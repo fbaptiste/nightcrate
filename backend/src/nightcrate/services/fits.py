@@ -24,16 +24,14 @@ def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
     """Return all header cards for the given HDU as a list of dicts."""
     with fits.open(file_path, memmap=False) as hdul:
         target = _hdu_index(hdul, hdu)
-        cards = []
-        for card in target.header.cards:
-            cards.append(
-                {
-                    "key": card.keyword,
-                    "value": str(card.value),
-                    "comment": card.comment,
-                }
-            )
-        return cards
+        return [
+            {
+                "key": card.keyword,
+                "value": str(card.value),
+                "comment": card.comment,
+            }
+            for card in target.header.cards
+        ]
 
 
 def list_hdus(file_path: Path) -> list[dict]:

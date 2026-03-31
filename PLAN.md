@@ -509,6 +509,24 @@ Write a read-only XISF parser based on the open XISF 1.0 specification. No depen
 - [ ] File path placeholder: "Absolute path to .fits or .xisf file…"
 - [ ] Browse dialog title: "Open Image File"
 
+### 8. Recent Files
+
+- [ ] Track the last 100 opened files in the SQLite database (path, timestamp)
+- [ ] Add a dropdown to the file path input in the FITS Viewer toolbar — shows recent files ordered most recent first
+- [ ] Selecting a recent file opens it immediately
+- [ ] Prune entries beyond 100; remove entries for files that no longer exist on disk
+
+### 9. Standard Image Format Support (PNG, JPEG, TIFF)
+
+- [ ] Backend: load PNG, JPEG, and TIFF files via Pillow (already a dependency)
+- [ ] Serve the image directly as PNG to the frontend (no stretch applied — these are already display-ready)
+- [ ] Extract and display any available metadata (EXIF for JPEG/TIFF, PNG text chunks) in the header table
+- [ ] Display metadata in the info bar where applicable (filename always shown; date/exposure/filter if present in EXIF)
+- [ ] Zoom/pan works identically to FITS/XISF
+- [ ] Stretch controls panel is hidden when viewing PNG/JPEG/TIFF (not applicable)
+- [ ] File browser shows `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff` alongside FITS and XISF files
+- [ ] Update `IMAGE_EXTENSIONS` set in backend and file path validation
+
 ### v0.3.0 Completion Criteria
 
 - [x] Settings stored in SQLite (single-file app state)
@@ -522,6 +540,8 @@ Write a read-only XISF parser based on the open XISF 1.0 specification. No depen
 - [ ] Mono and color XISF files both supported
 - [ ] XISF metadata (FITS keywords and/or XISF properties) displayed in header table and info bar
 - [ ] File browser shows both FITS and XISF files
+- [ ] Recent files dropdown shows last 100 opened files
+- [ ] PNG, JPEG, TIFF files open with zoom/pan and metadata but no stretch controls
 - [ ] `uv run ruff check .` passes
 - [ ] `uv run ruff format --check .` passes
 - [ ] `uv run bandit -r src/` passes

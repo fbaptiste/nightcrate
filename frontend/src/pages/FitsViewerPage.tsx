@@ -26,6 +26,17 @@ import { HduSelector } from "@/components/fits/HduSelector";
 import { StretchControls } from "@/components/fits/StretchControls";
 import { useDebounce } from "@/lib/useDebounce";
 
+function formatDateObs(raw: string | null): string | null {
+  if (!raw) return null;
+  const d = new Date(raw.endsWith("Z") ? raw : raw + "Z");
+  if (isNaN(d.getTime())) return raw;
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    timeZoneName: "short",
+  }).format(d);
+}
+
 const DEFAULT_PER_CHANNEL: [StretchParams, StretchParams, StretchParams] = [
   { ...DEFAULT_STRETCH },
   { ...DEFAULT_STRETCH },
@@ -148,17 +159,7 @@ export function FitsViewerPage() {
   };
   const fileName = activePath ? activePath.split("/").pop() ?? null : null;
   const dateObsRaw = headerVal("DATE-OBS");
-  const dateObs = (() => {
-    if (!dateObsRaw) return null;
-    const d = new Date(dateObsRaw.endsWith("Z") ? dateObsRaw : dateObsRaw + "Z");
-    if (isNaN(d.getTime())) return dateObsRaw;
-    const short = new Intl.DateTimeFormat(undefined, {
-      year: "numeric", month: "short", day: "numeric",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
-      timeZoneName: "short",
-    }).format(d);
-    return short;
-  })();
+  const dateObs = formatDateObs(dateObsRaw);
   const exposure = headerVal("EXPTIME");
   const filter = headerVal("FILTER");
 
@@ -219,65 +220,64 @@ export function FitsViewerPage() {
             </Tabs>
 
             <Box sx={{ flexGrow: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              {tab === 0 && (
-                selectedHduInfo?.has_image
-                  ? <>
-                      <Box sx={{ flexGrow: 1, overflow: "hidden" }}>
-                        <FitsImage
-                          ref={imageRef}
-                          path={activePath}
-                          hdu={selectedHdu}
-                          linked={debouncedLinked}
-                          perChannel={activePerChannel}
-                          onZoomChange={setCurrentZoom}
-                        />
-                      </Box>
-                      {/* Image info bar */}
-                      {(fileName || dateObs || exposure || filter) && (
-                        <Box
-                          sx={{
-                            display: "flex",
-                            gap: 2,
-                            px: 1.5,
-                            py: 0.5,
-                            borderTop: 1,
-                            borderColor: "divider",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {fileName && (
-                            <Typography variant="caption" color="text.secondary" fontFamily="monospace">
-                              {fileName}
-                            </Typography>
-                          )}
-                          {dateObs && (
-                            <Typography variant="caption" color="text.secondary">
-                              {dateObs}
-                            </Typography>
-                          )}
-                          {exposure && (
-                            <Typography variant="caption" color="text.secondary">
-                              {exposure}s
-                            </Typography>
-                          )}
-                          {filter && (
-                            <Typography variant="caption" color="text.secondary">
-                              {filter}
-                            </Typography>
-                          )}
-                        </Box>
+              {tab === 0 && selectedHduInfo?.has_image && (
+                <>
+                  <Box sx={{ flexGrow: 1, overflow: "hidden" }}>
+                    <FitsImage
+                      ref={imageRef}
+                      path={activePath}
+                      hdu={selectedHdu}
+                      linked={debouncedLinked}
+                      perChannel={activePerChannel}
+                      onZoomChange={setCurrentZoom}
+                    />
+                  </Box>
+                  {(fileName || dateObs || exposure || filter) && (
+                    <Box
+                      sx={{
+                        display: "flex",
+                        gap: 2,
+                        px: 1.5,
+                        py: 0.5,
+                        borderTop: 1,
+                        borderColor: "divider",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {fileName && (
+                        <Typography variant="caption" color="text.secondary" fontFamily="monospace">
+                          {fileName}
+                        </Typography>
                       )}
-                    </>
-                  : <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-                      <Typography color="text.secondary">Selected HDU has no image data</Typography>
+                      {dateObs && (
+                        <Typography variant="caption" color="text.secondary">
+                          {dateObs}
+                        </Typography>
+                      )}
+                      {exposure && (
+                        <Typography variant="caption" color="text.secondary">
+                          {exposure}s
+                        </Typography>
+                      )}
+                      {filter && (
+                        <Typography variant="caption" color="text.secondary">
+                          {filter}
+                        </Typography>
+                      )}
                     </Box>
+                  )}
+                </>
               )}
-              {tab === 1 && (
-                headerQuery.isLoading
-                  ? <Typography sx={{ p: 2 }} color="text.secondary">Loading header…</Typography>
-                  : headerQuery.data
-                    ? <FitsHeaderTable cards={headerQuery.data} />
-                    : null
+              {tab === 0 && !selectedHduInfo?.has_image && (
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+                  <Typography color="text.secondary">Selected HDU has no image data</Typography>
+                </Box>
+              )}
+              {tab === 1 && headerQuery.isLoading && (
+                <Typography sx={{ p: 2 }} color="text.secondary">Loading header…</Typography>
+              )}
+              {tab === 1 && !headerQuery.isLoading && headerQuery.data && (
+                <FitsHeaderTable cards={headerQuery.data} />
               )}
             </Box>
           </>

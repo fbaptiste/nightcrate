@@ -94,6 +94,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
       container.addEventListener("wheel", onWheel, { passive: false });
       return () => container.removeEventListener("wheel", onWheel);
+      // No dependency array: re-binds each render so onWheel captures current zoom/offset
     });
 
     // ── Mouse panning ────────────────────────────────────────────────────────

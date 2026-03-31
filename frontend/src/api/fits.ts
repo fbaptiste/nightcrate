@@ -50,7 +50,7 @@ export const DEFAULT_STRETCH: StretchParams = {
 
 /** Build a StretchParams from auto-computed STF values. */
 export function stfToStretch(stf: StfParams): StretchParams {
-  return { ...DEFAULT_STRETCH, stretch: "stf", ...stf };
+  return { ...DEFAULT_STRETCH, ...stf };
 }
 
 export function fetchHdus(path: string): Promise<HduInfo[]> {
