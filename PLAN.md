@@ -341,7 +341,7 @@ Steps you'll need to follow (once) before development begins.
 - [x] README.md: fixed stale Stack section (removed SQLAlchemy/Tailwind references), added Open Source Acknowledgments
 - [x] CLAUDE.md: added Dependency & License Policy section
 - [x] PLAN.md: added Appendix: Library Reference with license evaluation for ~30 libraries
-- [x] Identified GPL blockers: `xisf` (Python) and `PyQt6` — documented alternatives
+- [x] Identified GPL blocker: `xisf` (Python) — documented alternatives
 
 ### v0.2.0 Completion Criteria
 
@@ -572,8 +572,6 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 
 | Library | License | Reason |
 |---|---|---|
-| **PyQt6** | **GPL-3.0** | License is now compatible, but not needed — NightCrate uses pywebview/Tauri. |
 | **xisf** (Python, by sergio-dr) | **GPL-3.0** | License is now compatible, but we already have a clean-room parser (`services/xisf_io.py`). Evaluate before adopting — needs case-by-case approval for GPL deps. |
-| pyqtgraph | MIT | Not needed — not using Qt for the GUI. |
 | plotly | MIT | Redundant — already using D3.js for complex charts and MUI X Charts for simple ones. |
 | matplotlib | BSD-compat | Not needed — all charts are frontend-rendered via D3.js / MUI X Charts. |

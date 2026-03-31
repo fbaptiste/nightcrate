@@ -28,7 +28,7 @@ Reference documents:
 - **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly.
 - **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, single JSON row).
 
-Desktop packaging rationale: Qt rejected (PixInsight experience was buggy on Mac); Electron rejected (100MB+ bundle size); Tauri is the future native wrapper option using OS-native webview.
+Desktop packaging rationale: Electron rejected (100MB+ bundle size); Tauri is the future native wrapper option using OS-native webview.
 
 ## Architecture
 
