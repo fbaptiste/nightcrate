@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.0",
     "aiofiles>=24.0",
     "python-multipart>=0.0.20",
+    "platformdirs>=4.9.4",
 ]
 
 [project.scripts]

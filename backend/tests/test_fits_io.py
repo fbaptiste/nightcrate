@@ -104,12 +104,7 @@ class TestRenderImagePng:
         assert img.mode == "L"
 
     def test_linear_stretch(self, tmp_fits_mono: Path):
-        params = StretchParams(stretch="linear", black_pct=1, white_pct=99, gamma=2.0)
-        png = render_image_png(tmp_fits_mono, linked=params)
-        assert len(png) > 0
-
-    def test_asinh_stretch(self, tmp_fits_mono: Path):
-        params = StretchParams(stretch="asinh", black_pct=0, white_pct=100, asinh_beta=0.5)
+        params = StretchParams(stretch="linear")
         png = render_image_png(tmp_fits_mono, linked=params)
         assert len(png) > 0
 

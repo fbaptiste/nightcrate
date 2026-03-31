@@ -163,18 +163,18 @@ Steps you'll need to follow (once) before development begins.
 
 ### 5. Frontend — Project Initialization
 
-#### 5.1 Vite + React + TypeScript
+#### 7.1 Vite + React + TypeScript
 
 - [x] Scaffold the project (Vite + React + TypeScript)
 - [x] Add dependencies (zustand, react-router-dom, @tanstack/react-query, MUI core + MUI X Community)
 
-#### 5.2 MUI Theme Setup
+#### 7.2 MUI Theme Setup
 
 - [x] `src/theme/theme.ts` — light and dark MUI theme definitions
 - [x] `ThemeProvider` wraps the app and reads `theme` setting from Zustand store
 - [x] "browser" mode uses `useMediaQuery('(prefers-color-scheme: dark)')` to select theme automatically
 
-#### 5.3 Directory Structure
+#### 7.3 Directory Structure
 
 - [x] Establish frontend source layout:
   ```
@@ -386,7 +386,21 @@ Moved user settings from a standalone `settings.json` file into the SQLite datab
   - `test_api.py` (15) — all HTTP endpoints including error cases
 - [x] Pre-commit checklist added to CLAUDE.md: ruff lint → ruff format → bandit → pytest
 
-### 3. Refactor Image I/O Layer (planned)
+### 3. Cross-Platform Support
+
+- [x] App data directory via `platformdirs` — resolves correctly on Mac, Windows, Linux
+- [x] File browser volumes endpoint handles macOS (`/Volumes/`), Windows (drive letters), Linux (`/media/`, `/mnt/`)
+- [x] GPU compute abstraction supports `mlx` (Apple Silicon), `cupy` (NVIDIA CUDA), `numpy` (CPU fallback)
+- [x] Removed async dependency from compute module (was broken after settings moved to SQLite)
+- [x] Added `platformdirs` dependency (MIT, added to README acknowledgments)
+
+### 4. Stretch Simplification
+
+- [x] Removed Asinh stretch mode — only Auto (STF) and Linear remain
+- [x] Linear mode is now simple min/max scaling with no sliders (identity transform)
+- [x] Cleaned up backend `StretchParams`, API query params, frontend types, and tests
+
+### 5. Refactor Image I/O Layer (planned)
 
 Currently all image loading, stretching, stats, and rendering live in `services/fits.py`. Before adding XISF, split this into a clean architecture:
 
@@ -422,18 +436,18 @@ Move FITS-specific code from `services/fits.py`:
 - [ ] Remove after all code has been migrated to `imaging.py` and `fits_io.py`
 - [ ] Update imports in `api/fits.py`
 
-### 4. XISF Clean-Room Parser
+### 6. XISF Clean-Room Parser
 
 Write a read-only XISF parser based on the open XISF 1.0 specification. No dependency on the GPL `xisf` Python package.
 
-#### 4.1 Add Dependencies
+#### 6.1 Add Dependencies
 
 - [ ] `lz4` (BSD 3-Clause) — for LZ4/LZ4-HC decompression
 - [ ] `zstandard` (BSD 3-Clause) — for Zstandard decompression
 - [ ] Both already on the approved library list in this document
 - [ ] Update `README.md` Open Source Acknowledgments
 
-#### 4.2 Create `services/xisf_io.py`
+#### 6.2 Create `services/xisf_io.py`
 
 ##### File header parsing
 
@@ -471,26 +485,26 @@ Write a read-only XISF parser based on the open XISF 1.0 specification. No depen
 - Writing XISF files
 - Vector/Matrix property types
 
-### 5. Unified API Layer
+### 7. Unified API Layer
 
-#### 5.1 Update `api/fits.py` → dispatch by file type
+#### 7.1 Update `api/fits.py` → dispatch by file type
 
 - [ ] Rename to `api/images.py` (or keep as `api/fits.py` and add XISF routing)
 - [ ] Accept both `.fits/.fit/.fts` and `.xisf` extensions in path validation
 - [ ] Dispatch to `fits_io` or `xisf_io` based on file extension
 - [ ] All endpoints (`/image`, `/stats`, `/header`, `/hdus`) work identically for both formats
 
-#### 5.2 Update file browser
+#### 7.2 Update file browser
 
 - [ ] Show `.xisf` files alongside FITS files in the browse dialog
 - [ ] Update backend `FITS_EXTENSIONS` set to include `.xisf`
 
-#### 5.3 Update info bar
+#### 7.3 Update info bar
 
 - [ ] XISF files that contain `<FITSKeyword>` elements work automatically (same key names)
 - [ ] For XISF files without FITS keywords, fall back to XISF properties: `Observation:Time:Start` → date, `Instrument:ExposureTime` → exposure, `Instrument:Filter:Name` → filter
 
-#### 5.4 Update help text and labels
+#### 7.4 Update help text and labels
 
 - [ ] File path placeholder: "Absolute path to .fits or .xisf file…"
 - [ ] Browse dialog title: "Open Image File"
@@ -498,7 +512,9 @@ Write a read-only XISF parser based on the open XISF 1.0 specification. No depen
 ### v0.3.0 Completion Criteria
 
 - [x] Settings stored in SQLite (single-file app state)
-- [x] 61 unit tests passing; bandit security scanning added
+- [x] Cross-platform: app data directory, file browser volumes, GPU detection
+- [x] Asinh stretch removed; Linear is simple min/max with no controls
+- [x] 59 unit tests passing; bandit security scanning added
 - [x] Pre-commit checklist enforced: ruff lint → ruff format → bandit → pytest
 - [ ] Existing FITS functionality works identically after I/O refactor (no regressions)
 - [ ] XISF files (uncompressed, zlib, lz4, zstd — with and without shuffling) open and display correctly

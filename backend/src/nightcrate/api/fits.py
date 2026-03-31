@@ -75,16 +75,10 @@ async def get_stats(
 async def get_image(
     path: str = Query(..., description="Absolute path to FITS file"),
     hdu: int = Query(0, description="HDU index"),
-    stretch: str = Query("stf", description="Stretch type: stf | linear | asinh"),
-    # STF params
+    stretch: str = Query("stf", description="Stretch type: stf | linear"),
     shadow: float = Query(0.0, description="Shadow clip, normalized 0–1"),
     midtone: float = Query(0.5, description="Midtones balance 0–1"),
     highlight: float = Query(1.0, description="Highlight clip, normalized 0–1"),
-    # Linear / Asinh params
-    black_pct: float = Query(0.0, description="Black point percentile (0–100)"),
-    white_pct: float = Query(100.0, description="White point percentile (0–100)"),
-    gamma: float = Query(1.0, description="Gamma / midtones (0.1–10)"),
-    asinh_beta: float = Query(0.1, description="Asinh softening factor (0.001–5)"),
     # Per-channel overrides (color, unlinked mode)
     r_shadow: float | None = Query(None),
     r_midtone: float | None = Query(None),
@@ -104,10 +98,6 @@ async def get_image(
         shadow=shadow,
         midtone=midtone,
         highlight=highlight,
-        black_pct=black_pct,
-        white_pct=white_pct,
-        gamma=gamma,
-        asinh_beta=asinh_beta,
     )
 
     # Build per-channel params only if any channel override was provided
@@ -131,10 +121,6 @@ async def get_image(
                 shadow=sh if sh is not None else shadow,
                 midtone=mt if mt is not None else midtone,
                 highlight=hl if hl is not None else highlight,
-                black_pct=black_pct,
-                white_pct=white_pct,
-                gamma=gamma,
-                asinh_beta=asinh_beta,
             )
 
         per_channel = [

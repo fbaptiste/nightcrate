@@ -1,13 +1,13 @@
 """Async SQLite connection factory."""
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
+from platformdirs import user_data_dir
 
-APP_DIR = Path(os.path.expanduser("~/Library/Application Support/NightCrate"))
+APP_DIR = Path(user_data_dir("NightCrate", appauthor=False))
 DB_PATH = APP_DIR / "nightcrate.db"
 
 

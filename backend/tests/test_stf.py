@@ -90,25 +90,16 @@ class TestStretchPlane:
 
     def test_linear_full_range(self):
         plane = np.linspace(0, 1, 100).reshape(10, 10)
-        params = StretchParams(stretch="linear", black_pct=0, white_pct=100, gamma=1.0)
+        params = StretchParams(stretch="linear")
         result = _stretch_plane(plane, params)
         assert result.min() == 0
         assert result.max() == 255
 
-    def test_linear_gamma_brightens(self):
-        # Need a range of values so lo != hi
+    def test_linear_no_stretch(self):
+        """Linear mode should do simple min/max scaling — midtone at 0.5 maps to ~128."""
         plane = np.linspace(0, 1, 25).reshape(5, 5)
-        no_gamma = _stretch_plane(plane, StretchParams(stretch="linear", gamma=1.0))
-        with_gamma = _stretch_plane(plane, StretchParams(stretch="linear", gamma=2.0))
-        # gamma > 1 should brighten midtones (higher output for mid-range input)
-        mid = 2  # a row in the middle range
-        assert with_gamma[mid, mid] > no_gamma[mid, mid]
-
-    def test_asinh_returns_uint8(self):
-        plane = np.random.default_rng(2).uniform(0, 0.1, (10, 10))
-        params = StretchParams(stretch="asinh", black_pct=0, white_pct=100, asinh_beta=0.1)
-        result = _stretch_plane(plane, params)
-        assert result.dtype == np.uint8
+        result = _stretch_plane(plane, StretchParams(stretch="linear"))
+        assert 126 <= result[2, 2] <= 130
 
     def test_stf_highlight_lte_shadow_returns_gray(self):
         plane = np.ones((5, 5)) * 0.5
@@ -118,7 +109,7 @@ class TestStretchPlane:
 
     def test_uniform_plane_linear(self):
         plane = np.full((5, 5), 0.5)
-        params = StretchParams(stretch="linear", black_pct=0, white_pct=100, gamma=1.0)
+        params = StretchParams(stretch="linear")
         result = _stretch_plane(plane, params)
-        # All pixels identical — lo == hi, should return gray
+        # All pixels identical — min == max, should return gray
         np.testing.assert_array_equal(result, 128)

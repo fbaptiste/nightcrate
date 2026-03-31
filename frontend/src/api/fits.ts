@@ -34,16 +34,11 @@ export interface ImageStats {
 }
 
 export interface StretchParams {
-  stretch: "stf" | "linear" | "asinh";
+  stretch: "stf" | "linear";
   // STF
   shadow: number;
   midtone: number;
   highlight: number;
-  // Linear / Asinh
-  black_pct: number;
-  white_pct: number;
-  gamma: number;
-  asinh_beta: number;
 }
 
 export const DEFAULT_STRETCH: StretchParams = {
@@ -51,10 +46,6 @@ export const DEFAULT_STRETCH: StretchParams = {
   shadow: 0,
   midtone: 0.5,
   highlight: 1.0,
-  black_pct: 0,
-  white_pct: 100,
-  gamma: 1.0,
-  asinh_beta: 0.1,
 };
 
 /** Build a StretchParams from auto-computed STF values. */
@@ -87,10 +78,6 @@ export function fitsImageUrl(
     shadow: String(linked.shadow),
     midtone: String(linked.midtone),
     highlight: String(linked.highlight),
-    black_pct: String(linked.black_pct),
-    white_pct: String(linked.white_pct),
-    gamma: String(linked.gamma),
-    asinh_beta: String(linked.asinh_beta),
   });
 
   if (perChannel) {

@@ -25,7 +25,6 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
   );
 
   const isStf = params.stretch === "stf";
-  const isAsinh = params.stretch === "asinh";
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, minWidth: 0 }}>
@@ -45,7 +44,6 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
         >
           <MenuItem value="stf">Auto</MenuItem>
           <MenuItem value="linear">Linear</MenuItem>
-          <MenuItem value="asinh">Asinh</MenuItem>
         </Select>
       </FormControl>
 
@@ -88,82 +86,11 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
         </>
       )}
 
-      {/* ── Linear controls ── */}
-      {!isStf && !isAsinh && (
-        <>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              Black point: {params.black_pct.toFixed(2)}%
-            </Typography>
-            <Slider
-              min={0} max={100} step={0.01}
-              value={params.black_pct}
-              onChange={(_, v) => set({ black_pct: v as number })}
-              size="small"
-            />
-          </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              White point: {params.white_pct.toFixed(2)}%
-            </Typography>
-            <Slider
-              min={0} max={100} step={0.01}
-              value={params.white_pct}
-              onChange={(_, v) => set({ white_pct: v as number })}
-              size="small"
-            />
-          </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              Gamma: {params.gamma.toFixed(2)}
-            </Typography>
-            <Slider
-              min={0.1} max={10} step={0.05}
-              value={params.gamma}
-              onChange={(_, v) => set({ gamma: v as number })}
-              size="small"
-            />
-          </Box>
-        </>
-      )}
-
-      {/* ── Asinh controls ── */}
-      {isAsinh && (
-        <>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              Black point: {params.black_pct.toFixed(2)}%
-            </Typography>
-            <Slider
-              min={0} max={100} step={0.01}
-              value={params.black_pct}
-              onChange={(_, v) => set({ black_pct: v as number })}
-              size="small"
-            />
-          </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              White point: {params.white_pct.toFixed(2)}%
-            </Typography>
-            <Slider
-              min={0} max={100} step={0.01}
-              value={params.white_pct}
-              onChange={(_, v) => set({ white_pct: v as number })}
-              size="small"
-            />
-          </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              Softening (β): {params.asinh_beta.toFixed(3)}
-            </Typography>
-            <Slider
-              min={0.001} max={5} step={0.001}
-              value={params.asinh_beta}
-              onChange={(_, v) => set({ asinh_beta: v as number })}
-              size="small"
-            />
-          </Box>
-        </>
+      {/* Linear: no controls — simple min/max scaling */}
+      {!isStf && (
+        <Typography variant="caption" color="text.secondary">
+          No stretch — linear min/max scaling
+        </Typography>
       )}
     </Box>
   );

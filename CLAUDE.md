@@ -25,14 +25,16 @@ Reference documents:
 - **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
 - **Key Python libs:** `astropy`, `fitsio`, `astroquery`, ASTAP/astrometry.net for plate solving
 - **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
-- **GPU acceleration:** `mlx` (Apple Metal, primary target for Mac/Apple Silicon) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy directly. CuPy (NVIDIA CUDA) can be added later for cross-platform.
-- **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in a `settings.json` in the app data directory.
+- **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly.
+- **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, single JSON row).
 
 Desktop packaging rationale: Qt rejected (PixInsight experience was buggy on Mac); Electron rejected (100MB+ bundle size); Tauri is the future native wrapper option using OS-native webview.
 
 ## Architecture
 
-The app is a **local-first desktop application** for Mac (inherently cross-platform via web approach). The backend handles all computation — FITS parsing, log ingestion, plate solving, file management. The frontend is a React UI.
+The app is a **cross-platform local-first desktop application** (Mac, Windows, Linux). The backend handles all computation — FITS parsing, log ingestion, plate solving, file management. The frontend is a React UI.
+
+**Cross-platform:** App data directory via `platformdirs` (Mac: `~/Library/Application Support/NightCrate`, Windows: `AppData/Local/NightCrate`, Linux: `~/.local/share/NightCrate`). File browser detects volumes per platform. GPU backend auto-detects mlx (Mac) or CuPy (Windows/Linux).
 
 **Core data flow:** Imaging data captured on Windows PCs → transferred to Mac → NightCrate ingests and catalogs → PixInsight for processing.
 

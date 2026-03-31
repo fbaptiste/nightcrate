@@ -1,34 +1,52 @@
 """File system browsing endpoints."""
 
 import platform
+import string
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
-FITS_EXTENSIONS = {".fits", ".fit", ".fts"}
+IMAGE_EXTENSIONS = {".fits", ".fit", ".fts"}
 
 
 @router.get("/volumes")
 async def list_volumes() -> list[dict]:
     """List available filesystem volumes/mount points."""
     volumes: list[dict] = []
+    system = platform.system()
 
-    if platform.system() == "Darwin":
+    # Always include home first
+    home = Path.home()
+    volumes.append({"name": f"~ ({home.name})", "path": str(home)})
+
+    if system == "Darwin":
         vol_root = Path("/Volumes")
         if vol_root.is_dir():
             for entry in sorted(vol_root.iterdir(), key=lambda e: e.name.lower()):
                 if entry.is_dir() and not entry.name.startswith("."):
                     volumes.append({"name": entry.name, "path": str(entry)})
-        # Always include home
-        home = Path.home()
-        volumes.insert(0, {"name": f"~ ({home.name})", "path": str(home)})
+    elif system == "Windows":
+        for letter in string.ascii_uppercase:
+            drive = Path(f"{letter}:\\")
+            if drive.exists():
+                volumes.append({"name": f"{letter}:", "path": str(drive)})
     else:
-        # Linux / other: just home and root
-        home = Path.home()
-        volumes.append({"name": f"~ ({home.name})", "path": str(home)})
+        # Linux
         volumes.append({"name": "/", "path": "/"})
+        media = Path("/media")
+        if media.is_dir():
+            for user_dir in media.iterdir():
+                if user_dir.is_dir():
+                    for mount in sorted(user_dir.iterdir()):
+                        if mount.is_dir():
+                            volumes.append({"name": mount.name, "path": str(mount)})
+        mnt = Path("/mnt")
+        if mnt.is_dir():
+            for entry in sorted(mnt.iterdir()):
+                if entry.is_dir():
+                    volumes.append({"name": entry.name, "path": str(entry)})
 
     return volumes
 
@@ -37,7 +55,7 @@ async def list_volumes() -> list[dict]:
 async def browse(
     path: str = Query(default="~", description="Directory path to list"),
 ) -> dict:
-    """List directory contents — subdirectories and FITS files only."""
+    """List directory contents — subdirectories and image files only."""
     p = Path(path).expanduser().resolve()
 
     if not p.is_dir():
@@ -57,7 +75,7 @@ async def browse(
             continue
         if entry.is_dir():
             dirs.append({"name": entry.name, "path": str(entry)})
-        elif entry.is_file() and entry.suffix.lower() in FITS_EXTENSIONS:
+        elif entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
             try:
                 size = entry.stat().st_size
             except OSError:

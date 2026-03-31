@@ -216,16 +216,11 @@ def get_image_stats(file_path: Path, hdu: int = 0) -> ImageStats:
 
 @dataclass
 class StretchParams:
-    stretch: str = "stf"  # "stf" | "linear" | "asinh"
+    stretch: str = "stf"  # "stf" | "linear"
     # STF params (used when stretch == "stf")
     shadow: float = 0.0  # shadow clip, normalized 0–1
     midtone: float = 0.5  # midtones balance, 0–1
     highlight: float = 1.0  # highlight clip, normalized 0–1
-    # Legacy params (used when stretch == "linear" or "asinh")
-    black_pct: float = 0.0
-    white_pct: float = 100.0
-    gamma: float = 1.0
-    asinh_beta: float = 0.1
 
 
 def _mtf(x: np.ndarray, m: float) -> np.ndarray:
@@ -256,29 +251,13 @@ def _stretch_plane(plane: np.ndarray, p: StretchParams) -> np.ndarray:
         stretched = _mtf(rescaled, p.midtone)
         return (np.clip(stretched, 0.0, 1.0) * 255).astype(np.uint8)
 
-    elif p.stretch == "asinh":
-        flat = plane.ravel()
-        lo = float(np.percentile(flat, p.black_pct))
-        hi = float(np.percentile(flat, p.white_pct))
-        if hi <= lo:
-            return np.full(plane.shape, 128, dtype=np.uint8)
-        clipped = np.clip(plane, lo, hi)
-        normalized = (clipped - lo) / (hi - lo)
-        beta = max(p.asinh_beta, 1e-6)
-        normalized = np.arcsinh(normalized / beta) / np.arcsinh(1.0 / beta)
-        return (np.clip(normalized, 0.0, 1.0) * 255).astype(np.uint8)
-
     else:
-        # Linear with percentile clip + gamma
-        flat = plane.ravel()
-        lo = float(np.percentile(flat, p.black_pct))
-        hi = float(np.percentile(flat, p.white_pct))
-        if hi <= lo:
+        # Linear: simple min/max scaling, no stretch
+        dmin = plane.min()
+        dmax = plane.max()
+        if dmax == dmin:
             return np.full(plane.shape, 128, dtype=np.uint8)
-        clipped = np.clip(plane, lo, hi)
-        normalized = (clipped - lo) / (hi - lo)
-        if p.gamma != 1.0:
-            normalized = np.power(np.clip(normalized, 0.0, 1.0), 1.0 / p.gamma)
+        normalized = (plane - dmin) / (dmax - dmin)
         return (normalized * 255).astype(np.uint8)
 
 
