@@ -17,10 +17,42 @@ NightCrate ingests raw imaging data directories and associated log files — fro
 
 ## Stack
 
-- **Backend:** Python 3.14 + FastAPI + SQLite + SQLAlchemy
-- **Frontend:** React + TypeScript + Vite + Tailwind CSS + shadcn/ui
-- **Key libs:** astropy, fitsio, astroquery, D3.js
+- **Backend:** Python 3.14 + FastAPI + SQLite (via aiosqlite, raw SQL) + Pydantic
+- **Frontend:** React + TypeScript + Vite + MUI + Zustand + TanStack Query
+- **Key libs:** astropy, Pillow, D3.js
 
 ## Status
 
 Early development. See [PLAN.md](PLAN.md) for the current version plan.
+
+---
+
+## Open Source Acknowledgments
+
+NightCrate is built with the following open-source libraries. We are grateful to their authors and contributors.
+
+### Backend (Python)
+
+| Library | License | Copyright |
+|---|---|---|
+| [NumPy](https://numpy.org/) | BSD 3-Clause | Copyright (c) 2005-2025, NumPy Developers |
+| [Astropy](https://www.astropy.org/) | BSD 3-Clause | Copyright (c) 2011-2025, Astropy Developers |
+| [Pillow](https://python-pillow.org/) | HPND (PIL License) | Copyright (c) 1997-2011 by Secret Labs AB; Copyright (c) 1995-2011 by Fredrik Lundh; Copyright (c) 2010-2025 by Jeffrey A. Clark and contributors |
+| [FastAPI](https://fastapi.tiangolo.com/) | MIT | Copyright (c) 2018 Sebastián Ramírez |
+| [Uvicorn](https://www.uvicorn.org/) | BSD 3-Clause | Copyright (c) 2017-present, Encode OSS Ltd |
+| [Pydantic](https://docs.pydantic.dev/) | MIT | Copyright (c) 2017-2025, Samuel Colvin and Pydantic Contributors |
+| [aiosqlite](https://github.com/omnilib/aiosqlite) | MIT | Copyright (c) Amethyst Reese |
+| [yoyo-migrations](https://ollycope.com/software/yoyo/) | Apache 2.0 | Copyright (c) Oliver Mayfield-Sherborne |
+| [aiofiles](https://github.com/Tinche/aiofiles) | Apache 2.0 | Copyright (c) Tin Tvrtković |
+
+### Frontend (TypeScript / React)
+
+| Library | License | Copyright |
+|---|---|---|
+| [React](https://react.dev/) | MIT | Copyright (c) Meta Platforms, Inc. and affiliates |
+| [MUI](https://mui.com/) (Material UI + X Community) | MIT | Copyright (c) MUI |
+| [Zustand](https://github.com/pmndrs/zustand) | MIT | Copyright (c) 2019 Paul Henschel |
+| [TanStack Query](https://tanstack.com/query) | MIT | Copyright (c) 2021-present Tanner Linsley |
+| [React Router](https://reactrouter.com/) | MIT | Copyright (c) React Training LLC 2015-2019; Copyright (c) Remix Software Inc. 2020-2021; Copyright (c) Shopify Inc. 2022-2023 |
+| [Vite](https://vite.dev/) | MIT | Copyright (c) 2019-present, VoidZero Inc. and Vite contributors |
+| [Geist Font](https://vercel.com/font) | SIL OFL 1.1 | Copyright (c) 2023 Vercel |

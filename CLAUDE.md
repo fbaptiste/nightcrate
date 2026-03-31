@@ -108,4 +108,24 @@ uv run ruff format src/
 
 ## FITS Image Display
 
-Raw FITS data is 16-bit (0–65535). "No stretch" display means **linear min/max scaling**: map the actual pixel min→0, max→255. The image will look correctly exposed but not astronomically stretched. All pixel math goes through `core/compute.py` (`get_array_module()`), never directly importing mlx/numpy.
+FITS pixel data is normalized to [0, 1] at load time based on data type (uint16 ÷ 65535, matching PixInsight convention). Three stretch modes are supported:
+
+- **Auto (STF):** Default. PixInsight-compatible Screen Transfer Function. Auto-computes shadow clip and midtones balance from median + MAD statistics. For linked color: uses dimmest channel's params across all channels.
+- **Linear:** Percentile-based black/white point clipping + gamma.
+- **Asinh:** Arcsinh stretch for lifting faint detail.
+
+Both mono and color (RGB) FITS files are supported. Color images offer linked (single set of params for all channels) and unlinked (per-channel) stretch.
+
+Stretch is applied server-side — the frontend sends stretch params as query parameters and receives a rendered PNG. The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration but stretch currently uses numpy directly in `services/fits.py`.
+
+## Dependency & License Policy
+
+NightCrate is a **commercial closed-source product**. Before adding any new dependency (Python or JS/TS):
+
+1. **Check the license.** Only permissive licenses are allowed: MIT, BSD (2/3-Clause), Apache 2.0, ISC, HPND, SIL OFL (fonts). LGPL is acceptable for Python packages imported at runtime (dynamic linking) but **requires attribution** in `README.md`.
+2. **GPL is never allowed** — no GPL-2.0, GPL-3.0, or AGPL. If a critical feature needs a GPL library, write a clean-room implementation or find an alternative.
+3. **MUI X Pro/Premium is never allowed** — paid commercial license required. Only MUI X Community tier.
+4. **Update `README.md`** — add the library to the Open Source Acknowledgments table with its license and copyright.
+5. **Update `PLAN.md`** — if it's a new category of library, add it to the Library Reference appendix.
+
+The full evaluated library list is in `PLAN.md` under "Appendix: Library Reference."

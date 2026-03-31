@@ -6,7 +6,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nightcrate.api import fits, settings
+from nightcrate.api import files, fits, settings
 from nightcrate.db.migrations import apply_migrations
 
 
@@ -25,13 +25,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(files.router)
 app.include_router(fits.router)
 app.include_router(settings.router)
+
+APP_VERSION = "0.1.0"
 
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 def run() -> None:

@@ -11,10 +11,17 @@ APP_DIR = Path(os.path.expanduser("~/Library/Application Support/NightCrate"))
 SETTINGS_FILE = APP_DIR / "settings.json"
 
 
+class BrowserFavorite(BaseModel):
+    name: str
+    path: str
+
+
 class Settings(BaseModel):
     theme: Literal["light", "dark", "browser"] = "browser"
     gpu_acceleration: bool = True
     max_worker_cores: int | None = None  # None → cpu_count - 1
+    last_browse_path: str | None = None
+    browser_favorites: list[BrowserFavorite] = []
 
 
 def _ensure_app_dir() -> None:

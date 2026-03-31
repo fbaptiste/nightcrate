@@ -13,10 +13,10 @@ interface Props {
 export function HduSelector({ hdus, selected, onChange }: Props) {
   return (
     <FormControl size="small" sx={{ minWidth: 220 }}>
-      <InputLabel id="hdu-label">HDU</InputLabel>
+      <InputLabel id="hdu-label">Extension</InputLabel>
       <Select
         labelId="hdu-label"
-        label="HDU"
+        label="Extension"
         value={selected}
         onChange={(e) => onChange(Number(e.target.value))}
       >
