@@ -523,7 +523,7 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 
 ## Appendix: Library Reference
 
-Evaluated libraries for potential use across NightCrate. Every library must pass a license review before inclusion — NightCrate is a **commercial closed-source product**, so GPL-licensed code is not permitted.
+Evaluated libraries for potential use across NightCrate. Every library must pass a license review before inclusion. NightCrate is licensed under **GPL-3.0**. GPL dependencies are now technically compatible but should still be evaluated case by case — we prefer permissive dependencies where possible.
 
 ### Already in Use
 
@@ -568,12 +568,12 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 | D3.js | ISC | Complex interactive charts (PHD2 guiding graph, session timeline) |
 | rawpy | MIT (wrapper) / LibRaw: LGPL-2.1 or CDDL-1.0 | Camera RAW file support. ⚠ LibRaw LGPL — OK via dynamic linking in Python wheels. **Requires attribution.** Note: GPL demosaic packs excluded from standard builds. |
 
-### Not Recommended / Blocked
+### Not Recommended
 
 | Library | License | Reason |
 |---|---|---|
-| **PyQt6** | **GPL-3.0** | Requires paid Riverbank Computing commercial license for closed-source distribution. Not needed — NightCrate uses pywebview/Tauri. |
-| **xisf** (Python, by sergio-dr) | **GPL-3.0** | Cannot use in closed-source commercial product. XISF format support is important (PixInsight native format) — will need a custom parser based on the open XISF specification instead. |
-| pyqtgraph | MIT | License is fine, but depends on PyQt6 which is GPL. Also moot — not using Qt. |
-| plotly | MIT | License is fine, but redundant — already using D3.js for complex charts and MUI X Charts for simple ones. |
-| matplotlib | BSD-compat | License is fine, but not needed — all charts are frontend-rendered via D3.js / MUI X Charts. |
+| **PyQt6** | **GPL-3.0** | License is now compatible, but not needed — NightCrate uses pywebview/Tauri. |
+| **xisf** (Python, by sergio-dr) | **GPL-3.0** | License is now compatible, but we already have a clean-room parser (`services/xisf_io.py`). Evaluate before adopting — needs case-by-case approval for GPL deps. |
+| pyqtgraph | MIT | Not needed — not using Qt for the GUI. |
+| plotly | MIT | Redundant — already using D3.js for complex charts and MUI X Charts for simple ones. |
+| matplotlib | BSD-compat | Not needed — all charts are frontend-rendered via D3.js / MUI X Charts. |

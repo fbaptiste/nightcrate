@@ -139,12 +139,11 @@ Stretch is applied server-side — the frontend sends stretch params as query pa
 
 ## Dependency & License Policy
 
-NightCrate is a **commercial closed-source product**. Before adding any new dependency (Python or JS/TS):
+NightCrate is licensed under **GPL-3.0**. Before adding any new dependency (Python or JS/TS):
 
-1. **Check the license.** Only permissive licenses are allowed: MIT, BSD (2/3-Clause), Apache 2.0, ISC, HPND, SIL OFL (fonts). LGPL is acceptable for Python packages imported at runtime (dynamic linking) but **requires attribution** in `README.md`.
-2. **GPL is never allowed** — no GPL-2.0, GPL-3.0, or AGPL. If a critical feature needs a GPL library, write a clean-room implementation or find an alternative.
-3. **MUI X Pro/Premium is never allowed** — paid commercial license required. Only MUI X Community tier.
-4. **Update `README.md`** — add the library to the Open Source Acknowledgments table with its license and copyright.
-5. **Update `PLAN.md`** — if it's a new category of library, add it to the Library Reference appendix.
+1. **Check the license.** Compatible licenses: MIT, BSD (2/3-Clause), Apache 2.0, ISC, HPND, SIL OFL (fonts), LGPL, GPL-3.0. **Always verify compatibility and get approval before adding GPL-licensed dependencies** — even though NightCrate is GPL-3.0, we prefer permissive dependencies where possible and want to evaluate GPL libraries case by case.
+2. **MUI X Pro/Premium is never allowed** — paid commercial license. Only MUI X Community tier.
+3. **Update `README.md`** — add the library to the Open Source Acknowledgments table with its license and copyright.
+4. **Update `PLAN.md`** — if it's a new category of library, add it to the Library Reference appendix.
 
 The full evaluated library list is in `PLAN.md` under "Appendix: Library Reference."
