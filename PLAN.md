@@ -6,7 +6,7 @@ Living document tracking implementation status. Check off items as they are comp
 
 - [v0.1.0 — Foundation + FITS Viewer](#v010--foundation--fits-viewer) ✅
 - [v0.2.0 — Enhanced FITS Viewer](#v020--enhanced-fits-viewer) ✅
-- [v0.3.0 — XISF Support + Image I/O Refactor](#v030--xisf-support--image-io-refactor) (in progress)
+- [v0.3.0 — XISF Support + Image I/O Refactor](#v030--xisf-support--image-io-refactor) ✅
 - [Appendix: Library Reference](#appendix-library-reference)
 
 ---
@@ -361,7 +361,7 @@ Steps you'll need to follow (once) before development begins.
 
 **Goal:** Support XISF files (PixInsight native format) alongside FITS, with a clean-room parser, a refactored image I/O layer, and settings moved to SQLite.
 
-**Status:** In progress
+**Status:** ✅ Complete
 
 ---
 
@@ -507,11 +507,17 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 - [x] File browser shows FITS, XISF, PNG, JPEG, TIFF files
 - [x] Recent files: Autocomplete dropdown, SQLite persistence, stale entry pruning
 - [x] PNG/JPEG/TIFF: display with zoom/pan, EXIF/PNG metadata, no stretch panel
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run ruff format --check .` passes
-- [ ] `uv run bandit -r src/` passes
-- [ ] `uv run pytest` passes (add tests for XISF parser)
-- [ ] `npm run build` succeeds
+- [x] `uv run ruff check .` passes
+- [x] `uv run ruff format --check .` passes
+- [x] `uv run bandit -r src/` passes
+- [x] `uv run pytest` passes — 83 tests including 19 XISF parser tests
+- [x] `npm run build` succeeds
+
+---
+
+---
+
+*v0.4.0 scope to be defined.*
 
 ---
 

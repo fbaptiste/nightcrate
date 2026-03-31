@@ -16,14 +16,14 @@ Reference documents:
 - **Frontend:** React + TypeScript (Vite); Claude Code handles most React/JS work — Fred is not a React developer
   - **UI library:** MUI (`@mui/material`) — free MIT core. MUI X Community tier only (`@mui/x-data-grid`, `@mui/x-date-pickers`, `@mui/x-charts`, `@mui/x-tree-view`) — all free MIT. **Never use MUI X Pro or Premium** (paid, commercial license required; NightCrate is a commercial product so the open-source exception does not apply).
   - **Theme:** MUI `ThemeProvider` with light/dark/browser (system) modes. Stored in `settings.json` via backend.
-  - **No Tailwind CSS** — MUI uses its own styling system (`sx` prop + `styled`).
+  - **No Tailwind CSS, shadcn, or related packages** — MUI uses its own styling system (`sx` prop + `styled`). Do not add `tailwind-merge`, `class-variance-authority`, `clsx`, `lucide-react`, or `@base-ui/react`.
   - **State:** Zustand
   - **Data fetching:** TanStack Query
   - **Charts:** D3.js for complex interactive charts (PHD2 guiding graph, session timeline); MUI X Charts (free) for simpler dashboards (integration time bars, altitude).
 - **Database:** SQLite accessed directly via `aiosqlite` (raw SQL, no ORM). Migrations managed with `yoyo-migrations` (SQL files in `db/migrations/`). **No SQLAlchemy.**
 - **Data models:** Pydantic only — for API shapes, domain objects, and settings. No ORM models.
 - **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
-- **Key Python libs:** `astropy`, `fitsio`, `astroquery`, ASTAP/astrometry.net for plate solving
+- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, ASTAP/astrometry.net for plate solving
 - **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
 - **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly.
 - **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, single JSON row).
@@ -118,17 +118,24 @@ Before committing any Python code changes, all of these must pass:
 3. `uv run bandit -r src/` — security
 4. `uv run pytest` — tests
 
-## FITS Image Display
+## Image Viewer
 
-FITS pixel data is normalized to [0, 1] at load time based on data type (uint16 ÷ 65535, matching PixInsight convention). Three stretch modes are supported:
+Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PNG, JPEG, TIFF.
 
+**Architecture:**
+- `services/imaging.py` — format-agnostic: normalization, stretch, stats, PNG rendering
+- `services/fits_io.py` — FITS loading via astropy
+- `services/xisf_io.py` — clean-room XISF parser (no GPL dependency)
+- `services/standard_io.py` — PNG/JPEG/TIFF via Pillow (no stretch, passthrough display)
+- `api/images.py` — unified API at `/api/images/*`, dispatches by file extension
+
+**Stretch modes** (FITS and XISF only — not applicable to standard images):
 - **Auto (STF):** Default. PixInsight-compatible Screen Transfer Function. Auto-computes shadow clip and midtones balance from median + MAD statistics. For linked color: uses dimmest channel's params across all channels.
-- **Linear:** Percentile-based black/white point clipping + gamma.
-- **Asinh:** Arcsinh stretch for lifting faint detail.
+- **Linear:** Simple min/max scaling, no adjustable parameters.
 
-Both mono and color (RGB) FITS files are supported. Color images offer linked (single set of params for all channels) and unlinked (per-channel) stretch.
+FITS/XISF pixel data is normalized to [0, 1] at load time based on data type (uint16 ÷ 65535, matching PixInsight convention). Both mono and color (RGB) files are supported. Color images offer linked (single set of params for all channels) and unlinked (per-channel) stretch.
 
-Stretch is applied server-side — the frontend sends stretch params as query parameters and receives a rendered PNG. The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration but stretch currently uses numpy directly in `services/fits.py`.
+Stretch is applied server-side — the frontend sends stretch params as query parameters and receives a rendered PNG. The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration but stretch currently uses numpy directly in `services/imaging.py`.
 
 ## Dependency & License Policy
 

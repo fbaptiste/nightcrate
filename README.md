@@ -19,7 +19,7 @@ NightCrate ingests raw imaging data directories and associated log files — fro
 
 - **Backend:** Python 3.14 + FastAPI + SQLite (via aiosqlite, raw SQL) + Pydantic
 - **Frontend:** React + TypeScript + Vite + MUI + Zustand + TanStack Query
-- **Key libs:** astropy, Pillow, D3.js
+- **Key libs:** astropy, Pillow, lz4, zstandard, defusedxml, D3.js
 
 ## Status
 
