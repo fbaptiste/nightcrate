@@ -23,6 +23,13 @@ async def _test_db(tmp_path: Path, monkeypatch):
             )
         """)
         await conn.execute("INSERT OR IGNORE INTO settings (id, data) VALUES (1, '{}')")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS recent_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                opened_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
         await conn.commit()
 
 

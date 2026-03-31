@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Breadcrumbs from "@mui/material/Breadcrumbs";
 import Button from "@mui/material/Button";
@@ -125,12 +126,12 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
     update({ browser_favorites: favorites.filter((f) => f.path !== path) });
   }
 
-  // Build breadcrumb segments from resolved path
-  const pathSegments = result?.path.split("/").filter(Boolean) ?? [];
+  // Build breadcrumb segments from resolved path (handle both / and \ separators)
+  const pathSegments = result?.path.split(/[/\\]/).filter(Boolean) ?? [];
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Open FITS File</DialogTitle>
+      <DialogTitle>Open Image File</DialogTitle>
       <DialogContent
         sx={{ display: "flex", gap: 0, p: 0, minHeight: 450, overflow: "hidden" }}
       >
@@ -232,7 +233,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
           )}
 
           {error && (
-            <Typography color="error" variant="body2">{error}</Typography>
+            <Alert severity="warning" variant="outlined" sx={{ fontSize: "0.85rem" }}>{error}</Alert>
           )}
 
           {result && !loading && (

@@ -1,8 +1,5 @@
 """Tests for settings configuration."""
 
-from pathlib import Path
-
-import aiosqlite
 import pytest
 
 from nightcrate.core.config import BrowserFavorite, Settings, get_settings, update_settings
@@ -55,10 +52,11 @@ class TestSettingsPersistence:
         assert len(loaded.browser_favorites) == 1
         assert loaded.browser_favorites[0].name == "Astro"
 
-    async def test_corrupt_data_returns_defaults(self, tmp_path: Path):
+    async def test_corrupt_data_returns_defaults(self):
         """If the JSON in the DB is invalid, get_settings returns defaults."""
-        test_db = tmp_path / "test.db"
-        async with aiosqlite.connect(test_db) as conn:
+        from nightcrate.db.session import get_db
+
+        async with get_db() as conn:
             await conn.execute("UPDATE settings SET data = 'not valid json{{{' WHERE id = 1")
             await conn.commit()
         s = await get_settings()

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
+import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Divider from "@mui/material/Divider";
@@ -9,16 +10,21 @@ import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import FitScreenIcon from "@mui/icons-material/FitScreen";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import OneKIcon from "@mui/icons-material/PhotoSizeSelectActual";
 import {
   DEFAULT_STRETCH,
-  fetchHdus,
+  fetchExtensions,
   fetchHeader,
   fetchImageStats,
+  fetchRecentFiles,
+  recordRecentFile,
   stfToStretch,
+  supportsStretch,
   type ImageStats,
+  type RecentFile,
   type StretchParams,
-} from "@/api/fits";
+} from "@/api/images";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import { FitsHeaderTable } from "@/components/fits/FitsHeaderTable";
 import { FitsImage, type FitsImageHandle } from "@/components/fits/FitsImage";
@@ -43,21 +49,16 @@ const DEFAULT_PER_CHANNEL: [StretchParams, StretchParams, StretchParams] = [
   { ...DEFAULT_STRETCH },
 ];
 
-/** Apply auto-computed STF defaults from image stats to the stretch state. */
 function applyAutoStf(
   stats: ImageStats,
   setLinked: (p: StretchParams) => void,
   setPerChannel: (ch: [StretchParams, StretchParams, StretchParams]) => void,
 ) {
   if (stats.color && stats.linked_stf) {
-    // Linked: use dimmest-channel STF for all
     setLinked(stfToStretch(stats.linked_stf));
   } else if (stats.channels.length >= 1) {
-    // Mono: use the single channel's STF
     setLinked(stfToStretch(stats.channels[0].stf));
   }
-
-  // Per-channel: each channel gets its own STF
   if (stats.color && stats.channels.length === 3) {
     setPerChannel([
       stfToStretch(stats.channels[0].stf),
@@ -83,21 +84,30 @@ export function FitsViewerPage() {
   const [perChannel, setPerChannel] = useState<[StretchParams, StretchParams, StretchParams]>(DEFAULT_PER_CHANNEL);
   const [isLinked, setIsLinked] = useState(true);
 
-  // Debounce stretch params — sliders update instantly, backend call fires 300ms after last change
   const debouncedLinked = useDebounce(linked, 300);
   const debouncedPerChannel = useDebounce(perChannel, 300);
   const debouncedIsLinked = useDebounce(isLinked, 300);
 
-  const hdusQuery = useQuery({
-    queryKey: ["hdus", activePath],
-    queryFn: () => fetchHdus(activePath),
+  // Whether active file supports stretch (FITS/XISF yes, standard no)
+  const hasStretch = activePath !== "" && supportsStretch(activePath);
+
+  // Recent files
+  const recentQuery = useQuery({
+    queryKey: ["recent-files"],
+    queryFn: fetchRecentFiles,
+  });
+  const recentFiles: RecentFile[] = recentQuery.data ?? [];
+
+  const extensionsQuery = useQuery({
+    queryKey: ["extensions", activePath],
+    queryFn: () => fetchExtensions(activePath),
     enabled: activePath !== "",
   });
 
   const statsQuery = useQuery({
     queryKey: ["stats", activePath, selectedHdu],
     queryFn: () => fetchImageStats(activePath, selectedHdu),
-    enabled: activePath !== "",
+    enabled: hasStretch,
   });
 
   const headerQuery = useQuery({
@@ -121,14 +131,12 @@ export function FitsViewerPage() {
     setIsLinked(true);
     setInputPath(path);
     setActivePath(path);
+    recordRecentFile(path).then(() => recentQuery.refetch());
   }
 
   function handleOpen() {
-    openFile(inputPath.trim());
-  }
-
-  function handleBrowseSelect(path: string) {
-    openFile(path);
+    const p = inputPath.trim();
+    if (p) openFile(p);
   }
 
   const handleReset = useCallback(() => {
@@ -140,30 +148,27 @@ export function FitsViewerPage() {
 
   const handleLinkedToggle = useCallback((val: boolean) => {
     setIsLinked(val);
-    // When switching to unlinked, copy current linked params into all channels
     if (!val) {
       setPerChannel([{ ...linked }, { ...linked }, { ...linked }]);
     }
   }, [linked]);
 
-  const hdus = hdusQuery.data ?? [];
-  const selectedHduInfo = hdus.find((h) => h.index === selectedHdu);
+  const extensions = extensionsQuery.data ?? [];
+  const selectedExtInfo = extensions.find((h) => h.index === selectedHdu);
   const hasFile = activePath !== "";
   const isColor = statsQuery.data?.color ?? false;
 
-  // Extract display metadata from header
+  // Display metadata
   const headerCards = headerQuery.data ?? [];
   const headerVal = (key: string) => {
     const card = headerCards.find((c) => c.key === key);
     return card?.value && card.value !== "" && card.value !== "None" ? card.value : null;
   };
   const fileName = activePath ? activePath.split("/").pop() ?? null : null;
-  const dateObsRaw = headerVal("DATE-OBS");
-  const dateObs = formatDateObs(dateObsRaw);
+  const dateObs = formatDateObs(headerVal("DATE-OBS"));
   const exposure = headerVal("EXPTIME");
   const filter = headerVal("FILTER");
 
-  // Build per-channel arg only when in unlinked color mode
   const activePerChannel = (isColor && !debouncedIsLinked) ? debouncedPerChannel : undefined;
 
   return (
@@ -172,27 +177,51 @@ export function FitsViewerPage() {
       <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minWidth: 0, height: "100%" }}>
         {/* Toolbar */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, p: 1.5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
-          <TextField
+          <Button
+            variant="outlined"
             size="small"
-            placeholder="Absolute path to .fits file…"
-            value={inputPath}
-            onChange={(e) => setInputPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleOpen()}
-            inputProps={{ style: { fontFamily: "monospace", fontSize: "0.85rem" } }}
-            sx={{ flexGrow: 1 }}
-          />
-          <Button variant="outlined" onClick={() => setBrowserOpen(true)}>
+            onClick={() => setBrowserOpen(true)}
+            startIcon={<FolderOpenIcon sx={{ fontSize: 16 }} />}
+          >
             Browse
           </Button>
-          <Button variant="contained" onClick={handleOpen} disabled={!inputPath.trim()}>
+          <Autocomplete
+            freeSolo
+            clearOnBlur={false}
+            blurOnSelect
+            options={recentFiles.map((f) => f.path)}
+            filterOptions={(options) => options}
+            inputValue={inputPath}
+            onInputChange={(_, value, reason) => {
+              if (reason !== "reset") setInputPath(value);
+            }}
+            onChange={(_, value) => { if (value) openFile(value); }}
+            sx={{ flexGrow: 1 }}
+            slotProps={{ listbox: { style: { maxHeight: 320 } } }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                size="small"
+                placeholder="Path to image file…"
+                onKeyDown={(e) => e.key === "Enter" && handleOpen()}
+                inputProps={{ ...params.inputProps, style: { fontFamily: "monospace", fontSize: "0.75rem" } }}
+              />
+            )}
+            renderOption={(props, option) => (
+              <li {...props} key={option}>
+                <Typography sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}>{option}</Typography>
+              </li>
+            )}
+          />
+          <Button variant="contained" onClick={handleOpen} disabled={!inputPath.trim() || inputPath.trim() === activePath}>
             Open
           </Button>
 
-          {hasFile && hdus.length > 0 && hdus.filter((h) => h.has_image).length > 1 && (
+          {hasFile && extensions.length > 0 && extensions.filter((h) => h.has_image).length > 1 && (
             <>
               <Divider orientation="vertical" flexItem />
               <HduSelector
-                hdus={hdus}
+                hdus={extensions}
                 selected={selectedHdu}
                 onChange={(i) => { setSelectedHdu(i); setTab(0); }}
               />
@@ -201,26 +230,26 @@ export function FitsViewerPage() {
         </Box>
 
         {/* Error */}
-        {hdusQuery.isError && (
+        {extensionsQuery.isError && (
           <Alert severity="error" sx={{ mx: 2, mt: 1 }}>
-            {String(hdusQuery.error)}
+            {String(extensionsQuery.error)}
           </Alert>
         )}
 
         {/* Tabs + content */}
-        {hasFile && !hdusQuery.isError && (
+        {hasFile && !extensionsQuery.isError && (
           <>
             <Tabs
               value={tab}
               onChange={(_, v) => setTab(v)}
               sx={{ px: 2, flexShrink: 0, borderBottom: 1, borderColor: "divider" }}
             >
-              <Tab label="Image" disabled={!selectedHduInfo?.has_image} />
+              <Tab label="Image" disabled={!selectedExtInfo?.has_image} />
               <Tab label="Header" />
             </Tabs>
 
             <Box sx={{ flexGrow: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              {tab === 0 && selectedHduInfo?.has_image && (
+              {tab === 0 && selectedExtInfo?.has_image && (
                 <>
                   <Box sx={{ flexGrow: 1, overflow: "hidden" }}>
                     <FitsImage
@@ -228,7 +257,7 @@ export function FitsViewerPage() {
                       path={activePath}
                       hdu={selectedHdu}
                       linked={debouncedLinked}
-                      perChannel={activePerChannel}
+                      perChannel={hasStretch ? activePerChannel : undefined}
                       onZoomChange={setCurrentZoom}
                     />
                   </Box>
@@ -268,9 +297,9 @@ export function FitsViewerPage() {
                   )}
                 </>
               )}
-              {tab === 0 && !selectedHduInfo?.has_image && (
+              {tab === 0 && !selectedExtInfo?.has_image && (
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-                  <Typography color="text.secondary">Selected HDU has no image data</Typography>
+                  <Typography color="text.secondary">Selected extension has no image data</Typography>
                 </Box>
               )}
               {tab === 1 && headerQuery.isLoading && (
@@ -286,13 +315,13 @@ export function FitsViewerPage() {
         {/* Empty state */}
         {!hasFile && (
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", flexGrow: 1 }}>
-            <Typography color="text.secondary">Enter a path or click Browse to open a FITS file</Typography>
+            <Typography color="text.secondary">Enter a path or click Browse to open an image file</Typography>
           </Box>
         )}
       </Box>
 
-      {/* Stretch panel — right sidebar, only when an image is open */}
-      {hasFile && selectedHduInfo?.has_image && tab === 0 && (
+      {/* Right sidebar — only when an image is open and on the Image tab */}
+      {hasFile && selectedExtInfo?.has_image && tab === 0 && (
         <Box
           sx={{
             width: isColor && !isLinked ? 600 : 220,
@@ -331,22 +360,25 @@ export function FitsViewerPage() {
             </Typography>
           </Box>
 
-          <Divider sx={{ mx: 1.5 }} />
-
-          {/* Stretch section */}
-          <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, pt: 1, display: "block" }}>
-            STRETCH
-          </Typography>
-          <StretchControls
-            isColor={isColor}
-            linked={linked}
-            perChannel={perChannel}
-            isLinked={isLinked}
-            onLinkedChange={setLinked}
-            onPerChannelChange={setPerChannel}
-            onLinkedToggle={handleLinkedToggle}
-            onReset={handleReset}
-          />
+          {/* Stretch section — only for FITS/XISF */}
+          {hasStretch && (
+            <>
+              <Divider sx={{ mx: 1.5 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, pt: 1, display: "block" }}>
+                STRETCH
+              </Typography>
+              <StretchControls
+                isColor={isColor}
+                linked={linked}
+                perChannel={perChannel}
+                isLinked={isLinked}
+                onLinkedChange={setLinked}
+                onPerChannelChange={setPerChannel}
+                onLinkedToggle={handleLinkedToggle}
+                onReset={handleReset}
+              />
+            </>
+          )}
         </Box>
       )}
 
@@ -354,7 +386,7 @@ export function FitsViewerPage() {
       <FileBrowser
         open={browserOpen}
         onClose={() => setBrowserOpen(false)}
-        onSelect={handleBrowseSelect}
+        onSelect={(path) => openFile(path)}
       />
     </Box>
   );

@@ -1,6 +1,6 @@
 import Box from "@mui/material/Box";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
-import type { HeaderCard } from "@/api/fits";
+import type { HeaderCard } from "@/api/images";
 
 const columns: GridColDef[] = [
   {

@@ -46,7 +46,7 @@ export function SettingsPage() {
         <Box>
           <Typography variant="body1">GPU Acceleration</Typography>
           <Typography variant="body2" color="text.secondary">
-            Use Apple Metal (mlx) for array operations when available
+            Use GPU acceleration (Apple Metal / NVIDIA CUDA) when available
           </Typography>
         </Box>
         <FormControlLabel
@@ -72,7 +72,8 @@ export function SettingsPage() {
           value={settings.max_worker_cores ?? ""}
           onChange={(e) => {
             const val = e.target.value;
-            update({ max_worker_cores: val === "" ? null : parseInt(val, 10) });
+            const n = parseInt(val, 10);
+            update({ max_worker_cores: val === "" || isNaN(n) ? null : n });
           }}
           inputProps={{ min: 1 }}
           sx={{ width: 120 }}

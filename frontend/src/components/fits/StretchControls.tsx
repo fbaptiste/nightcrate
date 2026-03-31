@@ -9,7 +9,7 @@ import Slider from "@mui/material/Slider";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
-import type { StretchParams } from "@/api/fits";
+import type { StretchParams } from "@/api/images";
 
 interface ChannelControlsProps {
   label: string;

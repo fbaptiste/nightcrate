@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
-IMAGE_EXTENSIONS = {".fits", ".fit", ".fts"}
+IMAGE_EXTENSIONS = {".fits", ".fit", ".fts", ".xisf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 
 
 @router.get("/volumes")

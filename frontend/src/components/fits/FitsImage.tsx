@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Box from "@mui/material/Box";
-import { fitsImageUrl, type StretchParams } from "@/api/fits";
+import { imageUrl, type StretchParams } from "@/api/images";
 
 interface Props {
   path: string;
@@ -21,7 +21,7 @@ const ZOOM_FACTOR = 1.15;
 
 export const FitsImage = forwardRef<FitsImageHandle, Props>(
   function FitsImage({ path, hdu, linked, perChannel, onZoomChange }, ref) {
-    const src = fitsImageUrl(path, hdu, linked, perChannel);
+    const src = imageUrl(path, hdu, linked, perChannel);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -102,6 +102,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const handleMouseDown = useCallback(
       (e: React.MouseEvent) => {
         e.preventDefault();
+        // Blur any focused element (e.g. Autocomplete) so dropdowns close
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
         setIsPanning(true);
         panStart.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
       },

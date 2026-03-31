@@ -2,10 +2,10 @@ import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
-import type { HduInfo } from "@/api/fits";
+import type { ExtensionInfo } from "@/api/images";
 
 interface Props {
-  hdus: HduInfo[];
+  hdus: ExtensionInfo[];
   selected: number;
   onChange: (index: number) => void;
 }

@@ -27,7 +27,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (!current) return;
     const updated = { ...current, ...patch };
     set({ settings: updated }); // optimistic
-    const saved = await saveSettings(updated);
-    set({ settings: saved });
+    try {
+      const saved = await saveSettings(updated);
+      set({ settings: saved });
+    } catch {
+      set({ settings: current }); // rollback on failure
+    }
   },
 }));

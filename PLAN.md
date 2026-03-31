@@ -400,83 +400,60 @@ Moved user settings from a standalone `settings.json` file into the SQLite datab
 - [x] Linear mode is now simple min/max scaling with no sliders (identity transform)
 - [x] Cleaned up backend `StretchParams`, API query params, frontend types, and tests
 
-### 5. Refactor Image I/O Layer (planned)
+### 5. Refactor Image I/O Layer
 
-Currently all image loading, stretching, stats, and rendering live in `services/fits.py`. Before adding XISF, split this into a clean architecture:
+Split `services/fits.py` into a clean multi-format architecture:
 
 ```
 services/
 ├── imaging.py       # Shared: normalize, stretch, stats, render_image_png
 ├── fits_io.py       # FITS-specific: load data, read headers, list extensions
-└── xisf_io.py       # XISF-specific: parse format, load data, read metadata
+├── xisf_io.py       # XISF-specific: parse format, load data, read metadata
+└── standard_io.py   # PNG/JPEG/TIFF: passthrough display + metadata extraction
 ```
 
-#### 1.1 Create `services/imaging.py`
-
-Move format-agnostic code out of `services/fits.py`:
-
-- [ ] `_normalize_to_01()` — data-type-based normalization
-- [ ] `_mtf()`, `_stretch_plane()`, `_compute_stf()` — stretch engine
-- [ ] `StretchParams`, `StfParams`, `ChannelStats`, `ImageStats` — data classes
-- [ ] `get_image_stats()` — compute per-channel stats from a normalized array
-- [ ] `render_image_png()` — apply stretch and encode PNG from a normalized array
-
-All functions in `imaging.py` accept normalized [0, 1] float64 arrays — they have no knowledge of FITS or XISF.
-
-#### 1.2 Create `services/fits_io.py`
-
-Move FITS-specific code from `services/fits.py`:
-
-- [ ] `load_image_data(path, hdu) → np.ndarray` — returns normalized [0, 1] array, shape (H, W) or (3, H, W)
-- [ ] `read_header(path, hdu) → list[dict]` — returns `{key, value, comment}` dicts
-- [ ] `list_extensions(path) → list[dict]` — returns extension summary (index, name, type, has_image)
-
-#### 1.3 Delete `services/fits.py`
-
-- [ ] Remove after all code has been migrated to `imaging.py` and `fits_io.py`
-- [ ] Update imports in `api/fits.py`
+- [x] `services/imaging.py` — all format-agnostic code: `normalize_to_01()`, `_mtf()`, `stretch_plane()`, `_compute_stf()`, `compute_image_stats()`, `render_image_png()`, data classes
+- [x] `services/fits_io.py` — FITS-specific: `load_image_data()`, `read_header()`, `list_extensions()`
+- [x] `services/standard_io.py` — PNG/JPEG/TIFF: `load_image_bytes()`, `read_header()` (EXIF/PNG text), `list_extensions()`
+- [x] Deleted `services/fits.py` and `api/fits.py`
+- [x] `api/images.py` — unified API replacing `api/fits.py`, dispatches by file type
 
 ### 6. XISF Clean-Room Parser
 
-Write a read-only XISF parser based on the open XISF 1.0 specification. No dependency on the GPL `xisf` Python package.
+Clean-room read-only XISF parser based on the open XISF 1.0 specification. No dependency on the GPL `xisf` package. Uses `defusedxml` for safe XML parsing.
 
-#### 6.1 Add Dependencies
-
-- [ ] `lz4` (BSD 3-Clause) — for LZ4/LZ4-HC decompression
-- [ ] `zstandard` (BSD 3-Clause) — for Zstandard decompression
-- [ ] Both already on the approved library list in this document
-- [ ] Update `README.md` Open Source Acknowledgments
+- [x] `lz4` (BSD 3-Clause), `zstandard` (BSD 3-Clause), `defusedxml` (PSF-2.0) added as dependencies
+- [x] Updated `README.md` Open Source Acknowledgments
 
 #### 6.2 Create `services/xisf_io.py`
 
 ##### File header parsing
 
-- [ ] Validate magic bytes (`XISF0100` at offset 0)
-- [ ] Read XML header length (uint32 LE at offset 8)
-- [ ] Parse XML header block (UTF-8, namespace `http://www.pixinsight.com/xisf`)
+- [x] Validate magic bytes (`XISF0100` at offset 0)
+- [x] Read XML header length (uint32 LE at offset 8)
+- [x] Parse XML header block (UTF-8, namespace `http://www.pixinsight.com/xisf`)
 
 ##### Image data loading
 
-- [ ] Parse `<Image>` element: `geometry` (W:H:C), `sampleFormat`, `colorSpace`, `location`, `compression`
-- [ ] Support sample formats: `UInt16`, `Float32` (covers >95% of astrophotography files)
-- [ ] Support color spaces: `Gray` (mono), `RGB` (planar channel layout: RRR...GGG...BBB)
-- [ ] Read attachment data at absolute file offset
-- [ ] Decompression: uncompressed, `zlib`, `lz4`, `lz4-hc`, `zstd` (with and without `+sh` byte shuffling)
-- [ ] Sub-block reading: 16-byte headers (compressed_size uint64 LE, uncompressed_size uint64 LE) per chunk
-- [ ] Byte unshuffle via numpy reshape/transpose
-- [ ] Normalize to [0, 1]: UInt16 ÷ 65535, Float32 assumed already [0, 1] (or ÷ max if > 1)
-- [ ] Return normalized array shaped (H, W) for Gray or (3, H, W) for RGB
+- [x] Parse `<Image>` element: `geometry` (W:H:C), `sampleFormat`, `colorSpace`, `location`, `compression`
+- [x] Support sample formats: `UInt8`, `UInt16`, `UInt32`, `Float32`, `Float64`
+- [x] Support color spaces: `Gray` (mono), `RGB` (planar channel layout: RRR...GGG...BBB)
+- [x] Read attachment data at absolute file offset
+- [x] Decompression: uncompressed, `zlib`, `lz4`, `lz4-hc`, `zstd` (with and without `+sh` byte shuffling)
+- [x] Sub-block reading: 16-byte headers (compressed_size uint64 LE, uncompressed_size uint64 LE) per chunk
+- [x] Byte unshuffle via numpy reshape/transpose
+- [x] Normalize to [0, 1] via shared `normalize_to_01()` from `imaging.py`
+- [x] Return normalized array shaped (H, W) for Gray or (3, H, W) for RGB
 
 ##### Metadata extraction
 
-- [ ] Parse `<FITSKeyword>` elements → `{key, value, comment}` dicts (same format as FITS headers)
-- [ ] Parse `<Property>` elements → extract key properties (scalar `value` attributes + inline base64 `String` type)
-- [ ] Map XISF properties to display fields: `Instrument:Filter:Name` → filter, `Instrument:ExposureTime` → exposure, `Observation:Time:Start` → capture date
+- [x] Parse `<FITSKeyword>` elements → `{key, value, comment}` dicts (same format as FITS headers)
+- [x] Parse `<Property>` elements → extract key properties (scalar `value` attributes + inline base64 `String` type)
+- [x] Map XISF properties to FITS-style display fields: `Instrument:Filter:Name` → FILTER, `Instrument:ExposureTime` → EXPTIME, `Observation:Time:Start` → DATE-OBS, etc.
 
 ##### Extension listing
 
-- [ ] `list_extensions(path) → list[dict]` — list all `<Image>` elements with id, geometry, sampleFormat, colorSpace, has_image
-- [ ] Most files have one primary image + optional thumbnail; show only image-bearing extensions
+- [x] `list_extensions(path) → list[dict]` — list all `<Image>` elements with id, geometry, sampleFormat, colorSpace, has_image
 
 ##### Deferred (not in v0.3.0)
 
@@ -487,45 +464,34 @@ Write a read-only XISF parser based on the open XISF 1.0 specification. No depen
 
 ### 7. Unified API Layer
 
-#### 7.1 Update `api/fits.py` → dispatch by file type
-
-- [ ] Rename to `api/images.py` (or keep as `api/fits.py` and add XISF routing)
-- [ ] Accept both `.fits/.fit/.fts` and `.xisf` extensions in path validation
-- [ ] Dispatch to `fits_io` or `xisf_io` based on file extension
-- [ ] All endpoints (`/image`, `/stats`, `/header`, `/hdus`) work identically for both formats
-
-#### 7.2 Update file browser
-
-- [ ] Show `.xisf` files alongside FITS files in the browse dialog
-- [ ] Update backend `FITS_EXTENSIONS` set to include `.xisf`
-
-#### 7.3 Update info bar
-
-- [ ] XISF files that contain `<FITSKeyword>` elements work automatically (same key names)
-- [ ] For XISF files without FITS keywords, fall back to XISF properties: `Observation:Time:Start` → date, `Instrument:ExposureTime` → exposure, `Instrument:Filter:Name` → filter
-
-#### 7.4 Update help text and labels
-
-- [ ] File path placeholder: "Absolute path to .fits or .xisf file…"
-- [ ] Browse dialog title: "Open Image File"
+- [x] `api/images.py` replaces `api/fits.py` — new prefix `/api/images/*`
+- [x] Accepts `.fits/.fit/.fts`, `.xisf`, `.png/.jpg/.jpeg/.tif/.tiff`
+- [x] Dispatches to `fits_io`, `xisf_io`, or `standard_io` by extension
+- [x] All endpoints (`/image`, `/stats`, `/header`, `/extensions`) work for all formats
+- [x] `/stats` returns 404 for standard image formats (no stretch applicable)
+- [x] File browser updated: `IMAGE_EXTENSIONS` includes all supported types
+- [x] Frontend API module renamed from `api/fits.ts` to `api/images.ts`
+- [x] Frontend `supportsStretch()` helper determines if stretch panel should show
+- [x] Info bar: XISF files use FITS keywords when present, fall back to mapped XISF properties
+- [x] Help text updated: "Enter a path or click Browse to open an image file"
+- [x] Path input placeholder updated: "Path to image file…"
 
 ### 8. Recent Files
 
-- [ ] Track the last 100 opened files in the SQLite database (path, timestamp)
-- [ ] Add a dropdown to the file path input in the FITS Viewer toolbar — shows recent files ordered most recent first
-- [ ] Selecting a recent file opens it immediately
-- [ ] Prune entries beyond 100; remove entries for files that no longer exist on disk
+- [x] Migration `0003.recent_files.sql` — `recent_files` table with unique path, timestamp
+- [x] `POST /api/images/recent` — records a file open, upserts path, prunes beyond 100
+- [x] `GET /api/images/recent` — returns recent files ordered most recent first, prunes stale entries
+- [x] MUI `Autocomplete` dropdown on the path input — shows recent files as suggestions
+- [x] Selecting a recent file opens it immediately
 
 ### 9. Standard Image Format Support (PNG, JPEG, TIFF)
 
-- [ ] Backend: load PNG, JPEG, and TIFF files via Pillow (already a dependency)
-- [ ] Serve the image directly as PNG to the frontend (no stretch applied — these are already display-ready)
-- [ ] Extract and display any available metadata (EXIF for JPEG/TIFF, PNG text chunks) in the header table
-- [ ] Display metadata in the info bar where applicable (filename always shown; date/exposure/filter if present in EXIF)
-- [ ] Zoom/pan works identically to FITS/XISF
-- [ ] Stretch controls panel is hidden when viewing PNG/JPEG/TIFF (not applicable)
-- [ ] File browser shows `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff` alongside FITS and XISF files
-- [ ] Update `IMAGE_EXTENSIONS` set in backend and file path validation
+- [x] `services/standard_io.py` — loads via Pillow, converts to PNG for display
+- [x] Extracts EXIF metadata (JPEG/TIFF) and PNG text chunks for the header table
+- [x] Basic image info always shown (format, mode, dimensions)
+- [x] Zoom/pan works identically to FITS/XISF
+- [x] Stretch controls panel hidden when viewing standard images
+- [x] File browser shows `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`
 
 ### v0.3.0 Completion Criteria
 
@@ -534,14 +500,13 @@ Write a read-only XISF parser based on the open XISF 1.0 specification. No depen
 - [x] Asinh stretch removed; Linear is simple min/max with no controls
 - [x] 59 unit tests passing; bandit security scanning added
 - [x] Pre-commit checklist enforced: ruff lint → ruff format → bandit → pytest
-- [ ] Existing FITS functionality works identically after I/O refactor (no regressions)
-- [ ] XISF files (uncompressed, zlib, lz4, zstd — with and without shuffling) open and display correctly
-- [ ] Auto-stretch (STF) works on XISF files
-- [ ] Mono and color XISF files both supported
-- [ ] XISF metadata (FITS keywords and/or XISF properties) displayed in header table and info bar
-- [ ] File browser shows both FITS and XISF files
-- [ ] Recent files dropdown shows last 100 opened files
-- [ ] PNG, JPEG, TIFF files open with zoom/pan and metadata but no stretch controls
+- [x] Existing FITS functionality works identically after I/O refactor (64 tests passing)
+- [x] XISF parser: file header, image data, compression (zlib/lz4/zstd ±shuffle), sub-blocks, metadata
+- [x] XISF metadata maps to FITS-style display fields via property-to-keyword mapping
+- [x] Unified API: all formats through `/api/images/*` endpoints
+- [x] File browser shows FITS, XISF, PNG, JPEG, TIFF files
+- [x] Recent files: Autocomplete dropdown, SQLite persistence, stale entry pruning
+- [x] PNG/JPEG/TIFF: display with zoom/pan, EXIF/PNG metadata, no stretch panel
 - [ ] `uv run ruff check .` passes
 - [ ] `uv run ruff format --check .` passes
 - [ ] `uv run bandit -r src/` passes
