@@ -4,11 +4,11 @@ Living document tracking implementation status. Check off items as they are comp
 
 ---
 
-## Version 1 — Foundation + FITS Viewer
+## v0.1.0 — Foundation + FITS Viewer
 
 **Goal:** Working skeleton with a functional backend and frontend, theme switching, and the ability to open a FITS file, display its image and header.
 
-**Status:** 🔲 Not started
+**Status:** ✅ Complete
 
 ---
 
@@ -18,29 +18,21 @@ Steps you'll need to follow (once) before development begins.
 
 #### 1.1 Install uv
 
-- [ ] Install uv (Mac):
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  ```
-  Then restart your terminal so `uv` is on your PATH. Verify with `uv --version`.
+- [x] Install uv (Mac): installed via `brew install uv`
 
 #### 1.2 Install Python 3.14
 
-- [ ] Install Python 3.14 via uv:
-  ```bash
-  uv python install 3.14
-  ```
-  uv manages its own Python installs — this does not affect any system Python.
+- [x] Python 3.14.0 already installed
 
 #### 1.3 Node.js
 
-- [ ] Verify Node.js is installed: `node --version` (need v20+). Install via `brew install node` if needed.
+- [x] Node.js v25.2.1 installed
 
 ---
 
 ### 2. Project Structure
 
-- [ ] Create the top-level directory layout:
+- [x] Create the top-level directory layout:
   ```
   nightcrate/
   ├── backend/      ← Python/FastAPI
@@ -55,22 +47,9 @@ Steps you'll need to follow (once) before development begins.
 
 #### 3.1 uv Project Setup
 
-- [ ] Initialize the backend project:
-  ```bash
-  cd backend
-  uv init --python 3.14
-  ```
-  This creates `pyproject.toml` and a `.venv` automatically.
-
-- [ ] Add core dependencies:
-  ```bash
-  uv add fastapi "uvicorn[standard]" sqlalchemy alembic astropy pillow numpy
-  ```
-
-- [ ] Add dev dependencies:
-  ```bash
-  uv add --dev ruff pytest pytest-asyncio httpx
-  ```
+- [x] Initialize the backend project (`uv init --python 3.14 --lib`)
+- [x] Add core dependencies (fastapi, uvicorn, aiosqlite, yoyo-migrations, astropy, pillow, numpy, aiofiles, python-multipart)
+- [x] Add dev dependencies (ruff, pytest, pytest-asyncio, httpx)
 
   **Key uv commands you'll use daily:**
   | Command | What it does |
@@ -83,7 +62,7 @@ Steps you'll need to follow (once) before development begins.
 
 #### 3.2 Ruff Configuration
 
-- [ ] Add ruff config to `backend/pyproject.toml`:
+- [x] Add ruff config to `backend/pyproject.toml`:
   ```toml
   [tool.ruff]
   target-version = "py314"
@@ -106,7 +85,7 @@ Steps you'll need to follow (once) before development begins.
 
 #### 3.3 Directory Structure
 
-- [ ] Create backend source layout:
+- [x] Create backend source layout:
   ```
   backend/
   ├── pyproject.toml
@@ -135,31 +114,30 @@ Steps you'll need to follow (once) before development begins.
 
 #### 3.4 FastAPI App Shell
 
-- [ ] `main.py` — FastAPI instance with CORS configured for localhost, routers registered, startup/shutdown lifecycle
-- [ ] Health check endpoint: `GET /api/health` → `{"status": "ok"}`
-- [ ] Configure FastAPI to serve the built React frontend as static files (for production mode)
+- [x] `main.py` — FastAPI instance with CORS configured for localhost, routers registered, startup/shutdown lifecycle
+- [x] Health check endpoint: `GET /api/health` → `{"status": "ok"}`
+- [ ] Configure FastAPI to serve the built React frontend as static files (deferred — production packaging)
 
 #### 3.5 Settings System
 
-- [ ] `core/config.py` — Pydantic `Settings` model with fields:
+- [x] `core/config.py` — Pydantic `Settings` model with fields:
   - `theme`: `"light" | "dark" | "browser"` (default: `"browser"`)
   - `gpu_acceleration`: `bool` (default: `true`)
   - `max_worker_cores`: `int | None` (default: `null` → uses `cpu_count - 1`)
-- [ ] Load from / save to `~/Library/Application Support/NightCrate/settings.json`
-- [ ] `GET /api/settings` — return current settings
-- [ ] `PUT /api/settings` — update and persist settings
+- [x] Load from / save to `~/Library/Application Support/NightCrate/settings.json`
+- [x] `GET /api/settings` — return current settings
+- [x] `PUT /api/settings` — update and persist settings
 
 #### 3.6 Compute Backend Stub
 
-- [ ] `core/compute.py` — thin module that detects available backends at startup (mlx if on Apple Silicon, else numpy) and respects the `gpu_acceleration` setting. Expose `get_array_module()` that returns the right backend. Rest of codebase always calls this, never imports mlx/numpy directly.
+- [x] `core/compute.py` — thin module that detects available backends at startup (mlx if on Apple Silicon, else numpy) and respects the `gpu_acceleration` setting. Expose `get_array_module()` that returns the right backend. Rest of codebase always calls this, never imports mlx/numpy directly.
 
 #### 3.7 Database Initialization
 
-- [ ] `db/base.py` — SQLAlchemy `DeclarativeBase`
-- [ ] `db/session.py` — async engine + session factory pointing to `~/Library/Application Support/NightCrate/nightcrate.db`
-- [ ] Initialize Alembic: `uv run alembic init alembic`
-- [ ] Configure `alembic.ini` and `alembic/env.py` to use the app's DB URL and import all models
-- [ ] Create and apply initial (empty) migration: `uv run alembic revision --autogenerate -m "initial"` then `uv run alembic upgrade head`
+- [x] `db/session.py` — async aiosqlite connection factory pointing to `~/Library/Application Support/NightCrate/nightcrate.db`
+- [x] `db/migrations.py` — calls `yoyo apply` on startup to run any pending SQL migration files
+- [x] `db/migrations/0001.initial.sql` — empty placeholder migration (schema added in later versions)
+- [x] Migrations run automatically when the app starts — no manual command needed
 
 ---
 
@@ -167,14 +145,12 @@ Steps you'll need to follow (once) before development begins.
 
 #### 4.1 FITS Header Endpoint
 
-- [ ] `GET /api/fits/header?path=<encoded_path>` — reads the FITS file at the given path using `astropy.io.fits`, returns all header cards as a JSON array of `{key, value, comment}` objects. Handles multi-HDU files (returns headers per HDU).
+- [x] `GET /api/fits/header?path=<encoded_path>` — reads the FITS file at the given path using `astropy.io.fits`, returns all header cards as a JSON array of `{key, value, comment}` objects. Handles multi-HDU files (returns headers per HDU).
 
 #### 4.2 FITS Image Endpoint
 
-- [ ] `GET /api/fits/image?path=<encoded_path>&hdu=0` — reads image data from the specified HDU, applies **linear min/max scaling** (maps actual data min→0, max→255 with no stretch curve), returns a PNG via `StreamingResponse`.
-  - Note: this is the simplest possible display — the image will look correctly exposed but not stretched. Astronomical stretching (arcsinh, histogram equalization, etc.) comes in a later version.
-  - Use the compute backend (`get_array_module()`) for the scaling operation.
-  - Use `Pillow` for PNG encoding.
+- [x] `GET /api/fits/image?path=<encoded_path>&hdu=0` — reads image data from the specified HDU, applies **linear min/max scaling** (maps actual data min→0, max→255 with no stretch curve), returns a PNG via `StreamingResponse`.
+- [x] `GET /api/fits/hdus?path=<encoded_path>` — lists all HDUs with type and whether they contain image data.
 
 ---
 
@@ -182,41 +158,18 @@ Steps you'll need to follow (once) before development begins.
 
 #### 5.1 Vite + React + TypeScript
 
-- [ ] Scaffold the project:
-  ```bash
-  cd frontend
-  npm create vite@latest . -- --template react-ts
-  npm install
-  ```
+- [x] Scaffold the project (Vite + React + TypeScript)
+- [x] Add dependencies (zustand, react-router-dom, @tanstack/react-query, MUI core + MUI X Community)
 
-- [ ] Add dependencies:
-  ```bash
-  npm install zustand react-router-dom @tanstack/react-query
-  npm install -D tailwindcss @tailwindcss/vite
-  ```
+#### 5.2 MUI Theme Setup
 
-- [ ] Initialize Tailwind CSS:
-  ```bash
-  npx tailwindcss init
-  ```
-  Configure `vite.config.ts` to use the Tailwind Vite plugin. Set Tailwind dark mode to `class` strategy.
-
-#### 5.2 shadcn/ui
-
-- [ ] Initialize shadcn/ui:
-  ```bash
-  npx shadcn@latest init
-  ```
-  Choose: TypeScript, default style, CSS variables for theming.
-
-- [ ] Add initial components:
-  ```bash
-  npx shadcn@latest add button select separator scroll-area table
-  ```
+- [x] `src/theme/theme.ts` — light and dark MUI theme definitions
+- [x] `ThemeProvider` wraps the app and reads `theme` setting from Zustand store
+- [x] "browser" mode uses `useMediaQuery('(prefers-color-scheme: dark)')` to select theme automatically
 
 #### 5.3 Directory Structure
 
-- [ ] Establish frontend source layout:
+- [x] Establish frontend source layout:
   ```
   frontend/src/
   ├── api/             # Typed API client functions (calls backend)
@@ -232,31 +185,28 @@ Steps you'll need to follow (once) before development begins.
 
 #### 6.1 API Client
 
-- [ ] `api/client.ts` — base fetch wrapper pointing to `http://localhost:8000`
-- [ ] `api/settings.ts` — `getSettings()`, `updateSettings()`
-- [ ] `api/fits.ts` — `getFitsHeader(path)`, `getFitsImageUrl(path, hdu)`
+- [x] `api/client.ts` — base fetch wrapper (uses Vite proxy, no hardcoded port)
+- [x] `api/settings.ts` — `fetchSettings()`, `saveSettings()`
+- [x] `api/fits.ts` — `fetchHdus()`, `fetchHeader()`, `fitsImageUrl()`
 
 #### 6.2 Theme System
 
-- [ ] `stores/settingsStore.ts` — Zustand store holding `theme`, `gpuAcceleration`, `maxWorkerCores`; hydrates from `GET /api/settings` on app load; `updateSettings()` action calls `PUT /api/settings`
-- [ ] `components/ThemeProvider.tsx` — reads `theme` from store; applies `dark` class to `<html>` for dark mode, removes it for light, and uses `window.matchMedia('prefers-color-scheme: dark')` listener for browser/auto mode
-- [ ] Theme persists across sessions (stored in `settings.json` via backend)
+- [x] `stores/settingsStore.ts` — Zustand store; hydrates from `GET /api/settings` on app load; optimistic updates on change
+- [x] `components/ThemeProvider.tsx` — MUI ThemeProvider selecting light/dark/browser theme
+- [x] Theme persists across sessions (stored in `settings.json` via backend)
 
 #### 6.3 App Shell + Routing
 
-- [ ] `main.tsx` — mount `ThemeProvider`, `QueryClientProvider`, `RouterProvider`
-- [ ] Basic layout: sidebar/nav + main content area
-- [ ] Routes:
-  - `/` — home/welcome page (placeholder)
-  - `/fits-viewer` — FITS file viewer
-  - `/settings` — settings page
+- [x] `main.tsx` / `App.tsx` — mount `ThemeProvider`, `QueryClientProvider`, `RouterProvider`
+- [x] Sidebar layout with permanent MUI Drawer
+- [x] Routes: `/`, `/fits-viewer`, `/settings`
 
 #### 6.4 Settings Page
 
-- [ ] Theme selector: radio/select with options Light / Dark / Browser
-- [ ] GPU acceleration toggle
-- [ ] Max worker cores input (number, blank = auto)
-- [ ] Changes call `PUT /api/settings` and update the Zustand store immediately (optimistic update)
+- [x] Theme selector (Light / Dark / Browser)
+- [x] GPU acceleration toggle
+- [x] Max worker cores input (number, blank = auto)
+- [x] Optimistic updates via Zustand store → `PUT /api/settings`
 
 ---
 
@@ -264,27 +214,24 @@ Steps you'll need to follow (once) before development begins.
 
 #### 7.1 File Selection
 
-- [ ] File path input — a text input where the user types or pastes an absolute file path (native file picker `<input type="file">` cannot return absolute paths in browsers; pywebview can bridge this later)
-- [ ] "Open" button triggers load
+- [x] File path text input + Open button (native picker deferred until pywebview integration)
 
 #### 7.2 FITS Header Panel
 
-- [ ] Fetches `GET /api/fits/header?path=...` on file open
-- [ ] Displays a scrollable table: Keyword | Value | Comment
-- [ ] Multi-HDU support: tab or dropdown to switch between HDUs
+- [x] MUI X DataGrid showing Keyword / Value / Comment with sorting, pagination
+- [x] HDU dropdown selector
 
 #### 7.3 FITS Image Panel
 
-- [ ] Loads image from `GET /api/fits/image?path=...&hdu=...`
-- [ ] Displays the PNG returned by the backend
-- [ ] Shows HDU selector if multiple image HDUs exist
-- [ ] Basic zoom: fit-to-window toggle and 1:1 pixel view
+- [x] PNG rendered from backend, displayed in viewer
+- [x] HDU selector synced across image and header tabs
+- [x] Fit-to-window / 1:1 pixel toggle
 
 ---
 
 ### 8. Running the App
 
-- [ ] Document the dev workflow in CLAUDE.md:
+- [x] Document the dev workflow in CLAUDE.md:
   ```bash
   # Terminal 1 — backend
   cd backend
@@ -297,17 +244,19 @@ Steps you'll need to follow (once) before development begins.
 
 ---
 
-### Version 1 Completion Criteria
+### v0.1.0 Completion Criteria
 
-- [ ] Backend starts cleanly with `uv run uvicorn ...`
-- [ ] Frontend starts cleanly with `npm run dev`
-- [ ] `GET /api/health` returns 200
-- [ ] Settings load/save round-trip works
-- [ ] Theme switching (light/dark/browser) works and persists across app restarts
-- [ ] A FITS file can be opened and its header viewed
-- [ ] A FITS file's image data is displayed (linear-scaled, no stretch)
-- [ ] `uv run ruff check .` passes with no errors
+- [x] Backend starts cleanly with `uv run uvicorn ...`
+- [x] Frontend starts cleanly with `npm run dev`
+- [x] `GET /api/health` returns 200
+- [x] Settings load/save round-trip works
+- [x] Theme switching (light/dark/browser) works and persists across app restarts
+- [x] A FITS file can be opened and its header viewed
+- [x] A FITS file's image data is displayed (linear-scaled, no stretch)
+- [x] `uv run ruff check .` passes with no errors
 
 ---
 
-*Next version will be defined once Version 1 is complete.*
+---
+
+*v0.2.0 scope to be defined.*

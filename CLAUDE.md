@@ -14,12 +14,14 @@ Reference documents:
 
 - **Backend:** Python + FastAPI
 - **Frontend:** React + TypeScript (Vite); Claude Code handles most React/JS work — Fred is not a React developer
-  - **Styling:** Tailwind CSS (dark mode via `class` strategy) + shadcn/ui component library
-  - **Theme:** Light / Dark / Browser (auto). Stored in settings.json, applied via `dark` class on `<html>`.
+  - **UI library:** MUI (`@mui/material`) — free MIT core. MUI X Community tier only (`@mui/x-data-grid`, `@mui/x-date-pickers`, `@mui/x-charts`, `@mui/x-tree-view`) — all free MIT. **Never use MUI X Pro or Premium** (paid, commercial license required; NightCrate is a commercial product so the open-source exception does not apply).
+  - **Theme:** MUI `ThemeProvider` with light/dark/browser (system) modes. Stored in `settings.json` via backend.
+  - **No Tailwind CSS** — MUI uses its own styling system (`sx` prop + `styled`).
   - **State:** Zustand
   - **Data fetching:** TanStack Query
-  - **Charts:** D3.js for complex interactive charts (PHD2 guiding graph, session timeline); Recharts for simpler dashboards (integration time, altitude). Recharts is D3-based — one ecosystem.
-- **Database:** SQLite for MVP (PostgreSQL is Fred's area of expertise but SQLite is preferred for local desktop simplicity)
+  - **Charts:** D3.js for complex interactive charts (PHD2 guiding graph, session timeline); MUI X Charts (free) for simpler dashboards (integration time bars, altitude).
+- **Database:** SQLite accessed directly via `aiosqlite` (raw SQL, no ORM). Migrations managed with `yoyo-migrations` (SQL files in `db/migrations/`). **No SQLAlchemy.**
+- **Data models:** Pydantic only — for API shapes, domain objects, and settings. No ORM models.
 - **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
 - **Key Python libs:** `astropy`, `fitsio`, `astroquery`, ASTAP/astrometry.net for plate solving
 - **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
@@ -76,24 +78,32 @@ The app is a **local-first desktop application** for Mac (inherently cross-platf
 - **Package manager / venv:** `uv` — use `uv add <pkg>` to add deps, `uv run <cmd>` to run inside venv, `uv sync` after pulling changes
 - **Linter/formatter:** `ruff` (replaces flake8, black, isort — single tool, configured in pyproject.toml)
 - **Testing:** `pytest`
-- **Migrations:** Alembic
+- **Migrations:** `yoyo-migrations` — SQL files in `backend/src/nightcrate/db/migrations/`, applied automatically on startup via `db/migrations.py`
 
 ## Commands
 
+From the repo root, use `make`:
+
+```bash
+make dev       # Start backend + frontend together; browser opens automatically; Ctrl+C stops both
+make backend   # Backend only (http://127.0.0.1:8000)
+make frontend  # Frontend only (http://localhost:5173)
+make install   # Sync all deps after pulling changes
+make lint      # ruff check
+make format    # ruff format
+make test      # pytest
+```
+
+Direct commands when needed:
 ```bash
 # Backend (from backend/)
 uv run uvicorn nightcrate.main:app --reload --port 8000
 uv run pytest
-uv run ruff check .
-uv run ruff check --fix .
-uv run ruff format .
-uv run alembic upgrade head
-uv run alembic revision --autogenerate -m "description"
+uv run ruff check src/
+uv run ruff format src/
 
-# Frontend (from frontend/)
-npm run dev        # Vite dev server → http://localhost:5173
-npm run build
-npm run lint
+# Migrations: applied automatically on startup.
+# To add a new migration: create backend/src/nightcrate/db/migrations/NNNN.description.sql
 ```
 
 ## FITS Image Display
