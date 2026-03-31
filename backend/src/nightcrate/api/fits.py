@@ -24,9 +24,7 @@ def _resolve_path(path: str) -> Path:
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
     if p.suffix.lower() not in {".fits", ".fit", ".fts"}:
-        raise HTTPException(
-            status_code=400, detail="File must be a FITS file (.fits/.fit/.fts)"
-        )
+        raise HTTPException(status_code=400, detail="File must be a FITS file (.fits/.fit/.fts)")
     return p
 
 
@@ -114,12 +112,19 @@ async def get_image(
 
     # Build per-channel params only if any channel override was provided
     channel_overrides = [
-        r_shadow, r_midtone, r_highlight,
-        g_shadow, g_midtone, g_highlight,
-        b_shadow, b_midtone, b_highlight,
+        r_shadow,
+        r_midtone,
+        r_highlight,
+        g_shadow,
+        g_midtone,
+        g_highlight,
+        b_shadow,
+        b_midtone,
+        b_highlight,
     ]
     per_channel = None
     if any(v is not None for v in channel_overrides):
+
         def _ch(sh, mt, hl) -> StretchParams:
             return StretchParams(
                 stretch=stretch,

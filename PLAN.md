@@ -2,6 +2,13 @@
 
 Living document tracking implementation status. Check off items as they are completed.
 
+## Table of Contents
+
+- [v0.1.0 — Foundation + FITS Viewer](#v010--foundation--fits-viewer) ✅
+- [v0.2.0 — Enhanced FITS Viewer](#v020--enhanced-fits-viewer) ✅
+- [v0.3.0 — XISF Support + Image I/O Refactor](#v030--xisf-support--image-io-refactor) (in progress)
+- [Appendix: Library Reference](#appendix-library-reference)
+
 ---
 
 ## v0.1.0 — Foundation + FITS Viewer
@@ -350,7 +357,160 @@ Steps you'll need to follow (once) before development begins.
 
 ---
 
-*v0.3.0 scope to be defined.*
+## v0.3.0 — XISF Support + Image I/O Refactor
+
+**Goal:** Support XISF files (PixInsight native format) alongside FITS, with a clean-room parser, a refactored image I/O layer, and settings moved to SQLite.
+
+**Status:** In progress
+
+---
+
+### 1. Settings Moved to SQLite
+
+Moved user settings from a standalone `settings.json` file into the SQLite database, so the entire app state is a single `nightcrate.db` file.
+
+- [x] Migration `0002.settings_table.sql` — `settings` table with single-row constraint, JSON `data` column
+- [x] Rewrote `core/config.py` — `get_settings()` and `update_settings()` are now async, read/write via `aiosqlite`
+- [x] Removed `settings.json` file I/O, module-level singleton, and `APP_DIR` dependency from config
+- [x] Updated `api/settings.py` endpoints to `await` async config functions
+- [x] All existing settings (theme, GPU, worker cores, last browse path, favorites) preserved
+
+### 2. Unit Tests + Quality Tooling
+
+- [x] Added `bandit` as dev dependency for security scanning
+- [x] 61 unit tests across 5 test files:
+  - `test_normalize.py` (7) — data type normalization to [0, 1]
+  - `test_stf.py` (11) — MTF math, STF auto-computation, stretch plane output
+  - `test_fits_io.py` (10) — FITS header/HDU/stats/rendering, error cases
+  - `test_config.py` (6) — settings model validation, DB round-trip persistence
+  - `test_api.py` (15) — all HTTP endpoints including error cases
+- [x] Pre-commit checklist added to CLAUDE.md: ruff lint → ruff format → bandit → pytest
+
+### 3. Refactor Image I/O Layer (planned)
+
+Currently all image loading, stretching, stats, and rendering live in `services/fits.py`. Before adding XISF, split this into a clean architecture:
+
+```
+services/
+├── imaging.py       # Shared: normalize, stretch, stats, render_image_png
+├── fits_io.py       # FITS-specific: load data, read headers, list extensions
+└── xisf_io.py       # XISF-specific: parse format, load data, read metadata
+```
+
+#### 1.1 Create `services/imaging.py`
+
+Move format-agnostic code out of `services/fits.py`:
+
+- [ ] `_normalize_to_01()` — data-type-based normalization
+- [ ] `_mtf()`, `_stretch_plane()`, `_compute_stf()` — stretch engine
+- [ ] `StretchParams`, `StfParams`, `ChannelStats`, `ImageStats` — data classes
+- [ ] `get_image_stats()` — compute per-channel stats from a normalized array
+- [ ] `render_image_png()` — apply stretch and encode PNG from a normalized array
+
+All functions in `imaging.py` accept normalized [0, 1] float64 arrays — they have no knowledge of FITS or XISF.
+
+#### 1.2 Create `services/fits_io.py`
+
+Move FITS-specific code from `services/fits.py`:
+
+- [ ] `load_image_data(path, hdu) → np.ndarray` — returns normalized [0, 1] array, shape (H, W) or (3, H, W)
+- [ ] `read_header(path, hdu) → list[dict]` — returns `{key, value, comment}` dicts
+- [ ] `list_extensions(path) → list[dict]` — returns extension summary (index, name, type, has_image)
+
+#### 1.3 Delete `services/fits.py`
+
+- [ ] Remove after all code has been migrated to `imaging.py` and `fits_io.py`
+- [ ] Update imports in `api/fits.py`
+
+### 4. XISF Clean-Room Parser
+
+Write a read-only XISF parser based on the open XISF 1.0 specification. No dependency on the GPL `xisf` Python package.
+
+#### 4.1 Add Dependencies
+
+- [ ] `lz4` (BSD 3-Clause) — for LZ4/LZ4-HC decompression
+- [ ] `zstandard` (BSD 3-Clause) — for Zstandard decompression
+- [ ] Both already on the approved library list in this document
+- [ ] Update `README.md` Open Source Acknowledgments
+
+#### 4.2 Create `services/xisf_io.py`
+
+##### File header parsing
+
+- [ ] Validate magic bytes (`XISF0100` at offset 0)
+- [ ] Read XML header length (uint32 LE at offset 8)
+- [ ] Parse XML header block (UTF-8, namespace `http://www.pixinsight.com/xisf`)
+
+##### Image data loading
+
+- [ ] Parse `<Image>` element: `geometry` (W:H:C), `sampleFormat`, `colorSpace`, `location`, `compression`
+- [ ] Support sample formats: `UInt16`, `Float32` (covers >95% of astrophotography files)
+- [ ] Support color spaces: `Gray` (mono), `RGB` (planar channel layout: RRR...GGG...BBB)
+- [ ] Read attachment data at absolute file offset
+- [ ] Decompression: uncompressed, `zlib`, `lz4`, `lz4-hc`, `zstd` (with and without `+sh` byte shuffling)
+- [ ] Sub-block reading: 16-byte headers (compressed_size uint64 LE, uncompressed_size uint64 LE) per chunk
+- [ ] Byte unshuffle via numpy reshape/transpose
+- [ ] Normalize to [0, 1]: UInt16 ÷ 65535, Float32 assumed already [0, 1] (or ÷ max if > 1)
+- [ ] Return normalized array shaped (H, W) for Gray or (3, H, W) for RGB
+
+##### Metadata extraction
+
+- [ ] Parse `<FITSKeyword>` elements → `{key, value, comment}` dicts (same format as FITS headers)
+- [ ] Parse `<Property>` elements → extract key properties (scalar `value` attributes + inline base64 `String` type)
+- [ ] Map XISF properties to display fields: `Instrument:Filter:Name` → filter, `Instrument:ExposureTime` → exposure, `Observation:Time:Start` → capture date
+
+##### Extension listing
+
+- [ ] `list_extensions(path) → list[dict]` — list all `<Image>` elements with id, geometry, sampleFormat, colorSpace, has_image
+- [ ] Most files have one primary image + optional thumbnail; show only image-bearing extensions
+
+##### Deferred (not in v0.3.0)
+
+- Complex32/Complex64, UInt8, UInt32, Float64 sample formats
+- Inline base64 image data, external URL locations
+- Writing XISF files
+- Vector/Matrix property types
+
+### 5. Unified API Layer
+
+#### 5.1 Update `api/fits.py` → dispatch by file type
+
+- [ ] Rename to `api/images.py` (or keep as `api/fits.py` and add XISF routing)
+- [ ] Accept both `.fits/.fit/.fts` and `.xisf` extensions in path validation
+- [ ] Dispatch to `fits_io` or `xisf_io` based on file extension
+- [ ] All endpoints (`/image`, `/stats`, `/header`, `/hdus`) work identically for both formats
+
+#### 5.2 Update file browser
+
+- [ ] Show `.xisf` files alongside FITS files in the browse dialog
+- [ ] Update backend `FITS_EXTENSIONS` set to include `.xisf`
+
+#### 5.3 Update info bar
+
+- [ ] XISF files that contain `<FITSKeyword>` elements work automatically (same key names)
+- [ ] For XISF files without FITS keywords, fall back to XISF properties: `Observation:Time:Start` → date, `Instrument:ExposureTime` → exposure, `Instrument:Filter:Name` → filter
+
+#### 5.4 Update help text and labels
+
+- [ ] File path placeholder: "Absolute path to .fits or .xisf file…"
+- [ ] Browse dialog title: "Open Image File"
+
+### v0.3.0 Completion Criteria
+
+- [x] Settings stored in SQLite (single-file app state)
+- [x] 61 unit tests passing; bandit security scanning added
+- [x] Pre-commit checklist enforced: ruff lint → ruff format → bandit → pytest
+- [ ] Existing FITS functionality works identically after I/O refactor (no regressions)
+- [ ] XISF files (uncompressed, zlib, lz4, zstd — with and without shuffling) open and display correctly
+- [ ] Auto-stretch (STF) works on XISF files
+- [ ] Mono and color XISF files both supported
+- [ ] XISF metadata (FITS keywords and/or XISF properties) displayed in header table and info bar
+- [ ] File browser shows both FITS and XISF files
+- [ ] `uv run ruff check .` passes
+- [ ] `uv run ruff format --check .` passes
+- [ ] `uv run bandit -r src/` passes
+- [ ] `uv run pytest` passes (add tests for XISF parser)
+- [ ] `npm run build` succeeds
 
 ---
 

@@ -98,13 +98,23 @@ Direct commands when needed:
 ```bash
 # Backend (from backend/)
 uv run uvicorn nightcrate.main:app --reload --port 8000
-uv run pytest
-uv run ruff check src/
-uv run ruff format src/
+uv run pytest                          # Run tests
+uv run ruff check src/ tests/          # Lint
+uv run ruff format src/ tests/         # Format
+uv run bandit -r src/                  # Security scan
 
 # Migrations: applied automatically on startup.
 # To add a new migration: create backend/src/nightcrate/db/migrations/NNNN.description.sql
 ```
+
+## Pre-Commit Checklist
+
+Before committing any Python code changes, all of these must pass:
+
+1. `uv run ruff check src/ tests/` — lint
+2. `uv run ruff format --check src/ tests/` — formatting
+3. `uv run bandit -r src/` — security
+4. `uv run pytest` — tests
 
 ## FITS Image Display
 

@@ -49,9 +49,7 @@ async def browse(
     try:
         entries = sorted(p.iterdir(), key=lambda e: e.name.lower())
     except PermissionError:
-        raise HTTPException(
-            status_code=403, detail=f"Permission denied: {p}"
-        ) from None
+        raise HTTPException(status_code=403, detail=f"Permission denied: {p}") from None
 
     for entry in entries:
         # Skip hidden files/dirs

@@ -9,9 +9,9 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 @router.get("", response_model=Settings)
 async def read_settings() -> Settings:
-    return get_settings()
+    return await get_settings()
 
 
 @router.put("", response_model=Settings)
 async def write_settings(payload: Settings) -> Settings:
-    return update_settings(payload)
+    return await update_settings(payload)

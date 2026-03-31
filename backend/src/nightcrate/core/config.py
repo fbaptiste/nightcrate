@@ -1,14 +1,11 @@
-"""Application settings — loaded from and persisted to settings.json."""
+"""Application settings — stored in the SQLite database."""
 
 import json
-import os
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
-APP_DIR = Path(os.path.expanduser("~/Library/Application Support/NightCrate"))
-SETTINGS_FILE = APP_DIR / "settings.json"
+from nightcrate.db.session import get_db
 
 
 class BrowserFavorite(BaseModel):
@@ -24,39 +21,26 @@ class Settings(BaseModel):
     browser_favorites: list[BrowserFavorite] = []
 
 
-def _ensure_app_dir() -> None:
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def load_settings() -> Settings:
-    _ensure_app_dir()
-    if SETTINGS_FILE.exists():
-        try:
-            data = json.loads(SETTINGS_FILE.read_text())
-            return Settings(**data)
-        except Exception:
-            pass
+async def get_settings() -> Settings:
+    """Load settings from the database. Returns defaults for missing/invalid data."""
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT data FROM settings WHERE id = 1")
+        row = await cursor.fetchone()
+        if row:
+            try:
+                data = json.loads(row[0])
+                return Settings(**data)
+            except json.JSONDecodeError, TypeError, ValueError:
+                pass
     return Settings()
 
 
-def save_settings(settings: Settings) -> None:
-    _ensure_app_dir()
-    SETTINGS_FILE.write_text(settings.model_dump_json(indent=2))
-
-
-# Module-level singleton — loaded once at startup, mutated by the settings API.
-_settings: Settings | None = None
-
-
-def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = load_settings()
-    return _settings
-
-
-def update_settings(updated: Settings) -> Settings:
-    global _settings
-    _settings = updated
-    save_settings(updated)
-    return _settings
+async def update_settings(updated: Settings) -> Settings:
+    """Persist settings to the database and return the saved value."""
+    async with get_db() as conn:
+        await conn.execute(
+            "UPDATE settings SET data = ? WHERE id = 1",
+            (updated.model_dump_json(),),
+        )
+        await conn.commit()
+    return updated

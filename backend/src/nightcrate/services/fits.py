@@ -10,8 +10,8 @@ from PIL import Image
 
 # ── STF constants (matches PixInsight defaults) ──────────────────────────────
 
-STF_TARGET_BG = 0.25        # target median in the stretched image
-STF_SHADOW_CLIP = -2.8      # scaled-MAD units below median for shadow clip
+STF_TARGET_BG = 0.25  # target median in the stretched image
+STF_SHADOW_CLIP = -2.8  # scaled-MAD units below median for shadow clip
 
 
 def _hdu_index(hdul: fits.HDUList, hdu: int) -> fits.ImageHDU | fits.PrimaryHDU:
@@ -26,11 +26,13 @@ def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
         target = _hdu_index(hdul, hdu)
         cards = []
         for card in target.header.cards:
-            cards.append({
-                "key": card.keyword,
-                "value": str(card.value),
-                "comment": card.comment,
-            })
+            cards.append(
+                {
+                    "key": card.keyword,
+                    "value": str(card.value),
+                    "comment": card.comment,
+                }
+            )
         return cards
 
 
@@ -44,12 +46,14 @@ def list_hdus(file_path: Path) -> list[dict]:
                 and hdu_obj.data is not None
                 and hdu_obj.data.ndim >= 2
             )
-            result.append({
-                "index": i,
-                "name": hdu_obj.name or f"HDU {i}",
-                "type": type(hdu_obj).__name__,
-                "has_image": has_image,
-            })
+            result.append(
+                {
+                    "index": i,
+                    "name": hdu_obj.name or f"HDU {i}",
+                    "type": type(hdu_obj).__name__,
+                    "has_image": has_image,
+                }
+            )
         return result
 
 
@@ -124,8 +128,8 @@ def is_color(file_path: Path, hdu: int = 0) -> bool:
 class StfParams:
     """Auto-computed STF parameters for one channel."""
 
-    shadow: float     # black clip point, normalized 0–1
-    midtone: float    # midtones balance, 0–1 (lower = more aggressive stretch)
+    shadow: float  # black clip point, normalized 0–1
+    midtone: float  # midtones balance, 0–1 (lower = more aggressive stretch)
     highlight: float  # white point, normalized 0–1 (usually 1.0)
 
 
@@ -134,8 +138,8 @@ class ChannelStats:
     min: float
     max: float
     median: float
-    mad: float        # median absolute deviation
-    stf: StfParams    # auto-computed STF defaults
+    mad: float  # median absolute deviation
+    stf: StfParams  # auto-computed STF defaults
 
 
 @dataclass
@@ -212,11 +216,11 @@ def get_image_stats(file_path: Path, hdu: int = 0) -> ImageStats:
 
 @dataclass
 class StretchParams:
-    stretch: str = "stf"         # "stf" | "linear" | "asinh"
+    stretch: str = "stf"  # "stf" | "linear" | "asinh"
     # STF params (used when stretch == "stf")
-    shadow: float = 0.0          # shadow clip, normalized 0–1
-    midtone: float = 0.5         # midtones balance, 0–1
-    highlight: float = 1.0       # highlight clip, normalized 0–1
+    shadow: float = 0.0  # shadow clip, normalized 0–1
+    midtone: float = 0.5  # midtones balance, 0–1
+    highlight: float = 1.0  # highlight clip, normalized 0–1
     # Legacy params (used when stretch == "linear" or "asinh")
     black_pct: float = 0.0
     white_pct: float = 100.0
