@@ -56,10 +56,6 @@ Nobody is combining FITS header metadata, guiding logs, and session logs into a 
   - Phase 2: If the product takes off and users want a proper .dmg/.exe, wrap in Tauri (Rust-based desktop framework that uses native OS webview). The React frontend doesn't change — only the container changes.
   - This approach avoids premature desktop packaging complexity and lets development focus on the actual product.
 
-### Why not Qt/PySide6?
-
-Considered and rejected. Fred has direct experience with PixInsight (a Qt-based app) and finds the Qt experience on Mac to be buggy, visually inconsistent, and a maintenance burden due to library version churn. A web-based UI avoids these issues entirely.
-
 ### Why not Electron?
 
 Heavy (bundles entire Chromium, 100MB+ installers, hundreds of MB RAM). Tauri is the modern alternative if a native wrapper is ever needed — it uses the OS's native webview (WKWebView on Mac), resulting in ~10MB app size and ~30-40MB RAM usage.

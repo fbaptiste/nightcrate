@@ -23,10 +23,11 @@ help:
 
 ## Start backend and frontend together (Ctrl+C stops both)
 dev:
-	@trap 'kill 0' EXIT; \
-	(cd backend && uv run uvicorn nightcrate.main:app --reload --port 8000) & \
+	@(cd backend && uv run uvicorn nightcrate.main:app --reload --port 8000) & \
 	(cd frontend && npm run dev) & \
-	wait || true
+	trap '' INT TERM; \
+	wait; \
+	stty sane 2>/dev/null; true
 
 ## Start backend only (port 8000)
 backend:

@@ -7,6 +7,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.1.0 — Foundation + FITS Viewer](#v010--foundation--fits-viewer) ✅
 - [v0.2.0 — Enhanced FITS Viewer](#v020--enhanced-fits-viewer) ✅
 - [v0.3.0 — XISF Support + Image I/O Refactor](#v030--xisf-support--image-io-refactor) ✅
+- [v0.3.0a — UI Polish + Frontend Redesign](#v030a--ui-polish--frontend-redesign) ✅
 - [Appendix: Library Reference](#appendix-library-reference)
 
 ---
@@ -512,6 +513,90 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 - [x] `uv run bandit -r src/` passes
 - [x] `uv run pytest` passes — 83 tests including 19 XISF parser tests
 - [x] `npm run build` succeeds
+
+---
+
+---
+
+---
+
+## v0.3.0a — UI Polish + Frontend Redesign
+
+**Goal:** Visual identity overhaul, better UX patterns, and quality-of-life improvements across the frontend.
+
+**Status:** ✅ Complete
+
+---
+
+### 1. Naming + Branding
+
+- [x] Renamed "FITS Viewer" → "Image Viewer" in nav, route (`/image-viewer`), and page component
+- [x] Renamed `FitsViewerPage.tsx` → `ImageViewerPage.tsx`, updated `App.tsx` route and import
+- [x] Fixed browser tab title: "frontend" → "NightCrate" in `index.html`
+
+### 2. Custom Theme
+
+- [x] Warm amber accent palette (`#c07b2b` light / `#d4993f` dark) — colorblind-safe
+- [x] Cool slate surface colors for dark theme (`#1a1c20` base, `#24272c` paper, `#16181c` sidebar)
+- [x] Warm off-white light theme (`#f5f4f2` base, `#eeecea` sidebar)
+- [x] Component overrides: lowercase button text, rounded buttons/nav items, borderless drawer
+
+### 3. Typography
+
+- [x] **DM Sans** for body/heading text (loaded via Google Fonts)
+- [x] **JetBrains Mono** for monospace elements (file paths, zoom percentage)
+- [x] Shared typography config across both themes with tuned font sizes
+
+### 4. Navigation Icons
+
+- [x] Added MUI icons to sidebar nav: Home, ImageSearch (viewer), Settings
+- [x] Sidebar width increased from 200px → 220px to accommodate icons
+
+### 5. Image Viewer — Empty State
+
+- [x] Centered empty state with ImageSearch icon, "Browse Files" button, format chips (FITS/XISF/PNG/JPEG/TIFF)
+- [x] Keyboard shortcut hints displayed: ⌘O / Ctrl+O, F, 1
+
+### 6. Image Viewer — Tab Persistence
+
+- [x] Image and Header tabs now stay mounted (CSS `display: none` toggle instead of conditional render)
+- [x] Switching between Image and Header no longer re-fetches the image from the API
+
+### 7. Settings Page Layout
+
+- [x] Settings grouped into outlined cards: "Appearance" and "Performance"
+- [x] Centered layout with max-width 560px
+- [x] Section headers with uppercase labels
+
+### 8. Loading & Error States
+
+- [x] Spinner (`CircularProgress`) shown while loading image extensions
+- [x] Error notifications via MUI `Snackbar` toast (auto-dismiss 6s) instead of inline Alert
+
+### 9. Keyboard Shortcuts
+
+- [x] `Cmd/Ctrl+O` — open file browser
+- [x] `F` — fit image to window (when image is open)
+- [x] `1` — zoom to 1:1 (when image is open)
+- [x] Shortcuts disabled when focus is in text inputs
+
+### 10. Infrastructure
+
+- [x] `make dev` shutdown fix: parent shell ignores SIGINT after launching children, waits for clean exit, `stty sane` restores terminal
+- [x] Removed PyQt/Qt references from PLAN.md, CLAUDE.md, and nightcrate-brief.md
+- [x] License changed to GPL-3.0: added LICENSE file, updated dependency policy in CLAUDE.md and PLAN.md
+
+### v0.3.0a Completion Criteria
+
+- [x] Both light and dark themes render correctly with custom palette and typography
+- [x] Nav shows icons, route is `/image-viewer`, tab title is "NightCrate"
+- [x] Empty state shows browse button, format chips, and shortcut hints
+- [x] Tab switching preserves loaded image (no re-fetch)
+- [x] Settings page uses card layout with section grouping
+- [x] Error snackbar appears on load failures
+- [x] Keyboard shortcuts work (⌘O, F, 1)
+- [x] `npm run build` succeeds
+- [x] `make dev` exits cleanly on Ctrl+C
 
 ---
 

@@ -9,8 +9,12 @@ import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import CircularProgress from "@mui/material/CircularProgress";
+import Chip from "@mui/material/Chip";
+import Snackbar from "@mui/material/Snackbar";
 import FitScreenIcon from "@mui/icons-material/FitScreen";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
+import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import OneKIcon from "@mui/icons-material/PhotoSizeSelectActual";
 import {
   DEFAULT_STRETCH,
@@ -31,6 +35,7 @@ import { FitsImage, type FitsImageHandle } from "@/components/fits/FitsImage";
 import { HduSelector } from "@/components/fits/HduSelector";
 import { StretchControls } from "@/components/fits/StretchControls";
 import { useDebounce } from "@/lib/useDebounce";
+import { monoFontFamily } from "@/theme/theme";
 
 function formatDateObs(raw: string | null): string | null {
   if (!raw) return null;
@@ -68,7 +73,7 @@ function applyAutoStf(
   }
 }
 
-export function FitsViewerPage() {
+export function ImageViewerPage() {
   const [inputPath, setInputPath] = useState("");
   const [activePath, setActivePath] = useState("");
   const [selectedHdu, setSelectedHdu] = useState(0);
@@ -78,6 +83,9 @@ export function FitsViewerPage() {
 
   // File browser
   const [browserOpen, setBrowserOpen] = useState(false);
+
+  // Error notification
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Stretch state
   const [linked, setLinked] = useState<StretchParams>({ ...DEFAULT_STRETCH });
@@ -123,6 +131,11 @@ export function FitsViewerPage() {
     }
   }, [statsQuery.data]);
 
+  // Show error snackbar on query failures
+  useEffect(() => {
+    if (extensionsQuery.isError) setErrorMsg(String(extensionsQuery.error));
+  }, [extensionsQuery.isError, extensionsQuery.error]);
+
   function openFile(path: string) {
     setSelectedHdu(0);
     setTab(0);
@@ -157,6 +170,25 @@ export function FitsViewerPage() {
   const selectedExtInfo = extensions.find((h) => h.index === selectedHdu);
   const hasFile = activePath !== "";
   const isColor = statsQuery.data?.color ?? false;
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key === "o") {
+        e.preventDefault();
+        setBrowserOpen(true);
+      } else if (e.key === "f" && hasFile) {
+        imageRef.current?.fitToWindow();
+      } else if (e.key === "1" && hasFile) {
+        imageRef.current?.oneToOne();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [hasFile]);
 
   // Display metadata
   const headerCards = headerQuery.data ?? [];
@@ -204,12 +236,12 @@ export function FitsViewerPage() {
                 size="small"
                 placeholder="Path to image file…"
                 onKeyDown={(e) => e.key === "Enter" && handleOpen()}
-                inputProps={{ ...params.inputProps, style: { fontFamily: "monospace", fontSize: "0.75rem" } }}
+                inputProps={{ ...params.inputProps, style: { fontFamily: monoFontFamily, fontSize: "0.75rem" } }}
               />
             )}
             renderOption={(props, option) => (
               <li {...props} key={option}>
-                <Typography sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}>{option}</Typography>
+                <Typography sx={{ fontFamily: monoFontFamily, fontSize: "0.7rem" }}>{option}</Typography>
               </li>
             )}
           />
@@ -229,15 +261,15 @@ export function FitsViewerPage() {
           )}
         </Box>
 
-        {/* Error */}
-        {extensionsQuery.isError && (
-          <Alert severity="error" sx={{ mx: 2, mt: 1 }}>
-            {String(extensionsQuery.error)}
-          </Alert>
+        {/* Loading */}
+        {hasFile && extensionsQuery.isLoading && (
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", flexGrow: 1 }}>
+            <CircularProgress size={32} />
+          </Box>
         )}
 
         {/* Tabs + content */}
-        {hasFile && !extensionsQuery.isError && (
+        {hasFile && !extensionsQuery.isError && !extensionsQuery.isLoading && (
           <>
             <Tabs
               value={tab}
@@ -248,8 +280,9 @@ export function FitsViewerPage() {
               <Tab label="Header" />
             </Tabs>
 
-            <Box sx={{ flexGrow: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              {tab === 0 && selectedExtInfo?.has_image && (
+            {/* Image tab — kept mounted, hidden via CSS to avoid re-fetching */}
+            <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 0 ? "flex" : "none", flexDirection: "column" }}>
+              {selectedExtInfo?.has_image ? (
                 <>
                   <Box sx={{ flexGrow: 1, overflow: "hidden" }}>
                     <FitsImage
@@ -274,7 +307,7 @@ export function FitsViewerPage() {
                       }}
                     >
                       {fileName && (
-                        <Typography variant="caption" color="text.secondary" fontFamily="monospace">
+                        <Typography variant="caption" color="text.secondary" fontFamily={monoFontFamily}>
                           {fileName}
                         </Typography>
                       )}
@@ -296,16 +329,19 @@ export function FitsViewerPage() {
                     </Box>
                   )}
                 </>
-              )}
-              {tab === 0 && !selectedExtInfo?.has_image && (
+              ) : (
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
                   <Typography color="text.secondary">Selected extension has no image data</Typography>
                 </Box>
               )}
-              {tab === 1 && headerQuery.isLoading && (
+            </Box>
+
+            {/* Header tab */}
+            <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 1 ? "flex" : "none", flexDirection: "column" }}>
+              {headerQuery.isLoading && (
                 <Typography sx={{ p: 2 }} color="text.secondary">Loading header…</Typography>
               )}
-              {tab === 1 && !headerQuery.isLoading && headerQuery.data && (
+              {!headerQuery.isLoading && headerQuery.data && (
                 <FitsHeaderTable cards={headerQuery.data} />
               )}
             </Box>
@@ -315,7 +351,27 @@ export function FitsViewerPage() {
         {/* Empty state */}
         {!hasFile && (
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", flexGrow: 1 }}>
-            <Typography color="text.secondary">Enter a path or click Browse to open an image file</Typography>
+            <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, maxWidth: 400 }}>
+              <ImageSearchIcon sx={{ fontSize: 48, color: "text.secondary", opacity: 0.4 }} />
+              <Typography variant="body1" color="text.secondary" textAlign="center">
+                Open an image file to view it here
+              </Typography>
+              <Button
+                variant="outlined"
+                onClick={() => setBrowserOpen(true)}
+                startIcon={<FolderOpenIcon />}
+              >
+                Browse Files
+              </Button>
+              <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", justifyContent: "center" }}>
+                {["FITS", "XISF", "PNG", "JPEG", "TIFF"].map((fmt) => (
+                  <Chip key={fmt} label={fmt} size="small" variant="outlined" sx={{ fontSize: "0.7rem", height: 22 }} />
+                ))}
+              </Box>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, opacity: 0.6 }}>
+                {"\u2318"}O / Ctrl+O to browse &nbsp;&bull;&nbsp; F to fit &nbsp;&bull;&nbsp; 1 for 1:1
+              </Typography>
+            </Box>
           </Box>
         )}
       </Box>
@@ -355,7 +411,7 @@ export function FitsViewerPage() {
             >
               1:1
             </Button>
-            <Typography variant="caption" color="text.secondary" sx={{ ml: "auto", fontFamily: "monospace" }}>
+            <Typography variant="caption" color="text.secondary" sx={{ ml: "auto", fontFamily: monoFontFamily }}>
               {(currentZoom * 100).toFixed(0)}%
             </Typography>
           </Box>
@@ -388,6 +444,18 @@ export function FitsViewerPage() {
         onClose={() => setBrowserOpen(false)}
         onSelect={(path) => openFile(path)}
       />
+
+      {/* Error notification */}
+      <Snackbar
+        open={errorMsg !== null}
+        autoHideDuration={6000}
+        onClose={() => setErrorMsg(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="error" onClose={() => setErrorMsg(null)} variant="filled">
+          {errorMsg}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

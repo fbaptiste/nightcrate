@@ -5,17 +5,21 @@ import Drawer from "@mui/material/Drawer";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
 import ListItemButton from "@mui/material/ListItemButton";
+import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Typography from "@mui/material/Typography";
+import HomeIcon from "@mui/icons-material/Home";
+import ImageSearchIcon from "@mui/icons-material/ImageSearch";
+import SettingsIcon from "@mui/icons-material/Settings";
 import { NavLink, Outlet } from "react-router-dom";
 import { fetchHealth } from "@/api/files";
 
-const DRAWER_WIDTH = 200;
+const DRAWER_WIDTH = 220;
 
 const navItems = [
-  { to: "/", label: "Home" },
-  { to: "/fits-viewer", label: "FITS Viewer" },
-  { to: "/settings", label: "Settings" },
+  { to: "/", label: "Home", icon: <HomeIcon /> },
+  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
+  { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
 ];
 
 export function AppShell() {
@@ -49,7 +53,7 @@ export function AppShell() {
         </Box>
         <Divider />
         <List dense>
-          {navItems.map(({ to, label }) => (
+          {navItems.map(({ to, label, icon }) => (
             <ListItem key={to} disablePadding>
               <NavLink
                 to={to}
@@ -58,6 +62,7 @@ export function AppShell() {
               >
                 {({ isActive }) => (
                   <ListItemButton selected={isActive}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>{icon}</ListItemIcon>
                     <ListItemText primary={label} />
                   </ListItemButton>
                 )}
