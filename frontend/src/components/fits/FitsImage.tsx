@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Box from "@mui/material/Box";
+import CircularProgress from "@mui/material/CircularProgress";
 import { imageUrl, type StretchParams } from "@/api/images";
 
 interface Props {
@@ -32,12 +33,12 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const [isPanning, setIsPanning] = useState(false);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
 
-    // Reset to fit when image source changes
+    // Reset zoom/offset and loading state when a different file is opened
     useEffect(() => {
       setZoom(null);
       setOffset({ x: 0, y: 0 });
       setImageLoaded(false);
-    }, [src]);
+    }, [path, hdu]);
 
     // Compute the fit-to-window scale
     function getFitScale(): number {
@@ -156,6 +157,12 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           userSelect: "none",
         }}
       >
+        {/* Loading spinner */}
+        {!imageLoaded && (
+          <Box sx={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}>
+            <CircularProgress size={32} sx={{ color: "rgba(255,255,255,0.4)" }} />
+          </Box>
+        )}
         <Box
           sx={{
             position: "absolute",
@@ -170,9 +177,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             component="img"
             ref={imgRef}
             src={src}
-            alt="FITS image"
+            alt="Astronomical image"
             draggable={false}
             onLoad={() => setImageLoaded(true)}
+            onError={() => setImageLoaded(true)}
             sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
           />
         </Box>

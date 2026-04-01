@@ -19,14 +19,19 @@ import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import FolderIcon from "@mui/icons-material/Folder";
+import ImageIcon from "@mui/icons-material/Image";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
+import LinkIcon from "@mui/icons-material/Link";
 import StorageIcon from "@mui/icons-material/Storage";
 import HomeIcon from "@mui/icons-material/Home";
 import {
   browseDirectory,
+  browseProject,
   fetchVolumes,
   type BrowseResult,
+  type ProjectBrowseResult,
   type VolumeEntry,
 } from "@/api/files";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -34,7 +39,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSelect: (path: string) => void;
+  onSelect: (path: string, displayName?: string) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -54,6 +59,12 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedDisplayName, setSelectedDisplayName] = useState<string | null>(null);
+
+  // Project browsing state
+  const [activeProject, setActiveProject] = useState<string | null>(null);
+  const [projectResult, setProjectResult] = useState<ProjectBrowseResult | null>(null);
+  const [projectLoading, setProjectLoading] = useState(false);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; folderName: string; folderPath: string } | null>(null);
@@ -94,14 +105,36 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
       });
   }, [currentPath, open]);
 
+  // Fetch project contents when entering a project
+  useEffect(() => {
+    if (!activeProject) {
+      setProjectResult(null);
+      return;
+    }
+    setProjectLoading(true);
+    setSelectedFile(null);
+    browseProject(activeProject)
+      .then((data) => {
+        setProjectResult(data);
+        setProjectLoading(false);
+      })
+      .catch((err) => {
+        setError(String(err));
+        setProjectLoading(false);
+        setActiveProject(null);
+      });
+  }, [activeProject]);
+
   function navigateTo(path: string) {
     setCurrentPath(path);
     setSelectedFile(null);
+    setSelectedDisplayName(null);
+    setActiveProject(null);
   }
 
   function handleOpen() {
     if (selectedFile) {
-      onSelect(selectedFile);
+      onSelect(selectedFile, selectedDisplayName ?? undefined);
       onClose();
     }
   }
@@ -205,7 +238,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
               </Link>
               {pathSegments.map((seg, i) => {
                 const segPath = "/" + pathSegments.slice(0, i + 1).join("/");
-                const isLast = i === pathSegments.length - 1;
+                const isLast = i === pathSegments.length - 1 && !activeProject;
                 return isLast ? (
                   <Typography key={segPath} color="text.primary" sx={{ fontSize: "0.8rem" }}>
                     {seg}
@@ -223,6 +256,11 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
                   </Link>
                 );
               })}
+              {activeProject && (
+                <Typography color="text.primary" sx={{ fontSize: "0.8rem" }}>
+                  {activeProject.split("/").pop()}
+                </Typography>
+              )}
             </Breadcrumbs>
           )}
 
@@ -236,7 +274,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
             <Alert severity="warning" variant="outlined" sx={{ fontSize: "0.85rem" }}>{error}</Alert>
           )}
 
-          {result && !loading && (
+          {result && !loading && !activeProject && (
             <List
               dense
               sx={{
@@ -274,12 +312,30 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
                 </ListItemButton>
               ))}
 
-              {/* FITS files */}
+              {/* PixInsight projects */}
+              {result.projects.map((proj) => (
+                <ListItemButton
+                  key={proj.path}
+                  onClick={() => setActiveProject(proj.path)}
+                >
+                  <ListItemIcon sx={{ minWidth: 36 }}>
+                    <AccountTreeIcon fontSize="small" color="primary" />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={proj.name}
+                    secondary="PixInsight Project"
+                    primaryTypographyProps={{ fontSize: "0.85rem" }}
+                    secondaryTypographyProps={{ fontSize: "0.7rem" }}
+                  />
+                </ListItemButton>
+              ))}
+
+              {/* Image files */}
               {result.files.map((file) => (
                 <ListItemButton
                   key={file.path}
                   selected={selectedFile === file.path}
-                  onClick={() => setSelectedFile(file.path)}
+                  onClick={() => { setSelectedFile(file.path); setSelectedDisplayName(null); }}
                   onDoubleClick={() => { onSelect(file.path); onClose(); }}
                 >
                   <ListItemIcon sx={{ minWidth: 36 }}>
@@ -298,12 +354,75 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
               ))}
 
               {/* Empty state */}
-              {result.dirs.length === 0 && result.files.length === 0 && (
+              {result.dirs.length === 0 && result.files.length === 0 && result.projects.length === 0 && (
                 <Typography sx={{ p: 2 }} color="text.secondary" variant="body2">
-                  No directories or FITS files here
+                  No directories or image files here
                 </Typography>
               )}
             </List>
+          )}
+
+          {/* Project image listing */}
+          {activeProject && !projectLoading && projectResult && (
+            <List
+              dense
+              sx={{
+                flexGrow: 1,
+                overflow: "auto",
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 1,
+              }}
+            >
+              {/* Back to directory */}
+              <ListItemButton onClick={() => setActiveProject(null)}>
+                <ListItemIcon sx={{ minWidth: 36 }}>
+                  <FolderIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary=".." primaryTypographyProps={{ fontSize: "0.85rem" }} />
+              </ListItemButton>
+
+              {projectResult.images.map((img) => {
+                const virtualPath = `${activeProject}::${img.index}`;
+                const meta = [img.filter, img.object, img.exposure ? `${img.exposure}s` : null]
+                  .filter(Boolean)
+                  .join(" · ");
+                return (
+                  <ListItemButton
+                    key={img.index}
+                    selected={selectedFile === virtualPath}
+                    onClick={() => { setSelectedFile(virtualPath); setSelectedDisplayName(img.name); }}
+                    onDoubleClick={() => { onSelect(virtualPath, img.name); onClose(); }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      {img.source === "referenced" ? (
+                        <LinkIcon fontSize="small" />
+                      ) : (
+                        <ImageIcon fontSize="small" />
+                      )}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={img.name}
+                      secondary={meta || (img.source === "referenced" ? "Referenced XISF" : "Embedded")}
+                      primaryTypographyProps={{ fontSize: "0.85rem" }}
+                      secondaryTypographyProps={{ fontSize: "0.7rem" }}
+                    />
+                    <Chip
+                      label={img.source === "referenced" ? "ref" : "emb"}
+                      size="small"
+                      variant="outlined"
+                      sx={{ fontSize: "0.65rem", height: 18, ml: 1 }}
+                    />
+                  </ListItemButton>
+                );
+              })}
+            </List>
+          )}
+
+          {activeProject && projectLoading && (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+              <CircularProgress size={28} />
+            </Box>
           )}
         </Box>
 

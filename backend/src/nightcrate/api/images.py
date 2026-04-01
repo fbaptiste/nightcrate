@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from nightcrate.db.session import get_db
-from nightcrate.services import fits_io, standard_io, xisf_io
+from nightcrate.services import fits_io, pxiproject_io, standard_io, xisf_io
 from nightcrate.services.imaging import (
     StretchParams,
     compute_image_stats,
@@ -23,13 +23,15 @@ ALL_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | STANDARD_EXTENSIONS
 
 
 def _file_type(p: Path) -> str:
-    """Return 'fits', 'xisf', or 'standard' based on extension."""
+    """Return 'fits', 'xisf', 'float_tiff', or 'standard' based on extension and content."""
     ext = p.suffix.lower()
     if ext in FITS_EXTENSIONS:
         return "fits"
     if ext in XISF_EXTENSIONS:
         return "xisf"
     if ext in STANDARD_EXTENSIONS:
+        if ext in (".tif", ".tiff") and standard_io.is_float_tiff(p):
+            return "float_tiff"
         return "standard"
     raise HTTPException(
         status_code=400,
@@ -37,28 +39,62 @@ def _file_type(p: Path) -> str:
     )
 
 
-def _resolve_path(path: str) -> tuple[Path, str]:
-    """Validate and resolve a file path. Returns (path, file_type)."""
+def _resolve_path(path: str) -> tuple[Path, str, int]:
+    """Validate and resolve a file path.
+
+    Returns (resolved_path, file_type, image_index).
+    image_index is only meaningful for pxiproject virtual paths; 0 otherwise.
+    """
+    if "::" in path:
+        parts = path.rsplit("::", 1)
+        try:
+            project_dir, idx = Path(parts[0]).resolve(), int(parts[1])
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid virtual path: {path}")
+        if not project_dir.is_absolute():
+            raise HTTPException(status_code=400, detail="Path must be absolute")
+        if not project_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"Project not found: {project_dir}")
+        return project_dir, "pxiproject", idx
+
     p = Path(path)
     if not p.is_absolute():
         raise HTTPException(status_code=400, detail="Path must be absolute")
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    return p, _file_type(p)
+    return p, _file_type(p), 0
+
+
+def _load_image_data(p: Path, ft: str, idx: int, hdu: int):
+    """Load normalized image data for any supported file type."""
+    if ft == "pxiproject":
+        return pxiproject_io.load_image_data(p, idx)
+    if ft == "fits":
+        return fits_io.load_image_data(p, hdu)
+    if ft == "float_tiff":
+        return standard_io.load_image_data(p)
+    return xisf_io.load_image_data(p, hdu)
 
 
 @router.get("/extensions")
 async def get_extensions(
     path: str = Query(..., description="Absolute path to image file"),
 ) -> list[dict]:
-    """List extensions/layers in the file."""
-    p, ft = _resolve_path(path)
+    """List extensions/layers in the file, with stretch capability flag."""
+    p, ft, idx = _resolve_path(path)
+    stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject")
     try:
-        if ft == "fits":
-            return fits_io.list_extensions(p)
-        if ft == "xisf":
-            return xisf_io.list_extensions(p)
-        return standard_io.list_extensions(p)
+        if ft == "pxiproject":
+            exts = pxiproject_io.list_extensions(p, idx)
+        elif ft == "fits":
+            exts = fits_io.list_extensions(p)
+        elif ft == "xisf":
+            exts = xisf_io.list_extensions(p)
+        else:
+            exts = standard_io.list_extensions(p)
+        for ext in exts:
+            ext["supports_stretch"] = stretch
+        return exts
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -69,8 +105,10 @@ async def get_header(
     hdu: int = Query(0, description="Extension index"),
 ) -> list[dict]:
     """Return metadata cards for the specified extension."""
-    p, ft = _resolve_path(path)
+    p, ft, idx = _resolve_path(path)
     try:
+        if ft == "pxiproject":
+            return pxiproject_io.read_header(p, idx)
         if ft == "fits":
             return fits_io.read_header(p, hdu)
         if ft == "xisf":
@@ -87,20 +125,17 @@ async def get_stats(
     path: str = Query(..., description="Absolute path to image file"),
     hdu: int = Query(0, description="Extension index"),
 ) -> dict:
-    """Return per-channel statistics and auto-computed STF defaults.
+    """Return per-channel statistics and auto-computed stretch defaults.
 
-    Only applicable to FITS and XISF files. Returns 404 for standard images.
+    Only applicable to FITS, XISF, float TIFF, and pxiproject. Returns 404 for standard images.
     """
-    p, ft = _resolve_path(path)
+    p, ft, idx = _resolve_path(path)
     if ft == "standard":
         raise HTTPException(
             status_code=404, detail="Stats not available for standard image formats"
         )
     try:
-        if ft == "fits":
-            data = fits_io.load_image_data(p, hdu)
-        else:
-            data = xisf_io.load_image_data(p, hdu)
+        data = _load_image_data(p, ft, idx, hdu)
         stats = compute_image_stats(data)
         return asdict(stats)
     except ValueError as exc:
@@ -127,19 +162,15 @@ async def get_image(
     b_midtone: float | None = Query(None),
     b_highlight: float | None = Query(None),
 ) -> Response:
-    """Return the image as a PNG. Stretch is applied for FITS/XISF only."""
-    p, ft = _resolve_path(path)
+    """Return the image as a PNG. Stretch is applied for scientific formats."""
+    p, ft, idx = _resolve_path(path)
 
     try:
         if ft == "standard":
             png_bytes = standard_io.load_image_bytes(p)
             return Response(content=png_bytes, media_type="image/png")
 
-        # FITS or XISF — load normalized data and apply stretch
-        if ft == "fits":
-            data = fits_io.load_image_data(p, hdu)
-        else:
-            data = xisf_io.load_image_data(p, hdu)
+        data = _load_image_data(p, ft, idx, hdu)
 
         linked = StretchParams(stretch=stretch, shadow=shadow, midtone=midtone, highlight=highlight)
 
@@ -193,7 +224,6 @@ async def add_recent(path: str = Query(..., description="Path to record")) -> di
                ON CONFLICT(path) DO UPDATE SET opened_at = datetime('now')""",
             (path,),
         )
-        # Prune old entries
         await conn.execute(
             """DELETE FROM recent_files WHERE id NOT IN (
                    SELECT id FROM recent_files ORDER BY opened_at DESC LIMIT ?
@@ -202,6 +232,29 @@ async def add_recent(path: str = Query(..., description="Path to record")) -> di
         )
         await conn.commit()
     return {"ok": True}
+
+
+def _resolve_recent_name(raw_path: str, project_cache: dict[str, list[dict]]) -> str | None:
+    """Resolve display name for a recent file path. Returns None if stale."""
+    if "::" not in raw_path:
+        p = Path(raw_path)
+        return p.name if p.exists() else None
+
+    project_dir_str, idx_str = raw_path.rsplit("::", 1)
+    project_dir = Path(project_dir_str)
+    if not project_dir.is_dir():
+        return None
+
+    if project_dir_str not in project_cache:
+        try:
+            project_cache[project_dir_str] = pxiproject_io.list_project_images(project_dir)
+        except Exception:
+            project_cache[project_dir_str] = []
+
+    images = project_cache[project_dir_str]
+    idx = int(idx_str) if idx_str.isdigit() else -1
+    img_name = images[idx]["name"] if 0 <= idx < len(images) else idx_str
+    return f"{project_dir.name} / {img_name}"
 
 
 @router.get("/recent")
@@ -216,14 +269,16 @@ async def get_recent() -> list[dict]:
 
     result = []
     stale_paths = []
-    for row in rows:
-        p = Path(row[0])
-        if p.exists():
-            result.append({"path": row[0], "name": p.name, "opened_at": row[1]})
-        else:
-            stale_paths.append(row[0])
+    project_cache: dict[str, list[dict]] = {}
 
-    # Clean up stale entries in the background
+    for row in rows:
+        raw_path = row[0]
+        name = _resolve_recent_name(raw_path, project_cache)
+        if name is not None:
+            result.append({"path": raw_path, "name": name, "opened_at": row[1]})
+        else:
+            stale_paths.append(raw_path)
+
     if stale_paths:
         async with get_db() as conn:
             await conn.executemany(

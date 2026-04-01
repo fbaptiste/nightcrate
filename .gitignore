@@ -44,3 +44,9 @@ frontend/.vite/
 
 # Claude Code internal memory
 memory/
+
+# Personal notes
+RANDOM_IDEAS.md
+
+# Playwright MCP artifacts
+.playwright-mcp/

@@ -24,8 +24,6 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
     [params, onChange],
   );
 
-  const isStf = params.stretch === "stf";
-
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, minWidth: 0 }}>
       {label && (
@@ -34,64 +32,39 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
         </Typography>
       )}
 
-      {/* Stretch type */}
-      <FormControl size="small" fullWidth>
-        <InputLabel>Stretch</InputLabel>
-        <Select
-          label="Stretch"
-          value={params.stretch}
-          onChange={(e) => set({ stretch: e.target.value as StretchParams["stretch"] })}
-        >
-          <MenuItem value="stf">Auto</MenuItem>
-          <MenuItem value="linear">Linear</MenuItem>
-        </Select>
-      </FormControl>
-
-      {/* ── STF controls ── */}
-      {isStf && (
-        <>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              Shadow: {params.shadow.toFixed(6)}
-            </Typography>
-            <Slider
-              min={0} max={0.2} step={0.000001}
-              value={params.shadow}
-              onChange={(_, v) => set({ shadow: v as number })}
-              size="small"
-            />
-          </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              Midtone: {params.midtone.toFixed(6)}
-            </Typography>
-            <Slider
-              min={0} max={0.5} step={0.000001}
-              value={params.midtone}
-              onChange={(_, v) => set({ midtone: v as number })}
-              size="small"
-            />
-          </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              Highlight: {params.highlight.toFixed(6)}
-            </Typography>
-            <Slider
-              min={0.5} max={1} step={0.000001}
-              value={params.highlight}
-              onChange={(_, v) => set({ highlight: v as number })}
-              size="small"
-            />
-          </Box>
-        </>
-      )}
-
-      {/* Linear: no controls — simple min/max scaling */}
-      {!isStf && (
+      <Box>
         <Typography variant="caption" color="text.secondary">
-          No stretch — linear min/max scaling
+          Shadow: {params.shadow.toFixed(6)}
         </Typography>
-      )}
+        <Slider
+          min={0} max={0.2} step={0.000001}
+          value={params.shadow}
+          onChange={(_, v) => set({ shadow: v as number })}
+          size="small"
+        />
+      </Box>
+      <Box>
+        <Typography variant="caption" color="text.secondary">
+          Midtone: {params.midtone.toFixed(6)}
+        </Typography>
+        <Slider
+          min={0} max={0.5} step={0.000001}
+          value={params.midtone}
+          onChange={(_, v) => set({ midtone: v as number })}
+          size="small"
+        />
+      </Box>
+      <Box>
+        <Typography variant="caption" color="text.secondary">
+          Highlight: {params.highlight.toFixed(6)}
+        </Typography>
+        <Slider
+          min={0.5} max={1} step={0.000001}
+          value={params.highlight}
+          onChange={(_, v) => set({ highlight: v as number })}
+          size="small"
+        />
+      </Box>
     </Box>
   );
 }
@@ -122,16 +95,39 @@ export function StretchControls({
   onLinkedToggle,
   onReset,
 }: Props) {
+  const isStf = linked.stretch === "stf";
+
   function updateChannel(i: number, p: StretchParams) {
     const next = [...perChannel] as [StretchParams, StretchParams, StretchParams];
     next[i] = p;
     onPerChannelChange(next);
   }
 
+  function setStretchType(type: "stf" | "linear") {
+    if (type === "stf") {
+      onReset();
+    } else {
+      onLinkedChange({ ...linked, stretch: type });
+    }
+  }
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, p: 1.5, overflowX: "hidden" }}>
-      {/* Linked/Unlinked toggle — only shown for color images */}
-      {isColor && (
+      {/* Stretch type selector */}
+      <FormControl size="small" fullWidth>
+        <InputLabel>Stretch</InputLabel>
+        <Select
+          label="Stretch"
+          value={linked.stretch}
+          onChange={(e) => setStretchType(e.target.value as "stf" | "linear")}
+        >
+          <MenuItem value="stf">Auto Stretch</MenuItem>
+          <MenuItem value="linear">None</MenuItem>
+        </Select>
+      </FormControl>
+
+      {/* Linked/Unlinked toggle — only for color images with active stretch */}
+      {isStf && isColor && (
         <ToggleButtonGroup
           exclusive
           size="small"
@@ -143,8 +139,8 @@ export function StretchControls({
         </ToggleButtonGroup>
       )}
 
-      {/* Controls */}
-      {(!isColor || isLinked) && (
+      {/* Auto stretch controls */}
+      {isStf && (!isColor || isLinked) && (
         <ChannelControls
           label=""
           params={linked}
@@ -152,7 +148,7 @@ export function StretchControls({
         />
       )}
 
-      {isColor && !isLinked && (
+      {isStf && isColor && !isLinked && (
         <Box sx={{ display: "flex", gap: 3 }}>
           {perChannel.map((ch, i) => (
             <ChannelControls
@@ -166,9 +162,19 @@ export function StretchControls({
         </Box>
       )}
 
-      <Button variant="text" size="small" onClick={onReset} sx={{ alignSelf: "flex-start", fontSize: "0.75rem", mt: 0.5 }}>
-        Reset to auto
-      </Button>
+      {/* No stretch: just a note */}
+      {!isStf && (
+        <Typography variant="caption" color="text.secondary">
+          No stretch applied — displaying raw pixel values
+        </Typography>
+      )}
+
+      {/* Reset button — only when stretch is active */}
+      {isStf && (
+        <Button variant="text" size="small" onClick={onReset} sx={{ alignSelf: "flex-start", fontSize: "0.75rem" }}>
+          Reset to auto
+        </Button>
+      )}
     </Box>
   );
 }

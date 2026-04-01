@@ -22,9 +22,9 @@ import {
   fetchHeader,
   fetchImageStats,
   fetchRecentFiles,
+  isVirtualPath,
   recordRecentFile,
   stfToStretch,
-  supportsStretch,
   type ImageStats,
   type RecentFile,
   type StretchParams,
@@ -94,10 +94,6 @@ export function ImageViewerPage() {
 
   const debouncedLinked = useDebounce(linked, 300);
   const debouncedPerChannel = useDebounce(perChannel, 300);
-  const debouncedIsLinked = useDebounce(isLinked, 300);
-
-  // Whether active file supports stretch (FITS/XISF yes, standard no)
-  const hasStretch = activePath !== "" && supportsStretch(activePath);
 
   // Recent files
   const recentQuery = useQuery({
@@ -112,6 +108,9 @@ export function ImageViewerPage() {
     enabled: activePath !== "",
   });
 
+  // Whether the active file supports stretch — authoritative, from backend
+  const hasStretch = extensionsQuery.data?.[0]?.supports_stretch === true;
+
   const statsQuery = useQuery({
     queryKey: ["stats", activePath, selectedHdu],
     queryFn: () => fetchImageStats(activePath, selectedHdu),
@@ -124,47 +123,84 @@ export function ImageViewerPage() {
     enabled: activePath !== "",
   });
 
-  // Auto-apply STF defaults when stats arrive
+  // Auto-apply stretch once when stats first arrive for a new file.
+  // Uses a ref to track which path+hdu combo we've already applied defaults for,
+  // so we don't re-apply when the user manually changes stretch settings.
+  const appliedDefaultsFor = useRef("");
   useEffect(() => {
-    if (statsQuery.data) {
-      applyAutoStf(statsQuery.data, setLinked, setPerChannel);
+    if (!statsQuery.data || statsQuery.isFetching) return;
+
+    const key = `${activePath}::${selectedHdu}`;
+    if (appliedDefaultsFor.current === key) return;
+    appliedDefaultsFor.current = key;
+
+    const exts = extensionsQuery.data ?? [];
+    const ext = exts.find((h) => h.index === selectedHdu);
+
+    // Check explicit linear flag from pxiproject extensions
+    if (ext?.linear === false) {
+      setLinked({ ...DEFAULT_STRETCH, stretch: "linear" });
+      return;
     }
-  }, [statsQuery.data]);
+
+    // For all files: check auto-stretch midtone to detect non-linear images
+    const stats = statsQuery.data;
+    const stf = stats.linked_stf ?? stats.channels[0]?.stf;
+    if (stf && stf.midtone >= 0.1) {
+      setLinked({ ...DEFAULT_STRETCH, stretch: "linear" });
+      return;
+    }
+
+    applyAutoStf(stats, setLinked, setPerChannel);
+  }, [statsQuery.data, statsQuery.isFetching, extensionsQuery.data, selectedHdu, activePath]);
 
   // Show error snackbar on query failures
   useEffect(() => {
     if (extensionsQuery.isError) setErrorMsg(String(extensionsQuery.error));
   }, [extensionsQuery.isError, extensionsQuery.error]);
 
-  function openFile(path: string) {
+  function openFile(path: string, displayName?: string) {
     setSelectedHdu(0);
     setTab(0);
     setLinked({ ...DEFAULT_STRETCH });
     setPerChannel(DEFAULT_PER_CHANNEL);
     setIsLinked(true);
-    setInputPath(path);
+    // For project images, show a readable path in the input
+    if (isVirtualPath(path) && displayName) {
+      const projPath = path.split("::")[0];
+      setInputPath(`${projPath} / ${displayName}`);
+    } else {
+      setInputPath(path);
+    }
     setActivePath(path);
     recordRecentFile(path).then(() => recentQuery.refetch());
   }
 
   function handleOpen() {
+    // Don't re-open if a project image is already active (inputPath is a display string)
+    if (isVirtualPath(activePath)) return;
     const p = inputPath.trim();
     if (p) openFile(p);
   }
 
-  const handleReset = useCallback(() => {
+  function handleReset() {
     if (statsQuery.data) {
       applyAutoStf(statsQuery.data, setLinked, setPerChannel);
       setIsLinked(true);
     }
-  }, [statsQuery.data]);
+  }
 
   const handleLinkedToggle = useCallback((val: boolean) => {
     setIsLinked(val);
-    if (!val) {
-      setPerChannel([{ ...linked }, { ...linked }, { ...linked }]);
+    if (!val && statsQuery.data?.color && statsQuery.data.channels.length === 3) {
+      // Use per-channel auto-stretch params from stats, not linked params
+      setPerChannel([
+        stfToStretch(statsQuery.data.channels[0].stf),
+        stfToStretch(statsQuery.data.channels[1].stf),
+        stfToStretch(statsQuery.data.channels[2].stf),
+      ]);
     }
-  }, [linked]);
+  }, [statsQuery.data]);
 
   const extensions = extensionsQuery.data ?? [];
   const selectedExtInfo = extensions.find((h) => h.index === selectedHdu);
@@ -196,12 +232,24 @@ export function ImageViewerPage() {
     const card = headerCards.find((c) => c.key === key);
     return card?.value && card.value !== "" && card.value !== "None" ? card.value : null;
   };
-  const fileName = activePath ? activePath.split("/").pop() ?? null : null;
+  // For project images, resolve the image name from extensions query
+  const projectImageName = isVirtualPath(activePath)
+    ? (extensionsQuery.data?.[0]?.name ?? null)
+    : null;
+  const fileName = activePath
+    ? isVirtualPath(activePath)
+      ? (() => {
+          const projPath = activePath.split("::")[0];
+          const projName = projPath.split("/").pop() ?? "";
+          return `${projName} / ${projectImageName ?? "…"}`;
+        })()
+      : activePath.split("/").pop() ?? null
+    : null;
   const dateObs = formatDateObs(headerVal("DATE-OBS"));
   const exposure = headerVal("EXPTIME");
   const filter = headerVal("FILTER");
 
-  const activePerChannel = (isColor && !debouncedIsLinked) ? debouncedPerChannel : undefined;
+  const activePerChannel = (isColor && !isLinked) ? debouncedPerChannel : undefined;
 
   return (
     <Box sx={{ display: "flex", height: "100%", overflow: "hidden" }}>
@@ -221,13 +269,20 @@ export function ImageViewerPage() {
             freeSolo
             clearOnBlur={false}
             blurOnSelect
-            options={recentFiles.map((f) => f.path)}
+            options={recentFiles}
+            getOptionLabel={(opt) => typeof opt === "string" ? opt : opt.name}
             filterOptions={(options) => options}
             inputValue={inputPath}
             onInputChange={(_, value, reason) => {
               if (reason !== "reset") setInputPath(value);
             }}
-            onChange={(_, value) => { if (value) openFile(value); }}
+            onChange={(_, value) => {
+              if (value) {
+                const path = typeof value === "string" ? value : value.path;
+                const name = typeof value === "string" ? undefined : (isVirtualPath(value.path) ? value.name : undefined);
+                openFile(path, name);
+              }
+            }}
             sx={{ flexGrow: 1 }}
             slotProps={{ listbox: { style: { maxHeight: 320 } } }}
             renderInput={(params) => (
@@ -239,13 +294,16 @@ export function ImageViewerPage() {
                 inputProps={{ ...params.inputProps, style: { fontFamily: monoFontFamily, fontSize: "0.75rem" } }}
               />
             )}
-            renderOption={(props, option) => (
-              <li {...props} key={option}>
-                <Typography sx={{ fontFamily: monoFontFamily, fontSize: "0.7rem" }}>{option}</Typography>
+            renderOption={(props, option) => {
+              const item = typeof option === "string" ? { path: option, name: option } : option;
+              return (
+              <li {...props} key={item.path}>
+                <Typography sx={{ fontFamily: monoFontFamily, fontSize: "0.7rem" }}>{item.name}</Typography>
               </li>
-            )}
+              );
+            }}
           />
-          <Button variant="contained" onClick={handleOpen} disabled={!inputPath.trim() || inputPath.trim() === activePath}>
+          <Button variant="contained" onClick={handleOpen} disabled={!inputPath.trim() || inputPath.trim() === activePath || isVirtualPath(activePath)}>
             Open
           </Button>
 
@@ -380,7 +438,7 @@ export function ImageViewerPage() {
       {hasFile && selectedExtInfo?.has_image && tab === 0 && (
         <Box
           sx={{
-            width: isColor && !isLinked ? 600 : 220,
+            width: isColor && !isLinked && linked.stretch === "stf" ? 600 : 220,
             flexShrink: 0,
             borderLeft: 1,
             borderColor: "divider",
@@ -416,7 +474,7 @@ export function ImageViewerPage() {
             </Typography>
           </Box>
 
-          {/* Stretch section — only for FITS/XISF */}
+          {/* Stretch section — only for stretchable formats */}
           {hasStretch && (
             <>
               <Divider sx={{ mx: 1.5 }} />
@@ -442,7 +500,7 @@ export function ImageViewerPage() {
       <FileBrowser
         open={browserOpen}
         onClose={() => setBrowserOpen(false)}
-        onSelect={(path) => openFile(path)}
+        onSelect={(path, displayName) => openFile(path, displayName)}
       />
 
       {/* Error notification */}
