@@ -33,16 +33,12 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const [isPanning, setIsPanning] = useState(false);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
 
-    // Reset zoom/offset when a different file is opened (not on stretch changes)
+    // Reset zoom/offset and loading state when a different file is opened
     useEffect(() => {
       setZoom(null);
       setOffset({ x: 0, y: 0 });
-    }, [path, hdu]);
-
-    // Track loading state when image src changes (includes stretch param changes)
-    useEffect(() => {
       setImageLoaded(false);
-    }, [src]);
+    }, [path, hdu]);
 
     // Compute the fit-to-window scale
     function getFitScale(): number {
