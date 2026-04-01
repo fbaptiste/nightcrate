@@ -80,16 +80,21 @@ def _load_image_data(p: Path, ft: str, idx: int, hdu: int):
 async def get_extensions(
     path: str = Query(..., description="Absolute path to image file"),
 ) -> list[dict]:
-    """List extensions/layers in the file."""
+    """List extensions/layers in the file, with stretch capability flag."""
     p, ft, idx = _resolve_path(path)
+    stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject")
     try:
         if ft == "pxiproject":
-            return pxiproject_io.list_extensions(p, idx)
-        if ft == "fits":
-            return fits_io.list_extensions(p)
-        if ft == "xisf":
-            return xisf_io.list_extensions(p)
-        return standard_io.list_extensions(p)
+            exts = pxiproject_io.list_extensions(p, idx)
+        elif ft == "fits":
+            exts = fits_io.list_extensions(p)
+        elif ft == "xisf":
+            exts = xisf_io.list_extensions(p)
+        else:
+            exts = standard_io.list_extensions(p)
+        for ext in exts:
+            ext["supports_stretch"] = stretch
+        return exts
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

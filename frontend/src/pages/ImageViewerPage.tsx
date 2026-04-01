@@ -25,7 +25,6 @@ import {
   isVirtualPath,
   recordRecentFile,
   stfToStretch,
-  supportsStretch,
   type ImageStats,
   type RecentFile,
   type StretchParams,
@@ -96,9 +95,6 @@ export function ImageViewerPage() {
   const debouncedLinked = useDebounce(linked, 300);
   const debouncedPerChannel = useDebounce(perChannel, 300);
 
-  // Whether active file supports stretch (FITS/XISF/float TIFF/pxiproject yes, standard no)
-  const hasStretch = activePath !== "" && supportsStretch(activePath);
-
   // Recent files
   const recentQuery = useQuery({
     queryKey: ["recent-files"],
@@ -111,6 +107,9 @@ export function ImageViewerPage() {
     queryFn: () => fetchExtensions(activePath),
     enabled: activePath !== "",
   });
+
+  // Whether the active file supports stretch — authoritative, from backend
+  const hasStretch = extensionsQuery.data?.[0]?.supports_stretch === true;
 
   const statsQuery = useQuery({
     queryKey: ["stats", activePath, selectedHdu],
