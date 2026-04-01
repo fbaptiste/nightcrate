@@ -143,7 +143,7 @@ export function ImageViewerPage() {
       return;
     }
 
-    // For all files: check auto-STF midtone to detect non-linear images
+    // For all files: check auto-stretch midtone to detect non-linear images
     const stats = statsQuery.data;
     const stf = stats.linked_stf ?? stats.channels[0]?.stf;
     if (stf && stf.midtone >= 0.1) {
@@ -191,7 +191,7 @@ export function ImageViewerPage() {
   const handleLinkedToggle = useCallback((val: boolean) => {
     setIsLinked(val);
     if (!val && statsQuery.data?.color && statsQuery.data.channels.length === 3) {
-      // Use per-channel STF params from stats, not linked params
+      // Use per-channel auto-stretch params from stats, not linked params
       setPerChannel([
         stfToStretch(statsQuery.data.channels[0].stf),
         stfToStretch(statsQuery.data.channels[1].stf),

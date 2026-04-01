@@ -121,7 +121,7 @@ export function StretchControls({
           value={linked.stretch}
           onChange={(e) => setStretchType(e.target.value as "stf" | "linear")}
         >
-          <MenuItem value="stf">Auto (STF)</MenuItem>
+          <MenuItem value="stf">Auto Stretch</MenuItem>
           <MenuItem value="linear">None</MenuItem>
         </Select>
       </FormControl>
@@ -139,7 +139,7 @@ export function StretchControls({
         </ToggleButtonGroup>
       )}
 
-      {/* STF controls */}
+      {/* Auto stretch controls */}
       {isStf && (!isColor || isLinked) && (
         <ChannelControls
           label=""
