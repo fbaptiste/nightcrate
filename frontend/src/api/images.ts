@@ -5,6 +5,7 @@ export interface ExtensionInfo {
   name: string;
   type: string;
   has_image: boolean;
+  linear?: boolean;
 }
 
 export interface HeaderCard {
@@ -58,9 +59,11 @@ export function stfToStretch(stf: StfParams): StretchParams {
 }
 
 // File type detection
-const STRETCH_EXTENSIONS = new Set([".fits", ".fit", ".fts", ".xisf"]);
+const STRETCH_EXTENSIONS = new Set([".fits", ".fit", ".fts", ".xisf", ".tif", ".tiff"]);
 
 export function supportsStretch(path: string): boolean {
+  // Virtual paths (project::index) always support stretch
+  if (path.includes("::")) return true;
   const dotIdx = path.lastIndexOf(".");
   if (dotIdx === -1) return false;
   return STRETCH_EXTENSIONS.has(path.slice(dotIdx).toLowerCase());

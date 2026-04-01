@@ -44,3 +44,6 @@ frontend/.vite/
 
 # Claude Code internal memory
 memory/
+
+# Personal notes
+RANDOM_IDEAS.md

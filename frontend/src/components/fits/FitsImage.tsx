@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Box from "@mui/material/Box";
+import CircularProgress from "@mui/material/CircularProgress";
 import { imageUrl, type StretchParams } from "@/api/images";
 
 interface Props {
@@ -156,6 +157,12 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           userSelect: "none",
         }}
       >
+        {/* Loading spinner */}
+        {!imageLoaded && (
+          <Box sx={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}>
+            <CircularProgress size={32} sx={{ color: "rgba(255,255,255,0.4)" }} />
+          </Box>
+        )}
         <Box
           sx={{
             position: "absolute",
@@ -173,6 +180,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             alt="FITS image"
             draggable={false}
             onLoad={() => setImageLoaded(true)}
+            onError={() => setImageLoaded(true)}
             sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
           />
         </Box>

@@ -6,9 +6,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
+from nightcrate.services import pxiproject_io
+
 router = APIRouter(prefix="/api/files", tags=["files"])
 
 IMAGE_EXTENSIONS = {".fits", ".fit", ".fts", ".xisf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+PROJECT_EXTENSIONS = {".pxiproject"}
 
 
 @router.get("/volumes")
@@ -63,6 +66,7 @@ async def browse(
 
     dirs: list[dict] = []
     files: list[dict] = []
+    projects: list[dict] = []
 
     try:
         entries = sorted(p.iterdir(), key=lambda e: e.name.lower())
@@ -74,7 +78,10 @@ async def browse(
         if entry.name.startswith("."):
             continue
         if entry.is_dir():
-            dirs.append({"name": entry.name, "path": str(entry)})
+            if entry.suffix.lower() in PROJECT_EXTENSIONS:
+                projects.append({"name": entry.name, "path": str(entry)})
+            else:
+                dirs.append({"name": entry.name, "path": str(entry)})
         elif entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
             try:
                 size = entry.stat().st_size
@@ -87,4 +94,27 @@ async def browse(
         "parent": str(p.parent) if p != p.parent else None,
         "dirs": dirs,
         "files": files,
+        "projects": projects,
+    }
+
+
+@router.get("/browse-project")
+async def browse_project(
+    path: str = Query(..., description="Path to .pxiproject directory"),
+) -> dict:
+    """List images inside a PixInsight project bundle."""
+    p = Path(path).expanduser().resolve()
+
+    if not p.is_dir() or p.suffix.lower() not in PROJECT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Not a .pxiproject directory: {p}")
+
+    try:
+        images = pxiproject_io.list_project_images(p)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "path": str(p),
+        "parent": str(p.parent),
+        "images": images,
     }

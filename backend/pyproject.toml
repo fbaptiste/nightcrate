@@ -17,6 +17,7 @@ dependencies = [
     "lz4>=4.4.5",
     "zstandard>=0.25.0",
     "defusedxml>=0.7.1",
+    "tifffile>=2026.3.3",
 ]
 
 [project.scripts]

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from nightcrate.db.session import get_db
-from nightcrate.services import fits_io, standard_io, xisf_io
+from nightcrate.services import fits_io, pxiproject_io, standard_io, xisf_io
 from nightcrate.services.imaging import (
     StretchParams,
     compute_image_stats,
@@ -23,13 +23,16 @@ ALL_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | STANDARD_EXTENSIONS
 
 
 def _file_type(p: Path) -> str:
-    """Return 'fits', 'xisf', or 'standard' based on extension."""
+    """Return 'fits', 'xisf', 'float_tiff', or 'standard' based on extension and content."""
     ext = p.suffix.lower()
     if ext in FITS_EXTENSIONS:
         return "fits"
     if ext in XISF_EXTENSIONS:
         return "xisf"
     if ext in STANDARD_EXTENSIONS:
+        # Float TIFFs need the stretch pipeline, not passthrough display
+        if ext in (".tif", ".tiff") and standard_io.is_float_tiff(p):
+            return "float_tiff"
         return "standard"
     raise HTTPException(
         status_code=400,
@@ -37,8 +40,34 @@ def _file_type(p: Path) -> str:
     )
 
 
+def _parse_virtual_path(path: str) -> tuple[Path, int] | None:
+    """Check if path is a virtual project path (project_dir::image_index).
+
+    Returns (project_dir, image_index) or None if not a virtual path.
+    """
+    if "::" not in path:
+        return None
+    parts = path.rsplit("::", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        return Path(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
 def _resolve_path(path: str) -> tuple[Path, str]:
-    """Validate and resolve a file path. Returns (path, file_type)."""
+    """Validate and resolve a file path. Returns (path, file_type).
+
+    For virtual paths (project::index), returns the project dir with type 'pxiproject'.
+    """
+    vp = _parse_virtual_path(path)
+    if vp is not None:
+        project_dir, _ = vp
+        if not project_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"Project not found: {project_dir}")
+        return project_dir, "pxiproject"
+
     p = Path(path)
     if not p.is_absolute():
         raise HTTPException(status_code=400, detail="Path must be absolute")
@@ -54,6 +83,9 @@ async def get_extensions(
     """List extensions/layers in the file."""
     p, ft = _resolve_path(path)
     try:
+        if ft == "pxiproject":
+            vp = _parse_virtual_path(path)
+            return pxiproject_io.list_extensions(p, vp[1] if vp else 0)
         if ft == "fits":
             return fits_io.list_extensions(p)
         if ft == "xisf":
@@ -71,6 +103,9 @@ async def get_header(
     """Return metadata cards for the specified extension."""
     p, ft = _resolve_path(path)
     try:
+        if ft == "pxiproject":
+            vp = _parse_virtual_path(path)
+            return pxiproject_io.read_header(p, vp[1] if vp else 0)
         if ft == "fits":
             return fits_io.read_header(p, hdu)
         if ft == "xisf":
@@ -97,8 +132,13 @@ async def get_stats(
             status_code=404, detail="Stats not available for standard image formats"
         )
     try:
-        if ft == "fits":
+        if ft == "pxiproject":
+            vp = _parse_virtual_path(path)
+            data = pxiproject_io.load_image_data(p, vp[1] if vp else 0)
+        elif ft == "fits":
             data = fits_io.load_image_data(p, hdu)
+        elif ft == "float_tiff":
+            data = standard_io.load_image_data(p)
         else:
             data = xisf_io.load_image_data(p, hdu)
         stats = compute_image_stats(data)
@@ -135,9 +175,14 @@ async def get_image(
             png_bytes = standard_io.load_image_bytes(p)
             return Response(content=png_bytes, media_type="image/png")
 
-        # FITS or XISF — load normalized data and apply stretch
-        if ft == "fits":
+        # FITS, XISF, float TIFF, or PxiProject — load normalized data and apply stretch
+        if ft == "pxiproject":
+            vp = _parse_virtual_path(path)
+            data = pxiproject_io.load_image_data(p, vp[1] if vp else 0)
+        elif ft == "fits":
             data = fits_io.load_image_data(p, hdu)
+        elif ft == "float_tiff":
+            data = standard_io.load_image_data(p)
         else:
             data = xisf_io.load_image_data(p, hdu)
 
@@ -217,11 +262,27 @@ async def get_recent() -> list[dict]:
     result = []
     stale_paths = []
     for row in rows:
-        p = Path(row[0])
-        if p.exists():
-            result.append({"path": row[0], "name": p.name, "opened_at": row[1]})
+        raw_path = row[0]
+        # Virtual paths (project::index) — resolve image name from XOSM
+        if "::" in raw_path:
+            project_dir = Path(raw_path.split("::")[0])
+            if project_dir.is_dir():
+                try:
+                    idx = int(raw_path.split("::")[1])
+                    images = pxiproject_io.list_project_images(project_dir)
+                    img_name = images[idx]["name"] if idx < len(images) else f"#{idx}"
+                except Exception:
+                    img_name = raw_path.split("::")[1]
+                name = f"{project_dir.name} / {img_name}"
+                result.append({"path": raw_path, "name": name, "opened_at": row[1]})
+            else:
+                stale_paths.append(raw_path)
         else:
-            stale_paths.append(row[0])
+            p = Path(raw_path)
+            if p.exists():
+                result.append({"path": raw_path, "name": p.name, "opened_at": row[1]})
+            else:
+                stale_paths.append(raw_path)
 
     # Clean up stale entries in the background
     if stale_paths:
