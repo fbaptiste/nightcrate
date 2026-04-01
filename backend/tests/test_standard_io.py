@@ -34,7 +34,7 @@ def tmp_float_tiff_rgb(tmp_path: Path) -> Path:
     """Create a float32 RGB TIFF (H, W, 3)."""
     arr = np.random.default_rng(99).uniform(0.01, 0.9, size=(40, 60, 3)).astype(np.float32)
     path = tmp_path / "float_rgb.tif"
-    tifffile.imwrite(str(path), arr)
+    tifffile.imwrite(str(path), arr, photometric="rgb")
     return path
 
 
@@ -91,9 +91,13 @@ class TestLoadImageData:
 
     def test_unsupported_shape(self, tmp_path):
         """4D arrays should raise."""
+        import warnings
+
         arr = np.zeros((2, 3, 4, 5), dtype=np.float32)
         path = tmp_path / "4d.tif"
-        tifffile.imwrite(str(path), arr)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            tifffile.imwrite(str(path), arr)
         with pytest.raises(ValueError, match="Unsupported TIFF array shape"):
             load_image_data(path)
 
