@@ -47,3 +47,6 @@ memory/
 
 # Personal notes
 RANDOM_IDEAS.md
+
+# Playwright MCP artifacts
+.playwright-mcp/
