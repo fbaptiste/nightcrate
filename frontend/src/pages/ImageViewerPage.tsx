@@ -96,7 +96,7 @@ export function ImageViewerPage() {
   const debouncedLinked = useDebounce(linked, 300);
   const debouncedPerChannel = useDebounce(perChannel, 300);
 
-  // Whether active file supports stretch (FITS/XISF yes, standard no)
+  // Whether active file supports stretch (FITS/XISF/float TIFF/pxiproject yes, standard no)
   const hasStretch = activePath !== "" && supportsStretch(activePath);
 
   // Recent files
@@ -178,6 +178,8 @@ export function ImageViewerPage() {
   }
 
   function handleOpen() {
+    // Don't re-open if a project image is already active (inputPath is a display string)
+    if (isVirtualPath(activePath)) return;
     const p = inputPath.trim();
     if (p) openFile(p);
   }
@@ -302,7 +304,7 @@ export function ImageViewerPage() {
               );
             }}
           />
-          <Button variant="contained" onClick={handleOpen} disabled={!inputPath.trim() || inputPath.trim() === activePath}>
+          <Button variant="contained" onClick={handleOpen} disabled={!inputPath.trim() || inputPath.trim() === activePath || isVirtualPath(activePath)}>
             Open
           </Button>
 
@@ -473,7 +475,7 @@ export function ImageViewerPage() {
             </Typography>
           </Box>
 
-          {/* Stretch section — only for FITS/XISF */}
+          {/* Stretch section — only for stretchable formats */}
           {hasStretch && (
             <>
               <Divider sx={{ mx: 1.5 }} />

@@ -335,7 +335,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
                 <ListItemButton
                   key={file.path}
                   selected={selectedFile === file.path}
-                  onClick={() => setSelectedFile(file.path)}
+                  onClick={() => { setSelectedFile(file.path); setSelectedDisplayName(null); }}
                   onDoubleClick={() => { onSelect(file.path); onClose(); }}
                 >
                   <ListItemIcon sx={{ minWidth: 36 }}>

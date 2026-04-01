@@ -48,9 +48,11 @@ def _resolve_path(path: str) -> tuple[Path, str, int]:
     if "::" in path:
         parts = path.rsplit("::", 1)
         try:
-            project_dir, idx = Path(parts[0]), int(parts[1])
+            project_dir, idx = Path(parts[0]).resolve(), int(parts[1])
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid virtual path: {path}")
+        if not project_dir.is_absolute():
+            raise HTTPException(status_code=400, detail="Path must be absolute")
         if not project_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Project not found: {project_dir}")
         return project_dir, "pxiproject", idx
@@ -155,7 +157,7 @@ async def get_image(
     b_midtone: float | None = Query(None),
     b_highlight: float | None = Query(None),
 ) -> Response:
-    """Return the image as a PNG. Stretch is applied for FITS/XISF only."""
+    """Return the image as a PNG. Stretch is applied for scientific formats."""
     p, ft, idx = _resolve_path(path)
 
     try:

@@ -177,7 +177,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             component="img"
             ref={imgRef}
             src={src}
-            alt="FITS image"
+            alt="Astronomical image"
             draggable={false}
             onLoad={() => setImageLoaded(true)}
             onError={() => setImageLoaded(true)}

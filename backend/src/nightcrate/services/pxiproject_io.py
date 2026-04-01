@@ -70,9 +70,15 @@ def _extract_keyword(iw, keyword_name: str) -> str | None:
 def list_project_images(project_dir: Path) -> list[dict]:
     """List all images in a .pxiproject bundle.
 
-    Returns (images_list, compression_method) where each image is a dict with:
-    index, name, source, file_path, data_src, filter, object, exposure, date_obs, linear.
+    Returns a list of dicts, each with: index, name, source, file_path,
+    data_src, filter, object, exposure, date_obs, linear.
     """
+    images, _ = _list_project_images_with_compression(project_dir)
+    return images
+
+
+def _list_project_images_with_compression(project_dir: Path) -> tuple[list[dict], str]:
+    """List images and return the project compression method."""
     root, compression = _parse_xosm(project_dir)
     images = []
 
@@ -135,7 +141,7 @@ def list_project_images(project_dir: Path) -> list[dict]:
             }
         )
 
-    return images
+    return images, compression
 
 
 @lru_cache(maxsize=8)
@@ -144,9 +150,7 @@ def _cached_project_data(project_dir_str: str) -> tuple[list[dict], str]:
 
     Avoids re-parsing XOSM when multiple endpoints hit the same project.
     """
-    images = list_project_images(Path(project_dir_str))
-    _, compression = _parse_xosm(Path(project_dir_str))
-    return images, compression
+    return _list_project_images_with_compression(Path(project_dir_str))
 
 
 def _get_project_data(project_dir: Path) -> tuple[list[dict], str]:
@@ -270,7 +274,10 @@ def load_image_data(project_dir: Path, image_index: int) -> np.ndarray:
     if not entry["data_src"]:
         raise PxiProjectError(f"No data source for embedded image '{entry['name']}'")
 
-    blob_path = project_dir / "project.data" / entry["data_src"]
+    data_dir = (project_dir / "project.data").resolve()
+    blob_path = (data_dir / entry["data_src"]).resolve()
+    if not blob_path.is_relative_to(data_dir):
+        raise PxiProjectError(f"Invalid data source path: {entry['data_src']}")
     if not blob_path.exists():
         raise FileNotFoundError(f"Blob not found: {blob_path}")
 
