@@ -22,6 +22,7 @@ import {
   fetchHeader,
   fetchImageStats,
   fetchRecentFiles,
+  isVirtualPath,
   recordRecentFile,
   stfToStretch,
   supportsStretch,
@@ -166,7 +167,7 @@ export function ImageViewerPage() {
     setPerChannel(DEFAULT_PER_CHANNEL);
     setIsLinked(true);
     // For project images, show a readable path in the input
-    if (path.includes("::") && displayName) {
+    if (isVirtualPath(path) && displayName) {
       const projPath = path.split("::")[0];
       setInputPath(`${projPath} / ${displayName}`);
     } else {
@@ -231,11 +232,11 @@ export function ImageViewerPage() {
     return card?.value && card.value !== "" && card.value !== "None" ? card.value : null;
   };
   // For project images, resolve the image name from extensions query
-  const projectImageName = activePath.includes("::")
+  const projectImageName = isVirtualPath(activePath)
     ? (extensionsQuery.data?.[0]?.name ?? null)
     : null;
   const fileName = activePath
-    ? activePath.includes("::")
+    ? isVirtualPath(activePath)
       ? (() => {
           const projPath = activePath.split("::")[0];
           const projName = projPath.split("/").pop() ?? "";
@@ -277,7 +278,7 @@ export function ImageViewerPage() {
             onChange={(_, value) => {
               if (value) {
                 const path = typeof value === "string" ? value : value.path;
-                const name = typeof value === "string" ? undefined : (value.path.includes("::") ? value.name : undefined);
+                const name = typeof value === "string" ? undefined : (isVirtualPath(value.path) ? value.name : undefined);
                 openFile(path, name);
               }
             }}

@@ -61,9 +61,12 @@ export function stfToStretch(stf: StfParams): StretchParams {
 // File type detection
 const STRETCH_EXTENSIONS = new Set([".fits", ".fit", ".fts", ".xisf", ".tif", ".tiff"]);
 
+export function isVirtualPath(path: string): boolean {
+  return path.includes("::");
+}
+
 export function supportsStretch(path: string): boolean {
-  // Virtual paths (project::index) always support stretch
-  if (path.includes("::")) return true;
+  if (isVirtualPath(path)) return true;
   const dotIdx = path.lastIndexOf(".");
   if (dotIdx === -1) return false;
   return STRETCH_EXTENSIONS.has(path.slice(dotIdx).toLowerCase());

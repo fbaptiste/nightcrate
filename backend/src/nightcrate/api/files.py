@@ -6,11 +6,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
+from nightcrate.api.images import ALL_EXTENSIONS
 from nightcrate.services import pxiproject_io
 
 router = APIRouter(prefix="/api/files", tags=["files"])
-
-IMAGE_EXTENSIONS = {".fits", ".fit", ".fts", ".xisf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 PROJECT_EXTENSIONS = {".pxiproject"}
 
 
@@ -82,7 +81,7 @@ async def browse(
                 projects.append({"name": entry.name, "path": str(entry)})
             else:
                 dirs.append({"name": entry.name, "path": str(entry)})
-        elif entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
+        elif entry.is_file() and entry.suffix.lower() in ALL_EXTENSIONS:
             try:
                 size = entry.stat().st_size
             except OSError:
