@@ -16,7 +16,6 @@ from nightcrate.services.standard_io import (
     read_header,
 )
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

@@ -9,11 +9,10 @@ import pytest
 import zstandard
 
 from nightcrate.services.pxiproject_io import (
-    PxiProjectError,
     RAWIMAGE_HEADER_SIZE,
     RAWIMAGE_MAGIC,
+    PxiProjectError,
     _decompress_blob,
-    _decompress_channel_section,
     _parse_rawimage_header,
     list_extensions,
     list_project_images,
@@ -21,13 +20,10 @@ from nightcrate.services.pxiproject_io import (
     read_header,
 )
 
-
 # ── Helpers to build test .pxiproject bundles ────────────────────────────────
 
 
-def _make_rawimage_header(
-    width: int, height: int, channels: int = 1, bps: int = 32
-) -> bytes:
+def _make_rawimage_header(width: int, height: int, channels: int = 1, bps: int = 32) -> bytes:
     """Build a 128-byte rawimage swap header."""
     header = bytearray(RAWIMAGE_HEADER_SIZE)
     header[0:8] = RAWIMAGE_MAGIC
@@ -40,10 +36,7 @@ def _make_rawimage_header(
 
 
 def _make_compressed_channel(data: bytes, codec: str) -> bytes:
-    """Compress a single channel's data into the block format used by pxiproject blobs.
-
-    Format: num_blocks(uint32) + per block: comp_size(uint64) + uncomp_size(uint64) + 16-byte prefix + compressed_data
-    """
+    """Compress a single channel's data into the pxiproject block format."""
     if codec == "zlib":
         compressed = zlib.compress(data)
     elif codec in ("lz4", "lz4hc"):
@@ -74,7 +67,8 @@ def _make_xosm(
     image_windows = ""
     for img in images:
         view = img["name"]
-        file_path_attr = f' filePath="{img["file_path"]}" copy="true" format="XISF"' if img.get("file_path") else ""
+        fp = img.get("file_path")
+        file_path_attr = f' filePath="{fp}" copy="true" format="XISF"' if fp else ""
         stf_enabled = img.get("stf_enabled", "1")
         stf_midtone = img.get("stf_midtone")
         data_src = img.get("data_src", "")
@@ -85,7 +79,9 @@ def _make_xosm(
 
         keywords_xml = ""
         for kw_name, kw_val, kw_comment in img.get("keywords", []):
-            keywords_xml += f'<keyword xmlns="{ns}" name="{kw_name}" value="{kw_val}" comment="{kw_comment}"/>'
+            keywords_xml += (
+                f'<keyword xmlns="{ns}" name="{kw_name}" value="{kw_val}" comment="{kw_comment}"/>'
+            )
         fk_xml = f'<fitsKeywords xmlns="{ns}">{keywords_xml}</fitsKeywords>' if keywords_xml else ""
 
         image_xml = f'<image xmlns="{ns}" src="@project_data_dir/{data_src}"/>' if data_src else ""
@@ -229,12 +225,22 @@ class TestDecompressBlob:
 
 class TestListProjectImages:
     def test_basic_listing(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "L_raw", "file_path": "/data/L.xisf", "data_src": "blob-001",
-             "keywords": [("FILTER", "'LUM'", "Filter"), ("EXPTIME", "120", "Exposure")]},
-            {"name": "RGB_starless", "data_src": "blob-002",
-             "keywords": [("OBJECT", "'M42'", "Target")]},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {
+                    "name": "L_raw",
+                    "file_path": "/data/L.xisf",
+                    "data_src": "blob-001",
+                    "keywords": [("FILTER", "'LUM'", "Filter"), ("EXPTIME", "120", "Exposure")],
+                },
+                {
+                    "name": "RGB_starless",
+                    "data_src": "blob-002",
+                    "keywords": [("OBJECT", "'M42'", "Target")],
+                },
+            ],
+        )
         images = list_project_images(project)
         assert len(images) == 2
 
@@ -250,31 +256,43 @@ class TestListProjectImages:
         assert images[1]["object"] == "M42"
 
     def test_linearity_stf_small_midtone(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "Linear", "data_src": "b1", "stf_midtone": "0.0005"},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {"name": "Linear", "data_src": "b1", "stf_midtone": "0.0005"},
+            ],
+        )
         images = list_project_images(project)
         assert images[0]["linear"] is True
 
     def test_linearity_stf_identity(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "Stretched", "data_src": "b1", "stf_midtone": "0.5"},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {"name": "Stretched", "data_src": "b1", "stf_midtone": "0.5"},
+            ],
+        )
         images = list_project_images(project)
         assert images[0]["linear"] is False
 
     def test_linearity_stf_enabled_no_elements(self, tmp_path):
         """STF enabled but no stf elements → linear (PixInsight auto-computes)."""
-        project = _make_project(tmp_path, [
-            {"name": "AutoSTF", "data_src": "b1", "stf_enabled": "1"},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {"name": "AutoSTF", "data_src": "b1", "stf_enabled": "1"},
+            ],
+        )
         images = list_project_images(project)
         assert images[0]["linear"] is True
 
     def test_linearity_stf_disabled(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "NoSTF", "data_src": "b1", "stf_enabled": "0"},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {"name": "NoSTF", "data_src": "b1", "stf_enabled": "0"},
+            ],
+        )
         images = list_project_images(project)
         assert images[0]["linear"] is False
 
@@ -287,28 +305,40 @@ class TestListProjectImages:
 
 class TestReadHeader:
     def test_reads_fits_keywords(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "Img", "data_src": "b1",
-             "keywords": [("OBJECT", "'M31'", "Target"), ("FILTER", "'Ha'", "Filter")]},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {
+                    "name": "Img",
+                    "data_src": "b1",
+                    "keywords": [("OBJECT", "'M31'", "Target"), ("FILTER", "'Ha'", "Filter")],
+                },
+            ],
+        )
         cards = read_header(project, 0)
         keys = {c["key"] for c in cards}
         assert "OBJECT" in keys
         assert "FILTER" in keys
 
     def test_index_out_of_range(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "Only", "data_src": "b1"},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {"name": "Only", "data_src": "b1"},
+            ],
+        )
         with pytest.raises(ValueError, match="out of range"):
             read_header(project, 5)
 
 
 class TestListExtensions:
     def test_returns_single_entry(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "TestImg", "data_src": "b1"},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {"name": "TestImg", "data_src": "b1"},
+            ],
+        )
         exts = list_extensions(project, 0)
         assert len(exts) == 1
         assert exts[0]["name"] == "TestImg"
@@ -316,9 +346,12 @@ class TestListExtensions:
         assert "linear" in exts[0]
 
     def test_index_out_of_range(self, tmp_path):
-        project = _make_project(tmp_path, [
-            {"name": "Only", "data_src": "b1"},
-        ])
+        project = _make_project(
+            tmp_path,
+            [
+                {"name": "Only", "data_src": "b1"},
+            ],
+        )
         with pytest.raises(ValueError, match="out of range"):
             list_extensions(project, 3)
 
@@ -375,9 +408,7 @@ class TestLoadImageData:
             channels.append(ch)
 
         header = _make_rawimage_header(width, height, channels=3, bps=32)
-        compressed = b"".join(
-            _make_compressed_channel(ch.tobytes(), "zstd") for ch in channels
-        )
+        compressed = b"".join(_make_compressed_channel(ch.tobytes(), "zstd") for ch in channels)
         blob = header + compressed
 
         project = _make_project(
