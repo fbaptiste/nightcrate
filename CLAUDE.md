@@ -120,22 +120,49 @@ Before committing any Python code changes, all of these must pass:
 
 ## Image Viewer
 
-Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PNG, JPEG, TIFF.
+Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects (`.pxiproject`), PNG, JPEG, TIFF (including float32 TIFF).
 
 **Architecture:**
-- `services/imaging.py` — format-agnostic: normalization, stretch, stats, PNG rendering
+- `services/imaging.py` — format-agnostic: normalization, stretch, stats, histogram, Lab a*, PNG rendering
 - `services/fits_io.py` — FITS loading via astropy
 - `services/xisf_io.py` — clean-room XISF parser (no GPL dependency)
-- `services/standard_io.py` — PNG/JPEG/TIFF via Pillow (no stretch, passthrough display)
-- `api/images.py` — unified API at `/api/images/*`, dispatches by file extension
+- `services/pxiproject_io.py` — PixInsight project parser (XOSM manifest + rawimage swap format)
+- `services/standard_io.py` — PNG/JPEG/TIFF via Pillow + tifffile for float32 TIFFs
+- `api/images.py` — unified API at `/api/images/*`, dispatches by file type. Virtual paths (`project::index`) for pxiproject images.
 
-**Stretch modes** (FITS and XISF only — not applicable to standard images):
-- **Auto (STF):** Default. PixInsight-compatible Screen Transfer Function. Auto-computes shadow clip and midtones balance from median + MAD statistics. For linked color: uses dimmest channel's params across all channels.
-- **Linear:** Simple min/max scaling, no adjustable parameters.
+**Auto Stretch** (PixInsight-compatible Screen Transfer Function):
+- Uses **avgDev** (average deviation), NOT MAD, for shadow clip computation
+- Shadow clip: `median + (-1.25) * avgDev`
+- Midtones balance via MTF self-inverse: `m = MTF(b0, TARGET_BG)` where `b0 = median - shadow_clip`
+- Linked color mode: averages shadow clip and median across all channels
+- Target background: 0.25 (standard PixInsight default)
+- Non-linear images auto-detected (STF midtone >= 0.1) and shown without stretch
+- Backend-driven `supports_stretch` flag on `/extensions` endpoint
 
-FITS/XISF pixel data is normalized to [0, 1] at load time based on data type (uint16 ÷ 65535, matching PixInsight convention). Both mono and color (RGB) files are supported. Color images offer linked (single set of params for all channels) and unlinked (per-channel) stretch.
+**Histogram:**
+- Canvas-based rendering below image (filled area curves, not SVG bars)
+- R/G/B/Luminosity channels with channel checkboxes
+- Log/linear scale (auto-defaults based on image linearity)
+- Stretch indicator lines on slider interaction (auto-hide after 3s)
+- Channel intensity bars for color images (normalized to max channel)
 
-Stretch is applied server-side — the frontend sends stretch params as query parameters and receives a rendered PNG. The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration but stretch currently uses numpy directly in `services/imaging.py`.
+**Pixel Inspector:**
+- Client-side sampling via offscreen canvas (zero API calls on hover)
+- R/G/B/K values, hex color, XKCD named color (949 colors, CC0)
+- Magnified patch preview with adjustable zoom
+- Amber reticle cursor with black outline for contrast
+
+**Statistics:**
+- Per-channel: median, MAD, avgDev, SNR (median/σ), background delta
+- CIE L*a*b* a* median for color balance (neutral/warm excess/cool excess)
+- Image Info section with curated FITS keywords
+
+**Important implementation notes:**
+- All hex color constants must be 6-digit (#888888, never #888) — canvas gradient code appends alpha suffixes
+- Channel colors defined in `lib/channelColors.ts` (single source of truth)
+- Luminance weights (`LUM_R/G/B`) defined in `services/imaging.py`
+- Stretch is applied server-side — frontend sends stretch params as query parameters and receives a rendered PNG
+- The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration
 
 ## Dependency & License Policy
 
