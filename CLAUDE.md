@@ -14,8 +14,8 @@ Reference documents:
 
 - **Backend:** Python + FastAPI
 - **Frontend:** React + TypeScript (Vite); Claude Code handles most React/JS work — Fred is not a React developer
-  - **UI library:** MUI (`@mui/material`) — free MIT core. MUI X Community tier only (`@mui/x-data-grid`, `@mui/x-date-pickers`, `@mui/x-charts`, `@mui/x-tree-view`) — all free MIT. **Never use MUI X Pro or Premium** (paid, commercial license required; NightCrate is a commercial product so the open-source exception does not apply).
-  - **Theme:** MUI `ThemeProvider` with light/dark/browser (system) modes. Stored in `settings.json` via backend.
+  - **UI library:** MUI (`@mui/material`) — free MIT core. MUI X Community tier only (`@mui/x-data-grid`, `@mui/x-date-pickers`, `@mui/x-charts`, `@mui/x-tree-view`) — all free MIT. **Never use MUI X Pro or Premium** (paid commercial license).
+  - **Theme:** MUI `ThemeProvider` with light/dark/browser (system) modes. Stored in SQLite settings table via backend.
   - **No Tailwind CSS, shadcn, or related packages** — MUI uses its own styling system (`sx` prop + `styled`). Do not add `tailwind-merge`, `class-variance-authority`, `clsx`, `lucide-react`, or `@base-ui/react`.
   - **State:** Zustand
   - **Data fetching:** TanStack Query
@@ -111,12 +111,20 @@ uv run bandit -r src/                  # Security scan
 
 ## Pre-Commit Checklist
 
-Before committing any Python code changes, all of these must pass:
+Before committing, all applicable checks must pass:
 
+**Backend (from `backend/`):**
 1. `uv run ruff check src/ tests/` — lint
 2. `uv run ruff format --check src/ tests/` — formatting
 3. `uv run bandit -r src/` — security
 4. `uv run pytest` — tests
+
+**Frontend (from `frontend/`):**
+5. `npm run build` — TypeScript compilation + production build
+
+## Gotchas
+
+- **Python 3.14 + ruff format:** ruff format may strip parentheses from `except (ValueError, IndexError):` turning it into the Python 2 syntax `except ValueError, IndexError:`. This is a known ruff issue with `target-version = "py314"`. Avoid multi-exception `except` clauses, or rewrite to avoid the pattern (e.g., use a single base exception or restructure the logic).
 
 ## Image Viewer
 
