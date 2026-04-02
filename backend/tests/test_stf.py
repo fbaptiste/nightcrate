@@ -48,27 +48,47 @@ class TestMTF:
 
 
 class TestComputeStf:
+    """Tests use avg_dev (average deviation), not MAD."""
+
     def test_typical_astro_background(self):
-        median = 1500 / 65535
-        mad = 50 / 65535
-        stf = _compute_stf(median, mad)
+        median = 1500 / 65535  # ~0.023
+        avg_dev = 50 / 65535  # ~0.00076
+        stf = _compute_stf(median, avg_dev)
         assert stf.highlight == 1.0
         assert 0.0 <= stf.shadow < median
-        assert 0.0 < stf.midtone < 0.5
+        # Low midtone = aggressive stretch for faint data
+        assert 0.0 < stf.midtone < 0.05
 
-    def test_zero_mad(self):
+    def test_zero_avg_dev(self):
         stf = _compute_stf(0.5, 0.0)
         assert stf.shadow == pytest.approx(0.5)
         assert stf.midtone == 0.0
         assert stf.highlight == 1.0
 
     def test_very_bright_median(self):
-        stf = _compute_stf(0.8, 0.01)
-        assert stf.midtone > 0.3
+        # Bright image with small avg_dev: shadow clip is close to median,
+        # b0 is small, so midtone is still aggressive (low value).
+        # With large avg_dev, b0 grows and midtone approaches 0.5.
+        stf_small_dev = _compute_stf(0.8, 0.01)
+        stf_large_dev = _compute_stf(0.8, 0.3)
+        assert stf_large_dev.midtone > stf_small_dev.midtone
 
     def test_shadow_clamped_to_zero(self):
         stf = _compute_stf(0.001, 0.01)
         assert stf.shadow == 0.0
+
+    def test_mtf_self_inverse(self):
+        """Verify: if m = MTF(b0, TARGET), then MTF(b0, m) ≈ TARGET."""
+        from nightcrate.services.imaging import STF_TARGET_BG, _mtf_scalar
+
+        median = 0.023
+        avg_dev = 0.00076
+        c0 = max(0, median + (-1.25) * avg_dev)
+        b0 = median - c0
+        m = _mtf_scalar(b0, STF_TARGET_BG)
+        # Applying MTF with the computed midtone should give TARGET_BG
+        result = _mtf_scalar(b0, m)
+        assert result == pytest.approx(STF_TARGET_BG, abs=1e-6)
 
 
 class TestStretchPlane:

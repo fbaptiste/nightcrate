@@ -3,14 +3,19 @@
 from dataclasses import asdict
 from pathlib import Path
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from nightcrate.db.session import get_db
 from nightcrate.services import fits_io, pxiproject_io, standard_io, xisf_io
 from nightcrate.services.imaging import (
+    LUM_B,
+    LUM_G,
+    LUM_R,
     StretchParams,
     compute_image_stats,
+    is_color_image,
     render_image_png,
 )
 
@@ -73,6 +78,8 @@ def _load_image_data(p: Path, ft: str, idx: int, hdu: int):
         return fits_io.load_image_data(p, hdu)
     if ft == "float_tiff":
         return standard_io.load_image_data(p)
+    if ft == "standard":
+        return standard_io.load_image_as_array(p)
     return xisf_io.load_image_data(p, hdu)
 
 
@@ -138,6 +145,88 @@ async def get_stats(
         data = _load_image_data(p, ft, idx, hdu)
         stats = compute_image_stats(data)
         return asdict(stats)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+@router.get("/pixel")
+async def get_pixel(
+    path: str = Query(..., description="Absolute path to image file"),
+    hdu: int = Query(0, description="Extension index"),
+    x: int = Query(..., description="X coordinate (column)"),
+    y: int = Query(..., description="Y coordinate (row)"),
+) -> dict:
+    """Return raw pixel values at the given (x, y) coordinate."""
+    p, ft, idx = _resolve_path(path)
+    try:
+        data = _load_image_data(p, ft, idx, hdu)
+
+        color = is_color_image(data)
+
+        if color:
+            h, w = data.shape[1], data.shape[2]
+        else:
+            h, w = data.shape[0], data.shape[1]
+
+        if x < 0 or x >= w or y < 0 or y >= h:
+            raise HTTPException(
+                status_code=400, detail=f"Coordinates ({x}, {y}) out of bounds ({w}x{h})"
+            )
+
+        if color:
+            r, g, b = float(data[0, y, x]), float(data[1, y, x]), float(data[2, y, x])
+            k = LUM_R * r + LUM_G * g + LUM_B * b
+            return {"x": x, "y": y, "color": True, "R": r, "G": g, "B": b, "K": k}
+        else:
+            val = float(data[y, x])
+            return {"x": x, "y": y, "color": False, "K": val}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+@router.get("/histogram")
+async def get_histogram(
+    path: str = Query(..., description="Absolute path to image file"),
+    hdu: int = Query(0, description="Extension index"),
+    bins: int = Query(256, description="Number of histogram bins"),
+) -> dict:
+    """Return per-channel histogram data for the image."""
+    p, ft, idx = _resolve_path(path)
+    try:
+        data = _load_image_data(p, ft, idx, hdu)
+
+        color = is_color_image(data)
+        bin_edges = np.linspace(0.0, 1.0, bins + 1)
+
+        channels = []
+        if color:
+            for i, name in enumerate(["R", "G", "B"]):
+                counts, _ = np.histogram(data[i].ravel(), bins=bin_edges)
+                channels.append({"name": name, "bins": counts.tolist()})
+            # Luminosity: weighted sum (in-place to reduce memory)
+            lum = np.empty_like(data[0])
+            np.multiply(data[0], LUM_R, out=lum)
+            lum += LUM_G * data[1]
+            lum += LUM_B * data[2]
+            lum_counts, _ = np.histogram(lum.ravel(), bins=bin_edges)
+            luminosity = lum_counts.tolist()
+        else:
+            counts, _ = np.histogram(data.ravel(), bins=bin_edges)
+            channels.append({"name": "L", "bins": counts.tolist()})
+            luminosity = None
+
+        return {
+            "color": color,
+            "channels": channels,
+            "luminosity": luminosity,
+            "bin_edges": bin_edges.tolist(),
+        }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:

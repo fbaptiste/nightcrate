@@ -9,13 +9,21 @@ from dataclasses import dataclass, field
 import numpy as np
 from PIL import Image
 
-# ── STF constants (matches PixInsight defaults) ──────────────────────────────
+# ── STF constants (matches PixInsight AutoSTF defaults) ──────────────────────
 
-STF_TARGET_BG = 0.25  # target median in the stretched image
-STF_SHADOW_CLIP = -2.8  # scaled-MAD units below median for shadow clip
+STF_TARGET_BG = 0.25  # target background brightness in output
+STF_SHADOWS_CLIP = -1.25  # avgDev units below median for shadow clip
+
+# ── Luminance weights (ITU-R BT.709) ───────────────────────────────────────
+LUM_R, LUM_G, LUM_B = 0.2126, 0.7152, 0.0722
 
 
 # ── Data normalization ───────────────────────────────────────────────────────
+
+
+def is_color_image(data: np.ndarray) -> bool:
+    """Return True if the array represents a color (3-channel) image."""
+    return data.ndim == 3 and data.shape[0] == 3
 
 
 def normalize_to_01(raw_data: np.ndarray) -> np.ndarray:
@@ -79,6 +87,8 @@ class ChannelStats:
     max: float
     median: float
     mad: float
+    avg_dev: float
+    snr: float
     stf: StfParams
 
 
@@ -87,42 +97,64 @@ class ImageStats:
     color: bool
     channels: list[ChannelStats] = field(default_factory=list)
     linked_stf: StfParams | None = None
+    background_delta: list[float] | None = None  # per-channel deviation from mean median
+    lab_a_median: float | None = None  # CIE L*a*b* a* median (color balance diagnostic)
 
 
-def _compute_stf(median: float, mad: float) -> StfParams:
-    """Compute STF shadow clip and midtones balance from [0, 1] normalized stats."""
-    sigma = mad * 1.4826
+def _mtf_scalar(x: float, m: float) -> float:
+    """Scalar MTF for parameter computation (not pixel processing)."""
+    if m <= 0.0:
+        return 0.0
+    if m >= 1.0:
+        return 1.0
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    return ((m - 1.0) * x) / ((2.0 * m - 1.0) * x - m)
 
-    c = median + STF_SHADOW_CLIP * sigma
-    c = max(0.0, c)
 
-    if c < median and (1.0 - c) > 0:
-        med_clipped = (median - c) / (1.0 - c)
-    else:
-        med_clipped = 0.0
+def _compute_stf(median: float, avg_dev: float) -> StfParams:
+    """Compute STF shadow clip and midtones balance.
 
-    t = STF_TARGET_BG
-    if 0 < med_clipped < 1:
-        m = (med_clipped * (1 - t)) / (med_clipped * (1 - 2 * t) + t)
-    elif med_clipped <= 0:
+    Uses the PixInsight AutoSTF algorithm:
+    - Shadow clip: median + SHADOWS_CLIP * avgDev
+    - Midtones balance: MTF(TARGET_BKG, median - shadow_clip)
+      (exploits the MTF self-inverse property)
+    """
+    c0 = median + STF_SHADOWS_CLIP * avg_dev
+    c0 = max(0.0, min(c0, 1.0))
+
+    # Midtones balance via MTF self-inverse property:
+    # We want MTF(b0, m) = TARGET_BG, so m = MTF(b0, TARGET_BG)
+    b0 = median - c0
+    if b0 <= 0.0:
         m = 0.0
-    else:
+    elif b0 >= 1.0:
         m = 0.5
+    else:
+        m = _mtf_scalar(b0, STF_TARGET_BG)
 
-    return StfParams(shadow=c, midtone=m, highlight=1.0)
+    return StfParams(shadow=c0, midtone=m, highlight=1.0)
 
 
 def _channel_stats(plane: np.ndarray) -> ChannelStats:
     """Compute statistics for a single [0, 1]-normalized channel."""
     flat = plane.ravel()
     med = float(np.median(flat))
-    mad = float(np.median(np.abs(flat - med)))
-    stf = _compute_stf(med, mad)
+    deviations = np.abs(flat - med)
+    mad = float(np.median(deviations))
+    avg_dev = float(np.mean(deviations))
+    sigma = mad * 1.4826
+    snr = med / sigma if sigma > 0 else 0.0
+    stf = _compute_stf(med, avg_dev)
     return ChannelStats(
         min=float(flat.min()),
         max=float(flat.max()),
         median=med,
         mad=mad,
+        avg_dev=avg_dev,
+        snr=snr,
         stf=stf,
     )
 
@@ -131,13 +163,84 @@ def compute_image_stats(data: np.ndarray) -> ImageStats:
     """Compute per-channel statistics and auto STF params for a normalized array.
 
     data: (H, W) for mono or (3, H, W) for color.
+
+    For color images, the linked STF averages c0 and median across all channels
+    before computing a single set of parameters (matching PixInsight's linked mode).
     """
     if data.ndim == 2:
         return ImageStats(color=False, channels=[_channel_stats(data)])
 
-    channels = [_channel_stats(data[i]) for i in range(3)]
-    ref_idx = min(range(3), key=lambda i: channels[i].median)
-    return ImageStats(color=True, channels=channels, linked_stf=channels[ref_idx].stf)
+    n = data.shape[0]
+    channels = [_channel_stats(data[i]) for i in range(n)]
+
+    # Linked mode: average shadow clip and median across channels
+    avg_c0 = 0.0
+    avg_median = 0.0
+    for ch in channels:
+        avg_c0 += ch.median + STF_SHADOWS_CLIP * ch.avg_dev
+        avg_median += ch.median
+    avg_c0 = max(0.0, min(avg_c0 / n, 1.0))
+    avg_median /= n
+
+    b0 = avg_median - avg_c0
+    if b0 <= 0.0:
+        m = 0.0
+    elif b0 >= 1.0:
+        m = 0.5
+    else:
+        m = _mtf_scalar(b0, STF_TARGET_BG)
+
+    linked_stf = StfParams(shadow=avg_c0, midtone=m, highlight=1.0)
+
+    # Per-channel background deviation from mean median
+    background_delta = [(ch.median - avg_median) for ch in channels]
+
+    # CIE L*a*b* a* median — color balance diagnostic
+    lab_a_median = _compute_lab_a_median(data) if n == 3 else None
+
+    return ImageStats(
+        color=True,
+        channels=channels,
+        linked_stf=linked_stf,
+        background_delta=background_delta,
+        lab_a_median=lab_a_median,
+    )
+
+
+def _compute_lab_a_median(rgb_data: np.ndarray) -> float:
+    """Compute median CIE L*a*b* a* value from linear RGB [0,1] data.
+
+    Positive a* = red/magenta excess, negative a* = green excess.
+    Uses sRGB→XYZ→Lab conversion with D65 illuminant.
+    """
+    r, g, b = rgb_data[0], rgb_data[1], rgb_data[2]
+    # Subsample for performance (~500K pixels is statistically sufficient)
+    stride = max(1, int(np.sqrt(r.size / 500_000)))
+    if stride > 1:
+        r, g, b = r[::stride, ::stride], g[::stride, ::stride], b[::stride, ::stride]
+
+    # Linear sRGB → XYZ (D65) — only X and Y needed for a*
+    x = 0.4124564 * r + 0.3575761 * g + 0.1804375 * b
+    y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b
+
+    # D65 reference white
+    xn, yn = 0.95047, 1.0
+
+    def f(t: np.ndarray) -> np.ndarray:
+        delta = 6.0 / 29.0
+        mask = t > delta**3
+        result = np.empty_like(t)
+        result[mask] = np.cbrt(t[mask])
+        result[~mask] = t[~mask] / (3.0 * delta**2) + 4.0 / 29.0
+        return result
+
+    fx = f(x / xn)
+    fy = f(y / yn)
+
+    # a* = 500 * (f(X/Xn) - f(Y/Yn))
+    a_star = 500.0 * (fx - fy)
+
+    return float(np.median(a_star))
 
 
 # ── Stretch + render ─────────────────────────────────────────────────────────

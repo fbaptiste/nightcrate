@@ -53,6 +53,40 @@ def load_image_data(file_path: Path) -> np.ndarray:
     return reshape_color(normalized)
 
 
+def load_image_as_array(file_path: Path) -> np.ndarray:
+    """Load any standard image (PNG/JPEG/TIFF) as a normalized [0, 1] float array.
+
+    Used for histogram computation. Returns (H, W) for grayscale or (3, H, W) for RGB.
+    For float TIFFs, delegates to load_image_data. For 8/16-bit images, uses Pillow.
+    """
+    if is_float_tiff(file_path):
+        return load_image_data(file_path)
+
+    with Image.open(file_path) as img:
+        if img.mode in ("RGBA", "PA"):
+            img = img.convert("RGB")
+        elif img.mode in ("I", "I;16"):
+            # 16-bit grayscale — convert to numpy before Pillow truncates to 8-bit
+            arr = np.asarray(img, dtype=np.float64) / 65535.0
+            return arr  # already (H, W), no reshape needed
+        elif img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        arr = np.asarray(img, dtype=np.float64)
+
+    # Normalize based on dtype max (handles 8-bit and 16-bit correctly)
+    if arr.max() > 1.0:
+        if arr.max() > 255.0:
+            arr = arr / 65535.0
+        else:
+            arr = arr / 255.0
+
+    # (H, W, 3) → (3, H, W) for color
+    if arr.ndim == 3:
+        arr = np.moveaxis(arr, -1, 0)
+
+    return arr
+
+
 def load_image_bytes(file_path: Path) -> bytes:
     """Load the image and return it as PNG bytes (for consistent frontend display).
 

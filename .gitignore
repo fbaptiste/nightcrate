@@ -50,3 +50,4 @@ RANDOM_IDEAS.md
 
 # Playwright MCP artifacts
 .playwright-mcp/
+backend/.coverage
