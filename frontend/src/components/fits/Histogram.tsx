@@ -171,7 +171,7 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
     const channelOrder = [...data.channels].reverse();
     for (const ch of channelOrder) {
       if (visibleChannels[ch.name] !== false) {
-        visibleSeries.push({ bins: ch.bins, color: CHANNEL_COLORS[ch.name] ?? "#888" });
+        visibleSeries.push({ bins: ch.bins, color: CHANNEL_COLORS[ch.name] ?? "#888888" });
       }
     }
 
@@ -301,7 +301,7 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
     const value = fraction.toFixed(3);
     const counts: { name: string; count: number; color: string }[] = [];
     for (const ch of data.channels) {
-      counts.push({ name: ch.name, count: ch.bins[binIdx] ?? 0, color: CHANNEL_COLORS[ch.name] ?? "#888" });
+      counts.push({ name: ch.name, count: ch.bins[binIdx] ?? 0, color: CHANNEL_COLORS[ch.name] ?? "#888888" });
     }
     if (data.luminosity) {
       counts.push({ name: "Lum", count: data.luminosity[binIdx] ?? 0, color: LUMINOSITY_COLOR });
