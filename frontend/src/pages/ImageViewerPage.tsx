@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
@@ -11,7 +11,9 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import Chip from "@mui/material/Chip";
+import Slider from "@mui/material/Slider";
 import Snackbar from "@mui/material/Snackbar";
+import Tooltip from "@mui/material/Tooltip";
 import FitScreenIcon from "@mui/icons-material/FitScreen";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
@@ -21,6 +23,7 @@ import {
   fetchExtensions,
   fetchHeader,
   fetchImageStats,
+  fetchMetadata,
   fetchRecentFiles,
   isVirtualPath,
   recordRecentFile,
@@ -31,9 +34,12 @@ import {
 } from "@/api/images";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import { FitsHeaderTable } from "@/components/fits/FitsHeaderTable";
-import { FitsImage, type FitsImageHandle } from "@/components/fits/FitsImage";
+import { FitsImage, type FitsImageHandle, type PixelInfo } from "@/components/fits/FitsImage";
 import { HduSelector } from "@/components/fits/HduSelector";
+import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
+import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
+import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
 import { monoFontFamily } from "@/theme/theme";
 
@@ -46,6 +52,33 @@ function formatDateObs(raw: string | null): string | null {
     hour: "2-digit", minute: "2-digit", second: "2-digit",
     timeZoneName: "short",
   }).format(d);
+}
+
+function SidebarSection({ label, children, defaultOpen = true, open: controlledOpen, onToggle, sx }: {
+  label: string; children?: React.ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; sx?: object;
+}) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isOpen = controlledOpen ?? internalOpen;
+  const toggle = () => {
+    const next = !isOpen;
+    setInternalOpen(next);
+    onToggle?.(next);
+  };
+  return (
+    <>
+      <Box
+        onClick={toggle}
+        sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, pt: 1.5, pb: 0.5, cursor: "pointer", userSelect: "none", ...sx }}
+      >
+        <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
+        <Typography variant="caption" color="secondary.main" sx={{ fontSize: "0.65rem", flexShrink: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+          {isOpen ? label : `${label} ▸`}
+        </Typography>
+        <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
+      </Box>
+      {isOpen && children}
+    </>
+  );
 }
 
 const DEFAULT_PER_CHANNEL: [StretchParams, StretchParams, StretchParams] = [
@@ -84,6 +117,11 @@ export function ImageViewerPage() {
   // File browser
   const [browserOpen, setBrowserOpen] = useState(false);
 
+  // Pixel inspector
+  const [pixelInspectorOn, setPixelInspectorOn] = useState(false);
+  const [pixelData, setPixelData] = useState<PixelInfo | null>(null);
+  const [patchRadius, setPatchRadius] = useState(50);
+
   // Error notification
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -120,6 +158,12 @@ export function ImageViewerPage() {
   const headerQuery = useQuery({
     queryKey: ["header", activePath, selectedHdu],
     queryFn: () => fetchHeader(activePath, selectedHdu),
+    enabled: activePath !== "",
+  });
+
+  const metadataQuery = useQuery({
+    queryKey: ["metadata", activePath, selectedHdu],
+    queryFn: () => fetchMetadata(activePath, selectedHdu),
     enabled: activePath !== "",
   });
 
@@ -329,14 +373,33 @@ export function ImageViewerPage() {
         {/* Tabs + content */}
         {hasFile && !extensionsQuery.isError && !extensionsQuery.isLoading && (
           <>
-            <Tabs
-              value={tab}
-              onChange={(_, v) => setTab(v)}
-              sx={{ px: 2, flexShrink: 0, borderBottom: 1, borderColor: "divider" }}
-            >
-              <Tab label="Image" disabled={!selectedExtInfo?.has_image} />
-              <Tab label="Header" />
-            </Tabs>
+            <Box sx={{ display: "flex", alignItems: "center", borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+              <Tabs
+                value={tab}
+                onChange={(_, v) => setTab(v)}
+                sx={{ px: 2 }}
+              >
+                <Tab label="Image" disabled={!selectedExtInfo?.has_image} />
+                <Tab label="Header" />
+              </Tabs>
+              {/* Format and linearity indicators */}
+              <Box sx={{ display: "flex", gap: 0.5, ml: "auto", mr: 2 }}>
+                <Chip
+                  label={isVirtualPath(activePath) ? "PXI" : activePath.split(".").pop()?.toUpperCase() ?? ""}
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontSize: "0.65rem", height: 20 }}
+                />
+                {hasStretch && (
+                  <Chip
+                    label={linked.stretch === "stf" ? "Linear" : "Non-linear"}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontSize: "0.65rem", height: 20 }}
+                  />
+                )}
+              </Box>
+            </Box>
 
             {/* Image tab — kept mounted, hidden via CSS to avoid re-fetching */}
             <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 0 ? "flex" : "none", flexDirection: "column" }}>
@@ -350,6 +413,8 @@ export function ImageViewerPage() {
                       linked={debouncedLinked}
                       perChannel={hasStretch ? activePerChannel : undefined}
                       onZoomChange={setCurrentZoom}
+                      onPixelHover={pixelInspectorOn ? setPixelData : undefined}
+                      pixelPatchRadius={patchRadius}
                     />
                   </Box>
                   {(fileName || dateObs || exposure || filter) && (
@@ -386,6 +451,25 @@ export function ImageViewerPage() {
                       )}
                     </Box>
                   )}
+                  {/* Histogram — below image */}
+                  <Histogram
+                    path={activePath}
+                    hdu={selectedHdu}
+                    shadow={linked.shadow}
+                    midtone={linked.midtone}
+                    highlight={linked.highlight}
+                    isStretching={hasStretch && linked.stretch === "stf"}
+                    channelIntensities={
+                      isColor && statsQuery.data
+                        ? statsQuery.data.channels.map((ch, i) => ({
+                            name: ["R", "G", "B"][i] ?? `${i}`,
+                            median: ch.median,
+                            mad: ch.mad,
+                            color: CHANNEL_COLOR_ARRAY[i] ?? LUMINOSITY_COLOR,
+                          }))
+                        : undefined
+                    }
+                  />
                 </>
               ) : (
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
@@ -422,7 +506,7 @@ export function ImageViewerPage() {
                 Browse Files
               </Button>
               <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", justifyContent: "center" }}>
-                {["FITS", "XISF", "PNG", "JPEG", "TIFF"].map((fmt) => (
+                {["FITS", "XISF", "PXI Project", "PNG", "JPEG", "TIFF"].map((fmt) => (
                   <Chip key={fmt} label={fmt} size="small" variant="outlined" sx={{ fontSize: "0.7rem", height: 22 }} />
                 ))}
               </Box>
@@ -438,18 +522,68 @@ export function ImageViewerPage() {
       {hasFile && selectedExtInfo?.has_image && tab === 0 && (
         <Box
           sx={{
-            width: isColor && !isLinked && linked.stretch === "stf" ? 600 : 220,
+            width: 220,
             flexShrink: 0,
             borderLeft: 1,
             borderColor: "divider",
             overflowY: "auto",
             overflowX: "hidden",
+            display: "flex",
+            flexDirection: "column",
           }}
         >
+          {/* Key fields summary — curated header info */}
+          <SidebarSection label="Image Info">
+          {(() => {
+            const meta = metadataQuery.data?.canonical;
+            if (!meta || Object.keys(meta).length === 0) {
+              return (
+                <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, py: 0.5, fontSize: "0.65rem" }}>
+                  No metadata available
+                </Typography>
+              );
+            }
+            const displayFields: [string, string][] = [
+              ["object_name", "Object"],
+              ["filter_name", "Filter"],
+              ["exposure_time", "Exposure"],
+              ["gain", "Gain"],
+              ["sensor_temp", "Sensor"],
+              ["camera_name", "Camera"],
+              ["telescope_name", "Telescope"],
+              ["focal_length", "Focal Len"],
+              ["frame_type", "Type"],
+            ];
+            const rows = displayFields
+              .filter(([key]) => meta[key] != null && String(meta[key]).trim() !== "")
+              .map(([key, label]) => {
+                let val: React.ReactNode = String(meta[key]);
+                if (key === "exposure_time") val = `${meta[key]}s`;
+                if (key === "sensor_temp") val = `${meta[key]}\u00B0C`;
+                if (key === "focal_length") {
+                  val = <>{Number(meta[key]).toFixed(0)} mm{meta["focal_ratio"] != null && <span style={{ color: "var(--mui-palette-text-secondary)" }}> (f/{Number(meta["focal_ratio"]).toFixed(1)})</span>}</>;
+                }
+                return { label, val };
+              });
+            return rows.length > 0 ? (
+              <Box sx={{ px: 1.5, py: 0.5, display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, rowGap: 0.125, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
+                {rows.map(({ label, val }) => (
+                  <Fragment key={label}>
+                    <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", whiteSpace: "nowrap" }}>{label}</Typography>
+                    <Typography sx={{ fontSize: "inherit", fontFamily: "inherit" }}>{val}</Typography>
+                  </Fragment>
+                ))}
+              </Box>
+            ) : (
+              <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, py: 0.5, fontSize: "0.65rem" }}>
+                No metadata available
+              </Typography>
+            );
+          })()}
+          </SidebarSection>
+
           {/* Image Size section */}
-          <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, pt: 1.5, display: "block" }}>
-            IMAGE SIZE
-          </Typography>
+          <SidebarSection label="Image Size">
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, px: 1.5, py: 1 }}>
             <Button
               variant="outlined"
@@ -473,14 +607,11 @@ export function ImageViewerPage() {
               {(currentZoom * 100).toFixed(0)}%
             </Typography>
           </Box>
+          </SidebarSection>
 
-          {/* Stretch section — only for stretchable formats */}
+          {/* Stretch section — for stretchable formats */}
           {hasStretch && (
-            <>
-              <Divider sx={{ mx: 1.5 }} />
-              <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, pt: 1, display: "block" }}>
-                STRETCH
-              </Typography>
+            <SidebarSection label="Stretch" defaultOpen={false}>
               <StretchControls
                 isColor={isColor}
                 linked={linked}
@@ -491,8 +622,224 @@ export function ImageViewerPage() {
                 onLinkedToggle={handleLinkedToggle}
                 onReset={handleReset}
               />
-            </>
+            </SidebarSection>
           )}
+
+          {/* Pixel inspector — enabled when expanded */}
+          <SidebarSection label="Pixel Inspector" defaultOpen={false} open={pixelInspectorOn} onToggle={(v) => { setPixelInspectorOn(v); if (!v) setPixelData(null); }}>
+            <Box sx={{ px: 1.5, py: 0.5 }}>
+              {/* Magnified patch view with zoom slider */}
+              <Box sx={{ mb: 0.75, display: "flex", alignItems: "stretch", gap: 0.75, justifyContent: "center" }}>
+                <canvas
+                  ref={(el) => {
+                    if (!el) return;
+                    const displaySize = 120;
+                    const dpr = window.devicePixelRatio || 1;
+                    el.width = displaySize * dpr;
+                    el.height = displaySize * dpr;
+                    el.style.width = `${displaySize}px`;
+                    el.style.height = `${displaySize}px`;
+                    const ctx = el.getContext("2d");
+                    if (!ctx) return;
+                    ctx.scale(dpr, dpr);
+                    ctx.imageSmoothingEnabled = false;
+
+                    if (pixelData?.patch) {
+                      const tmpCanvas = document.createElement("canvas");
+                      tmpCanvas.width = pixelData.patch.width;
+                      tmpCanvas.height = pixelData.patch.height;
+                      const tmpCtx = tmpCanvas.getContext("2d");
+                      if (tmpCtx) {
+                        tmpCtx.putImageData(pixelData.patch, 0, 0);
+                        ctx.drawImage(tmpCanvas, 0, 0, displaySize, displaySize);
+                      }
+                    } else {
+                      ctx.fillStyle = "#000";
+                      ctx.fillRect(0, 0, displaySize, displaySize);
+                    }
+
+                    // Reticle
+                    const center = displaySize / 2;
+                    const r = 6;
+                    const gap = r + 2;
+                    ctx.strokeStyle = "#000";
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.arc(center, center, r, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(center, 0); ctx.lineTo(center, center - gap);
+                    ctx.moveTo(center, center + gap); ctx.lineTo(center, displaySize);
+                    ctx.moveTo(0, center); ctx.lineTo(center - gap, center);
+                    ctx.moveTo(center + gap, center); ctx.lineTo(displaySize, center);
+                    ctx.stroke();
+                    ctx.strokeStyle = "#d4993f";
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(center, center, r, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(center, 0); ctx.lineTo(center, center - gap);
+                    ctx.moveTo(center, center + gap); ctx.lineTo(center, displaySize);
+                    ctx.moveTo(0, center); ctx.lineTo(center - gap, center);
+                    ctx.moveTo(center + gap, center); ctx.lineTo(displaySize, center);
+                    ctx.stroke();
+                  }}
+                  style={{ borderRadius: 4, border: "1px solid var(--mui-palette-divider)" }}
+                />
+                <Slider
+                  orientation="vertical"
+                  min={10}
+                  max={150}
+                  value={patchRadius}
+                  onChange={(_, v) => setPatchRadius(v as number)}
+                  size="small"
+                  sx={{
+                    height: 120,
+                    "& .MuiSlider-thumb": { width: 10, height: 10 },
+                  }}
+                />
+              </Box>
+              <table style={{ borderCollapse: "collapse", fontSize: "0.65rem", fontFamily: monoFontFamily }}>
+                <tbody>
+                  <tr>
+                    <td style={{ color: "var(--mui-palette-text-secondary)", paddingRight: 8 }}>X, Y</td>
+                    <td>{pixelData ? `${pixelData.x}, ${pixelData.y}` : "—, —"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: CHANNEL_COLORS.R, paddingRight: 8 }}>R</td>
+                    <td>{pixelData ? pixelData.R.toFixed(5) : "0.00000"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: CHANNEL_COLORS.G, paddingRight: 8 }}>G</td>
+                    <td>{pixelData ? pixelData.G.toFixed(5) : "0.00000"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: CHANNEL_COLORS.B, paddingRight: 8 }}>B</td>
+                    <td>{pixelData ? pixelData.B.toFixed(5) : "0.00000"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: LUMINOSITY_COLOR, paddingRight: 8 }}>K</td>
+                    <td>{pixelData ? pixelData.K.toFixed(5) : "0.00000"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: "var(--mui-palette-text-secondary)", paddingRight: 8 }}>Hex</td>
+                    <td>{pixelData ? rgbToHex(pixelData.R, pixelData.G, pixelData.B) : "#000000"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: "var(--mui-palette-text-secondary)", paddingRight: 8, verticalAlign: "top" }}>Color</td>
+                    <td>
+                      <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            bgcolor: pixelData ? rgbToHex(pixelData.R, pixelData.G, pixelData.B) : "#000",
+                            border: "1px solid rgba(255,255,255,0.2)",
+                            flexShrink: 0,
+                          }}
+                        />
+                        {pixelData ? findColorName(pixelData.R, pixelData.G, pixelData.B) : "black"}
+                      </Box>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </Box>
+          </SidebarSection>
+
+          {/* Pixel statistics — shown when stats are available */}
+          {statsQuery.data && (
+            <SidebarSection label="Statistics">
+              <Box sx={{ px: 1.5, py: 0.5, display: "flex", flexDirection: "column", gap: 1 }}>
+                {statsQuery.data.channels.map((ch, i) => {
+                  const label = statsQuery.data!.color ? ["R", "G", "B"][i] ?? `${i}` : "L";
+                  const chColor = statsQuery.data!.color ? (CHANNEL_COLOR_ARRAY[i] ?? LUMINOSITY_COLOR) : LUMINOSITY_COLOR;
+                  const delta = statsQuery.data!.background_delta?.[i];
+                  return (
+                    <Box key={i}>
+                      <Typography sx={{ fontSize: "0.65rem", fontFamily: monoFontFamily, color: chColor, fontWeight: 600, mb: 0.25 }}>
+                        {label}
+                      </Typography>
+                      <Box sx={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, rowGap: 0.125, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
+                        <Tooltip title="Median pixel value" arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Med</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.median.toFixed(6)}</Typography>
+
+                        <Tooltip title="Median Absolute Deviation — noise measure" arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>MAD</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.mad.toFixed(6)}</Typography>
+
+                        <Tooltip title="Average Deviation — used by auto stretch algorithm" arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>AvgDev</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.avg_dev.toFixed(6)}</Typography>
+
+                        <Tooltip title="Signal-to-Noise Ratio (median / σ)" arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>SNR</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.snr.toFixed(1)}</Typography>
+
+                        {delta != null && (
+                          <>
+                            <Tooltip title="Background deviation from channel mean — shows color balance" arrow>
+                              <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Δbkg</Typography>
+                            </Tooltip>
+                            <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: Math.abs(delta) < 0.001 ? "inherit" : "#d4993f" }}>
+                              {delta >= 0 ? "+" : ""}{delta.toFixed(6)}
+                            </Typography>
+                          </>
+                        )}
+                      </Box>
+                    </Box>
+                  );
+                })}
+
+                {/* Lab a* color balance diagnostic — color images only */}
+                {statsQuery.data.lab_a_median != null && (
+                  <Box sx={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, fontSize: "0.65rem", fontFamily: monoFontFamily, alignItems: "baseline" }}>
+                    <Tooltip title="CIE L*a*b* a* median — positive = red/magenta excess, negative = green excess. Near zero = neutral." arrow>
+                      <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>a* median</Typography>
+                    </Tooltip>
+                    <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 0.75 }}>
+                      <Typography sx={{ fontSize: "inherit", fontFamily: "inherit" }}>
+                        {statsQuery.data.lab_a_median.toFixed(3)}
+                      </Typography>
+                      <Typography sx={{
+                        fontSize: "0.65rem",
+                        color: Math.abs(statsQuery.data.lab_a_median) < 0.5
+                          ? "text.secondary"
+                          : statsQuery.data.lab_a_median > 0 ? CHANNEL_COLORS.G : CHANNEL_COLORS.R,
+                      }}>
+                        {Math.abs(statsQuery.data.lab_a_median) < 0.5
+                          ? "neutral"
+                          : statsQuery.data.lab_a_median > 0 ? "warm excess" : "cool excess"}
+                      </Typography>
+                    </Box>
+                  </Box>
+                )}
+              </Box>
+            </SidebarSection>
+          )}
+
+          {/* Spacer pushes help to bottom */}
+          <Box sx={{ flexGrow: 1 }} />
+
+          {/* Help tips */}
+          <SidebarSection label="Help" defaultOpen={false}>
+            <Box sx={{ px: 1.5, pb: 1.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", display: "block", lineHeight: 2 }}>
+                Scroll to zoom<br />
+                Click + drag to pan<br />
+                F &mdash; fit to window<br />
+                1 &mdash; 1:1 pixel zoom<br />
+                {"\u2318"}O / Ctrl+O &mdash; browse files
+              </Typography>
+            </Box>
+          </SidebarSection>
         </Box>
       )}
 

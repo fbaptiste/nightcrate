@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 from PIL.ExifTags import TAGS
 
+from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 
 
@@ -51,6 +52,40 @@ def load_image_data(file_path: Path) -> np.ndarray:
 
     normalized = normalize_to_01(arr)
     return reshape_color(normalized)
+
+
+def load_image_as_array(file_path: Path) -> np.ndarray:
+    """Load any standard image (PNG/JPEG/TIFF) as a normalized [0, 1] float array.
+
+    Used for histogram computation. Returns (H, W) for grayscale or (3, H, W) for RGB.
+    For float TIFFs, delegates to load_image_data. For 8/16-bit images, uses Pillow.
+    """
+    if is_float_tiff(file_path):
+        return load_image_data(file_path)
+
+    with Image.open(file_path) as img:
+        if img.mode in ("RGBA", "PA"):
+            img = img.convert("RGB")
+        elif img.mode in ("I", "I;16"):
+            # 16-bit grayscale — convert to numpy before Pillow truncates to 8-bit
+            arr = np.asarray(img, dtype=np.float64) / 65535.0
+            return arr  # already (H, W), no reshape needed
+        elif img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        arr = np.asarray(img, dtype=np.float64)
+
+    # Normalize based on dtype max (handles 8-bit and 16-bit correctly)
+    if arr.max() > 1.0:
+        if arr.max() > 255.0:
+            arr = arr / 65535.0
+        else:
+            arr = arr / 255.0
+
+    # (H, W, 3) → (3, H, W) for color
+    if arr.ndim == 3:
+        arr = np.moveaxis(arr, -1, 0)
+
+    return arr
 
 
 def load_image_bytes(file_path: Path) -> bytes:
@@ -98,10 +133,20 @@ def read_header(file_path: Path) -> list[dict]:
 
     try:
         with Image.open(file_path) as img:
-            cards.append({"key": "Format", "value": img.format or "Unknown", "comment": ""})
-            cards.append({"key": "Mode", "value": img.mode, "comment": "Color mode"})
-            cards.append({"key": "Width", "value": str(img.width), "comment": "pixels"})
-            cards.append({"key": "Height", "value": str(img.height), "comment": "pixels"})
+            for key, val, comment in [
+                ("Format", img.format or "Unknown", ""),
+                ("Mode", img.mode, "Color mode"),
+                ("Width", str(img.width), "pixels"),
+                ("Height", str(img.height), "pixels"),
+            ]:
+                cards.append(
+                    {
+                        "key": key,
+                        "value": val,
+                        "comment": comment,
+                        "description": get_keyword_description(key),
+                    }
+                )
 
             exif = getattr(img, "_getexif", lambda: None)()
             if exif:
@@ -112,11 +157,25 @@ def read_header(file_path: Path) -> list[dict]:
                             value = str(value)
                         else:
                             continue
-                    cards.append({"key": tag_name, "value": str(value)[:200], "comment": ""})
+                    cards.append(
+                        {
+                            "key": tag_name,
+                            "value": str(value)[:200],
+                            "comment": "",
+                            "description": get_keyword_description(tag_name),
+                        }
+                    )
 
             if hasattr(img, "text"):
                 for key, value in img.text.items():
-                    cards.append({"key": key, "value": str(value)[:200], "comment": "PNG text"})
+                    cards.append(
+                        {
+                            "key": key,
+                            "value": str(value)[:200],
+                            "comment": "PNG text",
+                            "description": get_keyword_description(key),
+                        }
+                    )
 
             return cards
     except Exception:
@@ -128,12 +187,22 @@ def read_header(file_path: Path) -> list[dict]:
 
     with tifffile.TiffFile(str(file_path)) as tif:
         page = tif.pages[0]
-        cards.append({"key": "Format", "value": "TIFF", "comment": ""})
-        cards.append({"key": "Mode", "value": str(page.dtype), "comment": "Data type"})
-        cards.append({"key": "Width", "value": str(page.imagewidth), "comment": "pixels"})
-        cards.append({"key": "Height", "value": str(page.imagelength), "comment": "pixels"})
-        cards.append({"key": "SamplesPerPixel", "value": str(page.samplesperpixel), "comment": ""})
-        cards.append({"key": "BitsPerSample", "value": str(page.bitspersample), "comment": ""})
+        for key, val, comment in [
+            ("Format", "TIFF", ""),
+            ("Mode", str(page.dtype), "Data type"),
+            ("Width", str(page.imagewidth), "pixels"),
+            ("Height", str(page.imagelength), "pixels"),
+            ("SamplesPerPixel", str(page.samplesperpixel), ""),
+            ("BitsPerSample", str(page.bitspersample), ""),
+        ]:
+            cards.append(
+                {
+                    "key": key,
+                    "value": val,
+                    "comment": comment,
+                    "description": get_keyword_description(key),
+                }
+            )
 
     return cards
 

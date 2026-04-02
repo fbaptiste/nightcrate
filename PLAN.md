@@ -8,6 +8,10 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.2.0 — Enhanced FITS Viewer](#v020--enhanced-fits-viewer) ✅
 - [v0.3.0 — XISF Support + Image I/O Refactor](#v030--xisf-support--image-io-refactor) ✅
 - [v0.3.0a — UI Polish + Frontend Redesign](#v030a--ui-polish--frontend-redesign) ✅
+- [v0.4.0 — PixInsight Project Browsing](#v040--pixinsight-project-browsing) ✅
+- [v0.4.1 — Image Histogram](#v041--image-histogram)
+- [v0.5.0 — Aberration Inspector](#v050--aberration-inspector)
+- [Future Features to Consider](#future-features-to-consider)
 - [Appendix: Library Reference](#appendix-library-reference)
 
 ---
@@ -602,7 +606,391 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 
 ---
 
-*v0.4.0 scope to be defined.*
+## v0.4.0 — PixInsight Project Browsing
+
+**Goal:** Browse into .pxiproject bundles from the image viewer, open referenced and embedded images, auto-detect linear/non-linear state, float TIFF support.
+
+**Status:** ✅ Complete (merged via PR #1)
+
+---
+
+### Features delivered
+
+- [x] .pxiproject browsing: XOSM manifest parser, embedded swap data decoder (all compression formats)
+- [x] Multi-channel (RGB) embedded images decoded from planar channel sections
+- [x] Auto-stretch linearity detection from XOSM STF params and auto-computed midtone
+- [x] Float32 TIFF support via tifffile (BSD 3-Clause)
+- [x] Backend-driven `supports_stretch` flag on `/extensions` endpoint
+- [x] UI: "Auto Stretch" / "None" naming, Linked/Unlinked hidden when stretch is None
+- [x] Loading spinner, recent files with project image names, virtual path display
+- [x] Security: path traversal validation, absolute-path checks on virtual paths
+- [x] 46 new tests (pxiproject_io + standard_io float TIFF). Total: 129 tests.
+
+---
+
+---
+
+## v0.4.1 — Image Histogram
+
+**Goal:** Add a real-time pixel value histogram to the image viewer sidebar, showing the data distribution for the currently loaded image.
+
+**Status:** ✅ Complete
+
+---
+
+### 1. Histogram
+
+- [x] `GET /api/images/histogram` endpoint — returns per-channel bins, luminosity, bin_edges
+- [x] Works for all image types (FITS, XISF, float TIFF, pxiproject, standard PNG/JPEG/TIFF)
+- [x] `HistogramData` type + `fetchHistogram()` in frontend API client
+- [x] Canvas-based `Histogram.tsx` component with filled area curves
+- [x] Gradient opacity fills, channel rendering order (Lum → B → G → R)
+- [x] Channel visibility checkboxes with channel-colored labels
+- [x] Log/Linear scale selector (two links, active one highlighted)
+- [x] Auto-defaults: log scale for linear images, linear scale for non-linear
+- [x] Hover crosshair with tooltip (bin value + per-channel counts)
+- [x] Stretch indicator lines (shadow solid, midtone dashed, highlight solid) — appear on slider move, auto-hide after 3s
+- [x] Histogram positioned below image in main content area (50% width)
+- [x] Channel intensity bars next to histogram (color images only, normalized to max channel)
+- [x] ResizeObserver for proper canvas sizing
+
+### 2. Pixel Inspector
+
+- [x] `GET /api/images/pixel` endpoint (backend, available but not used by inspector)
+- [x] Client-side pixel sampling via offscreen canvas (zero API calls on hover)
+- [x] Toggle ON/OFF in right sidebar
+- [x] Shows X/Y coordinates, R/G/B/K values, hex color, named color (XKCD 949 colors)
+- [x] Magnified patch preview with adjustable zoom slider
+- [x] Amber reticle cursor with black outline for contrast
+- [x] Default cursor when inspector off, reticle when on, grabbing hand when panning
+- [x] UI persists when cursor leaves image (zeroed values, black patch)
+
+### 3. Auto Stretch Algorithm Fix
+
+- [x] Fixed to match PixInsight's AutoSTF algorithm
+- [x] Uses avgDev (average deviation) instead of MAD for shadow clip computation
+- [x] Correct constant: SHADOWS_CLIP = -1.25 (was -2.8)
+- [x] Correct MTF self-inverse: `m = MTF(b0, TARGET_BG)` not `MTF(TARGET_BG, b0)`
+- [x] Linked color mode: averages c0 and median across channels (was picking dimmest)
+- [x] Stretch slider constraints: shadow < midtone < highlight, sliders push each other
+- [x] Editable values: click any slider value to type an exact number
+
+### 4. Statistics Panel
+
+- [x] SNR per channel (median / σ) — key quality metric for astrophotography
+- [x] avgDev column — matches PixInsight's Statistics process
+- [x] Per-channel background deviation (Δbkg) — shows color balance at a glance
+- [x] CIE L*a*b* a* median — color balance diagnostic (neutral / warm excess / cool excess)
+- [x] Vertical card layout per channel (readable in 220px sidebar)
+- [x] All tooltips on stat labels
+
+### 5. Image Info Panel
+
+- [x] Curated key fields: OBJECT, FILTER, EXPTIME, GAIN, CCD-TEMP, INSTRUME, TELESCOP
+- [x] Extracted from existing header data (no new API call)
+- [x] First section in sidebar (before Image Size)
+
+### 6. UI Improvements
+
+- [x] Format chip (FITS/XISF/PXI/PNG/etc.) next to tabs
+- [x] Linear/Non-linear chip next to format chip
+- [x] Stretch section hidden for non-linear images
+- [x] Sidebar section headers: `── Label ────────` line style (no dividers)
+- [x] Help section at sidebar bottom with keyboard shortcuts
+- [x] Loading spinner in image viewer
+- [x] Global minimum font size: 0.65rem
+- [x] Named color lookup (XKCD 949 crowd-sourced colors, CC0 license)
+
+### 7. Tests
+
+- [x] 21 new tests: histogram endpoint (mono/color, bins sum, custom bins, monotonic edges), pixel endpoint (mono/color, out of bounds), SNR, avgDev, background delta, Lab a* (neutral/red/green, color/mono stats)
+- [x] Updated STF tests for corrected algorithm
+- [x] Total: 151 tests passing
+
+### 8. FITS Header Ingestion Pipeline
+
+- [x] `services/fits_header_map.py` — 108 keyword aliases across N.I.N.A., ASIAIR, SGPro, MaxIm DL, SharpCap, PixInsight
+- [x] Priority resolution when multiple keywords map to same canonical field (e.g. EXPTIME wins over EXPOSURE)
+- [x] Frame type normalization (IRAF short form, SBFITSEXT long form, other conventions → light/dark/flat/bias)
+- [x] Filter name normalization (Luminance/L/LUM → Lum, H-Alpha → Ha, etc.; unknown filters pass through)
+- [x] `extract_metadata()` — extracts canonical fields from any FITS header dict
+- [x] `get_keyword_description()` — short UI descriptions for all 108 keywords
+- [x] All four `read_header()` functions (fits_io, xisf_io, pxiproject_io, standard_io) annotate cards with `description` field
+- [x] `GET /api/images/metadata` endpoint — returns canonical metadata + unrecognized keywords list
+- [x] Header grid Comment column falls back to keyword description when FITS comment is empty
+- [x] Image Info sidebar uses canonical fields — works regardless of capture software
+- [x] Human-readable labels and formatting (120.0s, -10°C, 1960 mm, (f/6.3))
+- [x] 56 new tests for header map (normalization, extraction, priority, map consistency)
+
+### 9. UI Polish
+
+- [x] Fixed sidebar width expansion bug (unlinked stretch stacked vertically, sidebar stays 220px)
+- [x] Fixed favorites persistence race condition (generation counter in settings store, stale closure fix)
+- [x] Stretch selector: dropdown replaced with toggle buttons (Auto Stretch / None)
+- [x] Log/Linear selector: text links replaced with toggle buttons
+- [x] All sidebar toggle button fonts aligned to 0.65rem
+- [x] Section titles: centered between lines, secondary (slate blue) color
+- [x] All sidebar sections collapsible (click header to toggle, ▸ indicator when collapsed)
+- [x] Pixel Inspector: collapse/expand replaces ON/OFF toggle (collapsed = disabled)
+- [x] Stretch and Pixel Inspector default to collapsed on image load
+- [x] Help section defaults to collapsed
+- [x] Image Info uses same grid layout and styling as Statistics section
+- [x] Reset Stretch: renamed from "Reset to auto", repositioned closer to sliders
+- [x] Theme toggle in left nav (cycles Light → Dark → System) next to version
+- [x] Version read from `VERSION` file at repo root (no longer hardcoded)
+
+### v0.4.1 Completion Criteria
+
+- [x] Mono FITS/XISF → single gray filled curve
+- [x] Color image → R/G/B overlaid with gradient fills + luminosity
+- [x] Log/linear toggle works, auto-defaults based on linearity
+- [x] Channel visibility checkboxes work
+- [x] Hover crosshair + tooltip with values
+- [x] Stretch indicator lines appear on slider move, hide after 3s
+- [x] Pixel inspector: reticle cursor, magnified patch, R/G/B/K/hex/named color
+- [x] Image Info, Statistics (SNR, avgDev, Δbkg, a*), Help sections in sidebar
+- [x] Non-linear images: stretch section hidden
+- [x] FITS header descriptions and canonical metadata working across all formats
+- [x] Sidebar sections collapsible, consistent styling
+- [x] Theme toggle accessible from main UI
+- [x] `uv run pytest` passes — 210 tests
+- [x] `npm run build` succeeds
+
+---
+
+---
+
+## v0.5.0 — Aberration Inspector: Star Detection & Crop Grid
+
+**Goal:** Detect and measure star shapes across a single astronomical image, display results in a zoned crop grid. The core feature that directly replaces N.I.N.A.'s basic 3x3 aberration inspector with a configurable, quantitative alternative.
+
+**Status:** Planned
+
+---
+
+### New Dependencies
+
+- `sep` (LGPL-3.0, already approved) — Source Extractor for star detection and shape measurement. Fast, gives eccentricity + position angle directly. **Requires attribution in README.**
+- `photutils` (BSD 3-Clause, already approved) — fallback for 2D Gaussian/Moffat fitting if needed
+
+### 1. Backend — Star Detection & Measurement
+
+New service: `services/aberration.py`
+
+- [ ] `detect_stars(fits_path, settings)` — detect stars using `sep`, measure per-star metrics
+- [ ] Per-star output: x, y, FWHM, HFR, eccentricity, elongation_angle_deg, peak_adu, flux, SNR, semi_major, semi_minor
+- [ ] Configurable filters: min_star_snr, max_star_peak_adu, min/max_star_fwhm_px, exclude_saturated
+- [ ] Background subtraction via `sep.Background`
+- [ ] Edge-of-frame exclusion
+
+### 2. Backend — Zone Aggregation
+
+- [ ] Group stars into configurable rectangular grid (3x3 through 9x9)
+- [ ] Per-zone: median + mean + std of selected metric, median elongation angle, representative star selection
+- [ ] Cheap re-gridding — no re-analysis needed when grid density changes
+
+### 3. Backend — API Endpoints
+
+New router: `api/aberration.py`
+
+- [ ] `POST /api/aberration/analyze` — trigger analysis of a FITS frame, return star list + global stats
+- [ ] `POST /api/aberration/zones` — compute zone-aggregated stats from prior analysis (re-gridding without re-analysis)
+- [ ] `GET /api/aberration/crop` — return auto-stretched PNG crop around a specific star
+
+### 4. Database — Analysis Storage
+
+Migration: `aberration_analysis` and `aberration_stars` tables
+
+- [ ] `aberration_analysis`: id, frame_id, created_at, image_width/height, settings_json, global stats, star_count
+- [ ] `aberration_stars`: id, analysis_id, x, y, fwhm, hfr, eccentricity, elongation_angle_deg, peak_adu, flux, snr, semi_major, semi_minor
+- [ ] Index on `(analysis_id)` for fast zone queries
+- [ ] Results cached — re-opening previously analyzed frame is instant
+- [ ] Cache TTL: configurable expiration (default 30 days), stored in settings table
+- [ ] Startup cleanup: purge expired cache entries on app launch
+- [ ] Settings UI: display cache size in MB + "Clear All" button to purge entire aberration cache
+- [ ] API: `GET /api/aberration/cache/size` (returns bytes), `DELETE /api/aberration/cache` (purge all)
+
+### 5. Frontend — Aberration Inspector Tab
+
+New tab in the Image Viewer (alongside Image and Header tabs).
+
+- [ ] "Aberration" tab in the image viewer tab bar
+- [ ] Tab reuses the currently loaded file — no separate file selection
+- [ ] Right sidebar becomes context-dependent: switches between image viewer controls (histogram, stats, pixel inspector) and aberration inspector controls depending on active tab
+
+### 6. Frontend — Toolbar
+
+- [ ] Grid density selector: 3x3, 4x4, 5x5, 7x7, 9x9 (default 5x5)
+- [ ] Metric selector: eccentricity (default), FWHM, HFR, peak ADU, elongation angle
+
+### 7. Frontend — Crop Grid View
+
+- [ ] Grid of square tiles, one per zone
+- [ ] Each tile: auto-stretched star crop (from `/crop`), metric value overlay, background color tint (viridis scale)
+- [ ] Star count per zone in corner
+- [ ] Click zone → expand in sidebar with full stats, star list, mini-histogram
+
+### 8. Frontend — Right Sidebar (Aberration Context)
+
+Replaces the image viewer's right sidebar content when the Aberration tab is active.
+
+- [ ] Global stats: star count, median FWHM, median eccentricity, median HFR
+- [ ] Zone detail (on hover/click): larger crop, full stats, star list, mini-histogram
+
+### 9. Tests
+
+- [ ] Star detection on synthetic test image
+- [ ] Zone aggregation with known star positions
+- [ ] API endpoint tests (analyze, zones, crop)
+
+### v0.5.0 Completion Criteria
+
+- [ ] Star detection produces correct metrics on real FITS sub frame
+- [ ] Crop Grid view matches/exceeds N.I.N.A.'s aberration inspector
+- [ ] Re-gridding is instant (no re-analysis)
+- [ ] Previously analyzed frames load instantly from cache
+- [ ] All visualizations use colorblind-safe palette (viridis)
+- [ ] `uv run pytest` passes
+- [ ] `npm run build` succeeds
+
+---
+
+## v0.5.1 — Aberration Inspector: Heatmap & Vector Field Views
+
+**Goal:** Add spatial visualization modes to the aberration inspector — a color heatmap overlay and a vector field showing elongation direction/magnitude. These make optical aberration patterns immediately visible at a glance. No new backend logic — purely frontend views consuming existing v0.5.0 API data.
+
+**Status:** Planned
+
+---
+
+### 1. Frontend — Toolbar Additions
+
+- [ ] View mode toggle: Crop Grid | Heatmap | Vector Field
+- [ ] Star filter controls (expandable): min/max SNR, max peak ADU, min/max FWHM, min stars per zone
+
+### 2. Frontend — Heatmap View
+
+- [ ] Full FITS frame (auto-stretched grayscale, downscaled for viewport)
+- [ ] Semi-transparent color grid overlay (viridis colormap, per zone median of selected metric)
+- [ ] Adjustable opacity slider (default ~40%)
+- [ ] Color legend/scale bar
+- [ ] Zone tooltip on hover
+
+### 3. Frontend — Vector Field View
+
+- [ ] Full frame background with arrow overlay
+- [ ] One arrow per zone: direction = median elongation angle, length = median eccentricity
+- [ ] Arrow color = eccentricity magnitude (viridis)
+- [ ] Zones with eccentricity < 0.1 → small circles (round stars)
+- [ ] Arrow scale legend
+
+### 4. Tests
+
+- [ ] Heatmap renders with correct zone colors for known metric values
+- [ ] Vector field arrows match expected directions for synthetic star data
+
+### v0.5.1 Completion Criteria
+
+- [ ] Heatmap shows clear spatial pattern for tilted optics
+- [ ] Vector Field shows parallel arrows for tilt, radial for coma
+- [ ] View mode toggle switches cleanly between all three views
+- [ ] Star filters update all views in real time
+- [ ] All visualizations use colorblind-safe palette (viridis)
+- [ ] `uv run pytest` passes
+- [ ] `npm run build` succeeds
+
+---
+
+## v0.5.2 — Aberration Inspector: Diagnosis Engine & Export
+
+**Goal:** Automated pattern-matching diagnosis that names the aberration (tilt, coma, field curvature, etc.) with confidence levels, plain-English explanations, and fix suggestions. Plus data export for offline analysis.
+
+**Status:** Planned
+
+---
+
+### 1. Backend — Diagnosis Engine
+
+- [ ] Pattern matching on the zone-aggregated vector field (eccentricity + elongation angle per zone)
+- [ ] Diagnose: tilt, coma, astigmatism, field curvature, backspacing error, tracking/guiding error
+- [ ] Per diagnosis: type, confidence (0-100%), plain-English description, fix suggestion
+- [ ] "Ruled out" entries explaining why certain aberrations were excluded
+- [ ] Logic:
+  - Std of elongation angles < 15° → tilt or tracking
+  - Eccentricity gradient across field → tilt
+  - Eccentricity correlates with distance from center → field curvature or coma
+  - Radial elongation directions → coma; tangential → field curvature
+  - Uniform direction aligned with RA axis → tracking error
+
+### 2. Backend — API Endpoint
+
+- [ ] `POST /api/aberration/diagnose` — run pattern-matching diagnosis on zone data
+
+### 3. Frontend — Right Sidebar Additions
+
+- [ ] Diagnosis panel: cards with type, confidence bar, description, suggestion
+- [ ] "Ruled out" section (collapsible)
+- [ ] "How to read this" help tooltip
+
+### 4. Frontend — Export
+
+- [ ] Export: PNG screenshot, CSV per-star, CSV per-zone
+
+### 5. Tests
+
+- [ ] Diagnosis pattern matching (synthetic patterns for each aberration type)
+- [ ] API endpoint test (diagnose)
+
+### v0.5.2 Completion Criteria
+
+- [ ] Diagnosis correctly identifies tilt in a known-tilted frame
+- [ ] "Ruled out" explanations are coherent and helpful
+- [ ] Export produces valid CSV with all expected columns
+- [ ] PNG export captures current view accurately
+- [ ] `uv run pytest` passes
+- [ ] `npm run build` succeeds
+
+---
+
+---
+
+## Future Features to Consider
+
+Features that depend on cross-frame infrastructure or are beyond the current scope. Captured here for future planning.
+
+### Multi-Frame Comparison (Aberration Inspector)
+
+- **Frame-to-frame comparison:** Side-by-side vector fields or heatmaps from two frames (before/after tilt adjustment). Includes a difference view showing improvement vs. degradation per zone.
+- **Filter comparison:** Aberration patterns across different filters from the same session to diagnose chromatic focus shift or filter-dependent tilt.
+- **Session trend tracking:** Plot average corner eccentricity over time across sessions to catch slowly drifting mirrors or loosening tilt adapters.
+
+### Interactive Tools (Aberration Inspector)
+
+- **User annotations:** Pin notes to specific zones and persist them across sessions.
+- **Interactive zone drawing:** Drag/resize custom zones instead of a fixed rectangular grid for fine-grained investigation of specific field regions.
+
+### Session & Catalog Features
+
+- **Frame quality indicators on filmstrip thumbnails:** When browsing a night's subs, show SNR or FWHM badges on each thumbnail for quick quality assessment without opening each frame.
+- **Background sample region stats:** User-selectable region on the image canvas for targeted statistics (background level, noise).
+- **Session ingestion pipeline:** Ingest N.I.N.A./ASIAIR session logs, PHD2 guiding logs, FITS headers into a searchable catalog with integration-time dashboards.
+
+### AI Analysis (Post-MVP)
+
+- **AI session analyzer:** Claude-based analysis of session telemetry, guiding logs, and final images to provide improvement feedback. Monetized via [redacted] or subscription.
+- **Data model designed for AI-readiness:** MVP data model serializable into coherent context windows for AI analysis.
+
+### FITS Header Database Storage (Ingestion Pipeline)
+
+- **Canonical metadata in typed columns:** Store normalized values (object_name, exposure_time, filter_name, gain, sensor_temp, etc.) in dedicated database columns for fast queries and calibration frame matching.
+- **Raw FITS header as JSON:** Store the full raw header as a JSON column — escape hatch for re-extraction when new keywords are added to the alias map.
+- **PixInsight quality metrics:** Dedicated nullable columns for pi_ssweight, pi_psf_fwhm, pi_psf_eccen, pi_noise_layer0, etc. — populated only for files processed through PixInsight.
+- **Calibration key indexes:** Index on (camera_name, gain, sensor_temp, exposure_time, binning_x, binning_y, filter_name, frame_type) for fast calibration frame matching (darks, flats, bias).
+- **Unrecognized keyword frequency table:** Track keyword frequency across all ingested files. When a new keyword appears frequently, it signals a new alias to add to the map.
+- **Coordinate validation:** Parse and validate RA/DEC values (ASIAIR writes nonsensical coordinates in dark frame headers). Use astropy.coordinates.Angle for format handling.
+- **IMAGETYP filename fallback:** When IMAGETYP is missing (some SharpCap versions), fall back to filename pattern matching (e.g., `Dark_10.0s_...` or path containing `/darks/`).
+
+---
 
 ---
 

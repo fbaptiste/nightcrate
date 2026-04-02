@@ -14,8 +14,8 @@ Reference documents:
 
 - **Backend:** Python + FastAPI
 - **Frontend:** React + TypeScript (Vite); Claude Code handles most React/JS work — Fred is not a React developer
-  - **UI library:** MUI (`@mui/material`) — free MIT core. MUI X Community tier only (`@mui/x-data-grid`, `@mui/x-date-pickers`, `@mui/x-charts`, `@mui/x-tree-view`) — all free MIT. **Never use MUI X Pro or Premium** (paid, commercial license required; NightCrate is a commercial product so the open-source exception does not apply).
-  - **Theme:** MUI `ThemeProvider` with light/dark/browser (system) modes. Stored in `settings.json` via backend.
+  - **UI library:** MUI (`@mui/material`) — free MIT core. MUI X Community tier only (`@mui/x-data-grid`, `@mui/x-date-pickers`, `@mui/x-charts`, `@mui/x-tree-view`) — all free MIT. **Never use MUI X Pro or Premium** (paid commercial license).
+  - **Theme:** MUI `ThemeProvider` with light/dark/browser (system) modes. Stored in SQLite settings table via backend.
   - **No Tailwind CSS, shadcn, or related packages** — MUI uses its own styling system (`sx` prop + `styled`). Do not add `tailwind-merge`, `class-variance-authority`, `clsx`, `lucide-react`, or `@base-ui/react`.
   - **State:** Zustand
   - **Data fetching:** TanStack Query
@@ -111,31 +111,66 @@ uv run bandit -r src/                  # Security scan
 
 ## Pre-Commit Checklist
 
-Before committing any Python code changes, all of these must pass:
+Before committing, all applicable checks must pass:
 
+**Backend (from `backend/`):**
 1. `uv run ruff check src/ tests/` — lint
 2. `uv run ruff format --check src/ tests/` — formatting
 3. `uv run bandit -r src/` — security
 4. `uv run pytest` — tests
 
+**Frontend (from `frontend/`):**
+5. `npm run build` — TypeScript compilation + production build
+
+## Gotchas
+
+- **Python 3.14 + ruff format:** ruff format may strip parentheses from `except (ValueError, IndexError):` turning it into the Python 2 syntax `except ValueError, IndexError:`. This is a known ruff issue with `target-version = "py314"`. Avoid multi-exception `except` clauses, or rewrite to avoid the pattern (e.g., use a single base exception or restructure the logic).
+
 ## Image Viewer
 
-Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PNG, JPEG, TIFF.
+Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects (`.pxiproject`), PNG, JPEG, TIFF (including float32 TIFF).
 
 **Architecture:**
-- `services/imaging.py` — format-agnostic: normalization, stretch, stats, PNG rendering
+- `services/imaging.py` — format-agnostic: normalization, stretch, stats, histogram, Lab a*, PNG rendering
 - `services/fits_io.py` — FITS loading via astropy
 - `services/xisf_io.py` — clean-room XISF parser (no GPL dependency)
-- `services/standard_io.py` — PNG/JPEG/TIFF via Pillow (no stretch, passthrough display)
-- `api/images.py` — unified API at `/api/images/*`, dispatches by file extension
+- `services/pxiproject_io.py` — PixInsight project parser (XOSM manifest + rawimage swap format)
+- `services/standard_io.py` — PNG/JPEG/TIFF via Pillow + tifffile for float32 TIFFs
+- `api/images.py` — unified API at `/api/images/*`, dispatches by file type. Virtual paths (`project::index`) for pxiproject images.
 
-**Stretch modes** (FITS and XISF only — not applicable to standard images):
-- **Auto (STF):** Default. PixInsight-compatible Screen Transfer Function. Auto-computes shadow clip and midtones balance from median + MAD statistics. For linked color: uses dimmest channel's params across all channels.
-- **Linear:** Simple min/max scaling, no adjustable parameters.
+**Auto Stretch** (PixInsight-compatible Screen Transfer Function):
+- Uses **avgDev** (average deviation), NOT MAD, for shadow clip computation
+- Shadow clip: `median + (-1.25) * avgDev`
+- Midtones balance via MTF self-inverse: `m = MTF(b0, TARGET_BG)` where `b0 = median - shadow_clip`
+- Linked color mode: averages shadow clip and median across all channels
+- Target background: 0.25 (standard PixInsight default)
+- Non-linear images auto-detected (STF midtone >= 0.1) and shown without stretch
+- Backend-driven `supports_stretch` flag on `/extensions` endpoint
 
-FITS/XISF pixel data is normalized to [0, 1] at load time based on data type (uint16 ÷ 65535, matching PixInsight convention). Both mono and color (RGB) files are supported. Color images offer linked (single set of params for all channels) and unlinked (per-channel) stretch.
+**Histogram:**
+- Canvas-based rendering below image (filled area curves, not SVG bars)
+- R/G/B/Luminosity channels with channel checkboxes
+- Log/linear scale (auto-defaults based on image linearity)
+- Stretch indicator lines on slider interaction (auto-hide after 3s)
+- Channel intensity bars for color images (normalized to max channel)
 
-Stretch is applied server-side — the frontend sends stretch params as query parameters and receives a rendered PNG. The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration but stretch currently uses numpy directly in `services/imaging.py`.
+**Pixel Inspector:**
+- Client-side sampling via offscreen canvas (zero API calls on hover)
+- R/G/B/K values, hex color, XKCD named color (949 colors, CC0)
+- Magnified patch preview with adjustable zoom
+- Amber reticle cursor with black outline for contrast
+
+**Statistics:**
+- Per-channel: median, MAD, avgDev, SNR (median/σ), background delta
+- CIE L*a*b* a* median for color balance (neutral/warm excess/cool excess)
+- Image Info section with curated FITS keywords
+
+**Important implementation notes:**
+- All hex color constants must be 6-digit (#888888, never #888) — canvas gradient code appends alpha suffixes
+- Channel colors defined in `lib/channelColors.ts` (single source of truth)
+- Luminance weights (`LUM_R/G/B`) defined in `services/imaging.py`
+- Stretch is applied server-side — frontend sends stretch params as query parameters and receives a rendered PNG
+- The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration
 
 ## Dependency & License Policy
 

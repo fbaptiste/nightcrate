@@ -6,7 +6,7 @@ const columns: GridColDef[] = [
   {
     field: "key",
     headerName: "Keyword",
-    width: 130,
+    width: 120,
     renderCell: (params) => (
       <Box component="span" sx={{ fontFamily: "monospace", fontSize: "0.8rem", fontWeight: 600 }}>
         {params.value}
@@ -40,7 +40,11 @@ interface Props {
 }
 
 export function FitsHeaderTable({ cards }: Props) {
-  const rows = cards.map((card, i) => ({ id: i, ...card }));
+  const rows = cards.map((card, i) => ({
+    id: i,
+    ...card,
+    comment: card.comment || card.description || "",
+  }));
 
   return (
     <DataGrid

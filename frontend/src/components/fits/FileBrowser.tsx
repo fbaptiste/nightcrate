@@ -69,6 +69,11 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; folderName: string; folderPath: string } | null>(null);
 
+  // Keep a ref to the latest settings so the browse effect can read it
+  // without adding settings to its dependency array (which would loop).
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
   // Sync initial path when settings load
   const initializedRef = useRef(false);
   useEffect(() => {
@@ -95,7 +100,8 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
         setResult(data);
         setLoading(false);
         // Persist last browsed path
-        if (settings && data.path !== settings.last_browse_path) {
+        const s = settingsRef.current;
+        if (s && data.path !== s.last_browse_path) {
           update({ last_browse_path: data.path });
         }
       })

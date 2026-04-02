@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 
+from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 
 
@@ -28,11 +29,16 @@ def load_image_data(file_path: Path, hdu: int = 0) -> np.ndarray:
 
 
 def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
-    """Return all header cards for the given HDU as {key, value, comment} dicts."""
+    """Return all header cards for the given HDU as {key, value, comment, description} dicts."""
     with fits.open(file_path, memmap=False) as hdul:
         target = _hdu_index(hdul, hdu)
         return [
-            {"key": card.keyword, "value": str(card.value), "comment": card.comment}
+            {
+                "key": card.keyword,
+                "value": str(card.value),
+                "comment": card.comment,
+                "description": get_keyword_description(card.keyword),
+            }
             for card in target.header.cards
         ]
 

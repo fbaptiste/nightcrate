@@ -1,6 +1,6 @@
 [project]
 name = "nightcrate"
-version = "0.1.0"
+version = "0.4.1"
 description = "Astrophotography session cataloging and analysis"
 requires-python = ">=3.14"
 dependencies = [
@@ -34,6 +34,7 @@ dev = [
     "pytest-asyncio>=0.25",
     "httpx>=0.28",
     "bandit>=1.9.4",
+    "coverage>=7.13.5",
 ]
 
 [tool.ruff]

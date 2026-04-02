@@ -1,6 +1,7 @@
 """NightCrate FastAPI application."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -29,7 +30,8 @@ app.include_router(files.router)
 app.include_router(images.router)
 app.include_router(settings.router)
 
-APP_VERSION = "0.3.0"
+_VERSION_FILE = Path(__file__).resolve().parents[3] / "VERSION"
+APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.exists() else "unknown"
 
 
 @app.get("/api/health")

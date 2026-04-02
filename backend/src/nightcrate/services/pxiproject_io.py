@@ -14,6 +14,7 @@ import lz4.block
 import numpy as np
 import zstandard
 
+from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 
 XOSM_NS = "http://www.pixinsight.com/xosm"
@@ -318,6 +319,7 @@ def read_header(project_dir: Path, image_index: int) -> list[dict]:
                     "key": kw.get("name", ""),
                     "value": kw.get("value", ""),
                     "comment": kw.get("comment", ""),
+                    "description": get_keyword_description(kw.get("name", "")),
                 }
             )
 

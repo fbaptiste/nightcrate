@@ -13,6 +13,7 @@ export interface HeaderCard {
   key: string;
   value: string;
   comment: string;
+  description: string | null;
 }
 
 export interface StfParams {
@@ -26,6 +27,8 @@ export interface ChannelStats {
   max: number;
   median: number;
   mad: number;
+  avg_dev: number;
+  snr: number;
   stf: StfParams;
 }
 
@@ -33,6 +36,8 @@ export interface ImageStats {
   color: boolean;
   channels: ChannelStats[];
   linked_stf: StfParams | null;
+  background_delta: number[] | null;
+  lab_a_median: number | null;
 }
 
 export interface StretchParams {
@@ -75,6 +80,42 @@ export function fetchImageStats(path: string, hdu: number): Promise<ImageStats> 
   return apiFetch<ImageStats>(`/images/stats?path=${encodeURIComponent(path)}&hdu=${hdu}`);
 }
 
+// ── Pixel inspector ──────────────────────────────────────────────────────────
+
+export interface PixelData {
+  x: number;
+  y: number;
+  color: boolean;
+  R?: number;
+  G?: number;
+  B?: number;
+  K: number;
+}
+
+export function fetchPixel(path: string, hdu: number, x: number, y: number): Promise<PixelData> {
+  return apiFetch<PixelData>(`/images/pixel?path=${encodeURIComponent(path)}&hdu=${hdu}&x=${x}&y=${y}`);
+}
+
+// ── Histogram ────────────────────────────────────────────────────────────────
+
+export interface HistogramChannel {
+  name: string;
+  bins: number[];
+}
+
+export interface HistogramData {
+  color: boolean;
+  channels: HistogramChannel[];
+  luminosity: number[] | null;
+  bin_edges: number[];
+}
+
+export function fetchHistogram(path: string, hdu: number): Promise<HistogramData> {
+  return apiFetch<HistogramData>(`/images/histogram?path=${encodeURIComponent(path)}&hdu=${hdu}`);
+}
+
+// ── Image rendering ──────────────────────────────────────────────────────────
+
 export function imageUrl(
   path: string,
   hdu: number,
@@ -112,4 +153,15 @@ export function fetchRecentFiles(): Promise<RecentFile[]> {
 
 export function recordRecentFile(path: string): Promise<void> {
   return apiFetch(`/images/recent?path=${encodeURIComponent(path)}`, { method: "POST" });
+}
+
+// ── Metadata ────────────────────────────────────────────────────────────────
+
+export interface ImageMetadata {
+  canonical: Record<string, string | number | null>;
+  unrecognized_keywords: string[];
+}
+
+export function fetchMetadata(path: string, hdu: number): Promise<ImageMetadata> {
+  return apiFetch<ImageMetadata>(`/images/metadata?path=${encodeURIComponent(path)}&hdu=${hdu}`);
 }
