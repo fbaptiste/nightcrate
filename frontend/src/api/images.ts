@@ -13,6 +13,7 @@ export interface HeaderCard {
   key: string;
   value: string;
   comment: string;
+  description: string | null;
 }
 
 export interface StfParams {
@@ -152,4 +153,15 @@ export function fetchRecentFiles(): Promise<RecentFile[]> {
 
 export function recordRecentFile(path: string): Promise<void> {
   return apiFetch(`/images/recent?path=${encodeURIComponent(path)}`, { method: "POST" });
+}
+
+// ── Metadata ────────────────────────────────────────────────────────────────
+
+export interface ImageMetadata {
+  canonical: Record<string, string | number | null>;
+  unrecognized_keywords: string[];
+}
+
+export function fetchMetadata(path: string, hdu: number): Promise<ImageMetadata> {
+  return apiFetch<ImageMetadata>(`/images/metadata?path=${encodeURIComponent(path)}&hdu=${hdu}`);
 }

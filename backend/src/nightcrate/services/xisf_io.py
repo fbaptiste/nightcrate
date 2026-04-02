@@ -15,6 +15,7 @@ import lz4.block
 import numpy as np
 import zstandard
 
+from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 
 XISF_MAGIC = b"XISF0100"
@@ -225,11 +226,13 @@ def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
 
     # FITS keywords (preferred — most XISF files from PixInsight include these)
     for kw in img_elem.iter(_tag("FITSKeyword")):
+        name = kw.get("name", "")
         cards.append(
             {
-                "key": kw.get("name", ""),
+                "key": name,
                 "value": kw.get("value", ""),
                 "comment": kw.get("comment", ""),
+                "description": get_keyword_description(name),
             }
         )
 
@@ -255,10 +258,24 @@ def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
 
         mapped_key = prop_map.get(prop_id)
         if mapped_key and mapped_key not in existing_keys:
-            cards.append({"key": mapped_key, "value": str(value), "comment": f"XISF: {prop_id}"})
+            cards.append(
+                {
+                    "key": mapped_key,
+                    "value": str(value),
+                    "comment": f"XISF: {prop_id}",
+                    "description": get_keyword_description(mapped_key),
+                }
+            )
             existing_keys.add(mapped_key)
         elif not mapped_key:
-            cards.append({"key": prop_id, "value": str(value), "comment": ""})
+            cards.append(
+                {
+                    "key": prop_id,
+                    "value": str(value),
+                    "comment": "",
+                    "description": get_keyword_description(prop_id),
+                }
+            )
 
     return cards
 

@@ -23,6 +23,16 @@ class TestReadHeader:
         for card in cards:
             assert isinstance(card["value"], str)
 
+    def test_cards_have_description(self, tmp_fits_mono: Path):
+        cards = read_header(tmp_fits_mono)
+        exptime = next(c for c in cards if c["key"] == "EXPTIME")
+        assert exptime["description"] == "Exposure time (sec)"
+
+    def test_unknown_keyword_description_is_none(self, tmp_fits_mono: Path):
+        cards = read_header(tmp_fits_mono)
+        simple = next(c for c in cards if c["key"] == "SIMPLE")
+        assert simple["description"] is None
+
     def test_invalid_hdu_raises(self, tmp_fits_mono: Path):
         with pytest.raises(ValueError, match="out of range"):
             read_header(tmp_fits_mono, hdu=99)

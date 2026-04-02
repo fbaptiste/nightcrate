@@ -48,6 +48,9 @@ memory/
 # Personal notes
 RANDOM_IDEAS.md
 
+# Instructions (reference material, not part of codebase)
+instructions/
+
 # Playwright MCP artifacts
 .playwright-mcp/
 backend/.coverage

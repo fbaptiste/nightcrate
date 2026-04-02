@@ -8,6 +8,9 @@ interface SettingsState {
   update: (patch: Partial<Settings>) => Promise<void>;
 }
 
+/** Monotonic counter — only the latest save's response updates the store. */
+let saveGeneration = 0;
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: null,
   loading: false,
@@ -27,11 +30,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (!current) return;
     const updated = { ...current, ...patch };
     set({ settings: updated }); // optimistic
+    const gen = ++saveGeneration;
     try {
       const saved = await saveSettings(updated);
-      set({ settings: saved });
+      // Only apply the response if no newer save has been dispatched
+      if (gen === saveGeneration) {
+        set({ settings: saved });
+      }
     } catch {
-      set({ settings: current }); // rollback on failure
+      // Only rollback if no newer save has superseded this one
+      if (gen === saveGeneration) {
+        set({ settings: current });
+      }
     }
   },
 }));

@@ -1,10 +1,6 @@
 import { useCallback, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import FormControl from "@mui/material/FormControl";
-import InputLabel from "@mui/material/InputLabel";
-import MenuItem from "@mui/material/MenuItem";
-import Select from "@mui/material/Select";
 import Slider from "@mui/material/Slider";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
@@ -175,17 +171,16 @@ export function StretchControls({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, p: 1.5, overflowX: "hidden" }}>
       {/* Stretch type selector */}
-      <FormControl size="small" fullWidth>
-        <InputLabel>Stretch</InputLabel>
-        <Select
-          label="Stretch"
-          value={linked.stretch}
-          onChange={(e) => setStretchType(e.target.value as "stf" | "linear")}
-        >
-          <MenuItem value="stf">Auto Stretch</MenuItem>
-          <MenuItem value="linear">None</MenuItem>
-        </Select>
-      </FormControl>
+      <ToggleButtonGroup
+        exclusive
+        size="small"
+        value={linked.stretch}
+        onChange={(_, v) => { if (v) setStretchType(v as "stf" | "linear"); }}
+        fullWidth
+      >
+        <ToggleButton value="stf" sx={{ fontSize: "0.65rem" }}>Auto Stretch</ToggleButton>
+        <ToggleButton value="linear" sx={{ fontSize: "0.65rem" }}>None</ToggleButton>
+      </ToggleButtonGroup>
 
       {/* Linked/Unlinked toggle — only for color images with active stretch */}
       {isStf && isColor && (
@@ -195,8 +190,8 @@ export function StretchControls({
           value={isLinked ? "linked" : "unlinked"}
           onChange={(_, v) => { if (v) onLinkedToggle(v === "linked"); }}
         >
-          <ToggleButton value="linked">Linked</ToggleButton>
-          <ToggleButton value="unlinked">Unlinked</ToggleButton>
+          <ToggleButton value="linked" sx={{ fontSize: "0.65rem" }}>Linked</ToggleButton>
+          <ToggleButton value="unlinked" sx={{ fontSize: "0.65rem" }}>Unlinked</ToggleButton>
         </ToggleButtonGroup>
       )}
 
@@ -210,7 +205,7 @@ export function StretchControls({
       )}
 
       {isStf && isColor && !isLinked && (
-        <Box sx={{ display: "flex", gap: 3 }}>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {perChannel.map((ch, i) => (
             <ChannelControls
               key={i}
@@ -232,8 +227,8 @@ export function StretchControls({
 
       {/* Reset button — only when stretch is active */}
       {isStf && (
-        <Button variant="text" size="small" onClick={onReset} sx={{ alignSelf: "flex-start", fontSize: "0.75rem" }}>
-          Reset to auto
+        <Button variant="text" size="small" onClick={onReset} sx={{ alignSelf: "flex-start", fontSize: "0.65rem", mt: "-15px" }}>
+          Reset Stretch
         </Button>
       )}
     </Box>

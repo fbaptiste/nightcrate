@@ -80,6 +80,19 @@ class TestImageEndpoints:
         resp = await client.get("/api/images/extensions", params={"path": "relative/file.fits"})
         assert resp.status_code == 400
 
+    async def test_metadata(self, client: AsyncClient, tmp_fits_mono: Path):
+        resp = await client.get(
+            "/api/images/metadata", params={"path": str(tmp_fits_mono), "hdu": 0}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        canonical = data["canonical"]
+        assert canonical["object_name"] == "TestTarget"
+        assert float(canonical["exposure_time"]) == 300.0
+        assert canonical["filter_name"] == "Ha"
+        assert float(canonical["sensor_temp"]) == -10.0
+        assert isinstance(data["unrecognized_keywords"], list)
+
     async def test_non_image_extension_rejected(self, client: AsyncClient, tmp_path: Path):
         txt = tmp_path / "file.txt"
         txt.write_text("not an image")

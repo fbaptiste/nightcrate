@@ -9,6 +9,10 @@ from fastapi.responses import Response
 
 from nightcrate.db.session import get_db
 from nightcrate.services import fits_io, pxiproject_io, standard_io, xisf_io
+from nightcrate.services.fits_header_map import (
+    FITS_KEYWORD_ALIASES,
+    extract_metadata,
+)
 from nightcrate.services.imaging import (
     LUM_B,
     LUM_G,
@@ -25,6 +29,22 @@ FITS_EXTENSIONS = {".fits", ".fit", ".fts"}
 XISF_EXTENSIONS = {".xisf"}
 STANDARD_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 ALL_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | STANDARD_EXTENSIONS
+
+STRUCTURAL_KEYWORDS = {
+    "SIMPLE",
+    "NAXIS",
+    "NAXIS1",
+    "NAXIS2",
+    "NAXIS3",
+    "EXTEND",
+    "BZERO",
+    "BSCALE",
+    "COMMENT",
+    "HISTORY",
+    "END",
+    "",
+    "BITPIX",
+}
 
 
 def _file_type(p: Path) -> str:
@@ -125,6 +145,50 @@ async def get_header(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+@router.get("/metadata")
+async def get_metadata(
+    path: str = Query(..., description="Absolute path to image file"),
+    hdu: int = Query(0, description="Extension index"),
+) -> dict:
+    """Return canonical metadata and unrecognized keywords for a file."""
+    p, ft, idx = _resolve_path(path)
+    try:
+        if ft == "pxiproject":
+            cards = pxiproject_io.read_header(p, idx)
+        elif ft == "fits":
+            cards = fits_io.read_header(p, hdu)
+        elif ft == "xisf":
+            cards = xisf_io.read_header(p, hdu)
+        else:
+            cards = standard_io.read_header(p)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+    # Build a raw header dict from cards (first occurrence wins for dupes)
+    raw_header: dict[str, str] = {}
+    for card in cards:
+        if card["key"] and card["key"] not in raw_header:
+            raw_header[card["key"]] = card["value"]
+
+    canonical = extract_metadata(raw_header)
+
+    recognized = set(FITS_KEYWORD_ALIASES.keys())
+    unrecognized = [
+        k
+        for k in raw_header
+        if k.upper() not in recognized
+        and k.upper() not in STRUCTURAL_KEYWORDS
+        and not k.upper().startswith("NAXIS")
+    ]
+
+    return {
+        "canonical": canonical,
+        "unrecognized_keywords": unrecognized,
+    }
 
 
 @router.get("/stats")

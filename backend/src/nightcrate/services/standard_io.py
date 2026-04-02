@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 from PIL.ExifTags import TAGS
 
+from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 
 
@@ -132,10 +133,20 @@ def read_header(file_path: Path) -> list[dict]:
 
     try:
         with Image.open(file_path) as img:
-            cards.append({"key": "Format", "value": img.format or "Unknown", "comment": ""})
-            cards.append({"key": "Mode", "value": img.mode, "comment": "Color mode"})
-            cards.append({"key": "Width", "value": str(img.width), "comment": "pixels"})
-            cards.append({"key": "Height", "value": str(img.height), "comment": "pixels"})
+            for key, val, comment in [
+                ("Format", img.format or "Unknown", ""),
+                ("Mode", img.mode, "Color mode"),
+                ("Width", str(img.width), "pixels"),
+                ("Height", str(img.height), "pixels"),
+            ]:
+                cards.append(
+                    {
+                        "key": key,
+                        "value": val,
+                        "comment": comment,
+                        "description": get_keyword_description(key),
+                    }
+                )
 
             exif = getattr(img, "_getexif", lambda: None)()
             if exif:
@@ -146,11 +157,25 @@ def read_header(file_path: Path) -> list[dict]:
                             value = str(value)
                         else:
                             continue
-                    cards.append({"key": tag_name, "value": str(value)[:200], "comment": ""})
+                    cards.append(
+                        {
+                            "key": tag_name,
+                            "value": str(value)[:200],
+                            "comment": "",
+                            "description": get_keyword_description(tag_name),
+                        }
+                    )
 
             if hasattr(img, "text"):
                 for key, value in img.text.items():
-                    cards.append({"key": key, "value": str(value)[:200], "comment": "PNG text"})
+                    cards.append(
+                        {
+                            "key": key,
+                            "value": str(value)[:200],
+                            "comment": "PNG text",
+                            "description": get_keyword_description(key),
+                        }
+                    )
 
             return cards
     except Exception:
@@ -162,12 +187,22 @@ def read_header(file_path: Path) -> list[dict]:
 
     with tifffile.TiffFile(str(file_path)) as tif:
         page = tif.pages[0]
-        cards.append({"key": "Format", "value": "TIFF", "comment": ""})
-        cards.append({"key": "Mode", "value": str(page.dtype), "comment": "Data type"})
-        cards.append({"key": "Width", "value": str(page.imagewidth), "comment": "pixels"})
-        cards.append({"key": "Height", "value": str(page.imagelength), "comment": "pixels"})
-        cards.append({"key": "SamplesPerPixel", "value": str(page.samplesperpixel), "comment": ""})
-        cards.append({"key": "BitsPerSample", "value": str(page.bitspersample), "comment": ""})
+        for key, val, comment in [
+            ("Format", "TIFF", ""),
+            ("Mode", str(page.dtype), "Data type"),
+            ("Width", str(page.imagewidth), "pixels"),
+            ("Height", str(page.imagelength), "pixels"),
+            ("SamplesPerPixel", str(page.samplesperpixel), ""),
+            ("BitsPerSample", str(page.bitspersample), ""),
+        ]:
+            cards.append(
+                {
+                    "key": key,
+                    "value": val,
+                    "comment": comment,
+                    "description": get_keyword_description(key),
+                }
+            )
 
     return cards
 

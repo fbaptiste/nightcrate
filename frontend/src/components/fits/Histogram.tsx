@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Checkbox from "@mui/material/Checkbox";
 import FormControlLabel from "@mui/material/FormControlLabel";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { fetchHistogram } from "@/api/images";
@@ -412,32 +414,15 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
         </Box>
 
         {/* Log/Linear scale selector */}
-        <Box sx={{ display: "flex", gap: 0.5 }}>
-          {(["Log", "Linear"] as const).map((label) => {
-            const active = label === "Log" ? logScale : !logScale;
-            return (
-              <Typography
-                key={label}
-                component="button"
-                onClick={() => { userToggledScale.current = true; setLogScale(label === "Log"); }}
-                sx={{
-                  fontSize: "0.65rem",
-                  color: active ? "text.primary" : "text.secondary",
-                  fontWeight: active ? 600 : 400,
-                  cursor: active ? "default" : "pointer",
-                  border: "none",
-                  bgcolor: "transparent",
-                  textDecoration: active ? "none" : "underline",
-                  fontFamily: "inherit",
-                  p: 0,
-                  "&:hover": active ? {} : { color: "text.primary" },
-                }}
-              >
-                {label}
-              </Typography>
-            );
-          })}
-        </Box>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={logScale ? "log" : "linear"}
+          onChange={(_, v) => { if (v) { userToggledScale.current = true; setLogScale(v === "log"); } }}
+        >
+          <ToggleButton value="log" sx={{ fontSize: "0.65rem", py: 0.25 }}>Log</ToggleButton>
+          <ToggleButton value="linear" sx={{ fontSize: "0.65rem", py: 0.25 }}>Linear</ToggleButton>
+        </ToggleButtonGroup>
       </Box>
       </Box>
 

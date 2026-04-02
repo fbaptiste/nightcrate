@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
@@ -23,6 +23,7 @@ import {
   fetchExtensions,
   fetchHeader,
   fetchImageStats,
+  fetchMetadata,
   fetchRecentFiles,
   isVirtualPath,
   recordRecentFile,
@@ -53,15 +54,30 @@ function formatDateObs(raw: string | null): string | null {
   }).format(d);
 }
 
-function SidebarSection({ label, sx }: { label: string; sx?: object }) {
+function SidebarSection({ label, children, defaultOpen = true, open: controlledOpen, onToggle, sx }: {
+  label: string; children?: React.ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; sx?: object;
+}) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isOpen = controlledOpen ?? internalOpen;
+  const toggle = () => {
+    const next = !isOpen;
+    setInternalOpen(next);
+    onToggle?.(next);
+  };
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, pt: 1.5, pb: 0.5, ...sx }}>
-      <Box sx={{ width: 8, borderBottom: 1, borderColor: "text.secondary", opacity: 0.3 }} />
-      <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", flexShrink: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-        {label}
-      </Typography>
-      <Box sx={{ flex: 1, borderBottom: 1, borderColor: "text.secondary", opacity: 0.3 }} />
-    </Box>
+    <>
+      <Box
+        onClick={toggle}
+        sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, pt: 1.5, pb: 0.5, cursor: "pointer", userSelect: "none", ...sx }}
+      >
+        <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
+        <Typography variant="caption" color="secondary.main" sx={{ fontSize: "0.65rem", flexShrink: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+          {isOpen ? label : `${label} ▸`}
+        </Typography>
+        <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
+      </Box>
+      {isOpen && children}
+    </>
   );
 }
 
@@ -142,6 +158,12 @@ export function ImageViewerPage() {
   const headerQuery = useQuery({
     queryKey: ["header", activePath, selectedHdu],
     queryFn: () => fetchHeader(activePath, selectedHdu),
+    enabled: activePath !== "",
+  });
+
+  const metadataQuery = useQuery({
+    queryKey: ["metadata", activePath, selectedHdu],
+    queryFn: () => fetchMetadata(activePath, selectedHdu),
     enabled: activePath !== "",
   });
 
@@ -500,7 +522,7 @@ export function ImageViewerPage() {
       {hasFile && selectedExtInfo?.has_image && tab === 0 && (
         <Box
           sx={{
-            width: isColor && !isLinked && linked.stretch === "stf" ? 600 : 220,
+            width: 220,
             flexShrink: 0,
             borderLeft: 1,
             borderColor: "divider",
@@ -511,22 +533,46 @@ export function ImageViewerPage() {
           }}
         >
           {/* Key fields summary — curated header info */}
-          <SidebarSection label="Image Info" />
+          <SidebarSection label="Image Info">
           {(() => {
-            const keyFields = ["OBJECT", "FILTER", "EXPTIME", "GAIN", "CCD-TEMP", "INSTRUME", "TELESCOP"];
-            const cards = (headerQuery.data ?? []).filter((c) => keyFields.includes(c.key));
-            return cards.length > 0 ? (
-              <Box sx={{ px: 1.5, py: 0.5 }}>
-                <table style={{ borderCollapse: "collapse", fontSize: "0.65rem", fontFamily: monoFontFamily }}>
-                  <tbody>
-                    {cards.map((c) => (
-                      <tr key={c.key}>
-                        <td style={{ color: "var(--mui-palette-text-secondary)", paddingRight: 8, whiteSpace: "nowrap" }}>{c.key}</td>
-                        <td>{c.value.replace(/^'|'$/g, "")}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            const meta = metadataQuery.data?.canonical;
+            if (!meta || Object.keys(meta).length === 0) {
+              return (
+                <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, py: 0.5, fontSize: "0.65rem" }}>
+                  No metadata available
+                </Typography>
+              );
+            }
+            const displayFields: [string, string][] = [
+              ["object_name", "Object"],
+              ["filter_name", "Filter"],
+              ["exposure_time", "Exposure"],
+              ["gain", "Gain"],
+              ["sensor_temp", "Sensor"],
+              ["camera_name", "Camera"],
+              ["telescope_name", "Telescope"],
+              ["focal_length", "Focal Len"],
+              ["frame_type", "Type"],
+            ];
+            const rows = displayFields
+              .filter(([key]) => meta[key] != null && String(meta[key]).trim() !== "")
+              .map(([key, label]) => {
+                let val: React.ReactNode = String(meta[key]);
+                if (key === "exposure_time") val = `${meta[key]}s`;
+                if (key === "sensor_temp") val = `${meta[key]}\u00B0C`;
+                if (key === "focal_length") {
+                  val = <>{Number(meta[key]).toFixed(0)} mm{meta["focal_ratio"] != null && <span style={{ color: "var(--mui-palette-text-secondary)" }}> (f/{Number(meta["focal_ratio"]).toFixed(1)})</span>}</>;
+                }
+                return { label, val };
+              });
+            return rows.length > 0 ? (
+              <Box sx={{ px: 1.5, py: 0.5, display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, rowGap: 0.125, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
+                {rows.map(({ label, val }) => (
+                  <Fragment key={label}>
+                    <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", whiteSpace: "nowrap" }}>{label}</Typography>
+                    <Typography sx={{ fontSize: "inherit", fontFamily: "inherit" }}>{val}</Typography>
+                  </Fragment>
+                ))}
               </Box>
             ) : (
               <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, py: 0.5, fontSize: "0.65rem" }}>
@@ -534,9 +580,10 @@ export function ImageViewerPage() {
               </Typography>
             );
           })()}
+          </SidebarSection>
 
           {/* Image Size section */}
-          <SidebarSection label="Image Size" />
+          <SidebarSection label="Image Size">
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, px: 1.5, py: 1 }}>
             <Button
               variant="outlined"
@@ -560,11 +607,11 @@ export function ImageViewerPage() {
               {(currentZoom * 100).toFixed(0)}%
             </Typography>
           </Box>
+          </SidebarSection>
 
           {/* Stretch section — for stretchable formats */}
           {hasStretch && (
-            <>
-              <SidebarSection label="Stretch" />
+            <SidebarSection label="Stretch" defaultOpen={false}>
               <StretchControls
                 isColor={isColor}
                 linked={linked}
@@ -575,35 +622,11 @@ export function ImageViewerPage() {
                 onLinkedToggle={handleLinkedToggle}
                 onReset={handleReset}
               />
-            </>
+            </SidebarSection>
           )}
 
-          {/* Pixel inspector toggle + readout */}
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, pt: 1.5, pb: 0.5 }}>
-            <Box sx={{ width: 8, borderBottom: 1, borderColor: "text.secondary", opacity: 0.3 }} />
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", flexShrink: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-              Pixel Inspector
-            </Typography>
-            <Box sx={{ flex: 1, borderBottom: 1, borderColor: "text.secondary", opacity: 0.3 }} />
-            <Box
-              component="button"
-              onClick={() => { setPixelInspectorOn((v) => !v); setPixelData(null); }}
-              sx={{
-                fontSize: "0.65rem",
-                color: pixelInspectorOn ? "primary.main" : "text.secondary",
-                cursor: "pointer",
-                border: "none",
-                bgcolor: "transparent",
-                fontFamily: "inherit",
-                fontWeight: pixelInspectorOn ? 600 : 400,
-                p: 0,
-                flexShrink: 0,
-              }}
-            >
-              {pixelInspectorOn ? "ON" : "OFF"}
-            </Box>
-          </Box>
-          {pixelInspectorOn && (
+          {/* Pixel inspector — enabled when expanded */}
+          <SidebarSection label="Pixel Inspector" defaultOpen={false} open={pixelInspectorOn} onToggle={(v) => { setPixelInspectorOn(v); if (!v) setPixelData(null); }}>
             <Box sx={{ px: 1.5, py: 0.5 }}>
               {/* Magnified patch view with zoom slider */}
               <Box sx={{ mb: 0.75, display: "flex", alignItems: "stretch", gap: 0.75, justifyContent: "center" }}>
@@ -724,12 +747,11 @@ export function ImageViewerPage() {
                 </tbody>
               </table>
             </Box>
-          )}
+          </SidebarSection>
 
           {/* Pixel statistics — shown when stats are available */}
           {statsQuery.data && (
-            <>
-              <SidebarSection label="Statistics" />
+            <SidebarSection label="Statistics">
               <Box sx={{ px: 1.5, py: 0.5, display: "flex", flexDirection: "column", gap: 1 }}>
                 {statsQuery.data.channels.map((ch, i) => {
                   const label = statsQuery.data!.color ? ["R", "G", "B"][i] ?? `${i}` : "L";
@@ -800,23 +822,24 @@ export function ImageViewerPage() {
                   </Box>
                 )}
               </Box>
-            </>
+            </SidebarSection>
           )}
 
           {/* Spacer pushes help to bottom */}
           <Box sx={{ flexGrow: 1 }} />
 
           {/* Help tips */}
-          <SidebarSection label="Help" />
-          <Box sx={{ px: 1.5, pb: 1.5 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", display: "block", lineHeight: 2 }}>
-              Scroll to zoom<br />
-              Click + drag to pan<br />
-              F &mdash; fit to window<br />
-              1 &mdash; 1:1 pixel zoom<br />
-              {"\u2318"}O / Ctrl+O &mdash; browse files
-            </Typography>
-          </Box>
+          <SidebarSection label="Help" defaultOpen={false}>
+            <Box sx={{ px: 1.5, pb: 1.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", display: "block", lineHeight: 2 }}>
+                Scroll to zoom<br />
+                Click + drag to pan<br />
+                F &mdash; fit to window<br />
+                1 &mdash; 1:1 pixel zoom<br />
+                {"\u2318"}O / Ctrl+O &mdash; browse files
+              </Typography>
+            </Box>
+          </SidebarSection>
         </Box>
       )}
 
