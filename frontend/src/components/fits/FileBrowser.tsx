@@ -300,36 +300,34 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
                 </Typography>
               )}
               {activeArchive && (
-                <>
-                  <Chip
-                    icon={<FolderZipIcon sx={{ fontSize: "0.85rem" }} />}
-                    label={activeArchive.split("/").pop()}
-                    size="small"
-                    onClick={() => setArchiveSubdir("")}
-                    sx={{ fontSize: "0.75rem", height: 20 }}
-                  />
-                  {archiveSubdir && archiveSubdir.split("/").filter(Boolean).map((seg, i, parts) => {
-                    const subPath = parts.slice(0, i + 1).join("/");
-                    const isLast = i === parts.length - 1;
-                    return isLast ? (
-                      <Typography key={subPath} color="text.primary" sx={{ fontSize: "0.8rem" }}>
-                        {seg}
-                      </Typography>
-                    ) : (
-                      <Link
-                        key={subPath}
-                        component="button"
-                        underline="hover"
-                        color="inherit"
-                        onClick={() => setArchiveSubdir(subPath)}
-                        sx={{ fontSize: "0.8rem" }}
-                      >
-                        {seg}
-                      </Link>
-                    );
-                  })}
-                </>
+                <Chip
+                  icon={<FolderZipIcon sx={{ fontSize: "0.85rem" }} />}
+                  label={activeArchive.split("/").pop()}
+                  size="small"
+                  onClick={() => setArchiveSubdir("")}
+                  sx={{ fontSize: "0.75rem", height: 20 }}
+                />
               )}
+              {activeArchive && archiveSubdir && archiveSubdir.split("/").filter(Boolean).map((seg, i, parts) => {
+                const subPath = parts.slice(0, i + 1).join("/");
+                const isLast = i === parts.length - 1;
+                return isLast ? (
+                  <Typography key={subPath} color="text.primary" sx={{ fontSize: "0.8rem" }}>
+                    {seg}
+                  </Typography>
+                ) : (
+                  <Link
+                    key={subPath}
+                    component="button"
+                    underline="hover"
+                    color="inherit"
+                    onClick={() => setArchiveSubdir(subPath)}
+                    sx={{ fontSize: "0.8rem" }}
+                  >
+                    {seg}
+                  </Link>
+                );
+              })}
             </Breadcrumbs>
           )}
 
