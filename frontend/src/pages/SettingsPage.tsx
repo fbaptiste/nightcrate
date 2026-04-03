@@ -1,4 +1,5 @@
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import FormControl from "@mui/material/FormControl";
@@ -9,10 +10,18 @@ import Select from "@mui/material/Select";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchCacheSize, clearCache } from "@/api/aberration";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 export function SettingsPage() {
   const { settings, update } = useSettingsStore();
+  const queryClient = useQueryClient();
+  const cacheQuery = useQuery({
+    queryKey: ["aberration-cache-size"],
+    queryFn: fetchCacheSize,
+  });
+  const cacheMB = cacheQuery.data ? (cacheQuery.data.bytes / (1024 * 1024)).toFixed(2) : "…";
 
   if (!settings) {
     return <Typography sx={{ p: 3 }} color="text.secondary">Loading…</Typography>;
@@ -84,6 +93,33 @@ export function SettingsPage() {
               <FormHelperText>
                 Limit parallel processing cores. Leave blank to use all available cores minus one.
               </FormHelperText>
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Aberration Cache */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 2, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
+              Aberration Cache
+            </Typography>
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <Box>
+                <Typography variant="body1">Cache Size</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {cacheMB} MB used by cached star detection results
+                </Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={async () => {
+                  await clearCache();
+                  queryClient.invalidateQueries({ queryKey: ["aberration-cache-size"] });
+                }}
+              >
+                Clear All
+              </Button>
             </Box>
           </CardContent>
         </Card>

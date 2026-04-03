@@ -7,13 +7,27 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nightcrate.api import files, images, settings
+from nightcrate.api import aberration, files, images, settings
+from nightcrate.core.config import get_settings
 from nightcrate.db.migrations import apply_migrations
+from nightcrate.db.session import get_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     apply_migrations()
+    # Purge stale aberration cache entries
+    try:
+        app_settings = await get_settings()
+        ttl_days = app_settings.aberration_cache_ttl_days
+        async with get_db() as conn:
+            await conn.execute(
+                "DELETE FROM aberration_analysis WHERE created_at < datetime('now', ?)",
+                (f"-{ttl_days} days",),
+            )
+            await conn.commit()
+    except Exception:
+        pass  # Non-fatal — don't block startup
     yield
 
 
@@ -26,6 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(aberration.router)
 app.include_router(files.router)
 app.include_router(images.router)
 app.include_router(settings.router)

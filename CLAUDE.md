@@ -172,6 +172,40 @@ Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects
 - Stretch is applied server-side — frontend sends stretch params as query parameters and receives a rendered PNG
 - The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration
 
+## Aberration Inspector
+
+Analyses star shapes across the field to diagnose optical aberrations (tilt, coma, field curvature). Tab in the image viewer.
+
+**Architecture:**
+- `services/aberration.py` — star detection via `sep`, sample grid computation, isolated star filtering
+- `api/aberration.py` — REST endpoints for analyze, samples, crop, cache management
+- `db/migrations/0004.aberration_cache.sql` — SQLite cache for analysis results (TTL-based)
+- Frontend: `components/aberration/` — CropGrid, AberrationToolbar, AberrationSidebar, ZoneOverlayMap
+- `components/SidebarSection.tsx` — shared collapsible section component (used by both image viewer and aberration sidebar)
+
+**Star Detection:**
+- Uses `sep` (Source Extractor) for extraction + `sep.flux_radius` for HFR
+- Filters: min SNR, min/max FWHM, max semi-major (extended object rejection), sep blending flag, min neighbor separation
+- All filters user-adjustable via toolbar sliders, debounced 500ms
+- Different filter settings = different cache key
+
+**Sample Grid:**
+- Evenly-spaced squares (not full-coverage tiling) — `image_width / (samples_across * 1.5)` square size
+- Per-square metrics aggregated from all isolated stars within the region
+- Squares draggable in reference thumbnail with client-side re-aggregation (no backend call)
+- Drag constrained to row/column lane via midpoint boundaries
+
+**Tile Preview:**
+- Centered popup with auto-stretched region crop
+- SVG overlay: rotated ellipses (eccentricity), dotted direction lines (elongation angle), eccentricity labels
+- Star hover tooltip with zoomed crop + per-star metrics
+
+**Caching:**
+- Analysis results stored in `aberration_analysis` + `aberration_stars` tables
+- Cache key: (file_path, hdu, settings_json)
+- TTL: `aberration_cache_ttl_days` setting (default 30), cleanup on startup
+- Settings page: cache size display + Clear All button
+
 ## Dependency & License Policy
 
 NightCrate is licensed under **GPL-3.0**. Before adding any new dependency (Python or JS/TS):

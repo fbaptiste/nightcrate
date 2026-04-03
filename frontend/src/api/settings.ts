@@ -13,6 +13,7 @@ export interface Settings {
   max_worker_cores: number | null;
   last_browse_path: string | null;
   browser_favorites: BrowserFavorite[];
+  aberration_cache_ttl_days: number;
 }
 
 export function fetchSettings(): Promise<Settings> {
