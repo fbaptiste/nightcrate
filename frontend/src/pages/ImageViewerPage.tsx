@@ -237,6 +237,7 @@ export function ImageViewerPage() {
     setPerChannel(DEFAULT_PER_CHANNEL);
     setIsLinked(true);
     setSelectedSquare(null);
+    appliedDefaultsFor.current = "";
     // For project images, show a readable path in the input
     if (isVirtualPath(path) && displayName) {
       const projPath = path.split("::")[0];
