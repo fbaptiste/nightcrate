@@ -19,6 +19,7 @@ dependencies = [
     "defusedxml>=0.7.1",
     "tifffile>=2026.3.3",
     "sep>=1.4.1",
+    "py7zr>=1.1.0",
 ]
 
 [project.scripts]
