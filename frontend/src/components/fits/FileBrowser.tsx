@@ -264,7 +264,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
 
           {/* Breadcrumb navigation */}
           {result && (
-            <Breadcrumbs sx={{ pb: 1, fontSize: "0.8rem", "& ol": { flexWrap: "wrap", pl: 2, textIndent: "-16px" } }}>
+            <Breadcrumbs sx={{ pb: 1, fontSize: "0.8rem", "& ol": { flexWrap: "wrap", rowGap: 0.5 }, "& li": { whiteSpace: "nowrap" } }}>
               <Link
                 component="button"
                 underline="hover"
