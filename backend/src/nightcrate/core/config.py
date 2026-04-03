@@ -19,6 +19,7 @@ class Settings(BaseModel):
     max_worker_cores: int | None = None  # None → cpu_count - 1
     last_browse_path: str | None = None
     browser_favorites: list[BrowserFavorite] = []
+    aberration_cache_ttl_days: int = 30
 
 
 async def get_settings() -> Settings:

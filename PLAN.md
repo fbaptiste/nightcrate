@@ -760,195 +760,141 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 
 ---
 
-## v0.5.0 — Aberration Inspector: Star Detection & Crop Grid
+## v0.5.0 — Aberration Inspector: Star Detection & Sample Grid
 
-**Goal:** Detect and measure star shapes across a single astronomical image, display results in a zoned crop grid. The core feature that directly replaces N.I.N.A.'s basic 3x3 aberration inspector with a configurable, quantitative alternative.
+**Goal:** Detect and measure isolated star shapes across an astronomical image, display results in evenly-spaced sample squares with per-square aggregated metrics. Replaces N.I.N.A.'s basic aberration inspector with a configurable, interactive tool.
 
-**Status:** Planned
+**Status:** ✅ Complete
 
 ---
 
 ### New Dependencies
 
-- `sep` (LGPL-3.0, already approved) — Source Extractor for star detection and shape measurement. Fast, gives eccentricity + position angle directly. **Requires attribution in README.**
-- `photutils` (BSD 3-Clause, already approved) — fallback for 2D Gaussian/Moffat fitting if needed
+- `sep` (LGPL-3.0, already approved) — Source Extractor for star detection and shape measurement. Fast C library, gives eccentricity + position angle directly. **Attribution added to README.**
 
 ### 1. Backend — Star Detection & Measurement
 
 New service: `services/aberration.py`
 
-- [ ] `detect_stars(fits_path, settings)` — detect stars using `sep`, measure per-star metrics
-- [ ] Per-star output: x, y, FWHM, HFR, eccentricity, elongation_angle_deg, peak_adu, flux, SNR, semi_major, semi_minor
-- [ ] Configurable filters: min_star_snr, max_star_peak_adu, min/max_star_fwhm_px, exclude_saturated
-- [ ] Background subtraction via `sep.Background`
-- [ ] Edge-of-frame exclusion
+- [x] `detect_stars(data, settings)` — detect isolated stars using `sep`, measure per-star metrics
+- [x] Per-star output: x, y, FWHM, HFR, eccentricity, elongation_angle_deg, peak_adu, flux, SNR, semi_major, semi_minor, flag
+- [x] Configurable `DetectionSettings`: detection_threshold, min/max FWHM, min SNR, max peak ADU, max semi_major, min separation
+- [x] Background subtraction via `sep.Background`
+- [x] Edge-of-frame exclusion (`edge_margin_px`)
+- [x] Extended object filtering — rejects sources with semi_major > threshold (galaxy cores, nebula knots)
+- [x] Blended source filtering — rejects sep flag `0x02` (crowded/blended)
+- [x] Isolation filter — rejects stars with neighbor closer than `min_separation_px` (default 20px)
 
-### 2. Backend — Zone Aggregation
+### 2. Backend — Sample Grid Aggregation
 
-- [ ] Group stars into configurable rectangular grid (3x3 through 9x9)
-- [ ] Per-zone: median + mean + std of selected metric, median elongation angle, representative star selection
-- [ ] Cheap re-gridding — no re-analysis needed when grid density changes
+- [x] `compute_sample_grid(analysis, samples_across)` — evenly-spaced squares across the image
+- [x] Square size computed relative to image: `image_width / (samples_across * 1.5)`
+- [x] Rows auto-calculated from image aspect ratio
+- [x] Per-square: star count, star indices, median/mean/std FWHM, median eccentricity, median HFR, median elongation angle
+- [x] Re-gridding without re-analysis (different `samples_across` reuses cached star data)
 
 ### 3. Backend — API Endpoints
 
 New router: `api/aberration.py`
 
-- [ ] `POST /api/aberration/analyze` — trigger analysis of a FITS frame, return star list + global stats
-- [ ] `POST /api/aberration/zones` — compute zone-aggregated stats from prior analysis (re-gridding without re-analysis)
-- [ ] `GET /api/aberration/crop` — return auto-stretched PNG crop around a specific star
+- [x] `POST /api/aberration/analyze` — star detection with DB caching, accepts min_snr, min_fwhm, max_fwhm query params
+- [x] `POST /api/aberration/samples` — compute sample grid, accepts samples_across + filter params, auto-triggers analysis if not cached
+- [x] `GET /api/aberration/crop` — auto-stretched PNG of region (x0, y0, x1, y1 coordinates)
+- [x] `GET /api/aberration/cache/size` — cache size in bytes
+- [x] `DELETE /api/aberration/cache` — purge all cached data
 
 ### 4. Database — Analysis Storage
 
-Migration: `aberration_analysis` and `aberration_stars` tables
+Migration: `0004.aberration_cache.sql`
 
-- [ ] `aberration_analysis`: id, frame_id, created_at, image_width/height, settings_json, global stats, star_count
-- [ ] `aberration_stars`: id, analysis_id, x, y, fwhm, hfr, eccentricity, elongation_angle_deg, peak_adu, flux, snr, semi_major, semi_minor
-- [ ] Index on `(analysis_id)` for fast zone queries
-- [ ] Results cached — re-opening previously analyzed frame is instant
-- [ ] Cache TTL: configurable expiration (default 30 days), stored in settings table
-- [ ] Startup cleanup: purge expired cache entries on app launch
-- [ ] Settings UI: display cache size in MB + "Clear All" button to purge entire aberration cache
-- [ ] API: `GET /api/aberration/cache/size` (returns bytes), `DELETE /api/aberration/cache` (purge all)
+- [x] `aberration_analysis` table: id, file_path, hdu, created_at, image_width/height, settings_json, global stats, star_count
+- [x] `aberration_stars` table: id, analysis_id, per-star metrics (all 12 fields)
+- [x] Indexes on `(analysis_id)` and `(file_path, hdu)`
+- [x] UNIQUE constraint on (file_path, hdu, settings_json) for cache key
+- [x] Cascade delete: removing analysis auto-removes stars
+- [x] Cache TTL: `aberration_cache_ttl_days` setting (default 30 days)
+- [x] Startup cleanup: purge expired entries on app launch
+- [x] Settings page: cache size display in MB + "Clear All" button
 
 ### 5. Frontend — Aberration Inspector Tab
 
-New tab in the Image Viewer (alongside Image and Header tabs).
-
-- [ ] "Aberration" tab in the image viewer tab bar
-- [ ] Tab reuses the currently loaded file — no separate file selection
-- [ ] Right sidebar becomes context-dependent: switches between image viewer controls (histogram, stats, pixel inspector) and aberration inspector controls depending on active tab
+- [x] "Aberration" tab in image viewer tab bar (third tab after Image and Header)
+- [x] Reuses currently loaded file — no separate file selection
+- [x] Context-dependent right sidebar: image viewer controls for Image tab, aberration sidebar for Aberration tab
+- [x] `SidebarSection` extracted to shared component (`components/SidebarSection.tsx`) for consistency
 
 ### 6. Frontend — Toolbar
 
-- [ ] Grid density selector: 3x3, 4x4, 5x5, 7x7, 9x9 (default 5x5)
-- [ ] Metric selector: eccentricity (default), FWHM, HFR, peak ADU, elongation angle
+- [x] Samples-across slider (3–9, default 5) — controls number of sample squares horizontally
+- [x] Metric selector: Eccentricity (default), FWHM, HFR
+- [x] Star filter sliders with tooltips: Min SNR (3–50), Min FWHM (1–10), Max FWHM (10–50)
+- [x] Filters debounced (500ms) to avoid excessive backend calls
+- [x] Different filter settings = different cache key (no stale results)
 
-### 7. Frontend — Crop Grid View
+### 7. Frontend — Reference Thumbnail
 
-- [ ] Grid of square tiles, one per zone
-- [ ] Each tile: auto-stretched star crop (from `/crop`), metric value overlay, background color tint (viridis scale)
-- [ ] Star count per zone in corner
-- [ ] Click zone → expand in sidebar with full stats, star list, mini-histogram
+- [x] Auto-stretched image thumbnail at top of aberration tab
+- [x] Sample squares overlaid at actual image positions
+- [x] Squares are draggable — constrained to their row/column lane (midpoint boundaries prevent overlap)
+- [x] Client-side star re-aggregation on drag end (no backend call needed)
+- [x] Reset button appears when squares are moved (vertically oriented, doesn't shift image)
+- [x] Selected square highlighted with white border (colorblind-safe)
 
-### 8. Frontend — Right Sidebar (Aberration Context)
+### 8. Frontend — Crop Grid View
 
-Replaces the image viewer's right sidebar content when the Aberration tab is active.
+- [x] Evenly-spaced sample tiles showing actual image regions (not single-star crops)
+- [x] Tiles fill available space using CSS grid with `1fr` columns/rows
+- [x] Viridis colorblind-safe color scale on tile borders based on selected metric
+- [x] Color legend bar with min/max values and metric name
+- [x] Metric value + star count overlay at bottom of each tile
+- [x] Hover tooltips with all per-square metrics
+- [x] Click tile opens centered preview popup (640×640px)
 
-- [ ] Global stats: star count, median FWHM, median eccentricity, median HFR
-- [ ] Zone detail (on hover/click): larger crop, full stats, star list, mini-histogram
+### 9. Frontend — Tile Preview Popup
 
-### 9. Tests
+- [x] Centered overlay with fade animation, close button, click-backdrop-to-dismiss
+- [x] Auto-stretched image region with pixelated rendering
+- [x] Toggleable star markers: rotated ellipses reflecting eccentricity + elongation angle
+- [x] Dotted direction lines along major axis (offset below/above ellipse, not through it)
+- [x] Eccentricity labels (`e: 0.35`) on opposite side of star from direction line
+- [x] Labels positioned to stay within bounds (flips side if near edge)
+- [x] Star hover tooltip with 216×216px zoomed crop + per-star metrics (FWHM, ecc, HFR, SNR, peak, angle, a/b)
+- [x] Two-column metrics bar below image (not overlapping)
+- [x] Clicking different tile while preview open switches to new tile
 
-- [ ] Star detection on synthetic test image
-- [ ] Zone aggregation with known star positions
-- [ ] API endpoint tests (analyze, zones, crop)
+### 10. Frontend — Right Sidebar (Aberration Context)
+
+- [x] Uses shared `SidebarSection` component (collapsible, centered title with lines)
+- [x] Global Stats section: star count, median + range for FWHM/eccentricity/HFR, SNR range
+- [x] Help section (collapsed by default): grouped into Grid View and Tile Preview with bullet points
+
+### 11. Frontend — Additional Fixes
+
+- [x] FitsImage ResizeObserver fix — prevents black image when switching tabs (container has 0 dimensions when hidden via `display: none`)
+
+### 12. Tests
+
+- [x] Star detection on synthetic image (5 stars, position matching, metric validation)
+- [x] Edge exclusion, SNR filtering, extended object filtering
+- [x] Sample grid aggregation (3×3, 5×5, different counts, coordinate validation, metrics, empty squares)
+- [x] Square size scales with image dimensions
+- [x] API endpoint tests: analyze, samples, crop (region), cache size, cache clear, caching behavior, error cases
+- [x] Total: 241 tests passing
 
 ### v0.5.0 Completion Criteria
 
-- [ ] Star detection produces correct metrics on real FITS sub frame
-- [ ] Crop Grid view matches/exceeds N.I.N.A.'s aberration inspector
-- [ ] Re-gridding is instant (no re-analysis)
-- [ ] Previously analyzed frames load instantly from cache
-- [ ] All visualizations use colorblind-safe palette (viridis)
-- [ ] `uv run pytest` passes
-- [ ] `npm run build` succeeds
+- [x] Star detection produces correct metrics on real FITS sub frame
+- [x] Sample grid shows actual image regions with aggregated star metrics
+- [x] Isolated star filtering excludes extended objects, blended sources, and crowded stars
+- [x] User-adjustable filters (Min SNR, Min/Max FWHM) with debounced updates
+- [x] Draggable sample squares with client-side re-aggregation
+- [x] Tile preview with star ellipses, direction lines, and hover tooltips
+- [x] Previously analyzed frames load instantly from cache
+- [x] All visualizations use colorblind-safe palette (viridis) with white selection borders
+- [x] `uv run pytest` passes — 241 tests
+- [x] `npm run build` succeeds
 
 ---
-
-## v0.5.1 — Aberration Inspector: Heatmap & Vector Field Views
-
-**Goal:** Add spatial visualization modes to the aberration inspector — a color heatmap overlay and a vector field showing elongation direction/magnitude. These make optical aberration patterns immediately visible at a glance. No new backend logic — purely frontend views consuming existing v0.5.0 API data.
-
-**Status:** Planned
-
----
-
-### 1. Frontend — Toolbar Additions
-
-- [ ] View mode toggle: Crop Grid | Heatmap | Vector Field
-- [ ] Star filter controls (expandable): min/max SNR, max peak ADU, min/max FWHM, min stars per zone
-
-### 2. Frontend — Heatmap View
-
-- [ ] Full FITS frame (auto-stretched grayscale, downscaled for viewport)
-- [ ] Semi-transparent color grid overlay (viridis colormap, per zone median of selected metric)
-- [ ] Adjustable opacity slider (default ~40%)
-- [ ] Color legend/scale bar
-- [ ] Zone tooltip on hover
-
-### 3. Frontend — Vector Field View
-
-- [ ] Full frame background with arrow overlay
-- [ ] One arrow per zone: direction = median elongation angle, length = median eccentricity
-- [ ] Arrow color = eccentricity magnitude (viridis)
-- [ ] Zones with eccentricity < 0.1 → small circles (round stars)
-- [ ] Arrow scale legend
-
-### 4. Tests
-
-- [ ] Heatmap renders with correct zone colors for known metric values
-- [ ] Vector field arrows match expected directions for synthetic star data
-
-### v0.5.1 Completion Criteria
-
-- [ ] Heatmap shows clear spatial pattern for tilted optics
-- [ ] Vector Field shows parallel arrows for tilt, radial for coma
-- [ ] View mode toggle switches cleanly between all three views
-- [ ] Star filters update all views in real time
-- [ ] All visualizations use colorblind-safe palette (viridis)
-- [ ] `uv run pytest` passes
-- [ ] `npm run build` succeeds
-
----
-
-## v0.5.2 — Aberration Inspector: Diagnosis Engine & Export
-
-**Goal:** Automated pattern-matching diagnosis that names the aberration (tilt, coma, field curvature, etc.) with confidence levels, plain-English explanations, and fix suggestions. Plus data export for offline analysis.
-
-**Status:** Planned
-
----
-
-### 1. Backend — Diagnosis Engine
-
-- [ ] Pattern matching on the zone-aggregated vector field (eccentricity + elongation angle per zone)
-- [ ] Diagnose: tilt, coma, astigmatism, field curvature, backspacing error, tracking/guiding error
-- [ ] Per diagnosis: type, confidence (0-100%), plain-English description, fix suggestion
-- [ ] "Ruled out" entries explaining why certain aberrations were excluded
-- [ ] Logic:
-  - Std of elongation angles < 15° → tilt or tracking
-  - Eccentricity gradient across field → tilt
-  - Eccentricity correlates with distance from center → field curvature or coma
-  - Radial elongation directions → coma; tangential → field curvature
-  - Uniform direction aligned with RA axis → tracking error
-
-### 2. Backend — API Endpoint
-
-- [ ] `POST /api/aberration/diagnose` — run pattern-matching diagnosis on zone data
-
-### 3. Frontend — Right Sidebar Additions
-
-- [ ] Diagnosis panel: cards with type, confidence bar, description, suggestion
-- [ ] "Ruled out" section (collapsible)
-- [ ] "How to read this" help tooltip
-
-### 4. Frontend — Export
-
-- [ ] Export: PNG screenshot, CSV per-star, CSV per-zone
-
-### 5. Tests
-
-- [ ] Diagnosis pattern matching (synthetic patterns for each aberration type)
-- [ ] API endpoint test (diagnose)
-
-### v0.5.2 Completion Criteria
-
-- [ ] Diagnosis correctly identifies tilt in a known-tilted frame
-- [ ] "Ruled out" explanations are coherent and helpful
-- [ ] Export produces valid CSV with all expected columns
-- [ ] PNG export captures current view accurately
-- [ ] `uv run pytest` passes
-- [ ] `npm run build` succeeds
 
 ---
 
@@ -957,6 +903,18 @@ Replaces the image viewer's right sidebar content when the Aberration tab is act
 ## Future Features to Consider
 
 Features that depend on cross-frame infrastructure or are beyond the current scope. Captured here for future planning.
+
+### Aberration Inspector — Heatmap & Vector Field Views
+
+- **Heatmap view:** Full frame with semi-transparent color overlay (viridis) showing per-sample-square median of selected metric. Adjustable opacity slider, color legend, tooltip on hover.
+- **Vector field view:** Full frame with arrow/line overlay per sample square — direction = median elongation angle, length = median eccentricity. Squares with eccentricity < 0.1 shown as small circles (round stars). Arrow scale legend.
+- **View mode toggle:** Crop Grid | Heatmap | Vector Field in toolbar.
+
+### Aberration Inspector — Diagnosis Engine & Export
+
+- **Automated diagnosis:** Pattern matching on sample square metrics to identify tilt, coma, astigmatism, field curvature, backspacing error, tracking/guiding error. Per diagnosis: type, confidence (0-100%), plain-English description, fix suggestion. "Ruled out" entries explaining why certain aberrations were excluded.
+- **Diagnosis logic:** Std of elongation angles < 15° → tilt or tracking. Eccentricity gradient across field → tilt. Eccentricity correlates with distance from center → field curvature or coma. Radial elongation directions → coma; tangential → field curvature. Uniform direction aligned with RA axis → tracking error.
+- **Export:** PNG screenshot, CSV per-star, CSV per-sample-square.
 
 ### Multi-Frame Comparison (Aberration Inspector)
 

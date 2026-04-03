@@ -232,6 +232,17 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       onPixelHover?.(null);
     }
 
+    // ── Re-render when container resizes (e.g. tab becomes visible) ────────
+
+    const [, forceRender] = useState(0);
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      const observer = new ResizeObserver(() => forceRender((n) => n + 1));
+      observer.observe(container);
+      return () => observer.disconnect();
+    }, []);
+
     // ── Notify parent of zoom changes ──────────────────────────────────────
 
     const ez = effectiveZoom();

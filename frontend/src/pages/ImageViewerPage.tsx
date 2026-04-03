@@ -32,6 +32,12 @@ import {
   type RecentFile,
   type StretchParams,
 } from "@/api/images";
+import { analyzeFrame, fetchSamples, reaggregateSquare, DEFAULT_STAR_FILTERS, type SampleSquare, type AberrationMetric, type StarFilters } from "@/api/aberration";
+import { AberrationToolbar } from "@/components/aberration/AberrationToolbar";
+import { CropGrid } from "@/components/aberration/CropGrid";
+import { AberrationSidebar } from "@/components/aberration/AberrationSidebar";
+import { ZoneOverlayMap } from "@/components/aberration/ZoneOverlayMap";
+import { SidebarSection } from "@/components/SidebarSection";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import { FitsHeaderTable } from "@/components/fits/FitsHeaderTable";
 import { FitsImage, type FitsImageHandle, type PixelInfo } from "@/components/fits/FitsImage";
@@ -54,32 +60,6 @@ function formatDateObs(raw: string | null): string | null {
   }).format(d);
 }
 
-function SidebarSection({ label, children, defaultOpen = true, open: controlledOpen, onToggle, sx }: {
-  label: string; children?: React.ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; sx?: object;
-}) {
-  const [internalOpen, setInternalOpen] = useState(defaultOpen);
-  const isOpen = controlledOpen ?? internalOpen;
-  const toggle = () => {
-    const next = !isOpen;
-    setInternalOpen(next);
-    onToggle?.(next);
-  };
-  return (
-    <>
-      <Box
-        onClick={toggle}
-        sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, pt: 1.5, pb: 0.5, cursor: "pointer", userSelect: "none", ...sx }}
-      >
-        <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
-        <Typography variant="caption" color="secondary.main" sx={{ fontSize: "0.65rem", flexShrink: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-          {isOpen ? label : `${label} ▸`}
-        </Typography>
-        <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
-      </Box>
-      {isOpen && children}
-    </>
-  );
-}
 
 const DEFAULT_PER_CHANNEL: [StretchParams, StretchParams, StretchParams] = [
   { ...DEFAULT_STRETCH },
@@ -133,6 +113,13 @@ export function ImageViewerPage() {
   const debouncedLinked = useDebounce(linked, 300);
   const debouncedPerChannel = useDebounce(perChannel, 300);
 
+  // Aberration state
+  const [samplesAcross, setSamplesAcross] = useState(5);
+  const [aberrationMetric, setAberrationMetric] = useState<AberrationMetric>("eccentricity");
+  const [starFilters, setStarFilters] = useState<StarFilters>({ ...DEFAULT_STAR_FILTERS });
+  const [selectedSquare, setSelectedSquare] = useState<SampleSquare | null>(null);
+  const [customSquares, setCustomSquares] = useState<SampleSquare[] | null>(null);
+
   // Recent files
   const recentQuery = useQuery({
     queryKey: ["recent-files"],
@@ -166,6 +153,46 @@ export function ImageViewerPage() {
     queryFn: () => fetchMetadata(activePath, selectedHdu),
     enabled: activePath !== "",
   });
+
+  const debouncedFilters = useDebounce(starFilters, 500);
+
+  const aberrationQuery = useQuery({
+    queryKey: ["aberration", activePath, selectedHdu, debouncedFilters],
+    queryFn: () => analyzeFrame(activePath, selectedHdu, debouncedFilters),
+    enabled: activePath !== "" && tab === 2,
+  });
+
+  const samplesQuery = useQuery({
+    queryKey: ["samples", activePath, selectedHdu, samplesAcross, debouncedFilters],
+    queryFn: () => fetchSamples(activePath, selectedHdu, samplesAcross, debouncedFilters),
+    enabled: aberrationQuery.data != null,
+  });
+
+  // Reset custom square positions when a fresh grid arrives from the backend
+  useEffect(() => {
+    setCustomSquares(null);
+    setSelectedSquare(null);
+  }, [samplesQuery.data]);
+
+  // Active squares: custom positions if user has dragged, otherwise backend defaults
+  const activeSquares = customSquares ?? samplesQuery.data?.squares ?? [];
+
+  // Handle square drag — re-aggregate stars client-side
+  const handleSquareMoved = useCallback((movedSq: SampleSquare) => {
+    if (!aberrationQuery.data) return;
+    const stars = aberrationQuery.data.stars;
+    const base = customSquares ?? samplesQuery.data?.squares ?? [];
+    const updated = base.map((sq) =>
+      sq.row === movedSq.row && sq.col === movedSq.col
+        ? reaggregateSquare(movedSq, stars)
+        : sq,
+    );
+    setCustomSquares(updated);
+    // Update selected square if it was the one moved
+    if (selectedSquare?.row === movedSq.row && selectedSquare?.col === movedSq.col) {
+      setSelectedSquare(updated.find((s) => s.row === movedSq.row && s.col === movedSq.col) ?? null);
+    }
+  }, [aberrationQuery.data, customSquares, samplesQuery.data?.squares, selectedSquare]);
 
   // Auto-apply stretch once when stats first arrive for a new file.
   // Uses a ref to track which path+hdu combo we've already applied defaults for,
@@ -209,6 +236,7 @@ export function ImageViewerPage() {
     setLinked({ ...DEFAULT_STRETCH });
     setPerChannel(DEFAULT_PER_CHANNEL);
     setIsLinked(true);
+    setSelectedSquare(null);
     // For project images, show a readable path in the input
     if (isVirtualPath(path) && displayName) {
       const projPath = path.split("::")[0];
@@ -381,6 +409,7 @@ export function ImageViewerPage() {
               >
                 <Tab label="Image" disabled={!selectedExtInfo?.has_image} />
                 <Tab label="Header" />
+                <Tab label="Aberration" disabled={!hasFile || !selectedExtInfo?.has_image} />
               </Tabs>
               {/* Format and linearity indicators */}
               <Box sx={{ display: "flex", gap: 0.5, ml: "auto", mr: 2 }}>
@@ -487,6 +516,70 @@ export function ImageViewerPage() {
                 <FitsHeaderTable cards={headerQuery.data} />
               )}
             </Box>
+
+            {/* Aberration tab content */}
+            <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 2 ? "flex" : "none", flexDirection: "column" }}>
+              <AberrationToolbar
+                samplesAcross={samplesAcross}
+                onSamplesChange={(n) => { setSamplesAcross(n); setSelectedSquare(null); }}
+                metric={aberrationMetric}
+                onMetricChange={setAberrationMetric}
+                filters={starFilters}
+                onFiltersChange={setStarFilters}
+                analyzing={aberrationQuery.isFetching}
+              />
+              <Box sx={{ flexGrow: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
+                {/* Reference image with sample square markers */}
+                {aberrationQuery.data && samplesQuery.data && (
+                  <Box sx={{ height: 200, flexShrink: 0, display: "flex", justifyContent: "center", alignItems: "center", bgcolor: "#000", p: 0.5, gap: 0.5 }}>
+                    <ZoneOverlayMap
+                      path={activePath}
+                      hdu={selectedHdu}
+                      linked={debouncedLinked}
+                      grid={samplesQuery.data}
+                      squares={activeSquares}
+                      selectedSquare={selectedSquare}
+                      onSquareClick={setSelectedSquare}
+                      onSquareMoved={handleSquareMoved}
+                    />
+                    <Tooltip title="Reset all squares to original positions" arrow>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => { setCustomSquares(null); setSelectedSquare(null); }}
+                        sx={{
+                          fontSize: "0.6rem", minWidth: 0, px: 0.5, writingMode: "vertical-rl", textOrientation: "mixed",
+                          color: customSquares ? "text.secondary" : "transparent",
+                          pointerEvents: customSquares ? "auto" : "none",
+                        }}
+                      >
+                        Reset
+                      </Button>
+                    </Tooltip>
+                  </Box>
+                )}
+                {samplesQuery.data && aberrationQuery.data && (
+                  <CropGrid
+                    grid={samplesQuery.data}
+                    squares={activeSquares}
+                    stars={aberrationQuery.data.stars}
+                    path={activePath}
+                    hdu={selectedHdu}
+                    metric={aberrationMetric}
+                    selectedSquare={selectedSquare}
+                    onSquareClick={setSelectedSquare}
+                  />
+                )}
+                {aberrationQuery.isLoading && (
+                  <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%" }}>
+                    <CircularProgress size={32} />
+                  </Box>
+                )}
+                {aberrationQuery.isError && (
+                  <Alert severity="error" sx={{ m: 2 }}>{String(aberrationQuery.error)}</Alert>
+                )}
+              </Box>
+            </Box>
           </>
         )}
 
@@ -518,8 +611,8 @@ export function ImageViewerPage() {
         )}
       </Box>
 
-      {/* Right sidebar — only when an image is open and on the Image tab */}
-      {hasFile && selectedExtInfo?.has_image && tab === 0 && (
+      {/* Right sidebar — only when an image is open and on the Image or Aberration tab */}
+      {hasFile && selectedExtInfo?.has_image && (tab === 0 || tab === 2) && (
         <Box
           sx={{
             width: 220,
@@ -532,6 +625,8 @@ export function ImageViewerPage() {
             flexDirection: "column",
           }}
         >
+          {tab === 0 && (
+          <>
           {/* Key fields summary — curated header info */}
           <SidebarSection label="Image Info">
           {(() => {
@@ -840,6 +935,13 @@ export function ImageViewerPage() {
               </Typography>
             </Box>
           </SidebarSection>
+          </>
+          )}
+          {tab === 2 && (
+            <AberrationSidebar
+              analysis={aberrationQuery.data ?? null}
+            />
+          )}
         </Box>
       )}
 

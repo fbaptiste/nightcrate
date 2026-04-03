@@ -1,6 +1,6 @@
 [project]
 name = "nightcrate"
-version = "0.4.1"
+version = "0.5.0"
 description = "Astrophotography session cataloging and analysis"
 requires-python = ">=3.14"
 dependencies = [
@@ -18,6 +18,7 @@ dependencies = [
     "zstandard>=0.25.0",
     "defusedxml>=0.7.1",
     "tifffile>=2026.3.3",
+    "sep>=1.4.1",
 ]
 
 [project.scripts]
