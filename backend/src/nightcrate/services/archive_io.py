@@ -62,7 +62,7 @@ def is_archive(path: Path) -> bool:
 def list_contents(archive_path: Path, subdir: str = "") -> list[dict]:
     """List entries at a directory level within an archive (TOC only).
 
-    Returns a list of dicts with keys: name, is_dir, size (None for dirs).
+    Returns a list of dicts with keys: name, type ("file"|"dir"), size (None for dirs).
     """
     if subdir:
         _validate_path(subdir, "subdir")
@@ -137,9 +137,9 @@ def _build_level_entries(
 
     entries: list[dict] = []
     for d in sorted(dirs):
-        entries.append({"name": d, "is_dir": True, "size": None})
+        entries.append({"name": d, "type": "dir", "size": None})
     for name in sorted(files):
-        entries.append({"name": name, "is_dir": False, "size": files[name]})
+        entries.append({"name": name, "type": "file", "size": files[name]})
     return entries
 
 

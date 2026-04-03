@@ -134,12 +134,12 @@ class TestListContentsZip:
     def test_root_dirs_marked(self, tmp_zip_archive: Path):
         entries = list_contents(tmp_zip_archive)
         lights = next(e for e in entries if e["name"] == "lights")
-        assert lights["is_dir"] is True
+        assert lights["type"] == "dir"
 
     def test_root_file_not_dir(self, tmp_zip_archive: Path):
         entries = list_contents(tmp_zip_archive)
         notes = next(e for e in entries if e["name"] == "notes.txt")
-        assert notes["is_dir"] is False
+        assert notes["type"] == "file"
 
     def test_file_has_size(self, tmp_zip_archive: Path):
         entries = list_contents(tmp_zip_archive)
@@ -161,7 +161,7 @@ class TestListContentsZip:
         names = {e["name"] for e in entries}
         assert names == {"image_001.fits", "image_002.fits"}
         for e in entries:
-            assert e["is_dir"] is False
+            assert e["type"] == "file"
             assert e["size"] > 0
 
     def test_darks_subdir(self, tmp_zip_archive: Path):
