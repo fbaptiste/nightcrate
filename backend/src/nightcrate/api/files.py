@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 
 from nightcrate.api.images import ALL_EXTENSIONS
-from nightcrate.services import pxiproject_io
+from nightcrate.services import archive_io, pxiproject_io
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 PROJECT_EXTENSIONS = {".pxiproject"}
@@ -88,12 +88,52 @@ async def browse(
                 size = 0
             files.append({"name": entry.name, "path": str(entry), "size": size})
 
+    archives: list[dict] = []
+    for entry in sorted(p.iterdir(), key=lambda e: e.name.lower()):
+        if entry.name.startswith("."):
+            continue
+        if entry.is_file() and archive_io.is_archive(entry):
+            archives.append({"name": entry.name, "path": str(entry)})
+
     return {
         "path": str(p),
         "parent": str(p.parent) if p != p.parent else None,
         "dirs": dirs,
         "files": files,
         "projects": projects,
+        "archives": archives,
+    }
+
+
+@router.get("/browse-archive")
+async def browse_archive(
+    path: str = Query(...),
+    subdir: str = Query(default=""),
+) -> dict:
+    """List contents of an archive at the given subdirectory level."""
+    archive_path = Path(path).expanduser().resolve()
+    if not archive_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Archive not found: {path}")
+    if not archive_io.is_archive(archive_path):
+        raise HTTPException(status_code=400, detail=f"Not a recognized archive: {path}")
+
+    entries = archive_io.list_contents(archive_path, subdir)
+    dirs = [e for e in entries if e["type"] == "dir"]
+    files = [e for e in entries if e["type"] == "file"]
+
+    if not subdir:
+        parent = None
+    elif "/" in subdir:
+        parent = subdir.rsplit("/", 1)[0]
+    else:
+        parent = ""
+
+    return {
+        "path": str(archive_path),
+        "subdir": subdir,
+        "parent": parent,
+        "dirs": dirs,
+        "files": files,
     }
 
 

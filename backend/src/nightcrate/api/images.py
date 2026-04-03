@@ -2,13 +2,14 @@
 
 from dataclasses import asdict
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from nightcrate.db.session import get_db
-from nightcrate.services import fits_io, pxiproject_io, standard_io, xisf_io
+from nightcrate.services import archive_io, fits_io, pxiproject_io, standard_io, xisf_io
 from nightcrate.services.fits_header_map import (
     FITS_KEYWORD_ALIASES,
     extract_metadata,
@@ -64,23 +65,72 @@ def _file_type(p: Path) -> str:
     )
 
 
-def _resolve_path(path: str) -> tuple[Path, str, int]:
+def _file_type_from_ext(entry_name: str) -> str:
+    """Determine file type from extension only (no disk check)."""
+    suffix = Path(entry_name).suffix.lower()
+    if suffix in FITS_EXTENSIONS:
+        return "fits"
+    if suffix in XISF_EXTENSIONS:
+        return "xisf"
+    if suffix in STANDARD_EXTENSIONS:
+        if suffix in {".tif", ".tiff"}:
+            return "tiff_unknown"
+        return "standard"
+    raise HTTPException(status_code=422, detail=f"Unsupported format: {entry_name}")
+
+
+def _detect_tiff_type_from_buf(buf: BinaryIO) -> str:
+    import tifffile
+
+    try:
+        with tifffile.TiffFile(buf) as tif:
+            is_float = tif.pages[0].dtype.kind == "f"
+        buf.seek(0)
+        return "float_tiff" if is_float else "standard"
+    except Exception:
+        buf.seek(0)
+        return "standard"
+
+
+def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int]:
     """Validate and resolve a file path.
 
     Returns (resolved_path, file_type, image_index).
     image_index is only meaningful for pxiproject virtual paths; 0 otherwise.
     """
     if "::" in path:
-        parts = path.rsplit("::", 1)
+        left, right = path.rsplit("::", 1)
+        left_path = Path(left).resolve()
+
+        # pxiproject: right side is an integer index
         try:
-            project_dir, idx = Path(parts[0]).resolve(), int(parts[1])
+            idx = int(right)
+            if not left_path.is_absolute():
+                raise HTTPException(status_code=400, detail="Path must be absolute")
+            if not left_path.is_dir():
+                raise HTTPException(status_code=404, detail=f"Project not found: {left_path}")
+            return left_path, "pxiproject", idx
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid virtual path: {path}")
-        if not project_dir.is_absolute():
-            raise HTTPException(status_code=400, detail="Path must be absolute")
-        if not project_dir.is_dir():
-            raise HTTPException(status_code=404, detail=f"Project not found: {project_dir}")
-        return project_dir, "pxiproject", idx
+            pass
+
+        # Archive handling
+        if archive_io.is_archive(left_path):
+            if not left_path.is_absolute():
+                raise HTTPException(status_code=400, detail="Path must be absolute")
+            if not left_path.is_file():
+                raise HTTPException(status_code=404, detail=f"Archive not found: {left}")
+            try:
+                buf = archive_io.extract_entry(left_path, right)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Entry not found: {right}")
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            ft = _file_type_from_ext(right)
+            if ft == "tiff_unknown":
+                ft = _detect_tiff_type_from_buf(buf)
+            return buf, ft, 0
+
+        raise HTTPException(status_code=400, detail=f"Invalid virtual path: {path}")
 
     p = Path(path)
     if not p.is_absolute():
@@ -90,7 +140,7 @@ def _resolve_path(path: str) -> tuple[Path, str, int]:
     return p, _file_type(p), 0
 
 
-def _load_image_data(p: Path, ft: str, idx: int, hdu: int):
+def _load_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int):
     """Load normalized image data for any supported file type."""
     if ft == "pxiproject":
         return pxiproject_io.load_image_data(p, idx)
