@@ -9,8 +9,9 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.3.0 — XISF Support + Image I/O Refactor](#v030--xisf-support--image-io-refactor) ✅
 - [v0.3.0a — UI Polish + Frontend Redesign](#v030a--ui-polish--frontend-redesign) ✅
 - [v0.4.0 — PixInsight Project Browsing](#v040--pixinsight-project-browsing) ✅
-- [v0.4.1 — Image Histogram](#v041--image-histogram)
-- [v0.5.0 — Aberration Inspector](#v050--aberration-inspector)
+- [v0.4.1 — Image Histogram](#v041--image-histogram) ✅
+- [v0.5.0 — Aberration Inspector](#v050--aberration-inspector-star-detection--sample-grid) ✅
+- [v0.6.0 — Archive Browser](#v060--archive-browser)
 - [Future Features to Consider](#future-features-to-consider)
 - [Appendix: Library Reference](#appendix-library-reference)
 
@@ -907,6 +908,8 @@ Migration: `0004.aberration_cache.sql`
 **Status:** Planned
 
 **Design spec:** [`docs/superpowers/specs/2026-04-02-archive-browser-design.md`](docs/superpowers/specs/2026-04-02-archive-browser-design.md)
+
+**Implementation plan:** [`docs/superpowers/plans/2026-04-02-archive-browser.md`](docs/superpowers/plans/2026-04-02-archive-browser.md)
 
 ---
 
