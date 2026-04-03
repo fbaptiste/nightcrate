@@ -766,6 +766,8 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 
 **Status:** ✅ Complete
 
+**Implementation plan:** [`docs/superpowers/plans/2026-04-02-aberration-inspector.md`](docs/superpowers/plans/2026-04-02-aberration-inspector.md)
+
 ---
 
 ### New Dependencies
@@ -898,6 +900,78 @@ Migration: `0004.aberration_cache.sql`
 
 ---
 
+## v0.6.0 — Archive Browser
+
+**Goal:** Treat archive files (zip, tar, tar.gz, tar.bz2, tar.zst, 7z) as transparent folders in the file browser. Users navigate into archives, browse subdirectories, and select image files — which are extracted in-memory and loaded through the existing image pipeline with full viewer support.
+
+**Status:** Planned
+
+**Design spec:** [`docs/superpowers/specs/2026-04-02-archive-browser-design.md`](docs/superpowers/specs/2026-04-02-archive-browser-design.md)
+
+---
+
+### New Dependencies
+
+- `py7zr` (LGPL-2.1+) — pure Python 7z archive extraction. No external binaries required.
+
+### 1. Backend — Archive I/O Service
+
+New service: `services/archive_io.py`
+
+- [ ] `is_archive(path)` — detect archive files by extension
+- [ ] `list_contents(archive_path, subdir)` — list entries at a directory level within the archive (TOC only, no extraction)
+- [ ] `extract_entry(archive_path, entry_path)` — extract single file to `BytesIO` buffer
+- [ ] Format dispatch: zip (`zipfile`), tar variants (`tarfile`), 7z (`py7zr`)
+- [ ] Compound suffix detection (`.tar.gz`, `.tar.bz2`, `.tar.zst`) — longest-first matching
+- [ ] Directory synthesis from entry paths (archives don't always have explicit dir entries)
+- [ ] Path traversal validation — reject `..`, absolute paths, suspicious entry names
+
+### 2. Backend — I/O Service Widening
+
+Widen load/read functions from `Path` to `Path | BinaryIO`:
+
+- [ ] `fits_io.py` — `load_image_data`, `read_header`, `list_extensions`
+- [ ] `xisf_io.py` — `load_image_data`, `read_header`, `list_extensions`
+- [ ] `standard_io.py` — `load_image_data`, `load_image_as_array`, `read_header`, `list_extensions`
+- [ ] New helper: `_file_type_from_ext(entry_name)` — extension-only type detection (no disk check)
+- [ ] Float TIFF detection on in-memory data via `tifffile.TiffFile(buf)`
+
+### 3. Backend — API Endpoints
+
+- [ ] `GET /api/files/browse` — add `archives` array to response (alongside existing `dirs`, `files`, `projects`)
+- [ ] `GET /api/files/browse-archive?path={archive}&subdir={subdir}` — new endpoint, returns `{ path, subdir, parent, dirs, files }`
+- [ ] `_resolve_path()` in `api/images.py` — new archive branch for `::` virtual paths
+- [ ] Aberration cache key support for archive virtual paths
+
+### 4. Frontend — File Browser
+
+- [ ] Archive entries in directory listing with `FolderZipIcon`
+- [ ] New browse mode: `activeArchive` + `archiveSubdir` state
+- [ ] `browseArchive(path, subdir)` API client function
+- [ ] Directory navigation within archives (click to descend, back to ascend)
+- [ ] Virtual path construction: `${archivePath}::${entryPath}`
+- [ ] Breadcrumb with archive name distinguished by zip icon
+- [ ] Back button: within archive → up one level, at root → exit archive
+
+### 5. Tests
+
+- [ ] `archive_io` unit tests: list contents (zip, tar.gz, 7z), extract entry, directory synthesis, path traversal rejection
+- [ ] I/O service tests: verify `BytesIO` input works for FITS, XISF, standard formats
+- [ ] API tests: browse-archive endpoint, virtual path resolution, image loading from archive
+- [ ] Frontend build passes
+
+### v0.6.0 Completion Criteria
+
+- [ ] All six archive formats browsable in file browser
+- [ ] Full directory navigation within archives
+- [ ] Images from archives load with full viewer support (stretch, histogram, stats, aberration, pixel inspector)
+- [ ] In-memory extraction — no temp files on disk
+- [ ] Path traversal protection on archive entry names
+- [ ] `uv run pytest` passes
+- [ ] `npm run build` succeeds
+
+---
+
 ---
 
 ## Future Features to Consider
@@ -997,6 +1071,7 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 | tifffile | BSD 3-Clause | TIFF reading/writing if DSLR or other TIFF sources are needed |
 | requests | Apache 2.0 | HTTP client (astroquery dependency; useful for external APIs) |
 | D3.js | ISC | Complex interactive charts (PHD2 guiding graph, session timeline) |
+| py7zr | LGPL-2.1+ | 7z archive extraction. Pure Python, no external binaries. ⚠ LGPL — OK as Python import (dynamic linking). **Requires attribution.** |
 | rawpy | MIT (wrapper) / LibRaw: LGPL-2.1 or CDDL-1.0 | Camera RAW file support. ⚠ LibRaw LGPL — OK via dynamic linking in Python wheels. **Requires attribution.** Note: GPL demosaic packs excluded from standard builds. |
 
 ### Not Recommended
