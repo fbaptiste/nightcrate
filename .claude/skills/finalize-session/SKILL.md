@@ -15,13 +15,18 @@ End-of-session workflow: bump version, run all checks, commit, push, open PR.
 - If unclear, ask the user before proceeding
 - State the version number in the response
 
-### 2. Bump version
+### 2. Sync docs
+
+- Invoke the `sync-docs` skill (or follow its process if not available via Skill tool)
+- This updates PLAN.md, CLAUDE.md, README.md, and memory before committing
+
+### 3. Bump version
 
 - Update `VERSION` file to the target version
 - Update `backend/pyproject.toml` version field to match
 - If both already match the target, skip silently
 
-### 3. Run all checks
+### 4. Run all checks
 
 Run the pre-commit checklist (all must pass before committing):
 
@@ -36,18 +41,18 @@ Run the pre-commit checklist (all must pass before committing):
 
 If any check fails, fix the issue and re-run. Do not proceed to commit with failing checks.
 
-### 4. Commit
+### 5. Commit
 
 - Stage all relevant files (do NOT stage `instructions/`, `docs/superpowers/`, or files in `.gitignore`)
 - Write a descriptive commit message summarizing the work done
 - End the commit message with: `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
 - Use a HEREDOC for the commit message
 
-### 5. Push
+### 6. Push
 
 - Push the current branch to origin with `-u` flag
 
-### 6. Open PR
+### 7. Open PR
 
 - Use `gh pr create` targeting `main`
 - PR title: short, under 70 chars, describes the version/feature
@@ -74,7 +79,7 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
   - If the user has confirmed they tested something, check it off with `✅ User`
   - Be specific about what manual testing is needed based on the actual changes (e.g., "Test aberration tab with galaxy image" not just "test UI")
 
-### 7. Report
+### 8. Report
 
 - State the version number that was set
 - Show the PR URL
