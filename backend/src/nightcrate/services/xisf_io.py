@@ -8,6 +8,7 @@ import base64
 import struct
 import zlib
 from pathlib import Path
+from typing import BinaryIO
 from xml.etree.ElementTree import Element  # nosec B405 — type only, parsing via defusedxml
 
 import defusedxml.ElementTree as ET
@@ -91,9 +92,15 @@ def _decompress_blocks(raw: bytes, codec: str, uncompressed_size: int, item_size
     return data
 
 
-def _parse_xml_header(file_path: Path) -> tuple[Element, int]:
+def _parse_xml_header(source: Path | BinaryIO) -> tuple[Element, int]:
     """Read and parse the XISF XML header. Returns (root_element, header_end_offset)."""
-    with open(file_path, "rb") as f:
+    if isinstance(source, Path):
+        f = open(source, "rb")  # noqa: SIM115
+        owns_file = True
+    else:
+        f = source
+        owns_file = False
+    try:
         magic = f.read(8)
         if magic != XISF_MAGIC:
             raise XISFError(f"Not an XISF file (bad magic: {magic!r})")
@@ -103,6 +110,9 @@ def _parse_xml_header(file_path: Path) -> tuple[Element, int]:
         header_len = struct.unpack("<I", header_len_bytes)[0]
 
         xml_bytes = f.read(header_len)
+    finally:
+        if owns_file:
+            f.close()
 
     # Strip null padding
     xml_text = xml_bytes.decode("utf-8").rstrip("\x00")
@@ -117,13 +127,13 @@ def _find_primary_image(root: Element) -> Element:
     raise XISFError("No <Image> element found in XISF header")
 
 
-def load_image_data(file_path: Path, hdu: int = 0) -> np.ndarray:
+def load_image_data(source: Path | BinaryIO, hdu: int = 0) -> np.ndarray:
     """Load image data as float64 array normalized to [0, 1].
 
     Returns shape (H, W) for Gray or (3, H, W) for RGB.
     The hdu parameter selects among multiple Image elements (0-indexed).
     """
-    root, _ = _parse_xml_header(file_path)
+    root, _ = _parse_xml_header(source)
 
     images = list(root.iter(_tag("Image")))
     if hdu < 0 or hdu >= len(images):
@@ -157,9 +167,13 @@ def load_image_data(file_path: Path, hdu: int = 0) -> np.ndarray:
     compression = img_elem.get("compression", "")
 
     # Read raw data from file
-    with open(file_path, "rb") as f:
-        f.seek(data_offset)
-        raw = f.read(data_size)
+    if isinstance(source, Path):
+        with open(source, "rb") as f:  # noqa: SIM115
+            f.seek(data_offset)
+            raw = f.read(data_size)
+    else:
+        source.seek(data_offset)
+        raw = source.read(data_size)
 
     if len(raw) != data_size:
         raise XISFError(f"Expected {data_size} bytes at offset {data_offset}, got {len(raw)}")
@@ -208,14 +222,14 @@ def _extract_property_value(prop: Element) -> str:
     return prop.text
 
 
-def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
+def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
     """Read metadata as {key, value, comment} dicts.
 
     First extracts <FITSKeyword> elements (same format as FITS headers).
     Then extracts <Property> elements with scalar values, mapping XISF property IDs
     to equivalent FITS-style keywords for display.
     """
-    root, _ = _parse_xml_header(file_path)
+    root, _ = _parse_xml_header(source)
 
     images = list(root.iter(_tag("Image")))
     if hdu < 0 or hdu >= len(images):
@@ -280,9 +294,9 @@ def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
     return cards
 
 
-def list_extensions(file_path: Path) -> list[dict]:
+def list_extensions(source: Path | BinaryIO) -> list[dict]:
     """List all Image elements in the XISF file."""
-    root, _ = _parse_xml_header(file_path)
+    root, _ = _parse_xml_header(source)
 
     result = []
     for i, img in enumerate(root.iter(_tag("Image"))):

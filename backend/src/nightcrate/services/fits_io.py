@@ -1,6 +1,7 @@
 """FITS file I/O — loading image data, reading headers, listing extensions."""
 
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 from astropy.io import fits
@@ -15,12 +16,12 @@ def _hdu_index(hdul: fits.HDUList, hdu: int) -> fits.ImageHDU | fits.PrimaryHDU:
     return hdul[hdu]
 
 
-def load_image_data(file_path: Path, hdu: int = 0) -> np.ndarray:
+def load_image_data(source: Path | BinaryIO, hdu: int = 0) -> np.ndarray:
     """Load image data as float64 array normalized to [0, 1].
 
     Returns shape (H, W) for mono or (3, H, W) for color.
     """
-    with fits.open(file_path, memmap=False) as hdul:
+    with fits.open(source, memmap=False) as hdul:
         target = _hdu_index(hdul, hdu)
         if target.data is None:
             raise ValueError(f"HDU {hdu} contains no image data")
@@ -28,9 +29,9 @@ def load_image_data(file_path: Path, hdu: int = 0) -> np.ndarray:
     return reshape_color(data)
 
 
-def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
+def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
     """Return all header cards for the given HDU as {key, value, comment, description} dicts."""
-    with fits.open(file_path, memmap=False) as hdul:
+    with fits.open(source, memmap=False) as hdul:
         target = _hdu_index(hdul, hdu)
         return [
             {
@@ -43,9 +44,9 @@ def read_header(file_path: Path, hdu: int = 0) -> list[dict]:
         ]
 
 
-def list_extensions(file_path: Path) -> list[dict]:
+def list_extensions(source: Path | BinaryIO) -> list[dict]:
     """Return a summary of all HDUs: index, name, type, has_image."""
-    with fits.open(file_path, memmap=False) as hdul:
+    with fits.open(source, memmap=False) as hdul:
         result = []
         for i, hdu_obj in enumerate(hdul):
             has_image = (

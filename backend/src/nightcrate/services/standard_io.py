@@ -7,6 +7,7 @@ with stretch support, same as FITS/XISF.
 
 import io
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 from PIL import Image
@@ -16,28 +17,45 @@ from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 
 
-def is_float_tiff(file_path: Path) -> bool:
+def is_float_tiff(source: Path | BinaryIO) -> bool:
     """Check if a TIFF file contains float data (needs scientific treatment)."""
-    if file_path.suffix.lower() not in (".tif", ".tiff"):
+    if isinstance(source, Path) and source.suffix.lower() not in (".tif", ".tiff"):
         return False
-    try:
-        import tifffile
+    if isinstance(source, Path):
+        try:
+            import tifffile
 
-        with tifffile.TiffFile(str(file_path)) as tif:
-            page = tif.pages[0]
-            return page.dtype.kind == "f"  # float dtype
-    except Exception:
-        return False
+            with tifffile.TiffFile(source) as tif:
+                page = tif.pages[0]
+                return page.dtype.kind == "f"  # float dtype
+        except Exception:
+            return False
+    else:
+        # BinaryIO — try tifffile; non-TIFF data will raise
+        try:
+            import tifffile
+
+            with tifffile.TiffFile(source) as tif:
+                page = tif.pages[0]
+                result = page.dtype.kind == "f"
+            source.seek(0)
+            return result
+        except Exception:
+            try:
+                source.seek(0)
+            except Exception:
+                pass
+            return False
 
 
-def load_image_data(file_path: Path) -> np.ndarray:
+def load_image_data(source: Path | BinaryIO) -> np.ndarray:
     """Load a float TIFF as a normalized [0, 1] array for the stretch pipeline.
 
     Returns shape (H, W) for grayscale or (3, H, W) for RGB.
     """
     import tifffile
 
-    arr = tifffile.imread(str(file_path))
+    arr = tifffile.imread(source)
 
     # Handle various shapes: (H, W), (H, W, C), (C, H, W)
     if arr.ndim == 2:
@@ -54,16 +72,16 @@ def load_image_data(file_path: Path) -> np.ndarray:
     return reshape_color(normalized)
 
 
-def load_image_as_array(file_path: Path) -> np.ndarray:
+def load_image_as_array(source: Path | BinaryIO) -> np.ndarray:
     """Load any standard image (PNG/JPEG/TIFF) as a normalized [0, 1] float array.
 
     Used for histogram computation. Returns (H, W) for grayscale or (3, H, W) for RGB.
     For float TIFFs, delegates to load_image_data. For 8/16-bit images, uses Pillow.
     """
-    if is_float_tiff(file_path):
-        return load_image_data(file_path)
+    if isinstance(source, Path) and is_float_tiff(source):
+        return load_image_data(source)
 
-    with Image.open(file_path) as img:
+    with Image.open(source) as img:
         if img.mode in ("RGBA", "PA"):
             img = img.convert("RGB")
         elif img.mode in ("I", "I;16"):
@@ -88,13 +106,13 @@ def load_image_as_array(file_path: Path) -> np.ndarray:
     return arr
 
 
-def load_image_bytes(file_path: Path) -> bytes:
+def load_image_bytes(source: Path | BinaryIO) -> bytes:
     """Load the image and return it as PNG bytes (for consistent frontend display).
 
     For float TIFFs that Pillow can't handle, falls back to tifffile.
     """
     try:
-        with Image.open(file_path) as img:
+        with Image.open(source) as img:
             if img.mode not in ("RGB", "RGBA", "L"):
                 img = img.convert("RGB")
             buf = io.BytesIO()
@@ -103,10 +121,10 @@ def load_image_bytes(file_path: Path) -> bytes:
     except Exception:
         # Fallback for float TIFFs — this path shouldn't normally be hit
         # since float TIFFs are routed through the stretch pipeline
-        if file_path.suffix.lower() in (".tif", ".tiff"):
+        if isinstance(source, Path) and source.suffix.lower() in (".tif", ".tiff"):
             import tifffile
 
-            arr = tifffile.imread(str(file_path))
+            arr = tifffile.imread(source)
             if arr.dtype.kind == "f":
                 arr = np.clip(arr * 255, 0, 255).astype(np.uint8)
             if arr.ndim == 3 and arr.shape[2] in (3, 4):
@@ -123,7 +141,7 @@ def load_image_bytes(file_path: Path) -> bytes:
         raise
 
 
-def read_header(file_path: Path) -> list[dict]:
+def read_header(source: Path | BinaryIO) -> list[dict]:
     """Extract metadata as {key, value, comment} dicts.
 
     Reads EXIF data from JPEG/TIFF or text chunks from PNG.
@@ -132,7 +150,7 @@ def read_header(file_path: Path) -> list[dict]:
     cards: list[dict] = []
 
     try:
-        with Image.open(file_path) as img:
+        with Image.open(source) as img:
             for key, val, comment in [
                 ("Format", img.format or "Unknown", ""),
                 ("Mode", img.mode, "Color mode"),
@@ -179,13 +197,13 @@ def read_header(file_path: Path) -> list[dict]:
 
             return cards
     except Exception:
-        if file_path.suffix.lower() not in (".tif", ".tiff"):
+        if not isinstance(source, Path) or source.suffix.lower() not in (".tif", ".tiff"):
             raise
 
     # Fallback for float TIFFs
     import tifffile
 
-    with tifffile.TiffFile(str(file_path)) as tif:
+    with tifffile.TiffFile(source) as tif:
         page = tif.pages[0]
         for key, val, comment in [
             ("Format", "TIFF", ""),
@@ -207,10 +225,10 @@ def read_header(file_path: Path) -> list[dict]:
     return cards
 
 
-def list_extensions(file_path: Path) -> list[dict]:
+def list_extensions(source: Path | BinaryIO) -> list[dict]:
     """Standard images have a single 'extension'."""
     try:
-        with Image.open(file_path) as img:
+        with Image.open(source) as img:
             return [
                 {
                     "index": 0,
@@ -220,12 +238,12 @@ def list_extensions(file_path: Path) -> list[dict]:
                 }
             ]
     except Exception:
-        if file_path.suffix.lower() not in (".tif", ".tiff"):
+        if not isinstance(source, Path) or source.suffix.lower() not in (".tif", ".tiff"):
             raise
 
     import tifffile
 
-    with tifffile.TiffFile(str(file_path)) as tif:
+    with tifffile.TiffFile(source) as tif:
         page = tif.pages[0]
         return [
             {
