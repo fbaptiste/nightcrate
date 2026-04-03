@@ -50,7 +50,7 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
 
 ### 6. Commit
 
-- Stage all relevant files (do NOT stage `instructions/`, `docs/superpowers/`, or files in `.gitignore`)
+- Stage all relevant files (do NOT stage `instructions/` or files in `.gitignore`)
 - Write a descriptive commit message summarizing the work done
 - End the commit message with: `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
 - Use a HEREDOC for the commit message
