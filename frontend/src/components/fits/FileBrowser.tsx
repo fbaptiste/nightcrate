@@ -21,15 +21,18 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import FolderIcon from "@mui/icons-material/Folder";
+import FolderZipIcon from "@mui/icons-material/FolderZip";
 import ImageIcon from "@mui/icons-material/Image";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import LinkIcon from "@mui/icons-material/Link";
 import StorageIcon from "@mui/icons-material/Storage";
 import HomeIcon from "@mui/icons-material/Home";
 import {
+  browseArchive,
   browseDirectory,
   browseProject,
   fetchVolumes,
+  type ArchiveBrowseResult,
   type BrowseResult,
   type ProjectBrowseResult,
   type VolumeEntry,
@@ -65,6 +68,12 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const [projectResult, setProjectResult] = useState<ProjectBrowseResult | null>(null);
   const [projectLoading, setProjectLoading] = useState(false);
+
+  // Archive browsing state
+  const [activeArchive, setActiveArchive] = useState<string | null>(null);
+  const [archiveSubdir, setArchiveSubdir] = useState<string>("");
+  const [archiveResult, setArchiveResult] = useState<ArchiveBrowseResult | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; folderName: string; folderPath: string } | null>(null);
@@ -131,11 +140,34 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
       });
   }, [activeProject]);
 
+  // Fetch archive contents when entering/navigating within an archive
+  useEffect(() => {
+    if (!activeArchive) {
+      setArchiveResult(null);
+      return;
+    }
+    setArchiveLoading(true);
+    setSelectedFile(null);
+    browseArchive(activeArchive, archiveSubdir)
+      .then((data) => {
+        setArchiveResult(data);
+        setArchiveLoading(false);
+      })
+      .catch((err) => {
+        setError(err.message || "Failed to browse archive");
+        setArchiveLoading(false);
+        setActiveArchive(null);
+      });
+  }, [activeArchive, archiveSubdir]);
+
   function navigateTo(path: string) {
     setCurrentPath(path);
     setSelectedFile(null);
     setSelectedDisplayName(null);
     setActiveProject(null);
+    setActiveArchive(null);
+    setArchiveSubdir("");
+    setArchiveResult(null);
   }
 
   function handleOpen() {
@@ -244,7 +276,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
               </Link>
               {pathSegments.map((seg, i) => {
                 const segPath = "/" + pathSegments.slice(0, i + 1).join("/");
-                const isLast = i === pathSegments.length - 1 && !activeProject;
+                const isLast = i === pathSegments.length - 1 && !activeProject && !activeArchive;
                 return isLast ? (
                   <Typography key={segPath} color="text.primary" sx={{ fontSize: "0.8rem" }}>
                     {seg}
@@ -267,6 +299,37 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
                   {activeProject.split("/").pop()}
                 </Typography>
               )}
+              {activeArchive && (
+                <>
+                  <Chip
+                    icon={<FolderZipIcon sx={{ fontSize: "0.85rem" }} />}
+                    label={activeArchive.split("/").pop()}
+                    size="small"
+                    onClick={() => setArchiveSubdir("")}
+                    sx={{ fontSize: "0.75rem", height: 20 }}
+                  />
+                  {archiveSubdir && archiveSubdir.split("/").filter(Boolean).map((seg, i, parts) => {
+                    const subPath = parts.slice(0, i + 1).join("/");
+                    const isLast = i === parts.length - 1;
+                    return isLast ? (
+                      <Typography key={subPath} color="text.primary" sx={{ fontSize: "0.8rem" }}>
+                        {seg}
+                      </Typography>
+                    ) : (
+                      <Link
+                        key={subPath}
+                        component="button"
+                        underline="hover"
+                        color="inherit"
+                        onClick={() => setArchiveSubdir(subPath)}
+                        sx={{ fontSize: "0.8rem" }}
+                      >
+                        {seg}
+                      </Link>
+                    );
+                  })}
+                </>
+              )}
             </Breadcrumbs>
           )}
 
@@ -280,7 +343,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
             <Alert severity="warning" variant="outlined" sx={{ fontSize: "0.85rem" }}>{error}</Alert>
           )}
 
-          {result && !loading && !activeProject && (
+          {result && !loading && !activeProject && !activeArchive && (
             <List
               dense
               sx={{
@@ -336,6 +399,27 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
                 </ListItemButton>
               ))}
 
+              {/* Archives */}
+              {result.archives?.map((archive) => (
+                <ListItemButton
+                  key={archive.path}
+                  onClick={() => {
+                    setActiveArchive(archive.path);
+                    setArchiveSubdir("");
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 36 }}>
+                    <FolderZipIcon fontSize="small" color="primary" />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={archive.name}
+                    secondary="Archive"
+                    primaryTypographyProps={{ fontSize: "0.85rem" }}
+                    secondaryTypographyProps={{ fontSize: "0.7rem" }}
+                  />
+                </ListItemButton>
+              ))}
+
               {/* Image files */}
               {result.files.map((file) => (
                 <ListItemButton
@@ -360,7 +444,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
               ))}
 
               {/* Empty state */}
-              {result.dirs.length === 0 && result.files.length === 0 && result.projects.length === 0 && (
+              {result.dirs.length === 0 && result.files.length === 0 && result.projects.length === 0 && (result.archives?.length ?? 0) === 0 && (
                 <Typography sx={{ p: 2 }} color="text.secondary" variant="body2">
                   No directories or image files here
                 </Typography>
@@ -426,6 +510,110 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
           )}
 
           {activeProject && projectLoading && (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+              <CircularProgress size={28} />
+            </Box>
+          )}
+
+          {/* Archive browse listing */}
+          {activeArchive && !archiveLoading && archiveResult && (
+            <List
+              dense
+              sx={{
+                flexGrow: 1,
+                overflow: "auto",
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 1,
+              }}
+            >
+              {/* Back: go up within archive or exit archive */}
+              <ListItemButton
+                onClick={() => {
+                  if (archiveResult.parent !== null) {
+                    setArchiveSubdir(archiveResult.parent);
+                  } else {
+                    setActiveArchive(null);
+                    setArchiveSubdir("");
+                    setArchiveResult(null);
+                  }
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36 }}>
+                  <FolderIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary=".." primaryTypographyProps={{ fontSize: "0.85rem" }} />
+              </ListItemButton>
+
+              {/* Archive directories */}
+              {archiveResult.dirs.map((dir) => {
+                const dirPath = archiveResult.subdir
+                  ? `${archiveResult.subdir}/${dir.name}`
+                  : dir.name;
+                return (
+                  <ListItemButton
+                    key={dir.name}
+                    onClick={() => setArchiveSubdir(dirPath)}
+                  >
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      <FolderIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={dir.name}
+                      primaryTypographyProps={{ fontSize: "0.85rem" }}
+                    />
+                  </ListItemButton>
+                );
+              })}
+
+              {/* Archive files */}
+              {archiveResult.files.map((file) => {
+                const entryPath = archiveResult.subdir
+                  ? `${archiveResult.subdir}/${file.name}`
+                  : file.name;
+                const virtualPath = `${activeArchive}::${entryPath}`;
+                const sizeLabel = file.size !== null
+                  ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+                  : undefined;
+                return (
+                  <ListItemButton
+                    key={file.name}
+                    selected={selectedFile === virtualPath}
+                    onClick={() => {
+                      setSelectedFile(virtualPath);
+                      setSelectedDisplayName(file.name);
+                    }}
+                    onDoubleClick={() => {
+                      onSelect(virtualPath, file.name);
+                      onClose();
+                    }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      <InsertDriveFileIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={file.name}
+                      secondary={sizeLabel}
+                      primaryTypographyProps={{
+                        fontSize: "0.85rem",
+                        fontFamily: "monospace",
+                      }}
+                      secondaryTypographyProps={{ fontSize: "0.75rem" }}
+                    />
+                  </ListItemButton>
+                );
+              })}
+
+              {/* Empty archive directory */}
+              {archiveResult.dirs.length === 0 && archiveResult.files.length === 0 && (
+                <Typography sx={{ p: 2 }} color="text.secondary" variant="body2">
+                  No files in this archive directory
+                </Typography>
+              )}
+            </List>
+          )}
+
+          {activeArchive && archiveLoading && (
             <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
               <CircularProgress size={28} />
             </Box>
