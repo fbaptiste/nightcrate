@@ -78,7 +78,7 @@ def load_image_as_array(source: Path | BinaryIO) -> np.ndarray:
     Used for histogram computation. Returns (H, W) for grayscale or (3, H, W) for RGB.
     For float TIFFs, delegates to load_image_data. For 8/16-bit images, uses Pillow.
     """
-    if isinstance(source, Path) and is_float_tiff(source):
+    if is_float_tiff(source):
         return load_image_data(source)
 
     with Image.open(source) as img:
@@ -121,9 +121,14 @@ def load_image_bytes(source: Path | BinaryIO) -> bytes:
     except Exception:
         # Fallback for float TIFFs — this path shouldn't normally be hit
         # since float TIFFs are routed through the stretch pipeline
-        if isinstance(source, Path) and source.suffix.lower() in (".tif", ".tiff"):
+        is_tiff = (isinstance(source, Path) and source.suffix.lower() in (".tif", ".tiff")) or (
+            not isinstance(source, Path) and is_float_tiff(source)
+        )
+        if is_tiff:
             import tifffile
 
+            if not isinstance(source, Path):
+                source.seek(0)
             arr = tifffile.imread(source)
             if arr.dtype.kind == "f":
                 arr = np.clip(arr * 255, 0, 255).astype(np.uint8)
@@ -197,12 +202,17 @@ def read_header(source: Path | BinaryIO) -> list[dict]:
 
             return cards
     except Exception:
-        if not isinstance(source, Path) or source.suffix.lower() not in (".tif", ".tiff"):
+        is_tiff = (isinstance(source, Path) and source.suffix.lower() in (".tif", ".tiff")) or (
+            not isinstance(source, Path) and is_float_tiff(source)
+        )
+        if not is_tiff:
             raise
 
     # Fallback for float TIFFs
     import tifffile
 
+    if not isinstance(source, Path):
+        source.seek(0)
     with tifffile.TiffFile(source) as tif:
         page = tif.pages[0]
         for key, val, comment in [
@@ -238,11 +248,16 @@ def list_extensions(source: Path | BinaryIO) -> list[dict]:
                 }
             ]
     except Exception:
-        if not isinstance(source, Path) or source.suffix.lower() not in (".tif", ".tiff"):
+        is_tiff = (isinstance(source, Path) and source.suffix.lower() in (".tif", ".tiff")) or (
+            not isinstance(source, Path) and is_float_tiff(source)
+        )
+        if not is_tiff:
             raise
 
     import tifffile
 
+    if not isinstance(source, Path):
+        source.seek(0)
     with tifffile.TiffFile(source) as tif:
         page = tif.pages[0]
         return [

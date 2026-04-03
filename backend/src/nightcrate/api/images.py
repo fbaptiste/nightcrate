@@ -439,20 +439,30 @@ def _resolve_recent_name(raw_path: str, project_cache: dict[str, list[dict]]) ->
         p = Path(raw_path)
         return p.name if p.exists() else None
 
-    project_dir_str, idx_str = raw_path.rsplit("::", 1)
-    project_dir = Path(project_dir_str)
+    left_str, right = raw_path.rsplit("::", 1)
+    left_path = Path(left_str)
+
+    # Archive virtual path: archive.zip::subdir/file.fits
+    if archive_io.is_archive(left_path):
+        if not left_path.is_file():
+            return None
+        entry_name = right.rsplit("/", 1)[-1]
+        return f"{left_path.name} / {entry_name}"
+
+    # Pxiproject virtual path: project.pxiproject::index
+    project_dir = left_path
     if not project_dir.is_dir():
         return None
 
-    if project_dir_str not in project_cache:
+    if left_str not in project_cache:
         try:
-            project_cache[project_dir_str] = pxiproject_io.list_project_images(project_dir)
+            project_cache[left_str] = pxiproject_io.list_project_images(project_dir)
         except Exception:
-            project_cache[project_dir_str] = []
+            project_cache[left_str] = []
 
-    images = project_cache[project_dir_str]
-    idx = int(idx_str) if idx_str.isdigit() else -1
-    img_name = images[idx]["name"] if 0 <= idx < len(images) else idx_str
+    images = project_cache[left_str]
+    idx = int(right) if right.isdigit() else -1
+    img_name = images[idx]["name"] if 0 <= idx < len(images) else right
     return f"{project_dir.name} / {img_name}"
 
 
