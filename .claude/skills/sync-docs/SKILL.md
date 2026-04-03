@@ -27,7 +27,14 @@ Update project documentation to reflect work actually done in the current sessio
 
 4. **README.md** — Check if new dependencies were added (search for new imports in `pyproject.toml` or `package.json` changes). If so, update the Open Source Acknowledgments table.
 
-5. **Report** — Summarize what was updated and what was skipped (with reason).
+5. **Memory** — Review the session for anything worth persisting to memory:
+   - New user preferences or feedback → `feedback` memory
+   - Project decisions or context → `project` memory
+   - User profile updates → `user` memory
+   - Check existing memories in the project's auto-memory `MEMORY.md` (under `~/.claude/projects/`) — update stale ones, don't duplicate
+   - Only save things useful in future sessions, not ephemeral task details
+
+6. **Report** — Summarize what was updated and what was skipped (with reason).
 
 ## Rules
 

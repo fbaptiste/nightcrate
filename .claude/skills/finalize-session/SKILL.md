@@ -5,7 +5,7 @@ description: Use when a work session is done and ready to commit, push, and open
 
 # Finalize Session
 
-End-of-session workflow: bump version, run all checks, commit, push, open PR.
+End-of-session workflow: simplify code, sync docs, bump version, run checks, commit, push, open PR, code review.
 
 ## Process
 
@@ -15,13 +15,25 @@ End-of-session workflow: bump version, run all checks, commit, push, open PR.
 - If unclear, ask the user before proceeding
 - State the version number in the response
 
-### 2. Bump version
+### 2. Code simplification
+
+- Invoke the `simplify` skill (or follow its process if not available via Skill tool)
+- This reviews recently modified code for clarity, consistency, and maintainability
+- Preserves all functionality — only improves how code is written
+- If changes are made, re-run checks before proceeding
+
+### 3. Sync docs
+
+- Invoke the `sync-docs` skill (or follow its process if not available via Skill tool)
+- This updates PLAN.md, CLAUDE.md, README.md, and memory before committing
+
+### 4. Bump version
 
 - Update `VERSION` file to the target version
 - Update `backend/pyproject.toml` version field to match
 - If both already match the target, skip silently
 
-### 3. Run all checks
+### 5. Run all checks
 
 Run the pre-commit checklist (all must pass before committing):
 
@@ -36,18 +48,18 @@ Run the pre-commit checklist (all must pass before committing):
 
 If any check fails, fix the issue and re-run. Do not proceed to commit with failing checks.
 
-### 4. Commit
+### 6. Commit
 
-- Stage all relevant files (do NOT stage `instructions/`, `docs/superpowers/`, or files in `.gitignore`)
+- Stage all relevant files (do NOT stage `instructions/` or files in `.gitignore`)
 - Write a descriptive commit message summarizing the work done
 - End the commit message with: `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
 - Use a HEREDOC for the commit message
 
-### 5. Push
+### 7. Push
 
 - Push the current branch to origin with `-u` flag
 
-### 6. Open PR
+### 8. Open PR
 
 - Use `gh pr create` targeting `main`
 - PR title: short, under 70 chars, describes the version/feature
@@ -62,6 +74,7 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
   - [x] Backend security (bandit) ✅ Claude
   - [x] Backend tests (pytest — N tests) ✅ Claude
   - [x] Frontend build (tsc + vite) ✅ Claude
+  - [x] Code simplification pass ✅ Claude
   - [ ] Manual UI testing — load image, verify feature works 👤 User
   - [ ] <any other user-specific test items relevant to the changes> 👤 User
 
@@ -73,16 +86,28 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
   - Items requiring manual user testing (UI interaction, visual verification, real data): leave unchecked with `👤 User`
   - If the user has confirmed they tested something, check it off with `✅ User`
   - Be specific about what manual testing is needed based on the actual changes (e.g., "Test aberration tab with galaxy image" not just "test UI")
+  - If the branch already has an open PR, push to it instead of creating a new one
 
-### 7. Report
+### 9. Code review
+
+- After the PR is created (or updated), invoke the `code-review:code-review` skill with the PR number
+  - e.g., `/code-review <PR-number>` or `Skill("code-review:code-review", args: "<PR-number>")`
+- This runs a multi-agent code review (CLAUDE.md compliance, bug scan, git history, prior PR comments, code comment compliance)
+- If the review finds issues (confidence >= 80), address them:
+  - Fix the issues in code
+  - Re-run checks (step 5)
+  - Commit and push the fixes
+  - Note the fixes in the report
+
+### 10. Report
 
 - State the version number that was set
 - Show the PR URL
 - Show the test count
+- Note any code review findings and whether they were addressed
 
 ## Rules
 
 - Never skip checks — all must pass before committing
 - Never force-push
 - Always ask before committing if there are unstaged changes that look like they shouldn't be committed (e.g., local config, temp files)
-- If the branch already has an open PR, push to it instead of creating a new one
