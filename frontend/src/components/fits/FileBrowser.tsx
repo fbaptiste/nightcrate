@@ -573,7 +573,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
                   : file.name;
                 const virtualPath = `${activeArchive}::${entryPath}`;
                 const sizeLabel = file.size !== null
-                  ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+                  ? formatSize(file.size)
                   : undefined;
                 return (
                   <ListItemButton

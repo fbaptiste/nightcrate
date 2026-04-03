@@ -30,10 +30,6 @@ from nightcrate.services.imaging import (
 
 router = APIRouter(prefix="/api/aberration", tags=["aberration"])
 
-FITS_EXTENSIONS = {".fits", ".fit", ".fts"}
-XISF_EXTENSIONS = {".xisf"}
-STANDARD_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

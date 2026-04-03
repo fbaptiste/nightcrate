@@ -105,8 +105,6 @@ def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int]:
         # pxiproject: right side is an integer index
         try:
             idx = int(right)
-            if not left_path.is_absolute():
-                raise HTTPException(status_code=400, detail="Path must be absolute")
             if not left_path.is_dir():
                 raise HTTPException(status_code=404, detail=f"Project not found: {left_path}")
             return left_path, "pxiproject", idx
@@ -115,8 +113,6 @@ def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int]:
 
         # Archive handling
         if archive_io.is_archive(left_path):
-            if not left_path.is_absolute():
-                raise HTTPException(status_code=400, detail="Path must be absolute")
             if not left_path.is_file():
                 raise HTTPException(status_code=404, detail=f"Archive not found: {left}")
             try:

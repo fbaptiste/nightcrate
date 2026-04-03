@@ -66,6 +66,7 @@ async def browse(
     dirs: list[dict] = []
     files: list[dict] = []
     projects: list[dict] = []
+    archives: list[dict] = []
 
     try:
         entries = sorted(p.iterdir(), key=lambda e: e.name.lower())
@@ -81,19 +82,15 @@ async def browse(
                 projects.append({"name": entry.name, "path": str(entry)})
             else:
                 dirs.append({"name": entry.name, "path": str(entry)})
-        elif entry.is_file() and entry.suffix.lower() in ALL_EXTENSIONS:
-            try:
-                size = entry.stat().st_size
-            except OSError:
-                size = 0
-            files.append({"name": entry.name, "path": str(entry), "size": size})
-
-    archives: list[dict] = []
-    for entry in sorted(p.iterdir(), key=lambda e: e.name.lower()):
-        if entry.name.startswith("."):
-            continue
-        if entry.is_file() and archive_io.is_archive(entry):
-            archives.append({"name": entry.name, "path": str(entry)})
+        elif entry.is_file():
+            if archive_io.is_archive(entry):
+                archives.append({"name": entry.name, "path": str(entry)})
+            elif entry.suffix.lower() in ALL_EXTENSIONS:
+                try:
+                    size = entry.stat().st_size
+                except OSError:
+                    size = 0
+                files.append({"name": entry.name, "path": str(entry), "size": size})
 
     return {
         "path": str(p),
