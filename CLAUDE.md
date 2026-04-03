@@ -206,6 +206,22 @@ Analyses star shapes across the field to diagnose optical aberrations (tilt, com
 - TTL: `aberration_cache_ttl_days` setting (default 30), cleanup on startup
 - Settings page: cache size display + Clear All button
 
+## Archive Browser
+
+Supports browsing into archive files as if they were folders. Selecting an image inside an archive extracts it in-memory and loads it through the standard image pipeline.
+
+**Supported formats:** zip, tar, tar.gz, tar.bz2, tar.zst, 7z
+
+**Architecture:**
+- `services/archive_io.py` — format dispatch (zip/tar/7z), TOC listing, in-memory extraction to BytesIO
+- `api/files.py` — `browse-archive` endpoint, archive detection in directory browse
+- `api/images.py` — archive branch in `_resolve_path()` for `::` virtual paths
+- I/O services (`fits_io`, `xisf_io`, `standard_io`) accept `Path | BinaryIO`
+
+**Virtual paths:** `{archive_path}::{entry_path}` (same `::` separator as pxiproject)
+
+**In-memory extraction:** No temp files for zip/tar. 7z uses a temporary directory (py7zr API limitation) but cleans up immediately.
+
 ## Dependency & License Policy
 
 NightCrate is licensed under **GPL-3.0**. Before adding any new dependency (Python or JS/TS):
