@@ -2,11 +2,13 @@
 
 import json
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
+from nightcrate.api.images import _resolve_path
 from nightcrate.db.session import get_db
 from nightcrate.services import fits_io, standard_io, xisf_io
 from nightcrate.services.aberration import (
@@ -36,14 +38,13 @@ STANDARD_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _validate_path(file_path: str) -> Path:
-    """Validate path is absolute and exists, raise HTTPException otherwise."""
-    p = Path(file_path)
-    if not p.is_absolute():
-        raise HTTPException(status_code=422, detail="Path must be absolute")
-    if not p.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-    return p
+def _validate_and_resolve(file_path: str) -> tuple[Path | BinaryIO, str]:
+    """Validate and resolve path, returning (source, file_type).
+
+    Handles regular paths and archive virtual paths (archive.zip::entry).
+    """
+    source, ft, _idx = _resolve_path(file_path)
+    return source, ft
 
 
 def _settings_key(settings: DetectionSettings) -> str:
@@ -51,26 +52,27 @@ def _settings_key(settings: DetectionSettings) -> str:
     return json.dumps(settings.model_dump(), sort_keys=True)
 
 
-def _load_mono_data(file_path: Path, hdu: int) -> np.ndarray:
+def _load_mono_data(source: Path | BinaryIO, ft: str, hdu: int) -> np.ndarray:
     """Load image data and convert color to luminance if needed.
 
     Returns a 2D float64 array normalized to [0, 1].
     """
-    ext = file_path.suffix.lower()
+    if ft == "fits":
+        data = fits_io.load_image_data(source, hdu)
+    elif ft == "xisf":
+        data = xisf_io.load_image_data(source, hdu)
+    elif ft == "float_tiff":
+        data = standard_io.load_image_data(source)
+    elif ft == "standard":
+        data = standard_io.load_image_as_array(source)
+    elif ft == "pxiproject":
+        from nightcrate.services import pxiproject_io
 
-    if ext in FITS_EXTENSIONS:
-        data = fits_io.load_image_data(file_path, hdu)
-    elif ext in XISF_EXTENSIONS:
-        data = xisf_io.load_image_data(file_path, hdu)
-    elif ext in STANDARD_EXTENSIONS:
-        if ext in (".tif", ".tiff") and standard_io.is_float_tiff(file_path):
-            data = standard_io.load_image_data(file_path)
-        else:
-            data = standard_io.load_image_as_array(file_path)
+        data = pxiproject_io.load_image_data(source, hdu)
     else:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {ext}",
+            detail=f"Unsupported file type: {ft}",
         )
 
     # Convert color (3, H, W) to mono luminance
@@ -213,9 +215,9 @@ async def _run_analysis(file_path: str, hdu: int, settings: DetectionSettings) -
     if cached is not None:
         return cached
 
-    p = _validate_path(file_path)
+    source, ft = _validate_and_resolve(file_path)
     try:
-        mono = _load_mono_data(p, hdu)
+        mono = _load_mono_data(source, ft, hdu)
     except HTTPException:
         raise
     except Exception as exc:
@@ -279,10 +281,10 @@ async def get_crop(
     y1: int = Query(..., description="Bottom edge (pixels)"),
 ) -> Response:
     """Return an auto-stretched PNG crop of the specified region."""
-    p = _validate_path(path)
+    source, ft = _validate_and_resolve(path)
 
     try:
-        mono = _load_mono_data(p, hdu)
+        mono = _load_mono_data(source, ft, hdu)
     except HTTPException:
         raise
     except Exception as exc:
