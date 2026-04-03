@@ -17,7 +17,7 @@ End-of-session workflow: simplify code, sync docs, bump version, run checks, com
 
 ### 2. Code simplification
 
-- Invoke the `simplify` skill (or use the `code-simplifier` agent directly)
+- Invoke the `simplify` skill (or follow its process if not available via Skill tool)
 - This reviews recently modified code for clarity, consistency, and maintainability
 - Preserves all functionality — only improves how code is written
 - If changes are made, re-run checks before proceeding
@@ -86,12 +86,12 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
   - Items requiring manual user testing (UI interaction, visual verification, real data): leave unchecked with `👤 User`
   - If the user has confirmed they tested something, check it off with `✅ User`
   - Be specific about what manual testing is needed based on the actual changes (e.g., "Test aberration tab with galaxy image" not just "test UI")
-- If the branch already has an open PR, push to it instead of creating a new one
+  - If the branch already has an open PR, push to it instead of creating a new one
 
 ### 9. Code review
 
-- After the PR is created (or updated), invoke the `code-review` skill with the PR number
-  - e.g., `/code-review <PR-number>` or `Skill("code-review", args: "<PR-number>")`
+- After the PR is created (or updated), invoke the `code-review:code-review` skill with the PR number
+  - e.g., `/code-review <PR-number>` or `Skill("code-review:code-review", args: "<PR-number>")`
 - This runs a multi-agent code review (CLAUDE.md compliance, bug scan, git history, prior PR comments, code comment compliance)
 - If the review finds issues (confidence >= 80), address them:
   - Fix the issues in code

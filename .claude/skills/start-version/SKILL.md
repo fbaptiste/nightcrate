@@ -24,7 +24,7 @@ Post-merge workflow: ensure clean state, update main, create a new branch for th
 
 - `git checkout main`
 - `git pull`
-- Verify the merge commit is present (the PR should be merged)
+- Verify the merge commit is present (the PR should be merged). If not found, warn the user and ask how to proceed (wait for merge, check PR status on GitHub, or abort)
 
 ### 4. Determine next version
 

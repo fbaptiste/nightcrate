@@ -31,7 +31,7 @@ Update project documentation to reflect work actually done in the current sessio
    - New user preferences or feedback → `feedback` memory
    - Project decisions or context → `project` memory
    - User profile updates → `user` memory
-   - Check existing memories in `MEMORY.md` — update stale ones, don't duplicate
+   - Check existing memories in the project's auto-memory `MEMORY.md` (under `~/.claude/projects/`) — update stale ones, don't duplicate
    - Only save things useful in future sessions, not ephemeral task details
 
 6. **Report** — Summarize what was updated and what was skipped (with reason).
