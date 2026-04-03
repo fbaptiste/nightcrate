@@ -82,7 +82,7 @@ export function AberrationToolbar({
 
       {/* Star filter sliders */}
       <FilterSlider
-        label="Min SNR" value={filters.minSnr} min={3} max={50} step={1}
+        label="Min SNR" value={filters.minSnr} min={3} max={500} step={5}
         tooltip="Minimum signal-to-noise ratio — higher values keep only brighter, more reliable stars"
         onChange={(v) => onFiltersChange({ ...filters, minSnr: v })}
       />
