@@ -51,7 +51,7 @@ def _get_cached_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> n
     if not isinstance(p, Path):
         return _load_image_data(p, ft, idx, hdu)
 
-    key = (str(p), p.stat().st_mtime, hdu)
+    key = (str(p), p.stat().st_mtime, idx, hdu)
     now = time.monotonic()
 
     with _cache_lock:

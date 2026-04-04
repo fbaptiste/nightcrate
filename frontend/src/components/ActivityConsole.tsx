@@ -56,16 +56,16 @@ function shortenQuery(query: string): string {
   return "?" + params.toString();
 }
 
-function durationColor(ms: number): "success" | "warning" | "error" | "default" {
-  if (ms < 100) return "success";
-  if (ms < 500) return "warning";
-  return "error";
+function durationColor(ms: number): "info" | "warning" | "default" {
+  if (ms < 100) return "info";
+  if (ms < 500) return "default";
+  return "warning";
 }
 
-function statusColor(code: number): "success" | "error" | "warning" | "default" {
-  if (code >= 200 && code < 300) return "success";
-  if (code >= 400) return "error";
-  return "warning";
+function statusColor(code: number): "info" | "warning" | "default" {
+  if (code >= 200 && code < 300) return "info";
+  if (code >= 400) return "warning";
+  return "default";
 }
 
 /** Build a clean JSON object for a single request row. */

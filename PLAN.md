@@ -1087,6 +1087,7 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 | opencv-python | Apache 2.0 | Image processing, quality analysis |
 | numba | BSD 2-Clause | JIT compilation for CPU-bound array operations (alternative to mlx on non-Apple-Silicon) |
 | tifffile | BSD 3-Clause | TIFF reading/writing if DSLR or other TIFF sources are needed |
+| imagecodecs | BSD 3-Clause | Codec extensions for tifffile — required for LZW, JPEG, and other compressed TIFF formats |
 | requests | Apache 2.0 | HTTP client (astroquery dependency; useful for external APIs) |
 | D3.js | ISC | Complex interactive charts (PHD2 guiding graph, session timeline) |
 | py7zr | LGPL-2.1+ | 7z archive extraction. Pure Python, no external binaries. ⚠ LGPL — OK as Python import (dynamic linking). **Requires attribution.** |
