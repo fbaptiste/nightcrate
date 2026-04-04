@@ -1,5 +1,8 @@
 """Unified image API endpoints — dispatches by file type (FITS, XISF, PNG/JPEG/TIFF)."""
 
+import asyncio
+import threading
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import BinaryIO
@@ -30,6 +33,45 @@ FITS_EXTENSIONS = {".fits", ".fit", ".fts"}
 XISF_EXTENSIONS = {".xisf"}
 STANDARD_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 ALL_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | STANDARD_EXTENSIONS
+
+# ---------------------------------------------------------------------------
+# In-memory image data cache — avoids redundant file loads when multiple
+# endpoints hit the same file within a short window (e.g. opening a file).
+# ---------------------------------------------------------------------------
+
+_CACHE_MAX_ENTRIES = 5
+_CACHE_TTL_SECONDS = 120
+
+_cache: dict[tuple, tuple[np.ndarray, float]] = {}
+_cache_lock = threading.Lock()
+
+
+def _get_cached_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> np.ndarray:
+    """Load image data, using a TTL cache for Path-based sources."""
+    if not isinstance(p, Path):
+        return _load_image_data(p, ft, idx, hdu)
+
+    key = (str(p), p.stat().st_mtime, hdu)
+    now = time.monotonic()
+
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is not None:
+            data, ts = entry
+            if now - ts < _CACHE_TTL_SECONDS:
+                return data
+            del _cache[key]
+
+    data = _load_image_data(p, ft, idx, hdu)
+
+    with _cache_lock:
+        while len(_cache) >= _CACHE_MAX_ENTRIES:
+            oldest = min(_cache, key=lambda k: _cache[k][1])
+            del _cache[oldest]
+        _cache[key] = (data, time.monotonic())
+
+    return data
+
 
 STRUCTURAL_KEYWORDS = {
     "SIMPLE",
@@ -237,6 +279,12 @@ async def get_metadata(
     }
 
 
+def _compute_stats(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> dict:
+    """Load image and compute stats (runs in thread pool)."""
+    data = _get_cached_image_data(p, ft, idx, hdu)
+    return asdict(compute_image_stats(data))
+
+
 @router.get("/stats")
 async def get_stats(
     path: str = Query(..., description="Absolute path to image file"),
@@ -252,13 +300,30 @@ async def get_stats(
             status_code=404, detail="Stats not available for standard image formats"
         )
     try:
-        data = _load_image_data(p, ft, idx, hdu)
-        stats = compute_image_stats(data)
-        return asdict(stats)
+        return await asyncio.to_thread(_compute_stats, p, ft, idx, hdu)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+def _read_pixel(p: Path | BinaryIO, ft: str, idx: int, hdu: int, x: int, y: int) -> dict:
+    """Load image and read a single pixel (runs in thread pool)."""
+    data = _get_cached_image_data(p, ft, idx, hdu)
+    color = is_color_image(data)
+    h, w = (data.shape[1], data.shape[2]) if color else (data.shape[0], data.shape[1])
+
+    if x < 0 or x >= w or y < 0 or y >= h:
+        raise HTTPException(
+            status_code=400, detail=f"Coordinates ({x}, {y}) out of bounds ({w}x{h})"
+        )
+
+    if color:
+        r, g, b = float(data[0, y, x]), float(data[1, y, x]), float(data[2, y, x])
+        k = LUM_R * r + LUM_G * g + LUM_B * b
+        return {"x": x, "y": y, "color": True, "R": r, "G": g, "B": b, "K": k}
+    val = float(data[y, x])
+    return {"x": x, "y": y, "color": False, "K": val}
 
 
 @router.get("/pixel")
@@ -271,33 +336,48 @@ async def get_pixel(
     """Return raw pixel values at the given (x, y) coordinate."""
     p, ft, idx = _resolve_path(path)
     try:
-        data = _load_image_data(p, ft, idx, hdu)
-
-        color = is_color_image(data)
-
-        if color:
-            h, w = data.shape[1], data.shape[2]
-        else:
-            h, w = data.shape[0], data.shape[1]
-
-        if x < 0 or x >= w or y < 0 or y >= h:
-            raise HTTPException(
-                status_code=400, detail=f"Coordinates ({x}, {y}) out of bounds ({w}x{h})"
-            )
-
-        if color:
-            r, g, b = float(data[0, y, x]), float(data[1, y, x]), float(data[2, y, x])
-            k = LUM_R * r + LUM_G * g + LUM_B * b
-            return {"x": x, "y": y, "color": True, "R": r, "G": g, "B": b, "K": k}
-        else:
-            val = float(data[y, x])
-            return {"x": x, "y": y, "color": False, "K": val}
+        return await asyncio.to_thread(_read_pixel, p, ft, idx, hdu, x, y)
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+def _compute_histogram(data: np.ndarray, bins: int = 256) -> dict:
+    """Compute histogram from loaded image data."""
+    color = is_color_image(data)
+    bin_edges = np.linspace(0.0, 1.0, bins + 1)
+
+    channels = []
+    if color:
+        for i, name in enumerate(["R", "G", "B"]):
+            counts, _ = np.histogram(data[i].ravel(), bins=bin_edges)
+            channels.append({"name": name, "bins": counts.tolist()})
+        lum = np.empty_like(data[0])
+        np.multiply(data[0], LUM_R, out=lum)
+        lum += LUM_G * data[1]
+        lum += LUM_B * data[2]
+        lum_counts, _ = np.histogram(lum.ravel(), bins=bin_edges)
+        luminosity = lum_counts.tolist()
+    else:
+        counts, _ = np.histogram(data.ravel(), bins=bin_edges)
+        channels.append({"name": "L", "bins": counts.tolist()})
+        luminosity = None
+
+    return {
+        "color": color,
+        "channels": channels,
+        "luminosity": luminosity,
+        "bin_edges": bin_edges.tolist(),
+    }
+
+
+def _load_and_histogram(p: Path | BinaryIO, ft: str, idx: int, hdu: int, bins: int) -> dict:
+    """Load image and compute histogram (runs in thread pool)."""
+    data = _get_cached_image_data(p, ft, idx, hdu)
+    return _compute_histogram(data, bins)
 
 
 @router.get("/histogram")
@@ -309,45 +389,65 @@ async def get_histogram(
     """Return per-channel histogram data for the image."""
     p, ft, idx = _resolve_path(path)
     try:
-        data = _load_image_data(p, ft, idx, hdu)
-
-        color = is_color_image(data)
-        bin_edges = np.linspace(0.0, 1.0, bins + 1)
-
-        channels = []
-        if color:
-            for i, name in enumerate(["R", "G", "B"]):
-                counts, _ = np.histogram(data[i].ravel(), bins=bin_edges)
-                channels.append({"name": name, "bins": counts.tolist()})
-            # Luminosity: weighted sum (in-place to reduce memory)
-            lum = np.empty_like(data[0])
-            np.multiply(data[0], LUM_R, out=lum)
-            lum += LUM_G * data[1]
-            lum += LUM_B * data[2]
-            lum_counts, _ = np.histogram(lum.ravel(), bins=bin_edges)
-            luminosity = lum_counts.tolist()
-        else:
-            counts, _ = np.histogram(data.ravel(), bins=bin_edges)
-            channels.append({"name": "L", "bins": counts.tolist()})
-            luminosity = None
-
-        return {
-            "color": color,
-            "channels": channels,
-            "luminosity": luminosity,
-            "bin_edges": bin_edges.tolist(),
-        }
+        return await asyncio.to_thread(_load_and_histogram, p, ft, idx, hdu, bins)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
+def _compute_stats_and_histogram(
+    p: Path | BinaryIO, ft: str, idx: int, hdu: int, bins: int
+) -> dict:
+    """Load image once, compute both stats and histogram (runs in thread pool)."""
+    data = _get_cached_image_data(p, ft, idx, hdu)
+    return {
+        "stats": asdict(compute_image_stats(data)),
+        "histogram": _compute_histogram(data, bins),
+    }
+
+
+@router.get("/stats-histogram")
+async def get_stats_and_histogram(
+    path: str = Query(..., description="Absolute path to image file"),
+    hdu: int = Query(0, description="Extension index"),
+    bins: int = Query(256, description="Number of histogram bins"),
+) -> dict:
+    """Return stats and histogram in a single response (one data load)."""
+    p, ft, idx = _resolve_path(path)
+    if ft == "standard":
+        raise HTTPException(
+            status_code=404,
+            detail="Stats/histogram not available for standard image formats",
+        )
+    try:
+        return await asyncio.to_thread(_compute_stats_and_histogram, p, ft, idx, hdu, bins)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+def _render_image(
+    p: Path | BinaryIO,
+    ft: str,
+    idx: int,
+    hdu: int,
+    linked: StretchParams,
+    per_channel: list[StretchParams] | None,
+) -> bytes:
+    """Load image and render to PNG (runs in thread pool)."""
+    if ft == "standard":
+        return standard_io.load_image_bytes(p)
+    data = _get_cached_image_data(p, ft, idx, hdu)
+    return render_image_png(data, linked=linked, per_channel=per_channel)
+
+
 @router.get("/image")
 async def get_image(
     path: str = Query(..., description="Absolute path to image file"),
     hdu: int = Query(0, description="Extension index"),
-    stretch: str = Query("stf", description="Stretch type: stf | linear"),
+    stretch: str = Query("stf", description="Stretch type: auto | stf | linear"),
     shadow: float = Query(0.0, description="Shadow clip, normalized 0–1"),
     midtone: float = Query(0.5, description="Midtones balance 0–1"),
     highlight: float = Query(1.0, description="Highlight clip, normalized 0–1"),
@@ -364,44 +464,38 @@ async def get_image(
     """Return the image as a PNG. Stretch is applied for scientific formats."""
     p, ft, idx = _resolve_path(path)
 
-    try:
-        if ft == "standard":
-            png_bytes = standard_io.load_image_bytes(p)
-            return Response(content=png_bytes, media_type="image/png")
+    linked = StretchParams(stretch=stretch, shadow=shadow, midtone=midtone, highlight=highlight)
 
-        data = _load_image_data(p, ft, idx, hdu)
+    channel_overrides = [
+        r_shadow,
+        r_midtone,
+        r_highlight,
+        g_shadow,
+        g_midtone,
+        g_highlight,
+        b_shadow,
+        b_midtone,
+        b_highlight,
+    ]
+    per_channel = None
+    if any(v is not None for v in channel_overrides):
 
-        linked = StretchParams(stretch=stretch, shadow=shadow, midtone=midtone, highlight=highlight)
+        def _ch(sh: float | None, mt: float | None, hl: float | None) -> StretchParams:
+            return StretchParams(
+                stretch=stretch,
+                shadow=sh if sh is not None else shadow,
+                midtone=mt if mt is not None else midtone,
+                highlight=hl if hl is not None else highlight,
+            )
 
-        channel_overrides = [
-            r_shadow,
-            r_midtone,
-            r_highlight,
-            g_shadow,
-            g_midtone,
-            g_highlight,
-            b_shadow,
-            b_midtone,
-            b_highlight,
+        per_channel = [
+            _ch(r_shadow, r_midtone, r_highlight),
+            _ch(g_shadow, g_midtone, g_highlight),
+            _ch(b_shadow, b_midtone, b_highlight),
         ]
-        per_channel = None
-        if any(v is not None for v in channel_overrides):
 
-            def _ch(sh, mt, hl) -> StretchParams:
-                return StretchParams(
-                    stretch=stretch,
-                    shadow=sh if sh is not None else shadow,
-                    midtone=mt if mt is not None else midtone,
-                    highlight=hl if hl is not None else highlight,
-                )
-
-            per_channel = [
-                _ch(r_shadow, r_midtone, r_highlight),
-                _ch(g_shadow, g_midtone, g_highlight),
-                _ch(b_shadow, b_midtone, b_highlight),
-            ]
-
-        png_bytes = render_image_png(data, linked=linked, per_channel=per_channel)
+    try:
+        png_bytes = await asyncio.to_thread(_render_image, p, ft, idx, hdu, linked, per_channel)
         return Response(content=png_bytes, media_type="image/png")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

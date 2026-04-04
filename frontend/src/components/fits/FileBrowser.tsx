@@ -37,12 +37,15 @@ import {
   type ProjectBrowseResult,
   type VolumeEntry,
 } from "@/api/files";
+import { isVirtualPath } from "@/api/images";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onSelect: (path: string, displayName?: string) => void;
+  /** Currently displayed image path — browser opens to its directory with it pre-selected. */
+  activePath?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -51,7 +54,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileBrowser({ open, onClose, onSelect }: Props) {
+export function FileBrowser({ open, onClose, onSelect, activePath }: Props) {
   const { settings, update } = useSettingsStore();
   const initialPath = settings?.last_browse_path ?? "~";
   const favorites = settings?.browser_favorites ?? [];
@@ -92,6 +95,23 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
     }
   }, [settings?.last_browse_path]);
 
+  // When dialog opens with an active file, navigate to its directory and pre-select it
+  const pendingSelect = useRef<string | null>(null);
+  const selectedFileRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    if (activePath && !isVirtualPath(activePath)) {
+      const parentDir = activePath.substring(0, activePath.lastIndexOf("/")) || "/";
+      pendingSelect.current = activePath;
+      needsScroll.current = true;
+      setSelectedFile(activePath);
+      setSelectedDisplayName(null);
+      setActiveProject(null);
+      setActiveArchive(null);
+      setCurrentPath(parentDir);
+    }
+  }, [open]);  // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fetch volumes once when dialog opens
   useEffect(() => {
     if (!open) return;
@@ -103,11 +123,15 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
     if (!open) return;
     setLoading(true);
     setError(null);
-    setSelectedFile(null);
+    // Don't clear selection if we're navigating to pre-select a file
+    if (!pendingSelect.current) {
+      setSelectedFile(null);
+    }
     browseDirectory(currentPath)
       .then((data) => {
         setResult(data);
         setLoading(false);
+        pendingSelect.current = null;
         // Persist last browsed path
         const s = settingsRef.current;
         if (s && data.path !== s.last_browse_path) {
@@ -117,8 +141,18 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
       .catch((err) => {
         setError(String(err));
         setLoading(false);
+        pendingSelect.current = null;
       });
   }, [currentPath, open]);
+
+  // Scroll the pre-selected file into view after the list renders (initial open only)
+  const needsScroll = useRef(false);
+  useEffect(() => {
+    if (needsScroll.current && result && selectedFileRef.current) {
+      needsScroll.current = false;
+      selectedFileRef.current.scrollIntoView({ block: "center" });
+    }
+  }, [result]);
 
   // Fetch project contents when entering a project
   useEffect(() => {
@@ -422,6 +456,7 @@ export function FileBrowser({ open, onClose, onSelect }: Props) {
               {result.files.map((file) => (
                 <ListItemButton
                   key={file.path}
+                  ref={selectedFile === file.path ? selectedFileRef : undefined}
                   selected={selectedFile === file.path}
                   onClick={() => { setSelectedFile(file.path); setSelectedDisplayName(null); }}
                   onDoubleClick={() => { onSelect(file.path); onClose(); }}

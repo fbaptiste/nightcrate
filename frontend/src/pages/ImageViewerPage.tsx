@@ -14,22 +14,25 @@ import Chip from "@mui/material/Chip";
 import Slider from "@mui/material/Slider";
 import Snackbar from "@mui/material/Snackbar";
 import Tooltip from "@mui/material/Tooltip";
+import IconButton from "@mui/material/IconButton";
 import FitScreenIcon from "@mui/icons-material/FitScreen";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import OneKIcon from "@mui/icons-material/PhotoSizeSelectActual";
+import TimelineIcon from "@mui/icons-material/Timeline";
 import {
   DEFAULT_STRETCH,
   fetchExtensions,
   fetchHeader,
-  fetchImageStats,
   fetchMetadata,
   fetchRecentFiles,
+  fetchStatsAndHistogram,
   isVirtualPath,
   recordRecentFile,
   stfToStretch,
   type ImageStats,
   type RecentFile,
+  type StfParams,
   type StretchParams,
 } from "@/api/images";
 import { analyzeFrame, fetchSamples, reaggregateSquare, DEFAULT_STAR_FILTERS, type SampleSquare, type AberrationMetric, type StarFilters } from "@/api/aberration";
@@ -37,6 +40,7 @@ import { AberrationToolbar } from "@/components/aberration/AberrationToolbar";
 import { CropGrid } from "@/components/aberration/CropGrid";
 import { AberrationSidebar } from "@/components/aberration/AberrationSidebar";
 import { ZoneOverlayMap } from "@/components/aberration/ZoneOverlayMap";
+import { ActivityConsole } from "@/components/ActivityConsole";
 import { SidebarSection } from "@/components/SidebarSection";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import { FitsHeaderTable } from "@/components/fits/FitsHeaderTable";
@@ -44,6 +48,7 @@ import { FitsImage, type FitsImageHandle, type PixelInfo } from "@/components/fi
 import { HduSelector } from "@/components/fits/HduSelector";
 import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
+import { setActivity } from "@/api/client";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
@@ -67,21 +72,27 @@ const DEFAULT_PER_CHANNEL: [StretchParams, StretchParams, StretchParams] = [
   { ...DEFAULT_STRETCH },
 ];
 
+function stfWithAuto(stf: StfParams): StretchParams {
+  return { stretch: "auto", shadow: stf.shadow, midtone: stf.midtone, highlight: stf.highlight };
+}
+
 function applyAutoStf(
   stats: ImageStats,
   setLinked: (p: StretchParams) => void,
   setPerChannel: (ch: [StretchParams, StretchParams, StretchParams]) => void,
 ) {
+  // Populate slider values from computed STF, but keep stretch="auto" so the
+  // image URL doesn't change — the backend already applied the correct stretch.
   if (stats.color && stats.linked_stf) {
-    setLinked(stfToStretch(stats.linked_stf));
+    setLinked(stfWithAuto(stats.linked_stf));
   } else if (stats.channels.length >= 1) {
-    setLinked(stfToStretch(stats.channels[0].stf));
+    setLinked(stfWithAuto(stats.channels[0].stf));
   }
   if (stats.color && stats.channels.length === 3) {
     setPerChannel([
-      stfToStretch(stats.channels[0].stf),
-      stfToStretch(stats.channels[1].stf),
-      stfToStretch(stats.channels[2].stf),
+      stfWithAuto(stats.channels[0].stf),
+      stfWithAuto(stats.channels[1].stf),
+      stfWithAuto(stats.channels[2].stf),
     ]);
   }
 }
@@ -93,6 +104,9 @@ export function ImageViewerPage() {
   const [tab, setTab] = useState(0);
   const imageRef = useRef<FitsImageHandle>(null);
   const [currentZoom, setCurrentZoom] = useState(1);
+  // Stable activity label for image requests — set once on file open, doesn't
+  // change on tab switch, so the image URL stays stable for browser caching.
+  const [imageActivity, setImageActivity] = useState("");
 
   // File browser
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -101,6 +115,9 @@ export function ImageViewerPage() {
   const [pixelInspectorOn, setPixelInspectorOn] = useState(false);
   const [pixelData, setPixelData] = useState<PixelInfo | null>(null);
   const [patchRadius, setPatchRadius] = useState(50);
+
+  // Activity console
+  const [activityOpen, setActivityOpen] = useState(false);
 
   // Error notification
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -136,11 +153,19 @@ export function ImageViewerPage() {
   // Whether the active file supports stretch — authoritative, from backend
   const hasStretch = extensionsQuery.data?.[0]?.supports_stretch === true;
 
-  const statsQuery = useQuery({
-    queryKey: ["stats", activePath, selectedHdu],
-    queryFn: () => fetchImageStats(activePath, selectedHdu),
+  const statsHistogramQuery = useQuery({
+    queryKey: ["stats-histogram", activePath, selectedHdu],
+    queryFn: () => fetchStatsAndHistogram(activePath, selectedHdu),
     enabled: hasStretch,
   });
+
+  // Convenience aliases — keep the rest of the component working as before
+  const statsQuery = {
+    data: statsHistogramQuery.data?.stats as ImageStats | undefined,
+    isFetching: statsHistogramQuery.isFetching,
+    isError: statsHistogramQuery.isError,
+    error: statsHistogramQuery.error,
+  };
 
   const headerQuery = useQuery({
     queryKey: ["header", activePath, selectedHdu],
@@ -210,7 +235,8 @@ export function ImageViewerPage() {
 
     // Check explicit linear flag from pxiproject extensions
     if (ext?.linear === false) {
-      setLinked({ ...DEFAULT_STRETCH, stretch: "linear" });
+      // Non-linear — backend already rendered correctly via stretch=auto.
+      // Keep stretch="auto" so the image URL doesn't change.
       return;
     }
 
@@ -218,10 +244,12 @@ export function ImageViewerPage() {
     const stats = statsQuery.data;
     const stf = stats.linked_stf ?? stats.channels[0]?.stf;
     if (stf && stf.midtone >= 0.1) {
-      setLinked({ ...DEFAULT_STRETCH, stretch: "linear" });
+      // Non-linear — backend already rendered correctly via stretch=auto.
       return;
     }
 
+    // Linear image — populate slider values from computed STF (keeping stretch="auto"
+    // so the image URL doesn't change — backend already applied these params).
     applyAutoStf(stats, setLinked, setPerChannel);
   }, [statsQuery.data, statsQuery.isFetching, extensionsQuery.data, selectedHdu, activePath]);
 
@@ -231,6 +259,9 @@ export function ImageViewerPage() {
   }, [extensionsQuery.isError, extensionsQuery.error]);
 
   function openFile(path: string, displayName?: string) {
+    const shortName = displayName || path.split("/").pop() || path;
+    setActivity(`Open ${shortName}`);
+    setImageActivity(`Open ${shortName}`);
     setSelectedHdu(0);
     setTab(0);
     setLinked({ ...DEFAULT_STRETCH });
@@ -258,6 +289,7 @@ export function ImageViewerPage() {
 
   function handleReset() {
     if (statsQuery.data) {
+      setActivity("Reset auto stretch");
       applyAutoStf(statsQuery.data, setLinked, setPerChannel);
       setIsLinked(true);
     }
@@ -386,18 +418,18 @@ export function ImageViewerPage() {
               <HduSelector
                 hdus={extensions}
                 selected={selectedHdu}
-                onChange={(i) => { setSelectedHdu(i); setTab(0); }}
+                onChange={(i) => { setActivity(`Switch HDU ${i}`); setSelectedHdu(i); setTab(0); }}
               />
             </>
           )}
-        </Box>
 
-        {/* Loading */}
-        {hasFile && extensionsQuery.isLoading && (
-          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", flexGrow: 1 }}>
-            <CircularProgress size={32} />
-          </Box>
-        )}
+          <Box sx={{ flexGrow: 1 }} />
+          <Tooltip title="Activity Console">
+            <IconButton size="small" onClick={() => setActivityOpen(true)}>
+              <TimelineIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
 
         {/* Tabs + content */}
         {hasFile && !extensionsQuery.isError && !extensionsQuery.isLoading && (
@@ -405,7 +437,11 @@ export function ImageViewerPage() {
             <Box sx={{ display: "flex", alignItems: "center", borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
               <Tabs
                 value={tab}
-                onChange={(_, v) => setTab(v)}
+                onChange={(_, v) => {
+                  const labels = ["View image", "View header", "Analyze aberration"];
+                  setActivity(labels[v] ?? `Tab ${v}`);
+                  setTab(v);
+                }}
                 sx={{ px: 2 }}
               >
                 <Tab label="Image" disabled={!selectedExtInfo?.has_image} />
@@ -422,7 +458,7 @@ export function ImageViewerPage() {
                 />
                 {hasStretch && (
                   <Chip
-                    label={linked.stretch === "stf" ? "Linear" : "Non-linear"}
+                    label={linked.stretch === "stf" || linked.stretch === "auto" ? "Linear" : "Non-linear"}
                     size="small"
                     variant="outlined"
                     sx={{ fontSize: "0.65rem", height: 20 }}
@@ -442,6 +478,7 @@ export function ImageViewerPage() {
                       hdu={selectedHdu}
                       linked={debouncedLinked}
                       perChannel={hasStretch ? activePerChannel : undefined}
+                      activity={imageActivity}
                       onZoomChange={setCurrentZoom}
                       onPixelHover={pixelInspectorOn ? setPixelData : undefined}
                       pixelPatchRadius={patchRadius}
@@ -485,10 +522,11 @@ export function ImageViewerPage() {
                   <Histogram
                     path={activePath}
                     hdu={selectedHdu}
+                    histogramData={statsHistogramQuery.data?.histogram}
                     shadow={linked.shadow}
                     midtone={linked.midtone}
                     highlight={linked.highlight}
-                    isStretching={hasStretch && linked.stretch === "stf"}
+                    isStretching={hasStretch && (linked.stretch === "stf" || linked.stretch === "auto")}
                     channelIntensities={
                       isColor && statsQuery.data
                         ? statsQuery.data.channels.map((ch, i) => ({
@@ -951,7 +989,11 @@ export function ImageViewerPage() {
         open={browserOpen}
         onClose={() => setBrowserOpen(false)}
         onSelect={(path, displayName) => openFile(path, displayName)}
+        activePath={activePath}
       />
+
+      {/* Activity console */}
+      <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
 
       {/* Error notification */}
       <Snackbar

@@ -36,7 +36,7 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
         return [
             {
                 "key": card.keyword,
-                "value": str(card.value),
+                "value": str(card.value).strip("'\""),
                 "comment": card.comment,
                 "description": get_keyword_description(card.keyword),
             }

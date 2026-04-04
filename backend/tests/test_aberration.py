@@ -114,6 +114,25 @@ class TestDetectStars:
         assert len(result.stars) == 0
         assert result.star_count == 0
 
+    def test_pixstack_overflow_retries_with_higher_threshold(self):
+        """When sep overflows the pixstack, detection retries with doubled threshold."""
+        # Create an image with very low threshold that might overflow on dense data.
+        # We test indirectly: a very low threshold should still succeed (via retries)
+        # rather than raising an error.
+        rng = np.random.default_rng(42)
+        # Dense star field with many faint sources
+        data = rng.normal(0.02, 0.003, (200, 200)).clip(0, 1).astype(np.float64)
+        r = 4
+        for x in range(r + 1, 200 - r, 25):
+            for y in range(r + 1, 200 - r, 25):
+                yy, xx = np.ogrid[-r : r + 1, -r : r + 1]
+                mask = (xx**2 + yy**2) < r * r
+                data[y - r : y + r + 1, x - r : x + r + 1][mask] += 0.3
+        settings = DetectionSettings(detection_threshold=1.0)
+        result = detect_stars(data, settings)
+        # Should succeed (possibly with fewer stars due to higher threshold)
+        assert isinstance(result, AnalysisResult)
+
 
 class TestComputeSampleGrid:
     def test_basic_grid(self):

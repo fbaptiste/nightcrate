@@ -109,7 +109,24 @@ def detect_stars(
     bkg = sep.Background(img)
     img_sub = img - bkg
 
-    objects = sep.extract(img_sub, thresh=settings.detection_threshold, err=bkg.globalrms)
+    sep.set_extract_pixstack(1_000_000)
+
+    # On [0,1] normalized data the global RMS can be very small, making the
+    # absolute detection threshold too low and flooding sep with nebulosity
+    # pixels.  If extraction overflows the pixstack, retry with progressively
+    # higher thresholds before giving up.
+    thresh = settings.detection_threshold
+    objects = None
+    for attempt in range(4):
+        try:
+            objects = sep.extract(img_sub, thresh=thresh, err=bkg.globalrms)
+            break
+        except Exception as exc:
+            if "pixel buffer full" in str(exc) and attempt < 3:
+                thresh *= 2  # double the threshold and retry
+            else:
+                raise
+    assert objects is not None
 
     if len(objects) == 0:
         return AnalysisResult(

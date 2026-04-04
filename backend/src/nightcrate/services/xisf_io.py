@@ -51,40 +51,73 @@ def _byte_unshuffle(data: bytes, item_size: int) -> bytes:
     return arr.reshape(item_size, group_size).T.ravel().tobytes()
 
 
+def _is_single_stream(raw: bytes) -> bool:
+    """Detect if raw data is a single compressed stream (no XISF sub-block headers).
+
+    Sub-block format starts with two little-endian uint64 values (compressed_size,
+    uncompressed_size).  If those sizes exceed the raw data length, the data cannot
+    be sub-blocked — it must be a single compressed stream.
+    """
+    if len(raw) < 16:
+        return True
+    comp_size, uncomp_size = struct.unpack_from("<QQ", raw, 0)
+    # In valid sub-blocks, compressed size must fit inside the raw data
+    return comp_size > len(raw) or uncomp_size > len(raw) * 20
+
+
+def _decompress_single(raw: bytes, base_codec: str, uncompressed_size: int) -> bytes:
+    """Decompress a single compressed stream (no sub-block framing)."""
+    if base_codec == "zlib":
+        return zlib.decompress(raw)
+    if base_codec in ("lz4", "lz4-hc"):
+        return lz4.block.decompress(raw, uncompressed_size=uncompressed_size)
+    if base_codec == "zstd":
+        dctx = zstandard.ZstdDecompressor()
+        return dctx.decompress(raw, max_output_size=uncompressed_size)
+    raise XISFError(f"Unsupported compression codec: {base_codec}")
+
+
 def _decompress_blocks(raw: bytes, codec: str, uncompressed_size: int, item_size: int) -> bytes:
-    """Read sub-blocks from raw data, decompress, and optionally unshuffle."""
+    """Decompress XISF image data, handling both sub-block and single-stream formats."""
     # Determine if byte-shuffling is needed
     shuffle = "+sh" in codec
     base_codec = codec.replace("+sh", "").replace("+sc", "")
+    # Normalize: PixInsight writes "lz4hc", XISF spec uses "lz4-hc"
+    if base_codec == "lz4hc":
+        base_codec = "lz4-hc"
 
-    result = bytearray()
-    offset = 0
+    # Some XISF writers produce a single compressed stream instead of sub-blocks
+    if _is_single_stream(raw):
+        data = _decompress_single(raw, base_codec, uncompressed_size)
+    else:
+        result = bytearray()
+        offset = 0
 
-    while len(result) < uncompressed_size:
-        if offset + 16 > len(raw):
-            raise XISFError("Unexpected end of compressed data (sub-block header truncated)")
-        comp_size, uncomp_size = struct.unpack_from("<QQ", raw, offset)
-        offset += 16
+        while len(result) < uncompressed_size:
+            if offset + 16 > len(raw):
+                raise XISFError("Unexpected end of compressed data (sub-block header truncated)")
+            comp_size, uncomp_size = struct.unpack_from("<QQ", raw, offset)
+            offset += 16
 
-        if offset + comp_size > len(raw):
-            raise XISFError("Unexpected end of compressed data (sub-block data truncated)")
-        chunk = raw[offset : offset + comp_size]
-        offset += comp_size
+            if offset + comp_size > len(raw):
+                raise XISFError("Unexpected end of compressed data (sub-block data truncated)")
+            chunk = raw[offset : offset + comp_size]
+            offset += comp_size
 
-        if comp_size == uncomp_size:
-            # Stored uncompressed
-            result.extend(chunk)
-        elif base_codec == "zlib":
-            result.extend(zlib.decompress(chunk))
-        elif base_codec in ("lz4", "lz4-hc"):
-            result.extend(lz4.block.decompress(chunk, uncompressed_size=uncomp_size))
-        elif base_codec == "zstd":
-            dctx = zstandard.ZstdDecompressor()
-            result.extend(dctx.decompress(chunk))
-        else:
-            raise XISFError(f"Unsupported compression codec: {codec}")
+            if comp_size == uncomp_size:
+                # Stored uncompressed
+                result.extend(chunk)
+            elif base_codec == "zlib":
+                result.extend(zlib.decompress(chunk))
+            elif base_codec in ("lz4", "lz4-hc"):
+                result.extend(lz4.block.decompress(chunk, uncompressed_size=uncomp_size))
+            elif base_codec == "zstd":
+                dctx = zstandard.ZstdDecompressor()
+                result.extend(dctx.decompress(chunk))
+            else:
+                raise XISFError(f"Unsupported compression codec: {codec}")
 
-    data = bytes(result[:uncompressed_size])
+        data = bytes(result[:uncompressed_size])
 
     if shuffle:
         data = _byte_unshuffle(data, item_size)
@@ -244,7 +277,7 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
         cards.append(
             {
                 "key": name,
-                "value": kw.get("value", ""),
+                "value": kw.get("value", "").strip("'\""),
                 "comment": kw.get("comment", ""),
                 "description": get_keyword_description(name),
             }

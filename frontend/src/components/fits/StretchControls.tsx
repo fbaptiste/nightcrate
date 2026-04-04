@@ -152,11 +152,11 @@ export function StretchControls({
   onLinkedToggle,
   onReset,
 }: Props) {
-  const isStf = linked.stretch === "stf";
+  const isStf = linked.stretch === "stf" || linked.stretch === "auto";
 
   function updateChannel(i: number, p: StretchParams) {
     const next = [...perChannel] as [StretchParams, StretchParams, StretchParams];
-    next[i] = p;
+    next[i] = { ...p, stretch: "stf" };
     onPerChannelChange(next);
   }
 
@@ -174,7 +174,7 @@ export function StretchControls({
       <ToggleButtonGroup
         exclusive
         size="small"
-        value={linked.stretch}
+        value={isStf ? "stf" : "linear"}
         onChange={(_, v) => { if (v) setStretchType(v as "stf" | "linear"); }}
         fullWidth
       >
@@ -200,7 +200,7 @@ export function StretchControls({
         <ChannelControls
           label=""
           params={linked}
-          onChange={onLinkedChange}
+          onChange={(p) => onLinkedChange({ ...p, stretch: "stf" })}
         />
       )}
 

@@ -1,8 +1,9 @@
 """Standard image format I/O — PNG, JPEG, TIFF.
 
-These are display-ready formats: no stretch is applied for 8/16-bit images.
-Float32 TIFFs (common from PixInsight) are loaded as scientific images
-with stretch support, same as FITS/XISF.
+All standard formats are loaded as normalized [0,1] arrays and support the
+stretch pipeline.  Auto-stretch detects non-linear (already stretched) images
+via STF midtone and shows them without additional stretch.
+Float32 TIFFs (common from PixInsight) use tifffile for full-precision loading.
 """
 
 import io
@@ -15,6 +16,10 @@ from PIL.ExifTags import TAGS
 
 from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
+
+# Astrophotography images commonly exceed Pillow's default decompression bomb
+# threshold (89 MP). This is a local desktop app, not a web service, so disable it.
+Image.MAX_IMAGE_PIXELS = None
 
 
 def is_float_tiff(source: Path | BinaryIO) -> bool:

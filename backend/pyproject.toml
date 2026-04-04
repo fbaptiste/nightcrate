@@ -20,6 +20,7 @@ dependencies = [
     "tifffile>=2026.3.3",
     "sep>=1.4.1",
     "py7zr>=1.1.0",
+    "imagecodecs>=2026.3.6",
 ]
 
 [project.scripts]

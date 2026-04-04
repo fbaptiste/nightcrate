@@ -33,6 +33,14 @@ class TestReadHeader:
         simple = next(c for c in cards if c["key"] == "SIMPLE")
         assert simple["description"] is None
 
+    def test_string_values_have_quotes_stripped(self, tmp_fits_mono: Path):
+        """FITS string header values should not have surrounding quotes."""
+        cards = read_header(tmp_fits_mono)
+        obj = next(c for c in cards if c["key"] == "OBJECT")
+        assert obj["value"] == "TestTarget"
+        assert not obj["value"].startswith("'")
+        assert not obj["value"].endswith("'")
+
     def test_invalid_hdu_raises(self, tmp_fits_mono: Path):
         with pytest.raises(ValueError, match="out of range"):
             read_header(tmp_fits_mono, hdu=99)

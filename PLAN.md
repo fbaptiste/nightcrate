@@ -970,8 +970,23 @@ Widen load/read functions from `Path` to `Path | BinaryIO`:
 - [x] Images from archives load with full viewer support (stretch, histogram, stats, aberration, pixel inspector)
 - [x] In-memory extraction (7z uses temp dir due to py7zr API, cleaned up immediately)
 - [x] Path traversal protection on archive entry names
-- [x] `uv run pytest` passes — 296 tests
+- [x] `uv run pytest` passes — 321 tests
 - [x] `npm run build` succeeds
+
+### v0.6.0 Post-Release Improvements
+
+- [x] XISF: single-stream decompression support (zstd, lz4, zlib without sub-block headers)
+- [x] XISF: `lz4hc` codec normalization (PixInsight writes codec name without hyphen)
+- [x] FITS/XISF: strip surrounding single/double quotes from header values
+- [x] Aberration inspector: retry with doubled threshold on sep pixstack overflow
+- [x] Image viewer: `stretch=auto` backend mode — determines linearity and applies STF in one request, eliminating sequential frontend round trips
+- [x] Image viewer: per-component loading spinners (image, histogram, channel bars load independently)
+- [x] Image viewer: zoom/position preserved across tab switches (FitsImage stays mounted, `lastFitScale` cache)
+- [x] File browser: opens to current file's directory with file pre-selected and scrolled into view
+- [x] Activity console: ASGI middleware for request tracking, start-time timestamps, activity grouping, JSON export
+- [x] TIFF: added `imagecodecs` dependency (BSD-3) for LZW and other compressed TIFF support
+- [x] Pillow `MAX_IMAGE_PIXELS` disabled for large astrophotography images
+- [x] Tests: 321 total (25 new — auto-stretch, diagnostics, XISF single-stream, header quotes, aberration retry)
 
 ---
 

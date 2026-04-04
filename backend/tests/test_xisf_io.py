@@ -157,6 +157,49 @@ class TestDecompressBlocks:
         with pytest.raises(XISFError, match="Unsupported"):
             _decompress_blocks(sub_block, "brotli", 4, 1)
 
+    def test_single_stream_zstd(self):
+        """Raw zstd stream (no sub-block headers) should decompress correctly."""
+        original = b"\x01\x02\x03\x04" * 100
+        cctx = zstandard.ZstdCompressor()
+        raw = cctx.compress(original)
+        result = _decompress_blocks(raw, "zstd", len(original), 1)
+        assert result == original
+
+    def test_single_stream_lz4(self):
+        """Raw lz4 block (no sub-block headers) should decompress correctly."""
+        original = b"\x01\x02\x03\x04" * 100
+        raw = lz4.block.compress(original, store_size=False)
+        # Ensure the sub-block header parse gives invalid sizes (triggering single-stream)
+        result = _decompress_blocks(raw, "lz4", len(original), 1)
+        assert result == original
+
+    def test_single_stream_zlib(self):
+        """Raw zlib stream (no sub-block headers) should decompress correctly."""
+        original = b"\x01\x02\x03\x04" * 100
+        raw = zlib.compress(original)
+        result = _decompress_blocks(raw, "zlib", len(original), 1)
+        assert result == original
+
+    def test_lz4hc_codec_normalization(self):
+        """lz4hc codec name (without hyphen) should be normalized to lz4-hc."""
+        original = b"\x01\x02\x03\x04" * 100
+        compressed = lz4.block.compress(original, store_size=False)
+        sub_block = struct.pack("<QQ", len(compressed), len(original)) + compressed
+        result = _decompress_blocks(sub_block, "lz4hc", len(original), 1)
+        assert result == original
+
+    def test_single_stream_with_shuffle(self):
+        """Single-stream + byte shuffle should work correctly."""
+        original = np.array([1000, 2000, 3000, 4000], dtype=np.uint16).tobytes()
+        arr = np.frombuffer(original, dtype=np.uint8)
+        item_size = 2
+        group_size = len(arr) // item_size
+        shuffled = arr.reshape(group_size, item_size).T.ravel().tobytes()
+        cctx = zstandard.ZstdCompressor()
+        raw = cctx.compress(shuffled)
+        result = _decompress_blocks(raw, "zstd+sh", len(original), item_size)
+        assert result == original
+
 
 class TestLoadImageData:
     def test_mono_uint16_uncompressed(self, tmp_path):
@@ -262,6 +305,30 @@ class TestReadHeader:
         keys = {c["key"] for c in cards}
         assert "FILTER" in keys
         assert "EXPTIME" in keys
+
+
+    def test_fits_keyword_values_have_quotes_stripped(self, tmp_path):
+        """XISF FITSKeyword values with embedded quotes should be stripped."""
+        data = np.zeros((4, 4), dtype=np.uint16)
+        xisf_bytes = _make_xisf(
+            4,
+            4,
+            1,
+            "UInt16",
+            data.tobytes(),
+            fits_keywords=[
+                ("FILTER", "'Ha'", "Filter name"),
+                ("INSTRUME", "'ZWO ASI2600MM Pro'", "Camera"),
+            ],
+        )
+        path = tmp_path / "quoted.xisf"
+        path.write_bytes(xisf_bytes)
+
+        cards = read_header(path)
+        filter_card = next(c for c in cards if c["key"] == "FILTER")
+        instrume_card = next(c for c in cards if c["key"] == "INSTRUME")
+        assert filter_card["value"] == "Ha"
+        assert instrume_card["value"] == "ZWO ASI2600MM Pro"
 
 
 class TestListExtensions:
