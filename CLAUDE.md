@@ -133,7 +133,7 @@ Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects
 **Architecture:**
 - `services/imaging.py` — format-agnostic: normalization, stretch, stats, histogram, Lab a*, PNG rendering
 - `services/fits_io.py` — FITS loading via astropy
-- `services/xisf_io.py` — clean-room XISF parser (no GPL dependency)
+- `services/xisf_io.py` — clean-room XISF parser (no GPL dependency). Supports sub-block and single-stream compression (zlib, lz4, lz4-hc, zstd ± byte shuffle)
 - `services/pxiproject_io.py` — PixInsight project parser (XOSM manifest + rawimage swap format)
 - `services/standard_io.py` — PNG/JPEG/TIFF via Pillow + tifffile for float32 TIFFs
 - `api/images.py` — unified API at `/api/images/*`, dispatches by file type. Virtual paths (`project::index`) for pxiproject images.
@@ -146,6 +146,8 @@ Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects
 - Target background: 0.25 (standard PixInsight default)
 - Non-linear images auto-detected (STF midtone >= 0.1) and shown without stretch
 - Backend-driven `supports_stretch` flag on `/extensions` endpoint
+- `stretch=auto` mode: backend computes stats, determines linearity, and applies STF in a single request — frontend sends one request on file open instead of sequential round trips
+- Frontend uses `stretch: "auto"` as default; sliders populated from stats when they arrive; user slider interaction switches to explicit `stretch: "stf"` params
 
 **Histogram:**
 - Canvas-based rendering below image (filled area curves, not SVG bars)
@@ -171,6 +173,22 @@ Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects
 - Luminance weights (`LUM_R/G/B`) defined in `services/imaging.py`
 - Stretch is applied server-side — frontend sends stretch params as query parameters and receives a rendered PNG
 - The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration
+
+## Activity Console
+
+In-app request timing viewer for performance analysis.
+
+**Architecture:**
+- `api/diagnostics.py` — ASGI middleware (`RequestTrackingMiddleware`) records every request with start timestamp, duration, status, and activity label
+- `components/ActivityConsole.tsx` — dialog showing requests grouped by activity, with expandable detail tables
+- `api/diagnostics.ts` — frontend API client
+
+**Key details:**
+- Activity label propagated via `X-Activity` header (for `fetch()` calls) or `_activity` query param (for `<img src>` calls)
+- Image requests use a stable `_activity` label set once on file open (doesn't change on tab switch) to avoid URL cache-busting
+- Timestamps show request START time (not completion time)
+- `total_duration_ms` is sum of individual request durations, not wall-clock elapsed time
+- Diagnostics requests (`/api/diagnostics/*`) are excluded from tracking
 
 ## Aberration Inspector
 
@@ -205,6 +223,22 @@ Analyses star shapes across the field to diagnose optical aberrations (tilt, com
 - Cache key: (file_path, hdu, settings_json)
 - TTL: `aberration_cache_ttl_days` setting (default 30), cleanup on startup
 - Settings page: cache size display + Clear All button
+
+## Archive Browser
+
+Supports browsing into archive files as if they were folders. Selecting an image inside an archive extracts it in-memory and loads it through the standard image pipeline.
+
+**Supported formats:** zip, tar, tar.gz, tar.bz2, tar.zst, 7z
+
+**Architecture:**
+- `services/archive_io.py` — format dispatch (zip/tar/7z), TOC listing, in-memory extraction to BytesIO
+- `api/files.py` — `browse-archive` endpoint, archive detection in directory browse
+- `api/images.py` — archive branch in `_resolve_path()` for `::` virtual paths
+- I/O services (`fits_io`, `xisf_io`, `standard_io`) accept `Path | BinaryIO`
+
+**Virtual paths:** `{archive_path}::{entry_path}` (same `::` separator as pxiproject)
+
+**In-memory extraction:** No temp files for zip/tar. 7z uses a temporary directory (py7zr API limitation) but cleans up immediately.
 
 ## Dependency & License Policy
 

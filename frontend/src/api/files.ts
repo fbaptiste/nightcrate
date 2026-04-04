@@ -16,12 +16,35 @@ export interface ProjectEntry {
   path: string;
 }
 
+export interface ArchiveEntry {
+  name: string;
+  path: string;
+}
+
 export interface BrowseResult {
   path: string;
   parent: string | null;
   dirs: DirEntry[];
   files: FileEntry[];
   projects: ProjectEntry[];
+  archives: ArchiveEntry[];
+}
+
+export interface ArchiveDirEntry {
+  name: string;
+}
+
+export interface ArchiveFileEntry {
+  name: string;
+  size: number | null;
+}
+
+export interface ArchiveBrowseResult {
+  path: string;
+  subdir: string;
+  parent: string | null;
+  dirs: ArchiveDirEntry[];
+  files: ArchiveFileEntry[];
 }
 
 export interface ProjectImageEntry {
@@ -56,6 +79,15 @@ export function browseDirectory(path: string): Promise<BrowseResult> {
 
 export function browseProject(path: string): Promise<ProjectBrowseResult> {
   return apiFetch<ProjectBrowseResult>(`/files/browse-project?path=${encodeURIComponent(path)}`);
+}
+
+export function browseArchive(
+  archivePath: string,
+  subdir: string = ""
+): Promise<ArchiveBrowseResult> {
+  return apiFetch<ArchiveBrowseResult>(
+    `/files/browse-archive?path=${encodeURIComponent(archivePath)}&subdir=${encodeURIComponent(subdir)}`
+  );
 }
 
 export interface HealthInfo {

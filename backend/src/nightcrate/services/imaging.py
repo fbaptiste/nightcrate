@@ -248,7 +248,7 @@ def _compute_lab_a_median(rgb_data: np.ndarray) -> float:
 
 @dataclass
 class StretchParams:
-    stretch: str = "stf"  # "stf" | "linear"
+    stretch: str = "stf"  # "stf" | "linear" | "auto"
     shadow: float = 0.0
     midtone: float = 0.5
     highlight: float = 1.0
@@ -285,6 +285,56 @@ def stretch_plane(plane: np.ndarray, p: StretchParams) -> np.ndarray:
     return (normalized * 255).astype(np.uint8)
 
 
+def _resolve_auto_stretch(
+    data: np.ndarray,
+) -> tuple[StretchParams, list[StretchParams] | None]:
+    """Compute stretch params automatically from image data.
+
+    Determines whether the image is linear or non-linear by checking the STF
+    midtone value.  Linear images get STF stretch; non-linear images get a
+    simple linear passthrough.
+
+    Returns (linked_params, per_channel_params_or_None).
+    """
+    stats = compute_image_stats(data)
+
+    # Non-linear detection: if the STF midtone is >= 0.1, the image is already
+    # stretched — use linear passthrough.
+    stf = stats.linked_stf or (stats.channels[0].stf if stats.channels else None)
+    if stf and stf.midtone >= 0.1:
+        return StretchParams(stretch="linear"), None
+
+    # Linear image — apply STF auto-stretch
+    if stats.color and stats.linked_stf:
+        linked = StretchParams(
+            stretch="stf",
+            shadow=stats.linked_stf.shadow,
+            midtone=stats.linked_stf.midtone,
+            highlight=stats.linked_stf.highlight,
+        )
+    elif stats.channels:
+        ch_stf = stats.channels[0].stf
+        linked = StretchParams(
+            stretch="stf", shadow=ch_stf.shadow, midtone=ch_stf.midtone, highlight=ch_stf.highlight
+        )
+    else:
+        linked = StretchParams(stretch="linear")
+
+    per_channel = None
+    if stats.color and len(stats.channels) == 3:
+        per_channel = [
+            StretchParams(
+                stretch="stf",
+                shadow=ch.stf.shadow,
+                midtone=ch.stf.midtone,
+                highlight=ch.stf.highlight,
+            )
+            for ch in stats.channels
+        ]
+
+    return linked, per_channel
+
+
 def render_image_png(
     data: np.ndarray,
     linked: StretchParams | None = None,
@@ -293,8 +343,13 @@ def render_image_png(
     """Render a normalized [0, 1] array to PNG bytes with stretch applied.
 
     data: (H, W) for mono or (3, H, W) for color.
+    If linked.stretch == "auto", computes stats and determines the best stretch.
     """
     default_params = StretchParams()
+
+    # Resolve auto-stretch: compute stats and pick the right params
+    if linked and linked.stretch == "auto":
+        linked, per_channel = _resolve_auto_stretch(data)
 
     if data.ndim == 2:
         params = linked if linked is not None else default_params

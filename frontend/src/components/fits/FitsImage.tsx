@@ -18,6 +18,8 @@ interface Props {
   hdu: number;
   linked: StretchParams;
   perChannel?: [StretchParams, StretchParams, StretchParams];
+  /** Stable activity label for request tracking (set once on file open, doesn't change on tab switch). */
+  activity?: string;
   onZoomChange?: (zoom: number) => void;
   onPixelHover?: (info: PixelInfo | null) => void;
   pixelPatchRadius?: number;
@@ -33,8 +35,8 @@ const MAX_ZOOM = 40;
 const ZOOM_FACTOR = 1.15;
 
 export const FitsImage = forwardRef<FitsImageHandle, Props>(
-  function FitsImage({ path, hdu, linked, perChannel, onZoomChange, onPixelHover, pixelPatchRadius = 50 }, ref) {
-    const src = imageUrl(path, hdu, linked, perChannel);
+  function FitsImage({ path, hdu, linked, perChannel, activity, onZoomChange, onPixelHover, pixelPatchRadius = 50 }, ref) {
+    const src = imageUrl(path, hdu, linked, perChannel, activity);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -44,6 +46,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+
+    // Cache the last valid fit scale so we don't lose it when the container
+    // is hidden (display:none → 0×0) during tab switches.
+    const lastFitScale = useRef(1);
 
     // Reset zoom/offset and loading state when a different file is opened
     useEffect(() => {
@@ -56,10 +62,12 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     function getFitScale(): number {
       const container = containerRef.current;
       const img = imgRef.current;
-      if (!container || !img || !img.naturalWidth || !imageLoaded) return 1;
+      if (!container || !img || !img.naturalWidth || !imageLoaded) return lastFitScale.current;
       const sx = container.clientWidth / img.naturalWidth;
       const sy = container.clientHeight / img.naturalHeight;
-      return Math.min(sx, sy);
+      const scale = Math.min(sx, sy);
+      if (scale > 0) lastFitScale.current = scale;
+      return lastFitScale.current;
     }
 
     // The effective zoom: if null, use fit scale
@@ -270,7 +278,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       >
         {/* Loading spinner */}
         {!imageLoaded && (
-          <Box sx={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}>
+          <Box sx={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 1 }}>
             <CircularProgress size={32} sx={{ color: "rgba(255,255,255,0.4)" }} />
           </Box>
         )}
@@ -290,8 +298,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             src={src}
             alt="Astronomical image"
             draggable={false}
-            onLoad={() => setImageLoaded(true)}
-            onError={() => setImageLoaded(true)}
+            onLoad={() => { setImageLoaded(true); forceRender((n) => n + 1); }}
+            onError={() => { setImageLoaded(true); forceRender((n) => n + 1); }}
             sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
           />
         </Box>

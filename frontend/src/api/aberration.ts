@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, getActivity } from "./client";
 
 export interface StarMeasurement {
   x: number;
@@ -92,6 +92,8 @@ export function regionCropUrl(path: string, hdu: number, x0: number, y0: number,
     path, hdu: String(hdu),
     x0: String(x0), y0: String(y0), x1: String(x1), y1: String(y1),
   });
+  const activity = getActivity();
+  if (activity) q.set("_activity", activity);
   return `/api/aberration/crop?${q.toString()}`;
 }
 

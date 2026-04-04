@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Checkbox from "@mui/material/Checkbox";
+import CircularProgress from "@mui/material/CircularProgress";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import type { HistogramData } from "@/api/images";
 import { fetchHistogram } from "@/api/images";
 import { CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { monoFontFamily } from "@/theme/theme";
@@ -21,6 +23,8 @@ interface ChannelIntensity {
 interface Props {
   path: string;
   hdu: number;
+  /** Pre-fetched histogram data — if provided, skips internal fetch. */
+  histogramData?: HistogramData;
   shadow?: number;
   midtone?: number;
   highlight?: number;
@@ -33,7 +37,7 @@ const CANVAS_BG = "#12141a";
 const CANVAS_HEIGHT = 120;
 
 
-export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching, channelIntensities }: Props) {
+export function Histogram({ path, hdu, histogramData, shadow, midtone, highlight, isStretching, channelIntensities }: Props) {
   // Show indicator lines only while user is actively moving sliders
   const [showIndicators, setShowIndicators] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -120,11 +124,11 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
   const histQuery = useQuery({
     queryKey: ["histogram", path, hdu],
     queryFn: () => fetchHistogram(path, hdu),
-    enabled: path !== "",
+    enabled: path !== "" && !histogramData,
     staleTime: 60_000,
   });
 
-  const data = histQuery.data;
+  const data = histogramData ?? histQuery.data;
 
   // Redraw on container resize
   const [resizeKey, setResizeKey] = useState(0);
@@ -315,10 +319,11 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
     setVisibleChannels((prev) => ({ ...prev, [name]: !prev[name] }));
   }
 
-  if (histQuery.isLoading) {
+  if (!histogramData && histQuery.isLoading) {
     return (
-      <Box sx={{ px: 1.5, py: 1 }}>
-        <Typography variant="caption" color="text.secondary">Loading histogram…</Typography>
+      <Box sx={{ px: 1.5, py: 1, display: "flex", alignItems: "center", gap: 1 }}>
+        <CircularProgress size={16} sx={{ color: "text.secondary" }} />
+        <Typography variant="caption" color="text.secondary">Loading histogram...</Typography>
       </Box>
     );
   }
@@ -334,7 +339,7 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
   return (
     <Box sx={{ px: 1.5, py: 0.5, display: "flex", gap: 2.5 }}>
       {/* Left: histogram + controls */}
-      <Box sx={{ flex: 2, minWidth: 0 }}>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
       {/* Canvas */}
       <Box
         ref={containerRef}
@@ -430,7 +435,7 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
       {hasIntensities && (() => {
         const maxMedian = Math.max(...channelIntensities!.map((c) => c.median), 1e-10);
         return (
-        <Box sx={{ width: 180, display: "flex", flexDirection: "column", justifyContent: "center", gap: 1.5 }}>
+        <Box sx={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 1.5 }}>
           {channelIntensities!.map((ch) => (
             <Box key={ch.name} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <Typography sx={{ fontSize: "0.7rem", fontFamily: monoFontFamily, color: ch.color, fontWeight: 600, width: 14 }}>
@@ -441,7 +446,7 @@ export function Histogram({ path, hdu, shadow, midtone, highlight, isStretching,
                   <Box sx={{ flex: 1, height: 10, bgcolor: "rgba(255,255,255,0.05)", borderRadius: 1, overflow: "hidden" }}>
                     <Box sx={{ width: `${(ch.median / maxMedian) * 100}%`, height: "100%", bgcolor: ch.color, opacity: 0.6, borderRadius: 1 }} />
                   </Box>
-                  <Typography sx={{ fontSize: "0.65rem", fontFamily: monoFontFamily, color: "text.secondary", width: 36, textAlign: "right", flexShrink: 0 }}>
+                  <Typography sx={{ fontSize: "0.65rem", fontFamily: monoFontFamily, color: "text.secondary", width: 48, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" }}>
                     {ch.median < 0.01 ? ch.median.toExponential(1) : ch.median.toFixed(3)}
                   </Typography>
                 </Box>

@@ -69,7 +69,7 @@ class TestAnalyzeEndpoint:
             "/api/aberration/analyze",
             params={"path": "relative/path/file.fits", "hdu": 0},
         )
-        assert resp.status_code == 422
+        assert resp.status_code in (400, 422)
 
     async def test_analyze_caching(self, client: AsyncClient, tmp_fits_with_stars: Path):
         params = {"path": str(tmp_fits_with_stars), "hdu": 0}

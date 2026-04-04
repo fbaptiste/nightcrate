@@ -41,7 +41,7 @@ export interface ImageStats {
 }
 
 export interface StretchParams {
-  stretch: "stf" | "linear";
+  stretch: "auto" | "stf" | "linear";
   shadow: number;
   midtone: number;
   highlight: number;
@@ -54,14 +54,14 @@ export interface RecentFile {
 }
 
 export const DEFAULT_STRETCH: StretchParams = {
-  stretch: "stf",
+  stretch: "auto",
   shadow: 0,
   midtone: 0.5,
   highlight: 1.0,
 };
 
 export function stfToStretch(stf: StfParams): StretchParams {
-  return { ...DEFAULT_STRETCH, ...stf };
+  return { ...DEFAULT_STRETCH, stretch: "stf", ...stf };
 }
 
 export function isVirtualPath(path: string): boolean {
@@ -114,6 +114,19 @@ export function fetchHistogram(path: string, hdu: number): Promise<HistogramData
   return apiFetch<HistogramData>(`/images/histogram?path=${encodeURIComponent(path)}&hdu=${hdu}`);
 }
 
+// ── Combined stats + histogram ──────────────────────────────────────────────
+
+export interface StatsAndHistogram {
+  stats: ImageStats;
+  histogram: HistogramData;
+}
+
+export function fetchStatsAndHistogram(path: string, hdu: number): Promise<StatsAndHistogram> {
+  return apiFetch<StatsAndHistogram>(
+    `/images/stats-histogram?path=${encodeURIComponent(path)}&hdu=${hdu}`,
+  );
+}
+
 // ── Image rendering ──────────────────────────────────────────────────────────
 
 export function imageUrl(
@@ -121,17 +134,22 @@ export function imageUrl(
   hdu: number,
   linked?: StretchParams,
   perChannel?: [StretchParams, StretchParams, StretchParams],
+  activity?: string,
 ): string {
   const q = new URLSearchParams({ path, hdu: String(hdu) });
 
   if (linked) {
     q.set("stretch", linked.stretch);
-    q.set("shadow", String(linked.shadow));
-    q.set("midtone", String(linked.midtone));
-    q.set("highlight", String(linked.highlight));
+    // For auto stretch, the backend computes params — don't include them in the URL
+    // so that slider value updates don't trigger a re-fetch.
+    if (linked.stretch !== "auto") {
+      q.set("shadow", String(linked.shadow));
+      q.set("midtone", String(linked.midtone));
+      q.set("highlight", String(linked.highlight));
+    }
   }
 
-  if (perChannel) {
+  if (perChannel && linked?.stretch !== "auto") {
     const [r, g, b] = perChannel;
     q.set("r_shadow", String(r.shadow));
     q.set("r_midtone", String(r.midtone));
@@ -143,6 +161,8 @@ export function imageUrl(
     q.set("b_midtone", String(b.midtone));
     q.set("b_highlight", String(b.highlight));
   }
+
+  if (activity) q.set("_activity", activity);
 
   return `/api/images/image?${q.toString()}`;
 }

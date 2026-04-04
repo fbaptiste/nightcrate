@@ -1,5 +1,6 @@
 """NightCrate FastAPI application."""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,14 +8,27 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nightcrate.api import aberration, files, images, settings
+from nightcrate.api import aberration, diagnostics, files, images, settings
+from nightcrate.api.diagnostics import RequestTrackingMiddleware
 from nightcrate.core.config import get_settings
 from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import get_db
 
+_LOG_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
+_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _configure_logging() -> None:
+    """Add timestamps to uvicorn's log output."""
+    formatter = logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        for handler in logging.getLogger(name).handlers:
+            handler.setFormatter(formatter)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _configure_logging()
     apply_migrations()
     # Purge stale aberration cache entries
     try:
@@ -40,7 +54,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(RequestTrackingMiddleware)
+
 app.include_router(aberration.router)
+app.include_router(diagnostics.router)
 app.include_router(files.router)
 app.include_router(images.router)
 app.include_router(settings.router)

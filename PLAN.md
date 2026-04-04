@@ -9,8 +9,9 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.3.0 — XISF Support + Image I/O Refactor](#v030--xisf-support--image-io-refactor) ✅
 - [v0.3.0a — UI Polish + Frontend Redesign](#v030a--ui-polish--frontend-redesign) ✅
 - [v0.4.0 — PixInsight Project Browsing](#v040--pixinsight-project-browsing) ✅
-- [v0.4.1 — Image Histogram](#v041--image-histogram)
-- [v0.5.0 — Aberration Inspector](#v050--aberration-inspector)
+- [v0.4.1 — Image Histogram](#v041--image-histogram) ✅
+- [v0.5.0 — Aberration Inspector](#v050--aberration-inspector-star-detection--sample-grid) ✅
+- [v0.6.0 — Archive Browser](#v060--archive-browser) ✅
 - [Future Features to Consider](#future-features-to-consider)
 - [Appendix: Library Reference](#appendix-library-reference)
 
@@ -904,9 +905,11 @@ Migration: `0004.aberration_cache.sql`
 
 **Goal:** Treat archive files (zip, tar, tar.gz, tar.bz2, tar.zst, 7z) as transparent folders in the file browser. Users navigate into archives, browse subdirectories, and select image files — which are extracted in-memory and loaded through the existing image pipeline with full viewer support.
 
-**Status:** Planned
+**Status:** ✅ Complete
 
 **Design spec:** [`docs/superpowers/specs/2026-04-02-archive-browser-design.md`](docs/superpowers/specs/2026-04-02-archive-browser-design.md)
+
+**Implementation plan:** [`docs/superpowers/plans/2026-04-02-archive-browser.md`](docs/superpowers/plans/2026-04-02-archive-browser.md)
 
 ---
 
@@ -918,57 +921,72 @@ Migration: `0004.aberration_cache.sql`
 
 New service: `services/archive_io.py`
 
-- [ ] `is_archive(path)` — detect archive files by extension
-- [ ] `list_contents(archive_path, subdir)` — list entries at a directory level within the archive (TOC only, no extraction)
-- [ ] `extract_entry(archive_path, entry_path)` — extract single file to `BytesIO` buffer
-- [ ] Format dispatch: zip (`zipfile`), tar variants (`tarfile`), 7z (`py7zr`)
-- [ ] Compound suffix detection (`.tar.gz`, `.tar.bz2`, `.tar.zst`) — longest-first matching
-- [ ] Directory synthesis from entry paths (archives don't always have explicit dir entries)
-- [ ] Path traversal validation — reject `..`, absolute paths, suspicious entry names
+- [x] `is_archive(path)` — detect archive files by extension
+- [x] `list_contents(archive_path, subdir)` — list entries at a directory level within the archive (TOC only, no extraction)
+- [x] `extract_entry(archive_path, entry_path)` — extract single file to `BytesIO` buffer
+- [x] Format dispatch: zip (`zipfile`), tar variants (`tarfile`), 7z (`py7zr`)
+- [x] Compound suffix detection (`.tar.gz`, `.tar.bz2`, `.tar.zst`) — longest-first matching
+- [x] Directory synthesis from entry paths (archives don't always have explicit dir entries)
+- [x] Path traversal validation — reject `..`, absolute paths, suspicious entry names
 
 ### 2. Backend — I/O Service Widening
 
 Widen load/read functions from `Path` to `Path | BinaryIO`:
 
-- [ ] `fits_io.py` — `load_image_data`, `read_header`, `list_extensions`
-- [ ] `xisf_io.py` — `load_image_data`, `read_header`, `list_extensions`
-- [ ] `standard_io.py` — `load_image_data`, `load_image_as_array`, `read_header`, `list_extensions`
-- [ ] New helper: `_file_type_from_ext(entry_name)` — extension-only type detection (no disk check)
-- [ ] Float TIFF detection on in-memory data via `tifffile.TiffFile(buf)`
+- [x] `fits_io.py` — `load_image_data`, `read_header`, `list_extensions`
+- [x] `xisf_io.py` — `load_image_data`, `read_header`, `list_extensions`
+- [x] `standard_io.py` — `load_image_data`, `load_image_as_array`, `read_header`, `list_extensions`
+- [x] New helper: `_file_type_from_ext(entry_name)` — extension-only type detection (no disk check)
+- [x] Float TIFF detection on in-memory data via `tifffile.TiffFile(buf)`
 
 ### 3. Backend — API Endpoints
 
-- [ ] `GET /api/files/browse` — add `archives` array to response (alongside existing `dirs`, `files`, `projects`)
-- [ ] `GET /api/files/browse-archive?path={archive}&subdir={subdir}` — new endpoint, returns `{ path, subdir, parent, dirs, files }`
-- [ ] `_resolve_path()` in `api/images.py` — new archive branch for `::` virtual paths
-- [ ] Aberration cache key support for archive virtual paths
+- [x] `GET /api/files/browse` — add `archives` array to response (alongside existing `dirs`, `files`, `projects`)
+- [x] `GET /api/files/browse-archive?path={archive}&subdir={subdir}` — new endpoint, returns `{ path, subdir, parent, dirs, files }`
+- [x] `_resolve_path()` in `api/images.py` — new archive branch for `::` virtual paths
+- [x] Aberration inspector updated to use `_resolve_path()` for archive virtual path support
 
 ### 4. Frontend — File Browser
 
-- [ ] Archive entries in directory listing with `FolderZipIcon`
-- [ ] New browse mode: `activeArchive` + `archiveSubdir` state
-- [ ] `browseArchive(path, subdir)` API client function
-- [ ] Directory navigation within archives (click to descend, back to ascend)
-- [ ] Virtual path construction: `${archivePath}::${entryPath}`
-- [ ] Breadcrumb with archive name distinguished by zip icon
-- [ ] Back button: within archive → up one level, at root → exit archive
+- [x] Archive entries in directory listing with `FolderZipIcon`
+- [x] New browse mode: `activeArchive` + `archiveSubdir` state
+- [x] `browseArchive(path, subdir)` API client function
+- [x] Directory navigation within archives (click to descend, back to ascend)
+- [x] Virtual path construction: `${archivePath}::${entryPath}`
+- [x] Breadcrumb with archive name distinguished by zip icon
+- [x] Back button: within archive → up one level, at root → exit archive
 
 ### 5. Tests
 
-- [ ] `archive_io` unit tests: list contents (zip, tar.gz, 7z), extract entry, directory synthesis, path traversal rejection
-- [ ] I/O service tests: verify `BytesIO` input works for FITS, XISF, standard formats
-- [ ] API tests: browse-archive endpoint, virtual path resolution, image loading from archive
-- [ ] Frontend build passes
+- [x] `archive_io` unit tests: list contents (zip, tar.gz, 7z), extract entry, directory synthesis, path traversal rejection (36 tests)
+- [x] I/O service tests: verify `BytesIO` input works for FITS, XISF, standard formats (9 tests)
+- [x] API tests: browse-archive endpoint, virtual path resolution, image loading from archive (13 tests)
+- [x] Frontend build passes
 
 ### v0.6.0 Completion Criteria
 
-- [ ] All six archive formats browsable in file browser
-- [ ] Full directory navigation within archives
-- [ ] Images from archives load with full viewer support (stretch, histogram, stats, aberration, pixel inspector)
-- [ ] In-memory extraction — no temp files on disk
-- [ ] Path traversal protection on archive entry names
-- [ ] `uv run pytest` passes
-- [ ] `npm run build` succeeds
+- [x] All six archive formats browsable in file browser
+- [x] Full directory navigation within archives
+- [x] Images from archives load with full viewer support (stretch, histogram, stats, aberration, pixel inspector)
+- [x] In-memory extraction (7z uses temp dir due to py7zr API, cleaned up immediately)
+- [x] Path traversal protection on archive entry names
+- [x] `uv run pytest` passes — 321 tests
+- [x] `npm run build` succeeds
+
+### v0.6.0 Post-Release Improvements
+
+- [x] XISF: single-stream decompression support (zstd, lz4, zlib without sub-block headers)
+- [x] XISF: `lz4hc` codec normalization (PixInsight writes codec name without hyphen)
+- [x] FITS/XISF: strip surrounding single/double quotes from header values
+- [x] Aberration inspector: retry with doubled threshold on sep pixstack overflow
+- [x] Image viewer: `stretch=auto` backend mode — determines linearity and applies STF in one request, eliminating sequential frontend round trips
+- [x] Image viewer: per-component loading spinners (image, histogram, channel bars load independently)
+- [x] Image viewer: zoom/position preserved across tab switches (FitsImage stays mounted, `lastFitScale` cache)
+- [x] File browser: opens to current file's directory with file pre-selected and scrolled into view
+- [x] Activity console: ASGI middleware for request tracking, start-time timestamps, activity grouping, JSON export
+- [x] TIFF: added `imagecodecs` dependency (BSD-3) for LZW and other compressed TIFF support
+- [x] Pillow `MAX_IMAGE_PIXELS` disabled for large astrophotography images
+- [x] Tests: 321 total (25 new — auto-stretch, diagnostics, XISF single-stream, header quotes, aberration retry)
 
 ---
 
@@ -1069,6 +1087,7 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 | opencv-python | Apache 2.0 | Image processing, quality analysis |
 | numba | BSD 2-Clause | JIT compilation for CPU-bound array operations (alternative to mlx on non-Apple-Silicon) |
 | tifffile | BSD 3-Clause | TIFF reading/writing if DSLR or other TIFF sources are needed |
+| imagecodecs | BSD 3-Clause | Codec extensions for tifffile — required for LZW, JPEG, and other compressed TIFF formats |
 | requests | Apache 2.0 | HTTP client (astroquery dependency; useful for external APIs) |
 | D3.js | ISC | Complex interactive charts (PHD2 guiding graph, session timeline) |
 | py7zr | LGPL-2.1+ | 7z archive extraction. Pure Python, no external binaries. ⚠ LGPL — OK as Python import (dynamic linking). **Requires attribution.** |
