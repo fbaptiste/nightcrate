@@ -274,12 +274,15 @@ class StretchParams:
     highlight: float = 1.0
 
 
-def _mtf(x: np.ndarray, m: float) -> np.ndarray:
-    """Midtones Transfer Function: MTF(x, m) = (m-1)*x / ((2m-1)*x - m)."""
+def _mtf(x, m: float):
+    """Midtones Transfer Function: MTF(x, m) = (m-1)*x / ((2m-1)*x - m).
+
+    Works with numpy, mlx, and cupy arrays (uses only arithmetic operators).
+    """
     if m <= 0.0:
-        return np.zeros_like(x)
+        return x * 0.0
     if m >= 1.0:
-        return np.ones_like(x)
+        return x * 0.0 + 1.0
     return ((m - 1.0) * x) / ((2.0 * m - 1.0) * x - m)
 
 
@@ -300,15 +303,8 @@ def stretch_plane(plane: np.ndarray, p: StretchParams) -> np.ndarray:
         src = xp.array(plane) if use_gpu else plane
         clipped = xp.clip(src, c, h)
         rescaled = (clipped - c) / (h - c)
-        # Inline MTF on GPU (avoids _mtf helper which uses np-specific code)
-        m = p.midtone
-        if m <= 0.0:
-            stretched = xp.zeros_like(rescaled)
-        elif m >= 1.0:
-            stretched = xp.ones_like(rescaled)
-        else:
-            stretched = ((m - 1.0) * rescaled) / ((2.0 * m - 1.0) * rescaled - m)
-        result = (xp.clip(stretched, 0.0, 1.0) * 255)
+        stretched = _mtf(rescaled, p.midtone)
+        result = xp.clip(stretched, 0.0, 1.0) * 255
         if use_gpu:
             return np.asarray(result.astype(xp.uint8))
         return result.astype(np.uint8)
@@ -326,7 +322,7 @@ def stretch_plane(plane: np.ndarray, p: StretchParams) -> np.ndarray:
     return result.astype(np.uint8)
 
 
-def _resolve_auto_stretch(
+def resolve_auto_stretch(
     data: np.ndarray,
     stats: ImageStats | None = None,
 ) -> tuple[StretchParams, list[StretchParams] | None, ImageStats]:
@@ -392,7 +388,7 @@ def render_image_png(
 
     # Resolve auto-stretch: compute stats and pick the right params
     if linked and linked.stretch == "auto":
-        linked, per_channel, _ = _resolve_auto_stretch(data)
+        linked, per_channel, _ = resolve_auto_stretch(data)
 
     if data.ndim == 2:
         params = linked if linked is not None else default_params

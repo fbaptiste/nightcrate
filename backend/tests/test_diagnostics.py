@@ -5,8 +5,8 @@ import time
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from nightcrate.main import app
 from nightcrate.api.diagnostics import _records
+from nightcrate.main import app
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +39,7 @@ class TestRequestTracking:
         await client.get("/api/images/recent")
         rec = _records[-1]
         # Parse the ISO timestamp
-        from datetime import datetime, UTC
+        from datetime import datetime
 
         ts = datetime.fromisoformat(rec.timestamp)
         ts_epoch = ts.timestamp()
@@ -57,9 +57,7 @@ class TestRequestTracking:
         assert len(_records) == count_before  # no new record
 
     async def test_activity_from_header(self, client: AsyncClient):
-        await client.get(
-            "/api/images/recent", headers={"X-Activity": "Test Activity"}
-        )
+        await client.get("/api/images/recent", headers={"X-Activity": "Test Activity"})
         rec = _records[-1]
         assert rec.activity == "Test Activity"
 
@@ -77,15 +75,9 @@ class TestActivityEndpoint:
         assert data["groups"] == []
 
     async def test_groups_by_activity(self, client: AsyncClient):
-        await client.get(
-            "/api/images/recent", headers={"X-Activity": "Group A"}
-        )
-        await client.get(
-            "/api/images/recent", headers={"X-Activity": "Group A"}
-        )
-        await client.get(
-            "/api/images/recent", headers={"X-Activity": "Group B"}
-        )
+        await client.get("/api/images/recent", headers={"X-Activity": "Group A"})
+        await client.get("/api/images/recent", headers={"X-Activity": "Group A"})
+        await client.get("/api/images/recent", headers={"X-Activity": "Group B"})
         resp = await client.get("/api/diagnostics/activity")
         data = resp.json()
         assert len(data["groups"]) == 2

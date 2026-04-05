@@ -23,10 +23,10 @@ from nightcrate.services.imaging import (
     LUM_R,
     ImageStats,
     StretchParams,
-    _resolve_auto_stretch,
     compute_image_stats,
     is_color_image,
     render_image_png,
+    resolve_auto_stretch,
 )
 
 router = APIRouter(prefix="/api/images", tags=["images"])
@@ -45,102 +45,67 @@ _CACHE_MAX_ENTRIES = 5
 _CACHE_TTL_SECONDS = 120
 
 _cache: dict[tuple, tuple[np.ndarray, float]] = {}
-_data_locks: dict[tuple, threading.Lock] = {}
 _stats_cache: dict[tuple, tuple[ImageStats, float]] = {}
-_stats_locks: dict[tuple, threading.Lock] = {}
+_key_locks: dict[tuple, threading.Lock] = {}
 _cache_lock = threading.Lock()
 
 
-def _get_cached_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> np.ndarray:
-    """Load image data, using a TTL cache with per-key locking.
+def _cached_compute(key: tuple, store: dict, compute_fn):
+    """Get a value from a TTL cache, or compute it exactly once.
 
-    Concurrent requests for the same file share a single load — the first
-    thread loads and caches, others wait and get the cached result.
+    Uses per-key locking so concurrent requests for the same key share a
+    single computation — the first thread computes and caches, others wait.
     """
-    if not isinstance(p, Path):
-        return _load_image_data(p, ft, idx, hdu)
-
-    key = (str(p), p.stat().st_mtime, idx, hdu)
-
-    # Fast path: check cache
     with _cache_lock:
-        entry = _cache.get(key)
+        entry = store.get(key)
         if entry is not None:
-            data, ts = entry
+            val, ts = entry
             if time.monotonic() - ts < _CACHE_TTL_SECONDS:
-                return data
-            del _cache[key]
-        if key not in _data_locks:
-            _data_locks[key] = threading.Lock()
-        lock = _data_locks[key]
+                return val
+            del store[key]
+        if key not in _key_locks:
+            _key_locks[key] = threading.Lock()
+        lock = _key_locks[key]
 
-    # Per-key lock: only one thread loads, others wait
     with lock:
         with _cache_lock:
-            entry = _cache.get(key)
+            entry = store.get(key)
             if entry is not None:
-                data, ts = entry
+                val, ts = entry
                 if time.monotonic() - ts < _CACHE_TTL_SECONDS:
-                    return data
+                    return val
 
-        data = _load_image_data(p, ft, idx, hdu)
+        val = compute_fn()
 
         with _cache_lock:
-            while len(_cache) >= _CACHE_MAX_ENTRIES:
-                oldest = min(_cache, key=lambda k: _cache[k][1])
-                del _cache[oldest]
-            _cache[key] = (data, time.monotonic())
+            while len(store) >= _CACHE_MAX_ENTRIES:
+                oldest = next(iter(store))
+                del store[oldest]
+                _key_locks.pop(oldest, None)
+            store[key] = (val, time.monotonic())
 
-    return data
+    return val
+
+
+def _get_cached_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> np.ndarray:
+    """Load image data with TTL cache and per-key locking."""
+    if not isinstance(p, Path):
+        return _load_image_data(p, ft, idx, hdu)
+    key = (str(p), p.stat().st_mtime, idx, hdu)
+    return _cached_compute(key, _cache, lambda: _load_image_data(p, ft, idx, hdu))
 
 
 def _get_or_compute_stats(
-    data: np.ndarray, p: Path | BinaryIO, idx: int, hdu: int,
+    data: np.ndarray,
+    p: Path | BinaryIO,
+    idx: int,
+    hdu: int,
 ) -> ImageStats:
-    """Return stats from cache or compute once.
-
-    Uses per-key locks so concurrent requests for the same file don't both
-    compute stats — the first thread computes and caches, the second waits
-    and reads the cached result.
-    """
+    """Return stats from cache or compute once with per-key locking."""
     if not isinstance(p, Path):
         return compute_image_stats(data)
-
     key = (str(p), p.stat().st_mtime, idx, hdu)
-
-    # Fast path: check cache without per-key lock
-    now = time.monotonic()
-    with _cache_lock:
-        entry = _stats_cache.get(key)
-        if entry is not None:
-            stats, ts = entry
-            if now - ts < _CACHE_TTL_SECONDS:
-                return stats
-            del _stats_cache[key]
-        # Get or create per-key lock
-        if key not in _stats_locks:
-            _stats_locks[key] = threading.Lock()
-        lock = _stats_locks[key]
-
-    # Serialize computation for this key
-    with lock:
-        # Double-check after acquiring lock (another thread may have computed)
-        with _cache_lock:
-            entry = _stats_cache.get(key)
-            if entry is not None:
-                stats, ts = entry
-                if time.monotonic() - ts < _CACHE_TTL_SECONDS:
-                    return stats
-
-        stats = compute_image_stats(data)
-
-        with _cache_lock:
-            while len(_stats_cache) >= _CACHE_MAX_ENTRIES:
-                oldest = min(_stats_cache, key=lambda k: _stats_cache[k][1])
-                del _stats_cache[oldest]
-            _stats_cache[key] = (stats, time.monotonic())
-
-    return stats
+    return _cached_compute(key, _stats_cache, lambda: compute_image_stats(data))
 
 
 STRUCTURAL_KEYWORDS = {
@@ -533,7 +498,7 @@ def _render_image(
     # redundant computation with concurrent stats-histogram request)
     if linked and linked.stretch == "auto":
         stats = _get_or_compute_stats(data, p, idx, hdu)
-        linked, per_channel, _ = _resolve_auto_stretch(data, stats=stats)
+        linked, per_channel, _ = resolve_auto_stretch(data, stats=stats)
         return render_image_png(data, linked=linked, per_channel=per_channel)
     return render_image_png(data, linked=linked, per_channel=per_channel)
 
