@@ -1,6 +1,6 @@
 [project]
 name = "nightcrate"
-version = "0.6.0"
+version = "0.6.1"
 description = "Astrophotography session cataloging and analysis"
 requires-python = ">=3.14"
 dependencies = [
@@ -21,6 +21,8 @@ dependencies = [
     "sep>=1.4.1",
     "py7zr>=1.1.0",
     "imagecodecs>=2026.3.6",
+    "bottleneck>=1.6.0",
+    "mlx>=0.31.1; sys_platform == 'darwin'",
 ]
 
 [project.scripts]

@@ -25,6 +25,8 @@ interface Props {
   hdu: number;
   /** Pre-fetched histogram data — if provided, skips internal fetch. */
   histogramData?: HistogramData;
+  /** When true, histogram data will be provided via prop — don't fetch independently. */
+  histogramPending?: boolean;
   shadow?: number;
   midtone?: number;
   highlight?: number;
@@ -37,7 +39,7 @@ const CANVAS_BG = "#12141a";
 const CANVAS_HEIGHT = 120;
 
 
-export function Histogram({ path, hdu, histogramData, shadow, midtone, highlight, isStretching, channelIntensities }: Props) {
+export function Histogram({ path, hdu, histogramData, histogramPending, shadow, midtone, highlight, isStretching, channelIntensities }: Props) {
   // Show indicator lines only while user is actively moving sliders
   const [showIndicators, setShowIndicators] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,7 +126,7 @@ export function Histogram({ path, hdu, histogramData, shadow, midtone, highlight
   const histQuery = useQuery({
     queryKey: ["histogram", path, hdu],
     queryFn: () => fetchHistogram(path, hdu),
-    enabled: path !== "" && !histogramData,
+    enabled: path !== "" && !histogramData && !histogramPending,
     staleTime: 60_000,
   });
 

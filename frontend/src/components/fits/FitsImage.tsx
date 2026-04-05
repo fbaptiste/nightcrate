@@ -43,6 +43,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     // null zoom = fit-to-window (computed from container/image size)
     const [zoom, setZoom] = useState<number | null>(null);
     const [imageLoaded, setImageLoaded] = useState(false);
+    // Show spinner overlay when src changes (e.g., Apply stretch).
+    // Old image stays visible behind spinner.
+    const [imageLoading, setImageLoading] = useState(false);
+    const prevSrc = useRef(src);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
@@ -51,11 +55,20 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     // is hidden (display:none → 0×0) during tab switches.
     const lastFitScale = useRef(1);
 
+    // Detect src changes for loading spinner (stretch param changes, etc.)
+    if (src !== prevSrc.current) {
+      prevSrc.current = src;
+      if (imageLoaded) {
+        setImageLoading(true);
+      }
+    }
+
     // Reset zoom/offset and loading state when a different file is opened
     useEffect(() => {
       setZoom(null);
       setOffset({ x: 0, y: 0 });
       setImageLoaded(false);
+      setImageLoading(false);
     }, [path, hdu]);
 
     // Compute the fit-to-window scale
@@ -276,8 +289,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           userSelect: "none",
         }}
       >
-        {/* Loading spinner */}
-        {!imageLoaded && (
+        {/* Loading spinner — initial load or src change (e.g., stretch applied) */}
+        {(!imageLoaded || imageLoading) && (
           <Box sx={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 1 }}>
             <CircularProgress size={32} sx={{ color: "rgba(255,255,255,0.4)" }} />
           </Box>
@@ -298,8 +311,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             src={src}
             alt="Astronomical image"
             draggable={false}
-            onLoad={() => { setImageLoaded(true); forceRender((n) => n + 1); }}
-            onError={() => { setImageLoaded(true); forceRender((n) => n + 1); }}
+            onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+            onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
             sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
           />
         </Box>

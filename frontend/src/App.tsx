@@ -5,6 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { HomePage } from "@/pages/HomePage";
 import { ImageViewerPage } from "@/pages/ImageViewerPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { ApiDocsPage } from "@/pages/ApiDocsPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 const router = createBrowserRouter([
@@ -15,6 +16,7 @@ const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: "image-viewer", element: <ImageViewerPage /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "api-docs", element: <ApiDocsPage /> },
     ],
   },
 ]);

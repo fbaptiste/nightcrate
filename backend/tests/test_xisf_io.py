@@ -306,7 +306,6 @@ class TestReadHeader:
         assert "FILTER" in keys
         assert "EXPTIME" in keys
 
-
     def test_fits_keyword_values_have_quotes_stripped(self, tmp_path):
         """XISF FITSKeyword values with embedded quotes should be stripped."""
         data = np.zeros((4, 4), dtype=np.uint16)

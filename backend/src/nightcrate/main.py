@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from nightcrate.api import aberration, diagnostics, files, images, settings
 from nightcrate.api.diagnostics import RequestTrackingMiddleware
+from nightcrate.core.compute import set_gpu_enabled
 from nightcrate.core.config import get_settings
 from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import get_db
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     # Purge stale aberration cache entries
     try:
         app_settings = await get_settings()
+        set_gpu_enabled(app_settings.gpu_acceleration)
         ttl_days = app_settings.aberration_cache_ttl_days
         async with get_db() as conn:
             await conn.execute(

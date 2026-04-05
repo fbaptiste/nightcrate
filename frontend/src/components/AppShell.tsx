@@ -15,6 +15,7 @@ import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import HomeIcon from "@mui/icons-material/Home";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import LightModeIcon from "@mui/icons-material/LightMode";
+import CodeIcon from "@mui/icons-material/Code";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { NavLink, Outlet } from "react-router-dom";
 import { fetchHealth } from "@/api/files";
@@ -27,6 +28,7 @@ const navItems = [
   { to: "/", label: "Home", icon: <HomeIcon /> },
   { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
+  { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },
 ];
 
 const THEME_CYCLE: Theme[] = ["light", "dark", "browser"];

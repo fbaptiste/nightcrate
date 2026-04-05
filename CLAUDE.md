@@ -172,7 +172,11 @@ Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects
 - Channel colors defined in `lib/channelColors.ts` (single source of truth)
 - Luminance weights (`LUM_R/G/B`) defined in `services/imaging.py`
 - Stretch is applied server-side — frontend sends stretch params as query parameters and receives a rendered PNG
-- The `core/compute.py` (`get_array_module()`) abstraction exists for future GPU acceleration
+- `core/compute.py` (`get_array_module()`) provides GPU abstraction — used in `_channel_stats()` and `stretch_plane()` for mlx/cupy acceleration. Settings toggle applies immediately via `set_gpu_enabled()`
+- `bottleneck.nanmedian()` used as CPU fallback for faster median computation (2-3x vs numpy)
+- Histogram subsampled to ~2M pixels for large images (statistically identical for 256 bins)
+- PNG encoding uses `compress_level=1` (fastest) — local app, speed over file size
+- Per-key locking on image data and stats caches prevents redundant computation from concurrent requests
 
 ## Activity Console
 
