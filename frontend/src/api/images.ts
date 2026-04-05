@@ -68,6 +68,13 @@ export function isVirtualPath(path: string): boolean {
   return path.includes("::");
 }
 
+const FITS_EXTENSIONS = new Set([".fits", ".fit", ".fts"]);
+
+export function isFitsPath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return FITS_EXTENSIONS.has(lower.slice(lower.lastIndexOf(".")));
+}
+
 export function fetchExtensions(path: string): Promise<ExtensionInfo[]> {
   return apiFetch<ExtensionInfo[]>(`/images/extensions?path=${encodeURIComponent(path)}`);
 }
@@ -184,4 +191,25 @@ export interface ImageMetadata {
 
 export function fetchMetadata(path: string, hdu: number): Promise<ImageMetadata> {
   return apiFetch<ImageMetadata>(`/images/metadata?path=${encodeURIComponent(path)}&hdu=${hdu}`);
+}
+
+// ── Header editing ──────────────────────────────────────────────────────────
+
+export interface HeaderOperation {
+  op: "update" | "add" | "delete";
+  key: string;
+  value?: string;
+  comment?: string;
+}
+
+export function patchHeader(
+  path: string,
+  hdu: number,
+  operations: HeaderOperation[],
+): Promise<HeaderCard[]> {
+  return apiFetch<HeaderCard[]>("/images/header", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, hdu, operations }),
+  });
 }

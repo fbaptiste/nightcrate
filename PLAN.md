@@ -1071,6 +1071,39 @@ Widen load/read functions from `Path` to `Path | BinaryIO`:
 
 ---
 
+## v0.7.0 — FITS Header Editing
+
+**Status:** Complete
+**Branch:** `v0.7.0/header-editing`
+
+FITS header editing — modify existing keyword values/comments, add new keywords, delete keywords. Edits are written in place via astropy. Structural keywords (SIMPLE, BITPIX, NAXIS*, etc.) are protected.
+
+### Tasks
+
+- [x] `fits_io.update_header()` — in-place header editing via `mode="update"` + `flush()`
+- [x] `PATCH /api/images/header` — batch edit endpoint with validation
+- [x] Structural keyword protection (cannot edit/delete SIMPLE, BITPIX, NAXIS*, etc.)
+- [x] Archive/virtual path rejection (edit only regular FITS files on disk)
+- [x] Toggle edit mode in FitsHeaderTable (Edit/Done button)
+- [x] Inline cell editing for value and comment columns
+- [x] Inline key editing for newly added rows
+- [x] Add keyword row with "Add to headers" button + auto-scroll
+- [x] Delete keyword with undo support
+- [x] Pending change tracking with visual highlights (modified/added/deleted)
+- [x] Save/Discard with query invalidation and snackbar feedback
+- [x] Save and Discard exit edit mode automatically
+- [x] 20 backend tests (operations, validation, structural protection, on-disk verification)
+
+### Also in this version
+- [x] Fix archive image loading crash — concurrent cache bypass for BytesIO paths (v0.6.2 hotfix)
+
+### v0.7.0 Completion Criteria
+
+- [x] All tests pass — 342 tests
+- [x] Frontend builds (`npm run build`)
+- [x] Ruff clean
+- [x] Code simplification pass
+
 ---
 
 ## Future Features to Consider
