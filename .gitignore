@@ -54,3 +54,6 @@ instructions/
 # Playwright MCP artifacts
 .playwright-mcp/
 backend/.coverage
+
+# Temporary screenshots
+bug*.png

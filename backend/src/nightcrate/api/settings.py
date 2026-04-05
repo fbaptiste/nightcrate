@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from nightcrate.core.compute import set_gpu_enabled
 from nightcrate.core.config import Settings, get_settings, update_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -14,4 +15,6 @@ async def read_settings() -> Settings:
 
 @router.put("", response_model=Settings)
 async def write_settings(payload: Settings) -> Settings:
-    return await update_settings(payload)
+    saved = await update_settings(payload)
+    set_gpu_enabled(saved.gpu_acceleration)
+    return saved

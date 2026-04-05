@@ -122,13 +122,14 @@ export function ImageViewerPage() {
   // Error notification
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Stretch state
+  // Stretch state — split into "local" (slider display) and "applied" (what FitsImage renders).
+  // Sliders update local state immediately. Apply button commits local → applied.
+  // Toggles (Auto/None, Linked/Unlinked) and Reset apply immediately.
   const [linked, setLinked] = useState<StretchParams>({ ...DEFAULT_STRETCH });
   const [perChannel, setPerChannel] = useState<[StretchParams, StretchParams, StretchParams]>(DEFAULT_PER_CHANNEL);
+  const [appliedLinked, setAppliedLinked] = useState<StretchParams>({ ...DEFAULT_STRETCH });
+  const [appliedPerChannel, setAppliedPerChannel] = useState<[StretchParams, StretchParams, StretchParams]>(DEFAULT_PER_CHANNEL);
   const [isLinked, setIsLinked] = useState(true);
-
-  const debouncedLinked = useDebounce(linked, 300);
-  const debouncedPerChannel = useDebounce(perChannel, 300);
 
   // Aberration state
   const [samplesAcross, setSamplesAcross] = useState(5);
@@ -266,6 +267,8 @@ export function ImageViewerPage() {
     setTab(0);
     setLinked({ ...DEFAULT_STRETCH });
     setPerChannel(DEFAULT_PER_CHANNEL);
+    setAppliedLinked({ ...DEFAULT_STRETCH });
+    setAppliedPerChannel(DEFAULT_PER_CHANNEL);
     setIsLinked(true);
     setSelectedSquare(null);
     appliedDefaultsFor.current = "";
@@ -290,7 +293,8 @@ export function ImageViewerPage() {
   function handleReset() {
     if (statsQuery.data) {
       setActivity("Reset auto stretch");
-      applyAutoStf(statsQuery.data, setLinked, setPerChannel);
+      // Update both local and applied — Reset applies immediately
+      applyAutoStf(statsQuery.data, (p) => { setLinked(p); setAppliedLinked(p); }, (ch) => { setPerChannel(ch); setAppliedPerChannel(ch); });
       setIsLinked(true);
     }
   }
@@ -298,14 +302,33 @@ export function ImageViewerPage() {
   const handleLinkedToggle = useCallback((val: boolean) => {
     setIsLinked(val);
     if (!val && statsQuery.data?.color && statsQuery.data.channels.length === 3) {
-      // Use per-channel auto-stretch params from stats, not linked params
-      setPerChannel([
+      // Use per-channel auto-stretch params from stats — applies immediately
+      const ch: [StretchParams, StretchParams, StretchParams] = [
         stfToStretch(statsQuery.data.channels[0].stf),
         stfToStretch(statsQuery.data.channels[1].stf),
         stfToStretch(statsQuery.data.channels[2].stf),
-      ]);
+      ];
+      setPerChannel(ch);
+      setAppliedPerChannel(ch);
     }
   }, [statsQuery.data]);
+
+  function handleApplyStretch() {
+    setActivity("Apply stretch");
+    setAppliedLinked({ ...linked, stretch: "stf" });
+    setAppliedPerChannel([...perChannel]);
+  }
+
+  function handleStretchTypeChange(type: "stf" | "linear") {
+    if (type === "stf") {
+      handleReset();
+    } else {
+      // Switch to linear — applies immediately
+      const p = { ...linked, stretch: type as StretchParams["stretch"] };
+      setLinked(p);
+      setAppliedLinked(p);
+    }
+  }
 
   const extensions = extensionsQuery.data ?? [];
   const selectedExtInfo = extensions.find((h) => h.index === selectedHdu);
@@ -354,7 +377,7 @@ export function ImageViewerPage() {
   const exposure = headerVal("EXPTIME");
   const filter = headerVal("FILTER");
 
-  const activePerChannel = (isColor && !isLinked) ? debouncedPerChannel : undefined;
+  const activePerChannel = (isColor && !isLinked) ? appliedPerChannel : undefined;
 
   return (
     <Box sx={{ display: "flex", height: "100%", overflow: "hidden" }}>
@@ -476,7 +499,7 @@ export function ImageViewerPage() {
                       ref={imageRef}
                       path={activePath}
                       hdu={selectedHdu}
-                      linked={debouncedLinked}
+                      linked={appliedLinked}
                       perChannel={hasStretch ? activePerChannel : undefined}
                       activity={imageActivity}
                       onZoomChange={setCurrentZoom}
@@ -523,6 +546,7 @@ export function ImageViewerPage() {
                     path={activePath}
                     hdu={selectedHdu}
                     histogramData={statsHistogramQuery.data?.histogram}
+                    histogramPending={hasStretch}
                     shadow={linked.shadow}
                     midtone={linked.midtone}
                     highlight={linked.highlight}
@@ -574,7 +598,7 @@ export function ImageViewerPage() {
                     <ZoneOverlayMap
                       path={activePath}
                       hdu={selectedHdu}
-                      linked={debouncedLinked}
+                      linked={appliedLinked}
                       grid={samplesQuery.data}
                       squares={activeSquares}
                       selectedSquare={selectedSquare}
@@ -749,11 +773,15 @@ export function ImageViewerPage() {
               <StretchControls
                 isColor={isColor}
                 linked={linked}
+                appliedLinked={appliedLinked}
                 perChannel={perChannel}
+                appliedPerChannel={appliedPerChannel}
                 isLinked={isLinked}
                 onLinkedChange={setLinked}
                 onPerChannelChange={setPerChannel}
+                onStretchTypeChange={handleStretchTypeChange}
                 onLinkedToggle={handleLinkedToggle}
+                onApply={handleApplyStretch}
                 onReset={handleReset}
               />
             </SidebarSection>

@@ -12,6 +12,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.4.1 — Image Histogram](#v041--image-histogram) ✅
 - [v0.5.0 — Aberration Inspector](#v050--aberration-inspector-star-detection--sample-grid) ✅
 - [v0.6.0 — Archive Browser](#v060--archive-browser) ✅
+- [v0.6.1 — Performance & UX Polish](#v061--performance--ux-polish)
 - [Future Features to Consider](#future-features-to-consider)
 - [Appendix: Library Reference](#appendix-library-reference)
 
@@ -990,6 +991,86 @@ Widen load/read functions from `Path` to `Path | BinaryIO`:
 
 ---
 
+## v0.6.1 — Performance & UX Polish
+
+**Goal:** Faster image loading and better stretch control workflow. Focus on eliminating redundant computation, leveraging GPU acceleration, and replacing the live-updating debounced sliders with an explicit Apply workflow.
+
+**Status:** In Progress
+
+---
+
+### 1. Stretch Controls UX — Apply Button
+
+- [x] Split stretch state into local (slider display) and applied (what FitsImage renders)
+- [x] Add Apply button — highlighted when pending changes exist, disabled when nothing to apply
+- [x] Toggles (Auto/None, Linked/Unlinked) and Reset apply immediately — no Apply needed
+- [x] Only manual slider adjustments require Apply
+- [x] Remove 300ms debounce on stretch params
+- [x] FitsImage shows spinner when src changes (Apply clicked)
+
+### 2. Stats Caching
+
+- [x] Per-key locking for image data cache — concurrent requests share a single load
+- [x] Per-key locking for stats cache — concurrent requests share a single computation
+- [x] `_resolve_auto_stretch()` accepts pre-computed stats to avoid redundant computation
+- [x] Stats/stats-histogram endpoints use cached stats when available
+
+### 3. Faster Median — `bottleneck`
+
+- [x] Add `bottleneck` (BSD-2-Clause) for faster median computation
+- [x] Replace `np.median()` with `bn.nanmedian()` in `_channel_stats()` and `_compute_lab_a_median()`
+
+### 4. Histogram Subsampling
+
+- [x] Subsample large images to ~2M pixels for histogram computation
+- [x] 256-bin histogram is statistically identical at this sample size (0.015% max bin deviation)
+- [x] Histogram computation: 7.9s → 0.05s for 91MP RGB images
+- [x] Eliminate redundant histogram request — `histogramPending` prop prevents Histogram component from fetching independently when stats-histogram will provide data
+
+### 5. GPU Acceleration (mlx)
+
+- [x] Hook `set_gpu_enabled()` to settings PUT endpoint and startup lifespan
+- [x] Integrate `get_array_module()` into `_channel_stats()` — GPU median, abs, mean, min, max
+- [x] Integrate `get_array_module()` into `stretch_plane()` — GPU clip, rescale, MTF
+- [x] Add `mlx` dependency (MIT) for Apple Silicon Metal acceleration
+- [x] Add `mlx` to README acknowledgments and PLAN.md Library Reference
+
+### 6. PNG Encoding
+
+- [x] Reduce Pillow PNG `compress_level` from 6 (default) to 1 — local app, speed over size
+- [x] PNG encoding: 3.6s → 2.5s for 91MP RGB
+
+### Performance Results (91MP RGB XISF)
+
+| Metric | Before | After | Speedup |
+|--------|--------|-------|---------|
+| Image endpoint | 7175ms | 3012ms | 2.4x |
+| Stats-histogram endpoint | 10262ms | 1547ms | 6.6x |
+| Total open time | 26741ms | 4724ms | 5.7x |
+
+### New Dependencies
+
+- `bottleneck` (BSD-2-Clause) — fast median computation via introselect algorithm
+- `mlx` (MIT) — Apple Metal GPU acceleration for array operations
+
+### 7. API Docs Page
+
+- [x] New route `/api-docs` with `ApiDocsPage` component
+- [x] Nav item in sidebar with Code icon
+- [x] Swagger UI rendered in iframe with dark/light theme matching
+- [x] Vite dev proxy for `/docs` and `/openapi.json`
+
+### v0.6.1 Completion Criteria
+
+- [x] All tests pass — 321 tests
+- [x] Frontend builds (`npm run build`)
+- [x] Ruff clean
+- [x] Stretch Apply button works for linked and per-channel modes
+- [x] GPU toggle in settings takes effect immediately (no restart)
+- [x] README and PLAN.md Library Reference updated with new deps
+
+---
+
 ---
 
 ## Future Features to Consider
@@ -1086,6 +1167,8 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 | pywavelets (pywt) | MIT | Wavelet-based noise reduction/sharpening |
 | opencv-python | Apache 2.0 | Image processing, quality analysis |
 | numba | BSD 2-Clause | JIT compilation for CPU-bound array operations (alternative to mlx on non-Apple-Silicon) |
+| bottleneck | BSD 2-Clause | Fast median/nanmedian via introselect algorithm — 2-3x faster than numpy for large arrays |
+| mlx | MIT | Apple Metal GPU acceleration for array operations (Apple Silicon only). Used for stats and stretch computation |
 | tifffile | BSD 3-Clause | TIFF reading/writing if DSLR or other TIFF sources are needed |
 | imagecodecs | BSD 3-Clause | Codec extensions for tifffile — required for LZW, JPEG, and other compressed TIFF formats |
 | requests | Apache 2.0 | HTTP client (astroquery dependency; useful for external APIs) |

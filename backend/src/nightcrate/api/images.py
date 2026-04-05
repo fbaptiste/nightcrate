@@ -21,7 +21,9 @@ from nightcrate.services.imaging import (
     LUM_B,
     LUM_G,
     LUM_R,
+    ImageStats,
     StretchParams,
+    _resolve_auto_stretch,
     compute_image_stats,
     is_color_image,
     render_image_png,
@@ -43,34 +45,102 @@ _CACHE_MAX_ENTRIES = 5
 _CACHE_TTL_SECONDS = 120
 
 _cache: dict[tuple, tuple[np.ndarray, float]] = {}
+_data_locks: dict[tuple, threading.Lock] = {}
+_stats_cache: dict[tuple, tuple[ImageStats, float]] = {}
+_stats_locks: dict[tuple, threading.Lock] = {}
 _cache_lock = threading.Lock()
 
 
 def _get_cached_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> np.ndarray:
-    """Load image data, using a TTL cache for Path-based sources."""
+    """Load image data, using a TTL cache with per-key locking.
+
+    Concurrent requests for the same file share a single load — the first
+    thread loads and caches, others wait and get the cached result.
+    """
     if not isinstance(p, Path):
         return _load_image_data(p, ft, idx, hdu)
 
     key = (str(p), p.stat().st_mtime, idx, hdu)
-    now = time.monotonic()
 
+    # Fast path: check cache
     with _cache_lock:
         entry = _cache.get(key)
         if entry is not None:
             data, ts = entry
-            if now - ts < _CACHE_TTL_SECONDS:
+            if time.monotonic() - ts < _CACHE_TTL_SECONDS:
                 return data
             del _cache[key]
+        if key not in _data_locks:
+            _data_locks[key] = threading.Lock()
+        lock = _data_locks[key]
 
-    data = _load_image_data(p, ft, idx, hdu)
+    # Per-key lock: only one thread loads, others wait
+    with lock:
+        with _cache_lock:
+            entry = _cache.get(key)
+            if entry is not None:
+                data, ts = entry
+                if time.monotonic() - ts < _CACHE_TTL_SECONDS:
+                    return data
 
-    with _cache_lock:
-        while len(_cache) >= _CACHE_MAX_ENTRIES:
-            oldest = min(_cache, key=lambda k: _cache[k][1])
-            del _cache[oldest]
-        _cache[key] = (data, time.monotonic())
+        data = _load_image_data(p, ft, idx, hdu)
+
+        with _cache_lock:
+            while len(_cache) >= _CACHE_MAX_ENTRIES:
+                oldest = min(_cache, key=lambda k: _cache[k][1])
+                del _cache[oldest]
+            _cache[key] = (data, time.monotonic())
 
     return data
+
+
+def _get_or_compute_stats(
+    data: np.ndarray, p: Path | BinaryIO, idx: int, hdu: int,
+) -> ImageStats:
+    """Return stats from cache or compute once.
+
+    Uses per-key locks so concurrent requests for the same file don't both
+    compute stats — the first thread computes and caches, the second waits
+    and reads the cached result.
+    """
+    if not isinstance(p, Path):
+        return compute_image_stats(data)
+
+    key = (str(p), p.stat().st_mtime, idx, hdu)
+
+    # Fast path: check cache without per-key lock
+    now = time.monotonic()
+    with _cache_lock:
+        entry = _stats_cache.get(key)
+        if entry is not None:
+            stats, ts = entry
+            if now - ts < _CACHE_TTL_SECONDS:
+                return stats
+            del _stats_cache[key]
+        # Get or create per-key lock
+        if key not in _stats_locks:
+            _stats_locks[key] = threading.Lock()
+        lock = _stats_locks[key]
+
+    # Serialize computation for this key
+    with lock:
+        # Double-check after acquiring lock (another thread may have computed)
+        with _cache_lock:
+            entry = _stats_cache.get(key)
+            if entry is not None:
+                stats, ts = entry
+                if time.monotonic() - ts < _CACHE_TTL_SECONDS:
+                    return stats
+
+        stats = compute_image_stats(data)
+
+        with _cache_lock:
+            while len(_stats_cache) >= _CACHE_MAX_ENTRIES:
+                oldest = min(_stats_cache, key=lambda k: _stats_cache[k][1])
+                del _stats_cache[oldest]
+            _stats_cache[key] = (stats, time.monotonic())
+
+    return stats
 
 
 STRUCTURAL_KEYWORDS = {
@@ -280,9 +350,9 @@ async def get_metadata(
 
 
 def _compute_stats(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> dict:
-    """Load image and compute stats (runs in thread pool)."""
+    """Load image and compute stats (runs in thread pool). Uses stats cache."""
     data = _get_cached_image_data(p, ft, idx, hdu)
-    return asdict(compute_image_stats(data))
+    return asdict(_get_or_compute_stats(data, p, idx, hdu))
 
 
 @router.get("/stats")
@@ -345,24 +415,39 @@ async def get_pixel(
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
+_HISTOGRAM_MAX_PIXELS = 2_000_000
+
+
 def _compute_histogram(data: np.ndarray, bins: int = 256) -> dict:
-    """Compute histogram from loaded image data."""
+    """Compute histogram from loaded image data.
+
+    For large images, subsamples to ~2M pixels per channel for performance.
+    A 256-bin histogram is statistically identical at this sample size.
+    """
     color = is_color_image(data)
     bin_edges = np.linspace(0.0, 1.0, bins + 1)
+
+    # Subsample large images for histogram performance
+    h, w = (data.shape[1], data.shape[2]) if color else (data.shape[0], data.shape[1])
+    pixel_count = h * w
+    stride = max(1, int(np.sqrt(pixel_count / _HISTOGRAM_MAX_PIXELS)))
 
     channels = []
     if color:
         for i, name in enumerate(["R", "G", "B"]):
-            counts, _ = np.histogram(data[i].ravel(), bins=bin_edges)
+            plane = data[i, ::stride, ::stride] if stride > 1 else data[i]
+            counts, _ = np.histogram(plane, bins=bin_edges)
             channels.append({"name": name, "bins": counts.tolist()})
-        lum = np.empty_like(data[0])
-        np.multiply(data[0], LUM_R, out=lum)
-        lum += LUM_G * data[1]
-        lum += LUM_B * data[2]
-        lum_counts, _ = np.histogram(lum.ravel(), bins=bin_edges)
+        # Luminance from subsampled channels
+        r = data[0, ::stride, ::stride] if stride > 1 else data[0]
+        g = data[1, ::stride, ::stride] if stride > 1 else data[1]
+        b = data[2, ::stride, ::stride] if stride > 1 else data[2]
+        lum = LUM_R * r + LUM_G * g + LUM_B * b
+        lum_counts, _ = np.histogram(lum, bins=bin_edges)
         luminosity = lum_counts.tolist()
     else:
-        counts, _ = np.histogram(data.ravel(), bins=bin_edges)
+        plane = data[::stride, ::stride] if stride > 1 else data
+        counts, _ = np.histogram(plane, bins=bin_edges)
         channels.append({"name": "L", "bins": counts.tolist()})
         luminosity = None
 
@@ -401,8 +486,9 @@ def _compute_stats_and_histogram(
 ) -> dict:
     """Load image once, compute both stats and histogram (runs in thread pool)."""
     data = _get_cached_image_data(p, ft, idx, hdu)
+    stats = _get_or_compute_stats(data, p, idx, hdu)
     return {
-        "stats": asdict(compute_image_stats(data)),
+        "stats": asdict(stats),
         "histogram": _compute_histogram(data, bins),
     }
 
@@ -436,10 +522,19 @@ def _render_image(
     linked: StretchParams,
     per_channel: list[StretchParams] | None,
 ) -> bytes:
-    """Load image and render to PNG (runs in thread pool)."""
+    """Load image and render to PNG (runs in thread pool).
+
+    For stretch=auto, passes cached stats to avoid redundant computation.
+    """
     if ft == "standard":
         return standard_io.load_image_bytes(p)
     data = _get_cached_image_data(p, ft, idx, hdu)
+    # For auto-stretch, compute stats (with per-key locking to avoid
+    # redundant computation with concurrent stats-histogram request)
+    if linked and linked.stretch == "auto":
+        stats = _get_or_compute_stats(data, p, idx, hdu)
+        linked, per_channel, _ = _resolve_auto_stretch(data, stats=stats)
+        return render_image_png(data, linked=linked, per_channel=per_channel)
     return render_image_png(data, linked=linked, per_channel=per_channel)
 
 

@@ -20,7 +20,7 @@ class TestResolveAutoStretch:
         """Linear mono image should return STF stretch params."""
         rng = np.random.default_rng(42)
         data = rng.uniform(0.001, 0.01, size=(50, 60))
-        linked, per_ch = _resolve_auto_stretch(data)
+        linked, per_ch, _ = _resolve_auto_stretch(data)
         assert linked.stretch == "stf"
         assert linked.shadow > 0
         assert linked.midtone < 0.1  # low midtone = linear data
@@ -30,7 +30,7 @@ class TestResolveAutoStretch:
         """Non-linear mono image (already stretched) should get linear passthrough."""
         rng = np.random.default_rng(42)
         data = rng.uniform(0.2, 0.8, size=(50, 60))  # high median → non-linear
-        linked, per_ch = _resolve_auto_stretch(data)
+        linked, per_ch, _ = _resolve_auto_stretch(data)
         assert linked.stretch == "linear"
         assert per_ch is None
 
@@ -38,7 +38,7 @@ class TestResolveAutoStretch:
         """Linear color image should return linked STF + per-channel STF."""
         rng = np.random.default_rng(42)
         data = rng.uniform(0.001, 0.01, size=(3, 50, 60))
-        linked, per_ch = _resolve_auto_stretch(data)
+        linked, per_ch, _ = _resolve_auto_stretch(data)
         assert linked.stretch == "stf"
         assert per_ch is not None
         assert len(per_ch) == 3
@@ -49,7 +49,7 @@ class TestResolveAutoStretch:
         """Non-linear color image should get linear passthrough, no per-channel."""
         rng = np.random.default_rng(42)
         data = rng.uniform(0.2, 0.8, size=(3, 50, 60))
-        linked, per_ch = _resolve_auto_stretch(data)
+        linked, per_ch, _ = _resolve_auto_stretch(data)
         assert linked.stretch == "linear"
         assert per_ch is None
 

@@ -6,8 +6,11 @@ All functions accept normalized [0, 1] float64 arrays — no knowledge of FITS, 
 import io
 from dataclasses import dataclass, field
 
+import bottleneck as bn
 import numpy as np
 from PIL import Image
+
+from nightcrate.core.compute import get_array_module
 
 # ── STF constants (matches PixInsight AutoSTF defaults) ──────────────────────
 
@@ -139,18 +142,35 @@ def _compute_stf(median: float, avg_dev: float) -> StfParams:
 
 
 def _channel_stats(plane: np.ndarray) -> ChannelStats:
-    """Compute statistics for a single [0, 1]-normalized channel."""
-    flat = plane.ravel()
-    med = float(np.median(flat))
-    deviations = np.abs(flat - med)
-    mad = float(np.median(deviations))
-    avg_dev = float(np.mean(deviations))
+    """Compute statistics for a single [0, 1]-normalized channel.
+
+    Uses GPU (mlx/cupy) when available for median and deviation computation.
+    """
+    xp = get_array_module()
+    if xp is not np:
+        # GPU path: convert to GPU array, compute stats, extract scalars
+        gpu = xp.array(plane)
+        med = float(xp.median(gpu).item())
+        deviations = xp.abs(gpu - med)
+        mad = float(xp.median(deviations).item())
+        avg_dev = float(xp.mean(deviations).item())
+        vmin = float(xp.min(gpu).item())
+        vmax = float(xp.max(gpu).item())
+    else:
+        # CPU path: bottleneck for fast median
+        flat = plane.ravel()
+        med = float(bn.nanmedian(flat))
+        deviations = np.abs(flat - med)
+        mad = float(bn.nanmedian(deviations))
+        avg_dev = float(np.mean(deviations))
+        vmin = float(flat.min())
+        vmax = float(flat.max())
     sigma = mad * 1.4826
     snr = med / sigma if sigma > 0 else 0.0
     stf = _compute_stf(med, avg_dev)
     return ChannelStats(
-        min=float(flat.min()),
-        max=float(flat.max()),
+        min=vmin,
+        max=vmax,
         median=med,
         mad=mad,
         avg_dev=avg_dev,
@@ -240,7 +260,7 @@ def _compute_lab_a_median(rgb_data: np.ndarray) -> float:
     # a* = 500 * (f(X/Xn) - f(Y/Yn))
     a_star = 500.0 * (fx - fy)
 
-    return float(np.median(a_star))
+    return float(bn.nanmedian(a_star))
 
 
 # ── Stretch + render ─────────────────────────────────────────────────────────
@@ -264,45 +284,68 @@ def _mtf(x: np.ndarray, m: float) -> np.ndarray:
 
 
 def stretch_plane(plane: np.ndarray, p: StretchParams) -> np.ndarray:
-    """Apply stretch to a single 2D plane normalized to [0, 1]. Return uint8."""
+    """Apply stretch to a single 2D plane normalized to [0, 1]. Return uint8.
+
+    Uses GPU (mlx/cupy) when available for the heavy element-wise operations.
+    """
+    xp = get_array_module()
+    use_gpu = xp is not np
+
     if p.stretch == "stf":
         c = p.shadow
         h = p.highlight
         if h <= c:
             return np.full(plane.shape, 128, dtype=np.uint8)
 
-        clipped = np.clip(plane, c, h)
+        src = xp.array(plane) if use_gpu else plane
+        clipped = xp.clip(src, c, h)
         rescaled = (clipped - c) / (h - c)
-        stretched = _mtf(rescaled, p.midtone)
-        return (np.clip(stretched, 0.0, 1.0) * 255).astype(np.uint8)
+        # Inline MTF on GPU (avoids _mtf helper which uses np-specific code)
+        m = p.midtone
+        if m <= 0.0:
+            stretched = xp.zeros_like(rescaled)
+        elif m >= 1.0:
+            stretched = xp.ones_like(rescaled)
+        else:
+            stretched = ((m - 1.0) * rescaled) / ((2.0 * m - 1.0) * rescaled - m)
+        result = (xp.clip(stretched, 0.0, 1.0) * 255)
+        if use_gpu:
+            return np.asarray(result.astype(xp.uint8))
+        return result.astype(np.uint8)
 
     # Linear: simple min/max scaling
-    dmin = plane.min()
-    dmax = plane.max()
+    src = xp.array(plane) if use_gpu else plane
+    dmin = float(xp.min(src))
+    dmax = float(xp.max(src))
     if dmax == dmin:
         return np.full(plane.shape, 128, dtype=np.uint8)
-    normalized = (plane - dmin) / (dmax - dmin)
-    return (normalized * 255).astype(np.uint8)
+    normalized = (src - dmin) / (dmax - dmin)
+    result = normalized * 255
+    if use_gpu:
+        return np.asarray(result.astype(xp.uint8))
+    return result.astype(np.uint8)
 
 
 def _resolve_auto_stretch(
     data: np.ndarray,
-) -> tuple[StretchParams, list[StretchParams] | None]:
+    stats: ImageStats | None = None,
+) -> tuple[StretchParams, list[StretchParams] | None, ImageStats]:
     """Compute stretch params automatically from image data.
 
     Determines whether the image is linear or non-linear by checking the STF
     midtone value.  Linear images get STF stretch; non-linear images get a
     simple linear passthrough.
 
-    Returns (linked_params, per_channel_params_or_None).
+    Returns (linked_params, per_channel_params_or_None, computed_stats).
     """
-    stats = compute_image_stats(data)
+    if stats is None:
+        stats = compute_image_stats(data)
 
     # Non-linear detection: if the STF midtone is >= 0.1, the image is already
     # stretched — use linear passthrough.
     stf = stats.linked_stf or (stats.channels[0].stf if stats.channels else None)
     if stf and stf.midtone >= 0.1:
-        return StretchParams(stretch="linear"), None
+        return StretchParams(stretch="linear"), None, stats
 
     # Linear image — apply STF auto-stretch
     if stats.color and stats.linked_stf:
@@ -332,7 +375,7 @@ def _resolve_auto_stretch(
             for ch in stats.channels
         ]
 
-    return linked, per_channel
+    return linked, per_channel, stats
 
 
 def render_image_png(
@@ -349,7 +392,7 @@ def render_image_png(
 
     # Resolve auto-stretch: compute stats and pick the right params
     if linked and linked.stretch == "auto":
-        linked, per_channel = _resolve_auto_stretch(data)
+        linked, per_channel, _ = _resolve_auto_stretch(data)
 
     if data.ndim == 2:
         params = linked if linked is not None else default_params
@@ -367,5 +410,7 @@ def render_image_png(
         img = Image.fromarray(rgb, mode="RGB")
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    # Level 1: fastest compression. Local app — file size doesn't matter,
+    # but encoding speed directly impacts image load time.
+    img.save(buf, format="PNG", compress_level=1)
     return buf.getvalue()

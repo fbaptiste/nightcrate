@@ -132,11 +132,15 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
 interface Props {
   isColor: boolean;
   linked: StretchParams;
+  appliedLinked: StretchParams;
   perChannel: [StretchParams, StretchParams, StretchParams];
+  appliedPerChannel: [StretchParams, StretchParams, StretchParams];
   isLinked: boolean;
   onLinkedChange: (p: StretchParams) => void;
   onPerChannelChange: (ch: [StretchParams, StretchParams, StretchParams]) => void;
+  onStretchTypeChange: (type: "stf" | "linear") => void;
   onLinkedToggle: (linked: boolean) => void;
+  onApply: () => void;
   onReset: () => void;
 }
 
@@ -145,11 +149,15 @@ const CHANNEL_LABELS = ["Red", "Green", "Blue"];
 export function StretchControls({
   isColor,
   linked,
+  appliedLinked,
   perChannel,
+  appliedPerChannel,
   isLinked,
   onLinkedChange,
   onPerChannelChange,
+  onStretchTypeChange,
   onLinkedToggle,
+  onApply,
   onReset,
 }: Props) {
   const isStf = linked.stretch === "stf" || linked.stretch === "auto";
@@ -160,29 +168,34 @@ export function StretchControls({
     onPerChannelChange(next);
   }
 
-  function setStretchType(type: "stf" | "linear") {
-    if (type === "stf") {
-      onReset();
-    } else {
-      onLinkedChange({ ...linked, stretch: type });
-    }
-  }
+  // Detect whether slider values differ from what's currently rendered
+  const hasPendingLinked = isStf && (
+    linked.shadow !== appliedLinked.shadow ||
+    linked.midtone !== appliedLinked.midtone ||
+    linked.highlight !== appliedLinked.highlight
+  );
+  const hasPendingPerChannel = isStf && isColor && !isLinked && perChannel.some((ch, i) =>
+    ch.shadow !== appliedPerChannel[i].shadow ||
+    ch.midtone !== appliedPerChannel[i].midtone ||
+    ch.highlight !== appliedPerChannel[i].highlight
+  );
+  const hasPending = hasPendingLinked || hasPendingPerChannel;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, p: 1.5, overflowX: "hidden" }}>
-      {/* Stretch type selector */}
+      {/* Stretch type selector — applies immediately */}
       <ToggleButtonGroup
         exclusive
         size="small"
         value={isStf ? "stf" : "linear"}
-        onChange={(_, v) => { if (v) setStretchType(v as "stf" | "linear"); }}
+        onChange={(_, v) => { if (v) onStretchTypeChange(v as "stf" | "linear"); }}
         fullWidth
       >
         <ToggleButton value="stf" sx={{ fontSize: "0.65rem" }}>Auto Stretch</ToggleButton>
         <ToggleButton value="linear" sx={{ fontSize: "0.65rem" }}>None</ToggleButton>
       </ToggleButtonGroup>
 
-      {/* Linked/Unlinked toggle — only for color images with active stretch */}
+      {/* Linked/Unlinked toggle — applies immediately */}
       {isStf && isColor && (
         <ToggleButtonGroup
           exclusive
@@ -195,15 +208,16 @@ export function StretchControls({
         </ToggleButtonGroup>
       )}
 
-      {/* Auto stretch controls */}
+      {/* Linked stretch sliders — update local state only */}
       {isStf && (!isColor || isLinked) && (
         <ChannelControls
           label=""
           params={linked}
-          onChange={(p) => onLinkedChange({ ...p, stretch: "stf" })}
+          onChange={onLinkedChange}
         />
       )}
 
+      {/* Per-channel stretch sliders — update local state only */}
       {isStf && isColor && !isLinked && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {perChannel.map((ch, i) => (
@@ -218,18 +232,34 @@ export function StretchControls({
         </Box>
       )}
 
+      {/* Apply + Reset buttons */}
+      {isStf && (
+        <Box sx={{ display: "flex", gap: 1, mt: "-8px" }}>
+          <Button
+            variant={hasPending ? "contained" : "outlined"}
+            size="small"
+            onClick={onApply}
+            disabled={!hasPending}
+            sx={{ fontSize: "0.65rem", flexGrow: 1 }}
+          >
+            Apply
+          </Button>
+          <Button
+            variant="text"
+            size="small"
+            onClick={onReset}
+            sx={{ fontSize: "0.65rem" }}
+          >
+            Reset
+          </Button>
+        </Box>
+      )}
+
       {/* No stretch: just a note */}
       {!isStf && (
         <Typography variant="caption" color="text.secondary">
           No stretch applied — displaying raw pixel values
         </Typography>
-      )}
-
-      {/* Reset button — only when stretch is active */}
-      {isStf && (
-        <Button variant="text" size="small" onClick={onReset} sx={{ alignSelf: "flex-start", fontSize: "0.65rem", mt: "-15px" }}>
-          Reset Stretch
-        </Button>
       )}
     </Box>
   );
