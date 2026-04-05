@@ -54,6 +54,7 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
 - Write a descriptive commit message summarizing the work done
 - End the commit message with: `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
 - Use a HEREDOC for the commit message
+- Tag the branch with the version number
 
 ### 7. Push
 

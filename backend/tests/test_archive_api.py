@@ -1,5 +1,6 @@
 """Tests for archive browsing and image viewing via archive virtual paths."""
 
+import asyncio
 import zipfile
 from pathlib import Path
 
@@ -207,3 +208,29 @@ class TestArchiveImageEndpoints:
         virtual = f"{tmp_zip_with_fits}::nonexistent/file.fits"
         resp = await client.get("/api/images/extensions", params={"path": virtual})
         assert resp.status_code == 404
+
+    async def test_concurrent_image_and_stats(
+        self, client: AsyncClient, tmp_zip_with_fits: Path
+    ):
+        """Concurrent image + stats-histogram requests for same archive entry don't crash.
+
+        Regression test: before caching was added for archive (BytesIO) paths,
+        concurrent requests bypassed the per-key lock and ran GPU operations
+        from multiple threads simultaneously, crashing the backend.
+        """
+        virtual = f"{tmp_zip_with_fits}::lights/Ha/frame001.fits"
+        image_req = client.get(
+            "/api/images/image",
+            params={"path": virtual, "hdu": 0, "stretch": "auto"},
+        )
+        stats_req = client.get(
+            "/api/images/stats-histogram",
+            params={"path": virtual, "hdu": 0},
+        )
+        image_resp, stats_resp = await asyncio.gather(image_req, stats_req)
+        assert image_resp.status_code == 200
+        assert stats_resp.status_code == 200
+        assert image_resp.headers["content-type"] == "image/png"
+        stats_data = stats_resp.json()
+        assert "stats" in stats_data
+        assert "histogram" in stats_data

@@ -39,7 +39,7 @@ def _validate_and_resolve(file_path: str) -> tuple[Path | BinaryIO, str]:
 
     Handles regular paths and archive virtual paths (archive.zip::entry).
     """
-    source, ft, _idx = _resolve_path(file_path)
+    source, ft, _idx, _ck = _resolve_path(file_path)
     return source, ft
 
 

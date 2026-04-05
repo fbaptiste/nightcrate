@@ -87,11 +87,24 @@ def _cached_compute(key: tuple, store: dict, compute_fn):
     return val
 
 
-def _get_cached_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> np.ndarray:
-    """Load image data with TTL cache and per-key locking."""
-    if not isinstance(p, Path):
+def _get_cached_image_data(
+    p: Path | BinaryIO,
+    ft: str,
+    idx: int,
+    hdu: int,
+    cache_key: tuple | None = None,
+) -> np.ndarray:
+    """Load image data with TTL cache and per-key locking.
+
+    cache_key is used for archive entries (BytesIO) so concurrent requests
+    share cached data instead of loading independently.
+    """
+    if isinstance(p, Path):
+        key = (str(p), p.stat().st_mtime, idx, hdu)
+    elif cache_key is not None:
+        key = (*cache_key, hdu)
+    else:
         return _load_image_data(p, ft, idx, hdu)
-    key = (str(p), p.stat().st_mtime, idx, hdu)
     return _cached_compute(key, _cache, lambda: _load_image_data(p, ft, idx, hdu))
 
 
@@ -100,11 +113,15 @@ def _get_or_compute_stats(
     p: Path | BinaryIO,
     idx: int,
     hdu: int,
+    cache_key: tuple | None = None,
 ) -> ImageStats:
     """Return stats from cache or compute once with per-key locking."""
-    if not isinstance(p, Path):
+    if isinstance(p, Path):
+        key = (str(p), p.stat().st_mtime, idx, hdu)
+    elif cache_key is not None:
+        key = (*cache_key, hdu)
+    else:
         return compute_image_stats(data)
-    key = (str(p), p.stat().st_mtime, idx, hdu)
     return _cached_compute(key, _stats_cache, lambda: compute_image_stats(data))
 
 
@@ -169,11 +186,14 @@ def _detect_tiff_type_from_buf(buf: BinaryIO) -> str:
         return "standard"
 
 
-def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int]:
+def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int, tuple | None]:
     """Validate and resolve a file path.
 
-    Returns (resolved_path, file_type, image_index).
+    Returns (resolved_path, file_type, image_index, cache_key).
     image_index is only meaningful for pxiproject virtual paths; 0 otherwise.
+    cache_key is set for archive entries so they can share the data/stats caches
+    (and per-key locks) that prevent redundant computation and concurrent GPU access.
+    For regular Path files, cache_key is None — those use path + mtime directly.
     """
     if "::" in path:
         left, right = path.rsplit("::", 1)
@@ -184,7 +204,7 @@ def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int]:
             idx = int(right)
             if not left_path.is_dir():
                 raise HTTPException(status_code=404, detail=f"Project not found: {left_path}")
-            return left_path, "pxiproject", idx
+            return left_path, "pxiproject", idx, None
         except ValueError:
             pass
 
@@ -201,7 +221,10 @@ def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int]:
             ft = _file_type_from_ext(right)
             if ft == "tiff_unknown":
                 ft = _detect_tiff_type_from_buf(buf)
-            return buf, ft, 0
+            # Cache key uses archive path + mtime + entry so concurrent
+            # requests for the same entry share cached data and locks.
+            cache_key = (str(left_path), left_path.stat().st_mtime, right)
+            return buf, ft, 0, cache_key
 
         raise HTTPException(status_code=400, detail=f"Invalid virtual path: {path}")
 
@@ -210,7 +233,7 @@ def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int]:
         raise HTTPException(status_code=400, detail="Path must be absolute")
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    return p, _file_type(p), 0
+    return p, _file_type(p), 0, None
 
 
 def _load_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int):
@@ -231,7 +254,7 @@ async def get_extensions(
     path: str = Query(..., description="Absolute path to image file"),
 ) -> list[dict]:
     """List extensions/layers in the file, with stretch capability flag."""
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, _ck = _resolve_path(path)
     stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject")
     try:
         if ft == "pxiproject":
@@ -255,7 +278,7 @@ async def get_header(
     hdu: int = Query(0, description="Extension index"),
 ) -> list[dict]:
     """Return metadata cards for the specified extension."""
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, _ck = _resolve_path(path)
     try:
         if ft == "pxiproject":
             return pxiproject_io.read_header(p, idx)
@@ -276,7 +299,7 @@ async def get_metadata(
     hdu: int = Query(0, description="Extension index"),
 ) -> dict:
     """Return canonical metadata and unrecognized keywords for a file."""
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, _ck = _resolve_path(path)
     try:
         if ft == "pxiproject":
             cards = pxiproject_io.read_header(p, idx)
@@ -314,10 +337,12 @@ async def get_metadata(
     }
 
 
-def _compute_stats(p: Path | BinaryIO, ft: str, idx: int, hdu: int) -> dict:
+def _compute_stats(
+    p: Path | BinaryIO, ft: str, idx: int, hdu: int, cache_key: tuple | None = None
+) -> dict:
     """Load image and compute stats (runs in thread pool). Uses stats cache."""
-    data = _get_cached_image_data(p, ft, idx, hdu)
-    return asdict(_get_or_compute_stats(data, p, idx, hdu))
+    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
+    return asdict(_get_or_compute_stats(data, p, idx, hdu, cache_key=cache_key))
 
 
 @router.get("/stats")
@@ -329,22 +354,30 @@ async def get_stats(
 
     Only applicable to FITS, XISF, float TIFF, and pxiproject. Returns 404 for standard images.
     """
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, ck = _resolve_path(path)
     if ft == "standard":
         raise HTTPException(
             status_code=404, detail="Stats not available for standard image formats"
         )
     try:
-        return await asyncio.to_thread(_compute_stats, p, ft, idx, hdu)
+        return await asyncio.to_thread(_compute_stats, p, ft, idx, hdu, ck)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
-def _read_pixel(p: Path | BinaryIO, ft: str, idx: int, hdu: int, x: int, y: int) -> dict:
+def _read_pixel(
+    p: Path | BinaryIO,
+    ft: str,
+    idx: int,
+    hdu: int,
+    x: int,
+    y: int,
+    cache_key: tuple | None = None,
+) -> dict:
     """Load image and read a single pixel (runs in thread pool)."""
-    data = _get_cached_image_data(p, ft, idx, hdu)
+    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
     color = is_color_image(data)
     h, w = (data.shape[1], data.shape[2]) if color else (data.shape[0], data.shape[1])
 
@@ -369,9 +402,9 @@ async def get_pixel(
     y: int = Query(..., description="Y coordinate (row)"),
 ) -> dict:
     """Return raw pixel values at the given (x, y) coordinate."""
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, ck = _resolve_path(path)
     try:
-        return await asyncio.to_thread(_read_pixel, p, ft, idx, hdu, x, y)
+        return await asyncio.to_thread(_read_pixel, p, ft, idx, hdu, x, y, ck)
     except HTTPException:
         raise
     except ValueError as exc:
@@ -424,9 +457,16 @@ def _compute_histogram(data: np.ndarray, bins: int = 256) -> dict:
     }
 
 
-def _load_and_histogram(p: Path | BinaryIO, ft: str, idx: int, hdu: int, bins: int) -> dict:
+def _load_and_histogram(
+    p: Path | BinaryIO,
+    ft: str,
+    idx: int,
+    hdu: int,
+    bins: int,
+    cache_key: tuple | None = None,
+) -> dict:
     """Load image and compute histogram (runs in thread pool)."""
-    data = _get_cached_image_data(p, ft, idx, hdu)
+    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
     return _compute_histogram(data, bins)
 
 
@@ -437,9 +477,9 @@ async def get_histogram(
     bins: int = Query(256, description="Number of histogram bins"),
 ) -> dict:
     """Return per-channel histogram data for the image."""
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, ck = _resolve_path(path)
     try:
-        return await asyncio.to_thread(_load_and_histogram, p, ft, idx, hdu, bins)
+        return await asyncio.to_thread(_load_and_histogram, p, ft, idx, hdu, bins, ck)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -447,11 +487,16 @@ async def get_histogram(
 
 
 def _compute_stats_and_histogram(
-    p: Path | BinaryIO, ft: str, idx: int, hdu: int, bins: int
+    p: Path | BinaryIO,
+    ft: str,
+    idx: int,
+    hdu: int,
+    bins: int,
+    cache_key: tuple | None = None,
 ) -> dict:
     """Load image once, compute both stats and histogram (runs in thread pool)."""
-    data = _get_cached_image_data(p, ft, idx, hdu)
-    stats = _get_or_compute_stats(data, p, idx, hdu)
+    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
+    stats = _get_or_compute_stats(data, p, idx, hdu, cache_key=cache_key)
     return {
         "stats": asdict(stats),
         "histogram": _compute_histogram(data, bins),
@@ -465,14 +510,14 @@ async def get_stats_and_histogram(
     bins: int = Query(256, description="Number of histogram bins"),
 ) -> dict:
     """Return stats and histogram in a single response (one data load)."""
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, ck = _resolve_path(path)
     if ft == "standard":
         raise HTTPException(
             status_code=404,
             detail="Stats/histogram not available for standard image formats",
         )
     try:
-        return await asyncio.to_thread(_compute_stats_and_histogram, p, ft, idx, hdu, bins)
+        return await asyncio.to_thread(_compute_stats_and_histogram, p, ft, idx, hdu, bins, ck)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -486,6 +531,7 @@ def _render_image(
     hdu: int,
     linked: StretchParams,
     per_channel: list[StretchParams] | None,
+    cache_key: tuple | None = None,
 ) -> bytes:
     """Load image and render to PNG (runs in thread pool).
 
@@ -493,11 +539,11 @@ def _render_image(
     """
     if ft == "standard":
         return standard_io.load_image_bytes(p)
-    data = _get_cached_image_data(p, ft, idx, hdu)
+    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
     # For auto-stretch, compute stats (with per-key locking to avoid
     # redundant computation with concurrent stats-histogram request)
     if linked and linked.stretch == "auto":
-        stats = _get_or_compute_stats(data, p, idx, hdu)
+        stats = _get_or_compute_stats(data, p, idx, hdu, cache_key=cache_key)
         linked, per_channel, _ = resolve_auto_stretch(data, stats=stats)
         return render_image_png(data, linked=linked, per_channel=per_channel)
     return render_image_png(data, linked=linked, per_channel=per_channel)
@@ -522,7 +568,7 @@ async def get_image(
     b_highlight: float | None = Query(None),
 ) -> Response:
     """Return the image as a PNG. Stretch is applied for scientific formats."""
-    p, ft, idx = _resolve_path(path)
+    p, ft, idx, ck = _resolve_path(path)
 
     linked = StretchParams(stretch=stretch, shadow=shadow, midtone=midtone, highlight=highlight)
 
@@ -555,7 +601,7 @@ async def get_image(
         ]
 
     try:
-        png_bytes = await asyncio.to_thread(_render_image, p, ft, idx, hdu, linked, per_channel)
+        png_bytes = await asyncio.to_thread(_render_image, p, ft, idx, hdu, linked, per_channel, ck)
         return Response(content=png_bytes, media_type="image/png")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
