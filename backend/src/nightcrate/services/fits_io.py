@@ -63,6 +63,39 @@ STRUCTURAL_KEYWORDS = frozenset(
 )
 
 
+def _coerce_value(raw: str, existing=None):
+    """Coerce a string value to its original FITS type when possible.
+
+    For updates, matches the type of the existing value (int, float, bool).
+    For adds, attempts int then float, falling back to string.
+    """
+    if existing is not None:
+        if isinstance(existing, bool):
+            return raw.strip().upper() in ("TRUE", "T", "1", "YES")
+        if isinstance(existing, int):
+            try:
+                return int(raw)
+            except ValueError:
+                pass
+        if isinstance(existing, float):
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+        return raw
+
+    # New keyword — try int, then float, then string
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
 def update_header(
     path: Path,
     hdu: int,
@@ -109,15 +142,17 @@ def update_header(
             key = op_dict["key"].upper()
 
             if op == "update":
-                value = op_dict.get("value", "")
+                raw = op_dict.get("value") or ""
+                value = _coerce_value(raw, header.get(key))
                 comment = op_dict.get("comment")
                 if comment is not None:
                     header[key] = (value, comment)
                 else:
                     header[key] = value
             elif op == "add":
-                value = op_dict.get("value", "")
-                comment = op_dict.get("comment", "")
+                raw = op_dict.get("value") or ""
+                value = _coerce_value(raw)
+                comment = op_dict.get("comment") or ""
                 header.append((key, value, comment))
             elif op == "delete":
                 del header[key]

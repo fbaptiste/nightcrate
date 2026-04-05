@@ -83,8 +83,8 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
 
   const handleToggleEdit = useCallback(() => {
     if (editing && hasPending) {
-      // Exiting edit mode with unsaved changes — discard
-      handleDiscard();
+      handleDiscard(); // clears changes and exits edit mode
+      return;
     }
     setEditing((prev) => !prev);
   }, [editing, hasPending, handleDiscard]);
@@ -550,7 +550,7 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
             height: "100%",
             "& .row-deleted": { bgcolor: "action.disabledBackground" },
             "& .row-modified": { bgcolor: "rgba(25, 118, 210, 0.08)" },
-            "& .row-added": { bgcolor: "rgba(46, 125, 50, 0.08)" },
+            "& .row-added": { bgcolor: "rgba(237, 108, 2, 0.08)" },
             "& .row-structural": { opacity: 0.5 },
           }}
         />

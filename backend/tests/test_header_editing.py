@@ -271,3 +271,37 @@ class TestBatchOperations:
         # Re-read directly from disk
         with fits.open(editable_fits) as hdul:
             assert hdul[0].header["OBJECT"] == "DiskCheck"
+
+    async def test_numeric_type_preserved_on_update(self, client: AsyncClient, editable_fits: Path):
+        """Updating a numeric keyword preserves its FITS type (not converted to string)."""
+        resp = await client.patch(
+            "/api/images/header",
+            json={
+                "path": str(editable_fits),
+                "hdu": 0,
+                "operations": [{"op": "update", "key": "EXPTIME", "value": "600.0"}],
+            },
+        )
+        assert resp.status_code == 200
+        with fits.open(editable_fits) as hdul:
+            val = hdul[0].header["EXPTIME"]
+            assert isinstance(val, float)
+            assert val == 600.0
+
+    async def test_added_numeric_value_stored_as_number(
+        self, client: AsyncClient, editable_fits: Path
+    ):
+        """Adding a keyword with a numeric string stores it as a number in FITS."""
+        resp = await client.patch(
+            "/api/images/header",
+            json={
+                "path": str(editable_fits),
+                "hdu": 0,
+                "operations": [{"op": "add", "key": "AIRMASS", "value": "1.23"}],
+            },
+        )
+        assert resp.status_code == 200
+        with fits.open(editable_fits) as hdul:
+            val = hdul[0].header["AIRMASS"]
+            assert isinstance(val, float)
+            assert val == 1.23
