@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
@@ -27,6 +27,7 @@ import {
   fetchMetadata,
   fetchRecentFiles,
   fetchStatsAndHistogram,
+  isFitsPath,
   isVirtualPath,
   recordRecentFile,
   stfToStretch,
@@ -98,6 +99,7 @@ function applyAutoStf(
 }
 
 export function ImageViewerPage() {
+  const queryClient = useQueryClient();
   const [inputPath, setInputPath] = useState("");
   const [activePath, setActivePath] = useState("");
   const [selectedHdu, setSelectedHdu] = useState(0);
@@ -576,7 +578,16 @@ export function ImageViewerPage() {
                 <Typography sx={{ p: 2 }} color="text.secondary">Loading header…</Typography>
               )}
               {!headerQuery.isLoading && headerQuery.data && (
-                <FitsHeaderTable cards={headerQuery.data} />
+                <FitsHeaderTable
+                  cards={headerQuery.data}
+                  editable={!isVirtualPath(activePath) && isFitsPath(activePath)}
+                  path={activePath}
+                  hdu={selectedHdu}
+                  onSaved={() => {
+                    queryClient.invalidateQueries({ queryKey: ["header", activePath, selectedHdu] });
+                    queryClient.invalidateQueries({ queryKey: ["metadata", activePath, selectedHdu] });
+                  }}
+                />
               )}
             </Box>
 

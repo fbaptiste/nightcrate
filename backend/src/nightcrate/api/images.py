@@ -5,11 +5,12 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from nightcrate.db.session import get_db
 from nightcrate.services import archive_io, fits_io, pxiproject_io, standard_io, xisf_io
@@ -125,21 +126,7 @@ def _get_or_compute_stats(
     return _cached_compute(key, _stats_cache, lambda: compute_image_stats(data))
 
 
-STRUCTURAL_KEYWORDS = {
-    "SIMPLE",
-    "NAXIS",
-    "NAXIS1",
-    "NAXIS2",
-    "NAXIS3",
-    "EXTEND",
-    "BZERO",
-    "BSCALE",
-    "COMMENT",
-    "HISTORY",
-    "END",
-    "",
-    "BITPIX",
-}
+STRUCTURAL_KEYWORDS = fits_io.STRUCTURAL_KEYWORDS
 
 
 def _file_type(p: Path) -> str:
@@ -289,6 +276,50 @@ async def get_header(
         return standard_io.read_header(p)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+# ── Header editing ──────────────────────────────────────────────────────────
+
+
+class HeaderOperation(BaseModel):
+    op: Literal["update", "add", "delete"]
+    key: str
+    value: str | None = None
+    comment: str | None = None
+
+
+class HeaderEditRequest(BaseModel):
+    path: str
+    hdu: int = 0
+    operations: list[HeaderOperation]
+
+
+@router.patch("/header")
+async def edit_header(request: HeaderEditRequest) -> list[dict]:
+    """Apply edit operations to a FITS header and return the updated cards."""
+    if "::" in request.path:
+        raise HTTPException(
+            status_code=400,
+            detail="Header editing is not supported for archive or project virtual paths",
+        )
+
+    p = Path(request.path)
+    if not p.is_absolute():
+        raise HTTPException(status_code=400, detail="Path must be absolute")
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {request.path}")
+    if p.suffix.lower() not in FITS_EXTENSIONS:
+        raise HTTPException(
+            status_code=422, detail="Header editing is only supported for FITS files"
+        )
+
+    ops = [op.model_dump() for op in request.operations]
+    try:
+        return await asyncio.to_thread(fits_io.update_header, p, request.hdu, ops)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 

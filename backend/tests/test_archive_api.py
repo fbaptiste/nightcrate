@@ -209,9 +209,7 @@ class TestArchiveImageEndpoints:
         resp = await client.get("/api/images/extensions", params={"path": virtual})
         assert resp.status_code == 404
 
-    async def test_concurrent_image_and_stats(
-        self, client: AsyncClient, tmp_zip_with_fits: Path
-    ):
+    async def test_concurrent_image_and_stats(self, client: AsyncClient, tmp_zip_with_fits: Path):
         """Concurrent image + stats-histogram requests for same archive entry don't crash.
 
         Regression test: before caching was added for archive (BytesIO) paths,

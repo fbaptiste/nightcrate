@@ -44,6 +44,133 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
         ]
 
 
+STRUCTURAL_KEYWORDS = frozenset(
+    {
+        "SIMPLE",
+        "NAXIS",
+        "NAXIS1",
+        "NAXIS2",
+        "NAXIS3",
+        "EXTEND",
+        "BZERO",
+        "BSCALE",
+        "COMMENT",
+        "HISTORY",
+        "END",
+        "",
+        "BITPIX",
+    }
+)
+
+
+def _coerce_value(raw: str, existing=None):
+    """Coerce a string value to its original FITS type when possible.
+
+    For updates, matches the type of the existing value (int, float, bool).
+    For adds, attempts int then float, falling back to string.
+    """
+    if existing is not None:
+        if isinstance(existing, bool):
+            return raw.strip().upper() in ("TRUE", "T", "1", "YES")
+        if isinstance(existing, int):
+            try:
+                return int(raw)
+            except ValueError:
+                pass
+        if isinstance(existing, float):
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+        return raw
+
+    # New keyword — try int, then float, then string
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
+def update_header(
+    path: Path,
+    hdu: int,
+    operations: list[dict],
+) -> list[dict]:
+    """Apply edit operations to a FITS header and write in place.
+
+    Each operation is a dict with:
+      - op: "update" | "add" | "delete"
+      - key: FITS keyword
+      - value: new value (for update/add)
+      - comment: optional comment (for update/add)
+
+    Validates all operations before applying any. Returns the updated
+    header cards in the same format as read_header().
+    """
+    with fits.open(path, mode="update", memmap=False) as hdul:
+        target = _hdu_index(hdul, hdu)
+        header = target.header
+
+        # Validate all operations first (fail-fast)
+        for op_dict in operations:
+            op = op_dict["op"]
+            key = op_dict["key"].upper()
+
+            if key in STRUCTURAL_KEYWORDS or key.startswith("NAXIS"):
+                raise ValueError(f"Cannot modify structural keyword: {key}")
+
+            if op == "update":
+                if key not in header:
+                    raise ValueError(f"Keyword not found: {key}")
+            elif op == "add":
+                if key in header:
+                    raise ValueError(f"Keyword already exists: {key}")
+            elif op == "delete":
+                if key not in header:
+                    raise ValueError(f"Keyword not found: {key}")
+            else:
+                raise ValueError(f"Unknown operation: {op}")
+
+        # Apply all operations
+        for op_dict in operations:
+            op = op_dict["op"]
+            key = op_dict["key"].upper()
+
+            if op == "update":
+                raw = op_dict.get("value") or ""
+                value = _coerce_value(raw, header.get(key))
+                comment = op_dict.get("comment")
+                if comment is not None:
+                    header[key] = (value, comment)
+                else:
+                    header[key] = value
+            elif op == "add":
+                raw = op_dict.get("value") or ""
+                value = _coerce_value(raw)
+                comment = op_dict.get("comment") or ""
+                header.append((key, value, comment))
+            elif op == "delete":
+                del header[key]
+
+        hdul.flush()
+
+        # Return updated cards from the already-open HDU (avoids re-reading file)
+        return [
+            {
+                "key": card.keyword,
+                "value": str(card.value).strip("'\""),
+                "comment": card.comment,
+                "description": get_keyword_description(card.keyword),
+            }
+            for card in header.cards
+        ]
+
+
 def list_extensions(source: Path | BinaryIO) -> list[dict]:
     """Return a summary of all HDUs: index, name, type, has_image."""
     with fits.open(source, memmap=False) as hdul:

@@ -177,6 +177,15 @@ Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects
 - Histogram subsampled to ~2M pixels for large images (statistically identical for 256 bins)
 - PNG encoding uses `compress_level=1` (fastest) — local app, speed over file size
 - Per-key locking on image data and stats caches prevents redundant computation from concurrent requests
+- Archive (BytesIO) paths use a cache key `(archive_path, mtime, entry_path)` to share the same caching and locking as regular files
+
+**Header Editing:**
+- FITS files only (not XISF, standard, archive, or pxiproject virtual paths)
+- `PATCH /api/images/header` — batch operations (update, add, delete) validated and applied atomically
+- `fits_io.update_header()` uses `mode="update"` + `flush()` for efficient in-place writes (no full file rewrite)
+- Structural keywords (`SIMPLE`, `BITPIX`, `NAXIS*`, `EXTEND`, `BZERO`, `BSCALE`, `COMMENT`, `HISTORY`, `END`) are protected — cannot be edited or deleted
+- `STRUCTURAL_KEYWORDS` canonical definition in `fits_io.py`, imported by `images.py`
+- Frontend: toggle edit mode in `FitsHeaderTable`, inline cell editing, add/delete with undo, save/discard
 
 ## Activity Console
 
