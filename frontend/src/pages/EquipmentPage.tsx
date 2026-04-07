@@ -2,15 +2,22 @@ import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
 import { EquipmentSidebar } from "@/components/equipment/EquipmentSidebar";
 import { EquipmentPlaceholder } from "@/components/equipment/EquipmentPlaceholder";
+import CameraList from "@/components/equipment/CameraList";
 
-// CameraList, TelescopeList, FilterList will be created in Tasks 10-12.
-// For now, all categories use placeholders.
+// TelescopeList, FilterList will be created in Tasks 11-12.
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
   const navigate = useNavigate();
 
-  const content = <EquipmentPlaceholder category={category} />;
+  const content = (() => {
+    switch (category) {
+      case "cameras":
+        return <CameraList />;
+      default:
+        return <EquipmentPlaceholder category={category} />;
+    }
+  })();
 
   return (
     <Box sx={{ display: "flex", height: "100%" }}>
