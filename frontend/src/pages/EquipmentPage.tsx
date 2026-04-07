@@ -9,6 +9,8 @@ import SensorList from "@/components/equipment/SensorList";
 import MountList from "@/components/equipment/MountList";
 import FocuserList from "@/components/equipment/FocuserList";
 import FilterWheelList from "@/components/equipment/FilterWheelList";
+import OagList from "@/components/equipment/OagList";
+import GuideScopeList from "@/components/equipment/GuideScopeList";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -30,6 +32,10 @@ export function EquipmentPage() {
         return <FocuserList />;
       case "filter-wheels":
         return <FilterWheelList />;
+      case "oags":
+        return <OagList />;
+      case "guide-scopes":
+        return <GuideScopeList />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }
