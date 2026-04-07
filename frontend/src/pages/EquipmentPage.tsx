@@ -5,6 +5,7 @@ import { EquipmentPlaceholder } from "@/components/equipment/EquipmentPlaceholde
 import CameraList from "@/components/equipment/CameraList";
 import TelescopeList from "@/components/equipment/TelescopeList";
 import FilterList from "@/components/equipment/FilterList";
+import SensorList from "@/components/equipment/SensorList";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -18,6 +19,8 @@ export function EquipmentPage() {
         return <TelescopeList />;
       case "filters":
         return <FilterList />;
+      case "sensors":
+        return <SensorList />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }
