@@ -13,6 +13,7 @@ import OagList from "@/components/equipment/OagList";
 import GuideScopeList from "@/components/equipment/GuideScopeList";
 import ComputerList from "@/components/equipment/ComputerList";
 import SoftwareList from "@/components/equipment/SoftwareList";
+import ManufacturerList from "@/components/equipment/ManufacturerList";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -42,6 +43,8 @@ export function EquipmentPage() {
         return <ComputerList />;
       case "software":
         return <SoftwareList />;
+      case "manufacturers":
+        return <ManufacturerList />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }
