@@ -8,6 +8,7 @@ import FilterList from "@/components/equipment/FilterList";
 import SensorList from "@/components/equipment/SensorList";
 import MountList from "@/components/equipment/MountList";
 import FocuserList from "@/components/equipment/FocuserList";
+import FilterWheelList from "@/components/equipment/FilterWheelList";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -27,6 +28,8 @@ export function EquipmentPage() {
         return <MountList />;
       case "focusers":
         return <FocuserList />;
+      case "filter-wheels":
+        return <FilterWheelList />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }
