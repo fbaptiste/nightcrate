@@ -14,6 +14,7 @@ import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker
 import SensorPicker from "@/components/equipment/shared/SensorPicker";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import InterfaceMultiSelect from "@/components/equipment/shared/InterfaceMultiSelect";
+import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import {
   createCamera,
   updateCamera,
@@ -88,15 +89,6 @@ function cameraToForm(camera: Camera): FormState {
   };
 }
 
-function parseOptionalFloat(val: string): number | null {
-  const n = parseFloat(val);
-  return val.trim() !== "" && !isNaN(n) ? n : null;
-}
-
-function parseOptionalInt(val: string): number | null {
-  const n = parseInt(val, 10);
-  return val.trim() !== "" && !isNaN(n) ? n : null;
-}
 
 export default function CameraFormDialog({
   open,

@@ -9,15 +9,9 @@ import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchFilters, deleteFilter, type Filter } from "@/api/equipment";
+import { formatFilterType } from "@/lib/formUtils";
 import ConfirmDeleteDialog from "@/components/equipment/shared/ConfirmDeleteDialog";
 import FilterFormDialog from "./FilterFormDialog";
-
-function formatFilterType(name: string): string {
-  return name
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
 
 function summarizePassbands(filter: Filter): string {
   if (filter.passbands.length === 0) return "—";

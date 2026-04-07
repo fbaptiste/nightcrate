@@ -99,7 +99,7 @@ export default function TelescopeList() {
           <IconButton
             size="small"
             onClick={() => setDeleteTarget(params.row)}
-            aria-label={`Delete ${params.row.model_name}`}
+            aria-label={`Retire ${params.row.model_name}`}
           >
             <DeleteIcon fontSize="small" />
           </IconButton>

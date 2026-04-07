@@ -255,7 +255,7 @@ Supports browsing into archive files as if they were folders. Selecting an image
 
 ## Equipment Database
 
-Fully normalized equipment schema (migration `0005.equipment_schema.sql`). Schema only — no API or UI yet.
+Fully normalized equipment schema (migrations `0005.equipment_schema.sql` + `0006.camera_guide_sensor.sql`).
 
 **Reference docs:**
 - `DB_SCHEMA.md` — Mermaid ER diagrams broken into logical groups
@@ -277,6 +277,34 @@ Fully normalized equipment schema (migration `0005.equipment_schema.sql`). Schem
 - `updated_at` triggers auto-fire on every equipment table
 - Partial unique index on `seed_key WHERE NOT NULL` for seed loader support
 - Closed vocabularies enforced by CHECK constraints: `filter_type.name`, `filter_passband.line_name`, `software.category`, `connection_interface.category`, `sensor.sensor_type`, `sensor.bayer_pattern`
+
+## Equipment Management API
+
+Full CRUD API for all equipment types under `/api/equipment/`.
+
+**Architecture:**
+- `api/equipment_models.py` — Pydantic Create/Update/Response models for all types
+- `api/equipment.py` — single router with all CRUD endpoints
+- Helpers: `_row_to_dict`, `_bool_fields`, `_get_or_404`, `_strip_seed`, `_build_*_response` per complex type
+- Soft delete: DELETE sets `active=0`, list endpoints accept `?include_retired=true`
+- Seed tracking columns stripped from all responses via `_SEED_KEYS` constant
+
+**Endpoints per type:**
+- 7 lookup tables: 5 endpoints each (list, get, create, update, soft-delete)
+- `filter_type`: read-only (list, get only)
+- `sensor`, `camera`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`: 5 endpoints each
+- `telescope`: 5 endpoints + 3 child endpoints for configurations (create, update, delete)
+- `filter`: 5 endpoints + 3 child endpoints for passbands (create, update, delete)
+
+**Frontend Equipment page:**
+- `pages/EquipmentPage.tsx` — two-panel layout with TreeView sidebar + content area
+- `components/equipment/EquipmentSidebar.tsx` — grouped categories (Imaging, Optics, Tracking, Accessories, Computing, Reference)
+- `components/equipment/CameraList.tsx` + `CameraFormDialog.tsx` — camera DataGrid + add/edit dialog
+- `components/equipment/TelescopeList.tsx` + `TelescopeFormDialog.tsx` — telescope DataGrid + add/edit with configuration accordions
+- `components/equipment/FilterList.tsx` + `FilterFormDialog.tsx` — filter DataGrid + add/edit with passband accordions
+- `components/equipment/shared/` — ManufacturerPicker, SensorPicker, LookupPicker, InterfaceMultiSelect, ConfirmDeleteDialog
+- `lib/formUtils.ts` — shared `parseOptionalFloat`, `parseOptionalInt`, `formatFilterType`
+- `api/equipment.ts` — TypeScript interfaces + fetch functions for all equipment types
 
 ## Dependency & License Policy
 

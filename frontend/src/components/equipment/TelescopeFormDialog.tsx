@@ -21,6 +21,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import StarIcon from "@mui/icons-material/Star";
 import { useQuery } from "@tanstack/react-query";
+import { parseOptionalFloat } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import {
@@ -140,10 +141,6 @@ function configToEntry(c: TelescopeConfiguration): ConfigEntry {
   };
 }
 
-function parseOptionalFloat(val: string): number | null {
-  const n = parseFloat(val);
-  return val.trim() !== "" && !isNaN(n) ? n : null;
-}
 
 export default function TelescopeFormDialog({
   open,
@@ -190,23 +187,13 @@ export default function TelescopeFormDialog({
   };
 
   const addConfig = () => {
-    const newIndex = configs.filter((c) => !c.deleted).length;
     setConfigs((prev) => [...prev, emptyConfig()]);
-    // expand the new one (find its actual index)
     setExpandedIndex(configs.length);
-    void newIndex;
   };
 
   const removeConfig = (index: number) => {
     setConfigs((prev) =>
-      prev.map((c, i) => {
-        if (i !== index) return c;
-        if (c.id != null) {
-          // existing — mark for deletion
-          return { ...c, deleted: true };
-        }
-        return { ...c, deleted: true };
-      })
+      prev.map((c, i) => (i === index ? { ...c, deleted: true } : c))
     );
     if (expandedIndex === index) setExpandedIndex(false);
   };
@@ -445,7 +432,7 @@ export default function TelescopeFormDialog({
 
                 return (
                   <Accordion
-                    key={index}
+                    key={config.id ?? `new-${index}`}
                     expanded={expandedIndex === index}
                     onChange={(_e, isExpanded) =>
                       setExpandedIndex(isExpanded ? index : false)

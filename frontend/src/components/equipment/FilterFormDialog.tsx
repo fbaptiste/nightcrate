@@ -21,6 +21,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useQuery } from "@tanstack/react-query";
+import { parseOptionalFloat, formatFilterType } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import {
@@ -133,17 +134,6 @@ function passbandToEntry(pb: FilterPassband): PassbandEntry {
   };
 }
 
-function parseOptionalFloat(val: string): number | null {
-  const n = parseFloat(val);
-  return val.trim() !== "" && !isNaN(n) ? n : null;
-}
-
-function formatFilterType(name: string): string {
-  return name
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
 
 function passbandHeaderLabel(pb: PassbandEntry): string {
   const name = pb.line_name || "New Passband";
@@ -399,7 +389,7 @@ export default function FilterFormDialog({
 
               {visiblePassbands.map(({ pb, index }) => (
                 <Accordion
-                  key={index}
+                  key={pb.id ?? `new-${index}`}
                   expanded={expandedIndex === index}
                   onChange={(_e, isExpanded) => setExpandedIndex(isExpanded ? index : false)}
                   sx={{ mb: 1 }}

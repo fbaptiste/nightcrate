@@ -86,6 +86,16 @@ def _bool_fields(d: dict, *keys) -> dict:
     return d
 
 
+_SEED_KEYS = ("source", "seed_key", "seed_hash")
+
+
+def _strip_seed(d: dict) -> dict:
+    """Remove seed-tracking columns from a response dict."""
+    for k in _SEED_KEYS:
+        d.pop(k, None)
+    return d
+
+
 async def _get_or_404(conn, table: str, row_id: int, label: str = "Item") -> dict:
     """Fetch a single row by ID or raise 404."""
     row = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))
@@ -797,10 +807,7 @@ async def create_sensor(body: SensorCreate):
 @router.put("/sensor/{sensor_id}", response_model=SensorResponse)
 async def update_sensor(sensor_id: int, body: SensorUpdate):
     async with get_db() as conn:
-        # Verify exists
-        check = await conn.execute("SELECT id FROM sensor WHERE id = ?", (sensor_id,))
-        if await check.fetchone() is None:
-            raise HTTPException(status_code=404, detail=f"Sensor not found: {sensor_id}")
+        await _get_or_404(conn, "sensor", sensor_id, "Sensor")
 
         updates = body.model_dump(exclude_unset=True)
         if updates:
@@ -830,9 +837,7 @@ async def update_sensor(sensor_id: int, body: SensorUpdate):
 @router.delete("/sensor/{sensor_id}")
 async def delete_sensor(sensor_id: int):
     async with get_db() as conn:
-        check = await conn.execute("SELECT id FROM sensor WHERE id = ?", (sensor_id,))
-        if await check.fetchone() is None:
-            raise HTTPException(status_code=404, detail=f"Sensor not found: {sensor_id}")
+        await _get_or_404(conn, "sensor", sensor_id, "Sensor")
         await conn.execute(
             "UPDATE sensor SET active = 0 WHERE id = ?",
             (sensor_id,),
@@ -895,8 +900,7 @@ async def _build_camera_response(conn, camera_row: dict) -> dict:
     )
     d["interfaces"] = [_bool_fields(_row_to_dict(r), "active") for r in await ifaces.fetchall()]
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -1057,11 +1061,10 @@ async def _build_telescope_response(conn, telescope_row: dict) -> dict:
         _bool_fields(_row_to_dict(r), "active", "is_native") for r in await configs.fetchall()
     ]
     for cfg in d["configurations"]:
-        for k in ("active", "source", "seed_key", "seed_hash"):
-            cfg.pop(k, None)
+        _strip_seed(cfg)
+        cfg.pop("active", None)
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -1223,8 +1226,8 @@ async def create_telescope_configuration(telescope_id: int, body: TelescopeConfi
         row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
         result = await row.fetchone()
         cfg = _bool_fields(_row_to_dict(result), "active", "is_native")
-        for k in ("active", "source", "seed_key", "seed_hash"):
-            cfg.pop(k, None)
+        _strip_seed(cfg)
+        cfg.pop("active", None)
         return cfg
 
 
@@ -1274,8 +1277,8 @@ async def update_telescope_configuration(
         row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
         result = await row.fetchone()
         cfg = _bool_fields(_row_to_dict(result), "active", "is_native")
-        for k in ("active", "source", "seed_key", "seed_hash"):
-            cfg.pop(k, None)
+        _strip_seed(cfg)
+        cfg.pop("active", None)
         return cfg
 
 
@@ -1335,11 +1338,11 @@ async def _build_filter_response(conn, filter_row: dict) -> dict:
     )
     d["passbands"] = [_row_to_dict(r) for r in await pbs.fetchall()]
     for pb in d["passbands"]:
-        for k in ("active", "source", "seed_key", "seed_hash", "created_at", "updated_at"):
+        _strip_seed(pb)
+        for k in ("active", "created_at", "updated_at"):
             pb.pop(k, None)
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -1468,7 +1471,8 @@ async def create_filter_passband(filter_id: int, body: FilterPassbandCreate):
         row = await conn.execute("SELECT * FROM filter_passband WHERE id = ?", (passband_id,))
         result = await row.fetchone()
         pb = _row_to_dict(result)
-        for k in ("active", "source", "seed_key", "seed_hash", "created_at", "updated_at"):
+        _strip_seed(pb)
+        for k in ("active", "created_at", "updated_at"):
             pb.pop(k, None)
         return pb
 
@@ -1507,7 +1511,8 @@ async def update_filter_passband(filter_id: int, passband_id: int, body: FilterP
         row = await conn.execute("SELECT * FROM filter_passband WHERE id = ?", (passband_id,))
         result = await row.fetchone()
         pb = _row_to_dict(result)
-        for k in ("active", "source", "seed_key", "seed_hash", "created_at", "updated_at"):
+        _strip_seed(pb)
+        for k in ("active", "created_at", "updated_at"):
             pb.pop(k, None)
         return pb
 
@@ -1560,8 +1565,7 @@ async def _build_mount_response(conn, mount_row: dict) -> dict:
     )
     d["interfaces"] = [_bool_fields(_row_to_dict(r), "active") for r in await ifaces.fetchall()]
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -1698,8 +1702,7 @@ async def _build_focuser_response(conn, focuser_row: dict) -> dict:
     )
     d["interfaces"] = [_bool_fields(_row_to_dict(r), "active") for r in await ifaces.fetchall()]
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -1862,8 +1865,7 @@ async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
     )
     d["interfaces"] = [_bool_fields(_row_to_dict(r), "active") for r in await ifaces.fetchall()]
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -2005,8 +2007,7 @@ async def _build_oag_response(conn, oag_row: dict) -> dict:
     else:
         d["guide_camera_connector"] = None
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -2120,8 +2121,7 @@ async def _build_guide_scope_response(conn, gs_row: dict) -> dict:
     else:
         d["guide_camera_connector"] = None
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -2234,8 +2234,7 @@ async def _build_computer_response(conn, computer_row: dict) -> dict:
     else:
         d["computer_type"] = None
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
@@ -2339,8 +2338,7 @@ async def _build_software_response(conn, sw_row: dict) -> dict:
     else:
         d["manufacturer"] = None
 
-    for k in ("source", "seed_key", "seed_hash"):
-        d.pop(k, None)
+    _strip_seed(d)
 
     return d
 
