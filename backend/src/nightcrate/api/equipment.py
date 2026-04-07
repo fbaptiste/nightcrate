@@ -3,6 +3,9 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from nightcrate.api.equipment_models import (
+    CameraCreate,
+    CameraResponse,
+    CameraUpdate,
     ComputerTypeCreate,
     ComputerTypeResponse,
     ComputerTypeUpdate,
@@ -12,10 +15,16 @@ from nightcrate.api.equipment_models import (
     ConnectorSizeCreate,
     ConnectorSizeResponse,
     ConnectorSizeUpdate,
+    FilterCreate,
+    FilterPassbandCreate,
+    FilterPassbandResponse,
+    FilterPassbandUpdate,
+    FilterResponse,
     FilterSizeCreate,
     FilterSizeResponse,
     FilterSizeUpdate,
     FilterTypeResponse,
+    FilterUpdate,
     ManufacturerCreate,
     ManufacturerResponse,
     ManufacturerUpdate,
@@ -28,6 +37,12 @@ from nightcrate.api.equipment_models import (
     SensorCreate,
     SensorResponse,
     SensorUpdate,
+    TelescopeConfigurationCreate,
+    TelescopeConfigurationResponse,
+    TelescopeConfigurationUpdate,
+    TelescopeCreate,
+    TelescopeResponse,
+    TelescopeUpdate,
 )
 from nightcrate.db.session import get_db
 
@@ -801,5 +816,691 @@ async def delete_sensor(sensor_id: int):
             "UPDATE sensor SET active = 0 WHERE id = ?",
             (sensor_id,),
         )
+        await conn.commit()
+    return {"ok": True}
+
+
+# ── Camera ────────────────────────────────────────────────────────────────────
+
+
+async def _build_camera_response(conn, camera_row: dict) -> dict:
+    """Build full camera response with nested objects."""
+    d = dict(camera_row)
+    _bool_fields(d, "active", "cooled", "tilt_adapter", "has_usb_hub")
+
+    d["manufacturer"] = _bool_fields(
+        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        "active",
+    )
+
+    sensor_row = await conn.execute(f"{_SENSOR_JOIN_SQL} WHERE s.id = ?", (d.pop("sensor_id"),))
+    sensor_result = await sensor_row.fetchone()
+    d["sensor"] = _build_sensor_response(_row_to_dict(sensor_result))
+
+    guide_id = d.pop("guide_sensor_id")
+    if guide_id:
+        gs_row = await conn.execute(f"{_SENSOR_JOIN_SQL} WHERE s.id = ?", (guide_id,))
+        gs_result = await gs_row.fetchone()
+        d["guide_sensor"] = _build_sensor_response(_row_to_dict(gs_result))
+    else:
+        d["guide_sensor"] = None
+
+    cs_id = d.pop("connector_size_id")
+    if cs_id:
+        d["connector_size"] = _bool_fields(
+            await _get_or_404(conn, "connector_size", cs_id, "Connector size"),
+            "active",
+        )
+    else:
+        d["connector_size"] = None
+
+    uh_id = d.pop("usb_hub_interface_id")
+    if uh_id:
+        d["usb_hub_interface"] = _bool_fields(
+            await _get_or_404(conn, "connection_interface", uh_id, "Connection interface"),
+            "active",
+        )
+    else:
+        d["usb_hub_interface"] = None
+
+    ifaces = await conn.execute(
+        """
+        SELECT ci.* FROM connection_interface ci
+        JOIN camera_interface cai ON cai.interface_id = ci.id
+        WHERE cai.camera_id = ?
+        ORDER BY ci.name
+        """,
+        (d["id"],),
+    )
+    d["interfaces"] = [_bool_fields(_row_to_dict(r), "active") for r in await ifaces.fetchall()]
+
+    for k in ("source", "seed_key", "seed_hash"):
+        d.pop(k, None)
+
+    return d
+
+
+@router.get("/camera", response_model=list[CameraResponse])
+async def list_cameras(
+    include_retired: bool = Query(False, description="Include retired items"),
+):
+    async with get_db() as conn:
+        where = "" if include_retired else "WHERE active = 1"
+        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY model_name")
+        results = []
+        for r in await rows.fetchall():
+            results.append(await _build_camera_response(conn, _row_to_dict(r)))
+        return results
+
+
+@router.get("/camera/{camera_id}", response_model=CameraResponse)
+async def get_camera(camera_id: int):
+    async with get_db() as conn:
+        row = await _get_or_404(conn, "camera", camera_id, "Camera")
+        return await _build_camera_response(conn, row)
+
+
+@router.post("/camera", response_model=CameraResponse, status_code=201)
+async def create_camera(body: CameraCreate):
+    async with get_db() as conn:
+        try:
+            cursor = await conn.execute(
+                """INSERT INTO camera (
+                    manufacturer_id, sensor_id, guide_sensor_id, connector_size_id,
+                    model_name, cooled, cooling_delta_c, back_focus_mm, weight_g,
+                    tilt_adapter, has_usb_hub, usb_hub_interface_id, unity_gain, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    body.manufacturer_id,
+                    body.sensor_id,
+                    body.guide_sensor_id,
+                    body.connector_size_id,
+                    body.model_name,
+                    int(body.cooled),
+                    body.cooling_delta_c,
+                    body.back_focus_mm,
+                    body.weight_g,
+                    int(body.tilt_adapter),
+                    int(body.has_usb_hub),
+                    body.usb_hub_interface_id,
+                    body.unity_gain,
+                    body.notes,
+                ),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Camera already exists: {body.model_name}",
+                )
+            raise
+        camera_id = cursor.lastrowid
+        for iface_id in body.interface_ids:
+            await conn.execute(
+                "INSERT INTO camera_interface (camera_id, interface_id) VALUES (?, ?)",
+                (camera_id, iface_id),
+            )
+        await conn.commit()
+        row = await _get_or_404(conn, "camera", camera_id, "Camera")
+        return await _build_camera_response(conn, row)
+
+
+@router.put("/camera/{camera_id}", response_model=CameraResponse)
+async def update_camera(camera_id: int, body: CameraUpdate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "camera", camera_id, "Camera")
+        updates = body.model_dump(exclude_unset=True)
+        interface_ids = updates.pop("interface_ids", None)
+        if updates:
+            for bool_field in ("cooled", "tilt_adapter", "has_usb_hub"):
+                if bool_field in updates and updates[bool_field] is not None:
+                    updates[bool_field] = int(updates[bool_field])
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [camera_id]
+            try:
+                await conn.execute(
+                    f"UPDATE camera SET {set_clause} WHERE id = ?",
+                    values,
+                )
+                await conn.commit()
+            except Exception as exc:
+                if "UNIQUE" in str(exc):
+                    raise HTTPException(
+                        status_code=409, detail="Camera (manufacturer, model_name) already exists"
+                    )
+                raise
+        if interface_ids is not None:
+            await conn.execute("DELETE FROM camera_interface WHERE camera_id = ?", (camera_id,))
+            for iface_id in interface_ids:
+                await conn.execute(
+                    "INSERT INTO camera_interface (camera_id, interface_id) VALUES (?, ?)",
+                    (camera_id, iface_id),
+                )
+            await conn.commit()
+        row = await _get_or_404(conn, "camera", camera_id, "Camera")
+        return await _build_camera_response(conn, row)
+
+
+@router.delete("/camera/{camera_id}")
+async def delete_camera(camera_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "camera", camera_id, "Camera")
+        await conn.execute("UPDATE camera SET active = 0 WHERE id = ?", (camera_id,))
+        await conn.commit()
+    return {"ok": True}
+
+
+# ── Telescope ─────────────────────────────────────────────────────────────────
+
+
+async def _build_telescope_response(conn, telescope_row: dict) -> dict:
+    """Build full telescope response with nested objects."""
+    d = dict(telescope_row)
+    _bool_fields(d, "active")
+
+    d["manufacturer"] = _bool_fields(
+        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        "active",
+    )
+
+    od_id = d.pop("optical_design_id")
+    if od_id:
+        d["optical_design"] = _bool_fields(
+            await _get_or_404(conn, "optical_design", od_id, "Optical design"),
+            "active",
+        )
+    else:
+        d["optical_design"] = None
+
+    connectors = await conn.execute(
+        """
+        SELECT cs.* FROM connector_size cs
+        JOIN telescope_connector tc ON tc.connector_size_id = cs.id
+        WHERE tc.telescope_id = ?
+        ORDER BY cs.name
+        """,
+        (d["id"],),
+    )
+    d["connectors"] = [_bool_fields(_row_to_dict(r), "active") for r in await connectors.fetchall()]
+
+    configs = await conn.execute(
+        """
+        SELECT * FROM telescope_configuration
+        WHERE telescope_id = ? AND active = 1
+        ORDER BY is_native DESC, config_name
+        """,
+        (d["id"],),
+    )
+    d["configurations"] = [
+        _bool_fields(_row_to_dict(r), "active", "is_native") for r in await configs.fetchall()
+    ]
+    for cfg in d["configurations"]:
+        for k in ("active", "source", "seed_key", "seed_hash"):
+            cfg.pop(k, None)
+
+    for k in ("source", "seed_key", "seed_hash"):
+        d.pop(k, None)
+
+    return d
+
+
+@router.get("/telescope", response_model=list[TelescopeResponse])
+async def list_telescopes(
+    include_retired: bool = Query(False, description="Include retired items"),
+):
+    async with get_db() as conn:
+        where = "" if include_retired else "WHERE active = 1"
+        rows = await conn.execute(f"SELECT * FROM telescope {where} ORDER BY model_name")
+        results = []
+        for r in await rows.fetchall():
+            results.append(await _build_telescope_response(conn, _row_to_dict(r)))
+        return results
+
+
+@router.get("/telescope/{telescope_id}", response_model=TelescopeResponse)
+async def get_telescope(telescope_id: int):
+    async with get_db() as conn:
+        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        return await _build_telescope_response(conn, row)
+
+
+@router.post("/telescope", response_model=TelescopeResponse, status_code=201)
+async def create_telescope(body: TelescopeCreate):
+    async with get_db() as conn:
+        try:
+            cursor = await conn.execute(
+                """INSERT INTO telescope (
+                    manufacturer_id, optical_design_id, model_name,
+                    aperture_mm, image_circle_mm, weight_kg, obstruction_pct, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    body.manufacturer_id,
+                    body.optical_design_id,
+                    body.model_name,
+                    body.aperture_mm,
+                    body.image_circle_mm,
+                    body.weight_kg,
+                    body.obstruction_pct,
+                    body.notes,
+                ),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Telescope already exists: {body.model_name}",
+                )
+            raise
+        telescope_id = cursor.lastrowid
+        for cs_id in body.connector_size_ids:
+            await conn.execute(
+                "INSERT INTO telescope_connector (telescope_id, connector_size_id) VALUES (?, ?)",
+                (telescope_id, cs_id),
+            )
+        await conn.commit()
+        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        return await _build_telescope_response(conn, row)
+
+
+@router.put("/telescope/{telescope_id}", response_model=TelescopeResponse)
+async def update_telescope(telescope_id: int, body: TelescopeUpdate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        updates = body.model_dump(exclude_unset=True)
+        connector_size_ids = updates.pop("connector_size_ids", None)
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [telescope_id]
+            try:
+                await conn.execute(
+                    f"UPDATE telescope SET {set_clause} WHERE id = ?",
+                    values,
+                )
+                await conn.commit()
+            except Exception as exc:
+                if "UNIQUE" in str(exc):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Telescope (manufacturer, model_name) already exists",
+                    )
+                raise
+        if connector_size_ids is not None:
+            await conn.execute(
+                "DELETE FROM telescope_connector WHERE telescope_id = ?", (telescope_id,)
+            )
+            for cs_id in connector_size_ids:
+                await conn.execute(
+                    "INSERT INTO telescope_connector (telescope_id, connector_size_id)"
+                    " VALUES (?, ?)",
+                    (telescope_id, cs_id),
+                )
+            await conn.commit()
+        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        return await _build_telescope_response(conn, row)
+
+
+@router.delete("/telescope/{telescope_id}")
+async def delete_telescope(telescope_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await conn.execute("UPDATE telescope SET active = 0 WHERE id = ?", (telescope_id,))
+        await conn.commit()
+    return {"ok": True}
+
+
+# ── Telescope configuration child endpoints ───────────────────────────────────
+
+
+@router.post(
+    "/telescope/{telescope_id}/configuration",
+    response_model=TelescopeConfigurationResponse,
+    status_code=201,
+)
+async def create_telescope_configuration(telescope_id: int, body: TelescopeConfigurationCreate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        try:
+            cursor = await conn.execute(
+                """INSERT INTO telescope_configuration (
+                    telescope_id, config_name, accessory_name, reduction_factor,
+                    effective_focal_length_mm, effective_focal_ratio,
+                    effective_image_circle_mm, effective_back_focus_mm,
+                    is_native, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    telescope_id,
+                    body.config_name,
+                    body.accessory_name,
+                    body.reduction_factor,
+                    body.effective_focal_length_mm,
+                    body.effective_focal_ratio,
+                    body.effective_image_circle_mm,
+                    body.effective_back_focus_mm,
+                    int(body.is_native),
+                    body.notes,
+                ),
+            )
+            await conn.commit()
+        except Exception as exc:
+            exc_str = str(exc)
+            if "UNIQUE" in exc_str and "idx_telescope_configuration_one_native" in exc_str:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This telescope already has a native configuration (is_native=true).",  # noqa: E501
+                )
+            if "UNIQUE" in exc_str:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Configuration name already exists for this telescope: {body.config_name}"
+                    ),
+                )
+            raise
+        config_id = cursor.lastrowid
+        row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
+        result = await row.fetchone()
+        cfg = _bool_fields(_row_to_dict(result), "active", "is_native")
+        for k in ("active", "source", "seed_key", "seed_hash"):
+            cfg.pop(k, None)
+        return cfg
+
+
+@router.put(
+    "/telescope/{telescope_id}/configuration/{config_id}",
+    response_model=TelescopeConfigurationResponse,
+)
+async def update_telescope_configuration(
+    telescope_id: int, config_id: int, body: TelescopeConfigurationUpdate
+):
+    async with get_db() as conn:
+        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        check = await conn.execute(
+            "SELECT id FROM telescope_configuration WHERE id = ? AND telescope_id = ?",
+            (config_id, telescope_id),
+        )
+        if await check.fetchone() is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Configuration not found: {config_id}",
+            )
+        updates = body.model_dump(exclude_unset=True)
+        if updates:
+            if "is_native" in updates and updates["is_native"] is not None:
+                updates["is_native"] = int(updates["is_native"])
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [config_id]
+            try:
+                await conn.execute(
+                    f"UPDATE telescope_configuration SET {set_clause} WHERE id = ?",
+                    values,
+                )
+                await conn.commit()
+            except Exception as exc:
+                exc_str = str(exc)
+                if "UNIQUE" in exc_str and "idx_telescope_configuration_one_native" in exc_str:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This telescope already has a native configuration (is_native=true).",  # noqa: E501
+                    )
+                if "UNIQUE" in exc_str:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Configuration name already exists for this telescope",
+                    )
+                raise
+        row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
+        result = await row.fetchone()
+        cfg = _bool_fields(_row_to_dict(result), "active", "is_native")
+        for k in ("active", "source", "seed_key", "seed_hash"):
+            cfg.pop(k, None)
+        return cfg
+
+
+@router.delete("/telescope/{telescope_id}/configuration/{config_id}")
+async def delete_telescope_configuration(telescope_id: int, config_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        check = await conn.execute(
+            "SELECT id FROM telescope_configuration WHERE id = ? AND telescope_id = ?",
+            (config_id, telescope_id),
+        )
+        if await check.fetchone() is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Configuration not found: {config_id}",
+            )
+        await conn.execute(
+            "UPDATE telescope_configuration SET active = 0 WHERE id = ?", (config_id,)
+        )
+        await conn.commit()
+    return {"ok": True}
+
+
+# ── Filter ────────────────────────────────────────────────────────────────────
+
+
+async def _build_filter_response(conn, filter_row: dict) -> dict:
+    """Build full filter response with nested objects."""
+    d = dict(filter_row)
+    _bool_fields(d, "active")
+
+    d["manufacturer"] = _bool_fields(
+        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        "active",
+    )
+    d["filter_type"] = _bool_fields(
+        await _get_or_404(conn, "filter_type", d.pop("filter_type_id"), "Filter type"),
+        "active",
+    )
+
+    fs_id = d.pop("filter_size_id")
+    if fs_id:
+        d["filter_size"] = _bool_fields(
+            await _get_or_404(conn, "filter_size", fs_id, "Filter size"),
+            "active",
+        )
+    else:
+        d["filter_size"] = None
+
+    pbs = await conn.execute(
+        """
+        SELECT * FROM filter_passband
+        WHERE filter_id = ? AND active = 1
+        ORDER BY central_wavelength_nm
+        """,
+        (d["id"],),
+    )
+    d["passbands"] = [_row_to_dict(r) for r in await pbs.fetchall()]
+    for pb in d["passbands"]:
+        for k in ("active", "source", "seed_key", "seed_hash", "created_at", "updated_at"):
+            pb.pop(k, None)
+
+    for k in ("source", "seed_key", "seed_hash"):
+        d.pop(k, None)
+
+    return d
+
+
+@router.get("/filter", response_model=list[FilterResponse])
+async def list_filters(
+    include_retired: bool = Query(False, description="Include retired items"),
+):
+    async with get_db() as conn:
+        where = "" if include_retired else "WHERE active = 1"
+        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY model_name")
+        results = []
+        for r in await rows.fetchall():
+            results.append(await _build_filter_response(conn, _row_to_dict(r)))
+        return results
+
+
+@router.get("/filter/{filter_id}", response_model=FilterResponse)
+async def get_filter(filter_id: int):
+    async with get_db() as conn:
+        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        return await _build_filter_response(conn, row)
+
+
+@router.post("/filter", response_model=FilterResponse, status_code=201)
+async def create_filter(body: FilterCreate):
+    async with get_db() as conn:
+        try:
+            cursor = await conn.execute(
+                """INSERT INTO filter (
+                    manufacturer_id, filter_type_id, filter_size_id, model_name,
+                    peak_transmission_pct, mounted_thickness_mm, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    body.manufacturer_id,
+                    body.filter_type_id,
+                    body.filter_size_id,
+                    body.model_name,
+                    body.peak_transmission_pct,
+                    body.mounted_thickness_mm,
+                    body.notes,
+                ),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Filter already exists: {body.model_name}",
+                )
+            raise
+        filter_id = cursor.lastrowid
+        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        return await _build_filter_response(conn, row)
+
+
+@router.put("/filter/{filter_id}", response_model=FilterResponse)
+async def update_filter(filter_id: int, body: FilterUpdate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        updates = body.model_dump(exclude_unset=True)
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [filter_id]
+            try:
+                await conn.execute(
+                    f"UPDATE filter SET {set_clause} WHERE id = ?",
+                    values,
+                )
+                await conn.commit()
+            except Exception as exc:
+                if "UNIQUE" in str(exc):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Filter (manufacturer, model_name) already exists",
+                    )
+                raise
+        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        return await _build_filter_response(conn, row)
+
+
+@router.delete("/filter/{filter_id}")
+async def delete_filter(filter_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await conn.execute("UPDATE filter SET active = 0 WHERE id = ?", (filter_id,))
+        await conn.commit()
+    return {"ok": True}
+
+
+# ── Filter passband child endpoints ───────────────────────────────────────────
+
+
+@router.post(
+    "/filter/{filter_id}/passband",
+    response_model=FilterPassbandResponse,
+    status_code=201,
+)
+async def create_filter_passband(filter_id: int, body: FilterPassbandCreate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        try:
+            cursor = await conn.execute(
+                """INSERT INTO filter_passband (
+                    filter_id, line_name, central_wavelength_nm,
+                    bandwidth_nm, peak_transmission_pct
+                ) VALUES (?, ?, ?, ?, ?)""",
+                (
+                    filter_id,
+                    body.line_name,
+                    body.central_wavelength_nm,
+                    body.bandwidth_nm,
+                    body.peak_transmission_pct,
+                ),
+            )
+            await conn.commit()
+        except Exception as exc:
+            exc_str = str(exc)
+            if "CHECK" in exc_str:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid line_name: {body.line_name}",
+                )
+            raise
+        passband_id = cursor.lastrowid
+        row = await conn.execute("SELECT * FROM filter_passband WHERE id = ?", (passband_id,))
+        result = await row.fetchone()
+        pb = _row_to_dict(result)
+        for k in ("active", "source", "seed_key", "seed_hash", "created_at", "updated_at"):
+            pb.pop(k, None)
+        return pb
+
+
+@router.put(
+    "/filter/{filter_id}/passband/{passband_id}",
+    response_model=FilterPassbandResponse,
+)
+async def update_filter_passband(filter_id: int, passband_id: int, body: FilterPassbandUpdate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        check = await conn.execute(
+            "SELECT id FROM filter_passband WHERE id = ? AND filter_id = ?",
+            (passband_id, filter_id),
+        )
+        if await check.fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Passband not found: {passband_id}")
+        updates = body.model_dump(exclude_unset=True)
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [passband_id]
+            try:
+                await conn.execute(
+                    f"UPDATE filter_passband SET {set_clause} WHERE id = ?",
+                    values,
+                )
+                await conn.commit()
+            except Exception as exc:
+                exc_str = str(exc)
+                if "CHECK" in exc_str:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Invalid line_name: {updates.get('line_name')}",
+                    )
+                raise
+        row = await conn.execute("SELECT * FROM filter_passband WHERE id = ?", (passband_id,))
+        result = await row.fetchone()
+        pb = _row_to_dict(result)
+        for k in ("active", "source", "seed_key", "seed_hash", "created_at", "updated_at"):
+            pb.pop(k, None)
+        return pb
+
+
+@router.delete("/filter/{filter_id}/passband/{passband_id}")
+async def delete_filter_passband(filter_id: int, passband_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        check = await conn.execute(
+            "SELECT id FROM filter_passband WHERE id = ? AND filter_id = ?",
+            (passband_id, filter_id),
+        )
+        if await check.fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Passband not found: {passband_id}")
+        await conn.execute("UPDATE filter_passband SET active = 0 WHERE id = ?", (passband_id,))
         await conn.commit()
     return {"ok": True}
