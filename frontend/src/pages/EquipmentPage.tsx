@@ -3,8 +3,9 @@ import Box from "@mui/material/Box";
 import { EquipmentSidebar } from "@/components/equipment/EquipmentSidebar";
 import { EquipmentPlaceholder } from "@/components/equipment/EquipmentPlaceholder";
 import CameraList from "@/components/equipment/CameraList";
+import TelescopeList from "@/components/equipment/TelescopeList";
 
-// TelescopeList, FilterList will be created in Tasks 11-12.
+// FilterList will be created in Task 12.
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -14,6 +15,8 @@ export function EquipmentPage() {
     switch (category) {
       case "cameras":
         return <CameraList />;
+      case "telescopes":
+        return <TelescopeList />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }
