@@ -14,8 +14,9 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.6.0 — Archive Browser](#v060--archive-browser) ✅
 - [v0.6.1 — Performance & UX Polish](#v061--performance--ux-polish)
 - [v0.7.0 — FITS Header Editing](#v070--fits-header-editing) ✅
-- [v0.8.0 — Equipment Database Schema](#v080--equipment-database-schema)
-- [v0.9.0 — Equipment Management API + UI](#v090--equipment-management-api--ui)
+- [v0.8.0 — Equipment Database Schema](#v080--equipment-database-schema) ✅
+- [v0.9.0 — Equipment Management API + Core UI](#v090--equipment-management-api--core-ui)
+- [v0.9.1 — Equipment Management UI (Remaining Tabs)](#v091--equipment-management-ui-remaining-tabs)
 - [Seed Loader Spec](#seed-loader-spec)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
@@ -1206,60 +1207,54 @@ Based on the comprehensive schema revision spec reviewed by Claude Desktop.
 
 ---
 
-## v0.9.0 — Equipment Management API + UI
+## v0.9.0 — Equipment Management API + Core UI
 
-**Status:** Planned
-**Branch:** TBD
+**Status:** In Progress
+**Branch:** `v0.9.0/equipment-management`
 
-CRUD API endpoints and frontend Equipment page for managing all equipment data. Builds on the v0.8.0 schema.
+Full backend CRUD API for all equipment types. Frontend Equipment page with the three most complex tabs (Cameras, Telescopes, Filters) to prove the pattern. Simpler equipment tabs follow in v0.9.1.
 
 ### Backend — API Endpoints
 
-Pydantic models and FastAPI CRUD for each equipment category. All endpoints under `/api/equipment/`.
+Pydantic models and FastAPI CRUD for all equipment categories. All endpoints under `/api/equipment/`.
 
-- [ ] Lookup table CRUD: manufacturers, optical_designs, mount_types, connection_interfaces, connector_sizes, filter_sizes, computer_types
-- [ ] Sensor CRUD: list, get, create, update, delete (with manufacturer join)
-- [ ] Camera CRUD: list, get, create, update, delete (with sensor + manufacturer + interfaces joins)
-- [ ] Telescope CRUD: list, get, create, update, delete (with configurations + connectors)
+- [ ] Lookup table CRUD: manufacturer, optical_design, mount_type, connection_interface, connector_size, filter_size, computer_type, filter_type (read-only)
+- [ ] Sensor CRUD: list, get, create, update, soft-delete (with manufacturer join)
+- [ ] Camera CRUD: list, get, create, update, soft-delete (with sensor + manufacturer + connector_size + interfaces joins)
+- [ ] Telescope CRUD: list, get, create, update, soft-delete (with configurations + connectors)
 - [ ] Telescope configuration CRUD: create, update, delete (scoped to parent telescope)
-- [ ] Filter CRUD: list, get, create, update, delete (with passbands + filter_type)
+- [ ] Filter CRUD: list, get, create, update, soft-delete (with passbands + filter_type + filter_size)
 - [ ] Filter passband CRUD: create, update, delete (scoped to parent filter)
-- [ ] Mount CRUD: list, get, create, update, delete (with interfaces)
-- [ ] Focuser CRUD: list, get, create, update, delete (with interfaces)
-- [ ] Filter wheel CRUD: list, get, create, update, delete (with interfaces + connectors)
-- [ ] OAG CRUD: list, get, create, update, delete
-- [ ] Guide scope CRUD: list, get, create, update, delete
-- [ ] Computer CRUD: list, get, create, update, delete
-- [ ] Software CRUD: list, get, create, update, delete
-- [ ] Soft delete: DELETE sets `active=0`, not hard delete. Add `?include_retired=true` query param to list endpoints.
+- [ ] Mount CRUD: list, get, create, update, soft-delete (with interfaces)
+- [ ] Focuser CRUD: list, get, create, update, soft-delete (with interfaces)
+- [ ] Filter wheel CRUD: list, get, create, update, soft-delete (with interfaces + connectors)
+- [ ] OAG CRUD: list, get, create, update, soft-delete
+- [ ] Guide scope CRUD: list, get, create, update, soft-delete
+- [ ] Computer CRUD: list, get, create, update, soft-delete
+- [ ] Software CRUD: list, get, create, update, soft-delete
+- [ ] Soft delete: DELETE sets `active=0`. `?include_retired=true` query param on list endpoints.
 
-### Frontend — Equipment Page
+### Frontend — Equipment Page (Core Tabs)
 
-New nav item "Equipment" in the sidebar. Tabbed interface with one tab per equipment category.
+New nav item "Equipment" in the sidebar. Tabbed interface. v0.9.0 delivers the three most complex tabs plus shared infrastructure.
 
-- [ ] Equipment page with MUI Tabs: Cameras, Telescopes, Filters, Mounts, Focusers, Filter Wheels, Guiding, Computers, Software, Manufacturers
-- [ ] Each tab: DataGrid table listing equipment with key columns
-- [ ] Add button: opens dialog/form with fields specific to that equipment type
-- [ ] Edit: click row to open edit dialog, or inline editing for simple fields
-- [ ] Delete: soft delete with confirmation dialog
-- [ ] Manufacturer picker: autocomplete dropdown (shared across all equipment forms)
-- [ ] Sensor picker on camera form: autocomplete with sensor specs preview
-- [ ] Telescope configurations: expandable sub-table within telescope detail view
-- [ ] Filter passbands: inline sub-table within filter detail view
-- [ ] Junction table management: multi-select for connection interfaces on applicable equipment
-- [ ] Connector size pickers: dropdowns for camera, filter wheel, OAG, guide scope, telescope
+- [ ] Equipment page scaffolding with MUI Tabs (all tab labels present, remaining tabs show "Coming soon")
+- [ ] Shared components: ManufacturerPicker (autocomplete), EquipmentDataGrid (reusable grid wrapper), EquipmentFormDialog (reusable dialog shell)
+- [ ] **Cameras tab**: DataGrid with key columns (model, manufacturer, sensor, cooled, connector), add/edit dialog with sensor picker, interface multi-select
+- [ ] **Telescopes tab**: DataGrid with key columns (model, manufacturer, design, aperture), add/edit dialog, expandable configuration sub-table, connector multi-select
+- [ ] **Filters tab**: DataGrid with key columns (model, manufacturer, type, passbands summary), add/edit dialog, inline passband sub-table
 
 ### Frontend — API Client
 
-- [ ] TanStack Query hooks for all equipment CRUD operations
-- [ ] Optimistic updates for edit/delete
+- [ ] `frontend/src/api/equipment.ts` — TanStack Query hooks for all equipment CRUD
 - [ ] Query invalidation on mutations
+- [ ] Shared types for all equipment entities
 
 ### Tests
 
 - [ ] Backend: CRUD tests for each equipment type (create, read, update, soft-delete)
 - [ ] Backend: validation tests (missing required fields, FK violations, CHECK constraints)
-- [ ] Backend: cascade behavior (delete telescope → configs deleted, etc.)
+- [ ] Backend: junction table and child table management tests
 - [ ] Frontend: build passes
 
 ### v0.9.0 Completion Criteria
@@ -1267,8 +1262,39 @@ New nav item "Equipment" in the sidebar. Tabbed interface with one tab per equip
 - [ ] All tests pass
 - [ ] Ruff clean
 - [ ] Frontend builds
-- [ ] Can add/edit/delete all equipment types through the UI
+- [ ] Can add/edit/delete cameras, telescopes, and filters through the UI
+- [ ] Telescope configurations manageable via expandable sub-table
+- [ ] Filter passbands manageable via inline sub-table
 - [ ] Soft delete works (retired equipment hidden from lists, still in DB)
+- [ ] All other equipment types have working API endpoints (tested) even if UI tab is pending
+
+---
+
+## v0.9.1 — Equipment Management UI (Remaining Tabs)
+
+**Status:** Planned
+**Branch:** TBD
+
+Complete the frontend Equipment page with all remaining tabs, reusing the patterns established in v0.9.0.
+
+### Frontend — Remaining Tabs
+
+- [ ] **Sensors tab**: DataGrid + add/edit dialog (manufacturer, specs, bayer pattern)
+- [ ] **Mounts tab**: DataGrid + add/edit dialog (manufacturer, mount type, payload, interfaces)
+- [ ] **Focusers tab**: DataGrid + add/edit dialog (manufacturer, motorized, steps, interfaces)
+- [ ] **Filter Wheels tab**: DataGrid + add/edit dialog (manufacturer, positions, filter size, connectors, interfaces)
+- [ ] **Guiding tab**: Two sub-sections — OAGs and Guide Scopes, each with DataGrid + add/edit dialog
+- [ ] **Computers tab**: DataGrid + add/edit dialog (manufacturer, computer type)
+- [ ] **Software tab**: DataGrid + add/edit dialog (manufacturer, category)
+- [ ] **Manufacturers tab**: DataGrid + add/edit (name, website, notes)
+- [ ] **Lookup Tables tab**: Accordion sections for optical_design, mount_type, connection_interface, connector_size, filter_size, computer_type — simple inline-editable lists
+
+### v0.9.1 Completion Criteria
+
+- [ ] All tests pass
+- [ ] Frontend builds
+- [ ] Can add/edit/delete all equipment types through the UI
+- [ ] All lookup tables editable
 
 ---
 
