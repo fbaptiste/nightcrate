@@ -7,6 +7,7 @@ import TelescopeList from "@/components/equipment/TelescopeList";
 import FilterList from "@/components/equipment/FilterList";
 import SensorList from "@/components/equipment/SensorList";
 import MountList from "@/components/equipment/MountList";
+import FocuserList from "@/components/equipment/FocuserList";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -24,6 +25,8 @@ export function EquipmentPage() {
         return <SensorList />;
       case "mounts":
         return <MountList />;
+      case "focusers":
+        return <FocuserList />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }
