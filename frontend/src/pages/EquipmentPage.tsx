@@ -4,8 +4,7 @@ import { EquipmentSidebar } from "@/components/equipment/EquipmentSidebar";
 import { EquipmentPlaceholder } from "@/components/equipment/EquipmentPlaceholder";
 import CameraList from "@/components/equipment/CameraList";
 import TelescopeList from "@/components/equipment/TelescopeList";
-
-// FilterList will be created in Task 12.
+import FilterList from "@/components/equipment/FilterList";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -17,6 +16,8 @@ export function EquipmentPage() {
         return <CameraList />;
       case "telescopes":
         return <TelescopeList />;
+      case "filters":
+        return <FilterList />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }
