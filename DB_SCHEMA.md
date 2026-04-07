@@ -191,6 +191,7 @@ erDiagram
         INTEGER id PK
         INTEGER manufacturer_id FK
         INTEGER sensor_id FK
+        INTEGER guide_sensor_id FK "optional guide sensor"
         INTEGER connector_size_id FK "native connector"
         TEXT model_name
         INTEGER cooled "boolean"
@@ -211,6 +212,7 @@ erDiagram
 
     manufacturer ||--o{ camera : "makes"
     sensor ||--o{ camera : "used in"
+    sensor ||--o{ camera : "guide sensor"
     connector_size ||--o{ camera : "native connector"
     connection_interface ||--o{ camera : "usb hub type"
     camera ||--o{ camera_interface : "connects via"
