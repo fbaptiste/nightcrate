@@ -1,6 +1,6 @@
 ---
 name: sync-docs
-description: Use when a work session is ending, before committing, or when asked to update docs — syncs PLAN.md, CLAUDE.md, and README.md to reflect actual work done
+description: Use when a work session is ending, before committing, or when asked to update docs — syncs PLAN.md, CLAUDE.md, README.md, DB_SCHEMA.md, and DB_SCHEMA_DDL.sql to reflect actual work done
 ---
 
 # Sync Docs
@@ -27,14 +27,25 @@ Update project documentation to reflect work actually done in the current sessio
 
 4. **README.md** — Check if new dependencies were added (search for new imports in `pyproject.toml` or `package.json` changes). If so, update the Open Source Acknowledgments table.
 
-5. **Memory** — Review the session for anything worth persisting to memory:
+5. **DB_SCHEMA.md** — If any database tables, columns, indexes, triggers, or views changed:
+   - Update the Mermaid ER diagrams to reflect the current schema
+   - Update the table summary sections
+   - Ensure diagrams match `DB_SCHEMA_DDL.sql` (the authoritative DDL source)
+   - If no database changes were made, skip silently.
+
+6. **DB_SCHEMA_DDL.sql** — If database migrations were added or changed:
+   - Update the DDL file to reflect the complete current schema (all equipment tables, indexes, triggers, views)
+   - This file should always represent the full CREATE TABLE statements for the current schema
+   - If no database changes were made, skip silently.
+
+7. **Memory** — Review the session for anything worth persisting to memory:
    - New user preferences or feedback → `feedback` memory
    - Project decisions or context → `project` memory
    - User profile updates → `user` memory
    - Check existing memories in the project's auto-memory `MEMORY.md` (under `~/.claude/projects/`) — update stale ones, don't duplicate
    - Only save things useful in future sessions, not ephemeral task details
 
-6. **Report** — Summarize what was updated and what was skipped (with reason).
+8. **Report** — Summarize what was updated and what was skipped (with reason).
 
 ## Rules
 

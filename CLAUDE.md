@@ -253,6 +253,31 @@ Supports browsing into archive files as if they were folders. Selecting an image
 
 **In-memory extraction:** No temp files for zip/tar. 7z uses a temporary directory (py7zr API limitation) but cleans up immediately.
 
+## Equipment Database
+
+Fully normalized equipment schema (migration `0005.equipment_schema.sql`). Schema only — no API or UI yet.
+
+**Reference docs:**
+- `DB_SCHEMA.md` — Mermaid ER diagrams broken into logical groups
+- `DB_SCHEMA_DDL.sql` — authoritative CREATE TABLE statements
+
+**Architecture:**
+- 9 lookup/reference tables: `manufacturer`, `optical_design`, `mount_type`, `connection_interface`, `connector_size`, `filter_size`, `computer_type`, `filter_type`, `seed_loader_meta`
+- 12 equipment tables: `sensor`, `camera`, `telescope`, `telescope_configuration`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`
+- 5 junction tables: `camera_interface`, `telescope_connector`, `mount_interface`, `focuser_interface`, `filter_wheel_interface`
+- 1 child table: `filter_passband`
+- 4 FITS alias tables: `camera_alias`, `telescope_alias`, `filter_alias`, `unresolved_equipment_observation`
+- 1 view: `filter_summary`
+
+**Key design decisions:**
+- No custom_fields JSON — add real columns via migration when needed
+- `filter_type` is a closed CHECK vocabulary of roles (narrowband_single, broadband_color, etc.); wavelengths live in `filter_passband` on the physical filter
+- `telescope` carries identity only (aperture, design) — all focal length/ratio/back_focus on `telescope_configuration`. Every telescope must have one config with `is_native=1`
+- Every table has seed tracking columns: `created_at`, `updated_at`, `active`, `source`, `seed_key`, `seed_hash`
+- `updated_at` triggers auto-fire on every equipment table
+- Partial unique index on `seed_key WHERE NOT NULL` for seed loader support
+- Closed vocabularies enforced by CHECK constraints: `filter_type.name`, `filter_passband.line_name`, `software.category`, `connection_interface.category`, `sensor.sensor_type`, `sensor.bayer_pattern`
+
 ## Dependency & License Policy
 
 NightCrate is licensed under **GPL-3.0**. Before adding any new dependency (Python or JS/TS):

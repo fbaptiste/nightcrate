@@ -1,0 +1,720 @@
+# NightCrate Database Schema
+
+Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
+
+Authoritative source: `DB_SCHEMA_DDL.sql`
+
+---
+
+## 1. Existing Tables
+
+```mermaid
+erDiagram
+    setting {
+        INTEGER id PK "CHECK (id = 1)"
+        TEXT data "JSON-serialized settings"
+    }
+
+    recent_file {
+        INTEGER id PK
+        TEXT path UK
+        TEXT opened_at
+    }
+
+    aberration_analysis {
+        INTEGER id PK
+        TEXT file_path
+        INTEGER hdu
+        TEXT created_at
+        INTEGER image_width
+        INTEGER image_height
+        TEXT settings_json
+        INTEGER star_count
+        REAL median_fwhm
+        REAL median_hfr
+        REAL median_eccentricity
+    }
+
+    aberration_star {
+        INTEGER id PK
+        INTEGER analysis_id FK
+        REAL x
+        REAL y
+        REAL fwhm
+        REAL hfr
+        REAL eccentricity
+        REAL elongation_angle_deg
+        REAL peak_adu
+        REAL flux
+        REAL snr
+        REAL semi_major
+        REAL semi_minor
+    }
+
+    aberration_analysis ||--o{ aberration_star : "has stars"
+```
+
+---
+
+## 2. Lookup / Reference Tables
+
+Shared reference data. All carry seed tracking columns (`created_at`, `updated_at`, `active`, `source`, `seed_key`, `seed_hash`) — omitted from diagram for readability.
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+        TEXT website
+        TEXT notes
+    }
+
+    optical_design {
+        INTEGER id PK
+        TEXT name UK
+        TEXT description
+    }
+
+    mount_type {
+        INTEGER id PK
+        TEXT name UK
+        TEXT description
+    }
+
+    connection_interface {
+        INTEGER id PK
+        TEXT name UK
+        TEXT category "CHECK: data, control, power, wireless"
+        TEXT notes
+    }
+
+    connector_size {
+        INTEGER id PK
+        TEXT name UK "M54, M48, T2, 2 inch, etc."
+        REAL diameter_mm
+        TEXT notes
+    }
+
+    filter_size {
+        INTEGER id PK
+        TEXT name UK "1.25 inch, 2 inch, 36mm, 50mm"
+        TEXT description
+    }
+
+    computer_type {
+        INTEGER id PK
+        TEXT name UK "imaging, processing, control, general"
+        TEXT description
+    }
+
+    filter_type {
+        INTEGER id PK
+        TEXT name UK "CHECK: 9 closed values"
+        TEXT description
+    }
+
+    seed_loader_meta {
+        TEXT key PK
+        TEXT value
+    }
+```
+
+`filter_type.name` CHECK constraint values: `broadband_luminance`, `broadband_color`, `narrowband_single`, `narrowband_dual`, `narrowband_tri`, `uv_ir_cut`, `light_pollution`, `neutral_density`, `other`.
+
+---
+
+## 3. Sensor
+
+Sensor models shared across cameras. Many cameras use the same sensor (e.g., IMX571).
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    sensor {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        TEXT model_name
+        TEXT sensor_type "CHECK: mono, color"
+        REAL pixel_size_um "CHECK > 0"
+        INTEGER resolution_x "CHECK > 0"
+        INTEGER resolution_y "CHECK > 0"
+        REAL sensor_width_mm
+        REAL sensor_height_mm
+        INTEGER adc_bit_depth
+        REAL full_well_capacity_ke
+        REAL read_noise_e
+        REAL peak_qe_pct
+        TEXT bayer_pattern "CHECK: RGGB, GRBG, GBRG, BGGR or NULL"
+        INTEGER dual_gain "boolean"
+        INTEGER hcg_threshold_gain
+        TEXT notes
+    }
+
+    manufacturer ||--o{ sensor : "makes"
+```
+
+Constraint: `mono` sensors must have `bayer_pattern IS NULL`; `color` sensors must have `bayer_pattern IS NOT NULL`.
+
+---
+
+## 4. Camera
+
+Imaging cameras reference sensor, manufacturer, connector size. Connection interfaces via junction table. USB hub modeled as boolean + optional interface FK.
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    sensor {
+        INTEGER id PK
+        TEXT model_name
+    }
+
+    connector_size {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    connection_interface {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    camera {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER sensor_id FK
+        INTEGER connector_size_id FK "native connector"
+        TEXT model_name
+        INTEGER cooled "boolean"
+        REAL cooling_delta_c
+        REAL back_focus_mm
+        REAL weight_g
+        INTEGER tilt_adapter "boolean"
+        INTEGER has_usb_hub "boolean"
+        INTEGER usb_hub_interface_id FK "connection_interface"
+        INTEGER unity_gain
+        TEXT notes
+    }
+
+    camera_interface {
+        INTEGER camera_id FK
+        INTEGER interface_id FK
+    }
+
+    manufacturer ||--o{ camera : "makes"
+    sensor ||--o{ camera : "used in"
+    connector_size ||--o{ camera : "native connector"
+    connection_interface ||--o{ camera : "usb hub type"
+    camera ||--o{ camera_interface : "connects via"
+    connection_interface ||--o{ camera_interface : "used by"
+```
+
+---
+
+## 5. Telescope and Configuration
+
+Base OTA carries only identity — aperture, optical design. All focal length/ratio/back_focus data lives on `telescope_configuration`. Every telescope must have at least one config with `is_native=1` (enforced by partial unique index).
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    optical_design {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    connector_size {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    telescope {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER optical_design_id FK
+        TEXT model_name
+        REAL aperture_mm "CHECK > 0"
+        REAL image_circle_mm
+        REAL weight_kg
+        REAL obstruction_pct
+        TEXT notes
+    }
+
+    telescope_connector {
+        INTEGER telescope_id FK
+        INTEGER connector_size_id FK
+    }
+
+    telescope_configuration {
+        INTEGER id PK
+        INTEGER telescope_id FK
+        TEXT config_name "Native, 0.7x Reducer, etc."
+        TEXT accessory_name
+        REAL reduction_factor "CHECK > 0, default 1.0"
+        REAL effective_focal_length_mm "CHECK > 0"
+        REAL effective_focal_ratio "CHECK > 0"
+        REAL effective_image_circle_mm
+        REAL effective_back_focus_mm
+        INTEGER is_native "boolean, partial unique per telescope"
+        TEXT notes
+    }
+
+    manufacturer ||--o{ telescope : "makes"
+    optical_design ||--o{ telescope : "design type"
+    telescope ||--o{ telescope_connector : "has connectors"
+    connector_size ||--o{ telescope_connector : "size"
+    telescope ||--o{ telescope_configuration : "has configs"
+```
+
+---
+
+## 6. Filter and Passbands
+
+`filter_type` describes the filter's role (narrowband_single, broadband_color, etc.). Wavelength data lives on `filter_passband` — one row for single-band, two for dual-band, three for tri-band.
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    filter_type {
+        INTEGER id PK
+        TEXT name UK "CHECK: 9 closed values"
+    }
+
+    filter_size {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    filter {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER filter_type_id FK
+        INTEGER filter_size_id FK
+        TEXT model_name
+        REAL peak_transmission_pct
+        REAL mounted_thickness_mm
+        TEXT notes
+    }
+
+    filter_passband {
+        INTEGER id PK
+        INTEGER filter_id FK
+        TEXT line_name "CHECK: Ha, Hb, Oiii, Sii, etc."
+        REAL central_wavelength_nm "CHECK > 0"
+        REAL bandwidth_nm "CHECK > 0"
+        REAL peak_transmission_pct
+    }
+
+    manufacturer ||--o{ filter : "makes"
+    filter_type ||--o{ filter : "role"
+    filter_size ||--o{ filter : "sized as"
+    filter ||--o{ filter_passband : "has passbands"
+```
+
+`filter_passband.line_name` CHECK: `Ha`, `Hb`, `Oiii`, `Sii`, `Nii`, `OI`, `Lum`, `R`, `G`, `B`, `UVIR`, `LP`, `ND`, `other`.
+
+---
+
+## 7. Mount
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    mount_type {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    connection_interface {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    mount {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER mount_type_id FK
+        TEXT model_name
+        REAL payload_capacity_kg
+        REAL mount_weight_kg
+        INTEGER counterweight_required "boolean"
+        INTEGER goto_capable "boolean, default 1"
+        REAL periodic_error_arcsec
+        TEXT drive_type
+        TEXT notes
+    }
+
+    mount_interface {
+        INTEGER mount_id FK
+        INTEGER interface_id FK
+    }
+
+    manufacturer ||--o{ mount : "makes"
+    mount_type ||--o{ mount : "type of"
+    mount ||--o{ mount_interface : "connects via"
+    connection_interface ||--o{ mount_interface : "used by"
+```
+
+---
+
+## 8. Focuser
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    connection_interface {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    focuser {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        TEXT model_name
+        INTEGER motorized "boolean, default 1"
+        REAL travel_range_mm
+        REAL step_size_um
+        INTEGER total_steps
+        INTEGER temperature_compensation "boolean"
+        INTEGER backlash_steps
+        TEXT notes
+    }
+
+    focuser_interface {
+        INTEGER focuser_id FK
+        INTEGER interface_id FK
+    }
+
+    manufacturer ||--o{ focuser : "makes"
+    focuser ||--o{ focuser_interface : "connects via"
+    connection_interface ||--o{ focuser_interface : "used by"
+```
+
+---
+
+## 9. Filter Wheel
+
+Connectors on both sides (camera side and telescope side). Accepts a specific filter size.
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    connector_size {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    filter_size {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    connection_interface {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    filter_wheel {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER filter_size_id FK
+        INTEGER camera_side_connector_id FK "connector_size"
+        INTEGER telescope_side_connector_id FK "connector_size"
+        TEXT model_name
+        INTEGER num_positions "CHECK > 0"
+        REAL back_focus_contribution_mm
+        TEXT notes
+    }
+
+    filter_wheel_interface {
+        INTEGER filter_wheel_id FK
+        INTEGER interface_id FK
+    }
+
+    manufacturer ||--o{ filter_wheel : "makes"
+    filter_size ||--o{ filter_wheel : "accepts size"
+    connector_size ||--o{ filter_wheel : "camera side"
+    connector_size ||--o{ filter_wheel : "telescope side"
+    filter_wheel ||--o{ filter_wheel_interface : "connects via"
+    connection_interface ||--o{ filter_wheel_interface : "used by"
+```
+
+---
+
+## 10. Guiding Equipment (OAG, Guide Scope)
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    connector_size {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    oag {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER imaging_side_connector_id FK "connector_size"
+        INTEGER guide_camera_connector_id FK "connector_size"
+        TEXT model_name
+        REAL prism_size_mm
+        REAL back_focus_contribution_mm
+        REAL weight_g
+        TEXT notes
+    }
+
+    guide_scope {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER guide_camera_connector_id FK "connector_size"
+        TEXT model_name
+        REAL aperture_mm
+        REAL focal_length_mm
+        REAL weight_g
+        TEXT notes
+    }
+
+    manufacturer ||--o{ oag : "makes"
+    connector_size ||--o{ oag : "imaging side"
+    connector_size ||--o{ oag : "guide camera side"
+    manufacturer ||--o{ guide_scope : "makes"
+    connector_size ||--o{ guide_scope : "guide camera side"
+```
+
+---
+
+## 11. Computing and Software
+
+`software.developer` replaced by `software.manufacturer_id` FK. Software category is a CHECK constraint.
+
+```mermaid
+erDiagram
+    manufacturer {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    computer_type {
+        INTEGER id PK
+        TEXT name UK
+    }
+
+    computer {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        INTEGER computer_type_id FK
+        TEXT model_name
+        TEXT notes
+    }
+
+    software {
+        INTEGER id PK
+        INTEGER manufacturer_id FK
+        TEXT name
+        TEXT category "CHECK: capture, guiding, processing, etc."
+        TEXT website
+        TEXT notes
+    }
+
+    manufacturer ||--o{ computer : "makes"
+    computer_type ||--o{ computer : "type of"
+    manufacturer ||--o{ software : "develops"
+```
+
+---
+
+## 12. FITS Ingest Alias Tables
+
+For auto-resolving FITS header values to equipment rows. Alias tables carry `source`, `confirmed`, and timestamp tracking. `unresolved_equipment_observation` records unknown header values pending user review.
+
+```mermaid
+erDiagram
+    camera {
+        INTEGER id PK
+        TEXT model_name
+    }
+
+    telescope {
+        INTEGER id PK
+        TEXT model_name
+    }
+
+    filter {
+        INTEGER id PK
+        TEXT model_name
+    }
+
+    camera_alias {
+        INTEGER id PK
+        INTEGER camera_id FK
+        TEXT alias UK "normalized, lowercase"
+        TEXT source "CHECK: seed, nina, asiair, user, manual"
+        INTEGER confirmed "boolean"
+        TEXT first_seen_at
+        TEXT last_seen_at
+    }
+
+    telescope_alias {
+        INTEGER id PK
+        INTEGER telescope_id FK
+        TEXT alias UK
+        TEXT source "CHECK: seed, nina, asiair, user, manual"
+        INTEGER confirmed "boolean"
+        TEXT first_seen_at
+        TEXT last_seen_at
+    }
+
+    filter_alias {
+        INTEGER id PK
+        INTEGER filter_id FK
+        TEXT alias UK
+        TEXT source "CHECK: seed, nina, asiair, user, manual"
+        INTEGER confirmed "boolean"
+        TEXT first_seen_at
+        TEXT last_seen_at
+    }
+
+    unresolved_equipment_observation {
+        INTEGER id PK
+        TEXT equipment_kind "CHECK: camera, telescope, filter"
+        TEXT normalized_alias
+        TEXT original_observation
+        TEXT first_seen_at
+        TEXT last_seen_at
+        INTEGER seen_count
+        TEXT source "CHECK: nina, asiair, user, manual"
+        INTEGER resolved_to_equipment_id
+        TEXT resolved_at
+    }
+
+    camera ||--o{ camera_alias : "known as"
+    telescope ||--o{ telescope_alias : "known as"
+    filter ||--o{ filter_alias : "known as"
+```
+
+---
+
+## 13. Global Columns (on every equipment and lookup table)
+
+Omitted from diagrams for readability. Every seedable table carries:
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `created_at` | TEXT DEFAULT datetime('now') | Row creation timestamp |
+| `updated_at` | TEXT DEFAULT datetime('now') | Last modification (auto-updated via trigger) |
+| `active` | INTEGER DEFAULT 1 CHECK (0,1) | Soft retirement — 0 hides from dropdowns, preserves historical references |
+| `source` | TEXT DEFAULT 'user' CHECK ('seed','user') | Whether row came from seed data or user |
+| `seed_key` | TEXT (partial unique index) | Stable identifier for seed loader matching |
+| `seed_hash` | TEXT | SHA-256 of seed-originated fields for change detection |
+
+---
+
+## Table Summary
+
+### Existing Tables (v0.1.0–v0.7.0)
+
+| Table | Purpose |
+|-------|---------|
+| `setting` | Single-row JSON application settings |
+| `recent_file` | Recently opened file paths with timestamps |
+| `aberration_analysis` | Cached star detection results per image |
+| `aberration_star` | Individual star measurements linked to analysis |
+
+### v0.8.0 — Lookup / Reference (9 + 1 meta)
+
+| Table | Purpose |
+|-------|---------|
+| `manufacturer` | Brands — referenced by all equipment types |
+| `optical_design` | Telescope optical types (SCT, APO, RC, etc.) |
+| `mount_type` | Mount classifications (GEM, Harmonic EQ, etc.) |
+| `connection_interface` | USB 2.0, WiFi, ST-4, etc. (with category) |
+| `connector_size` | M54, M48, T2, 2 inch, etc. (with diameter_mm) |
+| `filter_size` | 1.25", 2", 36mm, 50mm |
+| `computer_type` | imaging, processing, control, general |
+| `filter_type` | Closed vocabulary: 9 filter role values |
+| `seed_loader_meta` | Key/value store for seed loader state |
+
+### v0.8.0 — Equipment (11)
+
+| Table | Purpose |
+|-------|---------|
+| `sensor` | Camera sensor models with specs |
+| `camera` | Imaging cameras — refs sensor, manufacturer, connector |
+| `telescope` | OTAs — identity only (aperture, design). No focal length. |
+| `telescope_configuration` | Focal length/ratio/back_focus per reducer/extender variant |
+| `filter` | Physical filters — refs filter_type, manufacturer, size |
+| `filter_passband` | Wavelength bands per physical filter (1 for single, 2+ for dual/tri) |
+| `mount` | Tracking mounts |
+| `focuser` | Motorized/manual focusers |
+| `filter_wheel` | Filter wheel housings with connectors on both sides |
+| `oag` | Off-axis guiders |
+| `guide_scope` | Guide scopes |
+| `computer` | Imaging/processing computers |
+| `software` | Applications (capture, guiding, processing, etc.) |
+
+### v0.8.0 — Junction (5)
+
+| Table | Purpose |
+|-------|---------|
+| `camera_interface` | Camera ↔ connection interface |
+| `telescope_connector` | Telescope ↔ connector size |
+| `mount_interface` | Mount ↔ connection interface |
+| `focuser_interface` | Focuser ↔ connection interface |
+| `filter_wheel_interface` | Filter wheel ↔ connection interface |
+
+### v0.8.0 — FITS Alias (4)
+
+| Table | Purpose |
+|-------|---------|
+| `camera_alias` | INSTRUME header → camera row |
+| `telescope_alias` | TELESCOP header → telescope row |
+| `filter_alias` | FILTER header → filter row |
+| `unresolved_equipment_observation` | Unknown header values pending user review |
+
+### v0.8.0 — Views (1)
+
+| View | Purpose |
+|------|---------|
+| `filter_summary` | Aggregated filter + type + passbands with GROUP_CONCAT |
+
+### Future Tables (not in v0.8.0)
+
+| Table | Purpose |
+|-------|---------|
+| `rig` | Equipment profiles combining telescope config + camera + mount + accessories |
+| `filter_wheel_filter` | Junction: which filters are in a rig's wheel positions |
+| `project` | Imaging projects (targets) |
+| `session` | Single-night imaging sessions |
+| `sub_frame` | Individual FITS exposures linked to session + rig |
