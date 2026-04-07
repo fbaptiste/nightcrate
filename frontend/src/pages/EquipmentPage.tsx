@@ -14,6 +14,7 @@ import GuideScopeList from "@/components/equipment/GuideScopeList";
 import ComputerList from "@/components/equipment/ComputerList";
 import SoftwareList from "@/components/equipment/SoftwareList";
 import ManufacturerList from "@/components/equipment/ManufacturerList";
+import LookupTablesPanel from "@/components/equipment/LookupTablesPanel";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -45,6 +46,8 @@ export function EquipmentPage() {
         return <SoftwareList />;
       case "manufacturers":
         return <ManufacturerList />;
+      case "lookup-tables":
+        return <LookupTablesPanel />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }

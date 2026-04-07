@@ -51,7 +51,10 @@ const GROUPS = [
   {
     id: "group-reference",
     label: "Reference",
-    items: [{ id: "manufacturers", label: "Manufacturers" }],
+    items: [
+      { id: "manufacturers", label: "Manufacturers" },
+      { id: "lookup-tables", label: "Lookup Tables" },
+    ],
   },
 ];
 
