@@ -263,9 +263,9 @@ Fully normalized equipment schema (migration `0005.equipment_schema.sql`). Schem
 
 **Architecture:**
 - 9 lookup/reference tables: `manufacturer`, `optical_design`, `mount_type`, `connection_interface`, `connector_size`, `filter_size`, `computer_type`, `filter_type`, `seed_loader_meta`
-- 11 equipment tables: `sensor`, `camera`, `telescope`, `telescope_configuration`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`
+- 12 equipment tables: `sensor`, `camera`, `telescope`, `telescope_configuration`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`
 - 5 junction tables: `camera_interface`, `telescope_connector`, `mount_interface`, `focuser_interface`, `filter_wheel_interface`
-- 2 child tables: `filter_passband`, `telescope_connector`
+- 1 child table: `filter_passband`
 - 4 FITS alias tables: `camera_alias`, `telescope_alias`, `filter_alias`, `unresolved_equipment_observation`
 - 1 view: `filter_summary`
 

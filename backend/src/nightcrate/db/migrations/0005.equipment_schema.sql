@@ -425,7 +425,7 @@ CREATE TABLE IF NOT EXISTS filter (
     source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('seed', 'user')),
     seed_key TEXT,
     seed_hash TEXT,
-    UNIQUE (manufacturer_id, model_name, filter_size_id)
+    UNIQUE (manufacturer_id, model_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_filter_manufacturer ON filter(manufacturer_id);
