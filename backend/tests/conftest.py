@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import importlib.resources
 from pathlib import Path
 
 import aiosqlite
@@ -63,6 +64,19 @@ async def _test_db(tmp_path: Path, monkeypatch):
                 semi_minor REAL NOT NULL
             )
         """)
+
+        # Apply equipment schema migrations (0005, 0006)
+        migrations_dir = importlib.resources.files("nightcrate") / "db" / "migrations"
+        for migration_name in sorted(
+            f.name for f in migrations_dir.iterdir() if f.name.endswith(".sql")
+        ):
+            if migration_name >= "0005":
+                sql = (migrations_dir / migration_name).read_text()
+                body = "\n".join(
+                    line for line in sql.split("\n") if not line.strip().startswith("-- depends:")
+                )
+                await conn.executescript(body)
+
         await conn.commit()
 
 

@@ -15,6 +15,7 @@ import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import HomeIcon from "@mui/icons-material/Home";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import LightModeIcon from "@mui/icons-material/LightMode";
+import BuildIcon from "@mui/icons-material/Build";
 import CodeIcon from "@mui/icons-material/Code";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { NavLink, Outlet } from "react-router-dom";
@@ -27,6 +28,7 @@ const DRAWER_WIDTH = 220;
 const navItems = [
   { to: "/", label: "Home", icon: <HomeIcon /> },
   { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
+  { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },
 ];

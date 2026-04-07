@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS camera (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturer(id),
     sensor_id INTEGER NOT NULL REFERENCES sensor(id),
+    guide_sensor_id INTEGER REFERENCES sensor(id),
     connector_size_id INTEGER REFERENCES connector_size(id),
     model_name TEXT NOT NULL,
     cooled INTEGER NOT NULL DEFAULT 0 CHECK (cooled IN (0, 1)),

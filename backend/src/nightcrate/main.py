@@ -8,7 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nightcrate.api import aberration, diagnostics, files, images, settings
+from nightcrate.api import aberration, diagnostics, equipment, files, images, settings
 from nightcrate.api.diagnostics import RequestTrackingMiddleware
 from nightcrate.core.compute import set_gpu_enabled
 from nightcrate.core.config import get_settings
@@ -60,6 +60,7 @@ app.add_middleware(RequestTrackingMiddleware)
 
 app.include_router(aberration.router)
 app.include_router(diagnostics.router)
+app.include_router(equipment.router)
 app.include_router(files.router)
 app.include_router(images.router)
 app.include_router(settings.router)
