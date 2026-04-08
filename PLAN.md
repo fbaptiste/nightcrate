@@ -1275,29 +1275,43 @@ New nav item "Equipment" in the sidebar. TreeView sidebar navigation with groupe
 
 ## v0.9.1 — Equipment Management UI (Remaining Tabs)
 
-**Status:** Planned
-**Branch:** TBD
+**Status:** Done
+**Branch:** `v0.9.1/equipment-ui`
 
 Complete the frontend Equipment page with all remaining tabs, reusing the patterns established in v0.9.0.
 
+### Architecture Improvements
+
+- [x] Generic `EquipmentList<T>` component extracted — eliminates copy-paste scaffolding across all list views
+- [x] Existing CameraList, TelescopeList, FilterList refactored to use EquipmentList (net -220 lines)
+- [x] Error feedback added to all 12 form dialogs (catch block + Snackbar with error message)
+- [x] Website columns render as clickable hyperlinks (Manufacturer, Software lists)
+
 ### Frontend — Remaining Tabs
 
-- [ ] **Sensors tab**: DataGrid + add/edit dialog (manufacturer, specs, bayer pattern)
-- [ ] **Mounts tab**: DataGrid + add/edit dialog (manufacturer, mount type, payload, interfaces)
-- [ ] **Focusers tab**: DataGrid + add/edit dialog (manufacturer, motorized, steps, interfaces)
-- [ ] **Filter Wheels tab**: DataGrid + add/edit dialog (manufacturer, positions, filter size, connectors, interfaces)
-- [ ] **Guiding tab**: Two sub-sections — OAGs and Guide Scopes, each with DataGrid + add/edit dialog
-- [ ] **Computers tab**: DataGrid + add/edit dialog (manufacturer, computer type)
-- [ ] **Software tab**: DataGrid + add/edit dialog (manufacturer, category)
-- [ ] **Manufacturers tab**: DataGrid + add/edit (name, website, notes)
-- [ ] **Lookup Tables tab**: Accordion sections for optical_design, mount_type, connection_interface, connector_size, filter_size, computer_type — simple inline-editable lists
+- [x] **Sensors tab**: DataGrid + add/edit dialog (manufacturer, specs, bayer pattern, dual gain)
+- [x] **Mounts tab**: DataGrid + add/edit dialog (manufacturer, mount type, payload, interfaces)
+- [x] **Focusers tab**: DataGrid + add/edit dialog (manufacturer, motorized, steps, interfaces)
+- [x] **Filter Wheels tab**: DataGrid + add/edit dialog (manufacturer, positions, filter size, connectors, interfaces)
+- [x] **OAGs tab**: DataGrid + add/edit dialog (imaging/guide connectors, prism size)
+- [x] **Guide Scopes tab**: DataGrid + add/edit dialog (guide connector, aperture, focal length)
+- [x] **Computers tab**: DataGrid + add/edit dialog (manufacturer, computer type)
+- [x] **Software tab**: DataGrid + add/edit dialog (manufacturer, category, website)
+- [x] **Manufacturers tab**: DataGrid + add/edit (name, website as hyperlink, notes)
+- [x] **Lookup Tables tab**: Accordion panel with inline CRUD for optical_design, mount_type, connection_interface, connector_size, filter_size, computer_type
+
+### Bug Fixes
+
+- [x] Telescope configuration `reduction_factor` defaults to 1.0 when empty (was sending null to NOT NULL column)
 
 ### v0.9.1 Completion Criteria
 
-- [ ] All tests pass
-- [ ] Frontend builds
-- [ ] Can add/edit/delete all equipment types through the UI
-- [ ] All lookup tables editable
+- [x] All tests pass (418 passed, 3 skipped)
+- [x] Frontend builds (1576 modules)
+- [x] Can add/edit/delete all equipment types through the UI ✅ User
+- [x] All lookup tables editable ✅ User
+- [x] Error messages shown on save failures ✅ User
+- [x] No "Coming soon" placeholders remain
 
 ---
 
