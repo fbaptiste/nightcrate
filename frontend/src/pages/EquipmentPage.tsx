@@ -5,6 +5,16 @@ import { EquipmentPlaceholder } from "@/components/equipment/EquipmentPlaceholde
 import CameraList from "@/components/equipment/CameraList";
 import TelescopeList from "@/components/equipment/TelescopeList";
 import FilterList from "@/components/equipment/FilterList";
+import SensorList from "@/components/equipment/SensorList";
+import MountList from "@/components/equipment/MountList";
+import FocuserList from "@/components/equipment/FocuserList";
+import FilterWheelList from "@/components/equipment/FilterWheelList";
+import OagList from "@/components/equipment/OagList";
+import GuideScopeList from "@/components/equipment/GuideScopeList";
+import ComputerList from "@/components/equipment/ComputerList";
+import SoftwareList from "@/components/equipment/SoftwareList";
+import ManufacturerList from "@/components/equipment/ManufacturerList";
+import LookupTablesPanel from "@/components/equipment/LookupTablesPanel";
 
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
@@ -18,6 +28,26 @@ export function EquipmentPage() {
         return <TelescopeList />;
       case "filters":
         return <FilterList />;
+      case "sensors":
+        return <SensorList />;
+      case "mounts":
+        return <MountList />;
+      case "focusers":
+        return <FocuserList />;
+      case "filter-wheels":
+        return <FilterWheelList />;
+      case "oags":
+        return <OagList />;
+      case "guide-scopes":
+        return <GuideScopeList />;
+      case "computers":
+        return <ComputerList />;
+      case "software":
+        return <SoftwareList />;
+      case "manufacturers":
+        return <ManufacturerList />;
+      case "lookup-tables":
+        return <LookupTablesPanel />;
       default:
         return <EquipmentPlaceholder category={category} />;
     }

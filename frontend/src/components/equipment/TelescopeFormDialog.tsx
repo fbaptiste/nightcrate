@@ -153,6 +153,8 @@ export default function TelescopeFormDialog({
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState | "configs" | "native", string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
+  const [snackMessage, setSnackMessage] = useState("");
+  const [snackSeverity, setSnackSeverity] = useState<"info" | "error">("info");
   const [expandedIndex, setExpandedIndex] = useState<number | false>(0);
 
   const { data: connectorSizes = [] } = useQuery({
@@ -274,7 +276,7 @@ export default function TelescopeFormDialog({
           telescope_id: telescopeId,
           config_name: config.config_name.trim(),
           accessory_name: config.accessory_name.trim() || null,
-          reduction_factor: parseOptionalFloat(config.reduction_factor),
+          reduction_factor: parseOptionalFloat(config.reduction_factor) ?? 1.0,
           effective_focal_length_mm: parseFloat(config.effective_focal_length_mm),
           effective_focal_ratio: parseFloat(config.effective_focal_ratio),
           effective_image_circle_mm: parseOptionalFloat(config.effective_image_circle_mm),
@@ -292,9 +294,15 @@ export default function TelescopeFormDialog({
         }
       }
 
+      setSnackMessage(isEdit ? "Telescope updated." : "Telescope added.");
+      setSnackSeverity("info");
       setSnackOpen(true);
       onSaved();
       onClose();
+    } catch (err) {
+      setSnackMessage(err instanceof Error ? err.message : "Save failed");
+      setSnackSeverity("error");
+      setSnackOpen(true);
     } finally {
       setSaving(false);
     }
@@ -610,8 +618,8 @@ export default function TelescopeFormDialog({
         onClose={() => setSnackOpen(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="info" onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
-          {isEdit ? "Telescope updated." : "Telescope added."}
+        <Alert severity={snackSeverity} onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
+          {snackMessage}
         </Alert>
       </Snackbar>
     </>

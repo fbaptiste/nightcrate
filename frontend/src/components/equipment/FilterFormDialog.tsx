@@ -156,6 +156,8 @@ export default function FilterFormDialog({
     Partial<Record<keyof FormState | "passbands", string>>
   >({});
   const [snackOpen, setSnackOpen] = useState(false);
+  const [snackMessage, setSnackMessage] = useState("");
+  const [snackSeverity, setSnackSeverity] = useState<"info" | "error">("info");
   const [expandedIndex, setExpandedIndex] = useState<number | false>(false);
 
   const { data: filterTypes = [] } = useQuery({
@@ -267,9 +269,15 @@ export default function FilterFormDialog({
         }
       }
 
+      setSnackMessage(isEdit ? "Filter updated." : "Filter added.");
+      setSnackSeverity("info");
       setSnackOpen(true);
       onSaved();
       onClose();
+    } catch (err) {
+      setSnackMessage(err instanceof Error ? err.message : "Save failed");
+      setSnackSeverity("error");
+      setSnackOpen(true);
     } finally {
       setSaving(false);
     }
@@ -508,8 +516,8 @@ export default function FilterFormDialog({
         onClose={() => setSnackOpen(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="info" onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
-          {isEdit ? "Filter updated." : "Filter added."}
+        <Alert severity={snackSeverity} onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
+          {snackMessage}
         </Alert>
       </Snackbar>
     </>

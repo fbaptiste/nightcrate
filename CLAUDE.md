@@ -299,12 +299,14 @@ Full CRUD API for all equipment types under `/api/equipment/`.
 **Frontend Equipment page:**
 - `pages/EquipmentPage.tsx` — two-panel layout with TreeView sidebar + content area
 - `components/equipment/EquipmentSidebar.tsx` — grouped categories (Imaging, Optics, Tracking, Accessories, Computing, Reference)
-- `components/equipment/CameraList.tsx` + `CameraFormDialog.tsx` — camera DataGrid + add/edit dialog
-- `components/equipment/TelescopeList.tsx` + `TelescopeFormDialog.tsx` — telescope DataGrid + add/edit with configuration accordions
-- `components/equipment/FilterList.tsx` + `FilterFormDialog.tsx` — filter DataGrid + add/edit with passband accordions
+- `components/equipment/EquipmentList.tsx` — generic list component handling DataGrid, state, delete confirmation for all types
+- Per-type thin list wrappers (`CameraList`, `SensorList`, `MountList`, etc.) define columns and wire EquipmentList to their form dialog
+- Per-type form dialogs (`CameraFormDialog`, `SensorFormDialog`, etc.) — each uses the generic `{ open, item, onClose, onSaved }` interface
+- `components/equipment/LookupTablesPanel.tsx` — accordion UI with inline CRUD for all 6 lookup tables
 - `components/equipment/shared/` — ManufacturerPicker, SensorPicker, LookupPicker, InterfaceMultiSelect, ConfirmDeleteDialog
 - `lib/formUtils.ts` — shared `parseOptionalFloat`, `parseOptionalInt`, `formatFilterType`
 - `api/equipment.ts` — TypeScript interfaces + fetch functions for all equipment types
+- All form dialogs show error feedback via Snackbar on save failure
 
 ## Dependency & License Policy
 
