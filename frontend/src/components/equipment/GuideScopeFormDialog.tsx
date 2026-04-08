@@ -70,6 +70,8 @@ export default function GuideScopeFormDialog({
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
+  const [snackMessage, setSnackMessage] = useState("");
+  const [snackSeverity, setSnackSeverity] = useState<"info" | "error">("info");
 
   useEffect(() => {
     if (open) {
@@ -111,9 +113,15 @@ export default function GuideScopeFormDialog({
         await createGuideScope(payload);
       }
 
+      setSnackMessage(isEdit ? "Guide scope updated." : "Guide scope added.");
+      setSnackSeverity("info");
       setSnackOpen(true);
       onSaved();
       onClose();
+    } catch (err) {
+      setSnackMessage(err instanceof Error ? err.message : "Save failed");
+      setSnackSeverity("error");
+      setSnackOpen(true);
     } finally {
       setSaving(false);
     }
@@ -210,8 +218,8 @@ export default function GuideScopeFormDialog({
         onClose={() => setSnackOpen(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="info" onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
-          {isEdit ? "Guide scope updated." : "Guide scope added."}
+        <Alert severity={snackSeverity} onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
+          {snackMessage}
         </Alert>
       </Snackbar>
     </>

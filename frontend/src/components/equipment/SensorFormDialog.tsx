@@ -102,6 +102,8 @@ export default function SensorFormDialog({
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
+  const [snackMessage, setSnackMessage] = useState("");
+  const [snackSeverity, setSnackSeverity] = useState<"info" | "error">("info");
 
   useEffect(() => {
     if (open) {
@@ -156,9 +158,15 @@ export default function SensorFormDialog({
         await createSensor(payload);
       }
 
+      setSnackMessage(isEdit ? "Sensor updated." : "Sensor added.");
+      setSnackSeverity("info");
       setSnackOpen(true);
       onSaved();
       onClose();
+    } catch (err) {
+      setSnackMessage(err instanceof Error ? err.message : "Save failed");
+      setSnackSeverity("error");
+      setSnackOpen(true);
     } finally {
       setSaving(false);
     }
@@ -367,8 +375,8 @@ export default function SensorFormDialog({
         onClose={() => setSnackOpen(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="info" onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
-          {isEdit ? "Sensor updated." : "Sensor added."}
+        <Alert severity={snackSeverity} onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
+          {snackMessage}
         </Alert>
       </Snackbar>
     </>

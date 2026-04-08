@@ -79,6 +79,8 @@ export default function FilterWheelFormDialog({
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
+  const [snackMessage, setSnackMessage] = useState("");
+  const [snackSeverity, setSnackSeverity] = useState<"info" | "error">("info");
 
   useEffect(() => {
     if (open) {
@@ -123,9 +125,15 @@ export default function FilterWheelFormDialog({
         await createFilterWheel(payload);
       }
 
+      setSnackMessage(isEdit ? "Filter wheel updated." : "Filter wheel added.");
+      setSnackSeverity("info");
       setSnackOpen(true);
       onSaved();
       onClose();
+    } catch (err) {
+      setSnackMessage(err instanceof Error ? err.message : "Save failed");
+      setSnackSeverity("error");
+      setSnackOpen(true);
     } finally {
       setSaving(false);
     }
@@ -238,8 +246,8 @@ export default function FilterWheelFormDialog({
         onClose={() => setSnackOpen(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="info" onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
-          {isEdit ? "Filter wheel updated." : "Filter wheel added."}
+        <Alert severity={snackSeverity} onClose={() => setSnackOpen(false)} sx={{ width: "100%" }}>
+          {snackMessage}
         </Alert>
       </Snackbar>
     </>

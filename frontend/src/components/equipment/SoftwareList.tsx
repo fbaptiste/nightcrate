@@ -25,7 +25,15 @@ const columns: GridColDef<Software>[] = [
     headerName: "Website",
     flex: 1.5,
     minWidth: 160,
-    valueGetter: (_v, row) => row.website ?? "—",
+    renderCell: (params) => {
+      const url = params.row.website;
+      if (!url) return "—";
+      return (
+        <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
+          {url}
+        </a>
+      );
+    },
   },
 ];
 
