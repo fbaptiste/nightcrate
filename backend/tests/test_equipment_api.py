@@ -77,21 +77,21 @@ async def _get_filter_type_id(client):
 
 class TestManufacturerCRUD:
     async def test_create_and_list(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "ZWO")
-        assert mfr["name"] == "ZWO"
+        mfr = await _make_manufacturer(client, "TestMfr_ZWO")
+        assert mfr["name"] == "TestMfr_ZWO"
         assert mfr["active"] is True
         assert "id" in mfr
 
         resp = await client.get("/api/equipment/manufacturer")
         assert resp.status_code == 200
         names = [m["name"] for m in resp.json()]
-        assert "ZWO" in names
+        assert "TestMfr_ZWO" in names
 
     async def test_get_by_id(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Celestron")
+        mfr = await _make_manufacturer(client, "TestMfr_Celestron")
         resp = await client.get(f"/api/equipment/manufacturer/{mfr['id']}")
         assert resp.status_code == 200
-        assert resp.json()["name"] == "Celestron"
+        assert resp.json()["name"] == "TestMfr_Celestron"
 
     async def test_update(self, client: AsyncClient):
         mfr = await _make_manufacturer(client, "OldName")
@@ -136,10 +136,10 @@ class TestManufacturerCRUD:
 
 class TestSensorCRUD:
     async def test_create_and_list(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Sony")
+        mfr = await _make_manufacturer(client, "TestMfr_Sony")
         sensor = await _make_sensor(client, mfr["id"], "IMX294")
         assert sensor["model_name"] == "IMX294"
-        assert sensor["manufacturer"]["name"] == "Sony"
+        assert sensor["manufacturer"]["name"] == "TestMfr_Sony"
         assert sensor["active"] is True
 
         resp = await client.get("/api/equipment/sensor")
@@ -183,7 +183,7 @@ class TestCameraCRUD:
         mfr = await _make_manufacturer(client, "ZWO Cam")
         sensor = await _make_sensor(client, mfr["id"], "IMX571C")
         iface = await _make_connection_interface(client, "USB 3.2", "data")
-        connector = await _make_connector_size(client, "M54")
+        connector = await _make_connector_size(client, "TestConn_M54")
 
         resp = await client.post(
             "/api/equipment/camera",
@@ -203,7 +203,7 @@ class TestCameraCRUD:
         assert data["cooled"] is True
         assert data["sensor"]["model_name"] == "IMX571C"
         assert data["manufacturer"]["name"] == "ZWO Cam"
-        assert data["connector_size"]["name"] == "M54"
+        assert data["connector_size"]["name"] == "TestConn_M54"
         assert len(data["interfaces"]) == 1
         assert data["interfaces"][0]["name"] == "USB 3.2"
 
@@ -454,7 +454,7 @@ class TestFilterCRUD:
         assert pb["line_name"] == "Ha"
 
     async def test_passbands_in_response(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Optolong")
+        mfr = await _make_manufacturer(client, "TestMfr_Optolong")
         ft_id = await _get_filter_type_id(client)
 
         resp = await client.post(
@@ -566,7 +566,7 @@ class TestMountCRUD:
 
 class TestFocuserCRUD:
     async def test_create_and_list(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Pegasus Astro")
+        mfr = await _make_manufacturer(client, "TestMfr_Pegasus")
         iface = await _make_connection_interface(client, "USB Focuser", "data")
 
         resp = await client.post(
@@ -886,14 +886,14 @@ class TestLookupTablesCRUD:
     async def test_optical_design_crud(self, client: AsyncClient):
         resp = await client.post(
             "/api/equipment/optical-design",
-            json={"name": "SCT", "description": "Schmidt-Cassegrain Telescope"},
+            json={"name": "TestDesign_SCT", "description": "Schmidt-Cassegrain Telescope"},
         )
         assert resp.status_code == 201
         od_id = resp.json()["id"]
 
         resp = await client.get(f"/api/equipment/optical-design/{od_id}")
         assert resp.status_code == 200
-        assert resp.json()["name"] == "SCT"
+        assert resp.json()["name"] == "TestDesign_SCT"
 
         resp = await client.put(
             f"/api/equipment/optical-design/{od_id}",
@@ -907,7 +907,7 @@ class TestLookupTablesCRUD:
 
         resp = await client.get("/api/equipment/optical-design")
         names = [o["name"] for o in resp.json()]
-        assert "SCT" not in names
+        assert "TestDesign_SCT" not in names
 
     async def test_mount_type_crud(self, client: AsyncClient):
         resp = await client.post(
