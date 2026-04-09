@@ -15,11 +15,13 @@ import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import HomeIcon from "@mui/icons-material/Home";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import LightModeIcon from "@mui/icons-material/LightMode";
+import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import BuildIcon from "@mui/icons-material/Build";
 import CodeIcon from "@mui/icons-material/Code";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { NavLink, Outlet } from "react-router-dom";
 import { fetchHealth } from "@/api/files";
+import { fetchAdminStatus } from "@/api/admin";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { Theme } from "@/api/settings";
 
@@ -30,6 +32,7 @@ const navItems = [
   { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
+  { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },
 ];
 
@@ -51,6 +54,12 @@ export function AppShell() {
     queryFn: fetchHealth,
     staleTime: Infinity,
   });
+  const statusQuery = useQuery({
+    queryKey: ["admin-status"],
+    queryFn: fetchAdminStatus,
+    staleTime: 60_000,
+  });
+  const activeDbName = statusQuery.data?.active_db?.name;
   const { settings, update } = useSettingsStore();
   const currentTheme: Theme = settings?.theme ?? "browser";
 
@@ -81,6 +90,11 @@ export function AppShell() {
           <Typography variant="h6" fontWeight={600} noWrap>
             NightCrate
           </Typography>
+          {activeDbName && (
+            <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block", mt: -0.5 }}>
+              {activeDbName}
+            </Typography>
+          )}
         </Box>
         <Divider />
         <List dense>

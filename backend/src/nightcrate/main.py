@@ -8,12 +8,13 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nightcrate.api import aberration, diagnostics, equipment, files, images, settings
+from nightcrate.api import aberration, admin, diagnostics, equipment, files, images, settings
 from nightcrate.api.diagnostics import RequestTrackingMiddleware
+from nightcrate.core.app_config import load_config
 from nightcrate.core.compute import set_gpu_enabled
 from nightcrate.core.config import get_settings
 from nightcrate.db.migrations import apply_migrations
-from nightcrate.db.session import get_db
+from nightcrate.db.session import get_db, set_db_path
 
 _LOG_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -30,20 +31,50 @@ def _configure_logging() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
-    apply_migrations()
-    # Purge stale aberration cache entries
-    try:
-        app_settings = await get_settings()
-        set_gpu_enabled(app_settings.gpu_acceleration)
-        ttl_days = app_settings.aberration_cache_ttl_days
-        async with get_db() as conn:
-            await conn.execute(
-                "DELETE FROM aberration_analysis WHERE created_at < datetime('now', ?)",
-                (f"-{ttl_days} days",),
-            )
-            await conn.commit()
-    except Exception:
-        pass  # Non-fatal — don't block startup
+
+    # Check if a database is configured and available before running DB operations.
+    # If not configured, the app starts in "unconfigured" mode where only
+    # /api/health and /api/admin/* endpoints are functional.
+    config = load_config()
+    if config.db_configured:
+        set_db_path(Path(config.active_db))
+        apply_migrations()
+        # Load seed data (first run populates, subsequent runs check for updates).
+        # Uses a separate sync sqlite3 connection — the seed loader is synchronous
+        # and aiosqlite's internal connection has thread restrictions.
+        try:
+            import importlib.resources
+            import sqlite3
+
+            from nightcrate.db.session import get_db_path
+            from nightcrate.seed_loader import load_all
+
+            csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
+            sync_conn = sqlite3.connect(str(get_db_path()))
+            try:
+                sync_conn.row_factory = sqlite3.Row
+                sync_conn.execute("PRAGMA foreign_keys = ON")
+                load_all(sync_conn, csv_root, "auto")
+                sync_conn.commit()
+            finally:
+                sync_conn.close()
+        except Exception:
+            logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
+            # Non-fatal — don't block startup
+        # Purge stale aberration cache entries
+        try:
+            app_settings = await get_settings()
+            set_gpu_enabled(app_settings.gpu_acceleration)
+            ttl_days = app_settings.aberration_cache_ttl_days
+            async with get_db() as conn:
+                await conn.execute(
+                    "DELETE FROM aberration_analysis WHERE created_at < datetime('now', ?)",
+                    (f"-{ttl_days} days",),
+                )
+                await conn.commit()
+        except Exception:
+            pass  # Non-fatal — don't block startup
+
     yield
 
 
@@ -59,6 +90,7 @@ app.add_middleware(
 app.add_middleware(RequestTrackingMiddleware)
 
 app.include_router(aberration.router)
+app.include_router(admin.router)
 app.include_router(diagnostics.router)
 app.include_router(equipment.router)
 app.include_router(files.router)
@@ -71,7 +103,8 @@ APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.exists() else "
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"status": "ok", "version": APP_VERSION}
+    config = load_config()
+    return {"status": "ok", "version": APP_VERSION, "db_configured": config.db_configured}
 
 
 def run() -> None:

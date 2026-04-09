@@ -93,6 +93,7 @@ export function browseArchive(
 export interface HealthInfo {
   status: string;
   version: string;
+  db_configured?: boolean;
 }
 
 export function fetchHealth(): Promise<HealthInfo> {

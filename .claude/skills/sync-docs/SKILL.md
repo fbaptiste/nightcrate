@@ -12,6 +12,9 @@ Update project documentation to reflect work actually done in the current sessio
 1. **Gather changes** — Run `git diff $(git merge-base HEAD main)...HEAD --stat` and `git log --oneline $(git merge-base HEAD main)..HEAD` to understand what changed since branching from main. Also review uncommitted changes with `git diff --stat`.
 
 2. **PLAN.md** — For the current version section:
+   - Update the **Table of Contents** at the top: add ✅ after the line for any version that is now complete
+   - Update the version's **Status** line: `Status: Planned` or `Status: In Progress` → `Status: Done`
+   - Update the version's **Branch** line if it was TBD
    - Check off (`- [x]`) completed items
    - Add new subsections for work done that wasn't originally planned (with checked boxes)
    - Update completion criteria to reflect actual state

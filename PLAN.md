@@ -15,9 +15,9 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.6.1 — Performance & UX Polish](#v061--performance--ux-polish)
 - [v0.7.0 — FITS Header Editing](#v070--fits-header-editing) ✅
 - [v0.8.0 — Equipment Database Schema](#v080--equipment-database-schema) ✅
-- [v0.9.0 — Equipment Management API + Core UI](#v090--equipment-management-api--core-ui)
-- [v0.9.1 — Equipment Management UI (Remaining Tabs)](#v091--equipment-management-ui-remaining-tabs)
-- [Seed Loader Spec](#seed-loader-spec)
+- [v0.9.0 — Equipment Management API + Core UI](#v090--equipment-management-api--core-ui) ✅
+- [v0.9.1 — Equipment Management UI (Remaining Tabs)](#v091--equipment-management-ui-remaining-tabs) ✅
+- [v0.10.0 — Equipment Seed Loader + Admin Page](#v0100--equipment-seed-loader--admin-page)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -1315,562 +1315,88 @@ Complete the frontend Equipment page with all remaining tabs, reusing the patter
 
 ---
 
-This spec defines the seed loader: the component that reads CSV seed files from the repo and populates the equipment database, both on first run and on subsequent manual re-seed operations. It assumes the schema from `nightcrate-schema-revision-spec.md` is already in place (specifically: every seedable table has `source`, `seed_key`, `seed_hash`, `created_at`, `updated_at`, and `active` columns).
+## v0.10.0 — Equipment Seed Loader + Admin Page
 
-Target: Python 3.12+, SQLite via `sqlite3` stdlib or `aiosqlite`. No ORM assumptions. The loader is a backend module, not a UI component.
+**Status:** Done
+**Branch:** `v0.10.0/equipment-seed-loader`
 
-**Out of scope for this change:** the UI "Update seed data" button (the loader will be callable via a function and a CLI; the UI wires into it later), FITS ingest, alias resolution logic.
+Equipment seed loader that reads CSV files from the repo and populates the database on first run, with hash-based change detection to never overwrite user edits. Admin page for managing multiple databases with first-run setup wizard.
 
----
+### Seed Loader
 
-### Table of contents
+- [x] Hash function (`seed_loader/hash.py`) — SHA-256 contract v1, deterministic serialization, pinned test values
+- [x] Seedable table registry (`seed_loader/registry.py`) — 29 tables (including filter_type) in dependency load order
+- [x] CSV reader (`seed_loader/csv_reader.py`) — header validation, comment lines, FK seed_key column detection
+- [x] Core loader (`seed_loader/loader.py`) — first_run/update modes, FK resolution, re-seed decision logic, junction/child handling, orphan detection
+- [x] CLI entry point (`seed_loader/__main__.py`) — `python -m nightcrate.seed_loader` with --dry-run, --verbose, --json
+- [x] 29 stub CSV files under `data/seed/` — header-only stubs for all tables, populated with test data for lookups + Fred's equipment
+- [x] filter_type seeding moved from migration 0005 to CSV (no equipment data in migrations)
+- [x] Auto-runs on app startup after migrations (sync connection, non-fatal)
+- [x] 50 seed loader tests (hash + integration)
 
-1. Goals and non-goals
-2. High-level design
-3. CSV file layout and conventions
-4. Hash function (the load-bearing contract)
-5. Seedable table registry
-6. Load order and referential integrity
-7. Parent/child seeding (telescope + configurations, filter + passbands)
-8. First-run seeding vs. re-seed
-9. Re-seed decision logic
-10. Error handling and reporting
-11. CLI entry point
-12. Deliverables
+### Admin Page
 
----
+- [x] App config module (`core/app_config.py`) — config.json read/write, tracks known databases + active DB
+- [x] Dynamic DB_PATH (`db/session.py`) — hot-swap support via `set_db_path()`, no restart needed
+- [x] Admin API (`api/admin.py`) — status, info, create, add existing, activate, remove (with optional file delete), browse, shortcuts, mkdir
+- [x] First-run setup wizard — shows on startup when no DB configured, folder browser with shortcuts (Home/Documents/App Data) + new folder
+- [x] Wizard handles three scenarios: fresh install, active DB unavailable (offers other available DBs), all DBs unavailable
+- [x] Admin page — App Info section (config file, paths, versions) + Database Management (active DB card, other known DBs list, create/add/activate/remove)
+- [x] Active database name shown in sidebar under NightCrate title
+- [x] Remove dialog: "Remove from list only" or "Remove and delete file (irreversible)"
+- [x] OTA rename (Telescopes → OTAs in sidebar and forms)
+- [x] 13 admin API tests + 10 app config unit tests
 
-### 1. Goals and non-goals
+### Seed CSV File Tracking
 
-#### Goals
+Lookup tables (populated):
+- [x] `manufacturer.csv` — ZWO, Celestron, Optolong, Sony, Pegasus Astro, Open Source
+- [x] `optical_design.csv` — SCT, APO Refractor, Newtonian, RC
+- [x] `mount_type.csv` — German EQ, Harmonic EQ, Alt-Az
+- [x] `connection_interface.csv` — USB 3.0, USB 2.0, WiFi, Ethernet
+- [x] `connector_size.csv` — M54, M48, T2, 2 inch
+- [x] `filter_size.csv` — 2 inch, 36mm, 1.25 inch
+- [x] `computer_type.csv` — Imaging, Processing, Control
+- [x] `filter_type.csv` — 9 standard types (moved from migration)
 
-- Load seed data from CSV files in the repo into the database on first run.
-- Provide a re-seed operation that updates only rows the user has not modified.
-- Never clobber user-created rows (`source='user'`).
-- Never clobber user edits to seed rows (detected via `seed_hash` mismatch).
-- Produce a report of what happened: inserted, updated, skipped-user-modified, skipped-user-owned, errors.
-- Be callable both programmatically (for the future UI button) and from a CLI (for development and debugging).
+Equipment tables (test data):
+- [x] `sensor.csv` — IMX571, IMX533
+- [x] `camera.csv` — ASI2600MM Pro, ASI533MM Pro
+- [x] `camera_interface.csv` — junction rows
+- [x] `telescope.csv` — C11 EdgeHD
+- [x] `telescope_connector.csv` — junction rows
+- [x] `telescope_configuration.csv` — Native + 0.7x Reducer
+- [x] `filter.csv` — Ha 7nm, OIII 6.5nm
+- [x] `filter_passband.csv` — passband wavelength data
+- [x] `mount.csv` — ZWO AM5
+- [x] `mount_interface.csv` — junction rows
+- [x] `software.csv` — N.I.N.A., PHD2
 
-#### Non-goals
+Empty stubs (to be populated):
+- [ ] `focuser.csv`, `focuser_interface.csv`
+- [ ] `filter_wheel.csv`, `filter_wheel_interface.csv`
+- [ ] `oag.csv`, `guide_scope.csv`
+- [ ] `computer.csv`
+- [ ] `camera_alias.csv`, `telescope_alias.csv`, `filter_alias.csv`
 
-- No UI. The spec delivers a function plus a CLI.
-- No handling of seed key renames or product deletions beyond logging. If a `seed_key` disappears from the CSVs between versions, the existing DB row is left alone and logged as "orphaned seed row." Actual cleanup is a manual decision, not an automated one.
-- No schema migrations. The loader assumes the schema is current; schema changes go through the migration system, not the seed loader.
-- No downloading of seed data from the network. CSVs are files in the repo, full stop.
+### v0.10.0 Completion Criteria
 
----
-
-### 2. High-level design
-
-The loader is a single Python module, `nightcrate.seed_loader`, with:
-
-- A registry of seedable tables (what to load, in what order, with what field set).
-- A CSV reader that produces typed dictionaries per row.
-- A hash function that canonicalizes and hashes a field dictionary.
-- A per-table loader that applies the re-seed decision logic to each incoming row.
-- A top-level `load_all(conn, csv_root, mode='first_run' | 'update') -> SeedReport` function.
-- A CLI wrapper: `python -m nightcrate.seed_loader --db <path> --csv-root <path> [--update]`.
-
-The loader runs the entire operation inside a single SQLite transaction. If anything fails, everything rolls back — there is no partial seed state.
-
----
-
-### 3. CSV file layout and conventions
-
-#### Directory structure
-
-Seed CSVs live under `nightcrate/data/seed/` in the repo. One CSV per seedable table:
-
-```
-nightcrate/data/seed/
-  manufacturer.csv
-  optical_design.csv
-  mount_type.csv
-  connection_interface.csv
-  connector_size.csv
-  filter_size.csv
-  computer_type.csv
-  sensor.csv
-  camera.csv
-  camera_interface.csv
-  telescope.csv
-  telescope_connector.csv
-  telescope_configuration.csv
-  filter.csv
-  filter_passband.csv
-  mount.csv
-  mount_interface.csv
-  focuser.csv
-  focuser_interface.csv
-  filter_wheel.csv
-  filter_wheel_interface.csv
-  oag.csv
-  guide_scope.csv
-  computer.csv
-  software.csv
-  camera_alias.csv
-  telescope_alias.csv
-  filter_alias.csv
-```
-
-`filter_type.csv` is **not** in this list — `filter_type` rows are seeded by the schema migration itself (§3 of the schema revision spec).
-
-#### CSV format rules
-
-- UTF-8, comma-delimited, `"`-quoted where needed, RFC 4180.
-- First row is a header naming columns.
-- The first column is always `seed_key` — this is how rows are identified across versions.
-- Subsequent columns are the seeded fields for that table.
-- Foreign keys are expressed by referencing another table's `seed_key` in a column named `<fk>_seed_key`. Example: `camera.csv` has `manufacturer_seed_key` and `sensor_seed_key` columns, which the loader resolves to FK integer IDs at insert time. **Raw integer FK IDs never appear in seed CSVs** — they aren't stable across databases.
-- Empty cells mean NULL.
-- Booleans are `0` or `1` (not `true`/`false`).
-- Floats use `.` as the decimal separator, always.
-- Comments: a line beginning with `#` is ignored. Useful for organizing large CSVs.
-
-#### Example: `camera.csv` (header + one row)
-
-```csv
-seed_key,manufacturer_seed_key,sensor_seed_key,connector_size_seed_key,model_name,cooled,cooling_delta_c,back_focus_mm,weight_g,tilt_adapter,has_usb_hub,usb_hub_interface_seed_key,unity_gain,notes
-camera.zwo.asi2600mm_pro,manufacturer.zwo,sensor.sony.imx571,connector_size.m54,ASI 2600MM Pro,1,35,17.5,700,1,1,connection_interface.usb_2_0,100,
-```
-
-#### Example: `telescope_configuration.csv`
-
-```csv
-seed_key,telescope_seed_key,config_name,accessory_name,reduction_factor,effective_focal_length_mm,effective_focal_ratio,effective_image_circle_mm,effective_back_focus_mm,is_native,notes
-telescope_configuration.celestron.c11.native,telescope.celestron.c11,Native,,1.0,2800,10,,,1,
-telescope_configuration.celestron.c11.starizona_lf_0_7x,telescope.celestron.c11,Starizona LF 0.7x,Starizona SCT Corrector LF 0.7x,0.7,1960,7,,,0,
-```
-
-#### Junction tables
-
-Junction tables like `camera_interface` do not have their own `seed_key` — they're pure many-to-many links. Their CSVs use composite references:
-
-```csv
-camera_seed_key,interface_seed_key
-camera.zwo.asi2600mm_pro,connection_interface.usb_3_0
-```
-
-Junction tables are **not** re-seed-tracked per-row. The re-seed strategy for junction tables: for each parent row that is itself being inserted or updated, delete all existing junction rows for that parent, then insert the current set from the CSV. This is safe because junction rows carry no user-owned data — the user edits the parent, not the link. Document this behavior explicitly in the loader.
+- [x] All tests pass (488 passed, 3 skipped)
+- [x] Ruff clean
+- [x] Frontend builds
+- [x] Seed loader populates equipment on first startup ✅ User
+- [x] Re-seed preserves user-modified rows ✅ User
+- [x] CLI works (--dry-run, --json) ✅ User
+- [x] First-run wizard creates DB and transitions to app ✅ User
+- [x] Admin page shows app info + database management ✅ User
+- [x] Create/activate/remove databases works ✅ User
+- [x] Hot-swap DB without restart ✅ User
 
 ---
 
-### 4. Hash function (the load-bearing contract)
+<!-- Old inline seed loader spec (sections 1-12) removed — implemented in v0.10.0.
+     Full spec preserved at docs/superpowers/specs/2026-04-08-equipment-seed-loader-design.md -->
 
-This is the canonical implementation referenced by `seed_hash` in the schema. **Once this is released, any change to the format invalidates every existing `seed_hash` in every user's database.** Treat it as a versioned contract.
-
-#### Signature
-
-```python
-def compute_seed_hash(fields: dict[str, Any]) -> str:
-    """
-    Compute a deterministic SHA-256 hash of the given field dictionary.
-    Returns a lowercase hex-encoded string.
-
-    Contract version: 1
-    Any change to this function's behavior requires bumping the contract
-    version and providing a migration path for existing seed_hash values.
-    """
-```
-
-#### Canonical serialization
-
-1. Sort keys alphabetically.
-2. For each key, emit one line: `key=<encoded_value>`.
-3. Join lines with `\n` (single newline, not platform-specific).
-4. Encode as UTF-8.
-5. SHA-256 the bytes. Return `hexdigest().lower()`.
-
-#### Value encoding rules
-
-| Python type | Encoding |
-|---|---|
-| `None` | the literal 6-byte sequence `\0NULL\0` (a null, the word `NULL`, another null) |
-| `bool` | `1` for True, `0` for False (not `True`/`False`) |
-| `int` | decimal representation, no leading zeros, no sign for zero |
-| `float` | `repr(value)` — Python's shortest round-trip representation. `float('nan')` and infinities are **forbidden**; raise `ValueError`. |
-| `str` | the string as-is, UTF-8 bytes, **no** quoting or escaping of `=` or `\n` (the serialization assumes field names contain neither) |
-| `bytes` | forbidden — raise `ValueError`. Seed data should not contain binary. |
-
-**Field name restrictions:** field names must match `[a-zA-Z_][a-zA-Z0-9_]*` — the loader validates this at startup.
-
-**String value restriction:** string values **may** contain `\n` or `=`. Because we emit `key=value` one per line, this is a real ambiguity. Resolve it by disallowing `\n` in string values at the validation layer (seed CSVs don't need newlines in values; if a real use case appears, switch to a length-prefixed format and bump the contract version). `=` in values is fine — the parser isn't the issue, the hash is a one-way function and doesn't need to be reversible.
-
-#### What fields are hashed
-
-The hash is computed over a **predeclared subset** of a table's columns, not "everything except blacklist." This is critical: if a future migration adds a new column, it doesn't silently change every existing seed_hash. The predeclared set only grows when we explicitly decide to add the new column to the seeded field set.
-
-Each seedable table has a `SEEDED_FIELDS` constant in the registry (see §5). Columns always excluded from the hash regardless of table:
-
-- `id`
-- `created_at`
-- `updated_at`
-- `source`
-- `seed_key`
-- `seed_hash`
-- `active`
-
-Everything else must be explicitly listed in `SEEDED_FIELDS` to participate in the hash.
-
-#### Contract version
-
-Store the hash contract version in a new table:
-
-```sql
-CREATE TABLE seed_loader_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
--- Seeded by the loader on first run:
--- INSERT INTO seed_loader_meta (key, value) VALUES ('hash_contract_version', '1');
--- INSERT INTO seed_loader_meta (key, value) VALUES ('first_seeded_at', datetime('now'));
--- INSERT INTO seed_loader_meta (key, value) VALUES ('last_seeded_at', datetime('now'));
-```
-
-On every run, the loader checks `hash_contract_version` and refuses to run if it doesn't match the code's current version. Bumping the version in the future requires an explicit migration that recomputes all seed_hash values.
-
----
-
-### 5. Seedable table registry
-
-Define a registry module `nightcrate.seed_loader.registry` with one entry per seedable table. Each entry is a dataclass:
-
-```python
-@dataclass(frozen=True)
-class SeedableTable:
-    table_name: str
-    csv_filename: str
-    seeded_fields: tuple[str, ...]          # columns in the hash
-    fk_columns: dict[str, str]              # csv column → referenced table name
-    parent_key_column: str | None = None    # set for child tables (e.g., filter_passband.filter_seed_key)
-    is_junction: bool = False
-    junction_parent: str | None = None      # for junction tables: the "owning" parent table
-    junction_key_columns: tuple[str, ...] = ()  # for junction tables: the FK columns
-```
-
-#### Example entries
-
-```python
-CAMERA = SeedableTable(
-    table_name='camera',
-    csv_filename='camera.csv',
-    seeded_fields=(
-        'manufacturer_id', 'sensor_id', 'connector_size_id', 'model_name',
-        'cooled', 'cooling_delta_c', 'back_focus_mm', 'weight_g',
-        'tilt_adapter', 'has_usb_hub', 'usb_hub_interface_id', 'unity_gain',
-        'notes',
-    ),
-    fk_columns={
-        'manufacturer_seed_key': 'manufacturer',
-        'sensor_seed_key': 'sensor',
-        'connector_size_seed_key': 'connector_size',
-        'usb_hub_interface_seed_key': 'connection_interface',
-    },
-)
-
-FILTER_PASSBAND = SeedableTable(
-    table_name='filter_passband',
-    csv_filename='filter_passband.csv',
-    seeded_fields=(
-        'filter_id', 'line_name', 'central_wavelength_nm',
-        'bandwidth_nm', 'peak_transmission_pct',
-    ),
-    fk_columns={'filter_seed_key': 'filter'},
-    parent_key_column='filter_seed_key',
-)
-
-CAMERA_INTERFACE = SeedableTable(
-    table_name='camera_interface',
-    csv_filename='camera_interface.csv',
-    seeded_fields=(),  # junction table — not hashed per-row
-    fk_columns={
-        'camera_seed_key': 'camera',
-        'interface_seed_key': 'connection_interface',
-    },
-    is_junction=True,
-    junction_parent='camera',
-    junction_key_columns=('camera_id', 'interface_id'),
-)
-```
-
-**Note on `seeded_fields`:** the listed field names are the **database column names** of the final row after FK resolution, not the CSV column names. The FK resolution step converts `manufacturer_seed_key` → `manufacturer_id` before hashing. This is intentional — the hash is over what actually lives in the row.
-
-Produce the full registry as part of this implementation. Every table in the list from §3 of the schema spec must have a registry entry.
-
----
-
-### 6. Load order and referential integrity
-
-Load tables in dependency order so FKs always resolve:
-
-```
-1.  manufacturer
-2.  optical_design
-3.  mount_type
-4.  connection_interface
-5.  connector_size
-6.  filter_size
-7.  computer_type
-8.  sensor
-9.  camera
-10. camera_interface
-11. telescope
-12. telescope_connector
-13. telescope_configuration
-14. filter
-15. filter_passband
-16. mount
-17. mount_interface
-18. focuser
-19. focuser_interface
-20. filter_wheel
-21. filter_wheel_interface
-22. oag
-23. guide_scope
-24. computer
-25. software
-26. camera_alias
-27. telescope_alias
-28. filter_alias
-```
-
-This order is also declared in the registry as `LOAD_ORDER`. Do not sort alphabetically or by any other criterion — this is the correct order and it is hand-maintained.
-
-During the loader run, keep an in-memory map `{(table_name, seed_key): int_id}` so FK resolution is a dict lookup rather than a query per row. Populate it as rows are inserted.
-
----
-
-### 7. Parent/child seeding (telescope + configurations, filter + passbands)
-
-Some entities have child rows that must be loaded in lockstep with the parent: a telescope with its configurations, a filter with its passbands. The re-seed logic has to handle these coherently.
-
-#### Rule
-
-A parent row and all its seed-tracked children form a **seed unit**. A seed unit is evaluated atomically:
-
-- If the parent is being newly inserted → insert the parent, then insert all its children listed in the child CSV.
-- If the parent exists and is unmodified (hash matches) → update the parent, then delete and re-insert all its seed-originated children for that parent. User-created children (`source='user'`) on the same parent are left alone. **Children whose `source='seed'` but which are themselves user-modified (hash mismatch) are preserved and logged** — do not delete a user-modified child.
-- If the parent exists and is user-modified (hash mismatch) → skip the entire seed unit, including children. Log it as "user-modified parent, children not updated."
-
-#### The delete-and-reinsert strategy for children
-
-For seed-originated, unmodified children, delete-and-reinsert is simpler than trying to match child rows across CSV versions. It means that a child's `id` may change between re-seeds. **Therefore, nothing in the schema should reference `filter_passband.id` from outside the filter. ** The same applies to `telescope_configuration.id` — sub frames, when that schema lands later, should reference telescopes and their configurations through a design that tolerates configuration ID changes on re-seed (likely via a denormalized "which config was in use" snapshot on the sub frame row, or a UUID-based `telescope_configuration.stable_id` that's preserved across re-seeds — this is a decision for the sub_frame spec, not this one). **Document this constraint explicitly in the loader module docstring** so downstream schema authors know.
-
-Alternative, if the above constraint proves unworkable later: add a `stable_id TEXT` UUID column to `telescope_configuration` and `filter_passband` that is preserved across re-seeds. The loader generates it on first insert and never touches it again, even if the row is deleted and re-inserted. Not implementing this now — flag it as a known possible future need.
-
----
-
-### 8. First-run seeding vs. re-seed
-
-The loader detects which mode it's in by querying `seed_loader_meta`:
-
-```python
-def detect_mode(conn) -> Literal['first_run', 'update']:
-    row = conn.execute(
-        "SELECT value FROM seed_loader_meta WHERE key = 'first_seeded_at'"
-    ).fetchone()
-    return 'update' if row else 'first_run'
-```
-
-**First run behavior:**
-- Every row in every CSV is inserted.
-- `seed_loader_meta.first_seeded_at` and `last_seeded_at` are set.
-- No conflict resolution is needed (the tables are empty of seed rows).
-
-**Update behavior:**
-- Each row goes through the re-seed decision logic (§9).
-- `seed_loader_meta.last_seeded_at` is updated at the end.
-
-The `mode` argument to `load_all` can override auto-detection for testing, but in normal operation auto-detection is authoritative.
-
----
-
-### 9. Re-seed decision logic
-
-For each CSV row during an update run:
-
-```
-1. Resolve FK seed keys → integer IDs using the in-memory map.
-2. Build the "incoming row" dict: CSV columns + resolved FK ids, filtered to the SEEDED_FIELDS set.
-3. SELECT existing row WHERE seed_key = <csv_row.seed_key>.
-4. If no existing row:
-      a. INSERT new row with source='seed', seed_key=<csv>, seed_hash=compute_seed_hash(incoming).
-      b. Report: INSERTED.
-5. If existing row found:
-      a. If existing.source != 'seed':
-             Report: SKIPPED_CORRUPT (should never happen; log a warning). Do not touch the row.
-             Continue to next CSV row.
-      b. Build "current row" dict from the existing row's SEEDED_FIELDS columns.
-      c. current_hash = compute_seed_hash(current_row)
-      d. If current_hash != existing.seed_hash:
-             Report: SKIPPED_USER_MODIFIED. Leave the row alone.
-             Continue.
-      e. incoming_hash = compute_seed_hash(incoming_row)
-      f. If incoming_hash == existing.seed_hash:
-             Report: UNCHANGED. No update needed.
-             Continue.
-      g. UPDATE row with incoming values, set seed_hash=incoming_hash.
-         Report: UPDATED.
-```
-
-Step 5b recomputes the hash of the **current database state** and compares to the **stored** `seed_hash`. If they differ, the user has edited the row since it was last seeded. This is the key mechanism.
-
-Step 5f is an important short-circuit: if the CSV content hasn't changed (same incoming hash as stored), don't bother with an UPDATE. This keeps `updated_at` stable for untouched rows across re-seeds.
-
-#### Junction table behavior during update
-
-Junction tables are not row-tracked, so the logic is different:
-
-```
-1. For each parent row that was INSERTED or UPDATED in the current run:
-      a. DELETE FROM <junction> WHERE <parent_id_column> = <parent_id>.
-      b. INSERT all the CSV rows for that parent.
-2. For each parent row that was SKIPPED_USER_MODIFIED or UNCHANGED:
-      a. Do nothing to its junction rows.
-```
-
-This means changing a camera's `camera_interface` links in the CSV will **not** propagate to a user-modified camera. That's the correct behavior — if the user has decided to customize the camera, they own its relationships too. Document this.
-
-#### Orphaned seed rows
-
-If a `seed_key` exists in the DB but not in any CSV (e.g., a product was removed from the seed data between versions), the loader:
-
-- Logs it as `ORPHANED_SEED`.
-- Does **not** delete it. The user may have sub frames referencing it.
-- Includes the list in the final `SeedReport` so the UI (later) can surface it for manual review.
-
----
-
-### 10. Error handling and reporting
-
-#### SeedReport dataclass
-
-```python
-@dataclass
-class SeedReport:
-    mode: Literal['first_run', 'update']
-    started_at: datetime
-    finished_at: datetime
-    per_table: dict[str, TableReport]
-    errors: list[SeedError]
-
-    @property
-    def ok(self) -> bool:
-        return len(self.errors) == 0
-
-@dataclass
-class TableReport:
-    inserted: int
-    updated: int
-    unchanged: int
-    skipped_user_modified: list[str]    # list of seed_keys
-    skipped_corrupt: list[str]
-    orphaned: list[str]
-
-@dataclass
-class SeedError:
-    table: str
-    seed_key: str | None
-    message: str
-    exception: str | None               # repr of exception if applicable
-```
-
-#### Error taxonomy
-
-- **CSV parse errors** (malformed CSV, wrong column count, unknown column name) → raise at load time, before any DB writes. The whole operation aborts; nothing is written.
-- **FK resolution failures** (a CSV row references a `seed_key` that doesn't exist in the in-memory map) → collect all such errors for the current table, then abort the operation. Do not partially apply a table. Report all failures at once so the user can fix the CSV in one pass.
-- **Constraint violations** during insert/update (CHECK, NOT NULL, UNIQUE) → collect per-row, abort the whole operation, report all errors. Same rationale.
-- **Hash contract version mismatch** → refuse to run, with a clear error telling the operator the database was seeded with a different hash contract version and a migration is needed.
-
-#### Transaction semantics
-
-The entire operation runs inside a single SQLite transaction:
-
-```python
-with conn:
-    _load_all_inner(conn, csv_root, mode)
-```
-
-If any exception escapes `_load_all_inner`, SQLite rolls back the whole thing. This means you never end up with, say, filters loaded but passbands missing.
-
----
-
-### 11. CLI entry point
-
-Provide a module-level CLI:
-
-```bash
-python -m nightcrate.seed_loader --db nightcrate.sqlite --csv-root nightcrate/data/seed
-python -m nightcrate.seed_loader --db nightcrate.sqlite --csv-root nightcrate/data/seed --update
-python -m nightcrate.seed_loader --db nightcrate.sqlite --csv-root nightcrate/data/seed --dry-run
-```
-
-Flags:
-
-- `--db PATH` (required): path to the SQLite database.
-- `--csv-root PATH` (required): path to the directory containing seed CSVs.
-- `--update`: force update mode even on a fresh DB (mostly useful for tests). Without this, mode is auto-detected.
-- `--first-run`: force first-run mode. Fails if there's already seed data in the DB.
-- `--dry-run`: compute everything, print the report, roll back the transaction. Nothing is persisted.
-- `--verbose`: log each row's decision (inserted / updated / skipped / etc.) instead of just per-table summaries.
-- `--json`: emit the `SeedReport` as JSON on stdout instead of human-readable text.
-
-Exit codes:
-
-- `0` — success, no errors.
-- `1` — errors occurred (see report for details).
-- `2` — CLI usage error (bad flags, missing files).
-- `3` — hash contract version mismatch.
-
----
-
-### 12. Deliverables
-
-1. **`nightcrate/seed_loader/__init__.py`** — public API: `load_all`, `SeedReport`, `SeedError`, exception types.
-2. **`nightcrate/seed_loader/hash.py`** — `compute_seed_hash` with exhaustive docstring pinning down the contract and the version constant.
-3. **`nightcrate/seed_loader/registry.py`** — the full `SeedableTable` registry for every table in the load order.
-4. **`nightcrate/seed_loader/csv_reader.py`** — CSV parsing, header validation, comment handling, FK column detection.
-5. **`nightcrate/seed_loader/loader.py`** — the core logic: mode detection, per-table loading, re-seed decision logic, junction table handling, parent/child handling, error collection.
-6. **`nightcrate/seed_loader/__main__.py`** — the CLI.
-7. **`nightcrate/data/seed/`** — the CSV files. For this change, populate only:
-   - `manufacturer.csv` — seeded with at least: ZWO, Celestron, Askar, Sony, Sharpstar, Optolong, Antlia, Starizona, PrimaLuceLab, WarpAstron.
-   - `filter_size.csv` — 1.25", 2", 36mm round, 50mm square.
-   - `connector_size.csv` — M48, M54, T2, 1.25", 2", 3".
-   - `connection_interface.csv` — USB 2.0, USB 3.0, USB-C, ASCOM, EQMOD, WiFi, Ethernet.
-   - `optical_design.csv` — SCT, refractor (APO), RC, Newtonian, Maksutov-Cassegrain, Ritchey-Chrétien.
-   - `mount_type.csv` — German Equatorial, Harmonic Equatorial, Alt-Azimuth, Fork.
-   - `computer_type.csv` — imaging, processing, control, general.
-   - `sensor.csv` — IMX571, IMX533, IMX585, IMX662, IMX178, IMX294 at minimum.
-   - `camera.csv` — ASI 2600MM Pro, ASI 533MM Pro, ASI 294MC Pro, ASI 178MM, ASI 120MM Mini, ASI 220MM Mini.
-
-   The other CSVs can be created as empty files (header row only) — they need to exist for the loader to find them, but can be populated in future changes.
-8. **Tests** — pytest-based:
-   - `test_hash.py`: canonical hash values for known inputs, including every type (None, bool, int, float, str), key ordering independence, `\n` and NaN rejection.
-   - `test_first_run.py`: in-memory SQLite + schema + loader produces expected rows.
-   - `test_reseed_unchanged.py`: second run with identical CSVs → all rows UNCHANGED.
-   - `test_reseed_user_modified.py`: modify a row directly in the DB, re-run, expect SKIPPED_USER_MODIFIED.
-   - `test_reseed_csv_changed.py`: modify the CSV, re-run on an unmodified DB, expect UPDATED.
-   - `test_parent_child.py`: telescope + configurations loaded and re-loaded coherently.
-   - `test_junction.py`: junction table delete-and-reinsert on parent update.
-   - `test_orphaned.py`: row in DB but not in CSV → ORPHANED_SEED, not deleted.
-   - `test_fk_resolution.py`: missing FK seed_key → abort with clear error.
-   - `test_transaction_rollback.py`: injected error mid-load → no partial state in DB.
-9. **README section** covering: how to run the loader from the CLI, the CSV format conventions, the hash contract version policy, and the warning about `telescope_configuration.id` / `filter_passband.id` not being stable across re-seeds.
-
----
-
-### What NOT to build in this change
-
-- The UI "Update seed data" button.
-- FITS ingest or alias resolution.
-- Seed data CSV files beyond the minimal set in Deliverables §7.
-- Any schema changes — the schema must already be in place from the schema revision spec.
-- A `stable_id` column on child tables. Noted as a possible future need, not implemented.
-- Automatic deletion of orphaned seed rows.
-- A seed data versioning scheme beyond the hash contract version (individual CSV file versions, bundle manifests, signatures, etc. — all future concerns).
-
----
 
 ## FITS Equipment Resolver Spec
 

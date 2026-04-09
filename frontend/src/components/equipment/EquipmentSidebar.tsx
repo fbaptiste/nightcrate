@@ -21,7 +21,7 @@ const GROUPS = [
     id: "group-optics",
     label: "Optics",
     items: [
-      { id: "telescopes", label: "Telescopes" },
+      { id: "telescopes", label: "OTAs" },
       { id: "filters", label: "Filters" },
     ],
   },

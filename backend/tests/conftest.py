@@ -13,8 +13,9 @@ from astropy.io import fits
 async def _test_db(tmp_path: Path, monkeypatch):
     """Point the database at a temp file and create the settings table for all tests."""
     test_db = tmp_path / "test.db"
-    monkeypatch.setattr("nightcrate.db.session.DB_PATH", test_db)
-    monkeypatch.setattr("nightcrate.db.session.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.db.session._db_path", test_db)
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.core.app_config.CONFIG_PATH", tmp_path / "config.json")
 
     async with aiosqlite.connect(test_db) as conn:
         await conn.execute("""
@@ -78,6 +79,20 @@ async def _test_db(tmp_path: Path, monkeypatch):
                 await conn.executescript(body)
 
         await conn.commit()
+
+    # Load seed data (filter_type and any other seed CSVs) using a separate
+    # sync connection — aiosqlite's internal connection has thread restrictions.
+    import sqlite3
+
+    from nightcrate.seed_loader import load_all
+
+    csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
+    sync_conn = sqlite3.connect(str(test_db))
+    sync_conn.row_factory = sqlite3.Row
+    sync_conn.execute("PRAGMA foreign_keys = ON")
+    load_all(sync_conn, csv_root, mode="first_run")
+    sync_conn.commit()
+    sync_conn.close()
 
 
 @pytest.fixture

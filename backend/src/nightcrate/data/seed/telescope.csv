@@ -1,0 +1,2 @@
+seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,weight_kg
+telescope.celestron.c11,manufacturer.celestron,optical_design.sct,280,,C11 EdgeHD,,34,12.5

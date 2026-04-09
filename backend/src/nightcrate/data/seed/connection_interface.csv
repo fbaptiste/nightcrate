@@ -1,0 +1,5 @@
+seed_key,category,name,notes
+connection_interface.usb_3_0,data,USB 3.0,
+connection_interface.usb_2_0,data,USB 2.0,
+connection_interface.wifi,wireless,WiFi,
+connection_interface.ethernet,data,Ethernet,
