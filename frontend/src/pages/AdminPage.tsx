@@ -7,13 +7,22 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import IconButton from "@mui/material/IconButton";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
+import ListItemButton from "@mui/material/ListItemButton";
+import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Paper from "@mui/material/Paper";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import DescriptionIcon from "@mui/icons-material/Description";
+import FolderIcon from "@mui/icons-material/Folder";
+import HomeIcon from "@mui/icons-material/Home";
+import StorageIcon from "@mui/icons-material/Storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminInfo,
@@ -21,6 +30,9 @@ import {
   createDatabase,
   activateDatabase,
   removeDatabase,
+  browseForDatabase,
+  fetchShortcuts,
+  createFolder,
   type AdminStatus,
   type AppInfo,
 } from "@/api/admin";
@@ -30,6 +42,14 @@ function formatBytes(bytes: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function nameToFilename(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug ? `${slug}.db` : "nightcrate.db";
 }
 
 interface InfoRowProps {
@@ -54,6 +74,10 @@ function InfoRow({ label, value }: InfoRowProps) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Create Database Dialog (with folder browser)
+// ---------------------------------------------------------------------------
+
 interface CreateDbDialogProps {
   open: boolean;
   onClose: () => void;
@@ -72,19 +96,45 @@ function CreateDbDialog({
   isAddExisting = false,
 }: CreateDbDialogProps) {
   const [name, setName] = useState("");
-  const [path, setPath] = useState("");
+  const [directory, setDirectory] = useState("");
+  const [existingPath, setExistingPath] = useState("");
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [browsePath, setBrowsePath] = useState("~");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const { data: shortcuts } = useQuery({
+    queryKey: ["admin-shortcuts"],
+    queryFn: fetchShortcuts,
+  });
+
+  const {
+    data: browseResult,
+    isLoading: browseLoading,
+    refetch: refetchBrowse,
+  } = useQuery({
+    queryKey: ["admin-browse-dialog", browsePath],
+    queryFn: () => browseForDatabase(browsePath),
+    enabled: browseOpen,
+  });
+
   const handleOpen = () => {
-    setName(isAddExisting ? "" : "My Database");
-    setPath(isAddExisting ? "" : `${defaultDir}/nightcrate.db`);
+    setName(isAddExisting ? "" : "My NightCrate Database");
+    setDirectory(defaultDir);
+    setExistingPath("");
     setError(null);
   };
+
+  const fullPath = directory
+    ? `${directory.replace(/\/$/, "")}/${nameToFilename(name)}`
+    : "";
 
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
+      const path = isAddExisting ? existingPath : fullPath;
       await createDatabase({ path, name });
       onCreated();
       onClose();
@@ -95,57 +145,275 @@ function CreateDbDialog({
     }
   };
 
+  const handleBrowseSelectDir = (dirPath: string) => {
+    setDirectory(dirPath);
+    setBrowseOpen(false);
+  };
+
+  const handleBrowseSelectFile = (filePath: string) => {
+    setExistingPath(filePath);
+    // Auto-derive name from filename if empty
+    if (!name.trim()) {
+      const filename = filePath.split("/").pop() ?? "";
+      const base = filename.replace(/\.db$/i, "").replace(/_/g, " ");
+      setName(base.charAt(0).toUpperCase() + base.slice(1));
+    }
+    setBrowseOpen(false);
+  };
+
+  const handleBrowseNavigate = (dirPath: string) => {
+    setBrowsePath(dirPath);
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return;
+    const currentPath = browseResult?.path ?? browsePath;
+    const newPath = `${currentPath.replace(/\/$/, "")}/${newFolderName.trim()}`;
+    try {
+      const result = await createFolder(newPath);
+      setNewFolderOpen(false);
+      setNewFolderName("");
+      handleBrowseNavigate(result.path);
+      void refetchBrowse();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create folder.");
+    }
+  };
+
+  const isValid = isAddExisting
+    ? name.trim() && existingPath.trim()
+    : name.trim() && fullPath;
+
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      fullWidth
-      maxWidth="sm"
-      TransitionProps={{ onEntered: handleOpen }}
-    >
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent>
-        <Box sx={{ pt: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-          <TextField
-            label="Database Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            fullWidth
-            autoFocus
-          />
-          <TextField
-            label="Database Path"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            fullWidth
-            helperText={
-              isAddExisting
-                ? "Full path to an existing .db file"
-                : "Full path where the new database file will be created"
-            }
-          />
-          {error && (
-            <Alert severity="error" onClose={() => setError(null)}>
-              {error}
-            </Alert>
+    <>
+      <Dialog
+        open={open}
+        onClose={onClose}
+        fullWidth
+        maxWidth="sm"
+        TransitionProps={{ onEntered: handleOpen }}
+      >
+        <DialogTitle>{title}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+            <TextField
+              label="Database Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              fullWidth
+              autoFocus
+            />
+            {isAddExisting ? (
+              <Box sx={{ display: "flex", gap: 1 }}>
+                <TextField
+                  label="Database File"
+                  value={existingPath}
+                  fullWidth
+                  slotProps={{ input: { readOnly: true } }}
+                  sx={{ "& .MuiInputBase-input": { cursor: "pointer" } }}
+                  onClick={() => {
+                    setBrowsePath(defaultDir);
+                    setBrowseOpen(true);
+                  }}
+                  helperText={existingPath ? undefined : "Select an existing .db file"}
+                />
+                <Button
+                  variant="outlined"
+                  onClick={() => {
+                    setBrowsePath(defaultDir);
+                    setBrowseOpen(true);
+                  }}
+                  sx={{ whiteSpace: "nowrap", minWidth: 90 }}
+                >
+                  Browse
+                </Button>
+              </Box>
+            ) : (
+              <>
+                <Box sx={{ display: "flex", gap: 1 }}>
+                  <TextField
+                    label="Location"
+                    value={directory}
+                    fullWidth
+                    slotProps={{ input: { readOnly: true } }}
+                    sx={{ "& .MuiInputBase-input": { cursor: "pointer" } }}
+                    onClick={() => {
+                      setBrowsePath(directory || "~");
+                      setBrowseOpen(true);
+                    }}
+                  />
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      setBrowsePath(directory || "~");
+                      setBrowseOpen(true);
+                    }}
+                    sx={{ whiteSpace: "nowrap", minWidth: 90 }}
+                  >
+                    Browse
+                  </Button>
+                </Box>
+                {fullPath && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontFamily: "monospace", wordBreak: "break-all", mt: -1 }}
+                  >
+                    {fullPath}
+                  </Typography>
+                )}
+              </>
+            )}
+            {error && (
+              <Alert severity="error" onClose={() => setError(null)}>
+                {error}
+              </Alert>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSubmit}
+            disabled={submitting || !isValid}
+          >
+            {submitting ? <CircularProgress size={20} color="inherit" /> : "Confirm"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Folder browser dialog */}
+      <Dialog
+        open={browseOpen}
+        onClose={() => setBrowseOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            Select Location
+            <Box sx={{ display: "flex", gap: 0.5 }}>
+              {shortcuts && (
+                <>
+                  <Tooltip title="Home">
+                    <IconButton size="small" onClick={() => handleBrowseNavigate(shortcuts.home)}>
+                      <HomeIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Documents">
+                    <IconButton size="small" onClick={() => handleBrowseNavigate(shortcuts.documents)}>
+                      <DescriptionIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="App Data">
+                    <IconButton size="small" onClick={() => handleBrowseNavigate(shortcuts.app_data)}>
+                      <StorageIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </>
+              )}
+              <Tooltip title="New Folder">
+                <IconButton size="small" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
+                  <CreateNewFolderIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontFamily: "monospace", display: "block", mb: 1 }}
+          >
+            {browseResult?.path ?? browsePath}
+          </Typography>
+
+          {newFolderOpen && (
+            <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
+              <TextField
+                size="small"
+                label="Folder name"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                fullWidth
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleCreateFolder();
+                  if (e.key === "Escape") setNewFolderOpen(false);
+                }}
+              />
+              <Button size="small" variant="contained" onClick={() => void handleCreateFolder()} disabled={!newFolderName.trim()}>
+                Create
+              </Button>
+              <Button size="small" onClick={() => setNewFolderOpen(false)}>
+                Cancel
+              </Button>
+            </Box>
           )}
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={submitting}>
-          Cancel
-        </Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={submitting || !name.trim() || !path.trim()}
-        >
-          {submitting ? <CircularProgress size={20} color="inherit" /> : "Confirm"}
-        </Button>
-      </DialogActions>
-    </Dialog>
+
+          {browseLoading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <List dense sx={{ maxHeight: 400, overflowY: "auto" }}>
+              {browseResult?.path && browseResult.path !== "/" && (
+                <ListItemButton
+                  onClick={() =>
+                    handleBrowseNavigate(browseResult.path.replace(/\/[^/]+\/?$/, "") || "/")
+                  }
+                >
+                  <ListItemIcon sx={{ minWidth: 36 }}><FolderIcon /></ListItemIcon>
+                  <ListItemText primary=".." />
+                </ListItemButton>
+              )}
+              {browseResult?.dirs.map((dir) => (
+                <ListItemButton key={dir.path} onClick={() => handleBrowseNavigate(dir.path)}>
+                  <ListItemIcon sx={{ minWidth: 36 }}><FolderIcon /></ListItemIcon>
+                  <ListItemText primary={dir.name} />
+                </ListItemButton>
+              ))}
+              {/* Show .db files when browsing for existing database */}
+              {isAddExisting && browseResult?.files.map((file) => (
+                <ListItemButton
+                  key={file.path}
+                  onClick={() => handleBrowseSelectFile(file.path)}
+                >
+                  <ListItemIcon sx={{ minWidth: 36 }}><StorageIcon fontSize="small" /></ListItemIcon>
+                  <ListItemText
+                    primary={file.name}
+                    secondary={formatBytes(file.size)}
+                  />
+                </ListItemButton>
+              ))}
+              {browseResult?.dirs.length === 0 && (!isAddExisting || browseResult?.files.length === 0) && (
+                <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: "center" }}>
+                  {isAddExisting ? "No folders or .db files" : "No subdirectories"}
+                </Typography>
+              )}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBrowseOpen(false)}>Cancel</Button>
+          {!isAddExisting && (
+            <Button variant="contained" onClick={() => handleBrowseSelectDir(browseResult?.path ?? browsePath)}>
+              Select This Folder
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Database Section
+// ---------------------------------------------------------------------------
 
 interface DatabaseSectionProps {
   status: AdminStatus;
@@ -157,14 +425,13 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
   const [addOpen, setAddOpen] = useState(false);
   const queryClient = useQueryClient();
 
-  const infoQuery = useQuery({
-    queryKey: ["admin-info"],
-    queryFn: fetchAdminInfo,
-  });
-  const defaultDir = infoQuery.data?.app_data_dir ?? "~";
+  // Default to the active DB's directory
+  const activeDir = status.active_db?.path
+    ? status.active_db.path.replace(/\/[^/]+$/, "")
+    : "~";
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["admin-status"] });
+    void queryClient.invalidateQueries({ queryKey: ["admin-status"] });
   };
 
   const handleActivate = (path: string) => {
@@ -185,7 +452,6 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
 
   return (
     <Box>
-      {/* Current database highlight */}
       {activeDb && (
         <Box
           sx={{
@@ -211,7 +477,6 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
         </Box>
       )}
 
-      {/* All known databases */}
       {status.known_databases.length > 0 && (
         <Box sx={{ mb: 2 }}>
           <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 1, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
@@ -238,22 +503,14 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                   <ListItemText
                     primary={
                       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                        <Typography
-                          variant="body2"
-                          fontWeight={500}
-                          sx={{ fontStyle: db.available ? "normal" : "italic" }}
-                        >
+                        <Typography variant="body2" fontWeight={500} sx={{ fontStyle: db.available ? "normal" : "italic" }}>
                           {db.name}
                         </Typography>
                         {!db.available && (
-                          <Typography variant="caption" color="text.secondary">
-                            (not found)
-                          </Typography>
+                          <Typography variant="caption" color="text.secondary">(not found)</Typography>
                         )}
                         {isActive && (
-                          <Typography variant="caption" color="primary.main" fontWeight={600}>
-                            active
-                          </Typography>
+                          <Typography variant="caption" color="primary.main" fontWeight={600}>active</Typography>
                         )}
                       </Box>
                     }
@@ -262,12 +519,7 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                         <Typography
                           component="span"
                           variant="caption"
-                          sx={{
-                            fontFamily: "monospace",
-                            display: "block",
-                            wordBreak: "break-all",
-                            fontStyle: db.available ? "normal" : "italic",
-                          }}
+                          sx={{ fontFamily: "monospace", display: "block", wordBreak: "break-all", fontStyle: db.available ? "normal" : "italic" }}
                         >
                           {db.path}
                         </Typography>
@@ -280,21 +532,10 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                     }
                   />
                   <Box sx={{ display: "flex", gap: 1, ml: 1, flexShrink: 0, alignItems: "center", pt: 0.5 }}>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      disabled={isActive || !db.available}
-                      onClick={() => handleActivate(db.path)}
-                    >
+                    <Button size="small" variant="outlined" disabled={isActive || !db.available} onClick={() => handleActivate(db.path)}>
                       Activate
                     </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      color="warning"
-                      disabled={isActive}
-                      onClick={() => handleRemove(db.path)}
-                    >
+                    <Button size="small" variant="outlined" color="warning" disabled={isActive} onClick={() => handleRemove(db.path)}>
                       Remove
                     </Button>
                   </Box>
@@ -305,7 +546,6 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
         </Box>
       )}
 
-      {/* Actions */}
       <Box sx={{ display: "flex", gap: 2 }}>
         <Button variant="contained" onClick={() => setCreateOpen(true)}>
           Create New Database
@@ -319,20 +559,24 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={invalidate}
-        defaultDir={defaultDir}
+        defaultDir={activeDir}
         title="Create New Database"
       />
       <CreateDbDialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onCreated={invalidate}
-        defaultDir={defaultDir}
+        defaultDir={activeDir}
         title="Add Existing Database"
         isAddExisting
       />
     </Box>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Admin Page
+// ---------------------------------------------------------------------------
 
 export function AdminPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -364,14 +608,11 @@ export function AdminPage() {
         Admin
       </Typography>
 
-      {/* App Info Section */}
       <Typography variant="h6" sx={{ mb: 1 }}>
         App Info
       </Typography>
       <Paper sx={{ p: 2, mb: 3 }}>
-        {infoQuery.isLoading && (
-          <CircularProgress size={20} />
-        )}
+        {infoQuery.isLoading && <CircularProgress size={20} />}
         {info && (
           <Box>
             <InfoRow label="Config File" value={info.config_file} />
@@ -384,15 +625,12 @@ export function AdminPage() {
         )}
       </Paper>
 
-      {/* Database Management Section */}
       <Typography variant="h6" sx={{ mb: 1 }}>
         Database Management
       </Typography>
       <Paper sx={{ p: 2 }}>
         {statusQuery.isLoading && <CircularProgress size={20} />}
-        {status && (
-          <DatabaseSection status={status} onMutate={handleMutate} />
-        )}
+        {status && <DatabaseSection status={status} onMutate={handleMutate} />}
       </Paper>
 
       <Snackbar
