@@ -207,17 +207,7 @@ BEGIN
     UPDATE filter_type SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
--- Seed filter_type rows
-INSERT OR IGNORE INTO filter_type (name, description, source, seed_key) VALUES
-    ('broadband_luminance', 'Broadband luminance / clear filter covering the full visible spectrum', 'seed', 'filter_type.broadband_luminance'),
-    ('broadband_color', 'Broadband R, G, or B filter for LRGB imaging', 'seed', 'filter_type.broadband_color'),
-    ('narrowband_single', 'Narrowband filter isolating a single emission line (e.g. Ha, Oiii, Sii)', 'seed', 'filter_type.narrowband_single'),
-    ('narrowband_dual', 'Dual-narrowband filter combining two emission lines in one piece of glass', 'seed', 'filter_type.narrowband_dual'),
-    ('narrowband_tri', 'Tri-narrowband filter combining three emission lines', 'seed', 'filter_type.narrowband_tri'),
-    ('uv_ir_cut', 'UV/IR blocking filter', 'seed', 'filter_type.uv_ir_cut'),
-    ('light_pollution', 'Broadband light pollution rejection filter', 'seed', 'filter_type.light_pollution'),
-    ('neutral_density', 'Neutral density filter', 'seed', 'filter_type.neutral_density'),
-    ('other', 'Filter that does not fit standard categories', 'seed', 'filter_type.other');
+-- filter_type rows are loaded by the seed loader from filter_type.csv
 
 -- ============================================================
 -- SENSOR

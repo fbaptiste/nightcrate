@@ -865,7 +865,7 @@ class TestFilterTypeReadOnly:
         names = {ft["name"] for ft in data}
         assert "narrowband_single" in names
         assert "broadband_color" in names
-        assert "broadband_luminance" in names
+        assert "luminance" in names
 
     async def test_get_filter_type_by_id(self, client: AsyncClient):
         resp = await client.get("/api/equipment/filter-type")

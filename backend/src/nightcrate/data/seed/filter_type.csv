@@ -1,5 +1,5 @@
 seed_key,description,display_name,name
-filter_type.broadband_luminance,Broadband luminance / clear filter covering the full visible spectrum,Broadband Luminance,broadband_luminance
+filter_type.luminance,Luminance / clear filter covering the full visible spectrum,Luminance,luminance
 filter_type.broadband_color,Broadband R G or B filter for LRGB imaging,Broadband Color,broadband_color
 filter_type.narrowband_single,Narrowband filter isolating a single emission line (e.g. Ha Oiii Sii),Narrowband Single,narrowband_single
 filter_type.narrowband_dual,Dual-narrowband filter combining two emission lines in one piece of glass,Narrowband Dual,narrowband_dual

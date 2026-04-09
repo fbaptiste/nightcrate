@@ -119,7 +119,7 @@ erDiagram
     }
 ```
 
-`filter_type.name` CHECK constraint values: `broadband_luminance`, `broadband_color`, `narrowband_single`, `narrowband_dual`, `narrowband_tri`, `uv_ir_cut`, `light_pollution`, `neutral_density`, `other`.
+`filter_type.name` is user-extensible (no CHECK constraint). Seed values: `luminance`, `broadband_color`, `narrowband_single`, `narrowband_dual`, `narrowband_tri`, `uv_ir_cut`, `light_pollution`, `neutral_density`, `other`.
 
 ---
 

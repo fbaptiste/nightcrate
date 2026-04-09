@@ -433,7 +433,7 @@ class TestFilterSummaryView:
     def test_inactive_filter_excluded(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
-        ft_id = _insert_filter_type(conn, "broadband_luminance")
+        ft_id = _insert_filter_type(conn, "luminance")
         f_id = _insert_filter(conn, mfg_id, ft_id, model="OldFilter")
         conn.execute("UPDATE filter SET active = 0 WHERE id = ?", (f_id,))
         row = conn.execute("SELECT * FROM filter_summary WHERE filter_id = ?", (f_id,)).fetchone()
