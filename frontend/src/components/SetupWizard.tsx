@@ -5,15 +5,40 @@ import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import CircularProgress from "@mui/material/CircularProgress";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
+import FolderIcon from "@mui/icons-material/Folder";
+import List from "@mui/material/List";
+import ListItemButton from "@mui/material/ListItemButton";
+import ListItemIcon from "@mui/material/ListItemIcon";
+import ListItemText from "@mui/material/ListItemText";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { useQuery } from "@tanstack/react-query";
-import { fetchAdminInfo, fetchAdminStatus, setupDatabase } from "@/api/admin";
+import {
+  fetchAdminInfo,
+  fetchAdminStatus,
+  setupDatabase,
+  browseForDatabase,
+} from "@/api/admin";
+
+/** Convert a database name to a filename slug (e.g., "Fred's Rig" → "freds_rig.db") */
+function nameToFilename(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug ? `${slug}.db` : "nightcrate.db";
+}
 
 export function SetupWizard() {
   const [name, setName] = useState("My Equipment Database");
-  const [path, setPath] = useState("");
+  const [directory, setDirectory] = useState("");
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [browsePath, setBrowsePath] = useState("~");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -27,11 +52,21 @@ export function SetupWizard() {
     queryFn: fetchAdminStatus,
   });
 
+  const { data: browseResult, isLoading: browseLoading } = useQuery({
+    queryKey: ["admin-browse", browsePath],
+    queryFn: () => browseForDatabase(browsePath),
+    enabled: browseOpen,
+  });
+
   useEffect(() => {
-    if (info && !path) {
-      setPath(`${info.app_data_dir}/nightcrate.db`);
+    if (info && !directory) {
+      setDirectory(info.app_data_dir);
     }
-  }, [info, path]);
+  }, [info, directory]);
+
+  const fullPath = directory
+    ? `${directory.replace(/\/$/, "")}/${nameToFilename(name)}`
+    : "";
 
   const isScenarioB =
     status !== undefined &&
@@ -44,7 +79,7 @@ export function SetupWizard() {
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      await setupDatabase({ path, name });
+      await setupDatabase({ path: fullPath, name });
       window.location.reload();
     } catch (err) {
       setErrorMsg(
@@ -53,6 +88,15 @@ export function SetupWizard() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleBrowseSelect = (dirPath: string) => {
+    setDirectory(dirPath);
+    setBrowseOpen(false);
+  };
+
+  const handleBrowseNavigate = (dirPath: string) => {
+    setBrowsePath(dirPath);
   };
 
   return (
@@ -112,27 +156,48 @@ export function SetupWizard() {
             fullWidth
             sx={{ mb: 2 }}
           />
-          <TextField
-            label="Database Path"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            fullWidth
-            sx={{ mb: 3 }}
-            slotProps={{
-              input: {
-                endAdornment: !info ? (
-                  <CircularProgress size={16} sx={{ mr: 1 }} />
-                ) : null,
-              },
-            }}
-          />
+          <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
+            <TextField
+              label="Location"
+              value={directory}
+              onChange={(e) => setDirectory(e.target.value)}
+              fullWidth
+              slotProps={{
+                input: {
+                  endAdornment: !info ? (
+                    <CircularProgress size={16} sx={{ mr: 1 }} />
+                  ) : null,
+                },
+              }}
+            />
+            <Button
+              variant="outlined"
+              onClick={() => {
+                setBrowsePath(directory || "~");
+                setBrowseOpen(true);
+              }}
+              sx={{ whiteSpace: "nowrap", minWidth: 90 }}
+            >
+              Browse
+            </Button>
+          </Box>
+          {fullPath && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ mb: 3, display: "block", fontFamily: "monospace", wordBreak: "break-all" }}
+            >
+              {fullPath}
+            </Typography>
+          )}
 
           <Button
             variant="contained"
             size="large"
             fullWidth
             onClick={handleSubmit}
-            disabled={submitting || !path}
+            disabled={submitting || !fullPath}
+            sx={{ mt: 2 }}
           >
             {submitting ? (
               <CircularProgress size={22} color="inherit" />
@@ -144,6 +209,77 @@ export function SetupWizard() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Directory browser dialog */}
+      <Dialog
+        open={browseOpen}
+        onClose={() => setBrowseOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Select Location</DialogTitle>
+        <DialogContent>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontFamily: "monospace", display: "block", mb: 1 }}
+          >
+            {browseResult?.path ?? browsePath}
+          </Typography>
+          {browseLoading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <List dense sx={{ maxHeight: 400, overflowY: "auto" }}>
+              {/* Parent directory */}
+              {browseResult?.path && browseResult.path !== "/" && (
+                <ListItemButton
+                  onClick={() =>
+                    handleBrowseNavigate(
+                      browseResult.path.replace(/\/[^/]+\/?$/, "") || "/",
+                    )
+                  }
+                >
+                  <ListItemIcon sx={{ minWidth: 36 }}>
+                    <FolderIcon />
+                  </ListItemIcon>
+                  <ListItemText primary=".." />
+                </ListItemButton>
+              )}
+              {browseResult?.dirs.map((dir) => (
+                <ListItemButton
+                  key={dir.path}
+                  onClick={() => handleBrowseNavigate(dir.path)}
+                >
+                  <ListItemIcon sx={{ minWidth: 36 }}>
+                    <FolderIcon />
+                  </ListItemIcon>
+                  <ListItemText primary={dir.name} />
+                </ListItemButton>
+              ))}
+              {browseResult?.dirs.length === 0 && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ py: 2, textAlign: "center" }}
+                >
+                  No subdirectories
+                </Typography>
+              )}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBrowseOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => handleBrowseSelect(browseResult?.path ?? browsePath)}
+          >
+            Select This Folder
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={errorMsg !== null}
