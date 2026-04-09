@@ -28,6 +28,7 @@ import {
   fetchAdminInfo,
   fetchAdminStatus,
   createDatabase,
+  addExistingDatabase,
   activateDatabase,
   removeDatabase,
   browseForDatabase,
@@ -135,7 +136,11 @@ function CreateDbDialog({
     setSubmitting(true);
     try {
       const path = isAddExisting ? existingPath : fullPath;
-      await createDatabase({ path, name });
+      if (isAddExisting) {
+        await addExistingDatabase({ path, name });
+      } else {
+        await createDatabase({ path, name });
+      }
       onCreated();
       onClose();
     } catch (err) {

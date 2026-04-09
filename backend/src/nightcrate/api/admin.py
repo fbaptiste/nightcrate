@@ -147,6 +147,32 @@ async def create_database(req: CreateDatabaseRequest) -> dict:
     }
 
 
+@router.post("/database/add")
+async def add_existing_database(req: CreateDatabaseRequest) -> dict:
+    """Register an existing database file in the config without creating it."""
+    db_path = Path(req.path)
+
+    if not db_path.is_file():
+        raise HTTPException(status_code=400, detail=f"File does not exist: {req.path}")
+
+    if not req.path.endswith(".db"):
+        raise HTTPException(status_code=400, detail="File must have a .db extension")
+
+    config = load_config()
+    if req.path in config.databases:
+        raise HTTPException(status_code=409, detail=f"Database already registered: {req.path}")
+
+    config.databases[req.path] = DatabaseEntry(name=req.name)
+    save_config(config)
+
+    return {
+        "path": req.path,
+        "name": req.name,
+        "size_bytes": _db_size(req.path),
+        "available": True,
+    }
+
+
 @router.post("/database/activate")
 async def activate_database(req: ActivateDatabaseRequest) -> dict:
     """Activate a known database, running migrations and seed loader first."""

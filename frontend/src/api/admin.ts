@@ -46,6 +46,13 @@ export const createDatabase = (data: { path: string; name: string }) =>
     body: JSON.stringify(data),
   });
 
+export const addExistingDatabase = (data: { path: string; name: string }) =>
+  apiFetch<DatabaseInfo>("/admin/database/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
 export const setupDatabase = (data: { path: string; name: string }) =>
   apiFetch<DatabaseInfo>("/admin/database/setup", {
     method: "POST",
