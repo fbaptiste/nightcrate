@@ -38,11 +38,11 @@ async def lifespan(app: FastAPI):
         import importlib.resources
         import sqlite3
 
+        from nightcrate.db.session import get_db_path
         from nightcrate.seed_loader import load_all
-        from nightcrate.db.session import DB_PATH
 
         csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
-        sync_conn = sqlite3.connect(str(DB_PATH))
+        sync_conn = sqlite3.connect(str(get_db_path()))
         sync_conn.row_factory = sqlite3.Row
         sync_conn.execute("PRAGMA foreign_keys = ON")
         report = load_all(sync_conn, csv_root, "auto")
