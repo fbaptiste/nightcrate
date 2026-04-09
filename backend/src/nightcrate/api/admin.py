@@ -16,7 +16,7 @@ from nightcrate.core.app_config import (
     save_config,
 )
 from nightcrate.db.migrations import apply_migrations
-from nightcrate.db.session import set_db_path
+from nightcrate.db.session import get_db_path, set_db_path
 from nightcrate.seed_loader import load_all
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -323,3 +323,57 @@ async def create_folder(req: CreateFolderRequest) -> dict:
     except OSError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"path": str(target.resolve())}
+
+
+@router.post("/reseed")
+async def reseed_equipment() -> dict:
+    """Re-run the seed loader on the active database.
+
+    Inserts new seed rows, updates unchanged seed rows with new CSV data,
+    and skips user-modified rows. Returns a summary of what changed.
+    """
+    config = load_config()
+    if not config.db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+
+    db_path = get_db_path()
+    csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
+
+    sync_conn = sqlite3.connect(str(db_path))
+    try:
+        sync_conn.row_factory = sqlite3.Row
+        sync_conn.execute("PRAGMA foreign_keys = ON")
+        report = load_all(sync_conn, csv_root, "update")
+        sync_conn.commit()
+    finally:
+        sync_conn.close()
+
+    # Build summary
+    summary = {
+        "mode": report.mode,
+        "ok": report.ok,
+        "tables": {},
+    }
+    total_inserted = 0
+    total_updated = 0
+    total_unchanged = 0
+    total_skipped = 0
+    for table_name, tr in report.per_table.items():
+        total_inserted += tr.inserted
+        total_updated += tr.updated
+        total_unchanged += tr.unchanged
+        total_skipped += len(tr.skipped_user_modified)
+        if tr.inserted or tr.updated or tr.skipped_user_modified or tr.orphaned:
+            summary["tables"][table_name] = {
+                "inserted": tr.inserted,
+                "updated": tr.updated,
+                "unchanged": tr.unchanged,
+                "skipped_user_modified": tr.skipped_user_modified,
+                "orphaned": tr.orphaned,
+            }
+    summary["total_inserted"] = total_inserted
+    summary["total_updated"] = total_updated
+    summary["total_unchanged"] = total_unchanged
+    summary["total_skipped"] = total_skipped
+
+    return summary
