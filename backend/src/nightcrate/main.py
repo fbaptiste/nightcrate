@@ -31,27 +31,32 @@ def _configure_logging() -> None:
 async def lifespan(app: FastAPI):
     _configure_logging()
     apply_migrations()
-    # Load seed data (first run populates, subsequent runs check for updates)
+    # Load seed data (first run populates, subsequent runs check for updates).
+    # Uses a separate sync sqlite3 connection — the seed loader is synchronous
+    # and aiosqlite's internal connection has thread restrictions.
     try:
-        import asyncio
         import importlib.resources
+        import sqlite3
 
         from nightcrate.seed_loader import load_all
+        from nightcrate.db.session import DB_PATH
 
         csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
-        async with get_db() as conn:
-            # seed loader uses sync sqlite3 — run in thread to avoid blocking
-            report = await asyncio.to_thread(load_all, conn._conn, csv_root, "auto")
-            if not report.ok:
-                logger = logging.getLogger("nightcrate")
-                for err in report.errors:
-                    logger.warning(
-                        "Seed loader error [%s] %s: %s",
-                        err.table,
-                        err.seed_key,
-                        err.message,
-                    )
-            await conn.commit()
+        sync_conn = sqlite3.connect(str(DB_PATH))
+        sync_conn.row_factory = sqlite3.Row
+        sync_conn.execute("PRAGMA foreign_keys = ON")
+        report = load_all(sync_conn, csv_root, "auto")
+        sync_conn.commit()
+        sync_conn.close()
+        if not report.ok:
+            logger = logging.getLogger("nightcrate")
+            for err in report.errors:
+                logger.warning(
+                    "Seed loader error [%s] %s: %s",
+                    err.table,
+                    err.seed_key,
+                    err.message,
+                )
     except Exception:
         logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
         # Non-fatal — don't block startup
