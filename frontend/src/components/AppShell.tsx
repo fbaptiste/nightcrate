@@ -15,6 +15,7 @@ import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import HomeIcon from "@mui/icons-material/Home";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import LightModeIcon from "@mui/icons-material/LightMode";
+import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import BuildIcon from "@mui/icons-material/Build";
 import CodeIcon from "@mui/icons-material/Code";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -30,6 +31,7 @@ const navItems = [
   { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
+  { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },
 ];
 
