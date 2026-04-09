@@ -147,7 +147,18 @@ class ComputerTypeResponse(BaseModel):
     updated_at: str
 
 
-# FilterType is read-only (closed vocabulary) — no Create/Update
+class FilterTypeCreate(BaseModel):
+    name: str
+    display_name: str
+    description: str | None = None
+
+
+class FilterTypeUpdate(BaseModel):
+    name: str | None = None
+    display_name: str | None = None
+    description: str | None = None
+
+
 class FilterTypeResponse(BaseModel):
     id: int
     name: str

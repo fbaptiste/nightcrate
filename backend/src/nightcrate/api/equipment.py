@@ -26,7 +26,9 @@ from nightcrate.api.equipment_models import (
     FilterSizeCreate,
     FilterSizeResponse,
     FilterSizeUpdate,
+    FilterTypeCreate,
     FilterTypeResponse,
+    FilterTypeUpdate,
     FilterUpdate,
     FilterWheelCreate,
     FilterWheelResponse,
@@ -711,6 +713,66 @@ async def get_filter_type(filter_type_id: int):
             await _get_or_404(conn, "filter_type", filter_type_id, "Filter type"),
             "active",
         )
+
+
+@router.post("/filter-type", response_model=FilterTypeResponse, status_code=201)
+async def create_filter_type(body: FilterTypeCreate):
+    async with get_db() as conn:
+        try:
+            cursor = await conn.execute(
+                "INSERT INTO filter_type (name, display_name, description) VALUES (?, ?, ?)",
+                (body.name, body.display_name, body.description),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(
+                    status_code=409, detail=f"Filter type already exists: {body.name}"
+                )
+            raise
+        return _bool_fields(
+            await _get_or_404(conn, "filter_type", cursor.lastrowid, "Filter type"),
+            "active",
+        )
+
+
+@router.put("/filter-type/{filter_type_id}", response_model=FilterTypeResponse)
+async def update_filter_type(filter_type_id: int, body: FilterTypeUpdate):
+    async with get_db() as conn:
+        existing = await _get_or_404(conn, "filter_type", filter_type_id, "Filter type")
+        updates = body.model_dump(exclude_unset=True)
+        if not updates:
+            return _bool_fields(existing, "active")
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [filter_type_id]
+        try:
+            await conn.execute(
+                f"UPDATE filter_type SET {set_clause} WHERE id = ?",
+                values,
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(
+                    status_code=409, detail="Filter type name already exists"
+                )
+            raise
+        return _bool_fields(
+            await _get_or_404(conn, "filter_type", filter_type_id, "Filter type"),
+            "active",
+        )
+
+
+@router.delete("/filter-type/{filter_type_id}")
+async def delete_filter_type(filter_type_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter_type", filter_type_id, "Filter type")
+        await conn.execute(
+            "UPDATE filter_type SET active = 0 WHERE id = ?",
+            (filter_type_id,),
+        )
+        await conn.commit()
+    return {"ok": True}
 
 
 # ── Sensor ────────────────────────────────────────────────────────────────────

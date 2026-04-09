@@ -331,6 +331,12 @@ export interface ComputerTypeCreate {
   description?: string | null;
 }
 
+export interface FilterTypeCreate {
+  name: string;
+  display_name: string;
+  description?: string | null;
+}
+
 export interface SensorCreate {
   manufacturer_id: number;
   model_name: string;
@@ -694,6 +700,23 @@ export const fetchFilterTypes = (includeRetired = false) =>
 
 export const fetchFilterType = (id: number) =>
   apiFetch<FilterType>(`/equipment/filter-type/${id}`);
+
+export const createFilterType = (data: FilterTypeCreate) =>
+  apiFetch<FilterType>("/equipment/filter-type", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(data),
+  });
+
+export const updateFilterType = (id: number, data: Partial<FilterTypeCreate>) =>
+  apiFetch<FilterType>(`/equipment/filter-type/${id}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(data),
+  });
+
+export const deleteFilterType = (id: number) =>
+  apiFetch<{ ok: boolean }>(`/equipment/filter-type/${id}`, { method: "DELETE" });
 
 // ---------------------------------------------------------------------------
 // Sensor

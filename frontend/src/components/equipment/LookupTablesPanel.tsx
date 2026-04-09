@@ -48,12 +48,17 @@ import {
   createComputerType,
   updateComputerType,
   deleteComputerType,
+  fetchFilterTypes,
+  createFilterType,
+  updateFilterType,
+  deleteFilterType,
   type OpticalDesign,
   type MountType,
   type ConnectionInterface,
   type ConnectorSize,
   type FilterSize,
   type ComputerType,
+  type FilterType,
 } from "@/api/equipment";
 
 // ---------------------------------------------------------------------------
@@ -401,6 +406,12 @@ const filterSizeColumns: GridColDef<FilterSize>[] = [nameCol(), descriptionCol()
 
 const computerTypeColumns: GridColDef<ComputerType>[] = [nameCol(), descriptionCol()];
 
+const filterTypeColumns: GridColDef<FilterType>[] = [
+  nameCol(),
+  { field: "display_name", headerName: "Display Name", flex: 1, minWidth: 150 },
+  descriptionCol(),
+];
+
 // ---------------------------------------------------------------------------
 // Field configs
 // ---------------------------------------------------------------------------
@@ -447,6 +458,12 @@ const filterSizeFields: FieldConfig[] = [
 
 const computerTypeFields: FieldConfig[] = [
   { key: "name", label: "Name", required: true },
+  { key: "description", label: "Description" },
+];
+
+const filterTypeFields: FieldConfig[] = [
+  { key: "name", label: "Name (slug)", required: true },
+  { key: "display_name", label: "Display Name", required: true },
   { key: "description", label: "Description" },
 ];
 
@@ -531,6 +548,18 @@ const SECTIONS = [
     columns: computerTypeColumns as GridColDef<GenericItem>[],
     fields: computerTypeFields,
     defaultValues: { name: "", description: null },
+  },
+  {
+    id: "filter-types",
+    title: "Filter Types",
+    queryKey: "filter-types",
+    fetchFn: fetchFilterTypes as (includeRetired?: boolean) => Promise<GenericItem[]>,
+    createFn: (createFilterType as unknown) as CreateFn,
+    updateFn: (updateFilterType as unknown) as UpdateFn,
+    deleteFn: deleteFilterType,
+    columns: filterTypeColumns as GridColDef<GenericItem>[],
+    fields: filterTypeFields,
+    defaultValues: { name: "", display_name: "", description: null },
   },
 ];
 

@@ -187,17 +187,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS filter_type (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE CHECK (name IN (
-        'broadband_luminance',
-        'broadband_color',
-        'narrowband_single',
-        'narrowband_dual',
-        'narrowband_tri',
-        'uv_ir_cut',
-        'light_pollution',
-        'neutral_density',
-        'other'
-    )),
+    name TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL DEFAULT '',
     description TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),

@@ -223,14 +223,6 @@ class TestCheckConstraints:
         row = conn.execute("SELECT bayer_pattern FROM sensor WHERE model_name='ColorOK'").fetchone()
         assert row["bayer_pattern"] == "RGGB"
 
-    def test_filter_type_rejects_invalid_name(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO filter_type (name, source, seed_key) "
-                "VALUES ('bogus_type', 'user', NULL)"
-            )
-
     def test_filter_passband_rejects_invalid_line_name(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
