@@ -1,5 +1,10 @@
 seed_key,category,name,notes
-connection_interface.usb_3_0,data,USB 3.0,
-connection_interface.usb_2_0,data,USB 2.0,
+connection_interface.usb_3_0,data,USB 3.0 Type-B,Standard USB 3.0 Type-B (most ZWO cameras)
+connection_interface.usb_2_0,data,USB 2.0,USB 2.0 Type-A/B
+connection_interface.usb_3_0_type_c,data,USB 3.0 Type-C,USB-C connector at USB 3.0 speed
+connection_interface.usb_2_0_micro_b,data,USB 2.0 Micro-B,Micro-USB (older accessories)
 connection_interface.wifi,wireless,WiFi,
+connection_interface.bluetooth,wireless,Bluetooth,Mount controllers and some accessories
 connection_interface.ethernet,data,Ethernet,
+connection_interface.st4,control,ST-4,RJ-12 autoguider port for pulse guiding
+connection_interface.serial_rs232,data,Serial (RS-232),Legacy mount connections and OnStep

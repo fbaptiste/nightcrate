@@ -6,14 +6,14 @@ Tracking which CSV files have been populated with real data.
 
 | # | File | Status | Notes |
 |---|------|--------|-------|
-| 1 | `filter_type.csv` | DONE | 9 types, fixed vocabulary |
-| 2 | `computer_type.csv` | TODO | Expand from 3 |
-| 3 | `mount_type.csv` | TODO | Expand from 3 |
-| 4 | `optical_design.csv` | TODO | Expand from 4 |
-| 5 | `connection_interface.csv` | TODO | Expand from 4 |
-| 6 | `connector_size.csv` | TODO | Expand from 4 |
-| 7 | `filter_size.csv` | TODO | Expand from 3 |
-| 8 | `manufacturer.csv` | TODO | Expand from 6 |
+| 1 | `filter_type.csv` | DONE | 9 types, open vocabulary with display_name |
+| 2 | `computer_type.csv` | DONE | 3 types: Imaging, Processing, Control |
+| 3 | `mount_type.csv` | DONE | 5 types: German EQ, Harmonic EQ, Alt-Az, Fork, Star Tracker |
+| 4 | `optical_design.csv` | DONE | 10 designs: SCT, Newtonian, RC, Doublet/Triplet/Quad Refractor, Petzval, Mak-Cass, DK/CDK, RASA |
+| 5 | `connection_interface.csv` | DONE | 9 interfaces: USB 3.0 Type-B/C, USB 2.0/Micro-B, WiFi, Bluetooth, Ethernet, ST-4, Serial |
+| 6 | `connector_size.csv` | DONE | 10 sizes: M54, M48, T2, 2", 1.25", 3", M68, M72, SCT, Large SCT |
+| 7 | `filter_size.csv` | DONE | 5 sizes: 1.25", 36mm, 2", 50mm Round, 50mm Square |
+| 8 | `manufacturer.csv` | DONE | 26 manufacturers |
 
 ## Simple Equipment
 
