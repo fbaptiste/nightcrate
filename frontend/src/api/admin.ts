@@ -70,4 +70,19 @@ export const removeDatabase = (path: string) =>
 export const browseForDatabase = (path = "~") =>
   apiFetch<BrowseResult>(`/admin/browse?path=${encodeURIComponent(path)}`);
 
+export interface Shortcuts {
+  home: string;
+  documents: string;
+  app_data: string;
+}
+
+export const fetchShortcuts = () => apiFetch<Shortcuts>("/admin/shortcuts");
+
+export const createFolder = (path: string) =>
+  apiFetch<{ path: string }>("/admin/mkdir", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+
 export const fetchHealth = () => _fetchHealth() as Promise<HealthResponse>;

@@ -262,3 +262,32 @@ async def browse_filesystem(path: str = Query(default="~")) -> dict:
         pass  # Return whatever we managed to collect
 
     return {"path": str(resolved), "dirs": dirs, "files": files}
+
+
+@router.get("/shortcuts")
+async def filesystem_shortcuts() -> dict:
+    """Return common filesystem shortcut paths."""
+    home = Path.home()
+    docs = home / "Documents"
+    return {
+        "home": str(home),
+        "documents": str(docs) if docs.is_dir() else str(home),
+        "app_data": str(APP_DIR),
+    }
+
+
+class CreateFolderRequest(BaseModel):
+    path: str
+
+
+@router.post("/mkdir")
+async def create_folder(req: CreateFolderRequest) -> dict:
+    """Create a new directory at the given path."""
+    target = Path(req.path)
+    if target.exists():
+        raise HTTPException(status_code=409, detail=f"Already exists: {req.path}")
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"path": str(target.resolve())}
