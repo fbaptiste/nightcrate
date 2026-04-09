@@ -31,6 +31,30 @@ def _configure_logging() -> None:
 async def lifespan(app: FastAPI):
     _configure_logging()
     apply_migrations()
+    # Load seed data (first run populates, subsequent runs check for updates)
+    try:
+        import asyncio
+        import importlib.resources
+
+        from nightcrate.seed_loader import load_all
+
+        csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
+        async with get_db() as conn:
+            # seed loader uses sync sqlite3 — run in thread to avoid blocking
+            report = await asyncio.to_thread(load_all, conn._conn, csv_root, "auto")
+            if not report.ok:
+                logger = logging.getLogger("nightcrate")
+                for err in report.errors:
+                    logger.warning(
+                        "Seed loader error [%s] %s: %s",
+                        err.table,
+                        err.seed_key,
+                        err.message,
+                    )
+            await conn.commit()
+    except Exception:
+        logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
+        # Non-fatal — don't block startup
     # Purge stale aberration cache entries
     try:
         app_settings = await get_settings()
