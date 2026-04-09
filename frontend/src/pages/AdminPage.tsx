@@ -482,14 +482,13 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
         </Box>
       )}
 
-      {status.known_databases.length > 0 && (
+      {status.known_databases.filter((db) => db.path !== activeDb?.path).length > 0 && (
         <Box sx={{ mb: 2 }}>
           <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 1, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
-            Known Databases
+            Other Known Databases
           </Typography>
           <List disablePadding>
-            {status.known_databases.map((db) => {
-              const isActive = activeDb?.path === db.path;
+            {status.known_databases.filter((db) => db.path !== activeDb?.path).map((db) => {
               return (
                 <ListItem
                   key={db.path}
@@ -500,7 +499,7 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                     py: 1,
                     borderRadius: 1,
                     border: 1,
-                    borderColor: isActive ? "primary.main" : "divider",
+                    borderColor: "divider",
                     opacity: db.available ? 1 : 0.55,
                     alignItems: "flex-start",
                   }}
@@ -513,9 +512,6 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                         </Typography>
                         {!db.available && (
                           <Typography variant="caption" color="text.secondary">(not found)</Typography>
-                        )}
-                        {isActive && (
-                          <Typography variant="caption" color="primary.main" fontWeight={600}>active</Typography>
                         )}
                       </Box>
                     }
@@ -537,10 +533,10 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                     }
                   />
                   <Box sx={{ display: "flex", gap: 1, ml: 1, flexShrink: 0, alignItems: "center", pt: 0.5 }}>
-                    <Button size="small" variant="outlined" disabled={isActive || !db.available} onClick={() => handleActivate(db.path)}>
+                    <Button size="small" variant="outlined" disabled={!db.available} onClick={() => handleActivate(db.path)}>
                       Activate
                     </Button>
-                    <Button size="small" variant="outlined" color="warning" disabled={isActive} onClick={() => handleRemove(db.path)}>
+                    <Button size="small" variant="outlined" color="warning" onClick={() => handleRemove(db.path)}>
                       Remove
                     </Button>
                   </Box>
