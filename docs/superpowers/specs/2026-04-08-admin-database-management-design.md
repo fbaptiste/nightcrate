@@ -82,7 +82,18 @@ Returns read-only app info:
 ```
 
 **`GET /api/admin/status`**
-Returns: `{ db_configured: bool, active_db: { path, name, size_bytes } | null, known_databases: [{ path, name, size_bytes }] }`
+Returns:
+```json
+{
+  "db_configured": true,
+  "active_db": { "path": "...", "name": "...", "size_bytes": 12345, "available": true },
+  "known_databases": [
+    { "path": "...", "name": "...", "size_bytes": 12345, "available": true },
+    { "path": "/old/path.db", "name": "Old DB", "size_bytes": null, "available": false }
+  ]
+}
+```
+Each database entry includes `available: bool` — checks if the file exists and is accessible. `size_bytes` is null when unavailable. `db_configured` is true only if `active_db` is set AND available.
 
 **`POST /api/admin/database/create`**
 Body: `{ path: string, name: string }`
@@ -123,8 +134,10 @@ Query: `path` (directory to browse)
 
 ### Modify `main.py`
 
-- On startup: load config, if `active_db` is set → use it as DB_PATH, run migrations + seed loader as before
-- If `active_db` is not set → skip DB initialization (no migrations, no seed loader). The app starts but most endpoints will fail until setup is complete. The `/api/health` and `/api/admin/*` endpoints must still work.
+- On startup: load config, check if `active_db` is set AND the file exists
+- If active_db available → use it as DB_PATH, run migrations + seed loader as before
+- If active_db set but file missing → log warning, treat as unconfigured
+- If no active_db → skip DB initialization (no migrations, no seed loader). The app starts but most endpoints will fail until setup is complete. The `/api/health` and `/api/admin/*` endpoints must still work.
 
 ### Modify `/api/health`
 
@@ -134,12 +147,23 @@ Add `db_configured: bool` to the health response. Frontend uses this to decide w
 
 ### Setup Wizard (`components/SetupWizard.tsx`)
 
-Shown instead of the normal app when `db_configured: false`. Full-screen centered card with:
+Shown instead of the normal app when `db_configured: false`. Two scenarios:
+
+**Scenario A — Fresh install (no config, no databases):**
 - "Welcome to NightCrate" heading
 - Database name field (default: "My Equipment Database")
 - Database path field (default: `{default_app_dir}/nightcrate.db`) with Browse button
 - "Create & Start" button
-- On success: reload the page (or re-query health to transition to normal app)
+- On success: reload the page to transition to normal app
+
+**Scenario B — Config exists but active DB unavailable (e.g., moved machine, external drive disconnected):**
+- "Database Not Available" heading
+- Warning message listing the unavailable databases with their paths
+- Same create form as Scenario A (name + path + Browse)
+- "Create New Database" button
+- Note: "You can manage your database list in the Admin page once connected."
+
+The wizard determines which scenario by checking the `/api/admin/status` response: if `known_databases` is non-empty but none are `available`, it's Scenario B.
 
 ### Admin Page (`pages/AdminPage.tsx`)
 
@@ -156,8 +180,11 @@ Accessible from nav sidebar. Two sections:
 Backed by `GET /api/admin/info` which returns all paths and versions.
 
 **Database Management**:
-- **Current database** section: name, path, file size
-- **Known databases** list: each entry shows name, path, size, "Activate" button (grayed if already active), "Remove" button (grayed if active)
+- **Current database** section: name, path, file size (highlighted as active)
+- **Known databases** list: each entry shows name, path, size + availability status
+  - **Available databases**: normal display, "Activate" button (grayed if already active), "Remove" button (grayed if active)
+  - **Unavailable databases**: visually distinct (dimmed/italic, warning icon), path shown with "(not found)" indicator, "Remove" button enabled (can clean up stale entries), "Activate" button disabled
+  - The currently active database cannot be removed
 - **Add database** section: two options:
   - "Create New" — opens dialog with name + path fields
   - "Add Existing" — opens file browser dialog to pick a `.db` file, then prompts for name
