@@ -13,7 +13,7 @@ import Select from "@mui/material/Select";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
-import { formatFilterType } from "@/lib/formUtils";
+import { formatSnakeCase } from "@/lib/formUtils";
 import {
   createSoftware,
   updateSoftware,
@@ -171,7 +171,7 @@ export default function SoftwareFormDialog({
               >
                 {SOFTWARE_CATEGORIES.map((cat) => (
                   <MenuItem key={cat} value={cat}>
-                    {formatFilterType(cat)}
+                    {formatSnakeCase(cat)}
                   </MenuItem>
                 ))}
               </Select>

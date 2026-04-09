@@ -151,6 +151,7 @@ class ComputerTypeResponse(BaseModel):
 class FilterTypeResponse(BaseModel):
     id: int
     name: str
+    display_name: str
     description: str | None
     active: bool
     created_at: str

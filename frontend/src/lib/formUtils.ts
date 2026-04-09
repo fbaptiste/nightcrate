@@ -10,8 +10,8 @@ export function parseOptionalInt(val: string): number | null {
   return val.trim() !== "" && !isNaN(n) ? n : null;
 }
 
-/** Format a snake_case filter type name for display (e.g., "narrowband_single" → "Narrowband Single"). */
-export function formatFilterType(name: string): string {
+/** Format a snake_case name for display (e.g., "plate_solving" → "Plate Solving"). */
+export function formatSnakeCase(name: string): string {
   return name
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());

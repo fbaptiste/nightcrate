@@ -2,7 +2,7 @@ import { type GridColDef } from "@mui/x-data-grid";
 import EquipmentList from "./EquipmentList";
 import SoftwareFormDialog from "./SoftwareFormDialog";
 import { fetchSoftwares, deleteSoftware, type Software } from "@/api/equipment";
-import { formatFilterType } from "@/lib/formUtils";
+import { formatSnakeCase } from "@/lib/formUtils";
 
 const columns: GridColDef<Software>[] = [
   { field: "name", headerName: "Name", flex: 1.5, minWidth: 160 },
@@ -18,7 +18,7 @@ const columns: GridColDef<Software>[] = [
     headerName: "Category",
     flex: 1,
     minWidth: 120,
-    valueGetter: (_v, row) => formatFilterType(row.category),
+    valueGetter: (_v, row) => formatSnakeCase(row.category),
   },
   {
     field: "website",

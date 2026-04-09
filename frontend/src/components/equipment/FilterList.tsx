@@ -1,6 +1,5 @@
 import { type GridColDef } from "@mui/x-data-grid";
 import { fetchFilters, deleteFilter, type Filter } from "@/api/equipment";
-import { formatFilterType } from "@/lib/formUtils";
 import EquipmentList from "./EquipmentList";
 import FilterFormDialog from "./FilterFormDialog";
 
@@ -52,7 +51,7 @@ const columns: GridColDef<Filter>[] = [
     headerName: "Type",
     flex: 1,
     minWidth: 150,
-    valueGetter: (_value, row) => formatFilterType(row.filter_type.name),
+    valueGetter: (_value, row) => row.filter_type.display_name,
   },
   {
     field: "passbands",

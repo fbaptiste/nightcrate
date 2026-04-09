@@ -21,7 +21,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useQuery } from "@tanstack/react-query";
-import { parseOptionalFloat, formatFilterType } from "@/lib/formUtils";
+import { parseOptionalFloat } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import {
@@ -330,7 +330,7 @@ export default function FilterFormDialog({
                 >
                   {filterTypes.map((ft) => (
                     <MenuItem key={ft.id} value={String(ft.id)}>
-                      {formatFilterType(ft.name)}
+                      {ft.display_name}
                     </MenuItem>
                   ))}
                 </Select>

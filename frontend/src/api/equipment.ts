@@ -73,6 +73,7 @@ export interface ComputerType {
 export interface FilterType {
   id: number;
   name: string;
+  display_name: string;
   description: string | null;
   active: boolean;
   created_at: string;

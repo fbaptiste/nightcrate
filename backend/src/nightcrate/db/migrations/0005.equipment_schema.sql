@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS filter_type (
         'neutral_density',
         'other'
     )),
+    display_name TEXT NOT NULL DEFAULT '',
     description TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
