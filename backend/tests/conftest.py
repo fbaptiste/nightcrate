@@ -79,6 +79,20 @@ async def _test_db(tmp_path: Path, monkeypatch):
 
         await conn.commit()
 
+    # Load seed data (filter_type and any other seed CSVs) using a separate
+    # sync connection — aiosqlite's internal connection has thread restrictions.
+    import sqlite3
+
+    from nightcrate.seed_loader import load_all
+
+    csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
+    sync_conn = sqlite3.connect(str(test_db))
+    sync_conn.row_factory = sqlite3.Row
+    sync_conn.execute("PRAGMA foreign_keys = ON")
+    load_all(sync_conn, csv_root, mode="first_run")
+    sync_conn.commit()
+    sync_conn.close()
+
 
 @pytest.fixture
 def tmp_fits_mono(tmp_path: Path) -> Path:

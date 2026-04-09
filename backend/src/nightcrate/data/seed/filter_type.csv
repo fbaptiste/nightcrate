@@ -1,0 +1,10 @@
+seed_key,description,name
+filter_type.broadband_luminance,Broadband luminance / clear filter covering the full visible spectrum,broadband_luminance
+filter_type.broadband_color,Broadband R G or B filter for LRGB imaging,broadband_color
+filter_type.narrowband_single,Narrowband filter isolating a single emission line (e.g. Ha Oiii Sii),narrowband_single
+filter_type.narrowband_dual,Dual-narrowband filter combining two emission lines in one piece of glass,narrowband_dual
+filter_type.narrowband_tri,Tri-narrowband filter combining three emission lines,narrowband_tri
+filter_type.uv_ir_cut,UV/IR blocking filter,uv_ir_cut
+filter_type.light_pollution,Broadband light pollution rejection filter,light_pollution
+filter_type.neutral_density,Neutral density filter,neutral_density
+filter_type.other,Filter that does not fit standard categories,other

@@ -98,39 +98,6 @@ def _build_incoming(
             if raw_sk is None:
                 # Nullable FK — leave as None
                 incoming[field_name] = None
-            elif ref_table == "filter_type":
-                # filter_type is seeded by migration; resolve via DB
-                fk_cache_key = ("filter_type", raw_sk)
-                if fk_cache_key in fk_map:
-                    incoming[field_name] = fk_map[fk_cache_key]
-                else:
-                    # Strip "filter_type." prefix if present
-                    lookup_name = raw_sk
-                    if lookup_name.startswith("filter_type."):
-                        lookup_name = lookup_name[len("filter_type.") :]
-                    cur = conn.execute("SELECT id FROM filter_type WHERE seed_key = ?", (raw_sk,))
-                    ft_row = cur.fetchone()
-                    if ft_row is None:
-                        # Try by name as fallback
-                        cur2 = conn.execute(
-                            "SELECT id FROM filter_type WHERE name = ?", (lookup_name,)
-                        )
-                        ft_row = cur2.fetchone()
-                    if ft_row is None:
-                        errors.append(
-                            SeedError(
-                                table=table.table_name,
-                                seed_key=seed_key,
-                                message=(
-                                    f"FK resolution failed: filter_type '{raw_sk}' not found in DB"
-                                ),
-                            )
-                        )
-                        ok = False
-                    else:
-                        resolved_id = ft_row["id"]
-                        fk_map[fk_cache_key] = resolved_id
-                        incoming[field_name] = resolved_id
             else:
                 fk_cache_key = (ref_table, raw_sk)
                 if fk_cache_key not in fk_map:

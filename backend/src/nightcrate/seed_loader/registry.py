@@ -65,8 +65,13 @@ LOAD_ORDER: list[SeedableTable] = [
         csv_filename="computer_type.csv",
         seeded_fields=("name", "description"),
     ),
+    SeedableTable(
+        table_name="filter_type",
+        csv_filename="filter_type.csv",
+        seeded_fields=("name", "description"),
+    ),
     # ------------------------------------------------------------------
-    # 8: sensor — FK: manufacturer_id → manufacturer
+    # 9: sensor — FK: manufacturer_id → manufacturer
     # ------------------------------------------------------------------
     SeedableTable(
         table_name="sensor",

@@ -74,8 +74,12 @@ def _insert_telescope(conn, manufacturer_id, *, model="TestScope"):
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
 
-def _get_filter_type_id(conn, name="narrowband_single"):
-    """Get a seeded filter_type id by name."""
+def _insert_filter_type(conn, name="narrowband_single", description="Test filter type"):
+    """Insert a filter_type and return its id."""
+    conn.execute(
+        "INSERT OR IGNORE INTO filter_type (name, description, source) VALUES (?, ?, 'seed')",
+        (name, description),
+    )
     row = conn.execute("SELECT id FROM filter_type WHERE name = ?", (name,)).fetchone()
     return row[0]
 
@@ -167,28 +171,6 @@ class TestMigrationApplies:
         assert len(rows) == 1
 
 
-class TestFilterTypeSeedData:
-    """Verify filter_type seed data is correctly inserted."""
-
-    def test_nine_filter_type_rows(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        count = conn.execute("SELECT COUNT(*) FROM filter_type").fetchone()[0]
-        assert count == 9
-
-    def test_all_source_seed(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        non_seed = conn.execute(
-            "SELECT COUNT(*) FROM filter_type WHERE source != 'seed'"
-        ).fetchone()[0]
-        assert non_seed == 0
-
-    def test_all_seed_keys_prefixed(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        rows = conn.execute("SELECT seed_key FROM filter_type").fetchall()
-        for row in rows:
-            assert row["seed_key"].startswith("filter_type.")
-
-
 class TestCheckConstraints:
     """Verify CHECK constraints on various tables."""
 
@@ -252,7 +234,7 @@ class TestCheckConstraints:
     def test_filter_passband_rejects_invalid_line_name(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
-        ft_id = _get_filter_type_id(conn, "narrowband_single")
+        ft_id = _insert_filter_type(conn, "narrowband_single")
         f_id = _insert_filter(conn, mfg_id, ft_id)
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -314,7 +296,7 @@ class TestCascadeDeletes:
     def test_delete_filter_cascades_to_passband(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
-        ft_id = _get_filter_type_id(conn, "narrowband_single")
+        ft_id = _insert_filter_type(conn, "narrowband_single")
         f_id = _insert_filter(conn, mfg_id, ft_id)
         conn.execute(
             "INSERT INTO filter_passband "
@@ -420,7 +402,7 @@ class TestFilterSummaryView:
     def test_single_band_filter(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
-        ft_id = _get_filter_type_id(conn, "narrowband_single")
+        ft_id = _insert_filter_type(conn, "narrowband_single")
         f_id = _insert_filter(conn, mfg_id, ft_id, model="Ha 7nm")
         conn.execute(
             "INSERT INTO filter_passband "
@@ -436,7 +418,7 @@ class TestFilterSummaryView:
     def test_dual_band_filter(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
-        ft_id = _get_filter_type_id(conn, "narrowband_dual")
+        ft_id = _insert_filter_type(conn, "narrowband_dual")
         f_id = _insert_filter(conn, mfg_id, ft_id, model="HaOiii Dual")
         conn.execute(
             "INSERT INTO filter_passband "
@@ -459,7 +441,7 @@ class TestFilterSummaryView:
     def test_inactive_filter_excluded(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
-        ft_id = _get_filter_type_id(conn, "broadband_luminance")
+        ft_id = _insert_filter_type(conn, "broadband_luminance")
         f_id = _insert_filter(conn, mfg_id, ft_id, model="OldFilter")
         conn.execute("UPDATE filter SET active = 0 WHERE id = ?", (f_id,))
         row = conn.execute("SELECT * FROM filter_summary WHERE filter_id = ?", (f_id,)).fetchone()
@@ -511,7 +493,7 @@ class TestFullRoundTrip:
         )
 
         # Filter with passband
-        ft_id = _get_filter_type_id(conn, "narrowband_single")
+        ft_id = _insert_filter_type(conn, "narrowband_single")
         f_id = _insert_filter(conn, mfg3_id, ft_id, model="Ha 7nm")
         conn.execute(
             "INSERT INTO filter_passband "

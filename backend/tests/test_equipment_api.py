@@ -858,7 +858,7 @@ class TestSoftwareCRUD:
 
 class TestFilterTypeReadOnly:
     async def test_list_filter_types_seeded(self, client: AsyncClient):
-        """Migration seeds filter_type; verify expected values present."""
+        """Seed loader populates filter_type; verify expected values present."""
         resp = await client.get("/api/equipment/filter-type")
         assert resp.status_code == 200
         data = resp.json()
