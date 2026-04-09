@@ -19,8 +19,6 @@ from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import set_db_path
 from nightcrate.seed_loader import load_all
 
-_VERSION_FILE = Path(__file__).resolve().parents[3] / "VERSION"
-_APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.exists() else "unknown"
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -83,7 +81,6 @@ async def admin_info() -> dict:
         "backend_root": str(Path(__file__).resolve().parents[1]),
         "seed_data_dir": str(importlib.resources.files("nightcrate") / "data" / "seed"),
         "python_version": sys.version.split()[0],
-        "app_version": _APP_VERSION,
     }
 
 

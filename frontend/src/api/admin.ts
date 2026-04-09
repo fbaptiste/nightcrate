@@ -7,7 +7,6 @@ export interface AppInfo {
   backend_root: string;
   seed_data_dir: string;
   python_version: string;
-  app_version: string;
 }
 
 export interface DatabaseInfo {

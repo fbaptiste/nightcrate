@@ -27,6 +27,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminInfo,
   fetchAdminStatus,
+  fetchHealth,
   createDatabase,
   addExistingDatabase,
   activateDatabase,
@@ -592,8 +593,15 @@ export function AdminPage() {
     queryFn: fetchAdminStatus,
   });
 
+  const healthQuery = useQuery({
+    queryKey: ["health"],
+    queryFn: fetchHealth,
+    staleTime: Infinity,
+  });
+
   const info: AppInfo | undefined = infoQuery.data;
   const status: AdminStatus | undefined = statusQuery.data;
+  const appVersion = healthQuery.data?.version ?? "...";
 
   const handleMutate = async (action: () => Promise<void>) => {
     try {
@@ -621,7 +629,7 @@ export function AdminPage() {
             <InfoRow label="Backend Root" value={info.backend_root} />
             <InfoRow label="Seed Data" value={info.seed_data_dir} />
             <InfoRow label="Python Version" value={info.python_version} />
-            <InfoRow label="App Version" value={info.app_version} />
+            <InfoRow label="App Version" value={appVersion} />
           </Box>
         )}
       </Paper>
