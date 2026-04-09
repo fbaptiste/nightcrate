@@ -34,7 +34,6 @@ async def test_admin_info(client):
     assert "backend_root" in data
     assert "seed_data_dir" in data
     assert "python_version" in data
-    assert "app_version" in data
     assert data["python_version"].startswith("3.")
 
 

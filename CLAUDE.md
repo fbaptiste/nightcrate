@@ -308,6 +308,41 @@ Full CRUD API for all equipment types under `/api/equipment/`.
 - `api/equipment.ts` — TypeScript interfaces + fetch functions for all equipment types
 - All form dialogs show error feedback via Snackbar on save failure
 
+## Equipment Seed Loader
+
+Populates the equipment database from CSV seed files on first run, with hash-based change detection on re-seed.
+
+**Architecture:**
+- `seed_loader/hash.py` — deterministic SHA-256 hash (contract v1, versioned — never change without migration)
+- `seed_loader/registry.py` — `SeedableTable` dataclass registry, 29 tables in dependency load order
+- `seed_loader/csv_reader.py` — CSV parsing with header validation, comment support, FK seed_key resolution
+- `seed_loader/loader.py` — core: first_run/update modes, FK resolution via in-memory map, re-seed decision logic, junction/child handling, orphan detection, single-transaction
+- `seed_loader/__main__.py` — CLI: `python -m nightcrate.seed_loader --db <path> --csv-root <path> [--dry-run] [--json]`
+- `seed_loader/models.py` — SeedReport, TableReport, SeedError dataclasses
+- `data/seed/*.csv` — 29 CSV files (one per seedable table)
+- Runs automatically on app startup after migrations (sync sqlite3 connection, non-fatal)
+- filter_type rows loaded from CSV, NOT from migration (no equipment data in migrations)
+
+**Re-seed rules:** never overwrites `source='user'` rows or user-modified seed rows (detected by hash mismatch). Junction tables delete-and-reinsert only for parents that were inserted/updated.
+
+## Admin Page — Database Management
+
+Multi-database support with first-run setup wizard and hot-swap.
+
+**Architecture:**
+- `core/app_config.py` — reads/writes `config.json` in platformdirs app dir. Tracks known databases (path → name) + active DB path.
+- `db/session.py` — dynamic `DB_PATH` via `get_db_path()` / `set_db_path()`. `get_db()` resolves path on each call.
+- `db/migrations.py` — `apply_migrations(db_path=None)` accepts optional path for initializing new DBs.
+- `api/admin.py` — endpoints: `/api/admin/info`, `/api/admin/status`, `/api/admin/database/create`, `/api/admin/database/add`, `/api/admin/database/activate`, `/api/admin/database/setup`, `DELETE /api/admin/database` (with `?delete_file=true` option), `/api/admin/browse`, `/api/admin/shortcuts`, `/api/admin/mkdir`
+- `/api/health` returns `db_configured: bool` — frontend uses this to decide wizard vs normal app
+- Frontend: `SetupWizard.tsx` (three scenarios: fresh, available DBs, all unavailable), `AdminPage.tsx` (app info + DB management), folder browser with Home/Documents/App Data shortcuts + new folder
+
+**Key behaviors:**
+- First startup with no config → setup wizard
+- Active DB unavailable but others available → wizard offers activation
+- DB switch: `set_db_path()` + `window.location.reload()` — no backend restart needed
+- Remove can optionally delete the file (irreversible)
+
 ## Dependency & License Policy
 
 NightCrate is licensed under **GPL-3.0**. Before adding any new dependency (Python or JS/TS):
