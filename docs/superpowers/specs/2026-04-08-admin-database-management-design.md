@@ -68,6 +68,19 @@ Add `set_db_path(path: Path)` for hot-swap — updates a module-level variable t
 
 ### `api/admin.py` — new router
 
+**`GET /api/admin/info`**
+Returns read-only app info:
+```json
+{
+  "config_file": "/Users/fred/Library/Application Support/NightCrate/config.json",
+  "app_data_dir": "/Users/fred/Library/Application Support/NightCrate/",
+  "backend_root": "/Users/fred/dev/nightcrate/backend/src/nightcrate/",
+  "seed_data_dir": "/Users/fred/dev/nightcrate/backend/src/nightcrate/data/seed/",
+  "python_version": "3.14.0",
+  "app_version": "0.10.0"
+}
+```
+
 **`GET /api/admin/status`**
 Returns: `{ db_configured: bool, active_db: { path, name, size_bytes } | null, known_databases: [{ path, name, size_bytes }] }`
 
@@ -130,7 +143,19 @@ Shown instead of the normal app when `db_configured: false`. Full-screen centere
 
 ### Admin Page (`pages/AdminPage.tsx`)
 
-Accessible from nav sidebar. Shows:
+Accessible from nav sidebar. Two sections:
+
+**App Info** (read-only, non-editable fields):
+- Config file path (e.g., `~/Library/Application Support/NightCrate/config.json`)
+- App data directory (platformdirs app dir)
+- Backend root (where the Python package runs from)
+- Seed data directory
+- Python version
+- App version
+
+Backed by `GET /api/admin/info` which returns all paths and versions.
+
+**Database Management**:
 - **Current database** section: name, path, file size
 - **Known databases** list: each entry shows name, path, size, "Activate" button (grayed if already active), "Remove" button (grayed if active)
 - **Add database** section: two options:
