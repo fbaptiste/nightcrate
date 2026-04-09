@@ -39,13 +39,15 @@ def seed_db():
 
 @pytest.fixture
 def csv_root(tmp_path):
-    """Copy all stub CSVs into a temp dir and return the directory path."""
+    """Create temp dir with header-only CSV stubs for all seed tables."""
     seed_dir = importlib.resources.files("nightcrate") / "data" / "seed"
     dest = tmp_path / "seed"
     dest.mkdir()
     for f in seed_dir.iterdir():
         if f.name.endswith(".csv"):
-            (dest / f.name).write_text(f.read_text(), encoding="utf-8")
+            # Copy only the header line — tests write their own data rows
+            header = f.read_text(encoding="utf-8").split("\n")[0]
+            (dest / f.name).write_text(header + "\n", encoding="utf-8")
     return dest
 
 
