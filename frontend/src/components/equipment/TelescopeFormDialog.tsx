@@ -294,7 +294,7 @@ export default function TelescopeFormDialog({
         }
       }
 
-      setSnackMessage(isEdit ? "Telescope updated." : "Telescope added.");
+      setSnackMessage(isEdit ? "OTA updated." : "OTA added.");
       setSnackSeverity("info");
       setSnackOpen(true);
       onSaved();
@@ -322,7 +322,7 @@ export default function TelescopeFormDialog({
   return (
     <>
       <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-        <DialogTitle>{isEdit ? "Edit Telescope" : "Add Telescope"}</DialogTitle>
+        <DialogTitle>{isEdit ? "Edit OTA" : "Add OTA"}</DialogTitle>
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>

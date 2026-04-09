@@ -61,7 +61,8 @@ const columns: GridColDef<Telescope>[] = [
 export default function TelescopeList() {
   return (
     <EquipmentList<Telescope>
-      title="Telescopes"
+      title="OTAs"
+      addLabel="Add OTA"
       queryKey="telescopes"
       fetchFn={fetchTelescopes}
       deleteFn={deleteTelescope}
