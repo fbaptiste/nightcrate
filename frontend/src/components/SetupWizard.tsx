@@ -9,6 +9,7 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
@@ -28,6 +29,7 @@ import {
   fetchAdminInfo,
   fetchAdminStatus,
   setupDatabase,
+  activateDatabase,
   browseForDatabase,
   fetchShortcuts,
   createFolder,
@@ -87,13 +89,11 @@ export function SetupWizard() {
     ? `${directory.replace(/\/$/, "")}/${nameToFilename(name)}`
     : "";
 
-  const isScenarioB =
-    status !== undefined &&
-    status.known_databases.length > 0 &&
-    !status.known_databases.some((db) => db.available);
-
-  const unavailableDbs =
-    isScenarioB ? status!.known_databases.filter((db) => !db.available) : [];
+  const knownDbs = status?.known_databases ?? [];
+  const availableDbs = knownDbs.filter((db) => db.available);
+  const unavailableDbs = knownDbs.filter((db) => !db.available);
+  const hasKnownDbs = knownDbs.length > 0;
+  const hasAvailableDbs = availableDbs.length > 0;
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -103,6 +103,20 @@ export function SetupWizard() {
     } catch (err) {
       setErrorMsg(
         err instanceof Error ? err.message : "Failed to create database.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleActivateExisting = async (path: string) => {
+    setSubmitting(true);
+    try {
+      await activateDatabase(path);
+      window.location.reload();
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : "Failed to activate database.",
       );
     } finally {
       setSubmitting(false);
@@ -147,33 +161,10 @@ export function SetupWizard() {
     >
       <Card sx={{ maxWidth: 600, width: "100%", mx: 2 }}>
         <CardContent sx={{ p: 4 }}>
-          {isScenarioB ? (
-            <>
-              <Typography variant="h5" gutterBottom>
-                Database Not Available
-              </Typography>
-              <Alert severity="warning" sx={{ mb: 2 }}>
-                <Typography variant="body2" gutterBottom>
-                  The following configured{" "}
-                  {unavailableDbs.length === 1 ? "database is" : "databases are"}{" "}
-                  not available:
-                </Typography>
-                {unavailableDbs.map((db) => (
-                  <Box key={db.path} sx={{ mt: 0.5 }}>
-                    <Typography variant="body2" fontWeight="bold">
-                      {db.name}
-                    </Typography>
-                    <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
-                      {db.path}
-                    </Typography>
-                  </Box>
-                ))}
-              </Alert>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Create a new database or go to Admin to manage your database
-                list.
-              </Typography>
-            </>
+          {hasKnownDbs ? (
+            <Typography variant="h5" gutterBottom>
+              Select Database
+            </Typography>
           ) : (
             <>
               <Typography variant="h5" gutterBottom>
@@ -183,6 +174,63 @@ export function SetupWizard() {
                 Create your first NightCrate database to get started.
               </Typography>
             </>
+          )}
+
+          {/* Show unavailable databases as a warning */}
+          {unavailableDbs.length > 0 && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              <Typography variant="body2" gutterBottom>
+                The following configured{" "}
+                {unavailableDbs.length === 1 ? "database is" : "databases are"}{" "}
+                not available:
+              </Typography>
+              {unavailableDbs.map((db) => (
+                <Box key={db.path} sx={{ mt: 0.5 }}>
+                  <Typography variant="body2" fontWeight="bold">
+                    {db.name}
+                  </Typography>
+                  <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
+                    {db.path}
+                  </Typography>
+                </Box>
+              ))}
+            </Alert>
+          )}
+
+          {/* Show available databases to activate */}
+          {hasAvailableDbs && (
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Select an existing database:
+              </Typography>
+              <List disablePadding sx={{ mb: 1 }}>
+                {availableDbs.map((db) => (
+                  <ListItemButton
+                    key={db.path}
+                    onClick={() => void handleActivateExisting(db.path)}
+                    disabled={submitting}
+                    sx={{ border: 1, borderColor: "divider", borderRadius: 1, mb: 0.5 }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      <StorageIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={db.name}
+                      secondary={
+                        <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
+                          {db.path}
+                        </Typography>
+                      }
+                    />
+                  </ListItemButton>
+                ))}
+              </List>
+              <Divider sx={{ my: 2 }}>
+                <Typography variant="caption" color="text.secondary">
+                  or create a new database
+                </Typography>
+              </Divider>
+            </Box>
           )}
 
           <TextField
@@ -242,8 +290,6 @@ export function SetupWizard() {
           >
             {submitting ? (
               <CircularProgress size={22} color="inherit" />
-            ) : isScenarioB ? (
-              "Create New Database"
             ) : (
               "Create & Start"
             )}
