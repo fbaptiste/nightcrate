@@ -429,6 +429,7 @@ interface DatabaseSectionProps {
 function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<{ path: string; name: string } | null>(null);
   const queryClient = useQueryClient();
 
   // Default to the active DB's directory
@@ -447,9 +448,12 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
     });
   };
 
-  const handleRemove = (path: string) => {
+  const handleRemoveConfirm = (deleteFile: boolean) => {
+    if (!removeTarget) return;
+    const path = removeTarget.path;
+    setRemoveTarget(null);
     onMutate(async () => {
-      await removeDatabase(path);
+      await removeDatabase(path, deleteFile);
       invalidate();
     });
   };
@@ -537,7 +541,7 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                     <Button size="small" variant="outlined" disabled={!db.available} onClick={() => handleActivate(db.path)}>
                       Activate
                     </Button>
-                    <Button size="small" variant="outlined" color="warning" onClick={() => handleRemove(db.path)}>
+                    <Button size="small" variant="outlined" color="warning" onClick={() => setRemoveTarget({ path: db.path, name: db.name })}>
                       Remove
                     </Button>
                   </Box>
@@ -572,6 +576,42 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
         title="Add Existing Database"
         isAddExisting
       />
+
+      {/* Remove confirmation dialog */}
+      <Dialog
+        open={removeTarget !== null}
+        onClose={() => setRemoveTarget(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Remove Database</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            Remove <strong>{removeTarget?.name}</strong> from the known databases list?
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+            {removeTarget?.path}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ flexDirection: "column", alignItems: "stretch", gap: 1, px: 3, pb: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={() => handleRemoveConfirm(false)}
+          >
+            Remove from list only
+          </Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={() => handleRemoveConfirm(true)}
+          >
+            Remove and delete file (irreversible)
+          </Button>
+          <Button onClick={() => setRemoveTarget(null)}>
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

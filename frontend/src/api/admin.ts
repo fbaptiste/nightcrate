@@ -66,12 +66,15 @@ export const activateDatabase = (path: string) =>
     body: JSON.stringify({ path }),
   });
 
-export const removeDatabase = (path: string) =>
-  apiFetch<{ ok: boolean }>("/admin/database", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
-  });
+export const removeDatabase = (path: string, deleteFile = false) =>
+  apiFetch<{ ok: boolean }>(
+    `/admin/database${deleteFile ? "?delete_file=true" : ""}`,
+    {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    },
+  );
 
 export const browseForDatabase = (path = "~") =>
   apiFetch<BrowseResult>(`/admin/browse?path=${encodeURIComponent(path)}`);

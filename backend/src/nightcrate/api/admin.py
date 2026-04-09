@@ -238,8 +238,11 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
 
 
 @router.delete("/database")
-async def remove_database(req: RemoveDatabaseRequest) -> dict:
-    """Remove a database from the known list. Does not delete the file."""
+async def remove_database(
+    req: RemoveDatabaseRequest,
+    delete_file: bool = Query(False, description="Also delete the database file from disk"),
+) -> dict:
+    """Remove a database from the known list, optionally deleting the file."""
     config = load_config()
 
     if config.active_db == req.path:
@@ -252,6 +255,11 @@ async def remove_database(req: RemoveDatabaseRequest) -> dict:
 
     del config.databases[req.path]
     save_config(config)
+
+    if delete_file:
+        db_path = Path(req.path)
+        if db_path.is_file():
+            db_path.unlink()
 
     return {"ok": True}
 
