@@ -1,1 +1,7 @@
 seed_key,name,notes,website
+manufacturer.zwo,ZWO,,https://zwoastro.com
+manufacturer.celestron,Celestron,,https://celestron.com
+manufacturer.optolong,Optolong,,https://optolong.com
+manufacturer.sony,Sony (Semiconductor),Used as sensor manufacturer,
+manufacturer.pegasus,Pegasus Astro,,https://pegasusastro.com
+manufacturer.open_source,Open Source / Community,,

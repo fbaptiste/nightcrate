@@ -1,1 +1,5 @@
 seed_key,diameter_mm,name,notes
+connector_size.m54,54,M54,
+connector_size.m48,48,M48,
+connector_size.t2,42,T2 (M42x0.75),
+connector_size.2_inch,50.8,2 inch,

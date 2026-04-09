@@ -1,1 +1,3 @@
 seed_key,manufacturer_seed_key,category,name,notes,website
+software.nina,manufacturer.open_source,capture,N.I.N.A.,Open source capture software,https://nighttime-imaging.eu
+software.phd2,manufacturer.open_source,guiding,PHD2,Open source guiding software,https://openphdguiding.org

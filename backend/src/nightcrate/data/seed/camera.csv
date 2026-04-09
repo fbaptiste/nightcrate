@@ -1,1 +1,3 @@
 seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,tilt_adapter,unity_gain,weight_g
+camera.zwo.asi2600mm_pro,connector_size.m54,,manufacturer.zwo,sensor.sony.imx571,connection_interface.usb_2_0,17.5,1,35,1,ASI2600MM Pro,,1,100,700
+camera.zwo.asi533mm_pro,connector_size.m54,,manufacturer.zwo,sensor.sony.imx533,,17.5,1,35,0,ASI533MM Pro,,0,100,450

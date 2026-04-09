@@ -1,1 +1,3 @@
 seed_key,filter_seed_key,bandwidth_nm,central_wavelength_nm,line_name,peak_transmission_pct
+filter_passband.optolong.ha_7nm.ha,filter.optolong.ha_7nm,7,656.3,Ha,90
+filter_passband.optolong.oiii_6_5nm.oiii,filter.optolong.oiii_6_5nm,6.5,500.7,Oiii,90

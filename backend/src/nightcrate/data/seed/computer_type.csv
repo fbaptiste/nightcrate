@@ -1,1 +1,4 @@
 seed_key,description,name
+computer_type.imaging,Dedicated imaging controller,Imaging
+computer_type.processing,Image processing workstation,Processing
+computer_type.control,Mount/observatory control,Control

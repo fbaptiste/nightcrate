@@ -1,1 +1,2 @@
 seed_key,manufacturer_seed_key,mount_type_seed_key,counterweight_required,drive_type,goto_capable,model_name,mount_weight_kg,notes,payload_capacity_kg,periodic_error_arcsec
+mount.zwo.am5,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM5,5,,13,

@@ -1,1 +1,3 @@
 seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,hcg_threshold_gain,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm
+sensor.sony.imx571,manufacturer.sony,16,,0,,,IMX571,Backside-illuminated CMOS,91,3.76,1.0,6248,4176,14.7,mono,23.5
+sensor.sony.imx533,manufacturer.sony,14,,0,,,IMX533,Backside-illuminated CMOS,91,3.76,1.0,3008,3008,11.3,mono,11.3
