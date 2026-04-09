@@ -23,7 +23,7 @@ class SeedableTable:
 
 
 # ---------------------------------------------------------------------------
-# LOAD ORDER — 28 entries, parents always precede children
+# LOAD ORDER — 29 entries, parents always precede children
 # ---------------------------------------------------------------------------
 
 LOAD_ORDER: list[SeedableTable] = [
@@ -205,13 +205,6 @@ LOAD_ORDER: list[SeedableTable] = [
     ),
     # ------------------------------------------------------------------
     # 14: filter — FKs: manufacturer, filter_type, filter_size
-    #
-    # NOTE: filter_type is NOT loaded by the seed loader — its rows are
-    # seeded directly by the schema migration (0005.equipment_schema.sql).
-    # The loader must resolve filter_type_seed_key by querying the DB
-    # directly (SELECT id FROM filter_type WHERE seed_key = ?) rather
-    # than using the in-memory seed_key map that only covers seed-loader
-    # managed tables.
     # ------------------------------------------------------------------
     SeedableTable(
         table_name="filter",
@@ -227,7 +220,7 @@ LOAD_ORDER: list[SeedableTable] = [
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
-            "filter_type_seed_key": "filter_type",  # resolved via DB, not in-memory map
+            "filter_type_seed_key": "filter_type",
             "filter_size_seed_key": "filter_size",
         },
     ),

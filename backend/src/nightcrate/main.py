@@ -51,20 +51,13 @@ async def lifespan(app: FastAPI):
 
             csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
             sync_conn = sqlite3.connect(str(get_db_path()))
-            sync_conn.row_factory = sqlite3.Row
-            sync_conn.execute("PRAGMA foreign_keys = ON")
-            report = load_all(sync_conn, csv_root, "auto")
-            sync_conn.commit()
-            sync_conn.close()
-            if not report.ok:
-                logger = logging.getLogger("nightcrate")
-                for err in report.errors:
-                    logger.warning(
-                        "Seed loader error [%s] %s: %s",
-                        err.table,
-                        err.seed_key,
-                        err.message,
-                    )
+            try:
+                sync_conn.row_factory = sqlite3.Row
+                sync_conn.execute("PRAGMA foreign_keys = ON")
+                load_all(sync_conn, csv_root, "auto")
+                sync_conn.commit()
+            finally:
+                sync_conn.close()
         except Exception:
             logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
             # Non-fatal — don't block startup
