@@ -344,6 +344,11 @@ export function Histogram({ path, hdu, histogramData, histogramPending, shadow, 
   }
 
   // Track mouse globally during drag so dragging beyond the canvas edges works
+  const dragStartRef = useRef(dragStartX);
+  const dragCurrentRef = useRef(dragCurrentX);
+  dragStartRef.current = dragStartX;
+  dragCurrentRef.current = dragCurrentX;
+
   useEffect(() => {
     if (!dragging) return;
 
@@ -359,9 +364,11 @@ export function Histogram({ path, hdu, histogramData, histogramPending, shadow, 
     };
 
     const commitZoom = () => {
-      if (dragStartX != null) {
-        const finalX = dragCurrentX ?? dragStartX;
-        const f1 = canvasXToFraction(dragStartX);
+      const start = dragStartRef.current;
+      const current = dragCurrentRef.current;
+      if (start != null) {
+        const finalX = current ?? start;
+        const f1 = canvasXToFraction(start);
         const f2 = canvasXToFraction(finalX);
         if (Math.abs(f1 - f2) >= 0.02) {
           const abs1 = zoomFractionToAbsolute(Math.min(f1, f2));
@@ -381,7 +388,7 @@ export function Histogram({ path, hdu, histogramData, histogramPending, shadow, 
       window.removeEventListener("mousemove", handleGlobalMove);
       window.removeEventListener("mouseup", commitZoom);
     };
-  });
+  }, [dragging]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compute tooltip data (only when not dragging)
   const tooltip = (() => {

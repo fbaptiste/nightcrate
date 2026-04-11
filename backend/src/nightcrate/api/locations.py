@@ -128,19 +128,6 @@ async def list_locations():
         return results
 
 
-@router.get("/{location_id}", response_model=LocationResponse)
-async def get_location(location_id: int):
-    """Get a single location by ID."""
-    async with get_db() as conn:
-        row = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
-        result = await row.fetchone()
-        if result is None:
-            raise HTTPException(status_code=404, detail="Location not found")
-        d = _row_to_dict(result)
-        _bool_fields(d, "is_default")
-        return d
-
-
 @router.get("/default", response_model=LocationResponse | None)
 async def get_default_location():
     """Get the default location, or null if none set."""
@@ -149,6 +136,19 @@ async def get_default_location():
         result = await row.fetchone()
         if result is None:
             return None
+        d = _row_to_dict(result)
+        _bool_fields(d, "is_default")
+        return d
+
+
+@router.get("/{location_id}", response_model=LocationResponse)
+async def get_location(location_id: int):
+    """Get a single location by ID."""
+    async with get_db() as conn:
+        row = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        result = await row.fetchone()
+        if result is None:
+            raise HTTPException(status_code=404, detail="Location not found")
         d = _row_to_dict(result)
         _bool_fields(d, "is_default")
         return d

@@ -31,6 +31,7 @@ import {
   type LocationCreate,
 } from "@/api/locations";
 import { EasterEggWand } from "@/components/EasterEggWand";
+import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 
 const INCANTATIONS = [
   "I solemnly swear not to buy any new equipment this month",
@@ -110,18 +111,6 @@ const INCANTATIONS = [
   "My filter wheel has 7 positions. Position 8 is for tears.",
   "Astronomer's prayer: give us this night our nightly subs",
 ];
-
-function parseOptionalFloat(s: string): number | null {
-  if (!s.trim()) return null;
-  const v = parseFloat(s);
-  return isNaN(v) ? null : v;
-}
-
-function parseOptionalInt(s: string): number | null {
-  if (!s.trim()) return null;
-  const v = parseInt(s, 10);
-  return isNaN(v) ? null : v;
-}
 
 interface FormState {
   name: string;
