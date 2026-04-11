@@ -23,7 +23,7 @@ class SeedableTable:
 
 
 # ---------------------------------------------------------------------------
-# LOAD ORDER — 30 entries, parents always precede children
+# LOAD ORDER — 31 entries, parents always precede children
 # ---------------------------------------------------------------------------
 
 LOAD_ORDER: list[SeedableTable] = [
