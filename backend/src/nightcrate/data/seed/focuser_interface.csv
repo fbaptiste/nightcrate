@@ -1,1 +1,40 @@
 focuser_seed_key,interface_seed_key
+# --- ZWO EAF line ---
+focuser.zwo.eaf,connection_interface.usb_2_0
+focuser.zwo.eaf_5v,connection_interface.usb_2_0
+focuser.zwo.eafn,connection_interface.usb_3_0_type_c
+focuser.zwo.eaf_pro,connection_interface.usb_3_0_type_c
+focuser.zwo.eaf_pro,connection_interface.bluetooth
+# --- Pegasus Astro ---
+focuser.pegasus_astro.focuscube_v3,connection_interface.usb_3_0_type_c
+focuser.pegasus_astro.focuscube_v3,connection_interface.wifi
+focuser.pegasus_astro.prodigy,connection_interface.usb_2_0
+# --- PrimaLuceLab SESTO SENSO ---
+focuser.primalucelab.sesto_senso_2,connection_interface.usb_3_0_type_c
+focuser.primalucelab.sesto_senso_2,connection_interface.wifi
+focuser.primalucelab.sesto_senso_3,connection_interface.usb_3_0_type_c
+focuser.primalucelab.sesto_senso_3,connection_interface.wifi
+# --- PrimaLuceLab ESATTO ---
+focuser.primalucelab.esatto_2,connection_interface.usb_3_0_type_c
+focuser.primalucelab.esatto_2,connection_interface.wifi
+focuser.primalucelab.esatto_2_lp,connection_interface.usb_3_0_type_c
+focuser.primalucelab.esatto_2_lp,connection_interface.wifi
+focuser.primalucelab.esatto_3,connection_interface.usb_3_0_type_c
+focuser.primalucelab.esatto_3,connection_interface.wifi
+focuser.primalucelab.esatto_35_lp,connection_interface.usb_3_0_type_c
+focuser.primalucelab.esatto_35_lp,connection_interface.wifi
+focuser.primalucelab.esatto_4,connection_interface.usb_3_0_type_c
+focuser.primalucelab.esatto_4,connection_interface.wifi
+# --- Celestron ---
+focuser.celestron.focus_motor,connection_interface.usb_2_0
+# --- Rigel Systems ---
+focuser.rigel_systems.wifi_nstep,connection_interface.usb_2_0
+focuser.rigel_systems.wifi_nstep,connection_interface.wifi
+# --- Lacerta ---
+focuser.lacerta.mfoc,connection_interface.usb_2_0
+# --- Deep Sky Dad ---
+focuser.deep_sky_dad.af3,connection_interface.usb_2_0_micro_b
+# --- Moonlite NiteCrawler ---
+focuser.moonlite.nitecrawler_wr25,connection_interface.usb_2_0
+focuser.moonlite.nitecrawler_wr30,connection_interface.usb_2_0
+focuser.moonlite.nitecrawler_wr35,connection_interface.usb_2_0

@@ -262,8 +262,8 @@ def test_parent_child(seed_db, csv_root):
     write_csv(
         csv_root,
         "telescope.csv",
-        "seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,weight_kg",
-        "telescope.c11,manufacturer.celestron,od.sct,279,,C11,,,",
+        "seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,source_url,weight_kg",
+        "telescope.c11,manufacturer.celestron,od.sct,279,,C11,,,,",
     )
     # reduction_factor, effective_focal_length_mm, effective_focal_ratio are NOT NULL
     write_csv(
@@ -309,8 +309,8 @@ def test_parent_child_user_modified_child(seed_db, csv_root):
     write_csv(
         csv_root,
         "telescope.csv",
-        "seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,weight_kg",
-        "telescope.c11,manufacturer.celestron,od.sct,279,,C11,,,",
+        "seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,source_url,weight_kg",
+        "telescope.c11,manufacturer.celestron,od.sct,279,,C11,,,,",
     )
     # reduction_factor, effective_focal_length_mm, effective_focal_ratio are NOT NULL
     write_csv(
@@ -374,22 +374,17 @@ def test_junction_table(seed_db, csv_root):
         "iface.usb3,data,USB 3.0,",
     )
     # sensor: NOT NULL cols are model_name, sensor_type, pixel_size_um, resolution_x, resolution_y
-    # Header col order (alphabetical after seed_key): seed_key, manufacturer_seed_key,
-    # adc_bit_depth, bayer_pattern, dual_gain, full_well_capacity_ke, hcg_threshold_gain,
-    # model_name (pos 8), notes (pos 9), peak_qe_pct (pos 10), pixel_size_um (pos 11),
-    # read_noise_e (pos 12), resolution_x (pos 13), resolution_y (pos 14),
-    # sensor_height_mm (pos 15), sensor_type (pos 16), sensor_width_mm (pos 17)
     write_csv(
         csv_root,
         "sensor.csv",
-        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,hcg_threshold_gain,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm",
-        "sensor.imx571,manufacturer.zwo,,,0,,,IMX571,,,3.76,,6248,4176,,mono,",
+        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm,source_url",
+        "sensor.imx571,manufacturer.zwo,,,0,,IMX571,,,3.76,,6248,4176,,mono,,",
     )
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,tilt_adapter,unity_gain,weight_g",
-        "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,,1,,0,ASI2600MM Pro,,0,100,",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,,1,,0,ASI2600MM Pro,,,0,100,,,,,,",
     )
     write_csv(
         csv_root,
@@ -419,8 +414,8 @@ def test_junction_table(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,tilt_adapter,unity_gain,weight_g",
-        "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,17.5,1,,0,ASI2600MM Pro,,0,100,",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,17.5,1,,0,ASI2600MM Pro,,,0,100,,,,,,",
     )
 
     report2 = load_all(seed_db, csv_root, mode="update")
@@ -484,8 +479,8 @@ def test_fk_resolution_failure(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,tilt_adapter,unity_gain,weight_g",
-        "camera.bad,,,manufacturer.zwo,sensor.nonexistent,,,,,,BadCamera,,,100,",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "camera.bad,,,manufacturer.zwo,sensor.nonexistent,,,,,,BadCamera,,,,100,,,,,,",
     )
 
     with pytest.raises(RuntimeError, match="FK resolution failed"):
@@ -513,8 +508,8 @@ def test_transaction_rollback(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,tilt_adapter,unity_gain,weight_g",
-        "camera.bad,,,manufacturer.zwo,sensor.ghost,,,,,,GhostCamera,,,100,",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "camera.bad,,,manufacturer.zwo,sensor.ghost,,,,,,GhostCamera,,,,100,,,,,,",
     )
 
     # Wrap in explicit transaction and rollback on failure

@@ -1,10 +1,12 @@
+import Box from "@mui/material/Box";
 import { type GridColDef } from "@mui/x-data-grid";
 import EquipmentList from "./EquipmentList";
 import FilterWheelFormDialog from "./FilterWheelFormDialog";
 import { fetchFilterWheels, deleteFilterWheel, type FilterWheel } from "@/api/equipment";
+import DetailField from "@/components/equipment/shared/DetailField";
+import ExternalLink from "@/components/equipment/shared/ExternalLink";
 
 const columns: GridColDef<FilterWheel>[] = [
-  { field: "model_name", headerName: "Model", flex: 1.5, minWidth: 160 },
   {
     field: "manufacturer",
     headerName: "Manufacturer",
@@ -12,6 +14,7 @@ const columns: GridColDef<FilterWheel>[] = [
     minWidth: 130,
     valueGetter: (_v, row) => row.manufacturer.name,
   },
+  { field: "model_name", headerName: "Model", flex: 1.5, minWidth: 160 },
   {
     field: "filter_size",
     headerName: "Filter Size",
@@ -46,11 +49,31 @@ export default function FilterWheelList() {
     <EquipmentList<FilterWheel>
       title="Filter Wheels"
       queryKey="filter-wheels"
+      tableName="filter_wheel"
       fetchFn={fetchFilterWheels}
       deleteFn={deleteFilterWheel}
       columns={columns}
       getItemName={(fw) => fw.model_name}
       FormDialog={FilterWheelFormDialog}
+      renderDetail={(item) => (
+        <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, columnGap: 4 }}>
+          <DetailField label="Manufacturer" value={item.manufacturer.name} />
+          <DetailField label="Filter Size" value={item.filter_size?.name ?? null} />
+          <DetailField label="Camera Side Connector" value={item.camera_side_connector?.name ?? null} />
+          <DetailField label="Telescope Side Connector" value={item.telescope_side_connector?.name ?? null} />
+          <DetailField label="Num Positions" value={item.num_positions} />
+          <DetailField label="Back Focus Contribution" value={item.back_focus_contribution_mm != null ? `${item.back_focus_contribution_mm}mm` : null} />
+          <DetailField
+            label="Interfaces"
+            value={item.interfaces.length > 0 ? item.interfaces.map((i) => i.name).join(", ") : null}
+          />
+          <DetailField label="Notes" value={item.notes ?? null} />
+          <DetailField
+            label="Source"
+            value={item.source_url ? <ExternalLink href={item.source_url} /> : null}
+          />
+        </Box>
+      )}
     />
   );
 }

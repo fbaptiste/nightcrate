@@ -1,2 +1,60 @@
 connector_size_seed_key,telescope_seed_key
-connector_size.m54,telescope.celestron.c11
+connector_size.sct,telescope.celestron.edgehd_800
+connector_size.large_sct,telescope.celestron.edgehd_925
+connector_size.large_sct,telescope.celestron.edgehd_1100
+connector_size.large_sct,telescope.celestron.edgehd_1400
+# --- RASA (front-mounted camera adapters) ---
+connector_size.t2,telescope.celestron.rasa_8
+connector_size.t2,telescope.celestron.rasa_11_v2
+connector_size.m48,telescope.celestron.rasa_11_v2
+# --- Classic SCTs (rear cell threads) ---
+connector_size.sct,telescope.celestron.c6
+connector_size.sct,telescope.celestron.c8
+connector_size.large_sct,telescope.celestron.c11
+# --- Sky-Watcher Esprit ---
+connector_size.m48,telescope.skywatcher.esprit_80ed
+connector_size.m48,telescope.skywatcher.esprit_100ed
+connector_size.m48,telescope.skywatcher.esprit_120ed
+# --- Sky-Watcher Quattro ---
+connector_size.2_inch,telescope.skywatcher.quattro_200p
+connector_size.2_inch,telescope.skywatcher.quattro_250p
+connector_size.2_inch,telescope.skywatcher.quattro_300p
+# --- Sky-Watcher Evostar ED ---
+connector_size.2_inch,telescope.skywatcher.evostar_72ed
+connector_size.2_inch,telescope.skywatcher.evostar_80ed
+connector_size.2_inch,telescope.skywatcher.evostar_100ed
+connector_size.2_inch,telescope.skywatcher.evostar_120ed
+# --- Askar ---
+connector_size.m48,telescope.askar.fra300_pro
+connector_size.m68,telescope.askar.fra400
+connector_size.m48,telescope.askar.fra600
+connector_size.m48,telescope.askar.v60
+connector_size.m54,telescope.askar.v60
+connector_size.m48,telescope.askar.v80
+connector_size.m54,telescope.askar.v80
+connector_size.m48,telescope.askar.103apo
+connector_size.m54,telescope.askar.103apo
+connector_size.m48,telescope.askar.107phq
+connector_size.m54,telescope.askar.107phq
+# --- William Optics ---
+connector_size.m48,telescope.william_optics.redcat_51_ii
+connector_size.m48,telescope.william_optics.whitecat_51
+connector_size.m48,telescope.william_optics.spacecat_51
+connector_size.m48,telescope.william_optics.redcat_71_ii
+connector_size.m54,telescope.william_optics.redcat_71_ii
+connector_size.m68,telescope.william_optics.redcat_71_ii
+connector_size.1_25_inch,telescope.william_optics.guidestar_61
+connector_size.m63,telescope.william_optics.gt81_iv
+connector_size.m63,telescope.william_optics.z103
+# --- Sharpstar ---
+connector_size.m48,telescope.sharpstar.15028hnt
+connector_size.m48,telescope.sharpstar.61edph_ii
+connector_size.m48,telescope.sharpstar.76edph
+connector_size.m48,telescope.sharpstar.94edph
+# --- Explore Scientific FCD100 ---
+connector_size.m48,telescope.explore_scientific.ed80_fcd100
+connector_size.2_inch,telescope.explore_scientific.ed80_fcd100
+connector_size.m48,telescope.explore_scientific.ed102_fcd100
+connector_size.2_inch,telescope.explore_scientific.ed102_fcd100
+connector_size.m48,telescope.explore_scientific.ed127_fcd100
+connector_size.2_inch,telescope.explore_scientific.ed127_fcd100

@@ -23,7 +23,7 @@ class SeedableTable:
 
 
 # ---------------------------------------------------------------------------
-# LOAD ORDER — 29 entries, parents always precede children
+# LOAD ORDER — 31 entries, parents always precede children
 # ---------------------------------------------------------------------------
 
 LOAD_ORDER: list[SeedableTable] = [
@@ -61,14 +61,19 @@ LOAD_ORDER: list[SeedableTable] = [
         seeded_fields=("name", "description"),
     ),
     SeedableTable(
-        table_name="computer_type",
-        csv_filename="computer_type.csv",
+        table_name="form_factor",
+        csv_filename="form_factor.csv",
         seeded_fields=("name", "description"),
+    ),
+    SeedableTable(
+        table_name="focuser_type",
+        csv_filename="focuser_type.csv",
+        seeded_fields=("name", "notes"),
     ),
     SeedableTable(
         table_name="filter_type",
         csv_filename="filter_type.csv",
-        seeded_fields=("name", "description"),
+        seeded_fields=("name", "display_name", "description"),
     ),
     # ------------------------------------------------------------------
     # 9: sensor — FK: manufacturer_id → manufacturer
@@ -91,8 +96,8 @@ LOAD_ORDER: list[SeedableTable] = [
             "peak_qe_pct",
             "bayer_pattern",
             "dual_gain",
-            "hcg_threshold_gain",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
@@ -119,7 +124,13 @@ LOAD_ORDER: list[SeedableTable] = [
             "has_usb_hub",
             "usb_hub_interface_id",
             "unity_gain",
+            "effective_full_well_ke",
+            "effective_read_noise_lcg_e",
+            "effective_read_noise_hcg_e",
+            "effective_peak_qe_pct",
+            "hcg_threshold_gain",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
@@ -159,6 +170,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "weight_kg",
             "obstruction_pct",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
@@ -204,7 +216,7 @@ LOAD_ORDER: list[SeedableTable] = [
         parent_key_column="telescope_seed_key",
     ),
     # ------------------------------------------------------------------
-    # 14: filter — FKs: manufacturer, filter_type, filter_size
+    # 14: filter — FKs: manufacturer, filter_type
     # ------------------------------------------------------------------
     SeedableTable(
         table_name="filter",
@@ -212,16 +224,14 @@ LOAD_ORDER: list[SeedableTable] = [
         seeded_fields=(
             "manufacturer_id",
             "filter_type_id",
-            "filter_size_id",
             "model_name",
             "peak_transmission_pct",
-            "mounted_thickness_mm",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
             "filter_type_seed_key": "filter_type",
-            "filter_size_seed_key": "filter_size",
         },
     ),
     # ------------------------------------------------------------------
@@ -243,7 +253,25 @@ LOAD_ORDER: list[SeedableTable] = [
         parent_key_column="filter_seed_key",
     ),
     # ------------------------------------------------------------------
-    # 16: mount — FKs: manufacturer, mount_type
+    # 16: filter_size_option — child of filter
+    # ------------------------------------------------------------------
+    SeedableTable(
+        table_name="filter_size_option",
+        csv_filename="filter_size_option.csv",
+        seeded_fields=(
+            "filter_id",
+            "filter_size_id",
+            "mounted_thickness_mm",
+            "notes",
+        ),
+        fk_columns={
+            "filter_seed_key": "filter",
+            "filter_size_seed_key": "filter_size",
+        },
+        parent_key_column="filter_seed_key",
+    ),
+    # ------------------------------------------------------------------
+    # 17: mount — FKs: manufacturer, mount_type
     # ------------------------------------------------------------------
     SeedableTable(
         table_name="mount",
@@ -259,6 +287,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "periodic_error_arcsec",
             "drive_type",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
@@ -281,13 +310,14 @@ LOAD_ORDER: list[SeedableTable] = [
         junction_key_columns=("mount_id", "interface_id"),
     ),
     # ------------------------------------------------------------------
-    # 18: focuser — FK: manufacturer
+    # 18: focuser — FKs: manufacturer, focuser_type
     # ------------------------------------------------------------------
     SeedableTable(
         table_name="focuser",
         csv_filename="focuser.csv",
         seeded_fields=(
             "manufacturer_id",
+            "focuser_type_id",
             "model_name",
             "motorized",
             "travel_range_mm",
@@ -296,9 +326,11 @@ LOAD_ORDER: list[SeedableTable] = [
             "temperature_compensation",
             "backlash_steps",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
+            "focuser_type_seed_key": "focuser_type",
         },
     ),
     # ------------------------------------------------------------------
@@ -331,6 +363,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "num_positions",
             "back_focus_contribution_mm",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
@@ -369,6 +402,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "back_focus_contribution_mm",
             "weight_g",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
@@ -390,6 +424,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "focal_length_mm",
             "weight_g",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
@@ -397,20 +432,21 @@ LOAD_ORDER: list[SeedableTable] = [
         },
     ),
     # ------------------------------------------------------------------
-    # 24: computer — FKs: manufacturer, computer_type
+    # 24: computer — FKs: manufacturer, form_factor
     # ------------------------------------------------------------------
     SeedableTable(
         table_name="computer",
         csv_filename="computer.csv",
         seeded_fields=(
             "manufacturer_id",
-            "computer_type_id",
+            "form_factor_id",
             "model_name",
             "notes",
+            "source_url",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
-            "computer_type_seed_key": "computer_type",
+            "form_factor_seed_key": "form_factor",
         },
     ),
     # ------------------------------------------------------------------

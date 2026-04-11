@@ -12,10 +12,12 @@ import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import InterfaceMultiSelect from "@/components/equipment/shared/InterfaceMultiSelect";
+import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import {
   createFocuser,
   updateFocuser,
+  fetchFocuserTypes,
   type Focuser,
   type FocuserCreate,
 } from "@/api/equipment";
@@ -30,6 +32,7 @@ interface FocuserFormDialogProps {
 interface FormState {
   model_name: string;
   manufacturer_id: number | null;
+  focuser_type_id: number | null;
   motorized: boolean;
   travel_range_mm: string;
   step_size_um: string;
@@ -44,6 +47,7 @@ function emptyForm(): FormState {
   return {
     model_name: "",
     manufacturer_id: null,
+    focuser_type_id: null,
     motorized: true,
     travel_range_mm: "",
     step_size_um: "",
@@ -59,6 +63,7 @@ function focuserToForm(item: Focuser): FormState {
   return {
     model_name: item.model_name,
     manufacturer_id: item.manufacturer.id,
+    focuser_type_id: item.focuser_type?.id ?? null,
     motorized: item.motorized,
     travel_range_mm: item.travel_range_mm != null ? String(item.travel_range_mm) : "",
     step_size_um: item.step_size_um != null ? String(item.step_size_um) : "",
@@ -110,6 +115,7 @@ export default function FocuserFormDialog({
       const payload: FocuserCreate = {
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
+        focuser_type_id: form.focuser_type_id,
         motorized: form.motorized,
         travel_range_mm: parseOptionalFloat(form.travel_range_mm),
         step_size_um: parseOptionalFloat(form.step_size_um),
@@ -168,7 +174,16 @@ export default function FocuserFormDialog({
               />
             </Box>
 
-            {/* Row 2: Travel range + Step size + Total steps + Backlash */}
+            {/* Row 2: Focuser Type */}
+            <LookupPicker
+              fetchFn={fetchFocuserTypes}
+              queryKey="focuser-types"
+              label="Focuser Type"
+              value={form.focuser_type_id}
+              onChange={(id) => set("focuser_type_id", id)}
+            />
+
+            {/* Row 3: Travel range + Step size + Total steps + Backlash */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 2 }}>
               <TextField
                 label="Travel Range (mm)"
@@ -200,7 +215,7 @@ export default function FocuserFormDialog({
               />
             </Box>
 
-            {/* Row 3: Switches */}
+            {/* Row 4: Switches */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 3, flexWrap: "wrap" }}>
               <FormControlLabel
                 control={
@@ -222,13 +237,13 @@ export default function FocuserFormDialog({
               />
             </Box>
 
-            {/* Row 4: Connection interfaces */}
+            {/* Row 5: Connection interfaces */}
             <InterfaceMultiSelect
               value={form.interface_ids}
               onChange={(ids) => set("interface_ids", ids)}
             />
 
-            {/* Row 5: Notes */}
+            {/* Row 6: Notes */}
             <TextField
               label="Notes"
               value={form.notes}

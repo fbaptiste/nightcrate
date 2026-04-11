@@ -123,7 +123,7 @@ class TestMigrationApplies:
             "connection_interface",
             "connector_size",
             "filter_size",
-            "computer_type",
+            "form_factor",
             "filter_type",
             "sensor",
             "camera",
@@ -222,14 +222,6 @@ class TestCheckConstraints:
         )
         row = conn.execute("SELECT bayer_pattern FROM sensor WHERE model_name='ColorOK'").fetchone()
         assert row["bayer_pattern"] == "RGGB"
-
-    def test_filter_type_rejects_invalid_name(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO filter_type (name, source, seed_key) "
-                "VALUES ('bogus_type', 'user', NULL)"
-            )
 
     def test_filter_passband_rejects_invalid_line_name(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
@@ -441,7 +433,7 @@ class TestFilterSummaryView:
     def test_inactive_filter_excluded(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         mfg_id = _insert_manufacturer(conn)
-        ft_id = _insert_filter_type(conn, "broadband_luminance")
+        ft_id = _insert_filter_type(conn, "luminance")
         f_id = _insert_filter(conn, mfg_id, ft_id, model="OldFilter")
         conn.execute("UPDATE filter SET active = 0 WHERE id = ?", (f_id,))
         row = conn.execute("SELECT * FROM filter_summary WHERE filter_id = ?", (f_id,)).fetchone()
@@ -543,11 +535,11 @@ class TestFullRoundTrip:
         )
 
         # Computer
-        conn.execute("INSERT INTO computer_type (name) VALUES ('Mini PC')")
+        conn.execute("INSERT INTO form_factor (name) VALUES ('Mini PC')")
         ct_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.execute(
             "INSERT INTO computer "
-            "(manufacturer_id, computer_type_id, model_name) "
+            "(manufacturer_id, form_factor_id, model_name) "
             "VALUES (?, ?, 'NUC')",
             (mfg6_id, ct_id),
         )

@@ -17,11 +17,15 @@ import Typography from "@mui/material/Typography";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import FormHelperText from "@mui/material/FormHelperText";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Switch from "@mui/material/Switch";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import RestoreIcon from "@mui/icons-material/RestoreFromTrash";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { restoreEquipmentItem } from "@/api/equipment";
 import ConfirmDeleteDialog from "@/components/equipment/shared/ConfirmDeleteDialog";
 import {
   fetchOpticalDesigns,
@@ -44,16 +48,26 @@ import {
   createFilterSize,
   updateFilterSize,
   deleteFilterSize,
-  fetchComputerTypes,
-  createComputerType,
-  updateComputerType,
-  deleteComputerType,
+  fetchFormFactors,
+  createFormFactor,
+  updateFormFactor,
+  deleteFormFactor,
+  fetchFilterTypes,
+  createFilterType,
+  updateFilterType,
+  deleteFilterType,
+  fetchFocuserTypes,
+  createFocuserType,
+  updateFocuserType,
+  deleteFocuserType,
   type OpticalDesign,
   type MountType,
   type ConnectionInterface,
   type ConnectorSize,
   type FilterSize,
-  type ComputerType,
+  type FormFactor,
+  type FilterType,
+  type FocuserType,
 } from "@/api/equipment";
 
 // ---------------------------------------------------------------------------
@@ -205,6 +219,7 @@ function LookupFormDialog({
 interface LookupSectionProps<T extends { id: number; name: string }> {
   title: string;
   queryKey: string;
+  tableName: string;
   fetchFn: (includeRetired?: boolean) => Promise<T[]>;
   createFn: (data: Record<string, unknown>) => Promise<T>;
   updateFn: (id: number, data: Record<string, unknown>) => Promise<T>;
@@ -214,9 +229,10 @@ interface LookupSectionProps<T extends { id: number; name: string }> {
   defaultValues: Record<string, unknown>;
 }
 
-function LookupSection<T extends { id: number; name: string }>({
+function LookupSection<T extends { id: number; name: string; active?: boolean }>({
   title,
   queryKey,
+  tableName,
   fetchFn,
   createFn,
   updateFn,
@@ -229,10 +245,11 @@ function LookupSection<T extends { id: number; name: string }>({
   const [formOpen, setFormOpen] = useState(false);
   const [editItem, setEditItem] = useState<T | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<T | null>(null);
+  const [showRetired, setShowRetired] = useState(false);
 
   const { data: items = [], isLoading } = useQuery({
-    queryKey: [queryKey],
-    queryFn: () => fetchFn(),
+    queryKey: [queryKey, { showRetired }],
+    queryFn: () => fetchFn(showRetired),
   });
 
   const handleAdd = () => {
@@ -266,30 +283,50 @@ function LookupSection<T extends { id: number; name: string }>({
     setDeleteTarget(null);
   };
 
+  const handleRestore = async (item: T) => {
+    await restoreEquipmentItem(tableName, item.id);
+    void queryClient.invalidateQueries({ queryKey: [queryKey] });
+  };
+
   const actionsColumn: GridColDef<T> = {
     field: "actions",
     headerName: "Actions",
     width: 100,
     sortable: false,
     filterable: false,
-    renderCell: (params) => (
-      <Box>
-        <IconButton
-          size="small"
-          onClick={() => handleEdit(params.row)}
-          aria-label={`Edit ${params.row.name}`}
-        >
-          <EditIcon fontSize="small" />
-        </IconButton>
-        <IconButton
-          size="small"
-          onClick={() => setDeleteTarget(params.row)}
-          aria-label={`Retire ${params.row.name}`}
-        >
-          <DeleteIcon fontSize="small" />
-        </IconButton>
-      </Box>
-    ),
+    renderCell: (params) => {
+      const isRetired = params.row.active === false;
+      if (isRetired) {
+        return (
+          <IconButton
+            size="small"
+            onClick={() => void handleRestore(params.row)}
+            aria-label={`Restore ${params.row.name}`}
+            color="primary"
+          >
+            <RestoreIcon fontSize="small" />
+          </IconButton>
+        );
+      }
+      return (
+        <Box>
+          <IconButton
+            size="small"
+            onClick={() => handleEdit(params.row)}
+            aria-label={`Edit ${params.row.name}`}
+          >
+            <EditIcon fontSize="small" />
+          </IconButton>
+          <IconButton
+            size="small"
+            onClick={() => setDeleteTarget(params.row)}
+            aria-label={`Retire ${params.row.name}`}
+          >
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      );
+    },
   };
 
   const allColumns = [...columns, actionsColumn];
@@ -309,7 +346,18 @@ function LookupSection<T extends { id: number; name: string }>({
 
   return (
     <>
-      <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+      <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={showRetired}
+              onChange={(_, checked) => setShowRetired(checked)}
+            />
+          }
+          label={<Typography variant="caption">Show Retired</Typography>}
+        />
+        <Box sx={{ flex: 1 }} />
         <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={handleAdd}>
           Add
         </Button>
@@ -323,7 +371,13 @@ function LookupSection<T extends { id: number; name: string }>({
         disableRowSelectionOnClick
         pageSizeOptions={[10, 25, 50]}
         initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
-        sx={{ fontSize: "0.85rem" }}
+        getRowClassName={(params) =>
+          (params.row as Record<string, unknown>).active === false ? "row-retired" : ""
+        }
+        sx={{
+          fontSize: "0.85rem",
+          "& .row-retired": { opacity: 0.45, fontStyle: "italic" },
+        }}
       />
 
       <LookupFormDialog
@@ -399,7 +453,15 @@ const connectorSizeColumns: GridColDef<ConnectorSize>[] = [
 
 const filterSizeColumns: GridColDef<FilterSize>[] = [nameCol(), descriptionCol()];
 
-const computerTypeColumns: GridColDef<ComputerType>[] = [nameCol(), descriptionCol()];
+const formFactorColumns: GridColDef<FormFactor>[] = [nameCol(), descriptionCol()];
+
+const focuserTypeColumns: GridColDef<FocuserType>[] = [nameCol(), notesCol()];
+
+const filterTypeColumns: GridColDef<FilterType>[] = [
+  nameCol(),
+  { field: "display_name", headerName: "Display Name", flex: 1, minWidth: 150 },
+  descriptionCol(),
+];
 
 // ---------------------------------------------------------------------------
 // Field configs
@@ -445,8 +507,19 @@ const filterSizeFields: FieldConfig[] = [
   { key: "description", label: "Description" },
 ];
 
-const computerTypeFields: FieldConfig[] = [
+const formFactorFields: FieldConfig[] = [
   { key: "name", label: "Name", required: true },
+  { key: "description", label: "Description" },
+];
+
+const focuserTypeFields: FieldConfig[] = [
+  { key: "name", label: "Name", required: true },
+  { key: "notes", label: "Notes" },
+];
+
+const filterTypeFields: FieldConfig[] = [
+  { key: "name", label: "Name (slug)", required: true },
+  { key: "display_name", label: "Display Name", required: true },
   { key: "description", label: "Description" },
 ];
 
@@ -464,6 +537,7 @@ const SECTIONS = [
     id: "optical-designs",
     title: "Optical Designs",
     queryKey: "optical-designs",
+    tableName: "optical_design",
     fetchFn: fetchOpticalDesigns as (includeRetired?: boolean) => Promise<GenericItem[]>,
     createFn: (createOpticalDesign as unknown) as CreateFn,
     updateFn: (updateOpticalDesign as unknown) as UpdateFn,
@@ -476,6 +550,7 @@ const SECTIONS = [
     id: "mount-types",
     title: "Mount Types",
     queryKey: "mount-types",
+    tableName: "mount_type",
     fetchFn: fetchMountTypes as (includeRetired?: boolean) => Promise<GenericItem[]>,
     createFn: (createMountType as unknown) as CreateFn,
     updateFn: (updateMountType as unknown) as UpdateFn,
@@ -488,6 +563,7 @@ const SECTIONS = [
     id: "connection-interfaces",
     title: "Connection Interfaces",
     queryKey: "connection-interfaces",
+    tableName: "connection_interface",
     fetchFn: fetchConnectionInterfaces as (includeRetired?: boolean) => Promise<GenericItem[]>,
     createFn: (createConnectionInterface as unknown) as CreateFn,
     updateFn: (updateConnectionInterface as unknown) as UpdateFn,
@@ -500,6 +576,7 @@ const SECTIONS = [
     id: "connector-sizes",
     title: "Connector Sizes",
     queryKey: "connector-sizes",
+    tableName: "connector_size",
     fetchFn: fetchConnectorSizes as (includeRetired?: boolean) => Promise<GenericItem[]>,
     createFn: (createConnectorSize as unknown) as CreateFn,
     updateFn: (updateConnectorSize as unknown) as UpdateFn,
@@ -512,6 +589,7 @@ const SECTIONS = [
     id: "filter-sizes",
     title: "Filter Sizes",
     queryKey: "filter-sizes",
+    tableName: "filter_size",
     fetchFn: fetchFilterSizes as (includeRetired?: boolean) => Promise<GenericItem[]>,
     createFn: (createFilterSize as unknown) as CreateFn,
     updateFn: (updateFilterSize as unknown) as UpdateFn,
@@ -521,16 +599,43 @@ const SECTIONS = [
     defaultValues: { name: "", description: null },
   },
   {
-    id: "computer-types",
-    title: "Computer Types",
-    queryKey: "computer-types",
-    fetchFn: fetchComputerTypes as (includeRetired?: boolean) => Promise<GenericItem[]>,
-    createFn: (createComputerType as unknown) as CreateFn,
-    updateFn: (updateComputerType as unknown) as UpdateFn,
-    deleteFn: deleteComputerType,
-    columns: computerTypeColumns as GridColDef<GenericItem>[],
-    fields: computerTypeFields,
+    id: "form-factors",
+    title: "Form Factors",
+    queryKey: "form-factors",
+    tableName: "form_factor",
+    fetchFn: fetchFormFactors as (includeRetired?: boolean) => Promise<GenericItem[]>,
+    createFn: (createFormFactor as unknown) as CreateFn,
+    updateFn: (updateFormFactor as unknown) as UpdateFn,
+    deleteFn: deleteFormFactor,
+    columns: formFactorColumns as GridColDef<GenericItem>[],
+    fields: formFactorFields,
     defaultValues: { name: "", description: null },
+  },
+  {
+    id: "focuser-types",
+    title: "Focuser Types",
+    queryKey: "focuser-types",
+    tableName: "focuser_type",
+    fetchFn: fetchFocuserTypes as (includeRetired?: boolean) => Promise<GenericItem[]>,
+    createFn: (createFocuserType as unknown) as CreateFn,
+    updateFn: (updateFocuserType as unknown) as UpdateFn,
+    deleteFn: deleteFocuserType,
+    columns: focuserTypeColumns as GridColDef<GenericItem>[],
+    fields: focuserTypeFields,
+    defaultValues: { name: "", notes: null },
+  },
+  {
+    id: "filter-types",
+    title: "Filter Types",
+    queryKey: "filter-types",
+    tableName: "filter_type",
+    fetchFn: fetchFilterTypes as (includeRetired?: boolean) => Promise<GenericItem[]>,
+    createFn: (createFilterType as unknown) as CreateFn,
+    updateFn: (updateFilterType as unknown) as UpdateFn,
+    deleteFn: deleteFilterType,
+    columns: filterTypeColumns as GridColDef<GenericItem>[],
+    fields: filterTypeFields,
+    defaultValues: { name: "", display_name: "", description: null },
   },
 ];
 
@@ -552,6 +657,7 @@ export default function LookupTablesPanel() {
             <LookupSection
               title={section.title}
               queryKey={section.queryKey}
+              tableName={section.tableName}
               fetchFn={section.fetchFn}
               createFn={section.createFn}
               updateFn={section.updateFn}

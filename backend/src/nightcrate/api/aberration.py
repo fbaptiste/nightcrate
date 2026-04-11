@@ -28,7 +28,7 @@ from nightcrate.services.imaging import (
     render_image_png,
 )
 
-router = APIRouter(prefix="/api/aberration", tags=["aberration"])
+router = APIRouter(prefix="/api/aberration", tags=["Aberration Inspector"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

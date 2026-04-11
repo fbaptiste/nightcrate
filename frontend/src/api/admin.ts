@@ -94,4 +94,23 @@ export const createFolder = (path: string) =>
     body: JSON.stringify({ path }),
   });
 
+export interface ReseedResult {
+  mode: string;
+  ok: boolean;
+  total_inserted: number;
+  total_updated: number;
+  total_unchanged: number;
+  total_skipped: number;
+  tables: Record<string, {
+    inserted: number;
+    updated: number;
+    unchanged: number;
+    skipped_user_modified: string[];
+    orphaned: string[];
+  }>;
+}
+
+export const reseedEquipment = () =>
+  apiFetch<ReseedResult>("/admin/reseed", { method: "POST" });
+
 export const fetchHealth = () => _fetchHealth() as Promise<HealthResponse>;

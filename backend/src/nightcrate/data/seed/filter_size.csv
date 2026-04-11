@@ -1,4 +1,6 @@
 seed_key,description,name
-filter_size.2_inch,2 inch round unmounted,2 inch
+filter_size.1_25_inch,1.25 inch round mounted,1.25 inch
 filter_size.36mm,36mm round mounted,36mm
-filter_size.1_25_inch,1.25 inch round,1.25 inch
+filter_size.2_inch,2 inch round mounted,2 inch
+filter_size.50mm_round,50mm round unmounted,50mm Round
+filter_size.50mm_square,50mm square unmounted (Astrodon/Chroma),50mm Square

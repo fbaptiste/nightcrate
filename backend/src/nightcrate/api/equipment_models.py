@@ -128,17 +128,17 @@ class FilterSizeResponse(BaseModel):
     updated_at: str
 
 
-class ComputerTypeCreate(BaseModel):
+class FormFactorCreate(BaseModel):
     name: str
     description: str | None = None
 
 
-class ComputerTypeUpdate(BaseModel):
+class FormFactorUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
 
 
-class ComputerTypeResponse(BaseModel):
+class FormFactorResponse(BaseModel):
     id: int
     name: str
     description: str | None
@@ -147,10 +147,41 @@ class ComputerTypeResponse(BaseModel):
     updated_at: str
 
 
-# FilterType is read-only (closed vocabulary) — no Create/Update
+class FocuserTypeCreate(BaseModel):
+    name: str
+    notes: str | None = None
+
+
+class FocuserTypeUpdate(BaseModel):
+    name: str | None = None
+    notes: str | None = None
+
+
+class FocuserTypeResponse(BaseModel):
+    id: int
+    name: str
+    notes: str | None
+    active: bool
+    created_at: str
+    updated_at: str
+
+
+class FilterTypeCreate(BaseModel):
+    name: str
+    display_name: str
+    description: str | None = None
+
+
+class FilterTypeUpdate(BaseModel):
+    name: str | None = None
+    display_name: str | None = None
+    description: str | None = None
+
+
 class FilterTypeResponse(BaseModel):
     id: int
     name: str
+    display_name: str
     description: str | None
     active: bool
     created_at: str
@@ -175,8 +206,8 @@ class SensorCreate(BaseModel):
     peak_qe_pct: float | None = None
     bayer_pattern: str | None = None
     dual_gain: bool = False
-    hcg_threshold_gain: int | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class SensorUpdate(BaseModel):
@@ -194,8 +225,8 @@ class SensorUpdate(BaseModel):
     peak_qe_pct: float | None = None
     bayer_pattern: str | None = None
     dual_gain: bool | None = None
-    hcg_threshold_gain: int | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class SensorResponse(BaseModel):
@@ -214,8 +245,8 @@ class SensorResponse(BaseModel):
     peak_qe_pct: float | None
     bayer_pattern: str | None
     dual_gain: bool
-    hcg_threshold_gain: int | None
     notes: str | None
+    source_url: str | None
     active: bool
     created_at: str
     updated_at: str
@@ -238,7 +269,13 @@ class CameraCreate(BaseModel):
     has_usb_hub: bool = False
     usb_hub_interface_id: int | None = None
     unity_gain: int | None = None
+    effective_full_well_ke: float | None = None
+    effective_read_noise_lcg_e: float | None = None
+    effective_read_noise_hcg_e: float | None = None
+    effective_peak_qe_pct: float | None = None
+    hcg_threshold_gain: int | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] = []
 
 
@@ -256,7 +293,13 @@ class CameraUpdate(BaseModel):
     has_usb_hub: bool | None = None
     usb_hub_interface_id: int | None = None
     unity_gain: int | None = None
+    effective_full_well_ke: float | None = None
+    effective_read_noise_lcg_e: float | None = None
+    effective_read_noise_hcg_e: float | None = None
+    effective_peak_qe_pct: float | None = None
+    hcg_threshold_gain: int | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] | None = None
 
 
@@ -275,7 +318,13 @@ class CameraResponse(BaseModel):
     has_usb_hub: bool
     usb_hub_interface: ConnectionInterfaceResponse | None
     unity_gain: int | None
+    effective_full_well_ke: float | None
+    effective_read_noise_lcg_e: float | None
+    effective_read_noise_hcg_e: float | None
+    effective_peak_qe_pct: float | None
+    hcg_threshold_gain: int | None
     notes: str | None
+    source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
     active: bool
     created_at: str
@@ -336,6 +385,7 @@ class TelescopeCreate(BaseModel):
     weight_kg: float | None = None
     obstruction_pct: float | None = None
     notes: str | None = None
+    source_url: str | None = None
     connector_size_ids: list[int] = []
 
 
@@ -348,6 +398,7 @@ class TelescopeUpdate(BaseModel):
     weight_kg: float | None = None
     obstruction_pct: float | None = None
     notes: str | None = None
+    source_url: str | None = None
     connector_size_ids: list[int] | None = None
 
 
@@ -361,6 +412,7 @@ class TelescopeResponse(BaseModel):
     weight_kg: float | None
     obstruction_pct: float | None
     notes: str | None
+    source_url: str | None
     connectors: list[ConnectorSizeResponse]
     configurations: list[TelescopeConfigurationResponse]
     active: bool
@@ -396,36 +448,55 @@ class FilterPassbandResponse(BaseModel):
     peak_transmission_pct: float | None
 
 
+class FilterSizeOptionCreate(BaseModel):
+    filter_id: int
+    filter_size_id: int
+    mounted_thickness_mm: float | None = None
+    notes: str | None = None
+
+
+class FilterSizeOptionUpdate(BaseModel):
+    filter_size_id: int | None = None
+    mounted_thickness_mm: float | None = None
+    notes: str | None = None
+
+
+class FilterSizeOptionResponse(BaseModel):
+    id: int
+    filter_id: int
+    filter_size: FilterSizeResponse
+    mounted_thickness_mm: float | None
+    notes: str | None
+
+
 class FilterCreate(BaseModel):
     manufacturer_id: int
     filter_type_id: int
-    filter_size_id: int | None = None
     model_name: str
     peak_transmission_pct: float | None = None
-    mounted_thickness_mm: float | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class FilterUpdate(BaseModel):
     manufacturer_id: int | None = None
     filter_type_id: int | None = None
-    filter_size_id: int | None = None
     model_name: str | None = None
     peak_transmission_pct: float | None = None
-    mounted_thickness_mm: float | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class FilterResponse(BaseModel):
     id: int
     manufacturer: ManufacturerResponse
     filter_type: FilterTypeResponse
-    filter_size: FilterSizeResponse | None
     model_name: str
     peak_transmission_pct: float | None
-    mounted_thickness_mm: float | None
     notes: str | None
+    source_url: str | None
     passbands: list[FilterPassbandResponse]
+    size_options: list[FilterSizeOptionResponse]
     active: bool
     created_at: str
     updated_at: str
@@ -445,6 +516,7 @@ class MountCreate(BaseModel):
     periodic_error_arcsec: float | None = None
     drive_type: str | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] = []
 
 
@@ -459,6 +531,7 @@ class MountUpdate(BaseModel):
     periodic_error_arcsec: float | None = None
     drive_type: str | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] | None = None
 
 
@@ -474,6 +547,7 @@ class MountResponse(BaseModel):
     periodic_error_arcsec: float | None
     drive_type: str | None
     notes: str | None
+    source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
     active: bool
     created_at: str
@@ -485,6 +559,7 @@ class MountResponse(BaseModel):
 
 class FocuserCreate(BaseModel):
     manufacturer_id: int
+    focuser_type_id: int | None = None
     model_name: str
     motorized: bool = True
     travel_range_mm: float | None = None
@@ -493,11 +568,13 @@ class FocuserCreate(BaseModel):
     temperature_compensation: bool = False
     backlash_steps: int | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] = []
 
 
 class FocuserUpdate(BaseModel):
     manufacturer_id: int | None = None
+    focuser_type_id: int | None = None
     model_name: str | None = None
     motorized: bool | None = None
     travel_range_mm: float | None = None
@@ -506,12 +583,14 @@ class FocuserUpdate(BaseModel):
     temperature_compensation: bool | None = None
     backlash_steps: int | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] | None = None
 
 
 class FocuserResponse(BaseModel):
     id: int
     manufacturer: ManufacturerResponse
+    focuser_type: FocuserTypeResponse | None
     model_name: str
     motorized: bool
     travel_range_mm: float | None
@@ -520,6 +599,7 @@ class FocuserResponse(BaseModel):
     temperature_compensation: bool
     backlash_steps: int | None
     notes: str | None
+    source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
     active: bool
     created_at: str
@@ -538,6 +618,7 @@ class FilterWheelCreate(BaseModel):
     num_positions: int
     back_focus_contribution_mm: float | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] = []
 
 
@@ -550,6 +631,7 @@ class FilterWheelUpdate(BaseModel):
     num_positions: int | None = None
     back_focus_contribution_mm: float | None = None
     notes: str | None = None
+    source_url: str | None = None
     interface_ids: list[int] | None = None
 
 
@@ -563,6 +645,7 @@ class FilterWheelResponse(BaseModel):
     num_positions: int
     back_focus_contribution_mm: float | None
     notes: str | None
+    source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
     active: bool
     created_at: str
@@ -581,6 +664,7 @@ class OagCreate(BaseModel):
     back_focus_contribution_mm: float | None = None
     weight_g: float | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class OagUpdate(BaseModel):
@@ -592,6 +676,7 @@ class OagUpdate(BaseModel):
     back_focus_contribution_mm: float | None = None
     weight_g: float | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class OagResponse(BaseModel):
@@ -604,6 +689,7 @@ class OagResponse(BaseModel):
     back_focus_contribution_mm: float | None
     weight_g: float | None
     notes: str | None
+    source_url: str | None
     active: bool
     created_at: str
     updated_at: str
@@ -620,6 +706,7 @@ class GuideScopeCreate(BaseModel):
     focal_length_mm: float | None = None
     weight_g: float | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class GuideScopeUpdate(BaseModel):
@@ -630,6 +717,7 @@ class GuideScopeUpdate(BaseModel):
     focal_length_mm: float | None = None
     weight_g: float | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class GuideScopeResponse(BaseModel):
@@ -641,6 +729,7 @@ class GuideScopeResponse(BaseModel):
     focal_length_mm: float | None
     weight_g: float | None
     notes: str | None
+    source_url: str | None
     active: bool
     created_at: str
     updated_at: str
@@ -651,24 +740,27 @@ class GuideScopeResponse(BaseModel):
 
 class ComputerCreate(BaseModel):
     manufacturer_id: int
-    computer_type_id: int | None = None
+    form_factor_id: int | None = None
     model_name: str
     notes: str | None = None
+    source_url: str | None = None
 
 
 class ComputerUpdate(BaseModel):
     manufacturer_id: int | None = None
-    computer_type_id: int | None = None
+    form_factor_id: int | None = None
     model_name: str | None = None
     notes: str | None = None
+    source_url: str | None = None
 
 
 class ComputerResponse(BaseModel):
     id: int
     manufacturer: ManufacturerResponse
-    computer_type: ComputerTypeResponse | None
+    form_factor: FormFactorResponse | None
     model_name: str
     notes: str | None
+    source_url: str | None
     active: bool
     created_at: str
     updated_at: str

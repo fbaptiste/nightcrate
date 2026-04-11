@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from nightcrate.core.compute import set_gpu_enabled
 from nightcrate.core.config import Settings, get_settings, update_settings
 
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
 
 @router.get("", response_model=Settings)

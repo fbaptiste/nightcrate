@@ -1,3 +1,107 @@
 seed_key,filter_seed_key,bandwidth_nm,central_wavelength_nm,line_name,peak_transmission_pct
-filter_passband.optolong.ha_7nm.ha,filter.optolong.ha_7nm,7,656.3,Ha,90
-filter_passband.optolong.oiii_6_5nm.oiii,filter.optolong.oiii_6_5nm,6.5,500.7,Oiii,90
+# --- L-eNhance (tri-band, 2 physical passbands) ---
+filter_passband.optolong.l_enhance.ha,filter.optolong.l_enhance,10.0,656.3,Ha,85.0
+filter_passband.optolong.l_enhance.oiii,filter.optolong.l_enhance,24.0,498.0,Oiii,85.0
+# --- L-eXtreme (dual 7nm) ---
+filter_passband.optolong.l_extreme.ha,filter.optolong.l_extreme,7.0,656.3,Ha,85.0
+filter_passband.optolong.l_extreme.oiii,filter.optolong.l_extreme,7.0,500.7,Oiii,85.0
+# --- L-eXtreme F2 (dual 7nm, fast-optics variant) ---
+filter_passband.optolong.l_extreme_f2.ha,filter.optolong.l_extreme_f2,7.0,656.3,Ha,85.0
+filter_passband.optolong.l_extreme_f2.oiii,filter.optolong.l_extreme_f2,7.0,500.7,Oiii,85.0
+# --- L-Ultimate (dual 3nm) ---
+filter_passband.optolong.l_ultimate.ha,filter.optolong.l_ultimate,3.0,656.3,Ha,90.0
+filter_passband.optolong.l_ultimate.oiii,filter.optolong.l_ultimate,3.0,500.7,Oiii,90.0
+# --- L-Para (dual 10nm) ---
+filter_passband.optolong.l_para.ha,filter.optolong.l_para,10.0,656.3,Ha,85.0
+filter_passband.optolong.l_para.oiii,filter.optolong.l_para,10.0,500.7,Oiii,85.0
+# --- Single-line SHO ---
+filter_passband.optolong.ha_3nm.ha,filter.optolong.ha_3nm,3.0,656.3,Ha,85.0
+filter_passband.optolong.ha_7nm.ha,filter.optolong.ha_7nm,7.0,656.3,Ha,85.0
+filter_passband.optolong.oiii_3nm.oiii,filter.optolong.oiii_3nm,3.0,500.7,Oiii,85.0
+filter_passband.optolong.oiii_6_5nm.oiii,filter.optolong.oiii_6_5nm,6.5,500.7,Oiii,85.0
+filter_passband.optolong.sii_3nm.sii,filter.optolong.sii_3nm,3.0,672.0,Sii,85.0
+filter_passband.optolong.sii_6_5nm.sii,filter.optolong.sii_6_5nm,6.5,672.0,Sii,85.0
+# --- LRGB (nominal values) ---
+filter_passband.optolong.lum.lum,filter.optolong.lum,280.0,540.0,Lum,95.0
+filter_passband.optolong.r.r,filter.optolong.r,100.0,625.0,R,95.0
+filter_passband.optolong.g.g,filter.optolong.g,90.0,530.0,G,95.0
+filter_passband.optolong.b.b,filter.optolong.b,90.0,445.0,B,95.0
+# --- Legacy single-line narrowband ---
+filter_passband.optolong.hb_12nm.hb,filter.optolong.hb_12nm,12.0,486.1,Hb,85.0
+filter_passband.optolong.oiii_18nm.oiii,filter.optolong.oiii_18nm,18.0,500.7,Oiii,85.0
+# --- Antlia 2.5nm Ultra ---
+filter_passband.antlia.ultra_2_5nm_ha.ha,filter.antlia.ultra_2_5nm_ha,2.5,656.3,Ha,95.0
+filter_passband.antlia.ultra_2_5nm_oiii.oiii,filter.antlia.ultra_2_5nm_oiii,2.5,500.7,Oiii,93.0
+filter_passband.antlia.ultra_2_5nm_sii.sii,filter.antlia.ultra_2_5nm_sii,2.5,671.6,Sii,95.0
+# --- Antlia 3nm Pro ---
+filter_passband.antlia.pro_3nm_ha.ha,filter.antlia.pro_3nm_ha,3.0,656.3,Ha,90.0
+filter_passband.antlia.pro_3nm_oiii.oiii,filter.antlia.pro_3nm_oiii,3.0,500.7,Oiii,90.0
+filter_passband.antlia.pro_3nm_sii.sii,filter.antlia.pro_3nm_sii,3.0,671.6,Sii,90.0
+# --- Antlia 3nm Pro Highspeed ---
+filter_passband.antlia.pro_3nm_hs_ha.ha,filter.antlia.pro_3nm_hs_ha,3.0,656.3,Ha,90.0
+filter_passband.antlia.pro_3nm_hs_oiii.oiii,filter.antlia.pro_3nm_hs_oiii,3.0,500.7,Oiii,90.0
+filter_passband.antlia.pro_3nm_hs_sii.sii,filter.antlia.pro_3nm_hs_sii,3.0,671.6,Sii,90.0
+# --- Antlia 4.5nm EDGE ---
+filter_passband.antlia.edge_4_5nm_ha.ha,filter.antlia.edge_4_5nm_ha,4.5,656.3,Ha,90.0
+filter_passband.antlia.edge_4_5nm_oiii.oiii,filter.antlia.edge_4_5nm_oiii,4.5,500.7,Oiii,85.0
+filter_passband.antlia.edge_4_5nm_sii.sii,filter.antlia.edge_4_5nm_sii,4.5,671.6,Sii,90.0
+# --- Antlia 7nm Prime ---
+filter_passband.antlia.prime_7nm_ha.ha,filter.antlia.prime_7nm_ha,7.0,656.3,Ha,90.0
+filter_passband.antlia.prime_7nm_oiii.oiii,filter.antlia.prime_7nm_oiii,7.0,500.7,Oiii,90.0
+filter_passband.antlia.prime_7nm_sii.sii,filter.antlia.prime_7nm_sii,7.0,671.6,Sii,90.0
+# --- Antlia ALP-T 5nm Ha&OIII ---
+filter_passband.antlia.alp_t_5nm_ha_oiii.ha,filter.antlia.alp_t_5nm_ha_oiii,5.0,656.3,Ha,90.0
+filter_passband.antlia.alp_t_5nm_ha_oiii.oiii,filter.antlia.alp_t_5nm_ha_oiii,5.0,500.7,Oiii,90.0
+# --- Antlia ALP-T 5nm Highspeed Ha&OIII ---
+filter_passband.antlia.alp_t_5nm_hs_ha_oiii.ha,filter.antlia.alp_t_5nm_hs_ha_oiii,5.0,656.3,Ha,90.0
+filter_passband.antlia.alp_t_5nm_hs_ha_oiii.oiii,filter.antlia.alp_t_5nm_hs_ha_oiii,5.0,500.7,Oiii,90.0
+# --- Antlia ALP-T 5nm SII&Hb ---
+filter_passband.antlia.alp_t_5nm_sii_hb.sii,filter.antlia.alp_t_5nm_sii_hb,5.0,671.6,Sii,90.0
+filter_passband.antlia.alp_t_5nm_sii_hb.hb,filter.antlia.alp_t_5nm_sii_hb,5.0,486.1,Hb,90.0
+# --- Antlia ALP-T 3nm Ha&OIII ---
+filter_passband.antlia.alp_t_3nm_ha_oiii.ha,filter.antlia.alp_t_3nm_ha_oiii,3.0,656.3,Ha,90.0
+filter_passband.antlia.alp_t_3nm_ha_oiii.oiii,filter.antlia.alp_t_3nm_ha_oiii,3.0,500.7,Oiii,90.0
+# --- Antlia ALP-T 3.5nm SII&Hb ---
+filter_passband.antlia.alp_t_3_5nm_sii_hb.sii,filter.antlia.alp_t_3_5nm_sii_hb,3.5,671.6,Sii,90.0
+filter_passband.antlia.alp_t_3_5nm_sii_hb.hb,filter.antlia.alp_t_3_5nm_sii_hb,3.5,486.1,Hb,90.0
+# --- Antlia ALP-T 3nm SII&OIII ---
+filter_passband.antlia.alp_t_3nm_sii_oiii.sii,filter.antlia.alp_t_3nm_sii_oiii,3.0,671.6,Sii,90.0
+filter_passband.antlia.alp_t_3nm_sii_oiii.oiii,filter.antlia.alp_t_3nm_sii_oiii,3.0,500.7,Oiii,90.0
+# --- Antlia LRGB-V Pro (nominal values) ---
+filter_passband.antlia.lrgb_v_pro_l.lum,filter.antlia.lrgb_v_pro_l,280.0,540.0,Lum,95.0
+filter_passband.antlia.lrgb_v_pro_r.r,filter.antlia.lrgb_v_pro_r,100.0,625.0,R,95.0
+filter_passband.antlia.lrgb_v_pro_g.g,filter.antlia.lrgb_v_pro_g,90.0,530.0,G,95.0
+filter_passband.antlia.lrgb_v_pro_b.b,filter.antlia.lrgb_v_pro_b,90.0,445.0,B,95.0
+# --- Antlia LRGBR+ Dark (derived from published ranges) ---
+filter_passband.antlia.lrgbr_plus_dark_l.lum,filter.antlia.lrgbr_plus_dark_l,310.0,555.0,Lum,97.0
+filter_passband.antlia.lrgbr_plus_dark_r.r,filter.antlia.lrgbr_plus_dark_r,110.0,650.0,R,97.0
+filter_passband.antlia.lrgbr_plus_dark_g.g,filter.antlia.lrgbr_plus_dark_g,110.0,550.0,G,97.0
+filter_passband.antlia.lrgbr_plus_dark_b.b,filter.antlia.lrgbr_plus_dark_b,95.0,457.5,B,95.0
+filter_passband.antlia.lrgbr_plus_dark_r_plus.r_plus,filter.antlia.lrgbr_plus_dark_r_plus,300.0,850.0,R+,97.0
+# --- ZWO 7nm Mark II single-line ---
+filter_passband.zwo.ha_7nm_mk2.ha,filter.zwo.ha_7nm_mk2,7.0,656.0,Ha,90.0
+filter_passband.zwo.oiii_7nm_mk2.oiii,filter.zwo.oiii_7nm_mk2,7.0,500.0,Oiii,90.0
+filter_passband.zwo.sii_7nm_mk2.sii,filter.zwo.sii_7nm_mk2,7.0,672.0,Sii,90.0
+# --- ZWO Duo-Band ---
+filter_passband.zwo.duo_band.ha,filter.zwo.duo_band,15.0,656.3,Ha,80.0
+filter_passband.zwo.duo_band.oiii,filter.zwo.duo_band,35.0,500.7,Oiii,90.0
+# --- ZWO Premium LRGB (nominal values) ---
+filter_passband.zwo.lrgb_l.lum,filter.zwo.lrgb_l,280.0,540.0,Lum,92.0
+filter_passband.zwo.lrgb_r.r,filter.zwo.lrgb_r,100.0,625.0,R,92.0
+filter_passband.zwo.lrgb_g.g,filter.zwo.lrgb_g,90.0,530.0,G,92.0
+filter_passband.zwo.lrgb_b.b,filter.zwo.lrgb_b,90.0,445.0,B,92.0
+# --- Askar Colour Magic C series (bandwidth estimated ~12nm) ---
+filter_passband.askar.cm_c1.ha,filter.askar.cm_c1,12.0,656.6,Ha,90.0
+filter_passband.askar.cm_c1.oiii,filter.askar.cm_c1,12.0,500.7,Oiii,90.0
+filter_passband.askar.cm_c2.sii,filter.askar.cm_c2,12.0,672.0,Sii,90.0
+filter_passband.askar.cm_c2.oiii,filter.askar.cm_c2,12.0,500.7,Oiii,90.0
+# --- Askar Colour Magic D / Super D (8.5nm Ha/SII, 6.5nm OIII) ---
+filter_passband.askar.cm_d1.ha,filter.askar.cm_d1,8.5,656.3,Ha,85.0
+filter_passband.askar.cm_d1.oiii,filter.askar.cm_d1,6.5,500.7,Oiii,85.0
+filter_passband.askar.cm_d2.sii,filter.askar.cm_d2,8.5,672.0,Sii,85.0
+filter_passband.askar.cm_d2.oiii,filter.askar.cm_d2,6.5,500.7,Oiii,85.0
+# --- Askar Colour Magic Ultra E (3nm) ---
+filter_passband.askar.cm_e1.ha,filter.askar.cm_e1,3.0,656.3,Ha,88.0
+filter_passband.askar.cm_e1.oiii,filter.askar.cm_e1,3.0,500.7,Oiii,88.0
+filter_passband.askar.cm_e2.sii,filter.askar.cm_e2,3.0,672.0,Sii,88.0
+filter_passband.askar.cm_e2.oiii,filter.askar.cm_e2,3.0,500.7,Oiii,88.0

@@ -558,8 +558,6 @@ def _load_child_table(
     parent_ref = table.fk_columns[parent_csv_col]  # e.g. "telescope"
     parent_db_col = parent_csv_col.replace("_seed_key", "_id")  # e.g. "telescope_id"
 
-    parent_changed = inserted_or_updated.get(parent_ref, set())
-
     # Group rows by parent seed_key
     groups: dict[str, list[dict]] = {}
     for row in rows:
@@ -578,11 +576,8 @@ def _load_child_table(
             )
             continue
 
-        # Was parent newly inserted in this run?
-        parent_newly_inserted = parent_sk in parent_changed
-
-        if effective_mode == "first_run" or parent_newly_inserted:
-            # Insert all children
+        if effective_mode == "first_run":
+            # First run — no existing rows, blind insert is safe
             for child_row in group_rows:
                 child_seed_key: str = child_row["seed_key"]  # type: ignore[assignment]
                 incoming = _build_incoming(

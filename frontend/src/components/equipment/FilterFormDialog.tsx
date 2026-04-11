@@ -21,9 +21,9 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useQuery } from "@tanstack/react-query";
-import { parseOptionalFloat, formatFilterType } from "@/lib/formUtils";
+import { parseOptionalFloat } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
-import LookupPicker from "@/components/equipment/shared/LookupPicker";
+
 import {
   createFilter,
   updateFilter,
@@ -31,7 +31,6 @@ import {
   updateFilterPassband,
   deleteFilterPassband,
   fetchFilterTypes,
-  fetchFilterSizes,
   type Filter,
   type FilterPassband,
   type FilterCreate,
@@ -77,9 +76,7 @@ interface FormState {
   model_name: string;
   manufacturer_id: number | null;
   filter_type_id: number | null;
-  filter_size_id: number | null;
   peak_transmission_pct: string;
-  mounted_thickness_mm: string;
   notes: string;
 }
 
@@ -88,9 +85,7 @@ function emptyForm(): FormState {
     model_name: "",
     manufacturer_id: null,
     filter_type_id: null,
-    filter_size_id: null,
     peak_transmission_pct: "",
-    mounted_thickness_mm: "",
     notes: "",
   };
 }
@@ -100,11 +95,8 @@ function filterToForm(filter: Filter): FormState {
     model_name: filter.model_name,
     manufacturer_id: filter.manufacturer.id,
     filter_type_id: filter.filter_type.id,
-    filter_size_id: filter.filter_size?.id ?? null,
     peak_transmission_pct:
       filter.peak_transmission_pct != null ? String(filter.peak_transmission_pct) : "",
-    mounted_thickness_mm:
-      filter.mounted_thickness_mm != null ? String(filter.mounted_thickness_mm) : "",
     notes: filter.notes ?? "",
   };
 }
@@ -230,9 +222,7 @@ export default function FilterFormDialog({
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
         filter_type_id: form.filter_type_id!,
-        filter_size_id: form.filter_size_id,
         peak_transmission_pct: parseOptionalFloat(form.peak_transmission_pct),
-        mounted_thickness_mm: parseOptionalFloat(form.mounted_thickness_mm),
         notes: form.notes.trim() || null,
       };
 
@@ -315,7 +305,7 @@ export default function FilterFormDialog({
               />
             </Box>
 
-            {/* Row 2: Filter type + Filter size */}
+            {/* Row 2: Filter type + Peak transmission */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <FormControl required error={Boolean(errors.filter_type_id)}>
                 <InputLabel id="filter-type-label">Filter Type</InputLabel>
@@ -330,7 +320,7 @@ export default function FilterFormDialog({
                 >
                   {filterTypes.map((ft) => (
                     <MenuItem key={ft.id} value={String(ft.id)}>
-                      {formatFilterType(ft.name)}
+                      {ft.display_name}
                     </MenuItem>
                   ))}
                 </Select>
@@ -341,30 +331,12 @@ export default function FilterFormDialog({
                 )}
               </FormControl>
 
-              <LookupPicker
-                fetchFn={fetchFilterSizes}
-                queryKey="filter-sizes"
-                label="Filter Size"
-                value={form.filter_size_id}
-                onChange={(id) => set("filter_size_id", id)}
-              />
-            </Box>
-
-            {/* Row 3: Peak transmission + Mounted thickness */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField
                 label="Peak Transmission (%)"
                 type="number"
                 value={form.peak_transmission_pct}
                 onChange={(e) => set("peak_transmission_pct", e.target.value)}
                 slotProps={{ htmlInput: { step: "any", min: 0, max: 100 } }}
-              />
-              <TextField
-                label="Mounted Thickness (mm)"
-                type="number"
-                value={form.mounted_thickness_mm}
-                onChange={(e) => set("mounted_thickness_mm", e.target.value)}
-                slotProps={{ htmlInput: { step: "any", min: 0 } }}
               />
             </Box>
 

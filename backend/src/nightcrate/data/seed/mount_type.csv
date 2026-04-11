@@ -2,3 +2,5 @@ seed_key,description,name
 mount_type.german_eq,German equatorial mount,German Equatorial
 mount_type.harmonic_eq,Harmonic drive equatorial mount,Harmonic Equatorial
 mount_type.alt_az,Altitude-azimuth mount,Alt-Azimuth
+mount_type.fork,Fork-mounted telescope (typically SCT),Fork
+mount_type.star_tracker,Lightweight portable star tracker,Star Tracker

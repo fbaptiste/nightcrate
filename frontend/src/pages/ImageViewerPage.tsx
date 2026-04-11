@@ -14,12 +14,15 @@ import Chip from "@mui/material/Chip";
 import Slider from "@mui/material/Slider";
 import Snackbar from "@mui/material/Snackbar";
 import Tooltip from "@mui/material/Tooltip";
+
 import IconButton from "@mui/material/IconButton";
+import KeyboardDoubleArrowLeftIcon from "@mui/icons-material/KeyboardDoubleArrowLeft";
+import KeyboardDoubleArrowRightIcon from "@mui/icons-material/KeyboardDoubleArrowRight";
 import FitScreenIcon from "@mui/icons-material/FitScreen";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import OneKIcon from "@mui/icons-material/PhotoSizeSelectActual";
-import TimelineIcon from "@mui/icons-material/Timeline";
+
 import {
   DEFAULT_STRETCH,
   fetchExtensions,
@@ -41,7 +44,7 @@ import { AberrationToolbar } from "@/components/aberration/AberrationToolbar";
 import { CropGrid } from "@/components/aberration/CropGrid";
 import { AberrationSidebar } from "@/components/aberration/AberrationSidebar";
 import { ZoneOverlayMap } from "@/components/aberration/ZoneOverlayMap";
-import { ActivityConsole } from "@/components/ActivityConsole";
+
 import { SidebarSection } from "@/components/SidebarSection";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import { FitsHeaderTable } from "@/components/fits/FitsHeaderTable";
@@ -49,11 +52,90 @@ import { FitsImage, type FitsImageHandle, type PixelInfo } from "@/components/fi
 import { HduSelector } from "@/components/fits/HduSelector";
 import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
+import { EasterEggWand } from "@/components/EasterEggWand";
 import { setActivity } from "@/api/client";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
 import { monoFontFamily } from "@/theme/theme";
+
+const IMAGE_COMMENTARY = [
+  "Ah yes, the classic 'is it signal or noise?' game",
+  "I see you went with the 'more data will fix it' philosophy",
+  "That's either a nebula or your sensor needs cleaning",
+  "Bold choice shooting at full moon. Bold.",
+  "Have you considered that the stars are supposed to be round?",
+  "This would look great on a coffee mug nobody asked for",
+  "10 out of 10 photons were harmed in the making of this image",
+  "I'm sure it'll look better after 47 PixInsight processes",
+  "The gradient is a feature, not a bug",
+  "Walking noise reduction at 3am: peak astrophotography",
+  "That hot pixel has been in every frame since 2019",
+  "Nice satellite trail collection. Very curated.",
+  "Is that tilt or are you just happy to see me?",
+  "DBE will fix it. DBE fixes everything. Right?",
+  "Your darks say -20C but your noise says otherwise",
+  "This flat frame has more signal than your lights",
+  "I've seen better SNR from a smartphone through a window",
+  "Let me guess: 'just one more sub' turned into sunrise",
+  "The histogram says linear. Your eyes say 'why bother'",
+  "Coma? In this economy?",
+  "That star looks like it's been through a windshield",
+  "300 seconds of pure... well, let's call it 'character'",
+  "Your collimation called. It wants a word.",
+  "Ah, the famous 'slightly out of focus and I didn't notice for 3 hours' technique",
+  "I count 4 airplane trails. That's a Tuesday.",
+  "This has real 'I'll crop it later' energy",
+  "The walking noise pattern adds a certain... rustic charm",
+  "Have you tried turning the stretch up? Or down? Or sideways?",
+  "Somewhere in there is a galaxy. Probably.",
+  "Your gain setting is either genius or reckless. Can't tell yet.",
+  "That diffraction spike is doing its own thing",
+  "Amp glow: the gift that keeps on glowing",
+  "Dithering would have helped. Just saying.",
+  "That's a lovely shade of light pollution magenta",
+  "The Newton rings add a certain holographic quality",
+  "Focus looks good if you squint. Really hard.",
+  "Exposure time: ambitious. Result: we'll get there.",
+  "I've seen more stars in a city parking lot",
+  "Are those dust bunnies or dark nebulae? Trick question.",
+  "Your FWHM says 4.2 but your heart says 2.0",
+  "That's either field curvature or abstract art",
+  "Binning 2x2 won't hide the tracking errors, but nice try",
+  "At least the bias frames look sharp",
+  "Your mount's periodic error is... periodic. I'll give it that.",
+  "Is that chromatic aberration or an artistic choice?",
+  "This image has more noise than a middle school cafeteria",
+  "I've seen subs rejected for less than this. But here we are.",
+  "The bloated stars add a dreamy bokeh effect. Sure.",
+  "Nice framing. If the target were 3 degrees to the left.",
+  "Your back focus is off by 0.5mm and your soul knows it",
+  "That reflection is from a star 2 degrees away. Impressive.",
+  "When the flat correction makes it worse, you know it's bad",
+  "The dew heater quit at 2am, didn't it",
+  "I see you're going for the 'maximum integration time' achievement",
+  "That gradient goes from 'almost acceptable' to 'absolutely not'",
+  "Your guiding graph looked fine. The stars disagree.",
+  "Great capture! The tracking error adds a painterly quality.",
+  "This sub would be perfect if not for... everything.",
+  "I'm told this is M31. I'll take your word for it.",
+  "900 seconds exposure: bold. 900 seconds of clouds: unfortunate.",
+  "That sensor glow in the corner is basically a nightlight",
+  "Your optical train has more adapters than a USB-C dongle bag",
+  "If you squint, the noise almost looks like structure",
+  "The color balance suggests your monitor needs calibrating. Or your filter.",
+  "This has 'I forgot to put the filter in' written all over it",
+  "Peak histogram at 12%. Living dangerously.",
+  "Your meridian flip left a souvenir in the guiding log",
+  "This would win first place in a noise photography competition",
+  "The best thing about this sub is that you took another one after it",
+  "That's either a cosmic ray or your cat stepped on the mount",
+  "Clearly shot through a window. The double-pane kind.",
+  "Your filter tilt is showing. In HD.",
+  "I see the problem: the sky was involved",
+  "Processing tip: have you tried selecting all and pressing delete?",
+  "At this point the noise IS the signal",
+];
 
 function formatDateObs(raw: string | null): string | null {
   if (!raw) return null;
@@ -118,8 +200,11 @@ export function ImageViewerPage() {
   const [pixelData, setPixelData] = useState<PixelInfo | null>(null);
   const [patchRadius, setPatchRadius] = useState(50);
 
-  // Activity console
-  const [activityOpen, setActivityOpen] = useState(false);
+  // Right sidebar
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+
+  // Stretch slider hover — shows histogram indicators while hovering over sliders
+  const [sliderHovering, setSliderHovering] = useState(false);
 
   // Error notification
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -392,11 +477,13 @@ export function ImageViewerPage() {
             size="small"
             onClick={() => setBrowserOpen(true)}
             startIcon={<FolderOpenIcon sx={{ fontSize: 16 }} />}
+            sx={{ height: 32 }}
           >
             Browse
           </Button>
           <Autocomplete
             freeSolo
+            forcePopupIcon
             clearOnBlur={false}
             blurOnSelect
             options={recentFiles}
@@ -413,7 +500,7 @@ export function ImageViewerPage() {
                 openFile(path, name);
               }
             }}
-            sx={{ flexGrow: 1 }}
+            sx={{ flexGrow: 1, "& .MuiInputBase-root": { height: 32 } }}
             slotProps={{ listbox: { style: { maxHeight: 320 } } }}
             renderInput={(params) => (
               <TextField
@@ -433,7 +520,7 @@ export function ImageViewerPage() {
               );
             }}
           />
-          <Button variant="contained" onClick={handleOpen} disabled={!inputPath.trim() || inputPath.trim() === activePath || isVirtualPath(activePath)}>
+          <Button variant="contained" size="small" onClick={handleOpen} disabled={!inputPath.trim() || inputPath.trim() === activePath || isVirtualPath(activePath)} sx={{ height: 32 }}>
             Open
           </Button>
 
@@ -448,12 +535,6 @@ export function ImageViewerPage() {
             </>
           )}
 
-          <Box sx={{ flexGrow: 1 }} />
-          <Tooltip title="Activity Console">
-            <IconButton size="small" onClick={() => setActivityOpen(true)}>
-              <TimelineIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
         </Box>
 
         {/* Tabs + content */}
@@ -489,6 +570,7 @@ export function ImageViewerPage() {
                     sx={{ fontSize: "0.65rem", height: 20 }}
                   />
                 )}
+                <EasterEggWand lines={IMAGE_COMMENTARY} tooltip="Expert analysis" size={12} />
               </Box>
             </Box>
 
@@ -553,6 +635,7 @@ export function ImageViewerPage() {
                     midtone={linked.midtone}
                     highlight={linked.highlight}
                     isStretching={hasStretch && (linked.stretch === "stf" || linked.stretch === "auto")}
+                    forceShowIndicators={sliderHovering}
                     channelIntensities={
                       isColor && statsQuery.data
                         ? statsQuery.data.channels.map((ch, i) => ({
@@ -689,16 +772,40 @@ export function ImageViewerPage() {
       {hasFile && selectedExtInfo?.has_image && (tab === 0 || tab === 2) && (
         <Box
           sx={{
-            width: 220,
+            width: rightSidebarOpen ? 220 : 24,
             flexShrink: 0,
             borderLeft: 1,
             borderColor: "divider",
-            overflowY: "auto",
-            overflowX: "hidden",
+            overflow: "hidden",
             display: "flex",
             flexDirection: "column",
+            transition: "width 0.2s",
           }}
         >
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: rightSidebarOpen ? "flex-start" : "center",
+              bgcolor: "action.hover",
+              borderBottom: 1,
+              borderColor: "divider",
+              py: 0.25,
+              px: 0.5,
+              flexShrink: 0,
+            }}
+          >
+            <Tooltip title={rightSidebarOpen ? "Collapse panel" : "Expand panel"} placement="left" arrow>
+              <IconButton
+                size="small"
+                onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+                sx={{ p: 0.25, color: "primary.main" }}
+              >
+                {rightSidebarOpen ? <KeyboardDoubleArrowRightIcon sx={{ fontSize: 16 }} /> : <KeyboardDoubleArrowLeftIcon sx={{ fontSize: 16 }} />}
+              </IconButton>
+            </Tooltip>
+          </Box>
+          {!rightSidebarOpen ? null : (
+          <Box sx={{ pt: 0.5, flex: 1, overflowY: "auto", overflowX: "hidden" }}>
           {tab === 0 && (
           <>
           {/* Key fields summary — curated header info */}
@@ -794,6 +901,7 @@ export function ImageViewerPage() {
                 onLinkedToggle={handleLinkedToggle}
                 onApply={handleApplyStretch}
                 onReset={handleReset}
+                onSliderHover={setSliderHovering}
               />
             </SidebarSection>
           )}
@@ -1003,14 +1111,29 @@ export function ImageViewerPage() {
 
           {/* Help tips */}
           <SidebarSection label="Help" defaultOpen={false}>
-            <Box sx={{ px: 1.5, pb: 1.5 }}>
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", display: "block", lineHeight: 2 }}>
-                Scroll to zoom<br />
-                Click + drag to pan<br />
-                F &mdash; fit to window<br />
-                1 &mdash; 1:1 pixel zoom<br />
-                {"\u2318"}O / Ctrl+O &mdash; browse files
-              </Typography>
+            <Box sx={{ px: 1.5, pb: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
+              <Box>
+                <Typography variant="caption" color="text.primary" sx={{ fontSize: "0.65rem", fontWeight: 600, display: "block", mb: 0.25 }}>
+                  Image
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", display: "block", lineHeight: 2 }}>
+                  Scroll to zoom<br />
+                  Click + drag to pan<br />
+                  F &mdash; fit to window<br />
+                  1 &mdash; 1:1 pixel zoom<br />
+                  {"\u2318"}O / Ctrl+O &mdash; browse files
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.primary" sx={{ fontSize: "0.65rem", fontWeight: 600, display: "block", mb: 0.25 }}>
+                  Histogram
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", display: "block", lineHeight: 2 }}>
+                  Hover to inspect bin values<br />
+                  Click + drag to zoom into a range<br />
+                  Reset Zoom to restore full view
+                </Typography>
+              </Box>
             </Box>
           </SidebarSection>
           </>
@@ -1020,6 +1143,7 @@ export function ImageViewerPage() {
               analysis={aberrationQuery.data ?? null}
             />
           )}
+          </Box>)}
         </Box>
       )}
 
@@ -1030,9 +1154,6 @@ export function ImageViewerPage() {
         onSelect={(path, displayName) => openFile(path, displayName)}
         activePath={activePath}
       />
-
-      {/* Activity console */}
-      <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
 
       {/* Error notification */}
       <Snackbar

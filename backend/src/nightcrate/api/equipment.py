@@ -8,9 +8,6 @@ from nightcrate.api.equipment_models import (
     CameraUpdate,
     ComputerCreate,
     ComputerResponse,
-    ComputerTypeCreate,
-    ComputerTypeResponse,
-    ComputerTypeUpdate,
     ComputerUpdate,
     ConnectionInterfaceCreate,
     ConnectionInterfaceResponse,
@@ -24,16 +21,27 @@ from nightcrate.api.equipment_models import (
     FilterPassbandUpdate,
     FilterResponse,
     FilterSizeCreate,
+    FilterSizeOptionCreate,
+    FilterSizeOptionResponse,
+    FilterSizeOptionUpdate,
     FilterSizeResponse,
     FilterSizeUpdate,
+    FilterTypeCreate,
     FilterTypeResponse,
+    FilterTypeUpdate,
     FilterUpdate,
     FilterWheelCreate,
     FilterWheelResponse,
     FilterWheelUpdate,
     FocuserCreate,
     FocuserResponse,
+    FocuserTypeCreate,
+    FocuserTypeResponse,
+    FocuserTypeUpdate,
     FocuserUpdate,
+    FormFactorCreate,
+    FormFactorResponse,
+    FormFactorUpdate,
     GuideScopeCreate,
     GuideScopeResponse,
     GuideScopeUpdate,
@@ -67,7 +75,8 @@ from nightcrate.api.equipment_models import (
 )
 from nightcrate.db.session import get_db
 
-router = APIRouter(prefix="/api/equipment", tags=["equipment"])
+router = APIRouter(prefix="/api/equipment", tags=["Equipment"])
+lookup_router = APIRouter(prefix="/api/equipment", tags=["Lookup Tables"])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,6 +105,32 @@ def _strip_seed(d: dict) -> dict:
     return d
 
 
+_RESTORABLE_TABLES = frozenset(
+    {
+        "manufacturer",
+        "optical_design",
+        "mount_type",
+        "connection_interface",
+        "connector_size",
+        "filter_size",
+        "form_factor",
+        "focuser_type",
+        "filter_type",
+        "sensor",
+        "camera",
+        "telescope",
+        "filter",
+        "mount",
+        "focuser",
+        "filter_wheel",
+        "oag",
+        "guide_scope",
+        "computer",
+        "software",
+    }
+)
+
+
 async def _get_or_404(conn, table: str, row_id: int, label: str = "Item") -> dict:
     """Fetch a single row by ID or raise 404."""
     row = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))
@@ -105,10 +140,28 @@ async def _get_or_404(conn, table: str, row_id: int, label: str = "Item") -> dic
     return _row_to_dict(result)
 
 
+# ── Restore (generic) ────────────────────────────────────────────────────────
+
+
+@router.post("/restore/{table_name}/{item_id}")
+async def restore_item(table_name: str, item_id: int):
+    """Restore a soft-deleted item by setting active=1."""
+    if table_name not in _RESTORABLE_TABLES:
+        raise HTTPException(status_code=400, detail=f"Unknown table: {table_name}")
+    async with get_db() as conn:
+        await _get_or_404(conn, table_name, item_id, table_name)
+        await conn.execute(
+            f"UPDATE {table_name} SET active = 1 WHERE id = ?",
+            (item_id,),
+        )
+        await conn.commit()
+    return {"ok": True}
+
+
 # ── Manufacturer ─────────────────────────────────────────────────────────────
 
 
-@router.get("/manufacturer", response_model=list[ManufacturerResponse])
+@lookup_router.get("/manufacturer", response_model=list[ManufacturerResponse])
 async def list_manufacturers(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
@@ -118,7 +171,7 @@ async def list_manufacturers(
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get("/manufacturer/{manufacturer_id}", response_model=ManufacturerResponse)
+@lookup_router.get("/manufacturer/{manufacturer_id}", response_model=ManufacturerResponse)
 async def get_manufacturer(manufacturer_id: int):
     async with get_db() as conn:
         return _bool_fields(
@@ -127,7 +180,7 @@ async def get_manufacturer(manufacturer_id: int):
         )
 
 
-@router.post("/manufacturer", response_model=ManufacturerResponse, status_code=201)
+@lookup_router.post("/manufacturer", response_model=ManufacturerResponse, status_code=201)
 async def create_manufacturer(body: ManufacturerCreate):
     async with get_db() as conn:
         try:
@@ -149,7 +202,7 @@ async def create_manufacturer(body: ManufacturerCreate):
         )
 
 
-@router.put("/manufacturer/{manufacturer_id}", response_model=ManufacturerResponse)
+@lookup_router.put("/manufacturer/{manufacturer_id}", response_model=ManufacturerResponse)
 async def update_manufacturer(manufacturer_id: int, body: ManufacturerUpdate):
     async with get_db() as conn:
         existing = await _get_or_404(conn, "manufacturer", manufacturer_id, "Manufacturer")
@@ -174,7 +227,7 @@ async def update_manufacturer(manufacturer_id: int, body: ManufacturerUpdate):
         )
 
 
-@router.delete("/manufacturer/{manufacturer_id}")
+@lookup_router.delete("/manufacturer/{manufacturer_id}")
 async def delete_manufacturer(manufacturer_id: int):
     async with get_db() as conn:
         await _get_or_404(conn, "manufacturer", manufacturer_id, "Manufacturer")
@@ -189,7 +242,7 @@ async def delete_manufacturer(manufacturer_id: int):
 # ── Optical Design ────────────────────────────────────────────────────────────
 
 
-@router.get("/optical-design", response_model=list[OpticalDesignResponse])
+@lookup_router.get("/optical-design", response_model=list[OpticalDesignResponse])
 async def list_optical_designs(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
@@ -199,7 +252,7 @@ async def list_optical_designs(
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get("/optical-design/{optical_design_id}", response_model=OpticalDesignResponse)
+@lookup_router.get("/optical-design/{optical_design_id}", response_model=OpticalDesignResponse)
 async def get_optical_design(optical_design_id: int):
     async with get_db() as conn:
         return _bool_fields(
@@ -208,7 +261,7 @@ async def get_optical_design(optical_design_id: int):
         )
 
 
-@router.post("/optical-design", response_model=OpticalDesignResponse, status_code=201)
+@lookup_router.post("/optical-design", response_model=OpticalDesignResponse, status_code=201)
 async def create_optical_design(body: OpticalDesignCreate):
     async with get_db() as conn:
         try:
@@ -230,7 +283,7 @@ async def create_optical_design(body: OpticalDesignCreate):
         )
 
 
-@router.put("/optical-design/{optical_design_id}", response_model=OpticalDesignResponse)
+@lookup_router.put("/optical-design/{optical_design_id}", response_model=OpticalDesignResponse)
 async def update_optical_design(optical_design_id: int, body: OpticalDesignUpdate):
     async with get_db() as conn:
         existing = await _get_or_404(conn, "optical_design", optical_design_id, "Optical design")
@@ -255,7 +308,7 @@ async def update_optical_design(optical_design_id: int, body: OpticalDesignUpdat
         )
 
 
-@router.delete("/optical-design/{optical_design_id}")
+@lookup_router.delete("/optical-design/{optical_design_id}")
 async def delete_optical_design(optical_design_id: int):
     async with get_db() as conn:
         await _get_or_404(conn, "optical_design", optical_design_id, "Optical design")
@@ -270,7 +323,7 @@ async def delete_optical_design(optical_design_id: int):
 # ── Mount Type ────────────────────────────────────────────────────────────────
 
 
-@router.get("/mount-type", response_model=list[MountTypeResponse])
+@lookup_router.get("/mount-type", response_model=list[MountTypeResponse])
 async def list_mount_types(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
@@ -280,7 +333,7 @@ async def list_mount_types(
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get("/mount-type/{mount_type_id}", response_model=MountTypeResponse)
+@lookup_router.get("/mount-type/{mount_type_id}", response_model=MountTypeResponse)
 async def get_mount_type(mount_type_id: int):
     async with get_db() as conn:
         return _bool_fields(
@@ -289,7 +342,7 @@ async def get_mount_type(mount_type_id: int):
         )
 
 
-@router.post("/mount-type", response_model=MountTypeResponse, status_code=201)
+@lookup_router.post("/mount-type", response_model=MountTypeResponse, status_code=201)
 async def create_mount_type(body: MountTypeCreate):
     async with get_db() as conn:
         try:
@@ -311,7 +364,7 @@ async def create_mount_type(body: MountTypeCreate):
         )
 
 
-@router.put("/mount-type/{mount_type_id}", response_model=MountTypeResponse)
+@lookup_router.put("/mount-type/{mount_type_id}", response_model=MountTypeResponse)
 async def update_mount_type(mount_type_id: int, body: MountTypeUpdate):
     async with get_db() as conn:
         existing = await _get_or_404(conn, "mount_type", mount_type_id, "Mount type")
@@ -336,7 +389,7 @@ async def update_mount_type(mount_type_id: int, body: MountTypeUpdate):
         )
 
 
-@router.delete("/mount-type/{mount_type_id}")
+@lookup_router.delete("/mount-type/{mount_type_id}")
 async def delete_mount_type(mount_type_id: int):
     async with get_db() as conn:
         await _get_or_404(conn, "mount_type", mount_type_id, "Mount type")
@@ -351,7 +404,7 @@ async def delete_mount_type(mount_type_id: int):
 # ── Connection Interface ──────────────────────────────────────────────────────
 
 
-@router.get("/connection-interface", response_model=list[ConnectionInterfaceResponse])
+@lookup_router.get("/connection-interface", response_model=list[ConnectionInterfaceResponse])
 async def list_connection_interfaces(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
@@ -361,7 +414,7 @@ async def list_connection_interfaces(
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get(
+@lookup_router.get(
     "/connection-interface/{connection_interface_id}",
     response_model=ConnectionInterfaceResponse,
 )
@@ -375,7 +428,9 @@ async def get_connection_interface(connection_interface_id: int):
         )
 
 
-@router.post("/connection-interface", response_model=ConnectionInterfaceResponse, status_code=201)
+@lookup_router.post(
+    "/connection-interface", response_model=ConnectionInterfaceResponse, status_code=201
+)
 async def create_connection_interface(body: ConnectionInterfaceCreate):
     async with get_db() as conn:
         try:
@@ -398,7 +453,7 @@ async def create_connection_interface(body: ConnectionInterfaceCreate):
         )
 
 
-@router.put(
+@lookup_router.put(
     "/connection-interface/{connection_interface_id}",
     response_model=ConnectionInterfaceResponse,
 )
@@ -434,7 +489,7 @@ async def update_connection_interface(
         )
 
 
-@router.delete("/connection-interface/{connection_interface_id}")
+@lookup_router.delete("/connection-interface/{connection_interface_id}")
 async def delete_connection_interface(connection_interface_id: int):
     async with get_db() as conn:
         await _get_or_404(
@@ -451,7 +506,7 @@ async def delete_connection_interface(connection_interface_id: int):
 # ── Connector Size ────────────────────────────────────────────────────────────
 
 
-@router.get("/connector-size", response_model=list[ConnectorSizeResponse])
+@lookup_router.get("/connector-size", response_model=list[ConnectorSizeResponse])
 async def list_connector_sizes(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
@@ -461,7 +516,7 @@ async def list_connector_sizes(
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get("/connector-size/{connector_size_id}", response_model=ConnectorSizeResponse)
+@lookup_router.get("/connector-size/{connector_size_id}", response_model=ConnectorSizeResponse)
 async def get_connector_size(connector_size_id: int):
     async with get_db() as conn:
         return _bool_fields(
@@ -470,7 +525,7 @@ async def get_connector_size(connector_size_id: int):
         )
 
 
-@router.post("/connector-size", response_model=ConnectorSizeResponse, status_code=201)
+@lookup_router.post("/connector-size", response_model=ConnectorSizeResponse, status_code=201)
 async def create_connector_size(body: ConnectorSizeCreate):
     async with get_db() as conn:
         try:
@@ -492,7 +547,7 @@ async def create_connector_size(body: ConnectorSizeCreate):
         )
 
 
-@router.put("/connector-size/{connector_size_id}", response_model=ConnectorSizeResponse)
+@lookup_router.put("/connector-size/{connector_size_id}", response_model=ConnectorSizeResponse)
 async def update_connector_size(connector_size_id: int, body: ConnectorSizeUpdate):
     async with get_db() as conn:
         existing = await _get_or_404(conn, "connector_size", connector_size_id, "Connector size")
@@ -517,7 +572,7 @@ async def update_connector_size(connector_size_id: int, body: ConnectorSizeUpdat
         )
 
 
-@router.delete("/connector-size/{connector_size_id}")
+@lookup_router.delete("/connector-size/{connector_size_id}")
 async def delete_connector_size(connector_size_id: int):
     async with get_db() as conn:
         await _get_or_404(conn, "connector_size", connector_size_id, "Connector size")
@@ -532,7 +587,7 @@ async def delete_connector_size(connector_size_id: int):
 # ── Filter Size ───────────────────────────────────────────────────────────────
 
 
-@router.get("/filter-size", response_model=list[FilterSizeResponse])
+@lookup_router.get("/filter-size", response_model=list[FilterSizeResponse])
 async def list_filter_sizes(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
@@ -542,7 +597,7 @@ async def list_filter_sizes(
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get("/filter-size/{filter_size_id}", response_model=FilterSizeResponse)
+@lookup_router.get("/filter-size/{filter_size_id}", response_model=FilterSizeResponse)
 async def get_filter_size(filter_size_id: int):
     async with get_db() as conn:
         return _bool_fields(
@@ -551,7 +606,7 @@ async def get_filter_size(filter_size_id: int):
         )
 
 
-@router.post("/filter-size", response_model=FilterSizeResponse, status_code=201)
+@lookup_router.post("/filter-size", response_model=FilterSizeResponse, status_code=201)
 async def create_filter_size(body: FilterSizeCreate):
     async with get_db() as conn:
         try:
@@ -573,7 +628,7 @@ async def create_filter_size(body: FilterSizeCreate):
         )
 
 
-@router.put("/filter-size/{filter_size_id}", response_model=FilterSizeResponse)
+@lookup_router.put("/filter-size/{filter_size_id}", response_model=FilterSizeResponse)
 async def update_filter_size(filter_size_id: int, body: FilterSizeUpdate):
     async with get_db() as conn:
         existing = await _get_or_404(conn, "filter_size", filter_size_id, "Filter size")
@@ -598,7 +653,7 @@ async def update_filter_size(filter_size_id: int, body: FilterSizeUpdate):
         )
 
 
-@router.delete("/filter-size/{filter_size_id}")
+@lookup_router.delete("/filter-size/{filter_size_id}")
 async def delete_filter_size(filter_size_id: int):
     async with get_db() as conn:
         await _get_or_404(conn, "filter_size", filter_size_id, "Filter size")
@@ -613,79 +668,160 @@ async def delete_filter_size(filter_size_id: int):
 # ── Computer Type ─────────────────────────────────────────────────────────────
 
 
-@router.get("/computer-type", response_model=list[ComputerTypeResponse])
-async def list_computer_types(
+@lookup_router.get("/form-factor", response_model=list[FormFactorResponse])
+async def list_form_factors(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM computer_type {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM form_factor {where} ORDER BY name")
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get("/computer-type/{computer_type_id}", response_model=ComputerTypeResponse)
-async def get_computer_type(computer_type_id: int):
+@lookup_router.get("/form-factor/{form_factor_id}", response_model=FormFactorResponse)
+async def get_form_factor(form_factor_id: int):
     async with get_db() as conn:
         return _bool_fields(
-            await _get_or_404(conn, "computer_type", computer_type_id, "Computer type"),
+            await _get_or_404(conn, "form_factor", form_factor_id, "Form factor"),
             "active",
         )
 
 
-@router.post("/computer-type", response_model=ComputerTypeResponse, status_code=201)
-async def create_computer_type(body: ComputerTypeCreate):
+@lookup_router.post("/form-factor", response_model=FormFactorResponse, status_code=201)
+async def create_form_factor(body: FormFactorCreate):
     async with get_db() as conn:
         try:
             cursor = await conn.execute(
-                "INSERT INTO computer_type (name, description) VALUES (?, ?)",
+                "INSERT INTO form_factor (name, description) VALUES (?, ?)",
                 (body.name, body.description),
             )
             await conn.commit()
         except Exception as exc:
             if "UNIQUE" in str(exc):
                 raise HTTPException(
-                    status_code=409, detail=f"Computer type already exists: {body.name}"
+                    status_code=409, detail=f"Form factor already exists: {body.name}"
                 )
             raise
         row_id = cursor.lastrowid
         return _bool_fields(
-            await _get_or_404(conn, "computer_type", row_id, "Computer type"),
+            await _get_or_404(conn, "form_factor", row_id, "Form factor"),
             "active",
         )
 
 
-@router.put("/computer-type/{computer_type_id}", response_model=ComputerTypeResponse)
-async def update_computer_type(computer_type_id: int, body: ComputerTypeUpdate):
+@lookup_router.put("/form-factor/{form_factor_id}", response_model=FormFactorResponse)
+async def update_form_factor(form_factor_id: int, body: FormFactorUpdate):
     async with get_db() as conn:
-        existing = await _get_or_404(conn, "computer_type", computer_type_id, "Computer type")
+        existing = await _get_or_404(conn, "form_factor", form_factor_id, "Form factor")
         updates = body.model_dump(exclude_unset=True)
         if not updates:
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [computer_type_id]
+        values = list(updates.values()) + [form_factor_id]
         try:
             await conn.execute(
-                f"UPDATE computer_type SET {set_clause} WHERE id = ?",
+                f"UPDATE form_factor SET {set_clause} WHERE id = ?",
                 values,
             )
             await conn.commit()
         except Exception as exc:
             if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Computer type name already exists")
+                raise HTTPException(status_code=409, detail="Form factor name already exists")
             raise
         return _bool_fields(
-            await _get_or_404(conn, "computer_type", computer_type_id, "Computer type"),
+            await _get_or_404(conn, "form_factor", form_factor_id, "Form factor"),
             "active",
         )
 
 
-@router.delete("/computer-type/{computer_type_id}")
-async def delete_computer_type(computer_type_id: int):
+@lookup_router.delete("/form-factor/{form_factor_id}")
+async def delete_form_factor(form_factor_id: int):
     async with get_db() as conn:
-        await _get_or_404(conn, "computer_type", computer_type_id, "Computer type")
+        await _get_or_404(conn, "form_factor", form_factor_id, "Form factor")
         await conn.execute(
-            "UPDATE computer_type SET active = 0 WHERE id = ?",
-            (computer_type_id,),
+            "UPDATE form_factor SET active = 0 WHERE id = ?",
+            (form_factor_id,),
+        )
+        await conn.commit()
+    return {"ok": True}
+
+
+# ── Focuser Type ──────────────────────────────────────────────────────────────
+
+
+@lookup_router.get("/focuser-type", response_model=list[FocuserTypeResponse])
+async def list_focuser_types(
+    include_retired: bool = Query(False, description="Include retired items"),
+):
+    async with get_db() as conn:
+        where = "" if include_retired else "WHERE active = 1"
+        rows = await conn.execute(f"SELECT * FROM focuser_type {where} ORDER BY name")
+        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
+
+
+@lookup_router.get("/focuser-type/{focuser_type_id}", response_model=FocuserTypeResponse)
+async def get_focuser_type(focuser_type_id: int):
+    async with get_db() as conn:
+        return _bool_fields(
+            await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type"),
+            "active",
+        )
+
+
+@lookup_router.post("/focuser-type", response_model=FocuserTypeResponse, status_code=201)
+async def create_focuser_type(body: FocuserTypeCreate):
+    async with get_db() as conn:
+        try:
+            cursor = await conn.execute(
+                "INSERT INTO focuser_type (name, notes) VALUES (?, ?)",
+                (body.name, body.notes),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(
+                    status_code=409, detail=f"Focuser type already exists: {body.name}"
+                )
+            raise
+        row_id = cursor.lastrowid
+        return _bool_fields(
+            await _get_or_404(conn, "focuser_type", row_id, "Focuser type"),
+            "active",
+        )
+
+
+@lookup_router.put("/focuser-type/{focuser_type_id}", response_model=FocuserTypeResponse)
+async def update_focuser_type(focuser_type_id: int, body: FocuserTypeUpdate):
+    async with get_db() as conn:
+        existing = await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type")
+        updates = body.model_dump(exclude_unset=True)
+        if not updates:
+            return _bool_fields(existing, "active")
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [focuser_type_id]
+        try:
+            await conn.execute(
+                f"UPDATE focuser_type SET {set_clause} WHERE id = ?",
+                values,
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(status_code=409, detail="Focuser type name already exists")
+            raise
+        return _bool_fields(
+            await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type"),
+            "active",
+        )
+
+
+@lookup_router.delete("/focuser-type/{focuser_type_id}")
+async def delete_focuser_type(focuser_type_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type")
+        await conn.execute(
+            "UPDATE focuser_type SET active = 0 WHERE id = ?",
+            (focuser_type_id,),
         )
         await conn.commit()
     return {"ok": True}
@@ -694,7 +830,7 @@ async def delete_computer_type(computer_type_id: int):
 # ── Filter Type (read-only) ───────────────────────────────────────────────────
 
 
-@router.get("/filter-type", response_model=list[FilterTypeResponse])
+@lookup_router.get("/filter-type", response_model=list[FilterTypeResponse])
 async def list_filter_types(
     include_retired: bool = Query(False, description="Include retired items"),
 ):
@@ -704,13 +840,71 @@ async def list_filter_types(
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
-@router.get("/filter-type/{filter_type_id}", response_model=FilterTypeResponse)
+@lookup_router.get("/filter-type/{filter_type_id}", response_model=FilterTypeResponse)
 async def get_filter_type(filter_type_id: int):
     async with get_db() as conn:
         return _bool_fields(
             await _get_or_404(conn, "filter_type", filter_type_id, "Filter type"),
             "active",
         )
+
+
+@lookup_router.post("/filter-type", response_model=FilterTypeResponse, status_code=201)
+async def create_filter_type(body: FilterTypeCreate):
+    async with get_db() as conn:
+        try:
+            cursor = await conn.execute(
+                "INSERT INTO filter_type (name, display_name, description) VALUES (?, ?, ?)",
+                (body.name, body.display_name, body.description),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(
+                    status_code=409, detail=f"Filter type already exists: {body.name}"
+                )
+            raise
+        return _bool_fields(
+            await _get_or_404(conn, "filter_type", cursor.lastrowid, "Filter type"),
+            "active",
+        )
+
+
+@lookup_router.put("/filter-type/{filter_type_id}", response_model=FilterTypeResponse)
+async def update_filter_type(filter_type_id: int, body: FilterTypeUpdate):
+    async with get_db() as conn:
+        existing = await _get_or_404(conn, "filter_type", filter_type_id, "Filter type")
+        updates = body.model_dump(exclude_unset=True)
+        if not updates:
+            return _bool_fields(existing, "active")
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [filter_type_id]
+        try:
+            await conn.execute(
+                f"UPDATE filter_type SET {set_clause} WHERE id = ?",
+                values,
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(status_code=409, detail="Filter type name already exists")
+            raise
+        return _bool_fields(
+            await _get_or_404(conn, "filter_type", filter_type_id, "Filter type"),
+            "active",
+        )
+
+
+@lookup_router.delete("/filter-type/{filter_type_id}")
+async def delete_filter_type(filter_type_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter_type", filter_type_id, "Filter type")
+        await conn.execute(
+            "UPDATE filter_type SET active = 0 WHERE id = ?",
+            (filter_type_id,),
+        )
+        await conn.commit()
+    return {"ok": True}
 
 
 # ── Sensor ────────────────────────────────────────────────────────────────────
@@ -769,7 +963,7 @@ async def create_sensor(body: SensorCreate):
                     pixel_size_um, resolution_x, resolution_y,
                     sensor_width_mm, sensor_height_mm, adc_bit_depth,
                     full_well_capacity_ke, read_noise_e, peak_qe_pct,
-                    bayer_pattern, dual_gain, hcg_threshold_gain, notes
+                    bayer_pattern, dual_gain, notes, source_url
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
@@ -786,8 +980,8 @@ async def create_sensor(body: SensorCreate):
                     body.peak_qe_pct,
                     body.bayer_pattern,
                     int(body.dual_gain),
-                    body.hcg_threshold_gain,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -933,8 +1127,12 @@ async def create_camera(body: CameraCreate):
                 """INSERT INTO camera (
                     manufacturer_id, sensor_id, guide_sensor_id, connector_size_id,
                     model_name, cooled, cooling_delta_c, back_focus_mm, weight_g,
-                    tilt_adapter, has_usb_hub, usb_hub_interface_id, unity_gain, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    tilt_adapter, has_usb_hub, usb_hub_interface_id, unity_gain,
+                    effective_full_well_ke, effective_read_noise_lcg_e,
+                    effective_read_noise_hcg_e, effective_peak_qe_pct,
+                    hcg_threshold_gain, notes, source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.sensor_id,
@@ -949,7 +1147,13 @@ async def create_camera(body: CameraCreate):
                     int(body.has_usb_hub),
                     body.usb_hub_interface_id,
                     body.unity_gain,
+                    body.effective_full_well_ke,
+                    body.effective_read_noise_lcg_e,
+                    body.effective_read_noise_hcg_e,
+                    body.effective_peak_qe_pct,
+                    body.hcg_threshold_gain,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -1096,8 +1300,9 @@ async def create_telescope(body: TelescopeCreate):
             cursor = await conn.execute(
                 """INSERT INTO telescope (
                     manufacturer_id, optical_design_id, model_name,
-                    aperture_mm, image_circle_mm, weight_kg, obstruction_pct, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    aperture_mm, image_circle_mm, weight_kg, obstruction_pct, notes,
+                    source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.optical_design_id,
@@ -1107,6 +1312,7 @@ async def create_telescope(body: TelescopeCreate):
                     body.weight_kg,
                     body.obstruction_pct,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -1319,15 +1525,6 @@ async def _build_filter_response(conn, filter_row: dict) -> dict:
         "active",
     )
 
-    fs_id = d.pop("filter_size_id")
-    if fs_id:
-        d["filter_size"] = _bool_fields(
-            await _get_or_404(conn, "filter_size", fs_id, "Filter size"),
-            "active",
-        )
-    else:
-        d["filter_size"] = None
-
     pbs = await conn.execute(
         """
         SELECT * FROM filter_passband
@@ -1341,6 +1538,29 @@ async def _build_filter_response(conn, filter_row: dict) -> dict:
         _strip_seed(pb)
         for k in ("active", "created_at", "updated_at"):
             pb.pop(k, None)
+
+    sos = await conn.execute(
+        """
+        SELECT * FROM filter_size_option
+        WHERE filter_id = ? AND active = 1
+        ORDER BY filter_size_id
+        """,
+        (d["id"],),
+    )
+    d["size_options"] = []
+    for row in await sos.fetchall():
+        so = _row_to_dict(row)
+        fs_id = so.pop("filter_size_id")
+        fs = _bool_fields(
+            await _get_or_404(conn, "filter_size", fs_id, "Filter size"),
+            "active",
+        )
+        _strip_seed(fs)
+        so["filter_size"] = fs
+        _strip_seed(so)
+        for k in ("active", "created_at", "updated_at"):
+            so.pop(k, None)
+        d["size_options"].append(so)
 
     _strip_seed(d)
 
@@ -1373,17 +1593,16 @@ async def create_filter(body: FilterCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO filter (
-                    manufacturer_id, filter_type_id, filter_size_id, model_name,
-                    peak_transmission_pct, mounted_thickness_mm, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    manufacturer_id, filter_type_id, model_name,
+                    peak_transmission_pct, notes, source_url
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.filter_type_id,
-                    body.filter_size_id,
                     body.model_name,
                     body.peak_transmission_pct,
-                    body.mounted_thickness_mm,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -1532,6 +1751,96 @@ async def delete_filter_passband(filter_id: int, passband_id: int):
     return {"ok": True}
 
 
+# ── Filter size option child endpoints ──────────────────────────────────────
+
+
+async def _build_size_option_response(conn, so_row) -> dict:
+    so = _row_to_dict(so_row)
+    fs = _bool_fields(
+        await _get_or_404(conn, "filter_size", so.pop("filter_size_id"), "Filter size"),
+        "active",
+    )
+    _strip_seed(fs)
+    so["filter_size"] = fs
+    _strip_seed(so)
+    for k in ("active", "created_at", "updated_at"):
+        so.pop(k, None)
+    return so
+
+
+@router.post(
+    "/filter/{filter_id}/size-option",
+    response_model=FilterSizeOptionResponse,
+    status_code=201,
+)
+async def create_filter_size_option(filter_id: int, body: FilterSizeOptionCreate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        try:
+            cursor = await conn.execute(
+                """INSERT INTO filter_size_option (
+                    filter_id, filter_size_id, mounted_thickness_mm, notes
+                ) VALUES (?, ?, ?, ?)""",
+                (filter_id, body.filter_size_id, body.mounted_thickness_mm, body.notes),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(status_code=409, detail="This filter already offers that size")
+            raise
+        row = await conn.execute(
+            "SELECT * FROM filter_size_option WHERE id = ?", (cursor.lastrowid,)
+        )
+        return await _build_size_option_response(conn, await row.fetchone())
+
+
+@router.put(
+    "/filter/{filter_id}/size-option/{option_id}",
+    response_model=FilterSizeOptionResponse,
+)
+async def update_filter_size_option(filter_id: int, option_id: int, body: FilterSizeOptionUpdate):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        check = await conn.execute(
+            "SELECT id FROM filter_size_option WHERE id = ? AND filter_id = ?",
+            (option_id, filter_id),
+        )
+        if await check.fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Size option not found: {option_id}")
+        updates = body.model_dump(exclude_unset=True)
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [option_id]
+            try:
+                await conn.execute(
+                    f"UPDATE filter_size_option SET {set_clause} WHERE id = ?", values
+                )
+                await conn.commit()
+            except Exception as exc:
+                if "UNIQUE" in str(exc):
+                    raise HTTPException(
+                        status_code=409, detail="This filter already offers that size"
+                    )
+                raise
+        row = await conn.execute("SELECT * FROM filter_size_option WHERE id = ?", (option_id,))
+        return await _build_size_option_response(conn, await row.fetchone())
+
+
+@router.delete("/filter/{filter_id}/size-option/{option_id}")
+async def delete_filter_size_option(filter_id: int, option_id: int):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        check = await conn.execute(
+            "SELECT id FROM filter_size_option WHERE id = ? AND filter_id = ?",
+            (option_id, filter_id),
+        )
+        if await check.fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Size option not found: {option_id}")
+        await conn.execute("UPDATE filter_size_option SET active = 0 WHERE id = ?", (option_id,))
+        await conn.commit()
+    return {"ok": True}
+
+
 # ── Mount ─────────────────────────────────────────────────────────────────────
 
 
@@ -1598,8 +1907,8 @@ async def create_mount(body: MountCreate):
                 """INSERT INTO mount (
                     manufacturer_id, mount_type_id, model_name,
                     payload_capacity_kg, mount_weight_kg, counterweight_required,
-                    goto_capable, periodic_error_arcsec, drive_type, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    goto_capable, periodic_error_arcsec, drive_type, notes, source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.mount_type_id,
@@ -1611,6 +1920,7 @@ async def create_mount(body: MountCreate):
                     body.periodic_error_arcsec,
                     body.drive_type,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -1691,6 +2001,15 @@ async def _build_focuser_response(conn, focuser_row: dict) -> dict:
         "active",
     )
 
+    ft_id = d.pop("focuser_type_id")
+    if ft_id:
+        d["focuser_type"] = _bool_fields(
+            await _get_or_404(conn, "focuser_type", ft_id, "Focuser type"),
+            "active",
+        )
+    else:
+        d["focuser_type"] = None
+
     ifaces = await conn.execute(
         """
         SELECT ci.* FROM connection_interface ci
@@ -1733,12 +2052,13 @@ async def create_focuser(body: FocuserCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO focuser (
-                    manufacturer_id, model_name, motorized, travel_range_mm,
+                    manufacturer_id, focuser_type_id, model_name, motorized, travel_range_mm,
                     step_size_um, total_steps, temperature_compensation,
-                    backlash_steps, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    backlash_steps, notes, source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
+                    body.focuser_type_id,
                     body.model_name,
                     int(body.motorized),
                     body.travel_range_mm,
@@ -1747,6 +2067,7 @@ async def create_focuser(body: FocuserCreate):
                     int(body.temperature_compensation),
                     body.backlash_steps,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -1898,8 +2219,8 @@ async def create_filter_wheel(body: FilterWheelCreate):
                 """INSERT INTO filter_wheel (
                     manufacturer_id, filter_size_id, camera_side_connector_id,
                     telescope_side_connector_id, model_name, num_positions,
-                    back_focus_contribution_mm, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    back_focus_contribution_mm, notes, source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.filter_size_id,
@@ -1909,6 +2230,7 @@ async def create_filter_wheel(body: FilterWheelCreate):
                     body.num_positions,
                     body.back_focus_contribution_mm,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -2039,8 +2361,9 @@ async def create_oag(body: OagCreate):
             cursor = await conn.execute(
                 """INSERT INTO oag (
                     manufacturer_id, imaging_side_connector_id, guide_camera_connector_id,
-                    model_name, prism_size_mm, back_focus_contribution_mm, weight_g, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    model_name, prism_size_mm, back_focus_contribution_mm, weight_g, notes,
+                    source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.imaging_side_connector_id,
@@ -2050,6 +2373,7 @@ async def create_oag(body: OagCreate):
                     body.back_focus_contribution_mm,
                     body.weight_g,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -2153,8 +2477,8 @@ async def create_guide_scope(body: GuideScopeCreate):
             cursor = await conn.execute(
                 """INSERT INTO guide_scope (
                     manufacturer_id, guide_camera_connector_id, model_name,
-                    aperture_mm, focal_length_mm, weight_g, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    aperture_mm, focal_length_mm, weight_g, notes, source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.guide_camera_connector_id,
@@ -2163,6 +2487,7 @@ async def create_guide_scope(body: GuideScopeCreate):
                     body.focal_length_mm,
                     body.weight_g,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()
@@ -2225,14 +2550,14 @@ async def _build_computer_response(conn, computer_row: dict) -> dict:
         "active",
     )
 
-    ct_id = d.pop("computer_type_id")
+    ct_id = d.pop("form_factor_id")
     if ct_id:
-        d["computer_type"] = _bool_fields(
-            await _get_or_404(conn, "computer_type", ct_id, "Computer type"),
+        d["form_factor"] = _bool_fields(
+            await _get_or_404(conn, "form_factor", ct_id, "Form factor"),
             "active",
         )
     else:
-        d["computer_type"] = None
+        d["form_factor"] = None
 
     _strip_seed(d)
 
@@ -2265,13 +2590,14 @@ async def create_computer(body: ComputerCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO computer (
-                    manufacturer_id, computer_type_id, model_name, notes
-                ) VALUES (?, ?, ?, ?)""",
+                    manufacturer_id, form_factor_id, model_name, notes, source_url
+                ) VALUES (?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
-                    body.computer_type_id,
+                    body.form_factor_id,
                     body.model_name,
                     body.notes,
+                    body.source_url,
                 ),
             )
             await conn.commit()

@@ -1,7 +1,64 @@
 seed_key,name,notes,website
+# --- Hardware manufacturers ---
 manufacturer.zwo,ZWO,,https://zwoastro.com
 manufacturer.celestron,Celestron,,https://celestron.com
 manufacturer.optolong,Optolong,,https://optolong.com
-manufacturer.sony,Sony (Semiconductor),Used as sensor manufacturer,
-manufacturer.pegasus,Pegasus Astro,,https://pegasusastro.com
+manufacturer.sony,Sony Semiconductor Solutions,Image sensor manufacturer; manufactures the IMX-series CMOS sensors used in nearly all current astrophotography cameras,https://www.sony-semicon.com/
+manufacturer.smartsens,SmartSens Technology,Chinese fabless image sensor manufacturer; produces the SC-series CMOS sensors used in modern guide cameras (SC2210),https://www.smartsens-tech.com/
+manufacturer.panasonic,Panasonic,Sensor manufacturer; MN34230 sensor powers the ZWO ASI1600 and QHY163 camera families,https://www.panasonic.com/
+manufacturer.onsemi,OnSemi,Sensor manufacturer (acquired Aptina Imaging 2014); AR0130 sensor powers the ubiquitous ZWO ASI120 guide cameras,https://www.onsemi.com/
+manufacturer.pegasus_astro,Pegasus Astro,,https://pegasusastro.com
+manufacturer.qhy,QHY,,https://www.qhyccd.com
+manufacturer.skywatcher,Sky-Watcher,,https://www.skywatcher.com
+manufacturer.ioptron,iOptron,,https://www.ioptron.com
+manufacturer.askar,Askar,,https://www.askar.com
+manufacturer.sharpstar,Sharpstar,,https://www.sharpstar.com
+manufacturer.antlia,Antlia,,https://www.intagnightsky.com
+manufacturer.chroma,Chroma Technology,,https://www.chroma.com
+manufacturer.baader,Baader Planetarium,,https://www.baader-planetarium.com
+manufacturer.william_optics,William Optics,,https://williamoptics.com
+manufacturer.starizona,Starizona,,https://starizona.com
+manufacturer.primalucelab,PrimaLuceLab,,https://www.primalucelab.com
+manufacturer.takahashi,Takahashi,,https://www.takahashi-europe.com
+manufacturer.player_one,Player One Astronomy,,https://player-one-astronomy.com
+manufacturer.touptek,Touptek,,https://www.touptek.com
+manufacturer.warpastron,WarpAstron,,https://warpastron.com
+manufacturer.planewave,Planewave Instruments,,https://planewave.com
+manufacturer.explore_scientific,Explore Scientific,,https://explorescientific.com
+manufacturer.ts_optics,TS-Optics,,https://www.teleskop-express.de
+manufacturer.rainbow_astro,Rainbow Astro,,https://www.rainbowastro.com
+# --- Software manufacturers ---
 manufacturer.open_source,Open Source / Community,,
+manufacturer.freeware,Freeware,Generic attribution for free closed-source tools by individual developers,
+manufacturer.pleiades_astrophoto,Pleiades Astrophoto,Developer of PixInsight,https://pixinsight.com
+manufacturer.sharpcap,SharpCap Ltd,Developer of SharpCap,https://www.sharpcap.co.uk
+manufacturer.main_sequence,Main Sequence Software,Developer of Sequence Generator Pro,https://mainsequencesoftware.com
+manufacturer.ideiki,Ideiki Software,Developer of Astro Photography Tool (APT),https://www.astrophotography.app
+manufacturer.starkeeper,Starkeeper,Developer of Voyager,https://software.starkeeper.it
+manufacturer.rc_astro,RC-Astro,Russell Croman — XTerminator suite,https://www.rc-astro.com
+manufacturer.aries_productions,Aries Productions,Developer of Astro Pixel Processor,https://www.astropixelprocessor.com
+manufacturer.ascom_initiative,ASCOM Initiative,ASCOM Platform standards body,https://ascom-standards.org
+manufacturer.simulation_curriculum,Simulation Curriculum,SkySafari and Starry Night,https://simulationcurriculum.com
+manufacturer.diffraction_limited,Diffraction Limited,Developer of MaxIm DL,https://diffractionlimited.com
+manufacturer.adobe,Adobe,Photoshop and Lightroom,https://www.adobe.com
+manufacturer.serif,Serif,Developer of Affinity Photo,https://affinity.serif.com
+manufacturer.topaz_labs,Topaz Labs,Topaz Photo AI — denoise sharpen upscale,https://www.topazlabs.com
+manufacturer.nina_project,N.I.N.A. Project,Open-source Nighttime Imaging 'N' Astronomy team,https://nighttime-imaging.eu
+manufacturer.open_phd_guiding,Open PHD Guiding Project,PHD2 autoguiding team (originally Craig Stark),https://openphdguiding.org
+manufacturer.seti_astro,Seti Astro,Developer of Seti Astro Suite,https://www.setiastro.com
+manufacturer.emil_kraaikamp,Emil Kraaikamp,Developer of AutoStakkert!,https://www.autostakkert.com
+manufacturer.han_kleijn,Han Kleijn,Developer of ASTAP,https://www.hnsky.org
+manufacturer.ilanga,iLanga,Developer of AstroPlanner,https://www.ilanga.com
+manufacturer.stellarmate,StellarMate,Maker of StellarMate dedicated astro computers (Jasem Mutlaq / Ikarus Technologies),https://stellarmate.com
+manufacturer.software_bisque,Software Bisque,,https://www.bisque.com
+manufacturer.losmandy,Losmandy Astronomical Products,Maker of G-series equatorial mounts,https://www.losmandy.com
+manufacturer.astro_physics,Astro-Physics,Premium American equatorial mounts and refractors,https://www.astro-physics.com
+manufacturer.10micron,10Micron,Italian premium absolute-encoder mounts,https://www.10micron.eu
+manufacturer.vixen,Vixen,Japanese telescope and mount manufacturer,https://www.vixenoptics.com
+manufacturer.msm,Move Shoot Move,Compact camera star trackers for nightscape photography,https://www.moveshootmove.com
+manufacturer.generic,Generic,Placeholder manufacturer for user-defined or bring-your-own equipment entries,
+manufacturer.rigel_systems,Rigel Systems,Maker of nSTEP focus motor controllers and QuikFinder reflex sights,https://rigelsys.com
+manufacturer.lacerta,Lacerta,Austrian astronomy retailer and manufacturer; MFOC motorfocus and MGEN guider,https://en.lacerta-optics.com
+manufacturer.deep_sky_dad,Deep Sky Dad,Slovenian small-batch astrophotography accessory maker,https://deepskydad.com
+manufacturer.moonlite,Moonlite Telescope Accessories,US handmade premium focusers and NiteCrawler rotators,https://focuser.com
+manufacturer.optec,Optec Inc,Long-running US maker of intelligent filter wheels and temperature compensating focusers,https://optecinc.com

@@ -1,2 +1,160 @@
 interface_seed_key,mount_seed_key
-connection_interface.usb_3_0,mount.zwo.am5
+# --- ZWO AM line ---
+connection_interface.usb_2_0,mount.zwo.am3
+connection_interface.st4,mount.zwo.am3
+connection_interface.usb_3_0_type_c,mount.zwo.am3n
+connection_interface.usb_2_0,mount.zwo.am3n
+connection_interface.bluetooth,mount.zwo.am3n
+connection_interface.st4,mount.zwo.am3n
+connection_interface.usb_3_0_type_c,mount.zwo.am5
+connection_interface.usb_2_0,mount.zwo.am5
+connection_interface.st4,mount.zwo.am5
+connection_interface.usb_3_0_type_c,mount.zwo.am5n
+connection_interface.usb_2_0,mount.zwo.am5n
+connection_interface.bluetooth,mount.zwo.am5n
+connection_interface.st4,mount.zwo.am5n
+connection_interface.usb_3_0_type_c,mount.zwo.am7
+connection_interface.usb_2_0,mount.zwo.am7
+connection_interface.bluetooth,mount.zwo.am7
+connection_interface.st4,mount.zwo.am7
+# --- Sky-Watcher traditional GEM ---
+connection_interface.usb_2_0,mount.skywatcher.heq5_pro
+connection_interface.st4,mount.skywatcher.heq5_pro
+connection_interface.usb_2_0,mount.skywatcher.eq6_r_pro
+connection_interface.st4,mount.skywatcher.eq6_r_pro
+connection_interface.usb_2_0,mount.skywatcher.cq350_pro
+connection_interface.st4,mount.skywatcher.cq350_pro
+connection_interface.usb_2_0,mount.skywatcher.eq8_r_pro
+connection_interface.st4,mount.skywatcher.eq8_r_pro
+connection_interface.usb_2_0,mount.skywatcher.eq8_rh_pro
+connection_interface.st4,mount.skywatcher.eq8_rh_pro
+connection_interface.usb_2_0,mount.skywatcher.az_eq6
+connection_interface.st4,mount.skywatcher.az_eq6
+# --- Sky-Watcher Wave ---
+connection_interface.usb_2_0,mount.skywatcher.wave_100i
+connection_interface.wifi,mount.skywatcher.wave_100i
+connection_interface.bluetooth,mount.skywatcher.wave_100i
+connection_interface.st4,mount.skywatcher.wave_100i
+connection_interface.usb_2_0,mount.skywatcher.wave_150i
+connection_interface.wifi,mount.skywatcher.wave_150i
+connection_interface.bluetooth,mount.skywatcher.wave_150i
+connection_interface.st4,mount.skywatcher.wave_150i
+# --- Sky-Watcher Star Adventurer ---
+connection_interface.usb_2_0_micro_b,mount.skywatcher.star_adventurer_2i
+connection_interface.wifi,mount.skywatcher.star_adventurer_2i
+connection_interface.st4,mount.skywatcher.star_adventurer_2i
+connection_interface.usb_2_0_micro_b,mount.skywatcher.star_adventurer_gti
+connection_interface.wifi,mount.skywatcher.star_adventurer_gti
+connection_interface.st4,mount.skywatcher.star_adventurer_gti
+# --- iOptron CEM/GEM (traditional) ---
+connection_interface.usb_2_0,mount.ioptron.cem26
+connection_interface.st4,mount.ioptron.cem26
+connection_interface.usb_2_0,mount.ioptron.cem40
+connection_interface.st4,mount.ioptron.cem40
+connection_interface.usb_2_0,mount.ioptron.cem70
+connection_interface.st4,mount.ioptron.cem70
+connection_interface.usb_2_0,mount.ioptron.gem28
+connection_interface.st4,mount.ioptron.gem28
+connection_interface.usb_2_0,mount.ioptron.gem45
+connection_interface.st4,mount.ioptron.gem45
+# --- iOptron HEM/HAE (harmonic with WiFi) ---
+connection_interface.usb_2_0,mount.ioptron.hem27
+connection_interface.wifi,mount.ioptron.hem27
+connection_interface.st4,mount.ioptron.hem27
+connection_interface.usb_2_0,mount.ioptron.hem44
+connection_interface.wifi,mount.ioptron.hem44
+connection_interface.st4,mount.ioptron.hem44
+connection_interface.usb_2_0,mount.ioptron.hae29
+connection_interface.wifi,mount.ioptron.hae29
+connection_interface.st4,mount.ioptron.hae29
+connection_interface.usb_2_0,mount.ioptron.hae43
+connection_interface.wifi,mount.ioptron.hae43
+connection_interface.st4,mount.ioptron.hae43
+connection_interface.usb_2_0,mount.ioptron.hae69
+connection_interface.wifi,mount.ioptron.hae69
+connection_interface.st4,mount.ioptron.hae69
+# --- iOptron SkyGuider Pro ---
+connection_interface.st4,mount.ioptron.skyguider_pro
+# --- Celestron ---
+connection_interface.usb_2_0,mount.celestron.avx
+connection_interface.st4,mount.celestron.avx
+connection_interface.usb_2_0,mount.celestron.cgem_ii
+connection_interface.st4,mount.celestron.cgem_ii
+connection_interface.usb_2_0,mount.celestron.cgx
+connection_interface.st4,mount.celestron.cgx
+connection_interface.usb_2_0,mount.celestron.cgx_l
+connection_interface.st4,mount.celestron.cgx_l
+# --- WarpAstron ---
+connection_interface.usb_3_0_type_c,mount.warpastron.wd20
+connection_interface.wifi,mount.warpastron.wd20
+connection_interface.bluetooth,mount.warpastron.wd20
+connection_interface.st4,mount.warpastron.wd20
+connection_interface.usb_3_0_type_c,mount.warpastron.wd20p
+connection_interface.wifi,mount.warpastron.wd20p
+connection_interface.bluetooth,mount.warpastron.wd20p
+connection_interface.st4,mount.warpastron.wd20p
+# --- Rainbow Astro ---
+connection_interface.usb_2_0,mount.rainbow_astro.rst135
+connection_interface.wifi,mount.rainbow_astro.rst135
+connection_interface.st4,mount.rainbow_astro.rst135
+connection_interface.usb_3_0_type_c,mount.rainbow_astro.rst135e
+connection_interface.wifi,mount.rainbow_astro.rst135e
+connection_interface.st4,mount.rainbow_astro.rst135e
+connection_interface.usb_3_0_type_c,mount.rainbow_astro.rst300
+connection_interface.wifi,mount.rainbow_astro.rst300
+connection_interface.st4,mount.rainbow_astro.rst300
+# --- Pegasus NYX-101 ---
+connection_interface.usb_2_0,mount.pegasus_astro.nyx101
+connection_interface.wifi,mount.pegasus_astro.nyx101
+connection_interface.st4,mount.pegasus_astro.nyx101
+# --- Takahashi Temma (serial native) ---
+connection_interface.serial_rs232,mount.takahashi.em200_temma3
+connection_interface.st4,mount.takahashi.em200_temma3
+connection_interface.serial_rs232,mount.takahashi.em11_temma2z
+connection_interface.st4,mount.takahashi.em11_temma2z
+# --- Losmandy (Gemini 2) ---
+connection_interface.usb_2_0,mount.losmandy.g11
+connection_interface.ethernet,mount.losmandy.g11
+connection_interface.st4,mount.losmandy.g11
+connection_interface.usb_2_0,mount.losmandy.gm8
+connection_interface.st4,mount.losmandy.gm8
+# --- Vixen (Star Book Ten) ---
+connection_interface.usb_2_0,mount.vixen.sxd2
+connection_interface.st4,mount.vixen.sxd2
+connection_interface.usb_2_0,mount.vixen.sxp2
+connection_interface.st4,mount.vixen.sxp2
+# --- Explore Scientific PMC-Eight ---
+connection_interface.usb_2_0,mount.explore_scientific.iexos100_2
+connection_interface.wifi,mount.explore_scientific.iexos100_2
+connection_interface.bluetooth,mount.explore_scientific.iexos100_2
+connection_interface.st4,mount.explore_scientific.iexos100_2
+connection_interface.usb_2_0,mount.explore_scientific.exos2_pmc8
+connection_interface.wifi,mount.explore_scientific.exos2_pmc8
+connection_interface.bluetooth,mount.explore_scientific.exos2_pmc8
+connection_interface.st4,mount.explore_scientific.exos2_pmc8
+# --- Astro-Physics (no ST-4) ---
+connection_interface.usb_2_0,mount.astro_physics.mach2gto
+connection_interface.ethernet,mount.astro_physics.mach2gto
+connection_interface.usb_2_0,mount.astro_physics.ap1100gto
+connection_interface.ethernet,mount.astro_physics.ap1100gto
+# --- 10Micron (no ST-4) ---
+connection_interface.ethernet,mount.10micron.gm1000_hps_ep
+connection_interface.serial_rs232,mount.10micron.gm1000_hps_ep
+connection_interface.usb_2_0,mount.10micron.gm1000_hps_ep
+connection_interface.ethernet,mount.10micron.gm2000_hps_ii
+connection_interface.serial_rs232,mount.10micron.gm2000_hps_ii
+connection_interface.usb_2_0,mount.10micron.gm2000_hps_ii
+# --- Paramount Series 6 (no ST-4) ---
+connection_interface.usb_3_0_type_c,mount.software_bisque.myt
+connection_interface.ethernet,mount.software_bisque.myt
+connection_interface.wifi,mount.software_bisque.myt
+connection_interface.usb_3_0_type_c,mount.software_bisque.mx_series6
+connection_interface.ethernet,mount.software_bisque.mx_series6
+connection_interface.wifi,mount.software_bisque.mx_series6
+connection_interface.usb_2_0,mount.software_bisque.me_ii
+connection_interface.ethernet,mount.software_bisque.me_ii
+# --- Planewave (Ethernet + USB) ---
+connection_interface.ethernet,mount.planewave.l350
+connection_interface.usb_2_0,mount.planewave.l350
+connection_interface.ethernet,mount.planewave.l500
+connection_interface.usb_2_0,mount.planewave.l500

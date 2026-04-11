@@ -1,5 +1,11 @@
 seed_key,description,name
 optical_design.sct,Schmidt-Cassegrain Telescope,SCT
-optical_design.apo_refractor,Apochromatic Refractor,APO Refractor
 optical_design.newtonian,Newtonian Reflector,Newtonian
-optical_design.rc,Ritchey-Chrétien,RC
+optical_design.rc,Ritchey-Chretien,RC
+optical_design.doublet_refractor,2-element refractor (ED doublets),Doublet Refractor
+optical_design.triplet_refractor,3-element APO refractor,Triplet Refractor
+optical_design.quadruplet_refractor,4-element refractor with integrated flattener,Quadruplet Refractor
+optical_design.petzval,Petzval-design refractor (specific quadruplet geometry),Petzval
+optical_design.mak_cass,Maksutov-Cassegrain,Maksutov-Cassegrain
+optical_design.dk,Dall-Kirkham / Corrected Dall-Kirkham (CDK),Dall-Kirkham / CDK
+optical_design.rasa,Rowe-Ackermann Schmidt Astrograph,RASA

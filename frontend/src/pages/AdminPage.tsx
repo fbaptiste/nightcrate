@@ -35,8 +35,10 @@ import {
   browseForDatabase,
   fetchShortcuts,
   createFolder,
+  reseedEquipment,
   type AdminStatus,
   type AppInfo,
+  type ReseedResult,
 } from "@/api/admin";
 
 function formatBytes(bytes: number | null): string {
@@ -210,7 +212,7 @@ function CreateDbDialog({
               autoFocus
             />
             {isAddExisting ? (
-              <Box sx={{ display: "flex", gap: 1 }}>
+              <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
                 <TextField
                   label="Database File"
                   value={existingPath}
@@ -229,7 +231,7 @@ function CreateDbDialog({
                     setBrowsePath(defaultDir);
                     setBrowseOpen(true);
                   }}
-                  sx={{ whiteSpace: "nowrap", minWidth: 90 }}
+                  sx={{ whiteSpace: "nowrap", minWidth: 90, height: 56 }}
                 >
                   Browse
                 </Button>
@@ -622,6 +624,8 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
 
 export function AdminPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [reseeding, setReseeding] = useState(false);
+  const [reseedResult, setReseedResult] = useState<ReseedResult | null>(null);
 
   const infoQuery = useQuery({
     queryKey: ["admin-info"],
@@ -680,6 +684,50 @@ export function AdminPage() {
       <Paper sx={{ p: 2 }}>
         {statusQuery.isLoading && <CircularProgress size={20} />}
         {status && <DatabaseSection status={status} onMutate={handleMutate} />}
+      </Paper>
+
+      {/* Seed Data Section */}
+      <Typography variant="h6" sx={{ mb: 1, mt: 3 }}>
+        Seed Data
+      </Typography>
+      <Paper sx={{ p: 2 }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Re-run the equipment seed loader to pick up new or updated seed data.
+          User-modified equipment will not be overwritten.
+        </Typography>
+        <Button
+          variant="contained"
+          onClick={async () => {
+            setReseeding(true);
+            setReseedResult(null);
+            try {
+              const result = await reseedEquipment();
+              setReseedResult(result);
+            } catch (err) {
+              setErrorMsg(err instanceof Error ? err.message : "Re-seed failed");
+            } finally {
+              setReseeding(false);
+            }
+          }}
+          disabled={reseeding}
+        >
+          {reseeding ? <CircularProgress size={20} color="inherit" /> : "Re-seed Equipment Data"}
+        </Button>
+        {reseedResult && (
+          <Box sx={{ mt: 2, p: 1.5, bgcolor: "action.hover", borderRadius: 1 }}>
+            <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+              {reseedResult.total_inserted} inserted, {reseedResult.total_updated} updated,{" "}
+              {reseedResult.total_unchanged} unchanged, {reseedResult.total_skipped} skipped
+            </Typography>
+            {Object.entries(reseedResult.tables).map(([table, tr]) => (
+              <Typography key={table} variant="caption" sx={{ display: "block", fontFamily: "monospace" }}>
+                {table}: {tr.inserted} ins, {tr.updated} upd
+                {tr.skipped_user_modified.length > 0 && `, ${tr.skipped_user_modified.length} skipped`}
+                {tr.orphaned.length > 0 && `, ${tr.orphaned.length} orphaned`}
+              </Typography>
+            ))}
+          </Box>
+        )}
       </Paper>
 
       <Snackbar

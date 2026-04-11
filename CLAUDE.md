@@ -262,21 +262,24 @@ Fully normalized equipment schema (migrations `0005.equipment_schema.sql` + `000
 - `DB_SCHEMA_DDL.sql` — authoritative CREATE TABLE statements
 
 **Architecture:**
-- 9 lookup/reference tables: `manufacturer`, `optical_design`, `mount_type`, `connection_interface`, `connector_size`, `filter_size`, `computer_type`, `filter_type`, `seed_loader_meta`
+- 10 lookup/reference tables: `manufacturer`, `optical_design`, `mount_type`, `connection_interface`, `connector_size`, `filter_size`, `form_factor`, `focuser_type`, `filter_type`, `seed_loader_meta`
 - 12 equipment tables: `sensor`, `camera`, `telescope`, `telescope_configuration`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`
 - 5 junction tables: `camera_interface`, `telescope_connector`, `mount_interface`, `focuser_interface`, `filter_wheel_interface`
-- 1 child table: `filter_passband`
+- 2 child tables: `filter_passband`, `filter_size_option`
 - 4 FITS alias tables: `camera_alias`, `telescope_alias`, `filter_alias`, `unresolved_equipment_observation`
 - 1 view: `filter_summary`
+- 1 domain table: `location` (migration 0007 — user imaging locations, not seed-tracked)
 
 **Key design decisions:**
 - No custom_fields JSON — add real columns via migration when needed
-- `filter_type` is a closed CHECK vocabulary of roles (narrowband_single, broadband_color, etc.); wavelengths live in `filter_passband` on the physical filter
+- `filter_type` is a user-extensible vocabulary of roles (narrowband_single, broadband_color, etc.) with `display_name` for UI; wavelengths live in `filter_passband` on the physical filter
+- `filter` represents an abstract product; physical sizes live in the `filter_size_option` child table (one row per available size with `mounted_thickness_mm`)
 - `telescope` carries identity only (aperture, design) — all focal length/ratio/back_focus on `telescope_configuration`. Every telescope must have one config with `is_native=1`
-- Every table has seed tracking columns: `created_at`, `updated_at`, `active`, `source`, `seed_key`, `seed_hash`
+- `camera` has `effective_full_well_ke`, `effective_read_noise_lcg_e`, `effective_read_noise_hcg_e`, `effective_peak_qe_pct`, `hcg_threshold_gain` for vendor-tuned specs that override sensor baseline values
+- Every equipment table has seed tracking columns: `created_at`, `updated_at`, `active`, `source`, `seed_key`, `seed_hash`
 - `updated_at` triggers auto-fire on every equipment table
 - Partial unique index on `seed_key WHERE NOT NULL` for seed loader support
-- Closed vocabularies enforced by CHECK constraints: `filter_type.name`, `filter_passband.line_name`, `software.category`, `connection_interface.category`, `sensor.sensor_type`, `sensor.bayer_pattern`
+- Closed vocabularies enforced by CHECK constraints: `filter_passband.line_name`, `software.category`, `connection_interface.category`, `sensor.sensor_type`, `sensor.bayer_pattern`
 
 ## Equipment Management API
 
@@ -290,11 +293,10 @@ Full CRUD API for all equipment types under `/api/equipment/`.
 - Seed tracking columns stripped from all responses via `_SEED_KEYS` constant
 
 **Endpoints per type:**
-- 7 lookup tables: 5 endpoints each (list, get, create, update, soft-delete)
-- `filter_type`: read-only (list, get only)
+- 10 lookup tables: 5 endpoints each (list, get, create, update, soft-delete)
 - `sensor`, `camera`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`: 5 endpoints each
 - `telescope`: 5 endpoints + 3 child endpoints for configurations (create, update, delete)
-- `filter`: 5 endpoints + 3 child endpoints for passbands (create, update, delete)
+- `filter`: 5 endpoints + 3 child endpoints for passbands + 3 child endpoints for size options (create, update, delete)
 
 **Frontend Equipment page:**
 - `pages/EquipmentPage.tsx` — two-panel layout with TreeView sidebar + content area
@@ -302,9 +304,9 @@ Full CRUD API for all equipment types under `/api/equipment/`.
 - `components/equipment/EquipmentList.tsx` — generic list component handling DataGrid, state, delete confirmation for all types
 - Per-type thin list wrappers (`CameraList`, `SensorList`, `MountList`, etc.) define columns and wire EquipmentList to their form dialog
 - Per-type form dialogs (`CameraFormDialog`, `SensorFormDialog`, etc.) — each uses the generic `{ open, item, onClose, onSaved }` interface
-- `components/equipment/LookupTablesPanel.tsx` — accordion UI with inline CRUD for all 6 lookup tables
-- `components/equipment/shared/` — ManufacturerPicker, SensorPicker, LookupPicker, InterfaceMultiSelect, ConfirmDeleteDialog
-- `lib/formUtils.ts` — shared `parseOptionalFloat`, `parseOptionalInt`, `formatFilterType`
+- `components/equipment/LookupTablesPanel.tsx` — accordion UI with inline CRUD for all lookup tables
+- `components/equipment/shared/` — ManufacturerPicker, SensorPicker, LookupPicker, InterfaceMultiSelect, ConfirmDeleteDialog, DetailField, ExternalLink, SensorLink
+- `lib/formUtils.ts` — shared `parseOptionalFloat`, `parseOptionalInt`, `formatFilterType`, `formatSnakeCase`
 - `api/equipment.ts` — TypeScript interfaces + fetch functions for all equipment types
 - All form dialogs show error feedback via Snackbar on save failure
 
@@ -314,12 +316,12 @@ Populates the equipment database from CSV seed files on first run, with hash-bas
 
 **Architecture:**
 - `seed_loader/hash.py` — deterministic SHA-256 hash (contract v1, versioned — never change without migration)
-- `seed_loader/registry.py` — `SeedableTable` dataclass registry, 29 tables in dependency load order
+- `seed_loader/registry.py` — `SeedableTable` dataclass registry, 31 tables in dependency load order
 - `seed_loader/csv_reader.py` — CSV parsing with header validation, comment support, FK seed_key resolution
 - `seed_loader/loader.py` — core: first_run/update modes, FK resolution via in-memory map, re-seed decision logic, junction/child handling, orphan detection, single-transaction
 - `seed_loader/__main__.py` — CLI: `python -m nightcrate.seed_loader --db <path> --csv-root <path> [--dry-run] [--json]`
 - `seed_loader/models.py` — SeedReport, TableReport, SeedError dataclasses
-- `data/seed/*.csv` — 29 CSV files (one per seedable table)
+- `data/seed/*.csv` — 31 CSV files (one per seedable table)
 - Runs automatically on app startup after migrations (sync sqlite3 connection, non-fatal)
 - filter_type rows loaded from CSV, NOT from migration (no equipment data in migrations)
 

@@ -148,8 +148,8 @@ class TestSensorCRUD:
         assert "IMX294" in models
 
     async def test_update_sensor(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Panasonic")
-        sensor = await _make_sensor(client, mfr["id"], "MN34230")
+        mfr = await _make_manufacturer(client, "TestSensorMfr")
+        sensor = await _make_sensor(client, mfr["id"], "TestSensor123")
         resp = await client.put(
             f"/api/equipment/sensor/{sensor['id']}",
             json={"notes": "Updated notes", "pixel_size_um": 4.5},
@@ -158,10 +158,10 @@ class TestSensorCRUD:
         data = resp.json()
         assert data["notes"] == "Updated notes"
         assert data["pixel_size_um"] == 4.5
-        assert data["model_name"] == "MN34230"
+        assert data["model_name"] == "TestSensor123"
 
     async def test_soft_delete_sensor(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Aptina")
+        mfr = await _make_manufacturer(client, "TestDeleteMfr")
         sensor = await _make_sensor(client, mfr["id"], "AR0521")
         resp = await client.delete(f"/api/equipment/sensor/{sensor['id']}")
         assert resp.status_code == 200
@@ -393,8 +393,8 @@ class TestTelescopeCRUD:
 
     async def test_update_connectors(self, client: AsyncClient):
         mfr = await _make_manufacturer(client, "ScopeMfr5")
-        c1 = await _make_connector_size(client, "M63")
-        c2 = await _make_connector_size(client, "M68")
+        c1 = await _make_connector_size(client, "TestConn_M63")
+        c2 = await _make_connector_size(client, "TestConn_M68")
 
         resp = await client.post(
             "/api/equipment/telescope",
@@ -414,7 +414,7 @@ class TestTelescopeCRUD:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["connectors"]) == 1
-        assert data["connectors"][0]["name"] == "M68"
+        assert data["connectors"][0]["name"] == "TestConn_M68"
 
 
 # ── Filter ────────────────────────────────────────────────────────────────────
@@ -422,7 +422,7 @@ class TestTelescopeCRUD:
 
 class TestFilterCRUD:
     async def test_create_and_add_passband(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Antlia")
+        mfr = await _make_manufacturer(client, "TestMfr_Antlia")
         ft_id = await _get_filter_type_id(client)
 
         resp = await client.post(
@@ -520,14 +520,14 @@ class TestFilterCRUD:
 
 class TestMountCRUD:
     async def test_create_and_list(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "10Micron")
-        iface = await _make_connection_interface(client, "Ethernet Mount", "data")
+        mfr = await _make_manufacturer(client, "TestMount Corp")
+        iface = await _make_connection_interface(client, "Ethernet Mount Test", "data")
 
         resp = await client.post(
             "/api/equipment/mount",
             json={
                 "manufacturer_id": mfr["id"],
-                "model_name": "GM1000 HPS",
+                "model_name": "TestMount Pro 9000",
                 "payload_capacity_kg": 30.0,
                 "goto_capable": True,
                 "interface_ids": [iface["id"]],
@@ -535,21 +535,21 @@ class TestMountCRUD:
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["model_name"] == "GM1000 HPS"
-        assert data["manufacturer"]["name"] == "10Micron"
+        assert data["model_name"] == "TestMount Pro 9000"
+        assert data["manufacturer"]["name"] == "TestMount Corp"
         assert len(data["interfaces"]) == 1
 
         resp = await client.get("/api/equipment/mount")
         models = [m["model_name"] for m in resp.json()]
-        assert "GM1000 HPS" in models
+        assert "TestMount Pro 9000" in models
 
     async def test_soft_delete_mount(self, client: AsyncClient):
-        mfr = await _make_manufacturer(client, "Skywatcher")
+        mfr = await _make_manufacturer(client, "TestMount Soft Delete Corp")
         resp = await client.post(
             "/api/equipment/mount",
             json={
                 "manufacturer_id": mfr["id"],
-                "model_name": "EQ6-R Pro",
+                "model_name": "TestMount Soft Delete 9000",
             },
         )
         mount_id = resp.json()["id"]
@@ -558,7 +558,7 @@ class TestMountCRUD:
 
         resp = await client.get("/api/equipment/mount")
         models = [m["model_name"] for m in resp.json()]
-        assert "EQ6-R Pro" not in models
+        assert "TestMount Soft Delete 9000" not in models
 
 
 # ── Focuser ───────────────────────────────────────────────────────────────────
@@ -764,7 +764,7 @@ class TestComputerCRUD:
         data = resp.json()
         assert data["model_name"] == "NUC11"
         assert data["manufacturer"]["name"] == "Intel"
-        assert data["computer_type"] is None
+        assert data["form_factor"] is None
 
         resp = await client.get("/api/equipment/computer")
         models = [c["model_name"] for c in resp.json()]
@@ -865,7 +865,7 @@ class TestFilterTypeReadOnly:
         names = {ft["name"] for ft in data}
         assert "narrowband_single" in names
         assert "broadband_color" in names
-        assert "broadband_luminance" in names
+        assert "luminance" in names
 
     async def test_get_filter_type_by_id(self, client: AsyncClient):
         resp = await client.get("/api/equipment/filter-type")
@@ -963,15 +963,15 @@ class TestLookupTablesCRUD:
         resp = await client.delete(f"/api/equipment/filter-size/{fs_id}")
         assert resp.status_code == 200
 
-    async def test_computer_type_crud(self, client: AsyncClient):
+    async def test_form_factor_crud(self, client: AsyncClient):
         resp = await client.post(
-            "/api/equipment/computer-type",
-            json={"name": "Mini PC"},
+            "/api/equipment/form-factor",
+            json={"name": "TestFormFactor_MiniPC"},
         )
         assert resp.status_code == 201
         ct_id = resp.json()["id"]
 
-        resp = await client.delete(f"/api/equipment/computer-type/{ct_id}")
+        resp = await client.delete(f"/api/equipment/form-factor/{ct_id}")
         assert resp.status_code == 200
 
     async def test_duplicate_lookup_409(self, client: AsyncClient):

@@ -1,3 +1,53 @@
 seed_key,manufacturer_seed_key,category,name,notes,website
-software.nina,manufacturer.open_source,capture,N.I.N.A.,Open source capture software,https://nighttime-imaging.eu
-software.phd2,manufacturer.open_source,guiding,PHD2,Open source guiding software,https://openphdguiding.org
+# --- Capture ---
+software.nina,manufacturer.nina_project,capture,N.I.N.A.,Nighttime Imaging 'N' Astronomy — Windows DSO capture suite,https://nighttime-imaging.eu
+software.sgp,manufacturer.main_sequence,capture,Sequence Generator Pro,Windows DSO capture and sequencing,https://mainsequencesoftware.com/products/sgpro
+software.apt,manufacturer.ideiki,capture,Astro Photography Tool,Windows DSO capture suite (APT),https://www.astrophotography.app
+software.voyager,manufacturer.starkeeper,capture,Voyager,Windows automation and capture,https://software.starkeeper.it
+software.sharpcap,manufacturer.sharpcap,capture,SharpCap,Windows capture — DSO EAA planetary polar alignment,https://www.sharpcap.co.uk
+software.ekos,manufacturer.open_source,capture,Ekos,KStars capture module — cross-platform,https://kstars.kde.org
+software.maximdl,manufacturer.diffraction_limited,capture,MaxIm DL,Windows capture and processing,https://diffractionlimited.com
+software.firecapture,manufacturer.freeware,capture,FireCapture,Planetary lunar and solar capture,https://www.firecapture.de
+# --- N.I.N.A. plugins (capture) ---
+software.nina_hocus_focus,manufacturer.freeware,capture,Hocus Focus,N.I.N.A. plugin — advanced autofocus,https://github.com/ghilios/joko.nina.plugins
+software.nina_tppa,manufacturer.nina_project,capture,Three Point Polar Alignment,N.I.N.A. plugin — polar alignment routine,https://nighttime-imaging.eu
+software.nina_ground_station,manufacturer.freeware,capture,Ground Station,N.I.N.A. plugin — notifications and remote monitoring,https://daleghent.com
+software.nina_target_scheduler,manufacturer.freeware,capture,Target Scheduler,N.I.N.A. plugin — multi-target sequence scheduling,https://github.com/tcpalmer/nina.plugin.targetscheduler
+# --- Guiding ---
+software.phd2,manufacturer.open_phd_guiding,guiding,PHD2,Push Here Dummy 2 — autoguiding,https://openphdguiding.org
+software.metaguide,manufacturer.freeware,guiding,MetaGuide,Guiding and centering for planetary work,http://www.astrogeeks.com/Bliss/MetaGuide
+# --- Processing (deep-sky) ---
+software.pixinsight,manufacturer.pleiades_astrophoto,processing,PixInsight,Cross-platform DSO image processing,https://pixinsight.com
+software.siril,manufacturer.open_source,processing,Siril,Free cross-platform DSO processing,https://siril.org
+software.dss,manufacturer.open_source,processing,DeepSkyStacker,Windows DSO stacking,http://deepskystacker.free.fr
+software.app,manufacturer.aries_productions,processing,Astro Pixel Processor,Cross-platform stacking and processing,https://www.astropixelprocessor.com
+software.graxpert,manufacturer.open_source,processing,GraXpert,Background extraction and denoising,https://www.graxpert.com
+software.bxt,manufacturer.rc_astro,processing,BlurXTerminator,PixInsight plugin — deconvolution,https://www.rc-astro.com/software/bxt
+software.nxt,manufacturer.rc_astro,processing,NoiseXTerminator,PixInsight plugin — denoising,https://www.rc-astro.com/software/nxt
+software.sxt,manufacturer.rc_astro,processing,StarXTerminator,PixInsight plugin — star removal,https://www.rc-astro.com/software/sxt
+software.seti_astro_suite,manufacturer.seti_astro,processing,Seti Astro Suite Pro,Cross-platform DSO processing toolkit,https://www.setiastro.com
+software.starnet,manufacturer.open_source,processing,StarNet++,Neural network star removal,https://www.starnetastro.com
+software.photoshop,manufacturer.adobe,processing,Adobe Photoshop,General image editor — common DSO finishing tool,https://www.adobe.com/products/photoshop.html
+software.affinity_photo,manufacturer.serif,processing,Affinity Photo,General image editor — common DSO finishing tool,https://affinity.serif.com/photo
+software.topaz_photo_ai,manufacturer.topaz_labs,processing,Topaz Photo AI,AI denoise sharpen and upscale,https://www.topazlabs.com/topaz-photo-ai
+# --- Processing (planetary / lunar / solar) ---
+software.autostakkert,manufacturer.emil_kraaikamp,processing,AutoStakkert!3,Lucky imaging stacker for planetary lunar solar,https://www.autostakkert.com
+software.registax,manufacturer.freeware,processing,RegiStax,Wavelet sharpening for planetary lunar solar,https://www.astronomie.be/registax
+software.pipp,manufacturer.freeware,processing,PIPP,Planetary Imaging PreProcessor,https://sites.google.com/site/astropipp
+software.winjupos,manufacturer.freeware,processing,WinJUPOS,Planetary derotation and measurement,http://jupos.org
+software.imppg,manufacturer.open_source,processing,ImPPG,Image Post-Processor — solar and lunar sharpening,https://greatattractor.github.io/imppg
+# --- Planetarium ---
+software.stellarium,manufacturer.open_source,planetarium,Stellarium,Free open-source planetarium for desktop and mobile; real-time sky rendering with extensive star and DSO catalogs; useful for session planning and target visualization,https://stellarium.org
+software.kstars,manufacturer.open_source,planetarium,KStars,Cross-platform planetarium (host of Ekos),https://kstars.kde.org
+software.theskyx,manufacturer.software_bisque,planetarium,TheSkyX,Software Bisque planetarium and control,https://www.bisque.com
+software.skysafari,manufacturer.simulation_curriculum,planetarium,SkySafari,Mobile and desktop planetarium,https://skysafariastronomy.com
+software.cartes_du_ciel,manufacturer.open_source,planetarium,Cartes du Ciel,Free planetarium (SkyChart),https://www.ap-i.net/skychart
+# --- Plate solving ---
+software.astap,manufacturer.han_kleijn,plate_solving,ASTAP,Astrometric STAcking Program — fast local plate solver,https://www.hnsky.org/astap.htm
+software.astrometry_net,manufacturer.open_source,plate_solving,Astrometry.net,Local and online plate solver,https://astrometry.net
+software.platesolve2,manufacturer.planewave,plate_solving,PlateSolve2,PlaneWave plate solver,https://planewave.com
+# --- Utility ---
+software.ascom,manufacturer.ascom_initiative,utility,ASCOM Platform,Windows device driver standard,https://ascom-standards.org
+software.indi,manufacturer.open_source,utility,INDI,Cross-platform device control standard,https://indilib.org
+software.eqmod,manufacturer.open_source,utility,EQMOD,SkyWatcher mount control via ASCOM,https://eq-mod.sourceforge.net
+software.astroplanner,manufacturer.ilanga,utility,AstroPlanner,Observation and imaging session planning,https://www.ilanga.com
