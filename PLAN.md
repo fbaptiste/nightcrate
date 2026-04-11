@@ -17,7 +17,8 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.8.0 — Equipment Database Schema](#v080--equipment-database-schema) ✅
 - [v0.9.0 — Equipment Management API + Core UI](#v090--equipment-management-api--core-ui) ✅
 - [v0.9.1 — Equipment Management UI (Remaining Tabs)](#v091--equipment-management-ui-remaining-tabs) ✅
-- [v0.10.0 — Equipment Seed Loader + Admin Page](#v0100--equipment-seed-loader--admin-page)
+- [v0.10.0 — Equipment Seed Loader + Admin Page](#v0100--equipment-seed-loader--admin-page) ✅
+- [v0.10.1 — Seed Data Population + UI Improvements + Locations](#v0101--seed-data-population--ui-improvements--locations) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider) (incl. Astronomy Weather Forecast)
@@ -1391,6 +1392,114 @@ Empty stubs (to be populated):
 - [x] Admin page shows app info + database management ✅ User
 - [x] Create/activate/remove databases works ✅ User
 - [x] Hot-swap DB without restart ✅ User
+
+---
+
+## v0.10.1 — Seed Data Population + UI Improvements + Locations
+
+**Status:** Done
+**Branch:** `v0.10.1/seed-data-population`
+
+Massive equipment seed data population, schema refinements, UI improvements, and new locations feature.
+
+### Equipment Seed Data
+
+OTAs (40 telescopes, 8 batches):
+- [x] Celestron EdgeHD (800/925/1100/1400) with 0.7x reducer configs
+- [x] Celestron RASA (8/11 V2) + Classic SCTs (C6/C8/C11) with f/6.3 reducer configs
+- [x] Sky-Watcher Esprit (80ED/100ED/120ED) with 0.77x reducer config
+- [x] Sky-Watcher Quattro (200P/250P/300P) with coma corrector configs
+- [x] Sky-Watcher Evostar ED (72ED/80ED/100ED/120ED) with 0.85x reducer configs
+- [x] Askar FRA (300 Pro/400/600), V60/V80 (split), 103APO, 107PHQ with flattener/reducer/extender configs
+- [x] William Optics Cat series, GT81 IV, Z103, GuideStar 61 with P-FLAT6AIII configs
+- [x] Sharpstar 15028HNT, 61EDPH II, 76EDPH, 94EDPH + Explore Scientific FCD100 series
+
+Filters (74 filters, 7 batches):
+- [x] Schema: filter_size_option junction table replacing filter_size_id on filter
+- [x] Optolong narrowband (Ha/OIII/SII 3nm/6.5nm/7nm, L-eNhance, L-eXtreme, L-Ultimate, L-Para)
+- [x] Optolong LRGB + light pollution + UV/IR + specialty (L-Pro, UHC, CLS, ND3.0, IR Pass 685)
+- [x] Antlia narrowband (2.5nm Ultra, 3nm Pro, 3nm Pro Highspeed, 4.5nm EDGE, 7nm Prime + ALP-T dual-band)
+- [x] Antlia LRGB-V Pro, LRGBR+ Dark (with R+ NIR), Triband RGB Ultra II, Quad Band ALP, 8-EL UHC
+- [x] ZWO narrowband (Ha/OIII/SII 7nm Mark II + Duo-Band) + Premium LRGB + UV/IR Cut
+- [x] Askar Colour Magic (C1/C2 budget, Super D1/D2 premium, Ultra E1/E2 3nm)
+
+Cameras & Sensors (37 sensors, 101 cameras, 12 batches):
+- [x] Schema: camera effective_* columns, hcg_threshold moved from sensor to camera
+- [x] Sony IMX571 (APS-C) — ZWO ASI2600 Pro/Air/Duo, QHY268, Player One Poseidon, ToupTek ATR3CMOS26000
+- [x] Sony IMX455 (full-frame) — ZWO ASI6200 Pro, QHY600, Player One Zeus, ToupTek SkyEye62
+- [x] Sony IMX533 (1" square) — ZWO ASI533 Pro, QHY533, Player One Ares, ToupTek ATR533
+- [x] Sony IMX585 (1/1.2" STARVIS 2) — ZWO ASI585 Pro/Air, QHY miniCAM8/5III585, Player One Uranus, ToupTek ATR585
+- [x] Sony IMX294/IMX492 (4/3" dual-mode) — ZWO ASI294 Pro, QHY294 Pro, Player One Artemis, ToupTek ATR294
+- [x] Sony IMX183 (1" legacy with amp glow) — ZWO ASI1600/183 Pro, QHY163/183 Pro
+- [x] Sony IMX461/IMX411 (medium format) — ZWO ASI461MM Pro, QHY461/411 Pro
+- [x] Small planetary/guide sensors (IMX174/178/290/462/464/662/678/715) — 22 cameras across ZWO/QHY/Player One
+- [x] Sony IMX410 (full-frame 24MP) — ZWO ASI2400MC Pro, QHY410C Pro
+- [x] Sony IMX485/IMX676 (niche) — ZWO ASI485MC, QHY5III676C, Player One Apollo-M Mini
+- [x] Non-Sony: Panasonic MN34230 (ASI1600/QHY163), OnSemi AR0130 (ASI120 guide cameras)
+- [x] SmartSens SC2210 standalone cameras — ZWO ASI220MM Mini, QHY5III200M
+- [x] New connector_size: M63 (William Optics), usb_2_0_type_c interface
+- [x] New manufacturers: SmartSens, Panasonic, OnSemi
+
+### Schema Changes
+
+- [x] `filter_size_option` junction table (filter × filter_size with mounted_thickness_mm)
+- [x] Camera `effective_full_well_ke`, `effective_read_noise_lcg_e`, `effective_read_noise_hcg_e`, `effective_peak_qe_pct`, `hcg_threshold_gain` columns
+- [x] Removed `hcg_threshold_gain` from sensor table
+- [x] `R+` added to filter_passband line_name CHECK constraint
+- [x] `location` table (migration 0007) with coordinates, timezone, Bortle, SQM, address fields
+- [x] Seed loader child table re-seed fix (no longer crashes on UNIQUE constraint when parent updated)
+
+### UI Improvements
+
+- [x] Collapsible left nav sidebar with double-chevron toggle
+- [x] Collapsible right sidebar (Image Viewer) with pinned chevron strip
+- [x] Activity Console: draggable dialog, resizable, pop-out to separate browser window with auto-refresh
+- [x] Activity Console moved from Image Viewer to global (AppShell)
+- [x] Version number moved to title area next to "NightCrate"
+- [x] Histogram: click-drag horizontal zoom with shaded selection, Reset Zoom button, stable vertical scale
+- [x] Histogram: always open as Linear, Log/Linear centered, help section split into Image/Histogram
+- [x] Stretch sliders: Shift+drag fine mode (10x sensitivity reduction), hover-to-show indicators
+- [x] Stretch sliders: click-on-track disabled (drag thumb only)
+- [x] Equipment lists: manufacturer-first column order with default sort
+- [x] Telescope configuration pills with hover popover showing specs
+- [x] Camera sensor links with hover popover and click-to-navigate (with auto-scroll)
+- [x] Equipment sidebar seed data disclaimer footnote
+- [x] Consistent toolbar heights (Browse, file path, Open buttons)
+- [x] File path Autocomplete dropdown indicator (forcePopupIcon)
+- [x] Admin "Add Existing" dialog Browse button height alignment
+- [x] Aberration inspector slider label consistent spacing
+- [x] OpenAPI/Swagger docs reorganized with proper tags, descriptions, and section ordering
+- [x] Software list: name-first column order (unlike hardware lists)
+
+### Locations Feature
+
+- [x] Database table (migration 0007) with lat/lon, elevation, timezone, Bortle, SQM, address, is_default
+- [x] Full CRUD API with set-default endpoint
+- [x] Locations page with card-based layout, star icon for default, Bortle/SQM chips
+- [x] Browser geolocation detection (Use My Location button)
+- [x] Reverse geocoding via OpenStreetMap Nominatim (address from coordinates)
+- [x] Forward geocoding via Nominatim (coordinates from address dialog)
+- [x] Elevation lookup via Open-Meteo
+- [x] Fetch-with-retry for rate-limited APIs
+- [x] OpenStreetMap iframe map preview
+- [x] Clear Outside forecast link per location
+- [x] Bortle/SQM auto-conversion (enter one, get the other)
+- [x] Clear Outside link for Bortle class lookup
+- [x] Nav item with pin icon between Equipment and Settings
+
+### Easter Eggs
+
+- [x] Shared EasterEggWand component with shuffled no-repeat queue
+- [x] Home page: 75 astrophotography hobby jokes ("Words of wisdom")
+- [x] Locations page: 76 weather incantations with sparkle animation ("Cast a clear sky incantation")
+- [x] Image Viewer: 75 image commentaries ("Expert analysis")
+
+### v0.10.1 Completion Criteria
+
+- [x] All tests pass (487 passed, 3 skipped)
+- [x] Ruff clean
+- [x] Frontend builds
+- [x] Code review: route ordering fix, dedup, drag perf fix
 
 ---
 

@@ -229,7 +229,6 @@ CREATE TABLE IF NOT EXISTS sensor (
     peak_qe_pct REAL,
     bayer_pattern TEXT CHECK (bayer_pattern IS NULL OR bayer_pattern IN ('RGGB', 'GRBG', 'GBRG', 'BGGR')),
     dual_gain INTEGER NOT NULL DEFAULT 0 CHECK (dual_gain IN (0, 1)),
-    hcg_threshold_gain INTEGER,
     notes TEXT,
     source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -277,6 +276,11 @@ CREATE TABLE IF NOT EXISTS camera (
     has_usb_hub INTEGER NOT NULL DEFAULT 0 CHECK (has_usb_hub IN (0, 1)),
     usb_hub_interface_id INTEGER REFERENCES connection_interface(id),
     unity_gain INTEGER,
+    effective_full_well_ke REAL,
+    effective_read_noise_lcg_e REAL,
+    effective_read_noise_hcg_e REAL,
+    effective_peak_qe_pct REAL,
+    hcg_threshold_gain INTEGER,
     notes TEXT,
     source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -429,7 +433,7 @@ CREATE TABLE IF NOT EXISTS filter_passband (
     filter_id INTEGER NOT NULL REFERENCES filter(id) ON DELETE CASCADE,
     line_name TEXT NOT NULL CHECK (line_name IN (
         'Ha', 'Hb', 'Oiii', 'Sii', 'Nii', 'OI',
-        'Lum', 'R', 'G', 'B',
+        'Lum', 'R', 'G', 'B', 'R+',
         'UVIR', 'LP', 'ND', 'other'
     )),
     central_wavelength_nm REAL NOT NULL CHECK (central_wavelength_nm > 0),
@@ -858,3 +862,34 @@ JOIN filter_type ft ON ft.id = f.filter_type_id
 LEFT JOIN filter_passband fp ON fp.filter_id = f.id
 WHERE f.active = 1
 GROUP BY f.id;
+
+-- ============================================================
+-- LOCATION (migration 0007)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS location (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    latitude REAL NOT NULL CHECK (latitude BETWEEN -90 AND 90),
+    longitude REAL NOT NULL CHECK (longitude BETWEEN -180 AND 180),
+    elevation_m REAL,
+    timezone TEXT NOT NULL,
+    bortle_class INTEGER CHECK (bortle_class BETWEEN 1 AND 9),
+    sqm_reading REAL CHECK (sqm_reading BETWEEN 10 AND 25),
+    city TEXT,
+    state_province TEXT,
+    country TEXT,
+    postal_code TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_location_updated_at
+AFTER UPDATE ON location
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE location SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
