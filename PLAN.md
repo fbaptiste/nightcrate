@@ -20,7 +20,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.10.0 — Equipment Seed Loader + Admin Page](#v0100--equipment-seed-loader--admin-page)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
-- [Future Features to Consider](#future-features-to-consider)
+- [Future Features to Consider](#future-features-to-consider) (incl. Astronomy Weather Forecast)
 - [Appendix: Library Reference](#appendix-library-reference)
 
 ---
@@ -3063,6 +3063,34 @@ Features that depend on cross-frame infrastructure or are beyond the current sco
 
 - **User annotations:** Pin notes to specific zones and persist them across sessions.
 - **Interactive zone drawing:** Drag/resize custom zones instead of a fixed rectangular grid for fine-grained investigation of specific field regions.
+
+### Astronomy Weather Forecast
+
+Telescopius-style weather forecast dashboard for imaging session planning.
+
+**Data sources:**
+- **Open-Meteo API** (free, no API key) — hourly cloud cover (total/low/mid/high), wind speed/direction, temperature, humidity, dew point, visibility. Up to 16-day forecast.
+- **astropy** (already in deps) — moon phase/illumination, twilight times (civil/nautical/astronomical), darkness hours. Computed from observer lat/lon/date.
+- **Computed seeing estimate** — derived from Open-Meteo wind speed at altitude, humidity, and temperature gradients. Score 0-100 following the JAG Lab methodology.
+
+**7-day overview:** Daily cards showing cloud cover icon, seeing score, moon phase icon, darkness hours, sunset/sunrise times.
+
+**Detailed hourly view (selected day):** Timeline chart showing darkness bands (civil/nautical/astronomical twilight + full night), cloud cover %, moon altitude, seeing score, wind speed. Sunset/sunrise and astronomical night start/end times displayed. Color-coded cells (blue/orange palette, color-blind safe).
+
+**Observer locations:** Users can define multiple named observing locations (name, lat/lon, elevation). Locations can be switched in the weather dashboard and assigned to imaging projects. Stored in the database — not tied to a single site.
+
+**Architecture:** Backend service fetches Open-Meteo data, computes seeing + astro data (including sunset/sunrise, twilight times, astronomical night), caches results. Frontend renders the dashboard. Observer location selectable from saved locations.
+
+**References:**
+- Open-Meteo API: https://open-meteo.com/en/docs
+- JAG Lab astronomy forecast (open source, uses Open-Meteo): https://jaglab.org/astro-forecast/
+- Clear Outside (inspiration for UI): https://clearoutside.com/
+
+### Equipment Links
+
+Add a `manufacturer_link` child table (manufacturer_id, label, url — unique on manufacturer_id + label) for associating multiple named URLs with each manufacturer (user forum, downloads, ASCOM drivers, spec sheets, etc.). Follows the same parent/child pattern as telescope_configuration and filter_passband. Seed loader gets a `manufacturer_link.csv`.
+
+Extend the same pattern to other equipment types — allow one or more URLs on cameras, telescopes, mounts, etc. for direct links to manufacturer spec pages, manuals, firmware downloads. Could be a generic `equipment_link` table (table_name, item_id, label, url) or per-type child tables.
 
 ### Session & Catalog Features
 

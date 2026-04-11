@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from nightcrate.api.images import ALL_EXTENSIONS
 from nightcrate.services import archive_io, pxiproject_io
 
-router = APIRouter(prefix="/api/files", tags=["files"])
+router = APIRouter(prefix="/api/files", tags=["File Browser"])
 PROJECT_EXTENSIONS = {".pxiproject"}
 
 

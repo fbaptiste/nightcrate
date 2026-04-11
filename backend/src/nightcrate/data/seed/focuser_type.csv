@@ -1,0 +1,4 @@
+seed_key,name,notes
+focuser_type.focus_motor,Focus Motor,Motor that drives an existing telescope focuser via coupler or belt; travel and step size depend on the host focuser
+focuser_type.integrated_motorized,Integrated Motorized,Motor and mechanical focuser combined as a single unit with its own published travel and step size
+focuser_type.manual,Manual,Manual focuser with no motor; user defines technical specifications per their setup

@@ -46,7 +46,6 @@ interface FormState {
   peak_qe_pct: string;
   bayer_pattern: string;
   dual_gain: boolean;
-  hcg_threshold_gain: string;
   notes: string;
 }
 
@@ -66,7 +65,6 @@ function emptyForm(): FormState {
     peak_qe_pct: "",
     bayer_pattern: "",
     dual_gain: false,
-    hcg_threshold_gain: "",
     notes: "",
   };
 }
@@ -87,7 +85,6 @@ function sensorToForm(sensor: Sensor): FormState {
     peak_qe_pct: sensor.peak_qe_pct != null ? String(sensor.peak_qe_pct) : "",
     bayer_pattern: sensor.bayer_pattern ?? "",
     dual_gain: sensor.dual_gain,
-    hcg_threshold_gain: sensor.hcg_threshold_gain != null ? String(sensor.hcg_threshold_gain) : "",
     notes: sensor.notes ?? "",
   };
 }
@@ -148,7 +145,6 @@ export default function SensorFormDialog({
         peak_qe_pct: parseOptionalFloat(form.peak_qe_pct),
         bayer_pattern: form.sensor_type === "color" && form.bayer_pattern ? form.bayer_pattern : null,
         dual_gain: form.dual_gain,
-        hcg_threshold_gain: form.dual_gain ? parseOptionalFloat(form.hcg_threshold_gain) : null,
         notes: form.notes.trim() || null,
       };
 
@@ -335,17 +331,6 @@ export default function SensorFormDialog({
                 }
                 label="Dual Gain"
               />
-              {form.dual_gain && (
-                <TextField
-                  label="HCG Threshold Gain"
-                  type="number"
-                  value={form.hcg_threshold_gain}
-                  onChange={(e) => set("hcg_threshold_gain", e.target.value)}
-                  size="small"
-                  sx={{ width: 200 }}
-                  slotProps={{ htmlInput: { step: "1" } }}
-                />
-              )}
             </Box>
 
             {/* Row 7: Notes */}

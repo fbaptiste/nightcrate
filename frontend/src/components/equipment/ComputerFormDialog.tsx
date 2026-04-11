@@ -10,7 +10,7 @@ import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
-import { fetchComputerTypes } from "@/api/equipment";
+import { fetchFormFactors } from "@/api/equipment";
 import {
   createComputer,
   updateComputer,
@@ -28,7 +28,7 @@ interface ComputerFormDialogProps {
 interface FormState {
   model_name: string;
   manufacturer_id: number | null;
-  computer_type_id: number | null;
+  form_factor_id: number | null;
   notes: string;
 }
 
@@ -36,7 +36,7 @@ function emptyForm(): FormState {
   return {
     model_name: "",
     manufacturer_id: null,
-    computer_type_id: null,
+    form_factor_id: null,
     notes: "",
   };
 }
@@ -45,7 +45,7 @@ function computerToForm(item: Computer): FormState {
   return {
     model_name: item.model_name,
     manufacturer_id: item.manufacturer.id,
-    computer_type_id: item.computer_type?.id ?? null,
+    form_factor_id: item.form_factor?.id ?? null,
     notes: item.notes ?? "",
   };
 }
@@ -90,7 +90,7 @@ export default function ComputerFormDialog({
       const payload: ComputerCreate = {
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
-        computer_type_id: form.computer_type_id,
+        form_factor_id: form.form_factor_id,
         notes: form.notes.trim() || null,
       };
 
@@ -142,13 +142,13 @@ export default function ComputerFormDialog({
               />
             </Box>
 
-            {/* Row 2: Computer Type */}
+            {/* Row 2: Form Factor */}
             <LookupPicker
-              fetchFn={fetchComputerTypes}
-              queryKey="computer-types"
-              label="Computer Type"
-              value={form.computer_type_id}
-              onChange={(id) => set("computer_type_id", id)}
+              fetchFn={fetchFormFactors}
+              queryKey="form-factors"
+              label="Form Factor"
+              value={form.form_factor_id}
+              onChange={(id) => set("form_factor_id", id)}
             />
 
             {/* Row 3: Notes */}

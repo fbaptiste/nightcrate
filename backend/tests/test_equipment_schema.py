@@ -123,7 +123,7 @@ class TestMigrationApplies:
             "connection_interface",
             "connector_size",
             "filter_size",
-            "computer_type",
+            "form_factor",
             "filter_type",
             "sensor",
             "camera",
@@ -535,11 +535,11 @@ class TestFullRoundTrip:
         )
 
         # Computer
-        conn.execute("INSERT INTO computer_type (name) VALUES ('Mini PC')")
+        conn.execute("INSERT INTO form_factor (name) VALUES ('Mini PC')")
         ct_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.execute(
             "INSERT INTO computer "
-            "(manufacturer_id, computer_type_id, model_name) "
+            "(manufacturer_id, form_factor_id, model_name) "
             "VALUES (?, ?, 'NUC')",
             (mfg6_id, ct_id),
         )

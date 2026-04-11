@@ -162,7 +162,7 @@ BEGIN
     UPDATE filter_size SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
-CREATE TABLE IF NOT EXISTS computer_type (
+CREATE TABLE IF NOT EXISTS form_factor (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     description TEXT,
@@ -174,15 +174,15 @@ CREATE TABLE IF NOT EXISTS computer_type (
     seed_hash TEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_computer_type_seed_key
-    ON computer_type(seed_key) WHERE seed_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_form_factor_seed_key
+    ON form_factor(seed_key) WHERE seed_key IS NOT NULL;
 
-CREATE TRIGGER IF NOT EXISTS trg_computer_type_updated_at
-AFTER UPDATE ON computer_type
+CREATE TRIGGER IF NOT EXISTS trg_form_factor_updated_at
+AFTER UPDATE ON form_factor
 FOR EACH ROW
 WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE computer_type SET updated_at = datetime('now') WHERE id = NEW.id;
+    UPDATE form_factor SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
 CREATE TABLE IF NOT EXISTS filter_type (
@@ -231,8 +231,8 @@ CREATE TABLE IF NOT EXISTS sensor (
     peak_qe_pct REAL,
     bayer_pattern TEXT CHECK (bayer_pattern IS NULL OR bayer_pattern IN ('RGGB', 'GRBG', 'GBRG', 'BGGR')),
     dual_gain INTEGER NOT NULL DEFAULT 0 CHECK (dual_gain IN (0, 1)),
-    hcg_threshold_gain INTEGER,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -277,7 +277,13 @@ CREATE TABLE IF NOT EXISTS camera (
     has_usb_hub INTEGER NOT NULL DEFAULT 0 CHECK (has_usb_hub IN (0, 1)),
     usb_hub_interface_id INTEGER REFERENCES connection_interface(id),
     unity_gain INTEGER,
+    effective_full_well_ke REAL,
+    effective_read_noise_lcg_e REAL,
+    effective_read_noise_hcg_e REAL,
+    effective_peak_qe_pct REAL,
+    hcg_threshold_gain INTEGER,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -321,6 +327,7 @@ CREATE TABLE IF NOT EXISTS telescope (
     weight_kg REAL,
     obstruction_pct REAL,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -395,11 +402,10 @@ CREATE TABLE IF NOT EXISTS filter (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturer(id),
     filter_type_id INTEGER NOT NULL REFERENCES filter_type(id),
-    filter_size_id INTEGER REFERENCES filter_size(id),
     model_name TEXT NOT NULL,
     peak_transmission_pct REAL,
-    mounted_thickness_mm REAL,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -428,7 +434,7 @@ CREATE TABLE IF NOT EXISTS filter_passband (
     filter_id INTEGER NOT NULL REFERENCES filter(id) ON DELETE CASCADE,
     line_name TEXT NOT NULL CHECK (line_name IN (
         'Ha', 'Hb', 'Oiii', 'Sii', 'Nii', 'OI',
-        'Lum', 'R', 'G', 'B',
+        'Lum', 'R', 'G', 'B', 'R+',
         'UVIR', 'LP', 'ND', 'other'
     )),
     central_wavelength_nm REAL NOT NULL CHECK (central_wavelength_nm > 0),
@@ -456,6 +462,35 @@ BEGIN
     UPDATE filter_passband SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
+-- filter_size_option — physical size variants of a filter product
+CREATE TABLE IF NOT EXISTS filter_size_option (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filter_id INTEGER NOT NULL REFERENCES filter(id) ON DELETE CASCADE,
+    filter_size_id INTEGER NOT NULL REFERENCES filter_size(id),
+    mounted_thickness_mm REAL,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('seed', 'user')),
+    seed_key TEXT,
+    seed_hash TEXT,
+    UNIQUE (filter_id, filter_size_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_filter_size_option_filter ON filter_size_option(filter_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_filter_size_option_seed_key
+    ON filter_size_option(seed_key) WHERE seed_key IS NOT NULL;
+
+CREATE TRIGGER IF NOT EXISTS trg_filter_size_option_updated_at
+AFTER UPDATE ON filter_size_option
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE filter_size_option SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
 -- ============================================================
 -- MOUNT
 -- ============================================================
@@ -472,6 +507,7 @@ CREATE TABLE IF NOT EXISTS mount (
     periodic_error_arcsec REAL,
     drive_type TEXT,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -501,12 +537,40 @@ CREATE TABLE IF NOT EXISTS mount_interface (
 );
 
 -- ============================================================
+-- FOCUSER TYPE (lookup)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS focuser_type (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('seed', 'user')),
+    seed_key TEXT,
+    seed_hash TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_focuser_type_seed_key
+    ON focuser_type(seed_key) WHERE seed_key IS NOT NULL;
+
+CREATE TRIGGER IF NOT EXISTS trg_focuser_type_updated_at
+AFTER UPDATE ON focuser_type
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE focuser_type SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
+-- ============================================================
 -- FOCUSER
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS focuser (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturer(id),
+    focuser_type_id INTEGER REFERENCES focuser_type(id),
     model_name TEXT NOT NULL,
     motorized INTEGER NOT NULL DEFAULT 1 CHECK (motorized IN (0, 1)),
     travel_range_mm REAL,
@@ -515,6 +579,7 @@ CREATE TABLE IF NOT EXISTS focuser (
     temperature_compensation INTEGER NOT NULL DEFAULT 0 CHECK (temperature_compensation IN (0, 1)),
     backlash_steps INTEGER,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -557,6 +622,7 @@ CREATE TABLE IF NOT EXISTS filter_wheel (
     num_positions INTEGER NOT NULL CHECK (num_positions > 0),
     back_focus_contribution_mm REAL,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -599,6 +665,7 @@ CREATE TABLE IF NOT EXISTS oag (
     back_focus_contribution_mm REAL,
     weight_g REAL,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -630,6 +697,7 @@ CREATE TABLE IF NOT EXISTS guide_scope (
     focal_length_mm REAL,
     weight_g REAL,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -659,9 +727,10 @@ END;
 CREATE TABLE IF NOT EXISTS computer (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturer(id),
-    computer_type_id INTEGER REFERENCES computer_type(id),
+    form_factor_id INTEGER REFERENCES form_factor(id),
     model_name TEXT NOT NULL,
     notes TEXT,
+    source_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),

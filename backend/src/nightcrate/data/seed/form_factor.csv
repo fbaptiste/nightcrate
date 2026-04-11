@@ -1,0 +1,6 @@
+seed_key,description,name
+form_factor.dedicated_controller,Purpose-built astrophotography control computer (ASIAIR / EAGLE / StellaVita / StellarMate / etc.),Dedicated Controller
+form_factor.mini_pc,Compact general-purpose PC repurposed for astrophotography (NUC / MeLE / Geekom / Beelink / etc.),Mini PC
+form_factor.laptop,Portable general-purpose laptop,Laptop
+form_factor.desktop,Full-size desktop workstation,Desktop
+form_factor.sbc,DIY single-board computer build (Raspberry Pi / Orange Pi / Rock Pi / etc.),Single-Board Computer

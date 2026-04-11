@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Divider from "@mui/material/Divider";
@@ -10,6 +11,8 @@ import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import KeyboardDoubleArrowLeftIcon from "@mui/icons-material/KeyboardDoubleArrowLeft";
+import KeyboardDoubleArrowRightIcon from "@mui/icons-material/KeyboardDoubleArrowRight";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import HomeIcon from "@mui/icons-material/Home";
@@ -18,19 +21,24 @@ import LightModeIcon from "@mui/icons-material/LightMode";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import BuildIcon from "@mui/icons-material/Build";
 import CodeIcon from "@mui/icons-material/Code";
+import PlaceIcon from "@mui/icons-material/Place";
 import SettingsIcon from "@mui/icons-material/Settings";
+import TimelineIcon from "@mui/icons-material/Timeline";
 import { NavLink, Outlet } from "react-router-dom";
 import { fetchHealth } from "@/api/files";
 import { fetchAdminStatus } from "@/api/admin";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { ActivityConsole } from "@/components/ActivityConsole";
 import type { Theme } from "@/api/settings";
 
-const DRAWER_WIDTH = 220;
+const DRAWER_WIDTH_OPEN = 220;
+const DRAWER_WIDTH_CLOSED = 52;
 
 const navItems = [
   { to: "/", label: "Home", icon: <HomeIcon /> },
   { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
+  { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },
@@ -70,33 +78,77 @@ export function AppShell() {
   };
 
   const version = healthQuery.data?.version ?? "…";
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(true);
+
+  const drawerWidth = navOpen ? DRAWER_WIDTH_OPEN : DRAWER_WIDTH_CLOSED;
 
   return (
     <Box sx={{ display: "flex", height: "100vh" }}>
       <Drawer
         variant="permanent"
         sx={{
-          width: DRAWER_WIDTH,
+          width: drawerWidth,
           flexShrink: 0,
+          transition: "width 0.2s",
           "& .MuiDrawer-paper": {
-            width: DRAWER_WIDTH,
+            width: drawerWidth,
             boxSizing: "border-box",
             display: "flex",
             flexDirection: "column",
+            overflow: "hidden",
+            transition: "width 0.2s",
           },
         }}
       >
-        <Box sx={{ px: 2, py: 2 }}>
-          <Typography variant="h6" fontWeight={600} noWrap>
-            NightCrate
-          </Typography>
-          {activeDbName && (
-            <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block", mt: -0.5 }}>
-              {activeDbName}
-            </Typography>
-          )}
+        {/* Collapse/expand strip */}
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: navOpen ? "flex-end" : "center",
+            bgcolor: "action.hover",
+            borderBottom: 1,
+            borderColor: "divider",
+            py: 0.25,
+            px: 0.5,
+          }}
+        >
+          <Tooltip title={navOpen ? "Collapse sidebar" : "Expand sidebar"} arrow placement="right">
+            <IconButton size="small" onClick={() => setNavOpen(!navOpen)} sx={{ p: 0.25, color: "primary.main" }}>
+              {navOpen ? <KeyboardDoubleArrowLeftIcon sx={{ fontSize: 16 }} /> : <KeyboardDoubleArrowRightIcon sx={{ fontSize: 16 }} />}
+            </IconButton>
+          </Tooltip>
         </Box>
+
+        {/* Header */}
+        {navOpen ? (
+          <Box sx={{ px: 2, py: 2 }}>
+            <Box sx={{ display: "flex", alignItems: "baseline", gap: 1 }}>
+              <Typography variant="h6" fontWeight={600} noWrap>
+                NightCrate
+              </Typography>
+              <Typography variant="caption" color="text.secondary" noWrap>
+                v{version}
+              </Typography>
+            </Box>
+            {activeDbName && (
+              <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block", mt: -0.5 }}>
+                {activeDbName}
+              </Typography>
+            )}
+          </Box>
+        ) : (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+            <Tooltip title="NightCrate" placement="right">
+              <Typography variant="h6" fontWeight={600} sx={{ fontSize: 14 }}>
+                NC
+              </Typography>
+            </Tooltip>
+          </Box>
+        )}
         <Divider />
+
+        {/* Navigation */}
         <List dense>
           {navItems.map(({ to, label, icon }) => (
             <ListItem key={to} disablePadding>
@@ -106,27 +158,46 @@ export function AppShell() {
                 style={{ textDecoration: "none", width: "100%", color: "inherit" }}
               >
                 {({ isActive }) => (
-                  <ListItemButton selected={isActive}>
-                    <ListItemIcon sx={{ minWidth: 36 }}>{icon}</ListItemIcon>
-                    <ListItemText primary={label} />
-                  </ListItemButton>
+                  <Tooltip title={navOpen ? "" : label} placement="right" arrow>
+                    <ListItemButton
+                      selected={isActive}
+                      sx={{ justifyContent: navOpen ? "initial" : "center", px: navOpen ? 2 : 1.5 }}
+                    >
+                      <ListItemIcon sx={{ minWidth: navOpen ? 36 : "auto" }}>{icon}</ListItemIcon>
+                      {navOpen && <ListItemText primary={label} />}
+                    </ListItemButton>
+                  </Tooltip>
                 )}
               </NavLink>
             </ListItem>
           ))}
         </List>
 
-        {/* Spacer pushes version to bottom */}
         <Box sx={{ flexGrow: 1 }} />
 
-        {/* Version + theme toggle */}
-        <Box sx={{ px: 2, py: 1.5, borderTop: 1, borderColor: "divider", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <Typography variant="caption" color="text.secondary">
-            v{version}
-          </Typography>
-          <Tooltip title={`Theme: ${THEME_LABELS[currentTheme]} — click to cycle`} arrow>
+        {/* Bottom controls */}
+        <Box
+          sx={{
+            borderTop: 1,
+            borderColor: "divider",
+            bgcolor: "action.hover",
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            px: navOpen ? 2 : 0,
+            py: 1.5,
+            justifyContent: navOpen ? "flex-start" : "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <Tooltip title={`Theme: ${THEME_LABELS[currentTheme]}`} arrow placement={navOpen ? "top" : "right"}>
             <IconButton size="small" onClick={cycleTheme} sx={{ p: 0.5 }}>
               {THEME_ICONS[currentTheme]}
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Activity Console" arrow placement={navOpen ? "top" : "right"}>
+            <IconButton size="small" onClick={() => setActivityOpen(true)} sx={{ p: 0.5 }}>
+              <TimelineIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
         </Box>
@@ -135,6 +206,8 @@ export function AppShell() {
       <Box component="main" sx={{ flexGrow: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
         <Outlet />
       </Box>
+
+      <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
     </Box>
   );
 }

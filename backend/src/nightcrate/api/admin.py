@@ -19,7 +19,7 @@ from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import get_db_path, set_db_path
 from nightcrate.seed_loader import load_all
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(prefix="/api/admin", tags=["Administration"])
 
 
 # ---------------------------------------------------------------------------

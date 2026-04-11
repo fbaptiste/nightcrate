@@ -212,7 +212,7 @@ function CreateDbDialog({
               autoFocus
             />
             {isAddExisting ? (
-              <Box sx={{ display: "flex", gap: 1 }}>
+              <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
                 <TextField
                   label="Database File"
                   value={existingPath}
@@ -231,7 +231,7 @@ function CreateDbDialog({
                     setBrowsePath(defaultDir);
                     setBrowseOpen(true);
                   }}
-                  sx={{ whiteSpace: "nowrap", minWidth: 90 }}
+                  sx={{ whiteSpace: "nowrap", minWidth: 90, height: 56 }}
                 >
                   Browse
                 </Button>

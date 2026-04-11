@@ -30,7 +30,7 @@ from nightcrate.services.imaging import (
     resolve_auto_stretch,
 )
 
-router = APIRouter(prefix="/api/images", tags=["images"])
+router = APIRouter(prefix="/api/images", tags=["Image Viewer"])
 
 FITS_EXTENSIONS = {".fits", ".fit", ".fts"}
 XISF_EXTENSIONS = {".xisf"}

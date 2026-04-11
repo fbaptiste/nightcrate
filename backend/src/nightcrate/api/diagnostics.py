@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
+router = APIRouter(prefix="/api/diagnostics", tags=["Diagnostics"])
 
 # ---------------------------------------------------------------------------
 # In-memory store

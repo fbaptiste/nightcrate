@@ -7,4 +7,5 @@ connection_interface.wifi,wireless,WiFi,
 connection_interface.bluetooth,wireless,Bluetooth,Mount controllers and some accessories
 connection_interface.ethernet,data,Ethernet,
 connection_interface.st4,control,ST-4,RJ-12 autoguider port for pulse guiding
+connection_interface.usb_2_0_type_c,data,USB 2.0 Type-C,USB 2.0 speed over USB-C connector (compact devices like ASI220MM Mini)
 connection_interface.serial_rs232,data,Serial (RS-232),Legacy mount connections and OnStep

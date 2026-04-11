@@ -104,6 +104,13 @@ export function EquipmentSidebar({
           </TreeItem>
         ))}
       </SimpleTreeView>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: "block", px: 2, pt: 2, pb: 1, fontStyle: "italic", lineHeight: 1.4 }}
+      >
+        Seed data was AI-generated. Please verify your equipment specs for accuracy.
+      </Typography>
     </Box>
   );
 }

@@ -9,6 +9,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { ApiDocsPage } from "@/pages/ApiDocsPage";
 import { EquipmentPage } from "@/pages/EquipmentPage";
 import { AdminPage } from "@/pages/AdminPage";
+import LocationsPage from "@/pages/LocationsPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { fetchHealth } from "@/api/admin";
 import { SetupWizard } from "@/components/SetupWizard";
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
       { path: "image-viewer", element: <ImageViewerPage /> },
       { path: "equipment", element: <EquipmentPage /> },
       { path: "equipment/:category", element: <EquipmentPage /> },
+      { path: "locations", element: <LocationsPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "api-docs", element: <ApiDocsPage /> },

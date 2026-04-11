@@ -25,7 +25,7 @@ function FilterSlider({ label, value, min, max, step, tooltip, onChange }: {
     </Typography>
   );
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 130 }}>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 130 }}>
       {tooltip ? <Tooltip title={tooltip} arrow><span>{labelEl}</span></Tooltip> : labelEl}
       <Slider
         min={min} max={max} step={step}

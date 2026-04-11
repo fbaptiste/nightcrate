@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Slider from "@mui/material/Slider";
@@ -9,7 +9,9 @@ import type { StretchParams } from "@/api/images";
 import { CHANNEL_COLOR_ARRAY } from "@/lib/channelColors";
 import { monoFontFamily } from "@/theme/theme";
 
-/** Slider with an editable value — click the number to type a precise value. */
+const FINE_FACTOR = 0.1; // Shift+drag sensitivity reduction
+
+/** Slider with an editable value and Shift+drag for fine control. */
 function StretchSlider({ label, value, min, max, onChange }: {
   label: string;
   value: number;
@@ -19,6 +21,11 @@ function StretchSlider({ label, value, min, max, onChange }: {
 }) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
+  const [fineMode, setFineMode] = useState(false);
+  const dragging = useRef(false);
+  const sliderRef = useRef<HTMLSpanElement>(null);
+  const anchorValue = useRef(value);
+  const anchorClientX = useRef(0);
 
   function startEdit() {
     setEditText(value.toFixed(6));
@@ -33,11 +40,58 @@ function StretchSlider({ label, value, min, max, onChange }: {
     }
   }
 
+  function handleSliderChange(e: Event, raw: number | number[]) {
+    const mouseEvent = e as unknown as MouseEvent;
+    const isShift = mouseEvent?.shiftKey ?? false;
+
+    if (isShift && dragging.current) {
+      if (!fineMode) {
+        // Entering fine mode mid-drag
+        setFineMode(true);
+        anchorValue.current = value;
+        anchorClientX.current = mouseEvent.clientX;
+        return;
+      }
+      // Fine mode: compute delta from mouse pixel movement
+      const sliderEl = sliderRef.current;
+      if (!sliderEl) return;
+      const sliderWidth = sliderEl.getBoundingClientRect().width;
+      const range = max - min;
+      const pxDelta = mouseEvent.clientX - anchorClientX.current;
+      const valueDelta = (pxDelta / sliderWidth) * range * FINE_FACTOR;
+      const result = Math.max(min, Math.min(max, anchorValue.current + valueDelta));
+      onChange(result);
+    } else {
+      if (fineMode) {
+        // Leaving fine mode — released Shift mid-drag
+        setFineMode(false);
+      }
+      onChange(raw as number);
+    }
+  }
+
+  function handleMouseDown(e: React.MouseEvent) {
+    dragging.current = true;
+    if (e.shiftKey) {
+      setFineMode(true);
+      anchorValue.current = value;
+      anchorClientX.current = e.clientX;
+    } else {
+      setFineMode(false);
+    }
+    const handleUp = () => {
+      dragging.current = false;
+      setFineMode(false);
+      window.removeEventListener("mouseup", handleUp);
+    };
+    window.addEventListener("mouseup", handleUp);
+  }
+
   return (
     <Box>
       <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <Typography variant="caption" color="text.secondary">
-          {label}:
+        <Typography variant="caption" color={fineMode ? "primary.main" : "text.secondary"}>
+          {label}:{fineMode ? " (fine)" : ""}
         </Typography>
         {editing ? (
           <input
@@ -75,10 +129,16 @@ function StretchSlider({ label, value, min, max, onChange }: {
         )}
       </Box>
       <Slider
+        ref={sliderRef}
         min={min} max={max} step={0.000001}
         value={value}
-        onChange={(_, v) => onChange(v as number)}
+        onChange={handleSliderChange}
+        onMouseDown={handleMouseDown}
         size="small"
+        slotProps={{
+          rail: { style: { pointerEvents: "none" } },
+          track: { style: { pointerEvents: "none" } },
+        }}
       />
     </Box>
   );
@@ -108,7 +168,6 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
       <StretchSlider label="Shadow" value={params.shadow} min={0} max={1}
         onChange={(v) => {
           const s = Math.min(v, params.highlight - 0.000001);
-          // Push midtone along if shadow would pass it
           const m = params.midtone <= s ? s + 0.000001 : params.midtone;
           set({ shadow: s, midtone: Math.min(m, params.highlight - 0.000001) });
         }} />
@@ -119,7 +178,6 @@ function ChannelControls({ label, color, params, onChange }: ChannelControlsProp
       <StretchSlider label="Highlight" value={params.highlight} min={0} max={1}
         onChange={(v) => {
           const h = Math.max(v, params.shadow + 0.000001);
-          // Push midtone along if highlight would pass it
           const m = params.midtone >= h ? h - 0.000001 : params.midtone;
           set({ highlight: h, midtone: Math.max(m, params.shadow + 0.000001) });
         }} />
@@ -142,6 +200,7 @@ interface Props {
   onLinkedToggle: (linked: boolean) => void;
   onApply: () => void;
   onReset: () => void;
+  onSliderHover?: (hovering: boolean) => void;
 }
 
 const CHANNEL_LABELS = ["Red", "Green", "Blue"];
@@ -159,6 +218,7 @@ export function StretchControls({
   onLinkedToggle,
   onApply,
   onReset,
+  onSliderHover,
 }: Props) {
   const isStf = linked.stretch === "stf" || linked.stretch === "auto";
 
@@ -210,16 +270,25 @@ export function StretchControls({
 
       {/* Linked stretch sliders — update local state only */}
       {isStf && (!isColor || isLinked) && (
-        <ChannelControls
-          label=""
-          params={linked}
-          onChange={onLinkedChange}
-        />
+        <Box
+          onMouseEnter={() => onSliderHover?.(true)}
+          onMouseLeave={() => onSliderHover?.(false)}
+        >
+          <ChannelControls
+            label=""
+            params={linked}
+            onChange={onLinkedChange}
+          />
+        </Box>
       )}
 
       {/* Per-channel stretch sliders — update local state only */}
       {isStf && isColor && !isLinked && (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <Box
+          sx={{ display: "flex", flexDirection: "column", gap: 2 }}
+          onMouseEnter={() => onSliderHover?.(true)}
+          onMouseLeave={() => onSliderHover?.(false)}
+        >
           {perChannel.map((ch, i) => (
             <ChannelControls
               key={i}

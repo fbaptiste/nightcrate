@@ -61,7 +61,7 @@ export interface FilterSize {
   updated_at: string;
 }
 
-export interface ComputerType {
+export interface FormFactor {
   id: number;
   name: string;
   description: string | null;
@@ -75,6 +75,15 @@ export interface FilterType {
   name: string;
   display_name: string;
   description: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FocuserType {
+  id: number;
+  name: string;
+  notes: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -100,8 +109,8 @@ export interface Sensor {
   peak_qe_pct: number | null;
   bayer_pattern: string | null;
   dual_gain: boolean;
-  hcg_threshold_gain: number | null;
   notes: string | null;
+  source_url: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -122,7 +131,13 @@ export interface Camera {
   has_usb_hub: boolean;
   usb_hub_interface: ConnectionInterface | null;
   unity_gain: number | null;
+  effective_full_well_ke: number | null;
+  effective_read_noise_lcg_e: number | null;
+  effective_read_noise_hcg_e: number | null;
+  effective_peak_qe_pct: number | null;
+  hcg_threshold_gain: number | null;
   notes: string | null;
+  source_url: string | null;
   interfaces: ConnectionInterface[];
   active: boolean;
   created_at: string;
@@ -155,6 +170,7 @@ export interface Telescope {
   weight_kg: number | null;
   obstruction_pct: number | null;
   notes: string | null;
+  source_url: string | null;
   connectors: ConnectorSize[];
   configurations: TelescopeConfiguration[];
   active: boolean;
@@ -171,16 +187,24 @@ export interface FilterPassband {
   peak_transmission_pct: number | null;
 }
 
+export interface FilterSizeOption {
+  id: number;
+  filter_id: number;
+  filter_size: FilterSize;
+  mounted_thickness_mm: number | null;
+  notes: string | null;
+}
+
 export interface Filter {
   id: number;
   manufacturer: Manufacturer;
   filter_type: FilterType;
-  filter_size: FilterSize | null;
   model_name: string;
   peak_transmission_pct: number | null;
-  mounted_thickness_mm: number | null;
   notes: string | null;
+  source_url: string | null;
   passbands: FilterPassband[];
+  size_options: FilterSizeOption[];
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -198,6 +222,7 @@ export interface Mount {
   periodic_error_arcsec: number | null;
   drive_type: string | null;
   notes: string | null;
+  source_url: string | null;
   interfaces: ConnectionInterface[];
   active: boolean;
   created_at: string;
@@ -207,6 +232,7 @@ export interface Mount {
 export interface Focuser {
   id: number;
   manufacturer: Manufacturer;
+  focuser_type: FocuserType | null;
   model_name: string;
   motorized: boolean;
   travel_range_mm: number | null;
@@ -215,6 +241,7 @@ export interface Focuser {
   temperature_compensation: boolean;
   backlash_steps: number | null;
   notes: string | null;
+  source_url: string | null;
   interfaces: ConnectionInterface[];
   active: boolean;
   created_at: string;
@@ -231,6 +258,7 @@ export interface FilterWheel {
   num_positions: number;
   back_focus_contribution_mm: number | null;
   notes: string | null;
+  source_url: string | null;
   interfaces: ConnectionInterface[];
   active: boolean;
   created_at: string;
@@ -247,6 +275,7 @@ export interface Oag {
   back_focus_contribution_mm: number | null;
   weight_g: number | null;
   notes: string | null;
+  source_url: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -261,6 +290,7 @@ export interface GuideScope {
   focal_length_mm: number | null;
   weight_g: number | null;
   notes: string | null;
+  source_url: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -269,9 +299,10 @@ export interface GuideScope {
 export interface Computer {
   id: number;
   manufacturer: Manufacturer;
-  computer_type: ComputerType | null;
+  form_factor: FormFactor | null;
   model_name: string;
   notes: string | null;
+  source_url: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -326,7 +357,7 @@ export interface FilterSizeCreate {
   description?: string | null;
 }
 
-export interface ComputerTypeCreate {
+export interface FormFactorCreate {
   name: string;
   description?: string | null;
 }
@@ -352,8 +383,8 @@ export interface SensorCreate {
   peak_qe_pct?: number | null;
   bayer_pattern?: string | null;
   dual_gain?: boolean;
-  hcg_threshold_gain?: number | null;
   notes?: string | null;
+  source_url?: string | null;
 }
 
 export interface CameraCreate {
@@ -370,7 +401,13 @@ export interface CameraCreate {
   has_usb_hub?: boolean;
   usb_hub_interface_id?: number | null;
   unity_gain?: number | null;
+  effective_full_well_ke?: number | null;
+  effective_read_noise_lcg_e?: number | null;
+  effective_read_noise_hcg_e?: number | null;
+  effective_peak_qe_pct?: number | null;
+  hcg_threshold_gain?: number | null;
   notes?: string | null;
+  source_url?: string | null;
   interface_ids?: number[];
 }
 
@@ -396,6 +433,7 @@ export interface TelescopeCreate {
   weight_kg?: number | null;
   obstruction_pct?: number | null;
   notes?: string | null;
+  source_url?: string | null;
   connector_size_ids?: number[];
 }
 
@@ -410,9 +448,15 @@ export interface FilterPassbandCreate {
 export interface FilterCreate {
   manufacturer_id: number;
   filter_type_id: number;
-  filter_size_id?: number | null;
   model_name: string;
   peak_transmission_pct?: number | null;
+  notes?: string | null;
+  source_url?: string | null;
+}
+
+export interface FilterSizeOptionCreate {
+  filter_id: number;
+  filter_size_id: number;
   mounted_thickness_mm?: number | null;
   notes?: string | null;
 }
@@ -428,11 +472,18 @@ export interface MountCreate {
   periodic_error_arcsec?: number | null;
   drive_type?: string | null;
   notes?: string | null;
+  source_url?: string | null;
   interface_ids?: number[];
+}
+
+export interface FocuserTypeCreate {
+  name: string;
+  notes?: string | null;
 }
 
 export interface FocuserCreate {
   manufacturer_id: number;
+  focuser_type_id?: number | null;
   model_name: string;
   motorized?: boolean;
   travel_range_mm?: number | null;
@@ -441,6 +492,7 @@ export interface FocuserCreate {
   temperature_compensation?: boolean;
   backlash_steps?: number | null;
   notes?: string | null;
+  source_url?: string | null;
   interface_ids?: number[];
 }
 
@@ -453,6 +505,7 @@ export interface FilterWheelCreate {
   num_positions: number;
   back_focus_contribution_mm?: number | null;
   notes?: string | null;
+  source_url?: string | null;
   interface_ids?: number[];
 }
 
@@ -465,6 +518,7 @@ export interface OagCreate {
   back_focus_contribution_mm?: number | null;
   weight_g?: number | null;
   notes?: string | null;
+  source_url?: string | null;
 }
 
 export interface GuideScopeCreate {
@@ -475,13 +529,15 @@ export interface GuideScopeCreate {
   focal_length_mm?: number | null;
   weight_g?: number | null;
   notes?: string | null;
+  source_url?: string | null;
 }
 
 export interface ComputerCreate {
   manufacturer_id: number;
-  computer_type_id?: number | null;
+  form_factor_id?: number | null;
   model_name: string;
   notes?: string | null;
+  source_url?: string | null;
 }
 
 export interface SoftwareCreate {
@@ -501,6 +557,15 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 function retiredParam(includeRetired: boolean): string {
   return includeRetired ? "?include_retired=true" : "";
 }
+
+// ---------------------------------------------------------------------------
+// Restore (generic)
+// ---------------------------------------------------------------------------
+
+export const restoreEquipmentItem = (tableName: string, id: number) =>
+  apiFetch<{ ok: boolean }>(`/equipment/restore/${tableName}/${id}`, {
+    method: "POST",
+  });
 
 // ---------------------------------------------------------------------------
 // Manufacturer
@@ -668,28 +733,28 @@ export const deleteFilterSize = (id: number) =>
 // Computer Type
 // ---------------------------------------------------------------------------
 
-export const fetchComputerTypes = (includeRetired = false) =>
-  apiFetch<ComputerType[]>(`/equipment/computer-type${retiredParam(includeRetired)}`);
+export const fetchFormFactors = (includeRetired = false) =>
+  apiFetch<FormFactor[]>(`/equipment/form-factor${retiredParam(includeRetired)}`);
 
-export const fetchComputerType = (id: number) =>
-  apiFetch<ComputerType>(`/equipment/computer-type/${id}`);
+export const fetchFormFactor = (id: number) =>
+  apiFetch<FormFactor>(`/equipment/form-factor/${id}`);
 
-export const createComputerType = (data: ComputerTypeCreate) =>
-  apiFetch<ComputerType>("/equipment/computer-type", {
+export const createFormFactor = (data: FormFactorCreate) =>
+  apiFetch<FormFactor>("/equipment/form-factor", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(data),
   });
 
-export const updateComputerType = (id: number, data: Partial<ComputerTypeCreate>) =>
-  apiFetch<ComputerType>(`/equipment/computer-type/${id}`, {
+export const updateFormFactor = (id: number, data: Partial<FormFactorCreate>) =>
+  apiFetch<FormFactor>(`/equipment/form-factor/${id}`, {
     method: "PUT",
     headers: JSON_HEADERS,
     body: JSON.stringify(data),
   });
 
-export const deleteComputerType = (id: number) =>
-  apiFetch<{ ok: boolean }>(`/equipment/computer-type/${id}`, { method: "DELETE" });
+export const deleteFormFactor = (id: number) =>
+  apiFetch<{ ok: boolean }>(`/equipment/form-factor/${id}`, { method: "DELETE" });
 
 // ---------------------------------------------------------------------------
 // Filter Type (read-only)
@@ -717,6 +782,33 @@ export const updateFilterType = (id: number, data: Partial<FilterTypeCreate>) =>
 
 export const deleteFilterType = (id: number) =>
   apiFetch<{ ok: boolean }>(`/equipment/filter-type/${id}`, { method: "DELETE" });
+
+// ---------------------------------------------------------------------------
+// Focuser Type
+// ---------------------------------------------------------------------------
+
+export const fetchFocuserTypes = (includeRetired = false) =>
+  apiFetch<FocuserType[]>(`/equipment/focuser-type${retiredParam(includeRetired)}`);
+
+export const fetchFocuserType = (id: number) =>
+  apiFetch<FocuserType>(`/equipment/focuser-type/${id}`);
+
+export const createFocuserType = (data: FocuserTypeCreate) =>
+  apiFetch<FocuserType>("/equipment/focuser-type", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(data),
+  });
+
+export const updateFocuserType = (id: number, data: Partial<FocuserTypeCreate>) =>
+  apiFetch<FocuserType>(`/equipment/focuser-type/${id}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(data),
+  });
+
+export const deleteFocuserType = (id: number) =>
+  apiFetch<{ ok: boolean }>(`/equipment/focuser-type/${id}`, { method: "DELETE" });
 
 // ---------------------------------------------------------------------------
 // Sensor
@@ -874,6 +966,31 @@ export const updateFilterPassband = (
 export const deleteFilterPassband = (filterId: number, passbandId: number) =>
   apiFetch<{ ok: boolean }>(
     `/equipment/filter/${filterId}/passband/${passbandId}`,
+    { method: "DELETE" },
+  );
+
+export const createFilterSizeOption = (
+  filterId: number,
+  data: FilterSizeOptionCreate,
+) =>
+  apiFetch<FilterSizeOption>(
+    `/equipment/filter/${filterId}/size-option`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) },
+  );
+
+export const updateFilterSizeOption = (
+  filterId: number,
+  optionId: number,
+  data: Partial<FilterSizeOptionCreate>,
+) =>
+  apiFetch<FilterSizeOption>(
+    `/equipment/filter/${filterId}/size-option/${optionId}`,
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) },
+  );
+
+export const deleteFilterSizeOption = (filterId: number, optionId: number) =>
+  apiFetch<{ ok: boolean }>(
+    `/equipment/filter/${filterId}/size-option/${optionId}`,
     { method: "DELETE" },
   );
 

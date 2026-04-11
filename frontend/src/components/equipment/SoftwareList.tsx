@@ -1,8 +1,11 @@
+import Box from "@mui/material/Box";
 import { type GridColDef } from "@mui/x-data-grid";
 import EquipmentList from "./EquipmentList";
 import SoftwareFormDialog from "./SoftwareFormDialog";
 import { fetchSoftwares, deleteSoftware, type Software } from "@/api/equipment";
 import { formatSnakeCase } from "@/lib/formUtils";
+import DetailField from "@/components/equipment/shared/DetailField";
+import ExternalLink from "@/components/equipment/shared/ExternalLink";
 
 const columns: GridColDef<Software>[] = [
   { field: "name", headerName: "Name", flex: 1.5, minWidth: 160 },
@@ -28,11 +31,7 @@ const columns: GridColDef<Software>[] = [
     renderCell: (params) => {
       const url = params.row.website;
       if (!url) return "—";
-      return (
-        <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
-          {url}
-        </a>
-      );
+      return <ExternalLink href={url} />;
     },
   },
 ];
@@ -43,11 +42,23 @@ export default function SoftwareList() {
       title="Software"
       addLabel="Add Software"
       queryKey="software"
+      tableName="software"
       fetchFn={fetchSoftwares}
       deleteFn={deleteSoftware}
       columns={columns}
       getItemName={(s) => s.name}
       FormDialog={SoftwareFormDialog}
+      renderDetail={(item) => (
+        <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, columnGap: 4 }}>
+          <DetailField label="Manufacturer" value={item.manufacturer?.name ?? null} />
+          <DetailField label="Category" value={formatSnakeCase(item.category)} />
+          <DetailField
+            label="Website"
+            value={item.website ? <ExternalLink href={item.website} /> : null}
+          />
+          <DetailField label="Notes" value={item.notes ?? null} />
+        </Box>
+      )}
     />
   );
 }

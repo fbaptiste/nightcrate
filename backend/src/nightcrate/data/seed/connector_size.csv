@@ -5,7 +5,8 @@ connector_size.t2,42,T2 (M42x0.75),Astro standard fine-pitch M42 thread
 connector_size.2_inch,50.8,2 inch,Standard 2 inch push-fit
 connector_size.1_25_inch,31.75,1.25 inch,Standard 1.25 inch push-fit
 connector_size.3_inch,76.2,3 inch,Large format push-fit
+connector_size.m63,63,M63,William Optics and some Chinese OEM refractors
 connector_size.m68,68,M68,Baader and large format systems
 connector_size.m72,72,M72,Some larger refractors and reducers
 connector_size.sct,50.8,SCT (2"-24 TPI),Native SCT rear cell thread (Celestron/Meade)
-connector_size.large_sct,83.6,Large SCT (3.29"-16 TPI),C11/C14 rear cell thread for correctors
+connector_size.large_sct,83.6,SCT (Large 3.29"-16 TPI),C11/C14 rear cell thread for correctors

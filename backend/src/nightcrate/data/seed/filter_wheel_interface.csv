@@ -1,1 +1,30 @@
 filter_wheel_seed_key,interface_seed_key
+# --- ZWO 2025 EFW ---
+filter_wheel.zwo.efw_mini_5x125,connection_interface.usb_3_0_type_c
+filter_wheel.zwo.efw_8x125,connection_interface.usb_3_0_type_c
+filter_wheel.zwo.efw_7x36,connection_interface.usb_3_0_type_c
+filter_wheel.zwo.efw_5x2,connection_interface.usb_3_0_type_c
+filter_wheel.zwo.efw_7x2,connection_interface.usb_3_0_type_c
+filter_wheel.zwo.efw_7x50sq,connection_interface.usb_3_0_type_c
+# --- QHY CFW3 ---
+filter_wheel.qhy.cfw3_s_7x125,connection_interface.usb_2_0
+filter_wheel.qhy.cfw3_m_us_7x36,connection_interface.usb_2_0
+filter_wheel.qhy.cfw3_m_sr_5x2,connection_interface.usb_2_0
+filter_wheel.qhy.cfw3_l_7x2,connection_interface.usb_2_0
+filter_wheel.qhy.cfw3_xl_9x50r,connection_interface.usb_2_0
+filter_wheel.qhy.cfw3_xl_7x50sq,connection_interface.usb_2_0
+# --- Pegasus Astro Indigo ---
+filter_wheel.pegasus_astro.indigo_7x2,connection_interface.usb_2_0
+# --- ToupTek AFW ---
+filter_wheel.touptek.afw_7x36,connection_interface.usb_2_0
+filter_wheel.touptek.afw_8x125,connection_interface.usb_2_0
+filter_wheel.touptek.afw_5x2,connection_interface.usb_2_0
+# --- Optec IFW 2-inch ---
+filter_wheel.optec.ifw_8x1in,connection_interface.serial_rs232
+filter_wheel.optec.ifw_5x50r,connection_interface.serial_rs232
+filter_wheel.optec.ifw_5x2,connection_interface.serial_rs232
+filter_wheel.optec.ifw_7x36,connection_interface.serial_rs232
+# --- Optec IFW-3 ---
+filter_wheel.optec.ifw3_5x58sq,connection_interface.serial_rs232
+filter_wheel.optec.ifw3_6x50sq,connection_interface.serial_rs232
+filter_wheel.optec.ifw3_9x50r,connection_interface.serial_rs232
