@@ -70,6 +70,34 @@ class LocationUpdate(BaseModel):
     is_default: bool | None = None
     notes: str | None = None
 
+    @field_validator("latitude")
+    @classmethod
+    def check_lat(cls, v: float | None) -> float | None:
+        if v is not None and not -90 <= v <= 90:
+            raise ValueError("Latitude must be between -90 and 90")
+        return v
+
+    @field_validator("longitude")
+    @classmethod
+    def check_lon(cls, v: float | None) -> float | None:
+        if v is not None and not -180 <= v <= 180:
+            raise ValueError("Longitude must be between -180 and 180")
+        return v
+
+    @field_validator("bortle_class")
+    @classmethod
+    def check_bortle(cls, v: int | None) -> int | None:
+        if v is not None and not 1 <= v <= 9:
+            raise ValueError("Bortle class must be between 1 and 9")
+        return v
+
+    @field_validator("sqm_reading")
+    @classmethod
+    def check_sqm(cls, v: float | None) -> float | None:
+        if v is not None and not 10 <= v <= 25:
+            raise ValueError("SQM reading must be between 10 and 25")
+        return v
+
 
 class LocationResponse(BaseModel):
     id: int

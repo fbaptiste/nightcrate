@@ -456,7 +456,6 @@ class FilterSizeOptionCreate(BaseModel):
 
 
 class FilterSizeOptionUpdate(BaseModel):
-    filter_id: int | None = None
     filter_size_id: int | None = None
     mounted_thickness_mm: float | None = None
     notes: str | None = None

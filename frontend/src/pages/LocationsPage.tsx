@@ -765,7 +765,7 @@ export default function LocationsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button onClick={handleDelete} color="error" variant="contained">Delete</Button>
+          <Button onClick={handleDelete} color="warning" variant="contained">Delete</Button>
         </DialogActions>
       </Dialog>
 
