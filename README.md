@@ -27,7 +27,7 @@ Early development. See [PLAN.md](PLAN.md) for the current version plan.
 
 ## License
 
-NightCrate is licensed under the [GNU General Public License v3.0](LICENSE).
+NightCrate is licensed under the [MIT License](LICENSE).
 
 ---
 

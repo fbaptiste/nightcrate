@@ -599,7 +599,7 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 
 - [x] `make dev` shutdown fix: parent shell ignores SIGINT after launching children, waits for clean exit, `stty sane` restores terminal
 - [x] Removed PyQt/Qt references from PLAN.md, CLAUDE.md, and nightcrate-brief.md
-- [x] License changed to GPL-3.0: added LICENSE file, updated dependency policy in CLAUDE.md and PLAN.md
+- [x] License changed to GPL-3.0 (later reverted to MIT in v0.11.0)
 
 ### v0.3.0a Completion Criteria
 
@@ -3290,7 +3290,7 @@ Extend the same pattern to other equipment types — allow one or more URLs on c
 
 ## Appendix: Library Reference
 
-Evaluated libraries for potential use across NightCrate. Every library must pass a license review before inclusion. NightCrate is licensed under **GPL-3.0**. GPL dependencies are now technically compatible but should still be evaluated case by case — we prefer permissive dependencies where possible.
+Evaluated libraries for potential use across NightCrate. Every library must pass a license review before inclusion. NightCrate is licensed under **MIT**. Only permissive licenses (MIT, BSD, Apache, ISC, HPND, PSF) are freely compatible. LGPL is acceptable for Python runtime imports but requires discussion. GPL is not allowed.
 
 ### Already in Use
 
@@ -3343,6 +3343,6 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 
 | Library | License | Reason |
 |---|---|---|
-| **xisf** (Python, by sergio-dr) | **GPL-3.0** | License is now compatible, but we already have a clean-room parser (`services/xisf_io.py`). Evaluate before adopting — needs case-by-case approval for GPL deps. |
+| **xisf** (Python, by sergio-dr) | **GPL-3.0** | **Incompatible with MIT license.** We have a clean-room parser (`services/xisf_io.py`) instead. Do not adopt. |
 | plotly | MIT | Redundant — already using D3.js for complex charts and MUI X Charts for simple ones. |
 | matplotlib | BSD-compat | Not needed — all charts are frontend-rendered via D3.js / MUI X Charts. |
