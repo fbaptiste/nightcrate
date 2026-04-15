@@ -125,9 +125,9 @@ const QUALITY_FACTOR_ROWS: RowDef[] = [
   },
   {
     label: "Moon Quality",
-    key: "moon_impact",
-    scoreFromHour: (h) => moonScore(h.moon_altitude_deg),
-    textFromHour: (h) => String(moonScore(h.moon_altitude_deg)),
+    key: "moon_score",
+    scoreFromHour: (h) => h.moon_score,
+    textFromHour: (h) => String(Math.round(h.moon_score)),
     type: "score",
   },
   {

@@ -574,6 +574,8 @@ async def get_hourly(
 ):
     """Hourly weather detail for a specific night."""
     loc = await _get_location(location_id)
+    settings = await get_settings()
+    moon_included = settings.weather_moon_penalty
     night_date = datetime.strptime(date, "%Y-%m-%d").date()
 
     weather = await _fetch_or_cached(
@@ -689,7 +691,7 @@ async def get_hourly(
             moonless_dark_hours=0.0 if moon_up else 1.0,
             darkness_hours=1.0,
             moon_illumination_pct=night.moon.illumination_pct,
-            include_moon=True,
+            include_moon=moon_included,
         )
 
         hours.append(
@@ -717,6 +719,7 @@ async def get_hourly(
                 dew_risk=dew_risk,
                 imaging_quality=quality.overall,
                 imaging_quality_label=quality.label,
+                moon_score=quality.moon_score,
                 moon_altitude_deg=astro.moon_altitude_deg if astro else None,
                 moon_illumination_pct=(astro.moon_illumination_pct if astro else None),
                 darkness_category=(astro.darkness_category if astro else None),

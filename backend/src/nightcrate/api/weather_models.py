@@ -40,6 +40,7 @@ class HourlyWeatherResponse(BaseModel):
     dew_risk: Literal["low", "moderate", "high", "critical"]
     imaging_quality: int
     imaging_quality_label: str
+    moon_score: int
     moon_altitude_deg: float | None
     moon_illumination_pct: float | None
     darkness_category: str | None

@@ -35,6 +35,7 @@ export interface HourlyWeather {
   dew_risk: "low" | "moderate" | "high" | "critical";
   imaging_quality: number;
   imaging_quality_label: string;
+  moon_score: number;
   moon_altitude_deg: number | null;
   moon_illumination_pct: number | null;
   darkness_category: string | null;
