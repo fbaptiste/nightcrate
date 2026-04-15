@@ -783,7 +783,7 @@ Clean-room read-only XISF parser based on the open XISF 1.0 specification. No de
 
 ### New Dependencies
 
-- `sep` (LGPL-3.0, already approved) — Source Extractor for star detection and shape measurement. Fast C library, gives eccentricity + position angle directly. **Attribution added to README.**
+- `sep` (LGPL-3.0) — Source Extractor for star detection and shape measurement. Fast C library, gives eccentricity + position angle directly. LGPL fine as Python import; at distribution time (Tauri/PyInstaller), bundle sep's LICENSE file per LGPL §6.
 
 ### 1. Backend — Star Detection & Measurement
 
@@ -925,7 +925,7 @@ Migration: `0004.aberration_cache.sql`
 
 ### New Dependencies
 
-- `py7zr` (LGPL-2.1+) — pure Python 7z archive extraction. No external binaries required.
+- `py7zr` (LGPL-2.1+) — pure Python 7z archive extraction. No external binaries required. LGPL fine as Python import; at distribution time, bundle py7zr's LICENSE file per LGPL §6.
 
 ### 1. Backend — Archive I/O Service
 
@@ -3319,25 +3319,25 @@ All licenses verified as commercial-compatible. Add via `uv add` (backend) or `n
 |---|---|---|
 | scipy | BSD 3-Clause | Signal processing (PHD2 RMS stats, autofocus curve fitting) |
 | pandas | BSD 3-Clause | PHD2 log parsing (CSV-like), session statistics tabulation |
-| astroquery | BSD 3-Clause | Simbad/MAST queries for object info, catalog cross-matching |
-| photutils | BSD 3-Clause | Source detection, background estimation, FWHM/HFR measurement for sub quality |
+| astroquery | BSD 3-Clause | Simbad/MAST queries for object info, catalog cross-matching. Note: library is BSD-3, but data from each service has its own terms of use (e.g., SIMBAD requires "This research made use of the SIMBAD database" attribution in published work). Check per-service terms when adding queries. |
+| photutils | BSD 3-Clause | Source detection, background estimation, FWHM/HFR measurement for sub quality. Note: overlaps with `sep` (currently used in Aberration Inspector). If added, consider migrating Aberration Inspector for consistency, or keep both if sep's speed advantage matters for single-image analysis. |
 | astroalign | MIT | Image registration/alignment for stacking prep |
-| sep | LGPL-3.0 | Source extraction, star detection, quality metrics. ⚠ LGPL — OK as Python import (dynamic linking), **requires attribution** |
+| sep | LGPL-3.0 | Source extraction, star detection, quality metrics. ⚠ LGPL — fine as Python import (dynamic linking). At distribution time (Tauri/PyInstaller), bundle LICENSE file per LGPL §6. No runtime attribution required. |
 | reproject | BSD 3-Clause | WCS reprojection for overlaying images from different rigs/orientations |
 | psutil | BSD 3-Clause | System resource monitoring (CPU cores, memory for worker management) |
 | lz4 | BSD 3-Clause | Fast compression for caching processed image data |
 | zstandard | BSD 3-Clause | Higher-ratio compression for archiving/caching |
 | pywavelets (pywt) | MIT | Wavelet-based noise reduction/sharpening |
-| opencv-python | Apache 2.0 | Image processing, quality analysis |
-| numba | BSD 2-Clause | JIT compilation for CPU-bound array operations (alternative to mlx on non-Apple-Silicon) |
+| opencv-python-headless | Apache 2.0 | Image processing, quality analysis. Use `-headless` variant (avoids Qt/GUI deps). `opencv-contrib-python` is **not allowed** without case-by-case review (contrib modules have mixed GPL/patent licensing). |
+| numba | BSD 2-Clause | JIT compilation for CPU-bound array operations (alternative to mlx on non-Apple-Silicon). Note: pulls in LLVM via llvmlite (~50-100MB install size). |
 | bottleneck | BSD 2-Clause | Fast median/nanmedian via introselect algorithm — 2-3x faster than numpy for large arrays |
 | mlx | MIT | Apple Metal GPU acceleration for array operations (Apple Silicon only). Used for stats and stretch computation |
 | tifffile | BSD 3-Clause | TIFF reading/writing if DSLR or other TIFF sources are needed |
 | imagecodecs | BSD 3-Clause | Codec extensions for tifffile — required for LZW, JPEG, and other compressed TIFF formats |
 | requests | Apache 2.0 | HTTP client (astroquery dependency; useful for external APIs) |
 | D3.js | ISC | Complex interactive charts (PHD2 guiding graph, session timeline) |
-| py7zr | LGPL-2.1+ | 7z archive extraction. Pure Python, no external binaries. ⚠ LGPL — OK as Python import (dynamic linking). **Requires attribution.** |
-| rawpy | MIT (wrapper) / LibRaw: LGPL-2.1 or CDDL-1.0 | Camera RAW file support. ⚠ LibRaw LGPL — OK via dynamic linking in Python wheels. **Requires attribution.** Note: GPL demosaic packs excluded from standard builds. |
+| py7zr | LGPL-2.1+ | 7z archive extraction. Pure Python, no external binaries. ⚠ LGPL — fine as Python import. At distribution time, bundle LICENSE file per LGPL §6. No runtime attribution required. |
+| rawpy | MIT (wrapper) / LibRaw: LGPL-2.1 or CDDL-1.0 | Camera RAW file support. ⚠ rawpy wraps LibRaw (dual-licensed LGPL-2.1 or CDDL-1.0; we use LGPL option via pip-installed pre-built wheels, which exclude GPL demosaic packs). **Building rawpy or LibRaw from source with demosaic pack support is not permitted** under MIT. At distribution time, bundle LibRaw's LICENSE.LGPL. |
 
 ### Not Recommended
 

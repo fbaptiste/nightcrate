@@ -388,7 +388,87 @@ Multi-database support with first-run setup wizard and hot-swap.
 
 NightCrate is licensed under **MIT**. Before adding any new dependency (Python or JS/TS):
 
-1. **Check the license.** Permissive licenses are always OK: MIT, BSD (2/3-Clause), Apache 2.0, ISC, HPND, SIL OFL (fonts), PSF. **LGPL is acceptable** for Python packages imported at runtime (dynamic linking) but requires attribution. **GPL is not allowed** — it would force the entire project to GPL. If a critical feature needs a GPL library, write a clean-room implementation or find an alternative. **Always discuss copyleft dependencies (LGPL, GPL) with Fred before adding** so we can weigh pros and cons together.
+1. **Check the license:.** **Always discuss copyleft dependencies (LGPL, GPL) with Fred before adding** so we can weigh pros and cons together. Always use attributions where necessary. Discuss possibility of clean room implementation options if that becomes necessary.
+
+NightCrate is licensed under MIT. Dependency licenses must be reviewed
+before inclusion. The acceptable licenses, in order of preference:
+
+Freely compatible (always fine):
+  MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, HPND, PSF-2.0,
+  CC0, Unlicense, 0BSD
+
+Font licenses (always fine for bundled fonts):
+  SIL OFL 1.1 — permits embedding and redistribution with software
+  under any license, including proprietary.
+
+Compatible with attribution obligations (fine, note the requirements):
+  BSD-4-Clause — advertising clause imposes attribution on derivative
+  works. Prefer BSD-2/3-Clause alternatives where available.
+  MPL-2.0 — file-level copyleft. Modifications to MPL files must stay
+  MPL; combining MPL libraries with MIT code is fine.
+
+Compatible for normal Python imports (fine, no discussion needed):
+  LGPL-2.1, LGPL-2.1+, LGPL-3.0, LGPL-3.0+ — Python `import` is
+  dynamic linking, which LGPL permits. Currently in use: sep (LGPL-3.0),
+  py7zr (LGPL-2.1+). Discussion is required only if NightCrate modifies
+  the library source, static-links it, or bundles it into a redistributed
+  artifact (e.g., a PyInstaller/Tauri build) — in those cases the LGPL
+  library's source must be made available alongside the distribution,
+  per LGPL requirements.
+
+Not allowed (incompatible copyleft):
+  GPL-2.0, GPL-2.0+, GPL-3.0, GPL-3.0+, AGPL-3.0, AGPL-3.0+
+  — the copyleft terms would force NightCrate to relicense.
+
+Not allowed (not open source):
+  SSPL, BUSL (Business Source License), Commons Clause, Elastic
+  License 2.0, Confluent Community License, Redis Source Available
+  License, any "source-available" license that restricts commercial
+  use, hosting, or competition.
+
+Dual-licensed libraries:
+  Fine — take the permissive option. Many libraries offer MIT-or-GPL,
+  MPL-or-LGPL-or-GPL, etc. Use under the most permissive option.
+
+Commercial tier caveats:
+  MUI X packages (@mui/x-charts, @mui/x-data-grid, @mui/x-date-pickers,
+  @mui/x-tree-view) ship a Community tier (MIT) and Pro/Premium tiers
+  (commercial). NightCrate uses only Community features. Features marked
+  with a "Pro" or "Premium" badge in MUI X documentation are off-limits
+  regardless of whether they appear to work without a license key.
+
+Exception — external programs invoked across a process boundary:
+  External programs invoked via subprocess, IPC, CLI, or HTTP are not
+  "dependencies" for license propagation purposes — they are separate
+  works. GPL-licensed external tools (e.g., plate solvers, Source
+  Extractor, ASTAP) may be invoked via the process-boundary pattern.
+  The license of an external program does not propagate to code that
+  calls it across a process boundary, provided NightCrate does not
+  bundle the program into a combined distribution. If such a program
+  is bundled with a redistributed NightCrate build, its license terms
+  apply to that distribution and must be reviewed separately.
+
+Transitive and bundled licensing considerations:
+  - LGPL obligations only kick in at distribution/packaging time (Tauri/PyInstaller),
+    not at pip-install time. At distribution time, the LGPL library's LICENSE file
+    and notices must be bundled alongside the build (LGPL §6). No runtime attribution
+    or "credits screen" is required.
+  - Pre-built wheels from PyPI are the expected distribution path. Building from
+    source may pull in different license terms (e.g., rawpy's LibRaw demosaic packs
+    are GPL-2.0 — only the standard pip-installed wheels, which exclude these packs,
+    are compatible with MIT).
+  - Some libraries have optional features or tiers that are separately licensed and
+    off-limits even if the main library is fine: rawpy demosaic packs (GPL-2.0),
+    opencv-contrib modules (mixed GPL/patent), MUI X Pro/Premium (commercial).
+  - `opencv-python-headless` is preferred over `opencv-python` (avoids Qt/GUI deps).
+    `opencv-contrib-python` is not allowed without case-by-case review.
+  - Data retrieved from astronomical databases (via astroquery or similar) may have
+    attribution requirements independent of the library's software license. Check
+    the terms of use for each specific service queried (e.g., SIMBAD, MAST).
+  - If Claude Code audits transitive deps and flags the GCC Runtime Library, that is
+    covered by the GCC Runtime Library Exception and is explicitly designed for use
+    in non-GPL code.
+
 2. **MUI X Pro/Premium is never allowed** — paid commercial license. Only MUI X Community tier.
 3. **Update `README.md`** — add the library to the Open Source Acknowledgments table with its license and copyright.
 4. **Update `PLAN.md`** — if it's a new category of library, add it to the Library Reference appendix.
