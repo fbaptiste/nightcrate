@@ -126,9 +126,8 @@ def detect_stars(
                 thresh *= 2  # double the threshold and retry
             else:
                 raise
-    assert objects is not None
 
-    if len(objects) == 0:
+    if objects is None or len(objects) == 0:
         return AnalysisResult(
             stars=[],
             star_count=0,
