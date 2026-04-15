@@ -218,3 +218,199 @@ class TestLabel:
             include_moon=True,
         )
         assert result.label == "Poor"
+
+
+class TestLabelBoundaries:
+    """Test scores at exact label thresholds."""
+
+    def test_score_80_is_excellent(self):
+        # sky=100, wind=0 (calm=100), include_moon=False, NB mode:
+        # overall = 100*0.40 + (t*0.25 + s*0.25 + 100*0.10)*1.0 = 50 + (t+s)*0.25
+        # For overall=80: t+s=120 → t=60, s=60
+        result = compute_imaging_quality(
+            sky_clarity=100,
+            seeing_score=60,
+            transparency_score=60,
+            wind_speed_kmh=0,
+            moonless_dark_hours=8,
+            darkness_hours=8,
+            moon_illumination_pct=0,
+            include_moon=False,
+        )
+        assert result.overall == 80
+        assert result.label == "Excellent"
+
+    def test_score_79_is_good(self):
+        # overall = 50 + (58+58)*0.25 = 50 + 29 = 79
+        result = compute_imaging_quality(
+            sky_clarity=100,
+            seeing_score=58,
+            transparency_score=58,
+            wind_speed_kmh=0,
+            moonless_dark_hours=8,
+            darkness_hours=8,
+            moon_illumination_pct=0,
+            include_moon=False,
+        )
+        assert result.overall == 79
+        assert result.label == "Good"
+
+    def test_score_55_is_good(self):
+        # overall = 50 + (10+10)*0.25 = 50 + 5 = 55
+        result = compute_imaging_quality(
+            sky_clarity=100,
+            seeing_score=10,
+            transparency_score=10,
+            wind_speed_kmh=0,
+            moonless_dark_hours=8,
+            darkness_hours=8,
+            moon_illumination_pct=0,
+            include_moon=False,
+        )
+        assert result.overall == 55
+        assert result.label == "Good"
+
+    def test_score_54_is_marginal(self):
+        # overall = 50 + (8+8)*0.25 = 50 + 4 = 54
+        result = compute_imaging_quality(
+            sky_clarity=100,
+            seeing_score=8,
+            transparency_score=8,
+            wind_speed_kmh=0,
+            moonless_dark_hours=8,
+            darkness_hours=8,
+            moon_illumination_pct=0,
+            include_moon=False,
+        )
+        assert result.overall == 54
+        assert result.label == "Marginal"
+
+    def test_score_30_is_marginal(self):
+        # sky=50, wind=0, NB mode:
+        # overall = 50*0.40 + (7*0.25 + 7*0.25 + 100*0.10)*sqrt(0.5)
+        #         = 20 + 13.5 * 0.70711 = 20 + 9.546 = 29.546 → 30
+        result = compute_imaging_quality(
+            sky_clarity=50,
+            seeing_score=7,
+            transparency_score=7,
+            wind_speed_kmh=0,
+            moonless_dark_hours=8,
+            darkness_hours=8,
+            moon_illumination_pct=0,
+            include_moon=False,
+        )
+        assert result.overall == 30
+        assert result.label == "Marginal"
+
+    def test_score_29_is_poor(self):
+        # sky=50, wind=0, NB mode:
+        # overall = 20 + (6*0.25 + 6*0.25 + 100*0.10)*sqrt(0.5)
+        #         = 20 + 13.0 * 0.70711 = 20 + 9.192 = 29.192 → 29
+        result = compute_imaging_quality(
+            sky_clarity=50,
+            seeing_score=6,
+            transparency_score=6,
+            wind_speed_kmh=0,
+            moonless_dark_hours=8,
+            darkness_hours=8,
+            moon_illumination_pct=0,
+            include_moon=False,
+        )
+        assert result.overall == 29
+        assert result.label == "Poor"
+
+
+class TestPinnedRegression:
+    """Exact value regression test — catches formula changes."""
+
+    def test_known_inputs_exact_score(self):
+        # Hand-computed:
+        #   wind_score(10) = 100 - (10-5)*4.0 = 80
+        #   moon_score(6, 8, 30) = (1 - 0.25*0.3)*100 = 92.5
+        #   cloud_gating = sqrt(80/100) = 0.894427...
+        #   other = 70*0.25 + 60*0.15 + 92.5*0.15 + 80*0.10 = 48.375
+        #   overall_f = 80*0.35 + 48.375*0.894427 = 28.0 + 43.269 = 71.269
+        #   overall = round(71.269) = 71
+        result = compute_imaging_quality(
+            sky_clarity=80,
+            seeing_score=70,
+            transparency_score=60,
+            wind_speed_kmh=10,
+            moonless_dark_hours=6,
+            darkness_hours=8,
+            moon_illumination_pct=30,
+            include_moon=True,
+        )
+        assert result.overall == 71
+        assert result.label == "Good"
+        assert result.wind_calm == 80
+        assert result.moon_score == 92  # round(92.5) = 92 (Python banker's rounding)
+        assert result.moon_included is True
+
+
+class TestEdgeCases:
+    def test_moonless_hours_greater_than_darkness_hours(self):
+        """moonless_dark_hours > darkness_hours should clamp, not crash."""
+        result = compute_imaging_quality(
+            sky_clarity=80,
+            seeing_score=70,
+            transparency_score=60,
+            wind_speed_kmh=5,
+            moonless_dark_hours=10,
+            darkness_hours=8,
+            moon_illumination_pct=50,
+            include_moon=True,
+        )
+        # Should not crash, score should be valid
+        assert 0 <= result.overall <= 100
+        # Moon up fraction should clamp to 0 (all moonless), so moon_score = 100
+        assert result.moon_score == 100
+
+    def test_all_zeros(self):
+        """All inputs at zero should produce overall score of 0."""
+        result = compute_imaging_quality(
+            sky_clarity=0,
+            seeing_score=0,
+            transparency_score=0,
+            wind_speed_kmh=0,
+            moonless_dark_hours=0,
+            darkness_hours=0,
+            moon_illumination_pct=0,
+            include_moon=True,
+        )
+        assert result.overall == 0
+        assert result.label == "Poor"
+
+
+class TestSkyClarityPartialLayers:
+    def test_partial_layers_falls_back_to_cloud_cover(self):
+        """When only some layers provided, should use raw cloud_cover_pct."""
+        # Only low and mid provided (high is None)
+        result = compute_sky_clarity(
+            cloud_cover_pct=40,
+            cloud_cover_low_pct=10,
+            cloud_cover_mid_pct=20,
+            cloud_cover_high_pct=None,
+        )
+        # Should fall back to cloud_cover_pct=40, so clarity=60
+        assert result == 60
+
+    def test_only_low_layer_falls_back(self):
+        result = compute_sky_clarity(
+            cloud_cover_pct=25,
+            cloud_cover_low_pct=80,
+            cloud_cover_mid_pct=None,
+            cloud_cover_high_pct=None,
+        )
+        # Falls back to cloud_cover_pct=25
+        assert result == 75
+
+    def test_only_high_layer_falls_back(self):
+        result = compute_sky_clarity(
+            cloud_cover_pct=50,
+            cloud_cover_low_pct=None,
+            cloud_cover_mid_pct=None,
+            cloud_cover_high_pct=90,
+        )
+        # Falls back to cloud_cover_pct=50
+        assert result == 50

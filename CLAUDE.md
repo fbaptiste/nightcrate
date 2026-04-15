@@ -122,6 +122,13 @@ Before committing, all applicable checks must pass:
 **Frontend (from `frontend/`):**
 5. `npm run build` — TypeScript compilation + production build
 
+**Test quality expectations:**
+- New code must include tests covering happy paths, edge cases, and error conditions
+- Tests must assert specific expected values (not just ranges like `0 <= x <= 100`)
+- When modifying scoring formulas or algorithms, add pinned regression tests with hand-computed expected values
+- When removing guards, assertions, or defensive checks, verify the downstream code still handles all cases
+- Run `uv run coverage report --include="src/nightcrate/*"` periodically — no module should regress below its current coverage level
+
 ## Gotchas
 
 - **Python 3.14 + ruff format:** ruff format may strip parentheses from `except (ValueError, IndexError):` turning it into the Python 2 syntax `except ValueError, IndexError:`. This is a known ruff issue with `target-version = "py314"`. Avoid multi-exception `except` clauses, or rewrite to avoid the pattern (e.g., use a single base exception or restructure the logic).

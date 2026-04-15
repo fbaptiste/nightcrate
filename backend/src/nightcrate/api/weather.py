@@ -576,7 +576,10 @@ async def get_hourly(
     loc = await _get_location(location_id)
     settings = await get_settings()
     moon_included = settings.weather_moon_penalty
-    night_date = datetime.strptime(date, "%Y-%m-%d").date()
+    try:
+        night_date = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid date format, expected YYYY-MM-DD")
 
     weather = await _fetch_or_cached(
         location_id=loc["id"],

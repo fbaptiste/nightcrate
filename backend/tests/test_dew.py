@@ -80,3 +80,68 @@ class TestDewSafeWindow:
     def test_empty_returns_none(self):
         result = compute_dew_safe_window([])
         assert result.label == "none"
+
+    def test_single_hour_safe(self):
+        """Single safe hour should return all_night."""
+        result = compute_dew_safe_window([("22:00", 15.0, 5.0)])
+        assert result.label == "all_night"
+
+    def test_single_hour_unsafe(self):
+        """Single unsafe hour should return none."""
+        result = compute_dew_safe_window([("22:00", 10.0, 9.0)])
+        assert result.label == "none"
+
+    def test_unsafe_in_the_middle(self):
+        """Safe at start and end, unsafe in middle — treated as 'until' first unsafe."""
+        hourly = [
+            ("20:00", 15.0, 5.0),  # safe (spread=10)
+            ("21:00", 15.0, 5.0),  # safe (spread=10)
+            ("22:00", 10.0, 9.0),  # unsafe (spread=1)
+            ("23:00", 10.0, 9.5),  # unsafe (spread=0.5)
+            ("00:00", 15.0, 5.0),  # safe (spread=10)
+            ("01:00", 15.0, 5.0),  # safe (spread=10)
+        ]
+        result = compute_dew_safe_window(hourly)
+        # Per the comment: "Unsafe in the middle only — rare, treat as 'until first unsafe'"
+        assert result.label == "until"
+        assert result.until_time == "22:00"
+
+
+class TestDewRiskBoundaries:
+    """Test exact boundary values for classify_dew_risk."""
+
+    def test_spread_exactly_5(self):
+        """Spread of exactly 5.0 should be low (the >= 5 branch)."""
+        assert classify_dew_risk(10.0, 5.0) == DEW_RISK_LOW
+
+    def test_spread_exactly_3(self):
+        """Spread of exactly 3.0 should be moderate (>= 3, < 5)."""
+        assert classify_dew_risk(10.0, 7.0) == DEW_RISK_MODERATE
+
+    def test_spread_exactly_1(self):
+        """Spread of exactly 1.0 should be high (>= 1, < 3)."""
+        assert classify_dew_risk(10.0, 9.0) == DEW_RISK_HIGH
+
+    def test_spread_just_below_5(self):
+        assert classify_dew_risk(10.0, 5.01) == DEW_RISK_MODERATE
+
+    def test_spread_just_below_3(self):
+        assert classify_dew_risk(10.0, 7.01) == DEW_RISK_HIGH
+
+    def test_spread_just_below_1(self):
+        assert classify_dew_risk(10.0, 9.01) == DEW_RISK_CRITICAL
+
+
+class TestNegativeSpread:
+    """Temperature below dew point — physically impossible but should handle gracefully."""
+
+    def test_negative_spread_is_critical(self):
+        """When temp < dew point, spread is negative → should classify as critical."""
+        assert classify_dew_risk(5.0, 10.0) == DEW_RISK_CRITICAL
+
+    def test_zero_spread_is_critical(self):
+        """When temp == dew point, spread is 0 → critical."""
+        assert classify_dew_risk(10.0, 10.0) == DEW_RISK_CRITICAL
+
+    def test_large_negative_spread_is_critical(self):
+        assert classify_dew_risk(-5.0, 10.0) == DEW_RISK_CRITICAL

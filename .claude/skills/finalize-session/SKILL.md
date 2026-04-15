@@ -48,6 +48,12 @@ Run the pre-commit checklist (all must pass before committing):
 
 If any check fails, fix the issue and re-run. Do not proceed to commit with failing checks.
 
+**Test quality gate:**
+- New code must include tests with edge cases and error conditions, not just happy paths
+- Tests must assert specific expected values, not just ranges
+- Scoring/algorithm changes need pinned regression tests with hand-computed values
+- Run `uv run coverage report --include="src/nightcrate/*"` — no module should regress below its current coverage level
+
 ### 6. Commit
 
 - Stage all relevant files (do NOT stage `instructions/` or files in `.gitignore`)

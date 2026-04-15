@@ -104,3 +104,138 @@ class TestTransparencyScores:
                             visibility_m=vis,
                         )
                         assert 0 <= result.score <= 100
+
+
+class TestTransparencyExtremes:
+    """Edge cases and extreme input values."""
+
+    def test_extreme_pwv_zero(self):
+        """PWV = 0 (bone dry). PWV component should score 100.
+
+        _pwv_score(0) = clamp(100 - max(0, 0-5)*3) = clamp(100 - 0) = 100
+        """
+        result = estimate_transparency(
+            pwv_mm=0.0,
+            aod=0.05,
+            humidity_pct=30.0,
+            visibility_m=25000.0,
+        )
+        assert result.components["pwv"] == 100.0
+
+    def test_extreme_pwv_very_high(self):
+        """PWV = 100 mm (extreme). PWV component should score 0.
+
+        _pwv_score(100) = clamp(100 - max(0, 100-5)*3) = clamp(100 - 285) = 0
+        """
+        result = estimate_transparency(
+            pwv_mm=100.0,
+            aod=0.05,
+            humidity_pct=30.0,
+            visibility_m=25000.0,
+        )
+        assert result.components["pwv"] == 0.0
+
+    def test_extreme_aod_zero(self):
+        """AOD = 0 (perfectly clean atmosphere).
+
+        _aod_score(0) = clamp(100 - max(0, 0-0.05)*180) = clamp(100) = 100
+        """
+        result = estimate_transparency(
+            pwv_mm=5.0,
+            aod=0.0,
+            humidity_pct=30.0,
+            visibility_m=25000.0,
+        )
+        assert result.components["aod"] == 100.0
+
+    def test_extreme_aod_volcanic(self):
+        """AOD = 1.0 (volcanic eruption level).
+
+        _aod_score(1.0) = clamp(100 - max(0, 1.0-0.05)*180)
+                        = clamp(100 - 0.95*180) = clamp(100 - 171) = clamp(-71) = 0
+        """
+        result = estimate_transparency(
+            pwv_mm=5.0,
+            aod=1.0,
+            humidity_pct=30.0,
+            visibility_m=25000.0,
+        )
+        assert result.components["aod"] == 0.0
+
+    def test_extreme_visibility_zero(self):
+        """Visibility = 0 m (fog).
+
+        _visibility_score(0) = clamp(0/25000*100) = 0
+        """
+        result = estimate_transparency(
+            pwv_mm=5.0,
+            aod=0.05,
+            humidity_pct=30.0,
+            visibility_m=0.0,
+        )
+        assert result.components["visibility"] == 0.0
+
+    def test_extreme_visibility_beyond_ceiling(self):
+        """Visibility = 50000 m (crystal clear, beyond the 25km ceiling).
+
+        _visibility_score(50000) = clamp(50000/25000*100) = clamp(200) = 100
+        Should cap at 100, not exceed it.
+        """
+        result = estimate_transparency(
+            pwv_mm=5.0,
+            aod=0.05,
+            humidity_pct=30.0,
+            visibility_m=50000.0,
+        )
+        assert result.components["visibility"] == 100.0
+
+    def test_contradictory_high_pwv_excellent_visibility(self):
+        """High PWV (30mm) but excellent visibility (30km).
+
+        PWV drags the score down even though visibility is great.
+
+        _pwv_score(30) = clamp(100 - max(0, 30-5)*3) = 100 - 75 = 25
+        _aod_score(0.03) = clamp(100 - max(0, 0.03-0.05)*180) = 100 (negative arg)
+        _humidity_score(30) = clamp(100 - 30*0.8) = 76
+        _visibility_score(30000) = clamp(30000/25000*100) = clamp(120) = 100
+
+        score = 25*0.50 + 100*0.25 + 76*0.15 + 100*0.10
+              = 12.5 + 25 + 11.4 + 10 = 58.9 → 59
+
+        Despite perfect visibility and AOD, PWV at 50% weight pulls the score
+        well below what visibility alone would suggest.
+        """
+        result = estimate_transparency(
+            pwv_mm=30.0,
+            aod=0.03,
+            humidity_pct=30.0,
+            visibility_m=30000.0,
+        )
+        assert result.tier == "primary"
+        assert result.score == 59
+        # Verify the PWV component is low while visibility is maxed
+        assert result.components["pwv"] == 25.0
+        assert result.components["visibility"] == 100.0
+
+    def test_reference_value_primary_tier(self):
+        """Reference value computed by hand from the primary tier formula.
+
+        Inputs: pwv=10, aod=0.1, humidity=50, visibility=20000
+
+        _pwv_score(10) = clamp(100 - max(0, 10-5)*3) = 100 - 15 = 85
+        _aod_score(0.1) = clamp(100 - max(0, 0.1-0.05)*180) = 100 - 9 = 91
+        _humidity_score(50) = clamp(100 - 50*0.8) = 100 - 40 = 60
+        _visibility_score(20000) = clamp(20000/25000*100) = 80
+
+        score = 85*0.50 + 91*0.25 + 60*0.15 + 80*0.10
+              = 42.5 + 22.75 + 9.0 + 8.0 = 82.25
+        round(82.25) = 82
+        """
+        result = estimate_transparency(
+            pwv_mm=10.0,
+            aod=0.1,
+            humidity_pct=50.0,
+            visibility_m=20000.0,
+        )
+        assert result.tier == "primary"
+        assert result.score == 82

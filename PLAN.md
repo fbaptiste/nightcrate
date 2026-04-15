@@ -1577,13 +1577,26 @@ Telescopius-style weather forecast dashboard for imaging session planning. 7-day
 - [x] Quality badge component (sequential blue palette — darker = better)
 - [x] Easter egg wand with astrophotography weather incantations
 
+### Test Coverage Push
+
+Comprehensive test quality improvement: from 564 tests / 77% coverage to 936 tests / 92% coverage. Added reference value regression tests, boundary conditions, error handling, constraint violations, polar latitude edge cases, and API schema validation. Found and fixed 1 bug (unvalidated date parameter on `/hourly` endpoint).
+
+Key coverage achievements:
+- 18 modules at 100%, 10 modules at 95%+, overall 92%
+- `api/equipment.py`: 59% → 94% (the largest single gap, 1,398 statements)
+- `api/locations.py`: 49% → 94%
+- `main.py`: 48% → 95%
+- `api/weather.py`: 72% → 96%
+- Remaining gaps are platform-specific code (GPU detection, OS volume listing) and file-type branches requiring complex test fixtures
+
 ### v0.11.0 Completion Criteria
 
-- [x] All backend tests pass (564 passed, 3 skipped)
+- [x] All backend tests pass (936 passed, 3 skipped)
 - [x] Ruff clean, bandit clean (no new issues)
 - [x] Frontend builds (TypeScript + Vite)
+- [x] Test coverage push: 77% → 92% overall, no module below 75%
+- [x] Code review (4 issues found and fixed)
 - [ ] Visual testing in browser
-- [ ] Code review
 
 ---
 
