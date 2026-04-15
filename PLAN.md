@@ -19,9 +19,10 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.9.1 — Equipment Management UI (Remaining Tabs)](#v091--equipment-management-ui-remaining-tabs) ✅
 - [v0.10.0 — Equipment Seed Loader + Admin Page](#v0100--equipment-seed-loader--admin-page) ✅
 - [v0.10.1 — Seed Data Population + UI Improvements + Locations](#v0101--seed-data-population--ui-improvements--locations) ✅
+- [v0.11.0 — Astronomy Weather Forecast](#v0110--astronomy-weather-forecast)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
-- [Future Features to Consider](#future-features-to-consider) (incl. Astronomy Weather Forecast)
+- [Future Features to Consider](#future-features-to-consider)
 - [Appendix: Library Reference](#appendix-library-reference)
 
 ---
@@ -1500,6 +1501,89 @@ Cameras & Sensors (37 sensors, 101 cameras, 12 batches):
 - [x] Ruff clean
 - [x] Frontend builds
 - [x] Code review: route ordering fix, dedup, drag perf fix
+
+---
+
+## v0.11.0 — Astronomy Weather Forecast
+
+**Status:** In Progress
+**Branch:** `v0.11.0/weather-forecast`
+
+Telescopius-style weather forecast dashboard for imaging session planning. 7-day daily cards + hourly detail view with darkness bar, moon polyline, score factor grid, and weather details.
+
+### Data Sources & Services
+
+- [x] Open-Meteo forecast API client (`services/weather.py`) — hourly temperature, dew point, humidity, cloud cover (total/low/mid/high), wind, visibility, precipitation
+- [x] Open-Meteo ECMWF API for PWV (`fetch_pwv`) — total column integrated water vapour from ECMWF IFS 0.25° model
+- [x] Open-Meteo Air Quality API for AOD (`fetch_air_quality`) — aerosol optical depth (CAMS Global, 3-hourly)
+- [x] Pressure-level wind data for seeing model (200/300/500 hPa wind speed + geopotential heights)
+- [x] Weather cache (`weather_cache` table, migration 0008) — TTL-based, supports forecast/archive/openmeteo_aq/ecmwf_pwv sources
+- [x] Supplementary data fetched separately with `nearest_match` timestamp alignment and non-fatal cache
+
+### Astronomy Service (`services/astronomy.py`)
+
+- [x] Moon phase computation (Meeus method — barycentric positions, phase angle, illumination)
+- [x] Twilight boundary detection (civil/nautical/astronomical, interpolated from 1-minute dense sampling)
+- [x] Moonless dark hours (5-minute moon altitude sampling during darkness window)
+- [x] Hourly astro data (moon altitude, darkness category per hour)
+- [x] Moon altitude polyline (10-minute sampling for smooth rendering)
+- [x] Polar latitude graceful degradation — all event fields Optional, independent per-crossing detection
+- [x] `deepest_darkness_reached` and `no_imaging_window` fields
+- [x] Renamed `phase_angle_deg` → `elongation_deg` in `MoonInfo`
+
+### Seeing Model (`services/seeing.py`)
+
+- [x] Surface model (JAG Lab methodology): temperature-dew point spread, wind, humidity, thermal stability
+- [x] Wind-shear model (Trinquet & Vernin 2006, Cherubini & Businger 2013): jet stream + vertical shear at pressure levels, blended with surface model (60/40 split)
+
+### Transparency Service (`services/transparency.py`)
+
+- [x] Three-tier scoring: primary (PWV+AOD+humidity+visibility, 50/25/15/10), fallback (no AOD), degraded (no PWV)
+- [x] PWV score: <5mm=100, 35mm=10, >40mm=0
+- [x] AOD score: <0.05=100, 0.6=1, >0.6=0 (steep penalty for wildfire smoke/dust)
+
+### Dew Service (`services/dew.py`)
+
+- [x] Risk classification: low (>5°C spread), moderate (3-5°C), high (1-3°C), critical (<1°C)
+- [x] Safe window computation for daily cards: all_night / until HH:MM / after HH:MM / none
+
+### Imaging Quality Score (`services/imaging_quality.py`)
+
+- [x] Weighted sky clarity from cloud layers (low×1.0, mid×0.9, high×0.6)
+- [x] Cloud gating factor: √(sky_clarity/100) multiplied on all other factors
+- [x] Broadband weights: Sky 35% / Seeing 25% / Transparency 15% / Moon 15% / Wind 10%
+- [x] Narrowband weights: Sky 40% / Transparency 25% / Seeing 25% / Wind 10%
+- [x] Quality labels: Excellent (80+), Good (55+), Marginal (30+), Poor (0+)
+
+### API (`api/weather.py`, `api/weather_models.py`)
+
+- [x] `GET /api/weather/forecast` — 7-day daily summaries with all scores
+- [x] `GET /api/weather/hourly` — sunset±1h hourly detail with moon polyline
+- [x] `GET /api/weather/methodology` — help text
+- [x] Daily response: imaging quality, sky clarity, transparency, seeing, moon, wind calm, dew safe window, moon phase name, darkness info
+- [x] Hourly response: all scores + raw weather + PWV + AOD + dew risk + darkness category
+- [x] Settings: `weather_cache_ttl_hours` (default 6), `weather_moon_penalty` (default true)
+
+### Frontend — Weather Page
+
+- [x] Location selector dropdown (from saved locations)
+- [x] "Include moon in quality score" toggle
+- [x] 7-day daily cards: quality badge, factor bars (Sky Clarity, Transparency, Seeing, Moon Quality, Wind Calm), moon phase icon + name, moonless/dark hours, sun/astro times, dew-safe line, precipitation, no-imaging-window handling
+- [x] Hourly timeline (D3): darkness gradient bar with twilight markers, moon altitude polyline (gold, clipped at horizon), unified hover tooltip
+- [x] Score factor grid: Imaging Quality (emphasized), Sky Clarity, Transparency, Seeing, Moon Quality, Wind Calm — daylight padding hours grayed out
+- [x] Weather details grid: Precip %/mm, Cloud layers, PWV, AOD, Temp, Dew Point, Humidity, Wind, Dew Risk (colorblind-safe blue palette), Moon %/Alt
+- [x] Methodology accordion with factors table, cloud gating explanation, quality labels, dew risk definitions, data sources
+- [x] Moon phase icon (terminator ellipse rendering from illumination percentage)
+- [x] Quality badge component (sequential blue palette — darker = better)
+- [x] Easter egg wand with astrophotography weather incantations
+
+### v0.11.0 Completion Criteria
+
+- [x] All backend tests pass (564 passed, 3 skipped)
+- [x] Ruff clean, bandit clean (no new issues)
+- [x] Frontend builds (TypeScript + Vite)
+- [ ] Visual testing in browser
+- [ ] Code review
 
 ---
 
@@ -3172,28 +3256,6 @@ Features that depend on cross-frame infrastructure or are beyond the current sco
 
 - **User annotations:** Pin notes to specific zones and persist them across sessions.
 - **Interactive zone drawing:** Drag/resize custom zones instead of a fixed rectangular grid for fine-grained investigation of specific field regions.
-
-### Astronomy Weather Forecast
-
-Telescopius-style weather forecast dashboard for imaging session planning.
-
-**Data sources:**
-- **Open-Meteo API** (free, no API key) — hourly cloud cover (total/low/mid/high), wind speed/direction, temperature, humidity, dew point, visibility. Up to 16-day forecast.
-- **astropy** (already in deps) — moon phase/illumination, twilight times (civil/nautical/astronomical), darkness hours. Computed from observer lat/lon/date.
-- **Computed seeing estimate** — derived from Open-Meteo wind speed at altitude, humidity, and temperature gradients. Score 0-100 following the JAG Lab methodology.
-
-**7-day overview:** Daily cards showing cloud cover icon, seeing score, moon phase icon, darkness hours, sunset/sunrise times.
-
-**Detailed hourly view (selected day):** Timeline chart showing darkness bands (civil/nautical/astronomical twilight + full night), cloud cover %, moon altitude, seeing score, wind speed. Sunset/sunrise and astronomical night start/end times displayed. Color-coded cells (blue/orange palette, color-blind safe).
-
-**Observer locations:** Users can define multiple named observing locations (name, lat/lon, elevation). Locations can be switched in the weather dashboard and assigned to imaging projects. Stored in the database — not tied to a single site.
-
-**Architecture:** Backend service fetches Open-Meteo data, computes seeing + astro data (including sunset/sunrise, twilight times, astronomical night), caches results. Frontend renders the dashboard. Observer location selectable from saved locations.
-
-**References:**
-- Open-Meteo API: https://open-meteo.com/en/docs
-- JAG Lab astronomy forecast (open source, uses Open-Meteo): https://jaglab.org/astro-forecast/
-- Clear Outside (inspiration for UI): https://clearoutside.com/
 
 ### Equipment Links
 

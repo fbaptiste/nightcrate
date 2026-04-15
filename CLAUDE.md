@@ -345,6 +345,45 @@ Multi-database support with first-run setup wizard and hot-swap.
 - DB switch: `set_db_path()` + `window.location.reload()` — no backend restart needed
 - Remove can optionally delete the file (irreversible)
 
+## Weather Forecast
+
+7-day imaging quality forecast with hourly detail for imaging session planning.
+
+**Architecture:**
+- `services/weather.py` — Open-Meteo forecast client (standard API + ECMWF for PWV + Air Quality for AOD). `SupplementaryData` dataclass for PWV/AOD time-series. `nearest_match()` for aligning 3-hourly AOD to hourly weather timestamps.
+- `services/astronomy.py` — astropy-based moon, twilight, darkness. All event fields `Optional` for polar latitude safety. `compute_moon_polyline()` for 10-min altitude sampling.
+- `services/seeing.py` — surface model (JAG Lab) + wind-shear model (Trinquet/Cherubini). Blended 60/40 when pressure-level data available.
+- `services/transparency.py` — three-tier scoring (PWV+AOD+humidity+visibility → fallback → degraded)
+- `services/dew.py` — temperature-dew point spread classification + safe window computation
+- `services/imaging_quality.py` — composite score with weighted sky clarity (cloud layers), cloud gating factor, transparency, seeing, moon, wind calm
+- `api/weather.py` — forecast/hourly/methodology endpoints, supplementary data cache with non-fatal writes
+- `api/weather_models.py` — Pydantic response models
+- `db/migrations/0008.weather_cache.sql` — cache table (forecast/archive/openmeteo_aq/ecmwf_pwv sources)
+
+**Imaging Quality Weights:**
+- Broadband (moon included): Sky 35% / Seeing 25% / Transparency 15% / Moon 15% / Wind 10%
+- Narrowband (no moon): Sky 40% / Transparency 25% / Seeing 25% / Wind 10%
+- Cloud gating: all non-sky factors multiplied by √(sky_clarity/100)
+- Quality labels: Excellent (80+), Good (55+), Marginal (30+), Poor (0+)
+
+**Frontend:**
+- `pages/WeatherPage.tsx` — location selector, moon toggle, 7-day cards, hourly detail
+- `components/weather/DailyCard.tsx` — quality badge, factor bars, moon info, dew-safe line
+- `components/weather/HourlyTimeline.tsx` — D3 SVG: darkness gradient bar, moon polyline, score factor grid (daylight hours grayed), weather details grid
+- `components/weather/MethodologyInfo.tsx` — help accordion with factor table, cloud gating, dew risk
+- `components/weather/MoonPhaseIcon.tsx` — terminator ellipse rendering from illumination %
+- `components/weather/QualityBadge.tsx` — sequential blue palette (darker = better)
+- `components/weather/LocationSelector.tsx` — dropdown from saved locations
+- `api/weather.ts` — TypeScript interfaces and fetch functions
+
+**Key implementation details:**
+- PWV from ECMWF endpoint (standard forecast API doesn't include `total_column_integrated_water_vapour`)
+- AOD from Air Quality API (3-hourly global, matched via `nearest_match`)
+- Supplementary data cache writes wrapped in try/except (non-fatal — data returned even if caching fails)
+- `forecast_days=8` to cover the last night's sunrise window
+- Polar latitude handling: no HTTP 422, returns `no_imaging_window: true` with valid moon/darkness info
+- Dew risk uses colorblind-safe sequential blue palette (not red/green)
+
 ## Dependency & License Policy
 
 NightCrate is licensed under **GPL-3.0**. Before adding any new dependency (Python or JS/TS):

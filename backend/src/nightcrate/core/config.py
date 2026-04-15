@@ -20,6 +20,9 @@ class Settings(BaseModel):
     last_browse_path: str | None = None
     browser_favorites: list[BrowserFavorite] = []
     aberration_cache_ttl_days: int = 30
+    weather_cache_ttl_hours: int = 6
+    weather_moon_penalty: bool = True
+    weather_units: Literal["metric", "imperial"] = "metric"
 
 
 async def get_settings() -> Settings:

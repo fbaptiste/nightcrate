@@ -893,3 +893,19 @@ WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE location SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
+
+-- ─── Weather Cache ─────────────────────────────────────────────────────────
+
+-- Cache for Open-Meteo API responses (weather forecast, ECMWF PWV, air quality AOD).
+-- One row per (location, data source) combination. TTL-based cleanup on startup.
+
+CREATE TABLE IF NOT EXISTS weather_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    location_id INTEGER NOT NULL REFERENCES location(id) ON DELETE CASCADE,
+    source TEXT NOT NULL CHECK (source IN ('forecast', 'archive', 'openmeteo_aq', 'ecmwf_pwv')),
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(location_id, source, start_date, end_date)
+);

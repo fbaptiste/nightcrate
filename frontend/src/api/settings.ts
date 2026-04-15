@@ -1,6 +1,7 @@
 import { apiFetch } from "./client";
 
 export type Theme = "light" | "dark" | "browser";
+export type WeatherUnits = "metric" | "imperial";
 
 export interface BrowserFavorite {
   name: string;
@@ -14,6 +15,9 @@ export interface Settings {
   last_browse_path: string | null;
   browser_favorites: BrowserFavorite[];
   aberration_cache_ttl_days: number;
+  weather_cache_ttl_hours: number;
+  weather_moon_penalty: boolean;
+  weather_units: WeatherUnits;
 }
 
 export function fetchSettings(): Promise<Settings> {
