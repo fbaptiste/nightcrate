@@ -123,6 +123,67 @@ export function SettingsPage() {
             </Box>
           </CardContent>
         </Card>
+
+        {/* Weather */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 2, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
+              Weather
+            </Typography>
+
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="body1" gutterBottom>Weather forecast cache duration (hours)</Typography>
+              <TextField
+                type="number"
+                size="small"
+                value={settings.weather_cache_ttl_hours}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const n = parseInt(val, 10);
+                  if (!isNaN(n) && n >= 1 && n <= 24) {
+                    update({ weather_cache_ttl_hours: n });
+                  }
+                }}
+                inputProps={{ min: 1, max: 24 }}
+                sx={{ width: 120 }}
+              />
+              <FormHelperText>
+                How long to reuse cached forecast data before fetching fresh data (1–24 hours).
+              </FormHelperText>
+            </Box>
+
+            <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+              <Box>
+                <Typography variant="body1">Include moon in quality score by default</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Disable for narrowband imaging where moonlight has minimal impact
+                </Typography>
+              </Box>
+              <Switch
+                checked={settings.weather_moon_penalty}
+                onChange={(e) => update({ weather_moon_penalty: e.target.checked })}
+              />
+            </Box>
+
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 2 }}>
+              <Box>
+                <Typography variant="body1">Temperature &amp; wind units</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Both units are always shown; this controls which is primary
+                </Typography>
+              </Box>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <Select
+                  value={settings.weather_units}
+                  onChange={(e) => update({ weather_units: e.target.value as "metric" | "imperial" })}
+                >
+                  <MenuItem value="metric">Metric</MenuItem>
+                  <MenuItem value="imperial">Imperial</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+          </CardContent>
+        </Card>
       </Box>
     </Box>
   );

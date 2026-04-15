@@ -17,6 +17,7 @@ from nightcrate.api import (
     images,
     locations,
     settings,
+    weather,
 )
 from nightcrate.api.diagnostics import RequestTrackingMiddleware
 from nightcrate.core.app_config import load_config
@@ -83,6 +84,17 @@ async def lifespan(app: FastAPI):
                 await conn.commit()
         except Exception:
             pass  # Non-fatal — don't block startup
+        # Purge stale weather cache entries
+        try:
+            weather_ttl = app_settings.weather_cache_ttl_hours
+            async with get_db() as conn:
+                await conn.execute(
+                    "DELETE FROM weather_cache WHERE fetched_at < datetime('now', ?)",
+                    (f"-{weather_ttl * 2} hours",),
+                )
+                await conn.commit()
+        except Exception:
+            pass  # Non-fatal — don't block startup
 
     yield
 
@@ -142,6 +154,16 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Weather",
+        "description": (
+            "Weather forecast and imaging quality predictions. Provides 7-day "
+            "daily summaries with composite imaging quality scores, hourly "
+            "detail breakdowns with seeing estimates, and methodology "
+            "documentation. Integrates Open-Meteo weather data with astronomy, "
+            "seeing estimation, and imaging quality scoring."
+        ),
+    },
+    {
         "name": "Settings",
         "description": (
             "Read and update application settings stored in the database. Controls "
@@ -184,6 +206,7 @@ app.include_router(aberration.router)
 app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
 app.include_router(locations.router)
+app.include_router(weather.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(diagnostics.router)

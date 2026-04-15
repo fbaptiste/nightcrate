@@ -711,6 +711,13 @@ Omitted from diagrams for readability. Every seedable table carries:
 |------|---------|
 | `filter_summary` | Aggregated filter + type + passbands with GROUP_CONCAT |
 
+### Weather & Location Tables
+
+| Table | Purpose |
+|-------|---------|
+| `location` | User-defined observing locations (lat/lon, elevation, timezone, Bortle, SQM) |
+| `weather_cache` | Cached API responses (forecast, ECMWF PWV, AOD) with TTL-based expiry |
+
 ### Future Tables (not in v0.8.0)
 
 | Table | Purpose |

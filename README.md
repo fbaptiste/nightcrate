@@ -27,7 +27,7 @@ Early development. See [PLAN.md](PLAN.md) for the current version plan.
 
 ## License
 
-NightCrate is licensed under the [GNU General Public License v3.0](LICENSE).
+NightCrate is licensed under the [MIT License](LICENSE).
 
 ---
 
@@ -45,6 +45,7 @@ NightCrate is built with the following open-source libraries. We are grateful to
 | [FastAPI](https://fastapi.tiangolo.com/) | MIT | Copyright (c) 2018 Sebastián Ramírez |
 | [Uvicorn](https://www.uvicorn.org/) | BSD 3-Clause | Copyright (c) 2017-present, Encode OSS Ltd |
 | [Pydantic](https://docs.pydantic.dev/) | MIT | Copyright (c) 2017-2025, Samuel Colvin and Pydantic Contributors |
+| [httpx](https://www.python-httpx.org/) | BSD 3-Clause | Copyright (c) 2019, Encode OSS Ltd |
 | [aiosqlite](https://github.com/omnilib/aiosqlite) | MIT | Copyright (c) Amethyst Reese |
 | [yoyo-migrations](https://ollycope.com/software/yoyo/) | Apache 2.0 | Copyright (c) Oliver Mayfield-Sherborne |
 | [aiofiles](https://github.com/Tinche/aiofiles) | Apache 2.0 | Copyright (c) Tin Tvrtković |
@@ -65,6 +66,7 @@ NightCrate is built with the following open-source libraries. We are grateful to
 |---|---|---|
 | [React](https://react.dev/) | MIT | Copyright (c) Meta Platforms, Inc. and affiliates |
 | [MUI](https://mui.com/) (Material UI + X Community) | MIT | Copyright (c) MUI |
+| [D3.js](https://d3js.org/) | ISC | Copyright (c) 2010-2025, Michael Bostock |
 | [Zustand](https://github.com/pmndrs/zustand) | MIT | Copyright (c) 2019 Paul Henschel |
 | [TanStack Query](https://tanstack.com/query) | MIT | Copyright (c) 2021-present Tanner Linsley |
 | [React Router](https://reactrouter.com/) | MIT | Copyright (c) React Training LLC 2015-2019; Copyright (c) Remix Software Inc. 2020-2021; Copyright (c) Shopify Inc. 2022-2023 |

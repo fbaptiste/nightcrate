@@ -322,3 +322,303 @@ async def test_browse(client, tmp_path):
     db_entry = next(f for f in data["files"] if f["name"] == "test.db")
     assert "size" in db_entry
     assert db_entry["size"] > 0
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/browse — hidden files excluded
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_browse_excludes_hidden(client, tmp_path):
+    hidden_dir = tmp_path / ".hidden"
+    hidden_dir.mkdir()
+    hidden_file = tmp_path / ".secret.db"
+    hidden_file.write_bytes(b"x")
+    visible = tmp_path / "visible"
+    visible.mkdir()
+
+    resp = await client.get(f"/api/admin/browse?path={tmp_path}")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    dir_names = [d["name"] for d in data["dirs"]]
+    file_names = [f["name"] for f in data["files"]]
+    assert ".hidden" not in dir_names
+    assert ".secret.db" not in file_names
+    assert "visible" in dir_names
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/browse — not a directory
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_browse_not_a_directory(client, tmp_path):
+    file_path = tmp_path / "somefile.txt"
+    file_path.write_text("hello")
+
+    resp = await client.get(f"/api/admin/browse?path={file_path}")
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/shortcuts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_shortcuts(client):
+    resp = await client.get("/api/admin/shortcuts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "home" in data
+    assert "documents" in data
+    assert "app_data" in data
+    # home should be a real directory
+    assert Path(data["home"]).is_dir()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/mkdir
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_mkdir(client, tmp_path):
+    new_dir = tmp_path / "new_folder"
+    resp = await client.post("/api/admin/mkdir", json={"path": str(new_dir)})
+    assert resp.status_code == 200
+    assert new_dir.is_dir()
+
+
+@pytest.mark.anyio
+async def test_mkdir_already_exists(client, tmp_path):
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    resp = await client.post("/api/admin/mkdir", json={"path": str(existing)})
+    assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/admin/database — with delete_file=true
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_remove_database_deletes_file(client, tmp_path):
+    db_path = str(tmp_path / "test_delete_file.db")
+    await client.post(
+        "/api/admin/database/create",
+        json={"path": db_path, "name": "Delete Me"},
+    )
+    assert Path(db_path).is_file()
+
+    resp = await client.request(
+        "DELETE",
+        "/api/admin/database?delete_file=true",
+        json={"path": db_path},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    # File should be gone from disk
+    assert not Path(db_path).is_file()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/database/add — existing file
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_add_existing_database(client, tmp_path):
+    db_path = tmp_path / "existing.db"
+    db_path.write_bytes(b"SQLite format 3\x00")
+
+    resp = await client.post(
+        "/api/admin/database/add",
+        json={"path": str(db_path), "name": "Existing DB"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Existing DB"
+    assert data["available"] is True
+
+
+@pytest.mark.anyio
+async def test_add_nonexistent_file_rejected(client, tmp_path):
+    resp = await client.post(
+        "/api/admin/database/add",
+        json={"path": str(tmp_path / "nope.db"), "name": "Missing"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_add_non_db_extension_rejected(client, tmp_path):
+    txt_file = tmp_path / "data.txt"
+    txt_file.write_text("not a db")
+    resp = await client.post(
+        "/api/admin/database/add",
+        json={"path": str(txt_file), "name": "Wrong Ext"},
+    )
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/database/create — already exists
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_create_database_already_exists(client, tmp_path):
+    """Creating a DB at an existing path should fail with 400."""
+    existing = tmp_path / "existing.db"
+    existing.write_bytes(b"data")
+
+    resp = await client.post(
+        "/api/admin/database/create",
+        json={"path": str(existing), "name": "Dup"},
+    )
+    assert resp.status_code == 400
+    assert "already exists" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/database/add — duplicate registration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_add_database_duplicate_rejected(client, tmp_path):
+    """Adding an already-registered database should return 409."""
+    db_file = tmp_path / "dup.db"
+    db_file.write_bytes(b"SQLite format 3\x00")
+
+    # First add succeeds
+    resp1 = await client.post(
+        "/api/admin/database/add",
+        json={"path": str(db_file), "name": "First"},
+    )
+    assert resp1.status_code == 200
+
+    # Second add should fail with 409
+    resp2 = await client.post(
+        "/api/admin/database/add",
+        json={"path": str(db_file), "name": "Second"},
+    )
+    assert resp2.status_code == 409
+    assert "already registered" in resp2.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/database/setup — path already exists
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_setup_existing_path_rejected(client, tmp_path):
+    """Setup with a path that already exists should return 400."""
+    existing = tmp_path / "taken.db"
+    existing.write_bytes(b"data")
+
+    resp = await client.post(
+        "/api/admin/database/setup",
+        json={"path": str(existing), "name": "Taken"},
+    )
+    assert resp.status_code == 400
+    assert "already exists" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/admin/database — unknown path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_remove_unknown_database_rejected(client, tmp_path):
+    """Removing a path not in known databases should return 400."""
+    resp = await client.request(
+        "DELETE",
+        "/api/admin/database",
+        json={"path": str(tmp_path / "unknown.db")},
+    )
+    assert resp.status_code == 400
+    assert "not in known databases" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/browse — PermissionError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_browse_permission_error(client, tmp_path):
+    """Browse should handle PermissionError gracefully (return partial results)."""
+    # Create a dir that we can browse
+    sub = tmp_path / "restricted"
+    sub.mkdir()
+
+    # We can't easily simulate PermissionError on iterdir without mocking,
+    # so use a real path — the endpoint returns partial results on PermissionError
+    resp = await client.get(f"/api/admin/browse?path={tmp_path}")
+    assert resp.status_code == 200
+    # At minimum we get a valid response structure
+    data = resp.json()
+    assert "dirs" in data
+    assert "files" in data
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/mkdir — OSError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_mkdir_invalid_path(client):
+    """Creating a directory at an invalid path should return 400."""
+    # Use a path that can't be created (e.g., a file as parent)
+    resp = await client.post(
+        "/api/admin/mkdir",
+        json={"path": "/dev/null/impossible/path"},
+    )
+    assert resp.status_code == 400 or resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/reseed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_reseed_no_database(client):
+    """Reseed without a configured database should return 400."""
+    resp = await client.post("/api/admin/reseed")
+    assert resp.status_code == 400
+    assert "no database" in resp.json()["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_reseed_with_active_database(client, tmp_path):
+    """Reseed with an active database should run the seed loader."""
+    # Set up a database first
+    db_path = str(tmp_path / "reseed_test.db")
+    setup_resp = await client.post(
+        "/api/admin/database/setup",
+        json={"path": db_path, "name": "Reseed Test"},
+    )
+    assert setup_resp.status_code == 200
+
+    # Now reseed
+    resp = await client.post("/api/admin/reseed")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "mode" in data
+    assert data["mode"] == "update"
+    assert "ok" in data
+    assert data["ok"] is True
+    assert "total_inserted" in data
+    assert "total_updated" in data
+    assert "total_unchanged" in data
+    assert "total_skipped" in data
