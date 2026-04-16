@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Autocomplete from "@mui/material/Autocomplete";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -23,6 +24,7 @@ import StarIcon from "@mui/icons-material/Star";
 import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import {
   fetchLocations,
+  fetchTimezones,
   createLocation,
   updateLocation,
   setDefaultLocation,
@@ -177,6 +179,11 @@ export default function LocationsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Location | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const { data: timezones = [] } = useQuery({
+    queryKey: ["timezones"],
+    queryFn: fetchTimezones,
+    staleTime: Infinity,
+  });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["locations"] });
 
@@ -662,13 +669,23 @@ export default function LocationsPage() {
                 onChange={(e) => set("elevation_m", e.target.value)}
                 slotProps={{ htmlInput: { step: "any" } }}
               />
-              <TextField
-                label="Timezone"
-                value={form.timezone}
-                onChange={(e) => set("timezone", e.target.value)}
-                required
-                error={Boolean(errors.timezone)}
-                helperText={errors.timezone || "e.g. America/New_York"}
+              <Autocomplete
+                options={timezones}
+                value={timezones.includes(form.timezone) ? form.timezone : null}
+                inputValue={form.timezone}
+                onInputChange={(_e, value) => set("timezone", value)}
+                onChange={(_e, value) => set("timezone", value ?? "")}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Timezone"
+                    required
+                    error={Boolean(errors.timezone)}
+                    helperText={errors.timezone}
+                  />
+                )}
+                size="small"
+                freeSolo
               />
             </Box>
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>

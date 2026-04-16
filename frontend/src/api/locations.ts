@@ -37,6 +37,8 @@ export interface LocationCreate {
 
 export const fetchLocations = () => apiFetch<Location[]>("/locations");
 
+export const fetchTimezones = () => apiFetch<string[]>("/locations/timezones");
+
 export const fetchLocation = (id: number) =>
   apiFetch<Location>(`/locations/${id}`);
 

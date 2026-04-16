@@ -1,11 +1,36 @@
 """Location management API — CRUD for imaging locations."""
 
+from zoneinfo import available_timezones
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
 from nightcrate.db.session import get_db
 
 router = APIRouter(prefix="/api/locations", tags=["Locations"])
+
+# Legacy/obscure timezone prefixes — filter these out for a clean dropdown
+_LEGACY_PREFIXES = (
+    "Etc/",
+    "US/",
+    "Canada/",
+    "Brazil/",
+    "Chile/",
+    "Mexico/",
+    "SystemV/",
+    "posix/",
+    "right/",
+)
+_TIMEZONES: list[str] | None = None
+
+
+def _get_timezones() -> list[str]:
+    global _TIMEZONES
+    if _TIMEZONES is None:
+        _TIMEZONES = sorted(
+            tz for tz in available_timezones() if "/" in tz and not tz.startswith(_LEGACY_PREFIXES)
+        )
+    return _TIMEZONES
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -141,6 +166,12 @@ async def _ensure_single_default(conn, new_default_id: int) -> None:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/timezones", response_model=list[str])
+async def list_timezones():
+    """List all supported IANA timezones (Region/City format)."""
+    return _get_timezones()
 
 
 @router.get("", response_model=list[LocationResponse])
