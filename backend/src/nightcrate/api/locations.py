@@ -1,13 +1,37 @@
 """Location management API — CRUD for imaging locations."""
 
+import logging
 from zoneinfo import available_timezones
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, field_validator
+from timezonefinder import TimezoneFinder
 
 from nightcrate.db.session import get_db
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/locations", tags=["Locations"])
+
+# Cached TimezoneFinder instance (~200ms to initialize, immutable after)
+_TZ_FINDER: TimezoneFinder | None = None
+
+
+def _get_tz_finder() -> TimezoneFinder:
+    global _TZ_FINDER
+    if _TZ_FINDER is None:
+        _TZ_FINDER = TimezoneFinder()
+    return _TZ_FINDER
+
+
+def _lookup_geo_timezone(latitude: float, longitude: float) -> str | None:
+    """Look up the IANA timezone for a lat/lon coordinate pair."""
+    try:
+        return _get_tz_finder().timezone_at(lat=latitude, lng=longitude)
+    except Exception:
+        logger.debug("geo_timezone lookup failed for %s, %s", latitude, longitude)
+        return None
+
 
 # Legacy/obscure timezone prefixes — filter these out for a clean dropdown
 _LEGACY_PREFIXES = (
@@ -131,6 +155,7 @@ class LocationResponse(BaseModel):
     longitude: float
     elevation_m: float | None
     timezone: str
+    geo_timezone: str | None
     bortle_class: int | None
     sqm_reading: float | None
     city: str | None
@@ -172,6 +197,16 @@ async def _ensure_single_default(conn, new_default_id: int) -> None:
 async def list_timezones():
     """List all supported IANA timezones (Region/City format)."""
     return _get_timezones()
+
+
+@router.get("/geo-timezone")
+async def get_geo_timezone(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+):
+    """Look up the geographic timezone for a coordinate pair."""
+    geo_tz = _lookup_geo_timezone(latitude, longitude)
+    return {"geo_timezone": geo_tz}
 
 
 @router.get("", response_model=list[LocationResponse])
@@ -216,6 +251,8 @@ async def get_location(location_id: int):
 @router.post("", response_model=LocationResponse, status_code=201)
 async def create_location(body: LocationCreate):
     """Create a new location."""
+    geo_tz = _lookup_geo_timezone(body.latitude, body.longitude)
+
     async with get_db() as conn:
         # If this is the first location or is_default is set, enforce single default
         count_row = await conn.execute("SELECT COUNT(*) as cnt FROM location")
@@ -225,16 +262,17 @@ async def create_location(body: LocationCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO location (
-                    name, latitude, longitude, elevation_m, timezone,
+                    name, latitude, longitude, elevation_m, timezone, geo_timezone,
                     bortle_class, sqm_reading, city, state_province,
                     country, postal_code, is_default, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.name.strip(),
                     body.latitude,
                     body.longitude,
                     body.elevation_m,
                     body.timezone.strip(),
+                    geo_tz,
                     body.bortle_class,
                     body.sqm_reading,
                     body.city,
@@ -269,7 +307,8 @@ async def update_location(location_id: int, body: LocationUpdate):
     """Update a location."""
     async with get_db() as conn:
         existing = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
-        if await existing.fetchone() is None:
+        existing_row = await existing.fetchone()
+        if existing_row is None:
             raise HTTPException(status_code=404, detail="Location not found")
 
         updates = body.model_dump(exclude_unset=True)
@@ -277,6 +316,12 @@ async def update_location(location_id: int, body: LocationUpdate):
             updates["is_default"] = 1 if updates["is_default"] else 0
         if "name" in updates and updates["name"]:
             updates["name"] = updates["name"].strip()
+
+        # Recompute geo_timezone if coordinates changed
+        if "latitude" in updates or "longitude" in updates:
+            lat = updates.get("latitude", existing_row["latitude"])
+            lon = updates.get("longitude", existing_row["longitude"])
+            updates["geo_timezone"] = _lookup_geo_timezone(lat, lon)
 
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)

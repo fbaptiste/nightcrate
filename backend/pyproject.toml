@@ -24,6 +24,7 @@ dependencies = [
     "bottleneck>=1.6.0",
     "mlx>=0.31.1; sys_platform == 'darwin'",
     "httpx>=0.28",
+    "timezonefinder>=8.2.2",
 ]
 
 [project.scripts]

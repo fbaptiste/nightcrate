@@ -127,6 +127,13 @@ export default function WeatherPage() {
         />
       </Box>
 
+      {/* Timezone mismatch note */}
+      {forecast && forecast.geo_timezone && forecast.timezone !== forecast.geo_timezone && (
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: "block" }}>
+          Times shown in {forecast.timezone} (location is in {forecast.geo_timezone})
+        </Typography>
+      )}
+
       {/* Error state */}
       {forecastError && (
         <Typography color="warning.main" sx={{ mb: 2 }}>

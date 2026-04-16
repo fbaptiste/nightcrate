@@ -369,13 +369,16 @@ def _compute_night_data(
     moon_included: bool,
 ) -> DailySummaryResponse | None:
     """Compute a daily summary for one night, driven by actual sunset/sunrise."""
+    # Use geographic timezone for astronomy (noon-to-noon search window must
+    # align with physical location), fall back to display timezone if unavailable.
+    astro_tz = loc.get("geo_timezone") or loc["timezone"]
     try:
         night = compute_night_summary(
             latitude=loc["latitude"],
             longitude=loc["longitude"],
             elevation_m=loc.get("elevation_m"),
             night_date=night_date,
-            timezone_str=loc["timezone"],
+            timezone_str=astro_tz,
         )
     except Exception:
         logger.warning("Skipping %s — astronomy computation failed", night_date)
@@ -565,6 +568,7 @@ async def get_forecast(
         latitude=loc["latitude"],
         longitude=loc["longitude"],
         timezone=loc["timezone"],
+        geo_timezone=loc.get("geo_timezone"),
         moon_included=moon_included,
         days=days,
     )
@@ -598,20 +602,21 @@ async def get_hourly(
     pwv_by_time, aod_by_time = await _fetch_supplementary_pair(loc, ttl_hours=ttl)
 
     tz = ZoneInfo(loc["timezone"])
+    astro_tz = loc.get("geo_timezone") or loc["timezone"]
 
     astro_hours = compute_hourly_astro(
         latitude=loc["latitude"],
         longitude=loc["longitude"],
         elevation_m=loc.get("elevation_m"),
         night_date=night_date,
-        timezone_str=loc["timezone"],
+        timezone_str=astro_tz,
     )
     night = compute_night_summary(
         latitude=loc["latitude"],
         longitude=loc["longitude"],
         elevation_m=loc.get("elevation_m"),
         night_date=night_date,
-        timezone_str=loc["timezone"],
+        timezone_str=astro_tz,
     )
 
     # If no imaging window (polar conditions), return minimal response
@@ -621,6 +626,7 @@ async def get_hourly(
             location_id=loc["id"],
             location_name=loc["name"],
             timezone=loc["timezone"],
+            geo_timezone=loc.get("geo_timezone"),
             sunset=_fmt_time(night.sunset, tz),
             sunrise=_fmt_time(night.sunrise, tz),
             twilight=TwilightTimesResponse(
@@ -750,6 +756,7 @@ async def get_hourly(
         location_id=loc["id"],
         location_name=loc["name"],
         timezone=loc["timezone"],
+        geo_timezone=loc.get("geo_timezone"),
         sunset=sunset_local.strftime("%H:%M"),
         sunrise=sunrise_local.strftime("%H:%M"),
         twilight=twilight,

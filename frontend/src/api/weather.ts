@@ -76,6 +76,7 @@ export interface ForecastResponse {
   latitude: number;
   longitude: number;
   timezone: string;
+  geo_timezone: string | null;
   moon_included: boolean;
   days: DailySummary[];
 }
@@ -94,6 +95,7 @@ export interface HourlyDetailResponse {
   location_id: number;
   location_name: string;
   timezone: string;
+  geo_timezone: string | null;
   sunset: string | null;
   sunrise: string | null;
   twilight: TwilightTimes;

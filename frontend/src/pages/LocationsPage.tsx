@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Autocomplete from "@mui/material/Autocomplete";
 import Alert from "@mui/material/Alert";
@@ -25,6 +25,7 @@ import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import {
   fetchLocations,
   fetchTimezones,
+  fetchGeoTimezone,
   createLocation,
   updateLocation,
   setDefaultLocation,
@@ -179,11 +180,37 @@ export default function LocationsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Location | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const [geoTimezone, setGeoTimezone] = useState<string | null>(null);
+  const geoTzTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { data: timezones = [] } = useQuery({
     queryKey: ["timezones"],
     queryFn: fetchTimezones,
     staleTime: Infinity,
   });
+
+  // Fetch geo_timezone when coordinates change (debounced 500ms)
+  useEffect(() => {
+    const lat = parseFloat(form.latitude);
+    const lon = parseFloat(form.longitude);
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      setGeoTimezone(null);
+      return;
+    }
+    clearTimeout(geoTzTimerRef.current);
+    geoTzTimerRef.current = setTimeout(async () => {
+      try {
+        const result = await fetchGeoTimezone(lat, lon);
+        setGeoTimezone(result.geo_timezone);
+        // Auto-populate timezone on new location (not editing)
+        if (!editingLocation && form.timezone === Intl.DateTimeFormat().resolvedOptions().timeZone && result.geo_timezone) {
+          setForm((prev) => ({ ...prev, timezone: result.geo_timezone! }));
+        }
+      } catch {
+        setGeoTimezone(null);
+      }
+    }, 500);
+    return () => clearTimeout(geoTzTimerRef.current);
+  }, [form.latitude, form.longitude]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["locations"] });
 
@@ -372,6 +399,7 @@ export default function LocationsPage() {
     setEditingLocation(null);
     setForm(emptyForm());
     setErrors({});
+    setGeoTimezone(null);
     setDialogOpen(true);
   };
 
@@ -379,6 +407,7 @@ export default function LocationsPage() {
     setEditingLocation(loc);
     setForm(locationToForm(loc));
     setErrors({});
+    setGeoTimezone(loc.geo_timezone);
     setDialogOpen(true);
   };
 
@@ -688,6 +717,12 @@ export default function LocationsPage() {
                 freeSolo
               />
             </Box>
+            {geoTimezone && (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
+                Coordinates timezone: <strong>{geoTimezone}</strong>
+                {geoTimezone !== form.timezone && " (differs from display timezone)"}
+              </Typography>
+            )}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField
                 label="Bortle Class"

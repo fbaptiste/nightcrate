@@ -77,7 +77,10 @@ export default function MethodologyInfo() {
         "&::before": { display: "none" },
       }}
     >
-      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+      <AccordionSummary
+        expandIcon={<ExpandMoreIcon />}
+        sx={{ "& .MuiAccordionSummary-content": { flexGrow: 0 } }}
+      >
         <Stack direction="row" alignItems="center" spacing={1}>
           <InfoIcon fontSize="small" color="action" />
           <Typography variant="body2" color="text.secondary">

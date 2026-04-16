@@ -185,3 +185,88 @@ class TestMoonPolyline:
         for p in points:
             assert isinstance(p.time_utc, str)
             assert -90 <= p.altitude_deg <= 90
+
+
+class TestTimezoneDecoupling:
+    """Verify that compute_night_summary works correctly when the geographic
+    timezone differs from a hypothetical display timezone.
+
+    The key insight: the function needs the GEOGRAPHIC timezone to set its
+    noon-to-noon search window correctly. Passing a wrong timezone (e.g.,
+    America/Phoenix for Paris coordinates) can cause sunset to fall outside
+    the search window.
+    """
+
+    def test_paris_with_correct_tz_finds_sunset(self):
+        """Paris coords with Europe/Paris tz should find sunset in the evening."""
+        s = compute_night_summary(
+            latitude=48.8566,
+            longitude=2.3522,
+            elevation_m=None,
+            night_date=date(2026, 4, 15),
+            timezone_str="Europe/Paris",
+        )
+        assert s.sunset is not None
+        assert s.sunrise is not None
+        # Sunset should be in the evening UTC (roughly 18-20 UTC in April)
+        assert 16 <= s.sunset.hour <= 21  # UTC hour
+
+    def test_paris_with_wrong_tz_may_fail(self):
+        """Paris coords with America/Phoenix tz — the old bug.
+
+        With Phoenix tz, noon-to-noon is ~19:00 UTC to 19:00 UTC.
+        Paris sunset at ~18:30 UTC falls just before the window starts.
+        This test documents the behavior that the geo_timezone fix resolves.
+        """
+        compute_night_summary(
+            latitude=48.8566,
+            longitude=2.3522,
+            elevation_m=None,
+            night_date=date(2026, 4, 15),
+            timezone_str="America/Phoenix",
+        )
+        # With Phoenix tz, sunset may be missed or the window is wrong.
+        # The function may still return a sunset (if it squeaks into the window)
+        # but the key test is that using the correct tz (above) always works.
+        # This test just documents the scenario — it may or may not find sunset
+        # depending on exact timing margins.
+
+    def test_tokyo_with_correct_tz(self):
+        """Tokyo coords with Asia/Tokyo tz should find sunset."""
+        s = compute_night_summary(
+            latitude=35.6762,
+            longitude=139.6503,
+            elevation_m=None,
+            night_date=date(2026, 4, 15),
+            timezone_str="Asia/Tokyo",
+        )
+        assert s.sunset is not None
+        assert s.sunrise is not None
+
+    def test_chile_with_correct_tz(self):
+        """Southern hemisphere: Chile coords should find sunset."""
+        s = compute_night_summary(
+            latitude=-30.2,
+            longitude=-70.8,
+            elevation_m=2200,
+            night_date=date(2026, 4, 15),
+            timezone_str="America/Santiago",
+        )
+        assert s.sunset is not None
+        assert s.sunrise is not None
+
+    def test_chile_with_new_york_tz_still_works_with_margin(self):
+        """Chile with New York tz — offset is only 1-2 hours, may still work.
+
+        Chile sunset ~22:30 UTC (April). NY noon = 16:00 UTC. Window 16:00-16:00+24h.
+        Sunset at 22:30 UTC is well within window.
+        """
+        s = compute_night_summary(
+            latitude=-30.2,
+            longitude=-70.8,
+            elevation_m=2200,
+            night_date=date(2026, 4, 15),
+            timezone_str="America/New_York",
+        )
+        # This happens to work because the tz offset is small enough
+        assert s.sunset is not None

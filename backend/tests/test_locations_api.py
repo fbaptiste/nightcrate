@@ -284,3 +284,115 @@ async def test_delete_nonexistent_location(client):
 async def test_set_default_nonexistent_location(client):
     resp = await client.post("/api/locations/99999/set-default")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Geographic timezone
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_create_location_sets_geo_timezone(client):
+    """Creating a location with Paris coords should set geo_timezone to Europe/Paris."""
+    loc = _make_location(name="Paris", latitude=48.8566, longitude=2.3522, timezone="Europe/Paris")
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["geo_timezone"] == "Europe/Paris"
+
+
+@pytest.mark.anyio
+async def test_create_location_preserves_custom_timezone(client):
+    """User sets display timezone to Phoenix for a Paris location."""
+    loc = _make_location(
+        name="Paris Remote", latitude=48.8566, longitude=2.3522, timezone="America/Phoenix"
+    )
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["timezone"] == "America/Phoenix"
+    assert data["geo_timezone"] == "Europe/Paris"
+
+
+@pytest.mark.anyio
+async def test_update_coordinates_recomputes_geo_timezone(client):
+    """Changing coordinates should update geo_timezone."""
+    loc = _make_location(name="Moving", latitude=48.8566, longitude=2.3522, timezone="Europe/Paris")
+    resp = await client.post("/api/locations", json=loc)
+    loc_id = resp.json()["id"]
+    assert resp.json()["geo_timezone"] == "Europe/Paris"
+
+    # Move to Tokyo
+    tokyo = {"latitude": 35.6762, "longitude": 139.6503}
+    resp = await client.put(f"/api/locations/{loc_id}", json=tokyo)
+    assert resp.status_code == 200
+    assert resp.json()["geo_timezone"] == "Asia/Tokyo"
+
+
+@pytest.mark.anyio
+async def test_update_coordinates_preserves_display_timezone(client):
+    """Changing coordinates should NOT change the user's display timezone."""
+    loc = _make_location(
+        name="Remote Obs", latitude=48.8566, longitude=2.3522, timezone="America/Phoenix"
+    )
+    resp = await client.post("/api/locations", json=loc)
+    loc_id = resp.json()["id"]
+
+    tokyo = {"latitude": 35.6762, "longitude": 139.6503}
+    resp = await client.put(f"/api/locations/{loc_id}", json=tokyo)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timezone"] == "America/Phoenix"  # unchanged
+    assert data["geo_timezone"] == "Asia/Tokyo"  # updated
+
+
+@pytest.mark.anyio
+async def test_update_non_coordinate_fields_preserves_geo_timezone(client):
+    """Updating name/notes should not recompute geo_timezone."""
+    loc = _make_location(name="Stable", latitude=48.8566, longitude=2.3522, timezone="Europe/Paris")
+    resp = await client.post("/api/locations", json=loc)
+    loc_id = resp.json()["id"]
+
+    resp = await client.put(f"/api/locations/{loc_id}", json={"name": "Renamed"})
+    assert resp.status_code == 200
+    assert resp.json()["geo_timezone"] == "Europe/Paris"
+
+
+@pytest.mark.anyio
+async def test_geo_timezone_endpoint_paris(client):
+    """Lookup endpoint returns Europe/Paris for Paris coordinates."""
+    resp = await client.get("/api/locations/geo-timezone?latitude=48.8566&longitude=2.3522")
+    assert resp.status_code == 200
+    assert resp.json()["geo_timezone"] == "Europe/Paris"
+
+
+@pytest.mark.anyio
+async def test_geo_timezone_endpoint_phoenix(client):
+    """Lookup endpoint returns America/Phoenix for Phoenix coordinates."""
+    resp = await client.get("/api/locations/geo-timezone?latitude=33.4484&longitude=-112.0740")
+    assert resp.status_code == 200
+    assert resp.json()["geo_timezone"] == "America/Phoenix"
+
+
+@pytest.mark.anyio
+async def test_geo_timezone_endpoint_southern_hemisphere(client):
+    """Lookup endpoint works for southern hemisphere (Chile)."""
+    resp = await client.get("/api/locations/geo-timezone?latitude=-30.2&longitude=-70.8")
+    assert resp.status_code == 200
+    assert resp.json()["geo_timezone"] == "America/Santiago"
+
+
+@pytest.mark.anyio
+async def test_geo_timezone_endpoint_invalid_coords(client):
+    """Lookup endpoint rejects out-of-range coordinates."""
+    resp = await client.get("/api/locations/geo-timezone?latitude=100&longitude=0")
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_geo_timezone_endpoint_ocean(client):
+    """Lookup endpoint returns a timezone even for mid-ocean coordinates."""
+    resp = await client.get("/api/locations/geo-timezone?latitude=0&longitude=-30")
+    assert resp.status_code == 200
+    # Ocean coords may return Etc/GMT+X — just verify it's non-null
+    assert resp.json()["geo_timezone"] is not None
