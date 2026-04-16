@@ -140,6 +140,14 @@ export default function SamplingChart({
         .attr("font-size", "11px")
         .text(label);
     });
+
+    // Y axis title
+    g.append("text")
+      .attr("transform", `translate(${-MARGIN.left + 10},${innerH / 2}) rotate(-90)`)
+      .attr("text-anchor", "middle")
+      .attr("fill", "#666666")
+      .attr("font-size", "10px")
+      .text("Binning");
   }, [imageScale, idealRangeLow, idealRangeHigh, binningRecommendations]);
 
   return <svg ref={svgRef} />;
