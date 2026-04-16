@@ -76,8 +76,8 @@ export default function WeatherPage() {
   });
 
   const { data: hourlyDetail, isLoading: hourlyLoading } = useQuery({
-    queryKey: ["weather-hourly", locationId, selectedDate],
-    queryFn: () => fetchHourlyDetail(locationId!, selectedDate!),
+    queryKey: ["weather-hourly", locationId, selectedDate, includeMoon],
+    queryFn: () => fetchHourlyDetail(locationId!, selectedDate!, includeMoon),
     enabled: locationId !== null && selectedDate !== null,
   });
 

@@ -574,11 +574,12 @@ async def get_forecast(
 async def get_hourly(
     location_id: int = Query(..., description="Location ID"),
     date: str = Query(..., description="Date in YYYY-MM-DD format"),
+    include_moon: bool | None = Query(None, description="Include moon penalty in quality score"),
 ):
     """Hourly weather detail for a specific night."""
     loc = await _get_location(location_id)
     settings = await get_settings()
-    moon_included = settings.weather_moon_penalty
+    moon_included = include_moon if include_moon is not None else settings.weather_moon_penalty
     ttl = settings.weather_cache_ttl_hours
     try:
         night_date = datetime.strptime(date, "%Y-%m-%d").date()

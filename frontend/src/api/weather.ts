@@ -109,9 +109,9 @@ export const fetchForecast = (locationId: number, includeMoon = true) =>
     `/weather/forecast?location_id=${locationId}&include_moon=${includeMoon}`
   );
 
-export const fetchHourlyDetail = (locationId: number, date: string) =>
+export const fetchHourlyDetail = (locationId: number, date: string, includeMoon = true) =>
   apiFetch<HourlyDetailResponse>(
-    `/weather/hourly?location_id=${locationId}&date=${date}`
+    `/weather/hourly?location_id=${locationId}&date=${date}&include_moon=${includeMoon}`
   );
 
 export const fetchMethodology = () =>

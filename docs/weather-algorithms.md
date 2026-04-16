@@ -289,10 +289,10 @@ Delegates to `estimate_seeing_surface()` described above.
 
 | Factor | Computation | Range |
 |--------|------------|-------|
-| Sky Clarity | `100 - cloud_cover_pct` | 0–100 |
+| Sky Clarity | Weighted cloud layers (low×1.0, mid×0.9, high×0.6); falls back to `100 - cloud_cover_pct` | 0–100 |
 | Seeing | Passed through from seeing model | 0–100 |
+| Transparency | PWV + AOD + humidity + visibility (from transparency service) | 0–100 |
 | Wind Calm | Piecewise linear (see below) | 0–100 |
-| Dryness | `100 - humidity_pct` | 0–100 |
 | Moon Score | Moon-up fraction × illumination (see below) | 0–100 |
 
 #### Wind Calm Score
@@ -313,32 +313,38 @@ moon_score = (1 - moon_up_fraction * illumination_factor) * 100
 - New moon (illumination = 0): moon_score = 100
 - Full moon up all night: moon_score = 0
 
-### 4.2 Composite Score — Moon Included (default)
+### 4.2 Composite Score — Moon Included (default, broadband)
 
 ```
-sky_clarity = 100 - cloud_cover_pct
-sky_factor = sqrt(sky_clarity / 100)     # 0.0–1.0 gating multiplier
+sky_clarity = compute_sky_clarity(cloud layers)  # weighted multi-layer
+sky_factor = sqrt(sky_clarity / 100)             # 0.0–1.0 gating multiplier
 
-other_score = seeing * 0.25 + moon * 0.20 + wind_calm * 0.10 + dryness * 0.05
+other_score = seeing * 0.25 + transparency * 0.15 + moon * 0.15 + wind_calm * 0.10
 
-overall = sky_clarity * 0.40 + other_score * sky_factor
+overall = sky_clarity * 0.35 + other_score * sky_factor
 ```
 
 **Effective weights under clear skies (sky_factor ≈ 1.0):**
-- Sky Clarity: 40%
+- Sky Clarity: 35%
 - Seeing: 25%
-- Moon: 20%
+- Transparency: 15%
+- Moon: 15%
 - Wind Calm: 10%
-- Dryness: 5%
 
 **Under heavy cloud (sky_factor → 0):** Sky clarity dominates; other factors are suppressed.
 
 ### 4.3 Composite Score — Moon Excluded (narrowband)
 
 ```
-other_score = seeing * 0.30 + wind_calm * 0.12 + dryness * 0.08
-overall = sky_clarity * 0.50 + other_score * sky_factor
+other_score = transparency * 0.25 + seeing * 0.25 + wind_calm * 0.10
+overall = sky_clarity * 0.40 + other_score * sky_factor
 ```
+
+**Effective weights under clear skies:**
+- Sky Clarity: 40%
+- Transparency: 25%
+- Seeing: 25%
+- Wind Calm: 10%
 
 ### 4.4 Quality Labels
 
@@ -365,7 +371,7 @@ to provide context before and after the imaging window.
 For each weather hour in the window:
 
 1. **Seeing:** `_compute_seeing(h, prev_h)` — selects wind-shear or surface model
-2. **Sky Clarity:** `int(round(clamp(100 - cloud_cover_pct, 0, 100)))`
+2. **Sky Clarity:** `compute_sky_clarity()` — weighted multi-layer (low×1.0, mid×0.9, high×0.6), falls back to `100 - cloud_cover_pct`
 3. **Wind Calm:** Same piecewise linear as in imaging_quality.py (duplicated inline):
    ```
    ≤ 5: 100
