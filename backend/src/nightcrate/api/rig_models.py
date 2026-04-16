@@ -25,7 +25,7 @@ class RigCreate(BaseModel):
     guide_scope_id: int | None = None
     guide_camera_id: int | None = None
     computer_id: int | None = None
-    software_id: int | None = None
+    software_ids: list[int] = []
     is_default: bool = False
     notes: str | None = None
     filter_slots: list[RigFilterSlotIn] = []
@@ -44,7 +44,7 @@ class RigUpdate(BaseModel):
     guide_scope_id: int | None = None
     guide_camera_id: int | None = None
     computer_id: int | None = None
-    software_id: int | None = None
+    software_ids: list[int] | None = None
     is_default: bool | None = None
     notes: str | None = None
     filter_slots: list[RigFilterSlotIn] | None = None
@@ -59,6 +59,12 @@ class RigFilterSlotOut(BaseModel):
     filter_name: str
     filter_type_name: str
     passbands: list[str]
+
+
+class RigSoftwareOut(BaseModel):
+    id: int
+    name: str
+    category: str
 
 
 class RigWarning(BaseModel):
@@ -132,8 +138,7 @@ class RigOut(BaseModel):
     guide_camera_name: str | None
     computer_id: int | None
     computer_name: str | None
-    software_id: int | None
-    software_name: str | None
+    software: list[RigSoftwareOut]
     filter_slots: list[RigFilterSlotOut]
     is_default: bool
     active: bool

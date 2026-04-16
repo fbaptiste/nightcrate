@@ -50,6 +50,29 @@ async def _resolve_location(conn, location_id: int | None) -> dict | None:
     return _row_to_dict(result) if result else None
 
 
+async def _build_software(conn, rig_id: int) -> list[dict]:
+    """Fetch software entries for a rig."""
+    rows = await conn.execute(
+        """SELECT s.id, s.name, s.category
+        FROM rig_software rs
+        JOIN software s ON s.id = rs.software_id
+        WHERE rs.rig_id = ?
+        ORDER BY s.name""",
+        (rig_id,),
+    )
+    return [_row_to_dict(r) for r in await rows.fetchall()]
+
+
+async def _save_software(conn, rig_id: int, software_ids: list[int]) -> None:
+    """Delete existing software links and insert new ones."""
+    await conn.execute("DELETE FROM rig_software WHERE rig_id = ?", (rig_id,))
+    for sid in software_ids:
+        await conn.execute(
+            "INSERT INTO rig_software (rig_id, software_id) VALUES (?, ?)",
+            (rig_id, sid),
+        )
+
+
 async def _build_filter_slots(conn, rig_id: int) -> list[dict]:
     """Fetch filter slots with joined filter and type names."""
     rows = await conn.execute(
@@ -127,7 +150,6 @@ async def _check_warnings(conn, rig_data: dict) -> list[dict]:
         ("guide_scope_id", "guide_scope", "Guide Scope"),
         ("guide_camera_id", "camera", "Guide Camera"),
         ("computer_id", "computer", "Computer"),
-        ("software_id", "software", "Software"),
     ]
     for field, table, label in equipment_checks:
         eq_id = rig_data.get(field)
@@ -287,8 +309,7 @@ async def _build_rig_response(
         "guide_camera_name": rig_row.get("guide_camera_name"),
         "computer_id": rig_row.get("computer_id"),
         "computer_name": rig_row.get("computer_name"),
-        "software_id": rig_row.get("software_id"),
-        "software_name": rig_row.get("software_name"),
+        "software": await _build_software(conn, rig_id),
         "filter_slots": filter_slots,
         "is_default": rig_row["is_default"],
         "active": rig_row["active"],
@@ -541,8 +562,8 @@ async def create_rig(body: RigCreate):
                     name, description, telescope_configuration_id, camera_id,
                     filter_wheel_id, single_filter_id, mount_id, focuser_id,
                     oag_id, guide_scope_id, guide_camera_id, computer_id,
-                    software_id, is_default, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    is_default, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.name.strip(),
                     body.description,
@@ -556,7 +577,6 @@ async def create_rig(body: RigCreate):
                     body.guide_scope_id,
                     body.guide_camera_id,
                     body.computer_id,
-                    body.software_id,
                     1 if body.is_default else 0,
                     body.notes,
                 ),
@@ -574,6 +594,10 @@ async def create_rig(body: RigCreate):
         # Save filter slots
         if body.filter_slots:
             await _save_filter_slots(conn, new_id, body.filter_slots)
+
+        # Save software links
+        if body.software_ids:
+            await _save_software(conn, new_id, body.software_ids)
 
         await conn.commit()
 
@@ -593,6 +617,7 @@ async def update_rig(rig_id: int, body: RigUpdate):
 
         updates = body.model_dump(exclude_unset=True)
         filter_slots = updates.pop("filter_slots", None)
+        software_ids = updates.pop("software_ids", None)
 
         # Determine effective filter_wheel_id for validation
         effective_fw_id = updates.get("filter_wheel_id", existing["filter_wheel_id"])
@@ -643,6 +668,10 @@ async def update_rig(rig_id: int, body: RigUpdate):
                 else:
                     slot_dicts.append({"slot_number": s.slot_number, "filter_id": s.filter_id})
             await _save_filter_slots(conn, rig_id, slot_dicts)
+
+        # Replace software links if provided
+        if software_ids is not None:
+            await _save_software(conn, rig_id, software_ids)
 
         await conn.commit()
 
@@ -698,8 +727,8 @@ async def clone_rig(rig_id: int):
                 name, description, telescope_configuration_id, camera_id,
                 filter_wheel_id, single_filter_id, mount_id, focuser_id,
                 oag_id, guide_scope_id, guide_camera_id, computer_id,
-                software_id, is_default, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+                is_default, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
             (
                 clone_name,
                 original["description"],
@@ -713,7 +742,6 @@ async def clone_rig(rig_id: int):
                 original["guide_scope_id"],
                 original["guide_camera_id"],
                 original["computer_id"],
-                original["software_id"],
                 original["notes"],
             ),
         )
@@ -728,6 +756,17 @@ async def clone_rig(rig_id: int):
             await conn.execute(
                 "INSERT INTO rig_filter_slot (rig_id, slot_number, filter_id) VALUES (?, ?, ?)",
                 (clone_id, s["slot_number"], s["filter_id"]),
+            )
+
+        # Clone software
+        sw_rows = await conn.execute(
+            "SELECT software_id FROM rig_software WHERE rig_id = ?",
+            (rig_id,),
+        )
+        for s in await sw_rows.fetchall():
+            await conn.execute(
+                "INSERT INTO rig_software (rig_id, software_id) VALUES (?, ?)",
+                (clone_id, s["software_id"]),
             )
 
         await conn.commit()

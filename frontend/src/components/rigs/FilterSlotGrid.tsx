@@ -48,6 +48,7 @@ export default function FilterSlotGrid({
             <Autocomplete
               size="small"
               options={filters}
+              groupBy={(o) => o.manufacturer_name}
               value={selectedFilter}
               onChange={(_e, value) => handleSlotChange(slotNumber, value)}
               getOptionLabel={(o) =>

@@ -86,8 +86,7 @@ export interface Rig {
   guide_camera_name: string | null;
   computer_id: number | null;
   computer_name: string | null;
-  software_id: number | null;
-  software_name: string | null;
+  software: { id: number; name: string; category: string }[];
   filter_slots: RigFilterSlotOut[];
   is_default: boolean;
   active: boolean;
@@ -111,7 +110,7 @@ export interface RigCreate {
   guide_scope_id?: number | null;
   guide_camera_id?: number | null;
   computer_id?: number | null;
-  software_id?: number | null;
+  software_ids?: number[];
   is_default?: boolean;
   notes?: string | null;
   filter_slots?: RigFilterSlotIn[];

@@ -56,7 +56,7 @@ interface FormState {
   guide_scope_id: number | null;
   guide_camera_id: number | null;
   computer_id: number | null;
-  software_id: number | null;
+  software_ids: number[];
   is_default: boolean;
   notes: string;
   filter_slots: { slot_number: number; filter_id: number }[];
@@ -89,7 +89,7 @@ function emptyForm(): FormState {
     guide_scope_id: null,
     guide_camera_id: null,
     computer_id: null,
-    software_id: null,
+    software_ids: [],
     is_default: false,
     notes: "",
     filter_slots: [],
@@ -115,7 +115,7 @@ function rigToForm(r: Rig): FormState {
     guide_scope_id: r.guide_scope_id,
     guide_camera_id: r.guide_camera_id,
     computer_id: r.computer_id,
-    software_id: r.software_id,
+    software_ids: r.software.map((s) => s.id),
     is_default: r.is_default,
     notes: r.notes ?? "",
     filter_slots: r.filter_slots.map((s) => ({
@@ -258,7 +258,7 @@ export default function RigFormDialog({
         guide_camera_id:
           form.guiding_mode !== "none" ? form.guide_camera_id : null,
         computer_id: form.computer_id,
-        software_id: form.software_id,
+        software_ids: form.software_ids,
         is_default: form.is_default,
         notes: form.notes.trim() || null,
         filter_slots: form.filter_wheel_id ? form.filter_slots : [],
@@ -347,6 +347,7 @@ export default function RigFormDialog({
             />
             <Autocomplete<CameraOption>
               options={options?.cameras ?? []}
+              groupBy={(o) => o.manufacturer_name}
               getOptionLabel={(o) =>
                 `${o.manufacturer_name} \u2014 ${o.model_name} (${o.sensor_type})`
               }
@@ -407,6 +408,7 @@ export default function RigFormDialog({
             </Typography>
             <Autocomplete<FilterWheelOption>
               options={options?.filter_wheels ?? []}
+              groupBy={(o) => o.manufacturer_name}
               getOptionLabel={(o) =>
                 `${o.manufacturer_name} \u2014 ${o.model_name} (${o.num_positions}-pos)`
               }
@@ -439,6 +441,7 @@ export default function RigFormDialog({
             {!form.filter_wheel_id && (
               <Autocomplete<FilterOption>
                 options={options?.filters ?? []}
+                groupBy={(o) => o.manufacturer_name}
                 getOptionLabel={(o) =>
                   `${o.manufacturer_name} \u2014 ${o.model_name}`
                 }
@@ -463,6 +466,7 @@ export default function RigFormDialog({
             </Typography>
             <Autocomplete<SimpleOption>
               options={options?.mounts ?? []}
+              groupBy={(o) => o.manufacturer_name}
               getOptionLabel={formatSimple}
               value={
                 options?.mounts.find(
@@ -499,6 +503,7 @@ export default function RigFormDialog({
             {form.guiding_mode === "oag" && (
               <Autocomplete<SimpleOption>
                 options={options?.oags ?? []}
+                groupBy={(o) => o.manufacturer_name}
                 getOptionLabel={formatSimple}
                 value={
                   options?.oags.find(
@@ -518,6 +523,7 @@ export default function RigFormDialog({
             {form.guiding_mode === "guide_scope" && (
               <Autocomplete<GuideScopeOption>
                 options={options?.guide_scopes ?? []}
+                groupBy={(o) => o.manufacturer_name}
                 getOptionLabel={formatSimple}
                 value={
                   options?.guide_scopes.find(
@@ -537,6 +543,7 @@ export default function RigFormDialog({
             {form.guiding_mode !== "none" && (
               <Autocomplete<CameraOption>
                 options={options?.cameras ?? []}
+                groupBy={(o) => o.manufacturer_name}
                 getOptionLabel={(o) =>
                   `${o.manufacturer_name} \u2014 ${o.model_name} (${o.sensor_type})`
                 }
@@ -561,6 +568,7 @@ export default function RigFormDialog({
             </Typography>
             <Autocomplete<SimpleOption>
               options={options?.focusers ?? []}
+              groupBy={(o) => o.manufacturer_name}
               getOptionLabel={formatSimple}
               value={
                 options?.focusers.find(
@@ -577,6 +585,7 @@ export default function RigFormDialog({
             />
             <Autocomplete<SimpleOption>
               options={options?.computers ?? []}
+              groupBy={(o) => o.manufacturer_name}
               getOptionLabel={formatSimple}
               value={
                 options?.computers.find(
@@ -591,16 +600,21 @@ export default function RigFormDialog({
                 <TextField {...params} label="Computer" />
               )}
             />
-            <Autocomplete<SoftwareOption>
+            <Autocomplete<SoftwareOption, true>
+              multiple
               options={options?.software ?? []}
-              getOptionLabel={(o) => `${o.name} (${o.category})`}
+              groupBy={(o) => o.category}
+              getOptionLabel={(o) => o.name}
               value={
-                options?.software.find(
-                  (s) => s.id === form.software_id,
-                ) ?? null
+                options?.software.filter((s) =>
+                  form.software_ids.includes(s.id),
+                ) ?? []
               }
-              onChange={(_e, value) =>
-                set("software_id", value ? value.id : null)
+              onChange={(_e, values) =>
+                set(
+                  "software_ids",
+                  values.map((v) => v.id),
+                )
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderInput={(params) => (

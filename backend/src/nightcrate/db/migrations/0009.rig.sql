@@ -22,8 +22,6 @@ CREATE TABLE IF NOT EXISTS rig (
     guide_scope_id INTEGER REFERENCES guide_scope(id),
     guide_camera_id INTEGER REFERENCES camera(id),
     computer_id INTEGER REFERENCES computer(id),
-    software_id INTEGER REFERENCES software(id),
-
     -- Metadata
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -58,6 +56,13 @@ CREATE TABLE IF NOT EXISTS rig_filter_slot (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rig_filter_slot_rig ON rig_filter_slot(rig_id);
+
+-- Software junction table (many-to-many: rig can have multiple software).
+CREATE TABLE IF NOT EXISTS rig_software (
+    rig_id INTEGER NOT NULL REFERENCES rig(id) ON DELETE CASCADE,
+    software_id INTEGER NOT NULL REFERENCES software(id),
+    PRIMARY KEY (rig_id, software_id)
+);
 
 -- Convenience view resolving all equipment names for rig listing.
 -- Includes guide camera sensor data for guide calculator computations.
@@ -113,8 +118,6 @@ SELECT
     -- Peripherals
     r.computer_id,
     comp.model_name AS computer_name,
-    r.software_id,
-    sw.name AS software_name,
     -- Single filter
     r.single_filter_id,
     sf.model_name AS single_filter_name
@@ -131,5 +134,4 @@ LEFT JOIN sensor gs2 ON gs2.id = gc.sensor_id
 LEFT JOIN guide_scope gs ON gs.id = r.guide_scope_id
 LEFT JOIN oag ON oag.id = r.oag_id
 LEFT JOIN computer comp ON comp.id = r.computer_id
-LEFT JOIN software sw ON sw.id = r.software_id
 LEFT JOIN filter sf ON sf.id = r.single_filter_id;
