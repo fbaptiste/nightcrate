@@ -8,7 +8,6 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { fetchLocations, type Location } from "@/api/locations";
 import {
@@ -343,21 +342,25 @@ function MetricRow({
   warning?: boolean;
 }) {
   const tooltip = METRIC_TOOLTIPS[label];
+  const labelEl = (
+    <Typography
+      variant="body2"
+      color="text.secondary"
+      sx={tooltip ? { cursor: "help", borderBottom: "1px dotted", borderColor: "text.disabled" } : undefined}
+    >
+      {label}
+    </Typography>
+  );
   return (
     <tr>
       <td>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Typography variant="body2" color="text.secondary">
-            {label}
-          </Typography>
-          {tooltip && (
-            <Tooltip title={tooltip} arrow placement="right">
-              <HelpOutlineIcon
-                sx={{ fontSize: 14, color: "text.disabled", cursor: "help" }}
-              />
-            </Tooltip>
-          )}
-        </Box>
+        {tooltip ? (
+          <Tooltip title={tooltip} arrow placement="right">
+            {labelEl}
+          </Tooltip>
+        ) : (
+          labelEl
+        )}
       </td>
       <td>
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
