@@ -3,11 +3,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Collapse from "@mui/material/Collapse";
+import Divider from "@mui/material/Divider";
+import IconButton from "@mui/material/IconButton";
+import Paper from "@mui/material/Paper";
 import Snackbar from "@mui/material/Snackbar";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
+import CloseIcon from "@mui/icons-material/Close";
 import RigCard from "@/components/rigs/RigCard";
 import RigFormDialog from "@/components/rigs/RigFormDialog";
+import CalculatorPanel from "@/components/rigs/CalculatorPanel";
 import {
   fetchRigs,
   cloneRig,
@@ -24,9 +30,9 @@ export default function RigsPage() {
     queryFn: () => fetchRigs(false),
   });
 
-  // Dialog state — will be wired to RigFormDialog in Task 8
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRig, setEditingRig] = useState<Rig | null>(null);
+  const [selectedRig, setSelectedRig] = useState<Rig | null>(null);
   const [snack, setSnack] = useState<{
     open: boolean;
     message: string;
@@ -44,6 +50,11 @@ export default function RigsPage() {
   const activeRigs = rigs.filter((r) => r.active);
   const retiredRigs = rigs.filter((r) => !r.active);
 
+  // Keep selected rig in sync with latest data after refetch
+  const resolvedSelected = selectedRig
+    ? rigs.find((r) => r.id === selectedRig.id) ?? null
+    : null;
+
   const handleNewRig = () => {
     setEditingRig(null);
     setDialogOpen(true);
@@ -52,6 +63,10 @@ export default function RigsPage() {
   const handleEdit = (rig: Rig) => {
     setEditingRig(rig);
     setDialogOpen(true);
+  };
+
+  const handleSelect = (rig: Rig) => {
+    setSelectedRig((prev) => (prev?.id === rig.id ? null : rig));
   };
 
   const handleClone = async (id: number) => {
@@ -70,6 +85,7 @@ export default function RigsPage() {
   const handleDelete = async (id: number) => {
     try {
       await deleteRig(id);
+      if (selectedRig?.id === id) setSelectedRig(null);
       invalidate();
       showSnack("Rig retired.", "success");
     } catch (err) {
@@ -151,6 +167,8 @@ export default function RigsPage() {
             <RigCard
               key={rig.id}
               rig={rig}
+              selected={resolvedSelected?.id === rig.id}
+              onSelect={handleSelect}
               onEdit={handleEdit}
               onClone={handleClone}
               onDelete={handleDelete}
@@ -189,6 +207,8 @@ export default function RigsPage() {
                 <RigCard
                   key={rig.id}
                   rig={rig}
+                  selected={resolvedSelected?.id === rig.id}
+                  onSelect={handleSelect}
                   onEdit={handleEdit}
                   onClone={handleClone}
                   onDelete={handleDelete}
@@ -200,6 +220,24 @@ export default function RigsPage() {
           )}
         </Box>
       )}
+
+      {/* Detail panel — slides open below the card grid when a rig is selected */}
+      <Collapse in={resolvedSelected !== null} timeout="auto" unmountOnExit>
+        <Divider sx={{ mt: 3 }} />
+        <Paper variant="outlined" sx={{ p: 2, mt: 1, position: "relative" }}>
+          <IconButton
+            size="small"
+            onClick={() => setSelectedRig(null)}
+            sx={{ position: "absolute", top: 8, right: 8 }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+          <Typography variant="h6" sx={{ mb: 1 }}>
+            {resolvedSelected?.name}
+          </Typography>
+          {resolvedSelected && <CalculatorPanel rig={resolvedSelected} />}
+        </Paper>
+      </Collapse>
 
       {/* Rig form dialog */}
       <RigFormDialog

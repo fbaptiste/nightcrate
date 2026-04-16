@@ -1,27 +1,24 @@
-import { useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
 import Chip from "@mui/material/Chip";
-import Collapse from "@mui/material/Collapse";
-import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RestoreIcon from "@mui/icons-material/Restore";
 import StarIcon from "@mui/icons-material/Star";
 import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import type { Rig } from "@/api/rigs";
-import CalculatorPanel from "./CalculatorPanel";
 
 interface RigCardProps {
   rig: Rig;
+  selected?: boolean;
+  onSelect: (rig: Rig) => void;
   onEdit: (rig: Rig) => void;
   onClone: (id: number) => void;
   onDelete: (id: number) => void;
@@ -46,7 +43,7 @@ function formatFilterSummary(rig: Rig): string {
     const slotNames = rig.filter_slots
       .sort((a, b) => a.slot_number - b.slot_number)
       .map((s) => s.filter_name)
-      .join(" ");
+      .join(" \u00b7 ");
     return `${rig.filter_wheel_positions}-pos: ${slotNames}`;
   }
   if (rig.single_filter_name) {
@@ -57,19 +54,20 @@ function formatFilterSummary(rig: Rig): string {
 
 export default function RigCard({
   rig,
+  selected,
+  onSelect,
   onEdit,
   onClone,
   onDelete,
   onRestore,
   onSetDefault,
 }: RigCardProps) {
-  const [expanded, setExpanded] = useState(false);
   const calc = rig.calculators;
   const scale = calc.image_scale_arcsec_per_pixel;
   const [fovW, fovH] = calc.field_of_view_arcmin;
   const fl = rig.effective_focal_length_mm;
   const ratio = rig.effective_focal_ratio;
-  const statsLine = `${fl}mm  f/${ratio}  ${scale.toFixed(2)}\u2033/px  ${fovW.toFixed(1)}\u00d7${fovH.toFixed(1)}\u2032`;
+  const statsLine = `${fl}mm \u00b7 f/${ratio} \u00b7 ${scale.toFixed(2)}\u2033/px \u00b7 ${fovW.toFixed(1)}\u00d7${fovH.toFixed(1)}\u2032`;
 
   const sampling = calc.sampling_assessment;
   const samplingColor = SAMPLING_COLORS[sampling.assessment] ?? {
@@ -84,8 +82,12 @@ export default function RigCard({
       variant="outlined"
       sx={{
         opacity: rig.active ? 1 : 0.6,
+        cursor: "pointer",
+        outline: selected ? 2 : 0,
+        outlineColor: "primary.main",
         "&:hover": { boxShadow: 4 },
       }}
+      onClick={() => onSelect(rig)}
     >
       <CardContent sx={{ pb: 1 }}>
         {/* Name + default chip */}
@@ -103,14 +105,19 @@ export default function RigCard({
           {rig.telescope_name} &mdash; {rig.telescope_config_name}
         </Typography>
 
+        {/* Stats line (above camera) */}
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          {statsLine}
+        </Typography>
+
         {/* Camera line */}
         <Typography variant="body2" color="text.secondary">
           {rig.camera_name}
         </Typography>
 
-        {/* Stats line */}
+        {/* Filter summary (above mount) */}
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {statsLine}
+          {formatFilterSummary(rig)}
         </Typography>
 
         {/* Mount line */}
@@ -119,11 +126,6 @@ export default function RigCard({
             Mount: {rig.mount_name}
           </Typography>
         )}
-
-        {/* Filter summary */}
-        <Typography variant="body2" color="text.secondary">
-          {formatFilterSummary(rig)}
-        </Typography>
 
         {/* Sampling badge */}
         <Box sx={{ mt: 1 }}>
@@ -154,7 +156,10 @@ export default function RigCard({
         )}
       </CardContent>
 
-      <CardActions sx={{ px: 2, pt: 0 }}>
+      <CardActions
+        sx={{ px: 2, pt: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
         <Tooltip title="Edit" arrow>
           <IconButton size="small" onClick={() => onEdit(rig)}>
             <EditIcon fontSize="small" />
@@ -196,25 +201,7 @@ export default function RigCard({
             </IconButton>
           </Tooltip>
         )}
-        <Tooltip title={expanded ? "Hide details" : "Show details"} arrow>
-          <IconButton
-            size="small"
-            onClick={() => setExpanded((prev) => !prev)}
-            sx={{
-              ml: "auto",
-              transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-              transition: "transform 0.2s",
-            }}
-          >
-            <ExpandMoreIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
       </CardActions>
-
-      <Collapse in={expanded} timeout="auto" unmountOnExit>
-        <Divider />
-        <CalculatorPanel rig={rig} />
-      </Collapse>
     </Card>
   );
 }

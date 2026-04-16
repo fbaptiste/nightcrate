@@ -6,7 +6,9 @@ import Slider from "@mui/material/Slider";
 import TextField from "@mui/material/TextField";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { fetchLocations, type Location } from "@/api/locations";
 import {
@@ -239,9 +241,20 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
       {/* Sampling assessment */}
       <Box sx={{ mb: 2 }}>
-        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-          Sampling Assessment
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            Sampling Assessment
+          </Typography>
+          <Tooltip
+            title="Sampling describes how your pixel scale relates to the atmospheric seeing at your site. Well-sampled means each star's FWHM spans 2\u20133 pixels (Nyquist). Oversampled (too many pixels per star) wastes signal-to-noise \u2014 binning can help. Undersampled (too few pixels per star) makes stars look blocky and limits resolution."
+            arrow
+            placement="right"
+          >
+            <HelpOutlineIcon
+              sx={{ fontSize: 14, color: "text.disabled", cursor: "help" }}
+            />
+          </Tooltip>
+        </Box>
         <Typography variant="body2">
           {seeingSlider !== null
             ? `Seeing: ${seeingValue.toFixed(1)}\u2033 (slider override)`
@@ -288,6 +301,25 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   );
 }
 
+const METRIC_TOOLTIPS: Record<string, string> = {
+  "Image Scale":
+    "Angular size each pixel covers on the sky. Smaller values mean higher resolution but require better seeing and guiding.",
+  "Field of View":
+    "Total sky area captured by the sensor. Determines how much of a target fits in a single frame.",
+  "Focal Ratio":
+    "The telescope's effective f-number. Lower f-ratios gather light faster (shorter exposures) but have a shallower depth of focus.",
+  "Dawes Limit":
+    "Theoretical minimum angular separation to resolve two equal-brightness stars, based on aperture. Seeing usually limits resolution before this.",
+  "Rayleigh Limit":
+    "Angular resolution limit where the first diffraction minimum of one star overlaps the central maximum of another. Slightly more conservative than Dawes.",
+  "Sensor Coverage":
+    "How much of the telescope's illuminated image circle the sensor covers. Values over 100% mean the sensor extends beyond the image circle, causing vignetting in the corners.",
+  "Guide Image Scale":
+    "Angular size each pixel covers on the guide camera. Coarser scales are easier for guiding software but less precise.",
+  "Guide FOV":
+    "Field of view of the guide camera. Needs to be large enough to reliably find guide stars.",
+};
+
 function MetricRow({
   label,
   value,
@@ -297,12 +329,22 @@ function MetricRow({
   value: string;
   warning?: boolean;
 }) {
+  const tooltip = METRIC_TOOLTIPS[label];
   return (
     <tr>
       <td>
-        <Typography variant="body2" color="text.secondary">
-          {label}
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+          <Typography variant="body2" color="text.secondary">
+            {label}
+          </Typography>
+          {tooltip && (
+            <Tooltip title={tooltip} arrow placement="right">
+              <HelpOutlineIcon
+                sx={{ fontSize: 14, color: "text.disabled", cursor: "help" }}
+              />
+            </Tooltip>
+          )}
+        </Box>
       </td>
       <td>
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
