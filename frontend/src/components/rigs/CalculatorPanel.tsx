@@ -275,7 +275,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
             {" "}are oversampled — pixel scale is finer than the seeing supports, wasting signal-to-noise. Consider binning.
           </Typography>
           <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
-            <Box component="span" sx={{ color: "#7b1fa2", fontWeight: 600 }}>Purple bars</Box>
+            <Box component="span" sx={{ color: "#b8860b", fontWeight: 600 }}>Amber bars</Box>
             {" "}are undersampled — pixel scale is too coarse, stars look blocky. Consider a longer focal length or smaller pixels.
           </Typography>
           <Typography variant="caption" component="p">
@@ -346,7 +346,7 @@ function MetricRow({
     <Typography
       variant="body2"
       color="text.secondary"
-      sx={tooltip ? { cursor: "help", borderBottom: "1px dotted", borderColor: "text.disabled" } : undefined}
+      sx={tooltip ? { cursor: "help" } : undefined}
     >
       {label}
     </Typography>

@@ -14,7 +14,7 @@ const MARGIN = { top: 20, right: 20, bottom: 30, left: 50 };
 
 const BLUE = "#1976d2";    // well sampled
 const ORANGE = "#ed6c02";  // oversampled (too fine, wasting SNR)
-const PURPLE = "#7b1fa2";  // undersampled (too coarse, blocky stars)
+const AMBER = "#b8860b";   // undersampled (too coarse, blocky stars)
 const IDEAL_ZONE_FILL = "#e3f2fd";
 
 const BINNING_LABELS = ["1\u00d71", "2\u00d72", "3\u00d73", "4\u00d74"];
@@ -97,7 +97,7 @@ export default function SamplingChart({
           ? BLUE
           : assessment === "oversampled"
             ? ORANGE
-            : PURPLE;
+            : AMBER;
       const yPos = (yScale(label) ?? 0) + barOffset;
 
       // Bar
