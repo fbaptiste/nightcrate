@@ -10,6 +10,7 @@ import { ApiDocsPage } from "@/pages/ApiDocsPage";
 import { EquipmentPage } from "@/pages/EquipmentPage";
 import { AdminPage } from "@/pages/AdminPage";
 import LocationsPage from "@/pages/LocationsPage";
+import RigsPage from "@/pages/RigsPage";
 import WeatherPage from "./pages/WeatherPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { fetchHealth } from "@/api/admin";
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: "equipment", element: <EquipmentPage /> },
       { path: "equipment/:category", element: <EquipmentPage /> },
       { path: "locations", element: <LocationsPage /> },
+      { path: "rigs", element: <RigsPage /> },
       { path: "weather", element: <WeatherPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
