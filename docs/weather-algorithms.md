@@ -429,7 +429,20 @@ Uses the same `compute_imaging_quality()` function with the averaged values:
 The frontend computes some display-only scores that are NOT part of the backend
 quality computation:
 
-### 7.1 Moon Quality (display only)
+### 7.1 Moon Quality (score factor row)
+
+The "Moon Quality" row in the score factor grid uses `h.moon_score` from the
+backend — the same illumination-weighted formula used in the composite score:
+```
+moon_up_fraction = 1 - moonless_dark_hours / darkness_hours
+illumination_factor = moon_illumination_pct / 100
+moon_score = (1 - moon_up_fraction * illumination_factor) * 100
+```
+
+### 7.2 Moon Altitude (weather details row, display only)
+
+The "Moon Alt." row in the weather details section uses a simpler altitude-only
+formula for cell background coloring:
 ```typescript
 if (moon_altitude_deg === null) return 100;
 if (moon_altitude_deg <= 0) return 100;     // moon below horizon = best
@@ -437,15 +450,14 @@ return max(0, round(100 - (altitude / 90) * 100));
 ```
 - Moon at horizon (0°): 100
 - Moon at zenith (90°): 0
-- **Note:** This is different from the backend moon_score which uses
-  illumination × fraction of dark hours. This is a simpler per-hour indicator.
+- This is a display-only visual aid — not used in the composite quality score.
 
-### 7.2 Cloud Score (display only)
+### 7.3 Cloud Score (display only)
 ```typescript
 cloud_score = round(100 - cloud_cover_pct)
 ```
 
-### 7.3 Precipitation Score (display only)
+### 7.4 Precipitation Score (display only)
 ```typescript
 if (mm === null || mm <= 0) return 100;
 if (mm < 0.5) return 70;

@@ -129,7 +129,7 @@ export default function WeatherPage() {
 
       {/* Error state */}
       {forecastError && (
-        <Typography color="error" sx={{ mb: 2 }}>
+        <Typography color="warning.main" sx={{ mb: 2 }}>
           {forecastError instanceof Error ? forecastError.message : "Failed to load forecast."}
         </Typography>
       )}
