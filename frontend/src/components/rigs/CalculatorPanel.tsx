@@ -150,35 +150,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
         </Typography>
       )}
 
-      {/* Seeing slider */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="body2" gutterBottom>
-          Seeing: {seeingValue.toFixed(1)}&Prime;
-        </Typography>
-        <Slider
-          value={seeingValue}
-          min={0.5}
-          max={6.0}
-          step={0.1}
-          onChange={(_, v) => setSeeingSlider(v as number)}
-          valueLabelDisplay="auto"
-          valueLabelFormat={(v) => `${v.toFixed(1)}\u2033`}
-          sx={{ maxWidth: 350 }}
-        />
-        <Box sx={{ display: "flex", justifyContent: "space-between", maxWidth: 350 }}>
-          {SEEING_LABELS.map(({ label }) => (
-            <Typography
-              key={label}
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: "0.65rem" }}
-            >
-              {label}
-            </Typography>
-          ))}
-        </Box>
-      </Box>
-
       {/* Binning selector */}
       <Box sx={{ mb: 2 }}>
         <Typography variant="body2" gutterBottom>
@@ -244,7 +215,37 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
         <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
           Sampling Assessment
         </Typography>
-        <Typography variant="body2">
+
+        {/* Seeing slider */}
+        <Box sx={{ mb: 1.5 }}>
+          <Typography variant="body2" gutterBottom>
+            Seeing: {seeingValue.toFixed(1)}&Prime;
+          </Typography>
+          <Slider
+            value={seeingValue}
+            min={0.5}
+            max={6.0}
+            step={0.1}
+            onChange={(_, v) => setSeeingSlider(v as number)}
+            valueLabelDisplay="auto"
+            valueLabelFormat={(v) => `${v.toFixed(1)}\u2033`}
+            sx={{ maxWidth: 350 }}
+          />
+          <Box sx={{ display: "flex", justifyContent: "space-between", maxWidth: 350 }}>
+            {SEEING_LABELS.map(({ label }) => (
+              <Typography
+                key={label}
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontSize: "0.65rem" }}
+              >
+                {label}
+              </Typography>
+            ))}
+          </Box>
+        </Box>
+
+        <Typography variant="body2" color="text.secondary">
           {seeingSlider !== null
             ? `Seeing: ${seeingValue.toFixed(1)}\u2033 (slider override)`
             : calculatorData.sampling_assessment.seeing_location_name
