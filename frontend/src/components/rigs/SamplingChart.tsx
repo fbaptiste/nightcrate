@@ -133,15 +133,16 @@ export default function SamplingChart({
       .attr("transform", `translate(0,${innerH})`)
       .call(xAxis)
       .selectAll("text")
-      .attr("font-size", "10px");
+      .attr("font-size", "11px")
+      .attr("fill", "#333333");
 
     // X axis title
     g.append("text")
       .attr("x", innerW / 2)
       .attr("y", innerH + 35)
       .attr("text-anchor", "middle")
-      .attr("fill", "#666666")
-      .attr("font-size", "10px")
+      .attr("fill", "#333333")
+      .attr("font-size", "11px")
       .text("Image Scale (\u2033/pixel)");
 
     // Y axis labels (manual — no axis line)
@@ -151,7 +152,7 @@ export default function SamplingChart({
         .attr("y", (yScale(label) ?? 0) + bandHeight / 2)
         .attr("dy", "0.35em")
         .attr("text-anchor", "end")
-        .attr("fill", "#666666")
+        .attr("fill", "#333333")
         .attr("font-size", "11px")
         .text(label);
     });
@@ -160,8 +161,8 @@ export default function SamplingChart({
     g.append("text")
       .attr("transform", `translate(${-MARGIN.left + 10},${innerH / 2}) rotate(-90)`)
       .attr("text-anchor", "middle")
-      .attr("fill", "#666666")
-      .attr("font-size", "10px")
+      .attr("fill", "#333333")
+      .attr("font-size", "11px")
       .text("Binning");
   }, [imageScale, idealRangeLow, idealRangeHigh, binningRecommendations]);
 
