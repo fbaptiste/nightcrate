@@ -4,7 +4,7 @@ import logging
 from zoneinfo import available_timezones
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from timezonefinder import TimezoneFinder
 
 from nightcrate.db.session import get_db
@@ -74,6 +74,8 @@ class LocationCreate(BaseModel):
     postal_code: str | None = None
     is_default: bool = False
     notes: str | None = None
+    typical_seeing_low_arcsec: float | None = None
+    typical_seeing_high_arcsec: float | None = None
 
     @field_validator("latitude")
     @classmethod
@@ -103,6 +105,18 @@ class LocationCreate(BaseModel):
             raise ValueError("SQM reading must be between 10 and 25")
         return v
 
+    @model_validator(mode="after")
+    def check_seeing_range(self) -> LocationCreate:
+        low = self.typical_seeing_low_arcsec
+        high = self.typical_seeing_high_arcsec
+        if low is not None and low <= 0:
+            raise ValueError("typical_seeing_low_arcsec must be positive")
+        if high is not None and high <= 0:
+            raise ValueError("typical_seeing_high_arcsec must be positive")
+        if low is not None and high is not None and low > high:
+            raise ValueError("typical_seeing_low_arcsec must be \u2264 typical_seeing_high_arcsec")
+        return self
+
 
 class LocationUpdate(BaseModel):
     name: str | None = None
@@ -118,6 +132,8 @@ class LocationUpdate(BaseModel):
     postal_code: str | None = None
     is_default: bool | None = None
     notes: str | None = None
+    typical_seeing_low_arcsec: float | None = None
+    typical_seeing_high_arcsec: float | None = None
 
     @field_validator("latitude")
     @classmethod
@@ -147,6 +163,18 @@ class LocationUpdate(BaseModel):
             raise ValueError("SQM reading must be between 10 and 25")
         return v
 
+    @model_validator(mode="after")
+    def check_seeing_range(self) -> LocationUpdate:
+        low = self.typical_seeing_low_arcsec
+        high = self.typical_seeing_high_arcsec
+        if low is not None and low <= 0:
+            raise ValueError("typical_seeing_low_arcsec must be positive")
+        if high is not None and high <= 0:
+            raise ValueError("typical_seeing_high_arcsec must be positive")
+        if low is not None and high is not None and low > high:
+            raise ValueError("typical_seeing_low_arcsec must be \u2264 typical_seeing_high_arcsec")
+        return self
+
 
 class LocationResponse(BaseModel):
     id: int
@@ -162,6 +190,8 @@ class LocationResponse(BaseModel):
     state_province: str | None
     country: str | None
     postal_code: str | None
+    typical_seeing_low_arcsec: float | None
+    typical_seeing_high_arcsec: float | None
     is_default: bool
     notes: str | None
     created_at: str
@@ -264,8 +294,9 @@ async def create_location(body: LocationCreate):
                 """INSERT INTO location (
                     name, latitude, longitude, elevation_m, timezone, geo_timezone,
                     bortle_class, sqm_reading, city, state_province,
-                    country, postal_code, is_default, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    country, postal_code, typical_seeing_low_arcsec,
+                    typical_seeing_high_arcsec, is_default, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.name.strip(),
                     body.latitude,
@@ -279,6 +310,8 @@ async def create_location(body: LocationCreate):
                     body.state_province,
                     body.country,
                     body.postal_code,
+                    body.typical_seeing_low_arcsec,
+                    body.typical_seeing_high_arcsec,
                     1 if make_default else 0,
                     body.notes,
                 ),
