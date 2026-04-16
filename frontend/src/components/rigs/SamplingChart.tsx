@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTheme } from "@mui/material/styles";
 import { scaleLinear, scaleBand, select, axisBottom } from "d3";
 
 interface SamplingChartProps {
@@ -15,8 +16,6 @@ const MARGIN = { top: 22, right: 20, bottom: 48, left: 55 };
 const BLUE = "#1976d2";    // well sampled
 const ORANGE = "#ed6c02";  // oversampled (too fine, wasting SNR)
 const TEAL = "#00695c";    // undersampled (too coarse, blocky stars)
-const IDEAL_ZONE_FILL = "#e3f2fd";
-const TEXT_COLOR = "#111111";
 
 const BINNING_LABELS = ["1\u00d71", "2\u00d72", "3\u00d73", "4\u00d74"];
 const BINNING_LEVELS = [1, 2, 3, 4];
@@ -28,10 +27,18 @@ export default function SamplingChart({
   binningRecommendations,
 }: SamplingChartProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const theme = useTheme();
 
   useEffect(() => {
     const svg = select(svgRef.current);
     svg.selectAll("*").remove();
+
+    const textColor = theme.palette.text.primary;
+    const textSecondary = theme.palette.text.secondary;
+    const isDark = theme.palette.mode === "dark";
+    const idealZoneFill = isDark ? "rgba(25, 118, 210, 0.15)" : "#e3f2fd";
+    const idealBorderColor = isDark ? "#5090c0" : "#64b5f6";
+    const idealLabelColor = isDark ? "#64b5f6" : "#1565c0";
 
     const innerW = WIDTH - MARGIN.left - MARGIN.right;
     const innerH = HEIGHT - MARGIN.top - MARGIN.bottom;
@@ -58,7 +65,7 @@ export default function SamplingChart({
       .attr("y", 0)
       .attr("width", xScale(idealRangeHigh) - xScale(idealRangeLow))
       .attr("height", innerH)
-      .attr("fill", IDEAL_ZONE_FILL);
+      .attr("fill", idealZoneFill);
 
     // Ideal zone label
     const zoneMidX =
@@ -67,7 +74,7 @@ export default function SamplingChart({
       .attr("x", zoneMidX)
       .attr("y", -7)
       .attr("text-anchor", "middle")
-      .attr("fill", "#1565c0")
+      .attr("fill", idealLabelColor)
       .attr("font-size", "11px")
       .attr("font-weight", 600)
       .text("Ideal Range");
@@ -79,7 +86,7 @@ export default function SamplingChart({
         .attr("x2", xScale(val))
         .attr("y1", 0)
         .attr("y2", innerH)
-        .attr("stroke", "#64b5f6")
+        .attr("stroke", idealBorderColor)
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "4,3");
     });
@@ -120,7 +127,7 @@ export default function SamplingChart({
         .attr("y", yPos + barHeight / 2)
         .attr("dy", "0.35em")
         .attr("text-anchor", labelInside ? "end" : "start")
-        .attr("fill", labelInside ? "#ffffff" : TEXT_COLOR)
+        .attr("fill", labelInside ? "#ffffff" : textColor)
         .attr("font-size", "12px")
         .attr("font-weight", 500)
         .text(labelText);
@@ -136,18 +143,22 @@ export default function SamplingChart({
       .attr("transform", `translate(0,${innerH})`)
       .call(xAxis);
 
-    // Force fill and font on D3-generated tick labels
+    // Force fill on D3-generated tick labels
     xAxisG.selectAll(".tick text")
-      .attr("fill", TEXT_COLOR)
+      .attr("fill", textColor)
       .attr("font-size", "12px")
-      .style("fill", TEXT_COLOR);
+      .style("fill", textColor);
+
+    // Style the axis line and ticks
+    xAxisG.selectAll(".domain, .tick line")
+      .attr("stroke", textSecondary);
 
     // X axis title
     g.append("text")
       .attr("x", innerW / 2)
       .attr("y", innerH + 38)
       .attr("text-anchor", "middle")
-      .attr("fill", TEXT_COLOR)
+      .attr("fill", textColor)
       .attr("font-size", "12px")
       .text("Image Scale (\u2033/pixel)");
 
@@ -158,7 +169,7 @@ export default function SamplingChart({
         .attr("y", (yScale(label) ?? 0) + bandHeight / 2)
         .attr("dy", "0.35em")
         .attr("text-anchor", "end")
-        .attr("fill", TEXT_COLOR)
+        .attr("fill", textColor)
         .attr("font-size", "12px")
         .text(label);
     });
@@ -167,10 +178,10 @@ export default function SamplingChart({
     g.append("text")
       .attr("transform", `translate(${-MARGIN.left + 12},${innerH / 2}) rotate(-90)`)
       .attr("text-anchor", "middle")
-      .attr("fill", TEXT_COLOR)
+      .attr("fill", textColor)
       .attr("font-size", "12px")
       .text("Binning");
-  }, [imageScale, idealRangeLow, idealRangeHigh, binningRecommendations]);
+  }, [imageScale, idealRangeLow, idealRangeHigh, binningRecommendations, theme]);
 
   return <svg ref={svgRef} />;
 }
