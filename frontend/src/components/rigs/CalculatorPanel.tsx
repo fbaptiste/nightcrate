@@ -244,24 +244,29 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
           </Box>
         </Box>
 
-        <Typography variant="body2" color="text.secondary">
-          {seeingSlider !== null
-            ? `Seeing: ${seeingValue.toFixed(1)}\u2033 (slider override)`
-            : calculatorData.sampling_assessment.seeing_location_name
-              ? `Seeing: ${calculatorData.sampling_assessment.seeing_fwhm_low.toFixed(1)}\u2013${calculatorData.sampling_assessment.seeing_fwhm_high.toFixed(1)}\u2033 from ${calculatorData.sampling_assessment.seeing_location_name}`
-              : `Seeing: ${seeingValue.toFixed(1)}\u2033 (default)`}
-        </Typography>
       </Box>
 
-      {/* Sampling chart + explanation side by side */}
+      {/* Sampling: seeing + chart on left, help text on right */}
       <Box sx={{ display: "flex", gap: 3, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <SamplingChart
-          imageScale={scale}
-          idealRangeLow={sampling.idealLow}
-          idealRangeHigh={sampling.idealHigh}
-          binningRecommendations={sampling.binningRecommendations}
-        />
-        <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.5, fontSize: "0.75rem", color: "text.secondary" }}>
+        {/* Left column: seeing source + chart */}
+        <Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            {seeingSlider !== null
+              ? `Seeing: ${seeingValue.toFixed(1)}\u2033 (slider override)`
+              : calculatorData.sampling_assessment.seeing_location_name
+                ? `Seeing: ${calculatorData.sampling_assessment.seeing_fwhm_low.toFixed(1)}\u2013${calculatorData.sampling_assessment.seeing_fwhm_high.toFixed(1)}\u2033 from ${calculatorData.sampling_assessment.seeing_location_name}`
+                : `Seeing: ${seeingValue.toFixed(1)}\u2033 (default)`}
+          </Typography>
+          <SamplingChart
+            imageScale={scale}
+            idealRangeLow={sampling.idealLow}
+            idealRangeHigh={sampling.idealHigh}
+            binningRecommendations={sampling.binningRecommendations}
+          />
+        </Box>
+
+        {/* Right column: help text in two narrow columns */}
+        <Box sx={{ display: "grid", gridTemplateColumns: "360px 360px", gap: 2, fontSize: "0.75rem", color: "text.secondary" }}>
           <Typography variant="caption" component="p">
             Sampling describes how your pixel scale relates to atmospheric seeing.
             Each bar shows the effective pixel scale at that binning level.
