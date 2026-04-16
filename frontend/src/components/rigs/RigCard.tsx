@@ -26,17 +26,6 @@ interface RigCardProps {
   onSetDefault: (id: number) => void;
 }
 
-const SAMPLING_COLORS: Record<string, { bg: string; text: string }> = {
-  well_sampled: { bg: "#1976d2", text: "#ffffff" },
-  oversampled: { bg: "#ed6c02", text: "#ffffff" },
-  undersampled: { bg: "#00695c", text: "#ffffff" },
-};
-
-const SAMPLING_LABELS: Record<string, string> = {
-  well_sampled: "Well Sampled",
-  oversampled: "Oversampled",
-  undersampled: "Undersampled",
-};
 
 function formatFilterSummary(rig: Rig): string {
   if (rig.filter_slots.length > 0) {
@@ -68,14 +57,6 @@ export default function RigCard({
   const fl = rig.effective_focal_length_mm;
   const ratio = rig.effective_focal_ratio;
   const statsLine = `${fl}mm \u00b7 f/${ratio} \u00b7 ${scale.toFixed(2)}\u2033/px \u00b7 ${fovW.toFixed(1)}\u00d7${fovH.toFixed(1)}\u2032`;
-
-  const sampling = calc.sampling_assessment;
-  const samplingColor = SAMPLING_COLORS[sampling.assessment] ?? {
-    bg: "#888888",
-    text: "#ffffff",
-  };
-  const samplingLabel =
-    SAMPLING_LABELS[sampling.assessment] ?? sampling.assessment;
 
   return (
     <Card
@@ -126,19 +107,6 @@ export default function RigCard({
             Mount: {rig.mount_name}
           </Typography>
         )}
-
-        {/* Sampling badge */}
-        <Box sx={{ mt: 1 }}>
-          <Chip
-            label={samplingLabel}
-            size="small"
-            sx={{
-              bgcolor: samplingColor.bg,
-              color: samplingColor.text,
-              fontWeight: 600,
-            }}
-          />
-        </Box>
 
         {/* Warnings */}
         {rig.warnings.length > 0 && (
