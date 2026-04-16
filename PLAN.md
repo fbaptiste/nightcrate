@@ -19,7 +19,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.9.1 — Equipment Management UI (Remaining Tabs)](#v091--equipment-management-ui-remaining-tabs) ✅
 - [v0.10.0 — Equipment Seed Loader + Admin Page](#v0100--equipment-seed-loader--admin-page) ✅
 - [v0.10.1 — Seed Data Population + UI Improvements + Locations](#v0101--seed-data-population--ui-improvements--locations) ✅
-- [v0.11.0 — Astronomy Weather Forecast](#v0110--astronomy-weather-forecast)
+- [v0.11.0 — Astronomy Weather Forecast](#v0110--astronomy-weather-forecast) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -1506,7 +1506,7 @@ Cameras & Sensors (37 sensors, 101 cameras, 12 batches):
 
 ## v0.11.0 — Astronomy Weather Forecast
 
-**Status:** In Progress
+**Status:** Done
 **Branch:** `v0.11.0/weather-forecast`
 
 Telescopius-style weather forecast dashboard for imaging session planning. 7-day daily cards + hourly detail view with darkness bar, moon polyline, score factor grid, and weather details.
@@ -1596,7 +1596,8 @@ Key coverage achievements:
 - [x] Frontend builds (TypeScript + Vite)
 - [x] Test coverage push: 77% → 92% overall, no module below 75%
 - [x] Code review (4 issues found and fixed)
-- [ ] Visual testing in browser
+- [x] Code simplification pass (extracted shared weather color helpers, eliminated redundant get_settings/location calls)
+- [x] Visual testing in browser
 
 ---
 

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { HourlyWeather, MoonPolylinePoint, TwilightTimes } from "../../api/weather";
 import type { WeatherUnits } from "../../api/settings";
 import { cToF, kmhToMph } from "../../lib/unitConversion";
+import { scoreToBackground, scoreToTextColor } from "../../lib/weatherColors";
 
 interface HourlyTimelineProps {
   hours: HourlyWeather[];
@@ -53,15 +54,8 @@ function dewRiskLabel(risk: string): string {
 
 // ── Score / color helpers ───────────────────────────────────────────────────
 
-function scoreToCellColor(score: number): string {
-  const saturation = 15 + (score / 100) * 50;
-  const lightness = 75 - (score / 100) * 57;
-  return `hsl(215, ${saturation}%, ${lightness}%)`;
-}
-
-function cellTextColor(score: number): string {
-  return score >= 45 ? "#e2e0dd" : "#1a1c20";
-}
+const scoreToCellColor = scoreToBackground;
+const cellTextColor = scoreToTextColor;
 
 function moonScore(altDeg: number | null): number {
   if (altDeg === null) return 100;
@@ -880,8 +874,6 @@ export default function HourlyTimeline({
   }
 
   return (
-    <Box sx={{ width: "100%" }}>
-      <Box ref={containerRef} sx={{ overflowX: "auto" }} />
-    </Box>
+    <Box ref={containerRef} sx={{ overflowX: "auto" }} />
   );
 }

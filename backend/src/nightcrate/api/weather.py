@@ -133,10 +133,12 @@ async def _fetch_or_cached(
     source: str = "forecast",
     start_date: str | None = None,
     end_date: str | None = None,
+    ttl_hours: int | None = None,
 ) -> WeatherData:
     """Return cached weather data if fresh, otherwise fetch and cache."""
-    settings = await get_settings()
-    ttl_hours = settings.weather_cache_ttl_hours
+    if ttl_hours is None:
+        settings = await get_settings()
+        ttl_hours = settings.weather_cache_ttl_hours
 
     async with get_db() as conn:
         if source == "forecast":
@@ -208,14 +210,16 @@ async def _fetch_or_cached_supplementary(
     timezone_str: str,
     source_key: str,
     fetch_fn,
+    ttl_hours: int | None = None,
 ) -> dict[str, float | None]:
     """Fetch supplementary time-series data (PWV or AOD) with cache.
 
     Returns a time→value map. Cache failures are non-fatal — the fetched
     data is always returned even if caching fails.
     """
-    settings = await get_settings()
-    ttl_hours = settings.weather_cache_ttl_hours
+    if ttl_hours is None:
+        settings = await get_settings()
+        ttl_hours = settings.weather_cache_ttl_hours
 
     # Try cache first
     try:
@@ -299,6 +303,7 @@ def _compute_seeing(h, prev_h) -> int:
 
 async def _fetch_supplementary_pair(
     loc: dict,
+    ttl_hours: int | None = None,
 ) -> tuple[dict[str, float | None], dict[str, float | None]]:
     """Fetch PWV and AOD supplementary data concurrently. Returns (pwv, aod) dicts."""
 
@@ -311,6 +316,7 @@ async def _fetch_supplementary_pair(
                 loc["timezone"],
                 source_key,
                 fetch_fn,
+                ttl_hours=ttl_hours,
             )
         except Exception:
             logger.warning("Supplementary fetch %s failed for location %s", source_key, loc["id"])
@@ -323,19 +329,14 @@ async def _fetch_supplementary_pair(
     return pwv_by_time, aod_by_time
 
 
-def _compute_transparency(
-    h,
-    pwv_mm: float | None,
-    aod_value: float | None,
-) -> int:
+def _transparency_score(h, pwv_mm: float | None, aod_value: float | None) -> int:
     """Compute transparency score for an hourly weather record."""
-    result = estimate_transparency(
+    return estimate_transparency(
         pwv_mm=pwv_mm,
         aod=aod_value,
         humidity_pct=h.humidity_pct,
         visibility_m=h.visibility_m,
-    )
-    return result.score
+    ).score
 
 
 def _hours_in_window(
@@ -446,7 +447,7 @@ def _compute_night_data(
     for _, h in hours_data:
         pwv_val = nearest_match(pwv_by_time, h.time)
         aod_val = nearest_match(aod_by_time, h.time)
-        transparency_scores.append(_compute_transparency(h, pwv_val, aod_val))
+        transparency_scores.append(_transparency_score(h, pwv_val, aod_val))
     avg_transparency = sum(transparency_scores) / len(transparency_scores)
 
     # Sky clarity (weighted)
@@ -523,6 +524,7 @@ async def get_forecast(
     loc = await _get_location(location_id)
     settings = await get_settings()
     moon_included = include_moon if include_moon is not None else settings.weather_moon_penalty
+    ttl = settings.weather_cache_ttl_hours
 
     weather = await _fetch_or_cached(
         location_id=loc["id"],
@@ -530,9 +532,10 @@ async def get_forecast(
         longitude=loc["longitude"],
         timezone_str=loc["timezone"],
         source="forecast",
+        ttl_hours=ttl,
     )
 
-    pwv_by_time, aod_by_time = await _fetch_supplementary_pair(loc)
+    pwv_by_time, aod_by_time = await _fetch_supplementary_pair(loc, ttl_hours=ttl)
 
     tz = ZoneInfo(loc["timezone"])
 
@@ -576,6 +579,7 @@ async def get_hourly(
     loc = await _get_location(location_id)
     settings = await get_settings()
     moon_included = settings.weather_moon_penalty
+    ttl = settings.weather_cache_ttl_hours
     try:
         night_date = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
@@ -587,9 +591,10 @@ async def get_hourly(
         longitude=loc["longitude"],
         timezone_str=loc["timezone"],
         source="forecast",
+        ttl_hours=ttl,
     )
 
-    pwv_by_time, aod_by_time = await _fetch_supplementary_pair(loc)
+    pwv_by_time, aod_by_time = await _fetch_supplementary_pair(loc, ttl_hours=ttl)
 
     tz = ZoneInfo(loc["timezone"])
 
@@ -679,7 +684,7 @@ async def get_hourly(
         # Transparency (PWV and AOD via nearest-match)
         pwv_val = nearest_match(pwv_by_time, h.time)
         aod_val = nearest_match(aod_by_time, h.time)
-        transparency = _compute_transparency(h, pwv_val, aod_val)
+        transparency = _transparency_score(h, pwv_val, aod_val)
 
         # Dew risk
         dew_risk = classify_dew_risk(h.temperature_c, h.dew_point_c)

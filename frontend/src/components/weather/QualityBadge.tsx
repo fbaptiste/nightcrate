@@ -1,6 +1,7 @@
 import Box from "@mui/material/Box";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import { scoreToBackground, scoreToLabel, scoreToTextColor } from "../../lib/weatherColors";
 
 type BadgeSize = "small" | "medium" | "large";
 
@@ -11,28 +12,6 @@ interface QualityBadgeProps {
   size?: BadgeSize;
   showLabel?: boolean;
   tooltip?: string;
-}
-
-function scoreToLabel(score: number): string {
-  if (score >= 80) return "Excellent";
-  if (score >= 55) return "Good";
-  if (score >= 30) return "Marginal";
-  return "Poor";
-}
-
-function scoreToBackground(score: number): string {
-  const clamped = Math.max(0, Math.min(100, score));
-  // Darker = better (good imaging = dark sky).
-  // Saturation: 15% (bad/light) → 65% (good/dark)
-  const saturation = 15 + (clamped / 100) * 50;
-  // Lightness: 75% (bad/washed out) → 18% (good/deep dark blue)
-  const lightness = 75 - (clamped / 100) * 57;
-  return `hsl(215, ${saturation.toFixed(1)}%, ${lightness.toFixed(1)}%)`;
-}
-
-function scoreToTextColor(score: number): string {
-  // Light text on dark backgrounds (high scores), dark text on light backgrounds (low scores)
-  return score >= 45 ? "#e2e0dd" : "#1a1c20";
 }
 
 const SIZE_MAP: Record<BadgeSize, { box: number; score: string; label: string }> = {

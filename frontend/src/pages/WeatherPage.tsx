@@ -5,7 +5,7 @@ import Checkbox from "@mui/material/Checkbox";
 import CircularProgress from "@mui/material/CircularProgress";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Typography from "@mui/material/Typography";
-import { fetchDefaultLocation } from "../api/locations";
+import { fetchLocations, type Location } from "../api/locations";
 import { fetchSettings, type WeatherUnits } from "../api/settings";
 import { fetchForecast, fetchHourlyDetail } from "../api/weather";
 import LocationSelector from "../components/weather/LocationSelector";
@@ -59,10 +59,11 @@ export default function WeatherPage() {
 
   const units: WeatherUnits = settings?.weather_units ?? "metric";
 
-  const { data: defaultLocation } = useQuery({
-    queryKey: ["locations", "default"],
-    queryFn: fetchDefaultLocation,
+  const { data: locations = [] } = useQuery<Location[]>({
+    queryKey: ["locations"],
+    queryFn: fetchLocations,
   });
+  const defaultLocation = locations.find((l) => l.is_default) ?? locations[0] ?? null;
 
   const {
     data: forecast,
