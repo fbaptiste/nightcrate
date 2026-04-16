@@ -93,6 +93,7 @@ export interface HourlyDetailResponse {
   date: string;
   location_id: number;
   location_name: string;
+  timezone: string;
   sunset: string | null;
   sunrise: string | null;
   twilight: TwilightTimes;

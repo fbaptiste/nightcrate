@@ -14,7 +14,40 @@ interface HourlyTimelineProps {
   sunrise: string | null;
   twilight: TwilightTimes;
   moonPolyline: MoonPolylinePoint[];
+  timezone: string;
   units: WeatherUnits;
+}
+
+/**
+ * Extract hours and minutes from an ISO-like local time string (e.g. "2026-04-15T21:00").
+ * Parses directly from the string — no Date object, no browser timezone dependency.
+ */
+function localTimeToMinutes(isoLocal: string): number {
+  const timePart = isoLocal.includes("T") ? isoLocal.split("T")[1] : isoLocal;
+  const [hh, mm] = timePart.split(":").map(Number);
+  return hh * 60 + (mm || 0);
+}
+
+/**
+ * Convert a UTC ISO string to minutes-of-day in a specific IANA timezone.
+ * Uses Intl.DateTimeFormat to get the location-local hour and minute.
+ */
+function utcToLocalMinutes(isoUtc: string, timezone: string): number {
+  const dt = new Date(isoUtc);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(dt);
+  let hh = 0, mm = 0;
+  for (const p of parts) {
+    if (p.type === "hour") hh = Number(p.value);
+    if (p.type === "minute") mm = Number(p.value);
+  }
+  // Intl hour12:false returns 24 for midnight in some browsers — normalize
+  if (hh === 24) hh = 0;
+  return hh * 60 + mm;
 }
 
 const LABEL_WIDTH = 130;
@@ -364,6 +397,7 @@ export default function HourlyTimeline({
   sunrise,
   twilight,
   moonPolyline,
+  timezone,
   units,
 }: HourlyTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -399,8 +433,8 @@ export default function HourlyTimeline({
     const totalWidth = LABEL_WIDTH + gridWidth + MARKER_RIGHT_PAD;
 
     // Shared time window — used by darkness bar, moon polyline, and all grid rows
-    const firstDt = new Date(hours[0].time);
-    const firstHourMin = firstDt.getHours() * 60 + firstDt.getMinutes();
+    // Parse location-local time directly from the ISO string (no Date/browser TZ)
+    const firstHourMin = localTimeToMinutes(hours[0].time);
     const windowStartMin = firstHourMin;
     const windowEndMin = firstHourMin + hours.length * 60;
 
@@ -586,12 +620,12 @@ export default function HourlyTimeline({
       .attr("stroke-width", 1);
 
     // ── Moon altitude polyline ──────────────────────────────────────
+    // Snapshot timezone for D3 closures (CLAUDE.md: JS closure pitfall)
+    const capturedTimezone = timezone;
     if (moonPolyline.length > 0) {
-      // Compute x position from UTC timestamp
+      // Compute x position from UTC timestamp, converted to location-local time
       const polylineToX = (isoUtc: string): number => {
-        const dt = new Date(isoUtc);
-        // Convert to same local time representation as our hours
-        const localMins = dt.getHours() * 60 + dt.getMinutes();
+        const localMins = utcToLocalMinutes(isoUtc, capturedTimezone);
         let adjustedMins = localMins;
         if (adjustedMins < windowStartMin - 12 * 60) {
           adjustedMins += 24 * 60;
@@ -769,8 +803,7 @@ export default function HourlyTimeline({
           let closestAlt: number | null = null;
           let closestDist = Infinity;
           for (const p of moonPolyline) {
-            const pDt = new Date(p.time_utc);
-            const pMins = pDt.getHours() * 60 + pDt.getMinutes();
+            const pMins = utcToLocalMinutes(p.time_utc, capturedTimezone);
             let adjPMins = pMins;
             if (adjPMins < capturedWindowStartMin - 12 * 60) adjPMins += 24 * 60;
             const dist = Math.abs(adjPMins - mins);
@@ -820,9 +853,11 @@ export default function HourlyTimeline({
 
     // ── Time axis labels ──────────────────────────────────────────────
     hours.forEach((hour, colIdx) => {
-      const dt = new Date(hour.time);
-      if (dt.getMinutes() === 0 && dt.getHours() % 2 === 0) {
-        const label = `${String(dt.getHours()).padStart(2, "0")}:00`;
+      const mins = localTimeToMinutes(hour.time);
+      const hh = Math.floor(mins / 60) % 24;
+      const mm = mins % 60;
+      if (mm === 0 && hh % 2 === 0) {
+        const label = `${String(hh).padStart(2, "0")}:00`;
         g.append("text")
           .attr("x", LABEL_WIDTH + colIdx * cellWidth + 2)
           .attr("y", curY + ROW_HEIGHT / 2)
@@ -863,7 +898,7 @@ export default function HourlyTimeline({
     }
 
     svg.attr("height", MARKER_PAD + curY);
-  }, [hours, containerWidth, twilight, sunset, sunrise, moonPolyline, units]);
+  }, [hours, containerWidth, twilight, sunset, sunrise, moonPolyline, timezone, units]);
 
   if (hours.length === 0) {
     return (

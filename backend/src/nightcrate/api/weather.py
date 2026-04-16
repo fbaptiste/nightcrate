@@ -620,6 +620,7 @@ async def get_hourly(
             date=date,
             location_id=loc["id"],
             location_name=loc["name"],
+            timezone=loc["timezone"],
             sunset=_fmt_time(night.sunset, tz),
             sunrise=_fmt_time(night.sunrise, tz),
             twilight=TwilightTimesResponse(
@@ -748,6 +749,7 @@ async def get_hourly(
         date=date,
         location_id=loc["id"],
         location_name=loc["name"],
+        timezone=loc["timezone"],
         sunset=sunset_local.strftime("%H:%M"),
         sunrise=sunrise_local.strftime("%H:%M"),
         twilight=twilight,

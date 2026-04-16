@@ -191,29 +191,40 @@ Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`.
 
 ## Notable architectural decisions already made
 
-[Decisions baked into the codebase that future architecture discussions should not relitigate without good reason. Capture the decision and a one-sentence rationale.]
-
-- [Decision 1] — [why]
-- [Decision 2] — [why]
+- **sep over photutils for star detection** — photutils is GPL; sep (LGPL) is license-compatible and faster for the extraction-only use case (aberration inspector).
+- **Catalog in place (reference, don't move files)** — default behavior is to index files where they live on disk. File reorganization/copy is optional, never forced. Avoids breaking PixInsight project paths or user directory structures.
+- **Clean-room XISF parser** — the only existing XISF library (PixInsight's) is GPL. `xisf_io.py` is a from-scratch implementation covering sub-block and single-stream compression (zlib, lz4, lz4-hc, zstd with byte shuffle).
+- **No ORM, raw SQL via aiosqlite** — deliberate choice for SQLite. Pydantic handles data shapes; SQL handles queries. No SQLAlchemy, no Tortoise, no Peewee.
+- **No fuzzy matching in FITS resolver** — the planned resolver uses exact alias lookup, not string similarity. Unresolved headers go to an `unresolved_equipment_observation` table for manual review. This avoids silent mismatches across similar equipment names.
+- **avgDev not MAD for auto-stretch** — PixInsight's Screen Transfer Function uses average deviation, not median absolute deviation. This was validated against PixInsight's actual output.
+- **Seed data in CSV, not migrations** — equipment reference data lives in `data/seed/*.csv` loaded by the seed loader, not in SQL migration INSERT statements. Keeps migrations structural-only and allows Fred to prepare seed data in Claude Desktop.
+- **Single JSON row for settings** — `settings` table has one row with a JSON blob. No column-per-setting. Simplifies adding new settings without migrations.
+- **GPU abstraction via `core/compute.py`** — callers never import mlx/numpy/cupy directly. `get_array_module()` returns the right backend. Setting toggle applies immediately.
+- **`::` virtual path separator** — used for both archive entries (`archive.zip::image.fits`) and pxiproject images (`project.pxiproject::0`). Consistent convention across all multi-image containers.
 
 ---
 
 ## Known limitations and rough edges
 
-[Things that exist but have known gaps, performance issues, or planned overhauls. Not bug tracking — high-level "you should know this isn't great yet" notes.]
+- **No catalog/ingestion pipeline** — the app can view and inspect images, but doesn't catalog them into projects/sessions/targets. This is the biggest missing piece for real workflow use.
+- **No plate solving integration** — ASTAP and astrometry.net are planned but not wired up. No WCS overlay or object annotation on images.
+- **Equipment exists but isn't connected to images** — FITS alias tables (`camera_alias`, `telescope_alias`, `filter_alias`) exist in the schema but the resolver that matches FITS headers to equipment rows is not built yet.
+- **Weather seeing model is surface-level** — the wind-shear model improves accuracy when pressure-level data is available, but Open-Meteo's pressure-level coverage is limited. Seeing estimates should be treated as rough guidance, not observatory-grade predictions.
+- **Single-chunk frontend bundle** — Vite warns about >500KB bundle. No code splitting yet. Acceptable for a local app but worth addressing if load times become noticeable.
+- **`color="error"` uses MUI red** — a few error text instances use MUI's default red, which isn't ideal for red-green colorblind users. Should use the project's blue/orange palette instead.
 
 ---
 
 ## What's NOT built yet
 
-[Quick pointers to the spec documents that describe planned-but-not-built features, so a reader knows where to find more.]
+Specs for future work live inline in `PLAN.md` (not as separate files).
 
-- DSO catalogs — see `nightcrate-dso-catalog-plan.md`
-- Schema revision — see `nightcrate-schema-revision-spec.md`
-- Seed loader — see `nightcrate-seed-loader-spec.md`
-- FITS resolver — see `nightcrate-fits-resolver-spec.md`
-- Imaging core — see `nightcrate-ingest-pipeline-spec.md`
-- Aberration Inspector — see `nightcrate-aberration-inspector-spec.md`
-- [add as relevant]
+- **FITS equipment resolver** — matches FITS header strings (`INSTRUME`, `TELESCOP`, `FILTER`) to equipment DB rows via alias tables. Schema support exists (alias tables, `unresolved_equipment_observation`); the resolver logic and UI are not built. See PLAN.md "FITS Equipment Resolver Spec" section.
+- **Imaging core schema (rigs, projects, sessions, sub frames)** — the entire catalog/ingestion side. Equipment schema landed in v0.8.0–v0.10.0; what remains is the imaging-side schema (`rig`, `project`, `session`, `sub_frame`, calibration matching) and the ingestion pipeline (FITS parsing, N.I.N.A./ASIAIR/PHD2 log import). See PLAN.md "Imaging Core Schema" section.
+- **DSO catalogs** — deep-sky object database for target planning and identification.
+- **Plate solving** — ASTAP/astrometry.net integration for WCS coordinates and image annotation.
+- **Desktop packaging** — Tauri wrapper for native app distribution (currently runs as local web app in browser).
+
+Note: the seed loader (v0.10.0) and aberration inspector (v0.5.0) are shipped — they were listed here in an earlier version of this doc but are now implemented.
 
 ---

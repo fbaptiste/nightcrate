@@ -100,6 +100,7 @@ class HourlyDetailResponse(BaseModel):
     date: str
     location_id: int
     location_name: str
+    timezone: str
     sunset: str | None
     sunrise: str | None
     twilight: TwilightTimesResponse
