@@ -12,8 +12,9 @@ const WIDTH = 350;
 const HEIGHT = 170;
 const MARGIN = { top: 20, right: 20, bottom: 30, left: 50 };
 
-const BLUE = "#1976d2";
-const ORANGE = "#ed6c02";
+const BLUE = "#1976d2";    // well sampled
+const ORANGE = "#ed6c02";  // oversampled (too fine, wasting SNR)
+const PURPLE = "#7b1fa2";  // undersampled (too coarse, blocky stars)
 const IDEAL_ZONE_FILL = "#e3f2fd";
 
 const BINNING_LABELS = ["1\u00d71", "2\u00d72", "3\u00d73", "4\u00d74"];
@@ -91,7 +92,12 @@ export default function SamplingChart({
       const label = BINNING_LABELS[i];
       const scaledValue = imageScale * bin;
       const assessment = binningRecommendations[bin];
-      const color = assessment === "well_sampled" ? BLUE : ORANGE;
+      const color =
+        assessment === "well_sampled"
+          ? BLUE
+          : assessment === "oversampled"
+            ? ORANGE
+            : PURPLE;
       const yPos = (yScale(label) ?? 0) + barOffset;
 
       // Bar
