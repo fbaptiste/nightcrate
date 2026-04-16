@@ -100,7 +100,7 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
 - After the PR is created (or updated), invoke the `code-review:code-review` skill with the PR number
   - e.g., `/code-review <PR-number>` or `Skill("code-review:code-review", args: "<PR-number>")`
 - This runs a multi-agent code review (CLAUDE.md compliance, bug scan, git history, prior PR comments, code comment compliance)
-- If the review finds issues (confidence >= 80), address them:
+- If the review finds issues, stop and provide that list to user to determine whether to handle or not. For those issues user indicates they want fixed:
   - Fix the issues in code
   - Re-run checks (step 5)
   - Commit and push the fixes
@@ -118,3 +118,5 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
 - Never skip checks — all must pass before committing
 - Never force-push
 - Always ask before committing if there are unstaged changes that look like they shouldn't be committed (e.g., local config, temp files)
+- Any security issues identified eiother by bandit or by the PR review need to be flagged to user and asked what to do about them - even if the identified issue was code committed in a prior PR. Under no circumstance should they be ignored or silenced.
+
