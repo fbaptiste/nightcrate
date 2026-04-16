@@ -153,12 +153,7 @@ export function SettingsPage() {
             </Box>
 
             <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-              <Box>
-                <Typography variant="body1">Include moon in quality score by default</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Disable for narrowband imaging where moonlight has minimal impact
-                </Typography>
-              </Box>
+              <Typography variant="body1">Include moon in quality score by default</Typography>
               <Switch
                 checked={settings.weather_moon_penalty}
                 onChange={(e) => update({ weather_moon_penalty: e.target.checked })}

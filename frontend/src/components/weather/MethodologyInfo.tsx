@@ -72,6 +72,7 @@ export default function MethodologyInfo() {
       disableGutters
       elevation={0}
       sx={{
+        maxWidth: 720,
         background: "transparent",
         "&::before": { display: "none" },
       }}
@@ -85,7 +86,7 @@ export default function MethodologyInfo() {
         </Stack>
       </AccordionSummary>
       <AccordionDetails>
-        <Box sx={{ maxWidth: 720 }}>
+        <Box>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             The imaging quality score (0&ndash;100) rates each night&rsquo;s suitability for
             deep-sky imaging. Higher is always better. Sky clarity acts as a cloud gating
