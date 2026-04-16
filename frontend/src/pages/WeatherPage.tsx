@@ -6,7 +6,8 @@ import CircularProgress from "@mui/material/CircularProgress";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Typography from "@mui/material/Typography";
 import { fetchLocations, type Location } from "../api/locations";
-import { fetchSettings, type WeatherUnits } from "../api/settings";
+import type { WeatherUnits } from "../api/settings";
+import { useSettingsStore } from "../stores/settingsStore";
 import { fetchForecast, fetchHourlyDetail } from "../api/weather";
 import LocationSelector from "../components/weather/LocationSelector";
 import DailyCard from "../components/weather/DailyCard";
@@ -52,11 +53,7 @@ export default function WeatherPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [includeMoon, setIncludeMoon] = useState<boolean | null>(null);
 
-  const { data: settings } = useQuery({
-    queryKey: ["settings"],
-    queryFn: fetchSettings,
-  });
-
+  const settings = useSettingsStore((s) => s.settings);
   const units: WeatherUnits = settings?.weather_units ?? "metric";
 
   // Initialize from saved setting once loaded; user can override per-session
