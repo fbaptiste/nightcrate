@@ -241,20 +241,9 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
       {/* Sampling assessment */}
       <Box sx={{ mb: 2 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            Sampling Assessment
-          </Typography>
-          <Tooltip
-            title="Sampling describes how your pixel scale relates to the atmospheric seeing at your site. Well-sampled means each star's FWHM spans 2\u20133 pixels (Nyquist). Oversampled (too many pixels per star) wastes signal-to-noise \u2014 binning can help. Undersampled (too few pixels per star) makes stars look blocky and limits resolution."
-            arrow
-            placement="right"
-          >
-            <HelpOutlineIcon
-              sx={{ fontSize: 14, color: "text.disabled", cursor: "help" }}
-            />
-          </Tooltip>
-        </Box>
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+          Sampling Assessment
+        </Typography>
         <Typography variant="body2">
           {seeingSlider !== null
             ? `Seeing: ${seeingValue.toFixed(1)}\u2033 (slider override)`
@@ -264,13 +253,33 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
         </Typography>
       </Box>
 
-      {/* Sampling chart */}
-      <SamplingChart
-        imageScale={scale}
-        idealRangeLow={sampling.idealLow}
-        idealRangeHigh={sampling.idealHigh}
-        binningRecommendations={sampling.binningRecommendations}
-      />
+      {/* Sampling chart + explanation side by side */}
+      <Box sx={{ display: "flex", gap: 3, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <SamplingChart
+          imageScale={scale}
+          idealRangeLow={sampling.idealLow}
+          idealRangeHigh={sampling.idealHigh}
+          binningRecommendations={sampling.binningRecommendations}
+        />
+        <Box sx={{ maxWidth: 280, fontSize: "0.75rem", color: "text.secondary" }}>
+          <Typography variant="caption" component="p" sx={{ mb: 1 }}>
+            Sampling describes how your pixel scale relates to atmospheric seeing.
+            Each bar shows the effective pixel scale at that binning level.
+          </Typography>
+          <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
+            <Box component="span" sx={{ color: "#1976d2", fontWeight: 600 }}>Blue bars</Box>
+            {" "}fall within the ideal range (well-sampled) — stars span 2–3 pixels, balancing resolution and signal.
+          </Typography>
+          <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
+            <Box component="span" sx={{ color: "#ed6c02", fontWeight: 600 }}>Orange bars</Box>
+            {" "}are outside the ideal range — either oversampled (wasting signal-to-noise, consider binning)
+            or undersampled (stars look blocky).
+          </Typography>
+          <Typography variant="caption" component="p">
+            The shaded region marks the ideal sampling zone for the selected seeing conditions.
+          </Typography>
+        </Box>
+      </Box>
 
       {/* Guide system summary */}
       {calculatorData.guide_image_scale_arcsec_per_pixel != null && (

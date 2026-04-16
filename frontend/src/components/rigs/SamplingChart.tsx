@@ -9,8 +9,8 @@ interface SamplingChartProps {
 }
 
 const WIDTH = 350;
-const HEIGHT = 160;
-const MARGIN = { top: 10, right: 20, bottom: 30, left: 50 };
+const HEIGHT = 170;
+const MARGIN = { top: 20, right: 20, bottom: 30, left: 50 };
 
 const BLUE = "#1976d2";
 const ORANGE = "#ed6c02";
@@ -57,6 +57,18 @@ export default function SamplingChart({
       .attr("width", xScale(idealRangeHigh) - xScale(idealRangeLow))
       .attr("height", innerH)
       .attr("fill", IDEAL_ZONE_FILL);
+
+    // Ideal zone label
+    const zoneMidX =
+      (xScale(idealRangeLow) + xScale(idealRangeHigh)) / 2;
+    g.append("text")
+      .attr("x", zoneMidX)
+      .attr("y", -6)
+      .attr("text-anchor", "middle")
+      .attr("fill", "#90caf9")
+      .attr("font-size", "10px")
+      .attr("font-weight", 600)
+      .text("Ideal Range");
 
     // Ideal zone dashed borders
     [idealRangeLow, idealRangeHigh].forEach((val) => {
