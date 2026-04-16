@@ -7,6 +7,7 @@ import Snackbar from "@mui/material/Snackbar";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import RigCard from "@/components/rigs/RigCard";
+import RigFormDialog from "@/components/rigs/RigFormDialog";
 import {
   fetchRigs,
   cloneRig,
@@ -31,10 +32,6 @@ export default function RigsPage() {
     message: string;
     severity: "success" | "error";
   }>({ open: false, message: "", severity: "success" });
-
-  // Suppress unused-variable lint for state that Task 8 will consume
-  void dialogOpen;
-  void editingRig;
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["rigs"] });
@@ -203,6 +200,17 @@ export default function RigsPage() {
           )}
         </Box>
       )}
+
+      {/* Rig form dialog */}
+      <RigFormDialog
+        open={dialogOpen}
+        rig={editingRig}
+        onClose={() => {
+          setDialogOpen(false);
+          setEditingRig(null);
+        }}
+        onSaved={() => queryClient.invalidateQueries({ queryKey: ["rigs"] })}
+      />
 
       {/* Snackbar */}
       <Snackbar
