@@ -261,26 +261,26 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
           idealRangeHigh={sampling.idealHigh}
           binningRecommendations={sampling.binningRecommendations}
         />
-        <Box sx={{ maxWidth: 280, fontSize: "0.75rem", color: "text.secondary" }}>
-          <Typography variant="caption" component="p" sx={{ mb: 1 }}>
+        <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.5, fontSize: "0.75rem", color: "text.secondary" }}>
+          <Typography variant="caption" component="p">
             Sampling describes how your pixel scale relates to atmospheric seeing.
             Each bar shows the effective pixel scale at that binning level.
-          </Typography>
-          <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
-            <Box component="span" sx={{ color: "#1976d2", fontWeight: 600 }}>Blue bars</Box>
-            {" "}fall within the ideal range (well-sampled) — stars span 2–3 pixels, balancing resolution and signal.
-          </Typography>
-          <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
-            <Box component="span" sx={{ color: "#ed6c02", fontWeight: 600 }}>Orange bars</Box>
-            {" "}are oversampled — pixel scale is finer than the seeing supports, wasting signal-to-noise. Consider binning.
-          </Typography>
-          <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
-            <Box component="span" sx={{ color: "#00695c", fontWeight: 600 }}>Teal bars</Box>
-            {" "}are undersampled — pixel scale is too coarse, stars look blocky. Consider a longer focal length or smaller pixels.
-          </Typography>
-          <Typography variant="caption" component="p">
             The shaded region marks the ideal sampling zone for the selected seeing conditions.
           </Typography>
+          <Box>
+            <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
+              <Box component="span" sx={{ color: "#1976d2", fontWeight: 600 }}>Blue bars</Box>
+              {" "}fall within the ideal range (well-sampled) — stars span 2–3 pixels, balancing resolution and signal.
+            </Typography>
+            <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
+              <Box component="span" sx={{ color: "#ed6c02", fontWeight: 600 }}>Orange bars</Box>
+              {" "}are oversampled — pixel scale is finer than the seeing supports, wasting signal-to-noise. Consider binning.
+            </Typography>
+            <Typography variant="caption" component="p">
+              <Box component="span" sx={{ color: "#00695c", fontWeight: 600 }}>Teal bars</Box>
+              {" "}are undersampled — pixel scale is too coarse, stars look blocky. Consider a longer focal length or smaller pixels.
+            </Typography>
+          </Box>
         </Box>
       </Box>
 
