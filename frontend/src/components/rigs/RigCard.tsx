@@ -29,7 +29,7 @@ interface RigCardProps {
 const SAMPLING_COLORS: Record<string, { bg: string; text: string }> = {
   well_sampled: { bg: "#1976d2", text: "#ffffff" },
   oversampled: { bg: "#ed6c02", text: "#ffffff" },
-  undersampled: { bg: "#b8860b", text: "#ffffff" },
+  undersampled: { bg: "#00695c", text: "#ffffff" },
 };
 
 const SAMPLING_LABELS: Record<string, string> = {

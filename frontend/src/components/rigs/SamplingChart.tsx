@@ -9,12 +9,12 @@ interface SamplingChartProps {
 }
 
 const WIDTH = 350;
-const HEIGHT = 170;
-const MARGIN = { top: 20, right: 20, bottom: 30, left: 50 };
+const HEIGHT = 185;
+const MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 
 const BLUE = "#1976d2";    // well sampled
 const ORANGE = "#ed6c02";  // oversampled (too fine, wasting SNR)
-const AMBER = "#b8860b";   // undersampled (too coarse, blocky stars)
+const TEAL = "#00695c";    // undersampled (too coarse, blocky stars)
 const IDEAL_ZONE_FILL = "#e3f2fd";
 
 const BINNING_LABELS = ["1\u00d71", "2\u00d72", "3\u00d73", "4\u00d74"];
@@ -97,7 +97,7 @@ export default function SamplingChart({
           ? BLUE
           : assessment === "oversampled"
             ? ORANGE
-            : AMBER;
+            : TEAL;
       const yPos = (yScale(label) ?? 0) + barOffset;
 
       // Bar
@@ -134,6 +134,15 @@ export default function SamplingChart({
       .call(xAxis)
       .selectAll("text")
       .attr("font-size", "10px");
+
+    // X axis title
+    g.append("text")
+      .attr("x", innerW / 2)
+      .attr("y", innerH + 35)
+      .attr("text-anchor", "middle")
+      .attr("fill", "#666666")
+      .attr("font-size", "10px")
+      .text("Image Scale (\u2033/pixel)");
 
     // Y axis labels (manual — no axis line)
     BINNING_LABELS.forEach((label) => {

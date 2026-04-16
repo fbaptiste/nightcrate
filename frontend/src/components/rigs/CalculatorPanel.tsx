@@ -275,7 +275,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
             {" "}are oversampled — pixel scale is finer than the seeing supports, wasting signal-to-noise. Consider binning.
           </Typography>
           <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
-            <Box component="span" sx={{ color: "#b8860b", fontWeight: 600 }}>Amber bars</Box>
+            <Box component="span" sx={{ color: "#00695c", fontWeight: 600 }}>Teal bars</Box>
             {" "}are undersampled — pixel scale is too coarse, stars look blocky. Consider a longer focal length or smaller pixels.
           </Typography>
           <Typography variant="caption" component="p">
