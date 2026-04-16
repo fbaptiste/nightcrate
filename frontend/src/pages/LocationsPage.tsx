@@ -739,7 +739,7 @@ export default function LocationsPage() {
                 slotProps={{ htmlInput: { step: "any", min: 10, max: 25 } }}
               />
             </Box>
-            {form.latitude && form.longitude && !isNaN(parseFloat(form.latitude)) && !isNaN(parseFloat(form.longitude)) && !form.bortle_class && (
+            {form.latitude && form.longitude && !isNaN(parseFloat(form.latitude)) && !isNaN(parseFloat(form.longitude)) && (
               <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
                 Don't know your Bortle class?{" "}
                 <Typography
