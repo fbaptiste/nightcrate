@@ -1589,15 +1589,33 @@ Key coverage achievements:
 - `api/weather.py`: 72% → 96%
 - Remaining gaps are platform-specific code (GPU detection, OS volume listing) and file-type branches requiring complex test fixtures
 
+### Post-Review Fixes & Enhancements
+
+- [x] Hourly endpoint: add `include_moon` query param (was reading only saved setting, ignoring UI toggle)
+- [x] Weather page: moon toggle initializes from saved `weather_moon_penalty` setting
+- [x] Hourly grid: Moon Quality row grayed out when moon excluded (matches daily card)
+- [x] Hourly timeline: location timezone via `localTimeToMinutes` + `Intl.DateTimeFormat` (was using browser timezone)
+- [x] Geographic timezone decoupling: `timezonefinder` derives geo_timezone from coordinates; astronomy uses geo_tz, display uses user's tz
+- [x] `GET /api/locations/geo-timezone` endpoint for real-time coordinate lookup
+- [x] `GET /api/locations/timezones` endpoint for backend-driven timezone dropdown
+- [x] Location form: read-only "Coordinates timezone" field, auto-populates display timezone on create
+- [x] Weather page: timezone mismatch indicator when display tz ≠ geo tz
+- [x] Weather page reads settings from Zustand store (instant unit/moon toggle sync with Settings page)
+- [x] Methodology accordion expand button adjacent to text (was floating far right)
+- [x] Temperature display: primary unit larger, secondary unit smaller and muted
+- [x] Colorblind-safe error text (warning.main instead of color="error")
+- [x] Clear Outside link always visible when coordinates filled in (was hidden once Bortle set)
+
 ### v0.11.0 Completion Criteria
 
-- [x] All backend tests pass (936 passed, 3 skipped)
+- [x] All backend tests pass (951 passed, 3 skipped)
 - [x] Ruff clean, bandit clean (no new issues)
 - [x] Frontend builds (TypeScript + Vite)
 - [x] Test coverage push: 77% → 92% overall, no module below 75%
 - [x] Code review (4 issues found and fixed)
 - [x] Code simplification pass (extracted shared weather color helpers, eliminated redundant get_settings/location calls)
 - [x] Visual testing in browser
+- [x] Geo_timezone cross-timezone tests (15 new tests)
 
 ---
 

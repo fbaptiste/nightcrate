@@ -23,7 +23,7 @@ Reference documents:
 - **Database:** SQLite accessed directly via `aiosqlite` (raw SQL, no ORM). Migrations managed with `yoyo-migrations` (SQL files in `db/migrations/`). **No SQLAlchemy.**
 - **Data models:** Pydantic only — for API shapes, domain objects, and settings. No ORM models.
 - **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
-- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, ASTAP/astrometry.net for plate solving
+- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, `timezonefinder` (geo tz from coordinates), ASTAP/astrometry.net for plate solving
 - **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
 - **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly.
 - **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, single JSON row).
@@ -390,6 +390,12 @@ Multi-database support with first-run setup wizard and hot-swap.
 - `forecast_days=8` to cover the last night's sunrise window
 - Polar latitude handling: no HTTP 422, returns `no_imaging_window: true` with valid moon/darkness info
 - Dew risk uses colorblind-safe sequential blue palette (not red/green)
+- **Geographic vs display timezone:** each location has `geo_timezone` (auto-derived from coordinates via `timezonefinder`) and `timezone` (user's display preference). Astronomy computations (`compute_night_summary`, `compute_hourly_astro`) use `geo_timezone` for noon-to-noon search windows. Open-Meteo API and all display formatting use the user's `timezone`. This allows remote observatory operators to see times in their home timezone.
+- `GET /api/locations/timezones` — backend-provided IANA timezone list for dropdown (filtered, Region/City format)
+- `GET /api/locations/geo-timezone` — real-time coordinate-to-timezone lookup
+- `lib/weatherColors.ts` — shared score-to-color helpers (scoreToBackground, scoreToTextColor, scoreToLabel)
+- `HourlyTimeline.tsx` uses `localTimeToMinutes()` (string parsing, no Date) and `utcToLocalMinutes()` (Intl.DateTimeFormat) for timezone-correct rendering
+- Weather page reads settings from Zustand store (shared with Settings page) for instant unit/preference sync
 
 ## Dependency & License Policy
 

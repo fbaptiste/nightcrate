@@ -715,7 +715,7 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 | Table | Purpose |
 |-------|---------|
-| `location` | User-defined observing locations (lat/lon, elevation, timezone, Bortle, SQM) |
+| `location` | User-defined observing locations (lat/lon, elevation, display timezone, geo_timezone from coordinates, Bortle, SQM) |
 | `weather_cache` | Cached API responses (forecast, ECMWF PWV, AOD) with TTL-based expiry |
 
 ### Future Tables (not in v0.8.0)
