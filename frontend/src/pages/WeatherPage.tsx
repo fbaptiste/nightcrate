@@ -5,8 +5,9 @@ import Checkbox from "@mui/material/Checkbox";
 import CircularProgress from "@mui/material/CircularProgress";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Typography from "@mui/material/Typography";
-import { fetchDefaultLocation } from "../api/locations";
-import { fetchSettings, type WeatherUnits } from "../api/settings";
+import { fetchLocations, type Location } from "../api/locations";
+import type { WeatherUnits } from "../api/settings";
+import { useSettingsStore } from "../stores/settingsStore";
 import { fetchForecast, fetchHourlyDetail } from "../api/weather";
 import LocationSelector from "../components/weather/LocationSelector";
 import DailyCard from "../components/weather/DailyCard";
@@ -50,19 +51,23 @@ const WEATHER_INCANTATIONS = [
 export default function WeatherPage() {
   const [locationId, setLocationId] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [includeMoon, setIncludeMoon] = useState(true);
+  const [includeMoon, setIncludeMoon] = useState<boolean | null>(null);
 
-  const { data: settings } = useQuery({
-    queryKey: ["settings"],
-    queryFn: fetchSettings,
-  });
-
+  const settings = useSettingsStore((s) => s.settings);
   const units: WeatherUnits = settings?.weather_units ?? "metric";
 
-  const { data: defaultLocation } = useQuery({
-    queryKey: ["locations", "default"],
-    queryFn: fetchDefaultLocation,
+  // Initialize from saved setting once loaded; user can override per-session
+  useEffect(() => {
+    if (settings && includeMoon === null) {
+      setIncludeMoon(settings.weather_moon_penalty);
+    }
+  }, [settings, includeMoon]);
+
+  const { data: locations = [] } = useQuery<Location[]>({
+    queryKey: ["locations"],
+    queryFn: fetchLocations,
   });
+  const defaultLocation = locations.find((l) => l.is_default) ?? locations[0] ?? null;
 
   const {
     data: forecast,
@@ -70,14 +75,14 @@ export default function WeatherPage() {
     error: forecastError,
   } = useQuery({
     queryKey: ["weather-forecast", locationId, includeMoon],
-    queryFn: () => fetchForecast(locationId!, includeMoon),
-    enabled: locationId !== null,
+    queryFn: () => fetchForecast(locationId!, includeMoon!),
+    enabled: locationId !== null && includeMoon !== null,
   });
 
   const { data: hourlyDetail, isLoading: hourlyLoading } = useQuery({
-    queryKey: ["weather-hourly", locationId, selectedDate],
-    queryFn: () => fetchHourlyDetail(locationId!, selectedDate!),
-    enabled: locationId !== null && selectedDate !== null,
+    queryKey: ["weather-hourly", locationId, selectedDate, includeMoon],
+    queryFn: () => fetchHourlyDetail(locationId!, selectedDate!, includeMoon!),
+    enabled: locationId !== null && selectedDate !== null && includeMoon !== null,
   });
 
   // Auto-select default location when loaded
@@ -110,7 +115,7 @@ export default function WeatherPage() {
         <FormControlLabel
           control={
             <Checkbox
-              checked={includeMoon}
+              checked={includeMoon ?? true}
               onChange={(e) => setIncludeMoon(e.target.checked)}
               size="small"
             />
@@ -119,9 +124,16 @@ export default function WeatherPage() {
         />
       </Box>
 
+      {/* Timezone mismatch note */}
+      {forecast && forecast.geo_timezone && forecast.timezone !== forecast.geo_timezone && (
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: "block" }}>
+          Times shown in {forecast.timezone} (location is in {forecast.geo_timezone})
+        </Typography>
+      )}
+
       {/* Error state */}
       {forecastError && (
-        <Typography color="error" sx={{ mb: 2 }}>
+        <Typography color="warning.main" sx={{ mb: 2 }}>
           {forecastError instanceof Error ? forecastError.message : "Failed to load forecast."}
         </Typography>
       )}
@@ -156,7 +168,7 @@ export default function WeatherPage() {
               key={day.date}
               day={day}
               selected={selectedDate === day.date}
-              moonIncluded={includeMoon}
+              moonIncluded={includeMoon ?? true}
               units={units}
               onClick={() => setSelectedDate(day.date)}
             />
@@ -183,6 +195,8 @@ export default function WeatherPage() {
               sunrise={hourlyDetail.sunrise}
               twilight={hourlyDetail.twilight}
               moonPolyline={hourlyDetail.moon_polyline}
+              timezone={hourlyDetail.timezone}
+              moonIncluded={includeMoon ?? true}
               units={units}
             />
           )

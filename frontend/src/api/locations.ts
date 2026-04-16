@@ -7,6 +7,7 @@ export interface Location {
   longitude: number;
   elevation_m: number | null;
   timezone: string;
+  geo_timezone: string | null;
   bortle_class: number | null;
   sqm_reading: number | null;
   city: string | null;
@@ -36,6 +37,13 @@ export interface LocationCreate {
 }
 
 export const fetchLocations = () => apiFetch<Location[]>("/locations");
+
+export const fetchTimezones = () => apiFetch<string[]>("/locations/timezones");
+
+export const fetchGeoTimezone = (latitude: number, longitude: number) =>
+  apiFetch<{ geo_timezone: string | null }>(
+    `/locations/geo-timezone?latitude=${latitude}&longitude=${longitude}`
+  );
 
 export const fetchLocation = (id: number) =>
   apiFetch<Location>(`/locations/${id}`);

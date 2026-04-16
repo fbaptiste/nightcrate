@@ -874,6 +874,7 @@ CREATE TABLE IF NOT EXISTS location (
     longitude REAL NOT NULL CHECK (longitude BETWEEN -180 AND 180),
     elevation_m REAL,
     timezone TEXT NOT NULL,
+    geo_timezone TEXT,
     bortle_class INTEGER CHECK (bortle_class BETWEEN 1 AND 9),
     sqm_reading REAL CHECK (sqm_reading BETWEEN 10 AND 25),
     city TEXT,

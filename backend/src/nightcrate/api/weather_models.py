@@ -81,6 +81,7 @@ class ForecastResponse(BaseModel):
     latitude: float
     longitude: float
     timezone: str
+    geo_timezone: str | None
     moon_included: bool
     days: list[DailySummaryResponse]
 
@@ -100,6 +101,8 @@ class HourlyDetailResponse(BaseModel):
     date: str
     location_id: int
     location_name: str
+    timezone: str
+    geo_timezone: str | None
     sunset: str | None
     sunrise: str | None
     twilight: TwilightTimesResponse

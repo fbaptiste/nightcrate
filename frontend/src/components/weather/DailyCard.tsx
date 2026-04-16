@@ -173,10 +173,10 @@ export default function DailyCard({ day, selected, moonIncluded, units, onClick 
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
                 <ThermostatIcon sx={{ fontSize: 14, color: "#d4993f" }} />
                 <Box>
-                  <Typography sx={{ fontSize: "0.6rem", color: "text.primary", lineHeight: 1.3, fontWeight: 500 }}>
+                  <Typography sx={{ fontSize: "0.65rem", color: "text.primary", lineHeight: 1.3, fontWeight: 500 }}>
                     {formatTempLine1(day.temp_min_c, day.temp_max_c, units)}
                   </Typography>
-                  <Typography sx={{ fontSize: "0.6rem", color: "text.primary", lineHeight: 1.3, fontWeight: 500 }}>
+                  <Typography sx={{ fontSize: "0.55rem", color: "text.secondary", lineHeight: 1.3 }}>
                     {formatTempLine2(day.temp_min_c, day.temp_max_c, units)}
                   </Typography>
                 </Box>

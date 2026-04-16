@@ -76,6 +76,7 @@ export interface ForecastResponse {
   latitude: number;
   longitude: number;
   timezone: string;
+  geo_timezone: string | null;
   moon_included: boolean;
   days: DailySummary[];
 }
@@ -93,6 +94,8 @@ export interface HourlyDetailResponse {
   date: string;
   location_id: number;
   location_name: string;
+  timezone: string;
+  geo_timezone: string | null;
   sunset: string | null;
   sunrise: string | null;
   twilight: TwilightTimes;
@@ -109,9 +112,9 @@ export const fetchForecast = (locationId: number, includeMoon = true) =>
     `/weather/forecast?location_id=${locationId}&include_moon=${includeMoon}`
   );
 
-export const fetchHourlyDetail = (locationId: number, date: string) =>
+export const fetchHourlyDetail = (locationId: number, date: string, includeMoon = true) =>
   apiFetch<HourlyDetailResponse>(
-    `/weather/hourly?location_id=${locationId}&date=${date}`
+    `/weather/hourly?location_id=${locationId}&date=${date}&include_moon=${includeMoon}`
   );
 
 export const fetchMethodology = () =>
