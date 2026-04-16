@@ -266,7 +266,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
         </Box>
 
         {/* Right column: help text in two narrow columns */}
-        <Box sx={{ display: "grid", gridTemplateColumns: "360px 360px", gap: 2, fontSize: "0.75rem", color: "text.secondary" }}>
+        <Box sx={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 2, fontSize: "0.75rem", color: "text.secondary" }}>
           <Typography variant="caption" component="p">
             Sampling describes how your pixel scale relates to atmospheric seeing.
             Each bar shows the effective pixel scale at that binning level.
