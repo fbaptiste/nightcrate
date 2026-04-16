@@ -210,13 +210,13 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
       </Box>
 
       {/* Sampling assessment */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-          Sampling Assessment
-        </Typography>
+      <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+        Sampling Assessment
+      </Typography>
 
-        {/* Seeing slider */}
-        <Box sx={{ mb: 1.5 }}>
+      <Box sx={{ display: "flex", gap: 3, alignItems: "flex-start", flexWrap: "wrap" }}>
+        {/* Left column: seeing slider + chart */}
+        <Box>
           <Typography variant="body2" gutterBottom>
             Seeing: {seeingValue.toFixed(1)}&Prime;
           </Typography>
@@ -230,7 +230,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
             valueLabelFormat={(v) => `${v.toFixed(1)}\u2033`}
             sx={{ maxWidth: 350 }}
           />
-          <Box sx={{ display: "flex", justifyContent: "space-between", maxWidth: 350 }}>
+          <Box sx={{ display: "flex", justifyContent: "space-between", maxWidth: 350, mb: 1.5 }}>
             {SEEING_LABELS.map(({ label }) => (
               <Typography
                 key={label}
@@ -242,21 +242,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
               </Typography>
             ))}
           </Box>
-        </Box>
-
-      </Box>
-
-      {/* Sampling: seeing + chart on left, help text on right */}
-      <Box sx={{ display: "flex", gap: 3, alignItems: "flex-start", flexWrap: "wrap" }}>
-        {/* Left column: seeing source + chart */}
-        <Box>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            {seeingSlider !== null
-              ? `Seeing: ${seeingValue.toFixed(1)}\u2033 (slider override)`
-              : calculatorData.sampling_assessment.seeing_location_name
-                ? `Seeing: ${calculatorData.sampling_assessment.seeing_fwhm_low.toFixed(1)}\u2013${calculatorData.sampling_assessment.seeing_fwhm_high.toFixed(1)}\u2033 from ${calculatorData.sampling_assessment.seeing_location_name}`
-                : `Seeing: ${seeingValue.toFixed(1)}\u2033 (default)`}
-          </Typography>
           <SamplingChart
             imageScale={scale}
             idealRangeLow={sampling.idealLow}
