@@ -1,0 +1,319 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import Autocomplete from "@mui/material/Autocomplete";
+import Box from "@mui/material/Box";
+import Slider from "@mui/material/Slider";
+import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Typography from "@mui/material/Typography";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
+import { fetchLocations, type Location } from "@/api/locations";
+import {
+  fetchRigCalculators,
+  type Rig,
+  type RigCalculators,
+} from "@/api/rigs";
+import { useDebounce } from "@/lib/useDebounce";
+import SamplingChart from "./SamplingChart";
+
+interface CalculatorPanelProps {
+  rig: Rig;
+}
+
+const SEEING_LABELS: { range: [number, number]; label: string }[] = [
+  { range: [0.5, 1.0], label: "Excellent" },
+  { range: [1.0, 2.0], label: "Good" },
+  { range: [2.0, 4.0], label: "OK" },
+  { range: [4.0, 5.0], label: "Poor" },
+  { range: [5.0, 6.0], label: "Very Poor" },
+];
+
+function assessSampling(
+  imageScale: number,
+  seeingValue: number
+): {
+  idealLow: number;
+  idealHigh: number;
+  binningRecommendations: Record<number, string>;
+} {
+  const idealLow = seeingValue / 3.0;
+  const idealHigh = seeingValue / 2.0;
+  const assess = (scale: number) => {
+    if (scale < idealLow) return "oversampled";
+    if (scale > idealHigh) return "undersampled";
+    return "well_sampled";
+  };
+  const binningRecommendations: Record<number, string> = {};
+  for (let bin = 1; bin <= 4; bin++) {
+    binningRecommendations[bin] = assess(imageScale * bin);
+  }
+  return { idealLow, idealHigh, binningRecommendations };
+}
+
+export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
+  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(
+    null
+  );
+  const [seeingSlider, setSeeingSlider] = useState<number | null>(null);
+  const [binning, setBinning] = useState<number>(1);
+  const [calculatorData, setCalculatorData] = useState<RigCalculators>(
+    rig.calculators
+  );
+
+  const { data: locations = [] } = useQuery<Location[]>({
+    queryKey: ["locations"],
+    queryFn: fetchLocations,
+  });
+
+  // Set default location on first load
+  useEffect(() => {
+    if (locations.length > 0 && selectedLocationId === null) {
+      const defaultLoc = locations.find((l) => l.is_default);
+      if (defaultLoc) {
+        setSelectedLocationId(defaultLoc.id);
+      }
+    }
+  }, [locations, selectedLocationId]);
+
+  // Fetch calculator data when location changes
+  useEffect(() => {
+    if (selectedLocationId === null) return;
+    let cancelled = false;
+    fetchRigCalculators(rig.id, { location_id: selectedLocationId }).then(
+      (data) => {
+        if (!cancelled) {
+          setCalculatorData(data);
+          // Reset seeing slider to midpoint of new location's seeing range
+          const mid =
+            (data.sampling_assessment.seeing_fwhm_low +
+              data.sampling_assessment.seeing_fwhm_high) /
+            2;
+          setSeeingSlider(mid > 0 ? mid : null);
+        }
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [rig.id, selectedLocationId]);
+
+  const selectedLocation = locations.find((l) => l.id === selectedLocationId);
+  const hasSeeing =
+    selectedLocation?.typical_seeing_low_arcsec != null &&
+    selectedLocation?.typical_seeing_high_arcsec != null;
+
+  // Seeing value for computation
+  const seeingValue = seeingSlider ?? 3.0;
+  const debouncedSeeing = useDebounce(seeingValue, 100);
+
+  // Compute sampling assessment client-side based on slider
+  const sampling = useMemo(() => {
+    const scale = calculatorData.image_scale_arcsec_per_pixel;
+    return assessSampling(scale, debouncedSeeing);
+  }, [calculatorData.image_scale_arcsec_per_pixel, debouncedSeeing]);
+
+  // Derived values with binning applied
+  const scale = calculatorData.image_scale_arcsec_per_pixel;
+  const binnedScale = scale * binning;
+  const [fovW, fovH] = calculatorData.field_of_view_arcmin;
+  const [degW, degH] = calculatorData.field_of_view_deg;
+  const binnedFovW = fovW; // FOV doesn't change with binning, only resolution
+  const binnedFovH = fovH;
+  const binnedDegW = degW;
+  const binnedDegH = degH;
+
+  return (
+    <Box sx={{ px: 2, pb: 2, pt: 1 }}>
+      {/* Location selector */}
+      <Autocomplete
+        size="small"
+        options={locations}
+        getOptionLabel={(loc) =>
+          `${loc.name}${loc.is_default ? " (default)" : ""}`
+        }
+        value={selectedLocation ?? null}
+        onChange={(_, loc) => {
+          if (loc) setSelectedLocationId(loc.id);
+        }}
+        renderInput={(params) => <TextField {...params} label="Location" />}
+        sx={{ maxWidth: 300, mb: 1.5 }}
+        isOptionEqualToValue={(option, value) => option.id === value.id}
+      />
+
+      {!hasSeeing && selectedLocation && (
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5, display: "block" }}>
+          Set typical seeing for this location in Location settings for a more
+          accurate assessment.
+        </Typography>
+      )}
+
+      {/* Seeing slider */}
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="body2" gutterBottom>
+          Seeing: {seeingValue.toFixed(1)}&Prime;
+        </Typography>
+        <Slider
+          value={seeingValue}
+          min={0.5}
+          max={6.0}
+          step={0.1}
+          onChange={(_, v) => setSeeingSlider(v as number)}
+          valueLabelDisplay="auto"
+          valueLabelFormat={(v) => `${v.toFixed(1)}\u2033`}
+          sx={{ maxWidth: 350 }}
+        />
+        <Box sx={{ display: "flex", justifyContent: "space-between", maxWidth: 350 }}>
+          {SEEING_LABELS.map(({ label }) => (
+            <Typography
+              key={label}
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: "0.65rem" }}
+            >
+              {label}
+            </Typography>
+          ))}
+        </Box>
+      </Box>
+
+      {/* Binning selector */}
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="body2" gutterBottom>
+          Binning
+        </Typography>
+        <ToggleButtonGroup
+          value={binning}
+          exclusive
+          onChange={(_, val) => {
+            if (val !== null) setBinning(val);
+          }}
+          size="small"
+        >
+          {[1, 2, 3, 4].map((b) => (
+            <ToggleButton key={b} value={b}>
+              {b}&times;{b}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+      </Box>
+
+      {/* Metrics table */}
+      <Box
+        component="table"
+        sx={{
+          "& td": { py: 0.3, pr: 2, verticalAlign: "top" },
+          mb: 2,
+        }}
+      >
+        <tbody>
+          <MetricRow
+            label="Image Scale"
+            value={`${binnedScale.toFixed(2)}\u2033/pixel`}
+          />
+          <MetricRow
+            label="Field of View"
+            value={`${binnedFovW.toFixed(1)}\u2032 \u00d7 ${binnedFovH.toFixed(1)}\u2032 (${binnedDegW.toFixed(2)}\u00b0 \u00d7 ${binnedDegH.toFixed(2)}\u00b0)`}
+          />
+          <MetricRow
+            label="Focal Ratio"
+            value={`f/${calculatorData.focal_ratio}`}
+          />
+          <MetricRow
+            label="Dawes Limit"
+            value={`${calculatorData.dawes_limit_arcsec.toFixed(2)}\u2033`}
+          />
+          <MetricRow
+            label="Rayleigh Limit"
+            value={`${calculatorData.rayleigh_limit_arcsec.toFixed(2)}\u2033`}
+          />
+          {calculatorData.sensor_coverage_pct != null && (
+            <MetricRow
+              label="Sensor Coverage"
+              value={`${calculatorData.sensor_coverage_pct.toFixed(0)}% of image circle`}
+              warning={calculatorData.sensor_coverage_pct > 100}
+            />
+          )}
+        </tbody>
+      </Box>
+
+      {/* Sampling assessment */}
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+          Sampling Assessment
+        </Typography>
+        <Typography variant="body2">
+          {seeingSlider !== null
+            ? `Seeing: ${seeingValue.toFixed(1)}\u2033 (slider override)`
+            : calculatorData.sampling_assessment.seeing_location_name
+              ? `Seeing: ${calculatorData.sampling_assessment.seeing_fwhm_low.toFixed(1)}\u2013${calculatorData.sampling_assessment.seeing_fwhm_high.toFixed(1)}\u2033 from ${calculatorData.sampling_assessment.seeing_location_name}`
+              : `Seeing: ${seeingValue.toFixed(1)}\u2033 (default)`}
+        </Typography>
+      </Box>
+
+      {/* Sampling chart */}
+      <SamplingChart
+        imageScale={scale}
+        idealRangeLow={sampling.idealLow}
+        idealRangeHigh={sampling.idealHigh}
+        binningRecommendations={sampling.binningRecommendations}
+      />
+
+      {/* Guide system summary */}
+      {calculatorData.guide_image_scale_arcsec_per_pixel != null && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+            Guide System
+          </Typography>
+          <Box
+            component="table"
+            sx={{ "& td": { py: 0.3, pr: 2, verticalAlign: "top" } }}
+          >
+            <tbody>
+              <MetricRow
+                label="Guide Image Scale"
+                value={`${calculatorData.guide_image_scale_arcsec_per_pixel.toFixed(2)}\u2033/pixel`}
+              />
+              {calculatorData.guide_field_of_view_arcmin && (
+                <MetricRow
+                  label="Guide FOV"
+                  value={`${calculatorData.guide_field_of_view_arcmin[0].toFixed(1)}\u2032 \u00d7 ${calculatorData.guide_field_of_view_arcmin[1].toFixed(1)}\u2032`}
+                />
+              )}
+            </tbody>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  warning,
+}: {
+  label: string;
+  value: string;
+  warning?: boolean;
+}) {
+  return (
+    <tr>
+      <td>
+        <Typography variant="body2" color="text.secondary">
+          {label}
+        </Typography>
+      </td>
+      <td>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+          <Typography variant="body1">{value}</Typography>
+          {warning && (
+            <WarningAmberIcon
+              sx={{ fontSize: 16, color: "warning.main" }}
+            />
+          )}
+        </Box>
+      </td>
+    </tr>
+  );
+}

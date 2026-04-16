@@ -1,19 +1,24 @@
+import { useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
 import Chip from "@mui/material/Chip";
+import Collapse from "@mui/material/Collapse";
+import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RestoreIcon from "@mui/icons-material/Restore";
 import StarIcon from "@mui/icons-material/Star";
 import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import type { Rig } from "@/api/rigs";
+import CalculatorPanel from "./CalculatorPanel";
 
 interface RigCardProps {
   rig: Rig;
@@ -58,6 +63,7 @@ export default function RigCard({
   onRestore,
   onSetDefault,
 }: RigCardProps) {
+  const [expanded, setExpanded] = useState(false);
   const calc = rig.calculators;
   const scale = calc.image_scale_arcsec_per_pixel;
   const [fovW, fovH] = calc.field_of_view_arcmin;
@@ -190,7 +196,25 @@ export default function RigCard({
             </IconButton>
           </Tooltip>
         )}
+        <Tooltip title={expanded ? "Hide details" : "Show details"} arrow>
+          <IconButton
+            size="small"
+            onClick={() => setExpanded((prev) => !prev)}
+            sx={{
+              ml: "auto",
+              transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 0.2s",
+            }}
+          >
+            <ExpandMoreIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </CardActions>
+
+      <Collapse in={expanded} timeout="auto" unmountOnExit>
+        <Divider />
+        <CalculatorPanel rig={rig} />
+      </Collapse>
     </Card>
   );
 }
