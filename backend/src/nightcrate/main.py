@@ -16,6 +16,7 @@ from nightcrate.api import (
     files,
     images,
     locations,
+    rigs,
     settings,
     weather,
 )
@@ -154,6 +155,15 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Rigs",
+        "description": (
+            "Imaging rig templates: user-composed equipment configurations with "
+            "optical calculators (image scale, FOV, sampling assessment). Each rig "
+            "combines an OTA configuration, camera, and optional filter wheel, mount, "
+            "guiding, and peripheral equipment."
+        ),
+    },
+    {
         "name": "Weather",
         "description": (
             "Weather forecast and imaging quality predictions. Provides 7-day "
@@ -206,6 +216,7 @@ app.include_router(aberration.router)
 app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
 app.include_router(locations.router)
+app.include_router(rigs.router)
 app.include_router(weather.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
