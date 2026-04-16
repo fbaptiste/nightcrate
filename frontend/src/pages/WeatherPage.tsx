@@ -192,6 +192,7 @@ export default function WeatherPage() {
               twilight={hourlyDetail.twilight}
               moonPolyline={hourlyDetail.moon_polyline}
               timezone={hourlyDetail.timezone}
+              moonIncluded={includeMoon ?? true}
               units={units}
             />
           )

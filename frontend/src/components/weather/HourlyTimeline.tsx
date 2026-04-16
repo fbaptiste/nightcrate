@@ -15,6 +15,7 @@ interface HourlyTimelineProps {
   twilight: TwilightTimes;
   moonPolyline: MoonPolylinePoint[];
   timezone: string;
+  moonIncluded: boolean;
   units: WeatherUnits;
 }
 
@@ -398,6 +399,7 @@ export default function HourlyTimeline({
   twilight,
   moonPolyline,
   timezone,
+  moonIncluded,
   units,
 }: HourlyTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -467,10 +469,11 @@ export default function HourlyTimeline({
     }
 
     // ── Helper: render a row of cells ─────────────────────────────────
-    function renderRow(row: RowDef, y: number, h: number, grayDaylight: boolean = false) {
+    function renderRow(row: RowDef, y: number, h: number, grayDaylight: boolean = false, opacity: number = 1) {
+      const rowG = opacity < 1 ? g.append("g").style("opacity", opacity) : g;
       const labelWeight = row.type === "quality" ? "600" : "400";
       const labelSize = row.type === "quality" ? "14px" : "12px";
-      g.append("text")
+      rowG.append("text")
         .attr("x", LABEL_WIDTH - 8)
         .attr("y", y + h / 2 + 1)
         .attr("text-anchor", "end")
@@ -487,11 +490,11 @@ export default function HourlyTimeline({
 
         // Gray out daylight padding hours for score rows
         if (grayDaylight && daylight) {
-          g.append("rect")
+          rowG.append("rect")
             .attr("x", x + 1).attr("y", y + 1)
             .attr("width", cellWidth - 2).attr("height", h - 2)
             .attr("rx", 2).attr("fill", "rgba(128, 128, 140, 0.12)");
-          g.append("text")
+          rowG.append("text")
             .attr("x", x + cellWidth / 2).attr("y", y + h / 2 + 1)
             .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
             .attr("font-size", "12px").attr("fill", "rgba(128, 128, 140, 0.4)")
@@ -504,22 +507,22 @@ export default function HourlyTimeline({
           const bgColor = DEW_RISK_COLORS[riskLevel] ?? DEW_RISK_COLORS.low;
           const txtColor = dewRiskTextColor(riskLevel);
           const text = row.textFromHour(hour) ?? "";
-          g.append("rect")
+          rowG.append("rect")
             .attr("x", x + 1).attr("y", y + 1)
             .attr("width", cellWidth - 2).attr("height", h - 2)
             .attr("rx", 2).attr("fill", bgColor);
-          g.append("text")
+          rowG.append("text")
             .attr("x", x + cellWidth / 2).attr("y", y + h / 2 + 1)
             .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
             .attr("font-size", "11px").attr("fill", txtColor)
             .attr("font-family", "sans-serif").text(text);
         } else if (row.type === "neutral") {
           const text = row.textFromHour(hour) ?? "";
-          g.append("rect")
+          rowG.append("rect")
             .attr("x", x + 1).attr("y", y + 1)
             .attr("width", cellWidth - 2).attr("height", h - 2)
             .attr("rx", 2).attr("fill", "rgba(128, 128, 140, 0.15)");
-          g.append("text")
+          rowG.append("text")
             .attr("x", x + cellWidth / 2).attr("y", y + h / 2 + 1)
             .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
             .attr("font-size", "12px").attr("fill", "#a0a0a8")
@@ -532,11 +535,11 @@ export default function HourlyTimeline({
           const fontSize = row.type === "quality" ? "14px" : "12px";
           const fontWeight = row.type === "quality" ? "700" : "400";
 
-          g.append("rect")
+          rowG.append("rect")
             .attr("x", x + 1).attr("y", y + 1)
             .attr("width", cellWidth - 2).attr("height", h - 2)
             .attr("rx", 2).attr("fill", fillColor);
-          g.append("text")
+          rowG.append("text")
             .attr("x", x + cellWidth / 2).attr("y", y + h / 2 + 1)
             .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
             .attr("font-size", fontSize).attr("font-weight", fontWeight)
@@ -884,7 +887,8 @@ export default function HourlyTimeline({
     renderGroupHeader("SCORE FACTORS", curY);
     curY += GROUP_HEADER_HEIGHT;
     for (const row of QUALITY_FACTOR_ROWS) {
-      renderRow(row, curY, ROW_HEIGHT, true);
+      const rowOpacity = row.key === "moon_score" && !moonIncluded ? 0.35 : 1;
+      renderRow(row, curY, ROW_HEIGHT, true, rowOpacity);
       curY += ROW_HEIGHT;
     }
 
@@ -898,7 +902,7 @@ export default function HourlyTimeline({
     }
 
     svg.attr("height", MARKER_PAD + curY);
-  }, [hours, containerWidth, twilight, sunset, sunrise, moonPolyline, timezone, units]);
+  }, [hours, containerWidth, twilight, sunset, sunrise, moonPolyline, timezone, moonIncluded, units]);
 
   if (hours.length === 0) {
     return (
