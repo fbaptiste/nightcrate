@@ -48,6 +48,7 @@ from nightcrate.api.equipment_models import (
     ManufacturerCreate,
     ManufacturerResponse,
     ManufacturerUpdate,
+    MineToggle,
     MountCreate,
     MountResponse,
     MountTypeCreate,
@@ -1227,6 +1228,19 @@ async def delete_camera(camera_id: int):
     return {"ok": True}
 
 
+@router.post("/camera/{camera_id}/mine", response_model=CameraResponse)
+async def toggle_camera_mine(camera_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "camera", camera_id, "Camera")
+        await conn.execute(
+            "UPDATE camera SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), camera_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "camera", camera_id, "Camera")
+        return await _build_camera_response(conn, row)
+
+
 # ── Telescope ─────────────────────────────────────────────────────────────────
 
 
@@ -1394,6 +1408,19 @@ async def delete_telescope(telescope_id: int):
         await conn.execute("UPDATE telescope SET active = 0 WHERE id = ?", (telescope_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/telescope/{telescope_id}/mine", response_model=TelescopeResponse)
+async def toggle_telescope_mine(telescope_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await conn.execute(
+            "UPDATE telescope SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), telescope_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        return await _build_telescope_response(conn, row)
 
 
 # ── Telescope configuration child endpoints ───────────────────────────────────
@@ -1673,6 +1700,19 @@ async def delete_filter(filter_id: int):
         await conn.execute("UPDATE filter SET active = 0 WHERE id = ?", (filter_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/filter/{filter_id}/mine", response_model=FilterResponse)
+async def toggle_filter_mine(filter_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await conn.execute(
+            "UPDATE filter SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), filter_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        return await _build_filter_response(conn, row)
 
 
 # ── Filter passband child endpoints ───────────────────────────────────────────
@@ -2019,6 +2059,19 @@ async def delete_mount(mount_id: int):
     return {"ok": True}
 
 
+@router.post("/mount/{mount_id}/mine", response_model=MountResponse)
+async def toggle_mount_mine(mount_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "mount", mount_id, "Mount")
+        await conn.execute(
+            "UPDATE mount SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), mount_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "mount", mount_id, "Mount")
+        return await _build_mount_response(conn, row)
+
+
 # ── Focuser ───────────────────────────────────────────────────────────────────
 
 
@@ -2173,6 +2226,19 @@ async def delete_focuser(focuser_id: int):
         await conn.execute("UPDATE focuser SET active = 0 WHERE id = ?", (focuser_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/focuser/{focuser_id}/mine", response_model=FocuserResponse)
+async def toggle_focuser_mine(focuser_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "focuser", focuser_id, "Focuser")
+        await conn.execute(
+            "UPDATE focuser SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), focuser_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "focuser", focuser_id, "Focuser")
+        return await _build_focuser_response(conn, row)
 
 
 # ── Filter Wheel ──────────────────────────────────────────────────────────────
@@ -2347,6 +2413,19 @@ async def delete_filter_wheel(filter_wheel_id: int):
     return {"ok": True}
 
 
+@router.post("/filter-wheel/{filter_wheel_id}/mine", response_model=FilterWheelResponse)
+async def toggle_filter_wheel_mine(filter_wheel_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
+        await conn.execute(
+            "UPDATE filter_wheel SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), filter_wheel_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
+        return await _build_filter_wheel_response(conn, row)
+
+
 # ── OAG ───────────────────────────────────────────────────────────────────────
 
 
@@ -2479,6 +2558,19 @@ async def delete_oag(oag_id: int):
     return {"ok": True}
 
 
+@router.post("/oag/{oag_id}/mine", response_model=OagResponse)
+async def toggle_oag_mine(oag_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "oag", oag_id, "OAG")
+        await conn.execute(
+            "UPDATE oag SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), oag_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "oag", oag_id, "OAG")
+        return await _build_oag_response(conn, row)
+
+
 # ── Guide Scope ───────────────────────────────────────────────────────────────
 
 
@@ -2602,6 +2694,19 @@ async def delete_guide_scope(guide_scope_id: int):
     return {"ok": True}
 
 
+@router.post("/guide-scope/{guide_scope_id}/mine", response_model=GuideScopeResponse)
+async def toggle_guide_scope_mine(guide_scope_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
+        await conn.execute(
+            "UPDATE guide_scope SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), guide_scope_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
+        return await _build_guide_scope_response(conn, row)
+
+
 # ── Computer ──────────────────────────────────────────────────────────────────
 
 
@@ -2719,6 +2824,19 @@ async def delete_computer(computer_id: int):
         await conn.execute("UPDATE computer SET active = 0 WHERE id = ?", (computer_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/computer/{computer_id}/mine", response_model=ComputerResponse)
+async def toggle_computer_mine(computer_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "computer", computer_id, "Computer")
+        await conn.execute(
+            "UPDATE computer SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), computer_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "computer", computer_id, "Computer")
+        return await _build_computer_response(conn, row)
 
 
 # ── Software ──────────────────────────────────────────────────────────────────
@@ -2843,3 +2961,16 @@ async def delete_software(software_id: int):
         await conn.execute("UPDATE software SET active = 0 WHERE id = ?", (software_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/software/{software_id}/mine", response_model=SoftwareResponse)
+async def toggle_software_mine(software_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "software", software_id, "Software")
+        await conn.execute(
+            "UPDATE software SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), software_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "software", software_id, "Software")
+        return await _build_software_response(conn, row)

@@ -1,6 +1,13 @@
 """Pydantic models for equipment API request/response shapes."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# ── Shared ────────────────────────────────────────────────────────────────────
+
+
+class MineToggle(BaseModel):
+    is_mine: bool = Field(..., description="True to mark as mine; False to unmark")
+
 
 # ── Lookup tables ────────────────────────────────────────────────────────────
 
