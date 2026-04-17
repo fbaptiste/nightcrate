@@ -129,6 +129,7 @@ export interface TelescopeWithConfigs {
   telescope_name: string;
   manufacturer_name: string;
   aperture_mm: number;
+  is_mine: boolean;
   configs: TelescopeConfigOption[];
 }
 
@@ -142,6 +143,7 @@ export interface CameraOption {
   sensor_width_mm: number | null;
   sensor_height_mm: number | null;
   sensor_type: string;
+  is_mine: boolean;
 }
 
 export interface FilterWheelOption {
@@ -149,6 +151,7 @@ export interface FilterWheelOption {
   model_name: string;
   manufacturer_name: string;
   num_positions: number;
+  is_mine: boolean;
 }
 
 export interface FilterOption {
@@ -156,12 +159,14 @@ export interface FilterOption {
   model_name: string;
   manufacturer_name: string;
   filter_type_name: string;
+  is_mine: boolean;
 }
 
 export interface SimpleOption {
   id: number;
   model_name: string;
   manufacturer_name: string;
+  is_mine: boolean;
 }
 
 export interface GuideScopeOption extends SimpleOption {
@@ -172,6 +177,7 @@ export interface SoftwareOption {
   id: number;
   name: string;
   category: string;
+  is_mine: boolean;
 }
 
 export interface EquipmentOptions {

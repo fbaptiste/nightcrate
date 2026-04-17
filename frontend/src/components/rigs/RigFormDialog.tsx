@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
+import StarIcon from "@mui/icons-material/Star";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
@@ -31,6 +32,31 @@ import {
   type SoftwareOption,
   type TelescopeConfigOption,
 } from "@/api/rigs";
+
+// ── My Equipment virtual group helper ──────────────────────────────────────
+
+const MINE_GROUP_LABEL = "My Equipment";
+
+/**
+ * Pre-process an option list so is_mine=true items appear both in a flat
+ * "My Equipment" virtual group at the top AND in their regular group.
+ * Returns a new array with duplicates. Caller's `groupBy` must check
+ * `__mine_group` first.
+ */
+function withMineGroup<T extends { is_mine?: boolean }>(
+  options: T[],
+): (T & { __mine_group?: string })[] {
+  const result: (T & { __mine_group?: string })[] = [];
+  for (const opt of options) {
+    if (opt.is_mine) {
+      result.push({ ...opt, __mine_group: MINE_GROUP_LABEL });
+    }
+  }
+  for (const opt of options) {
+    result.push(opt);
+  }
+  return result;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -69,6 +95,8 @@ interface FlatConfigOption extends TelescopeConfigOption {
   manufacturer_name: string;
   aperture_mm: number;
   telescope_id: number;
+  is_mine: boolean;
+  __mine_group?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -176,6 +204,7 @@ export default function RigFormDialog({
           manufacturer_name: t.manufacturer_name,
           aperture_mm: t.aperture_mm,
           telescope_id: t.telescope_id,
+          is_mine: t.is_mine,
         })),
       ) ?? [],
     [options?.telescopes],
@@ -316,9 +345,9 @@ export default function RigFormDialog({
               Optical Train
             </Typography>
             <Autocomplete
-              options={telescopeConfigOptions}
+              options={withMineGroup(telescopeConfigOptions)}
               groupBy={(o) =>
-                `${o.manufacturer_name} ${o.telescope_name}`
+                o.__mine_group ?? `${o.manufacturer_name} ${o.telescope_name}`
               }
               getOptionLabel={(o: FlatConfigOption) =>
                 `${o.manufacturer_name} ${o.telescope_name} \u2014 ${o.config_name} (${o.effective_focal_length_mm}mm f/${o.effective_focal_ratio})`
@@ -335,6 +364,14 @@ export default function RigFormDialog({
                 )
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  {option.is_mine && (
+                    <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                  )}
+                  {`${option.manufacturer_name} ${option.telescope_name} \u2014 ${option.config_name} (${option.effective_focal_length_mm}mm f/${option.effective_focal_ratio})`}
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField
                   {...params}
@@ -345,9 +382,9 @@ export default function RigFormDialog({
                 />
               )}
             />
-            <Autocomplete<CameraOption>
-              options={options?.cameras ?? []}
-              groupBy={(o) => o.manufacturer_name}
+            <Autocomplete<CameraOption & { __mine_group?: string }>
+              options={withMineGroup(options?.cameras ?? [])}
+              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
               getOptionLabel={(o) =>
                 `${o.manufacturer_name} \u2014 ${o.model_name} (${o.sensor_type})`
               }
@@ -360,6 +397,14 @@ export default function RigFormDialog({
                 set("camera_id", value ? value.id : null)
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  {option.is_mine && (
+                    <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                  )}
+                  {`${option.manufacturer_name} \u2014 ${option.model_name} (${option.sensor_type})`}
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField
                   {...params}
@@ -406,9 +451,9 @@ export default function RigFormDialog({
             <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>
               Filtration
             </Typography>
-            <Autocomplete<FilterWheelOption>
-              options={options?.filter_wheels ?? []}
-              groupBy={(o) => o.manufacturer_name}
+            <Autocomplete<FilterWheelOption & { __mine_group?: string }>
+              options={withMineGroup(options?.filter_wheels ?? [])}
+              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
               getOptionLabel={(o) =>
                 `${o.manufacturer_name} \u2014 ${o.model_name} (${o.num_positions}-pos)`
               }
@@ -424,6 +469,14 @@ export default function RigFormDialog({
                 }
               }}
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  {option.is_mine && (
+                    <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                  )}
+                  {`${option.manufacturer_name} \u2014 ${option.model_name} (${option.num_positions}-pos)`}
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField {...params} label="Filter Wheel" />
               )}
@@ -439,9 +492,9 @@ export default function RigFormDialog({
             )}
 
             {!form.filter_wheel_id && (
-              <Autocomplete<FilterOption>
-                options={options?.filters ?? []}
-                groupBy={(o) => o.manufacturer_name}
+              <Autocomplete<FilterOption & { __mine_group?: string }>
+                options={withMineGroup(options?.filters ?? [])}
+                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
                 getOptionLabel={(o) =>
                   `${o.manufacturer_name} \u2014 ${o.model_name}`
                 }
@@ -454,6 +507,14 @@ export default function RigFormDialog({
                   set("single_filter_id", value ? value.id : null)
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.is_mine && (
+                      <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                    )}
+                    {`${option.manufacturer_name} \u2014 ${option.model_name}`}
+                  </li>
+                )}
                 renderInput={(params) => (
                   <TextField {...params} label="Single Filter" />
                 )}
@@ -464,9 +525,9 @@ export default function RigFormDialog({
             <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>
               Mount & Guiding
             </Typography>
-            <Autocomplete<SimpleOption>
-              options={options?.mounts ?? []}
-              groupBy={(o) => o.manufacturer_name}
+            <Autocomplete<SimpleOption & { __mine_group?: string }>
+              options={withMineGroup(options?.mounts ?? [])}
+              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
               getOptionLabel={formatSimple}
               value={
                 options?.mounts.find(
@@ -477,6 +538,14 @@ export default function RigFormDialog({
                 set("mount_id", value ? value.id : null)
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  {option.is_mine && (
+                    <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                  )}
+                  {formatSimple(option)}
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField {...params} label="Mount" />
               )}
@@ -501,9 +570,9 @@ export default function RigFormDialog({
             </Box>
 
             {form.guiding_mode === "oag" && (
-              <Autocomplete<SimpleOption>
-                options={options?.oags ?? []}
-                groupBy={(o) => o.manufacturer_name}
+              <Autocomplete<SimpleOption & { __mine_group?: string }>
+                options={withMineGroup(options?.oags ?? [])}
+                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
                 getOptionLabel={formatSimple}
                 value={
                   options?.oags.find(
@@ -514,6 +583,14 @@ export default function RigFormDialog({
                   set("oag_id", value ? value.id : null)
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.is_mine && (
+                      <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                    )}
+                    {formatSimple(option)}
+                  </li>
+                )}
                 renderInput={(params) => (
                   <TextField {...params} label="OAG" />
                 )}
@@ -521,9 +598,9 @@ export default function RigFormDialog({
             )}
 
             {form.guiding_mode === "guide_scope" && (
-              <Autocomplete<GuideScopeOption>
-                options={options?.guide_scopes ?? []}
-                groupBy={(o) => o.manufacturer_name}
+              <Autocomplete<GuideScopeOption & { __mine_group?: string }>
+                options={withMineGroup(options?.guide_scopes ?? [])}
+                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
                 getOptionLabel={formatSimple}
                 value={
                   options?.guide_scopes.find(
@@ -534,6 +611,14 @@ export default function RigFormDialog({
                   set("guide_scope_id", value ? value.id : null)
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.is_mine && (
+                      <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                    )}
+                    {formatSimple(option)}
+                  </li>
+                )}
                 renderInput={(params) => (
                   <TextField {...params} label="Guide Scope" />
                 )}
@@ -541,9 +626,9 @@ export default function RigFormDialog({
             )}
 
             {form.guiding_mode !== "none" && (
-              <Autocomplete<CameraOption>
-                options={options?.cameras ?? []}
-                groupBy={(o) => o.manufacturer_name}
+              <Autocomplete<CameraOption & { __mine_group?: string }>
+                options={withMineGroup(options?.cameras ?? [])}
+                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
                 getOptionLabel={(o) =>
                   `${o.manufacturer_name} \u2014 ${o.model_name} (${o.sensor_type})`
                 }
@@ -556,6 +641,14 @@ export default function RigFormDialog({
                   set("guide_camera_id", value ? value.id : null)
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.is_mine && (
+                      <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                    )}
+                    {`${option.manufacturer_name} \u2014 ${option.model_name} (${option.sensor_type})`}
+                  </li>
+                )}
                 renderInput={(params) => (
                   <TextField {...params} label="Guide Camera" />
                 )}
@@ -566,9 +659,9 @@ export default function RigFormDialog({
             <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>
               Peripherals
             </Typography>
-            <Autocomplete<SimpleOption>
-              options={options?.focusers ?? []}
-              groupBy={(o) => o.manufacturer_name}
+            <Autocomplete<SimpleOption & { __mine_group?: string }>
+              options={withMineGroup(options?.focusers ?? [])}
+              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
               getOptionLabel={formatSimple}
               value={
                 options?.focusers.find(
@@ -579,13 +672,21 @@ export default function RigFormDialog({
                 set("focuser_id", value ? value.id : null)
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  {option.is_mine && (
+                    <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                  )}
+                  {formatSimple(option)}
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField {...params} label="Focuser" />
               )}
             />
-            <Autocomplete<SimpleOption>
-              options={options?.computers ?? []}
-              groupBy={(o) => o.manufacturer_name}
+            <Autocomplete<SimpleOption & { __mine_group?: string }>
+              options={withMineGroup(options?.computers ?? [])}
+              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
               getOptionLabel={formatSimple}
               value={
                 options?.computers.find(
@@ -596,14 +697,22 @@ export default function RigFormDialog({
                 set("computer_id", value ? value.id : null)
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  {option.is_mine && (
+                    <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                  )}
+                  {formatSimple(option)}
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField {...params} label="Computer" />
               )}
             />
-            <Autocomplete<SoftwareOption, true>
+            <Autocomplete<SoftwareOption & { __mine_group?: string }, true>
               multiple
-              options={options?.software ?? []}
-              groupBy={(o) => o.category}
+              options={withMineGroup(options?.software ?? [])}
+              groupBy={(o) => o.__mine_group ?? o.category}
               getOptionLabel={(o) => o.name}
               value={
                 options?.software.filter((s) =>
@@ -617,6 +726,14 @@ export default function RigFormDialog({
                 )
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  {option.is_mine && (
+                    <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
+                  )}
+                  {option.name}
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField {...params} label="Software" />
               )}

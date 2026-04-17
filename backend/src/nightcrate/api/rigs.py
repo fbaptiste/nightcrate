@@ -355,12 +355,12 @@ async def get_equipment_options():
             SELECT tc.id, tc.config_name, tc.effective_focal_length_mm,
                    tc.effective_focal_ratio, tc.effective_image_circle_mm,
                    t.id AS telescope_id, t.model_name AS telescope_name,
-                   t.aperture_mm, m.name AS manufacturer_name
+                   t.aperture_mm, t.is_mine, m.name AS manufacturer_name
             FROM telescope_configuration tc
             JOIN telescope t ON t.id = tc.telescope_id
             JOIN manufacturer m ON m.id = t.manufacturer_id
             WHERE tc.active = 1 AND t.active = 1
-            ORDER BY m.name, t.model_name, tc.config_name
+            ORDER BY t.is_mine DESC, m.name, t.model_name, tc.config_name
             """
         )
         telescopes_map: dict[int, dict] = {}
@@ -373,6 +373,7 @@ async def get_equipment_options():
                     "telescope_name": d["telescope_name"],
                     "manufacturer_name": d["manufacturer_name"],
                     "aperture_mm": d["aperture_mm"],
+                    "is_mine": bool(d["is_mine"]),
                     "configs": [],
                 }
             telescopes_map[tid]["configs"].append(
@@ -391,12 +392,13 @@ async def get_equipment_options():
             """
             SELECT c.id, c.model_name, m.name AS manufacturer_name,
                    s.pixel_size_um, s.resolution_x, s.resolution_y,
-                   s.sensor_width_mm, s.sensor_height_mm, s.sensor_type
+                   s.sensor_width_mm, s.sensor_height_mm, s.sensor_type,
+                   c.is_mine
             FROM camera c
             JOIN manufacturer m ON m.id = c.manufacturer_id
             JOIN sensor s ON s.id = c.sensor_id
             WHERE c.active = 1
-            ORDER BY m.name, c.model_name
+            ORDER BY c.is_mine DESC, m.name, c.model_name
             """
         )
         cameras = [_row_to_dict(r) for r in await cam_rows.fetchall()]
@@ -405,11 +407,11 @@ async def get_equipment_options():
         fw_rows = await conn.execute(
             """
             SELECT fw.id, fw.model_name, m.name AS manufacturer_name,
-                   fw.num_positions
+                   fw.num_positions, fw.is_mine
             FROM filter_wheel fw
             JOIN manufacturer m ON m.id = fw.manufacturer_id
             WHERE fw.active = 1
-            ORDER BY m.name, fw.model_name
+            ORDER BY fw.is_mine DESC, m.name, fw.model_name
             """
         )
         filter_wheels = [_row_to_dict(r) for r in await fw_rows.fetchall()]
@@ -418,12 +420,12 @@ async def get_equipment_options():
         f_rows = await conn.execute(
             """
             SELECT f.id, f.model_name, m.name AS manufacturer_name,
-                   ft.display_name AS filter_type_name
+                   ft.display_name AS filter_type_name, f.is_mine
             FROM filter f
             JOIN manufacturer m ON m.id = f.manufacturer_id
             JOIN filter_type ft ON ft.id = f.filter_type_id
             WHERE f.active = 1
-            ORDER BY m.name, f.model_name
+            ORDER BY f.is_mine DESC, m.name, f.model_name
             """
         )
         filters = [_row_to_dict(r) for r in await f_rows.fetchall()]
@@ -431,11 +433,12 @@ async def get_equipment_options():
         # Mounts
         mt_rows = await conn.execute(
             """
-            SELECT mt.id, mt.model_name, m.name AS manufacturer_name
+            SELECT mt.id, mt.model_name, m.name AS manufacturer_name,
+                   mt.is_mine
             FROM mount mt
             JOIN manufacturer m ON m.id = mt.manufacturer_id
             WHERE mt.active = 1
-            ORDER BY m.name, mt.model_name
+            ORDER BY mt.is_mine DESC, m.name, mt.model_name
             """
         )
         mounts = [_row_to_dict(r) for r in await mt_rows.fetchall()]
@@ -443,11 +446,12 @@ async def get_equipment_options():
         # Focusers
         foc_rows = await conn.execute(
             """
-            SELECT foc.id, foc.model_name, m.name AS manufacturer_name
+            SELECT foc.id, foc.model_name, m.name AS manufacturer_name,
+                   foc.is_mine
             FROM focuser foc
             JOIN manufacturer m ON m.id = foc.manufacturer_id
             WHERE foc.active = 1
-            ORDER BY m.name, foc.model_name
+            ORDER BY foc.is_mine DESC, m.name, foc.model_name
             """
         )
         focusers = [_row_to_dict(r) for r in await foc_rows.fetchall()]
@@ -455,11 +459,12 @@ async def get_equipment_options():
         # OAGs
         oag_rows = await conn.execute(
             """
-            SELECT o.id, o.model_name, m.name AS manufacturer_name
+            SELECT o.id, o.model_name, m.name AS manufacturer_name,
+                   o.is_mine
             FROM oag o
             JOIN manufacturer m ON m.id = o.manufacturer_id
             WHERE o.active = 1
-            ORDER BY m.name, o.model_name
+            ORDER BY o.is_mine DESC, m.name, o.model_name
             """
         )
         oags = [_row_to_dict(r) for r in await oag_rows.fetchall()]
@@ -468,11 +473,11 @@ async def get_equipment_options():
         gs_rows = await conn.execute(
             """
             SELECT gs.id, gs.model_name, m.name AS manufacturer_name,
-                   gs.focal_length_mm
+                   gs.focal_length_mm, gs.is_mine
             FROM guide_scope gs
             JOIN manufacturer m ON m.id = gs.manufacturer_id
             WHERE gs.active = 1
-            ORDER BY m.name, gs.model_name
+            ORDER BY gs.is_mine DESC, m.name, gs.model_name
             """
         )
         guide_scopes = [_row_to_dict(r) for r in await gs_rows.fetchall()]
@@ -480,11 +485,12 @@ async def get_equipment_options():
         # Computers
         comp_rows = await conn.execute(
             """
-            SELECT c.id, c.model_name, m.name AS manufacturer_name
+            SELECT c.id, c.model_name, m.name AS manufacturer_name,
+                   c.is_mine
             FROM computer c
             JOIN manufacturer m ON m.id = c.manufacturer_id
             WHERE c.active = 1
-            ORDER BY m.name, c.model_name
+            ORDER BY c.is_mine DESC, m.name, c.model_name
             """
         )
         computers = [_row_to_dict(r) for r in await comp_rows.fetchall()]
@@ -492,9 +498,9 @@ async def get_equipment_options():
         # Software
         sw_rows = await conn.execute(
             """
-            SELECT id, name, category FROM software
+            SELECT id, name, category, is_mine FROM software
             WHERE active = 1
-            ORDER BY name
+            ORDER BY is_mine DESC, name
             """
         )
         software = [_row_to_dict(r) for r in await sw_rows.fetchall()]

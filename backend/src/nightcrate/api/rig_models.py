@@ -165,6 +165,7 @@ class TelescopeWithConfigs(BaseModel):
     telescope_name: str
     manufacturer_name: str
     aperture_mm: float
+    is_mine: bool
     configs: list[TelescopeConfigOption]
 
 
@@ -178,6 +179,7 @@ class CameraOption(BaseModel):
     sensor_width_mm: float | None
     sensor_height_mm: float | None
     sensor_type: str
+    is_mine: bool
 
 
 class FilterWheelOption(BaseModel):
@@ -185,6 +187,7 @@ class FilterWheelOption(BaseModel):
     model_name: str
     manufacturer_name: str
     num_positions: int
+    is_mine: bool
 
 
 class FilterOption(BaseModel):
@@ -192,24 +195,28 @@ class FilterOption(BaseModel):
     model_name: str
     manufacturer_name: str
     filter_type_name: str
+    is_mine: bool
 
 
 class MountOption(BaseModel):
     id: int
     model_name: str
     manufacturer_name: str
+    is_mine: bool
 
 
 class FocuserOption(BaseModel):
     id: int
     model_name: str
     manufacturer_name: str
+    is_mine: bool
 
 
 class OagOption(BaseModel):
     id: int
     model_name: str
     manufacturer_name: str
+    is_mine: bool
 
 
 class GuideScopeOption(BaseModel):
@@ -217,18 +224,21 @@ class GuideScopeOption(BaseModel):
     model_name: str
     manufacturer_name: str
     focal_length_mm: float | None
+    is_mine: bool
 
 
 class ComputerOption(BaseModel):
     id: int
     model_name: str
     manufacturer_name: str
+    is_mine: bool
 
 
 class SoftwareOption(BaseModel):
     id: int
     name: str
     category: str
+    is_mine: bool
 
 
 class EquipmentOptionsOut(BaseModel):
