@@ -5,8 +5,6 @@ import Collapse from "@mui/material/Collapse";
 import IconButton from "@mui/material/IconButton";
 import Link from "@mui/material/Link";
 import Slider from "@mui/material/Slider";
-import ToggleButton from "@mui/material/ToggleButton";
-import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -19,8 +17,6 @@ interface GuideSuitabilityPanelProps {
   rig: Rig;
   suitability: GuideSuitability | null;
   mainImageScale: number;
-  guideBinning: number;
-  onBinningChange: (b: number) => void;
   centroidAccuracy: number;
   onCentroidChange: (v: number) => void;
 }
@@ -45,38 +41,10 @@ export default function GuideSuitabilityPanel({
   rig,
   suitability,
   mainImageScale,
-  guideBinning,
-  onBinningChange,
   centroidAccuracy,
   onCentroidChange,
 }: GuideSuitabilityPanelProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
-
-  const header = (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 0.5 }}>
-      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-        Guide System
-      </Typography>
-      <Box sx={{ flex: 1 }} />
-      <Typography variant="caption" color="text.secondary">
-        Binning
-      </Typography>
-      <ToggleButtonGroup
-        value={guideBinning}
-        exclusive
-        size="small"
-        onChange={(_, v) => {
-          if (v !== null) onBinningChange(v);
-        }}
-      >
-        {[1, 2, 3, 4].map((b) => (
-          <ToggleButton key={b} value={b} sx={{ px: 1.5, py: 0.25 }}>
-            {b}&times;{b}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
-    </Box>
-  );
 
   // Empty-state paths: no guide camera at all, or assigned without a path,
   // or guide scope missing focal length.
@@ -90,8 +58,7 @@ export default function GuideSuitabilityPanel({
       ? "Assign a guide scope or OAG to compute guide suitability."
       : `Guide scope "${rig.guide_scope_name ?? "?"}" is missing a focal length. Edit the equipment record to add one.`;
     return (
-      <Box sx={{ mt: 2 }}>
-        {header}
+      <Box>
         <Typography
           variant="caption"
           color="text.secondary"
@@ -117,9 +84,7 @@ export default function GuideSuitabilityPanel({
   const focalLengthSuffix = suitability.mode === "oag" ? " (from main scope)" : "";
 
   return (
-    <Box sx={{ mt: 2 }}>
-      {header}
-
+    <Box>
       <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
         {modeLabel}
       </Typography>

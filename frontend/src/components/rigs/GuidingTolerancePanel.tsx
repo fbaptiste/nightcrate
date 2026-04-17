@@ -28,10 +28,7 @@ export default function GuidingTolerancePanel({
   const pct = (v: number) => `${(Math.min(v, xMax) / xMax) * 100}%`;
 
   return (
-    <Box sx={{ mt: 3 }}>
-      <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.25 }}>
-        Guiding Tolerance
-      </Typography>
+    <Box>
       <Typography
         variant="caption"
         color="text.secondary"
