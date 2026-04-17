@@ -120,6 +120,7 @@ export interface Rig {
   name: string;
   description: string | null;
   telescope_configuration_id: number;
+  telescope_id: number;
   telescope_name: string;
   telescope_config_name: string;
   effective_focal_length_mm: number;

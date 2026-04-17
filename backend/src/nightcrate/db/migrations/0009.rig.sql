@@ -78,6 +78,7 @@ SELECT
     r.updated_at,
     -- OTA
     r.telescope_configuration_id,
+    t.id AS telescope_id,
     t.model_name AS telescope_name,
     tc.config_name AS telescope_config_name,
     tc.effective_focal_length_mm,

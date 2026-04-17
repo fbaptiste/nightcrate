@@ -546,6 +546,7 @@ async def _build_rig_response(
         "name": rig_row["name"],
         "description": rig_row.get("description"),
         "telescope_configuration_id": rig_row["telescope_configuration_id"],
+        "telescope_id": rig_row["telescope_id"],
         "telescope_name": rig_row["telescope_name"],
         "telescope_config_name": rig_row["telescope_config_name"],
         "effective_focal_length_mm": rig_row["effective_focal_length_mm"],

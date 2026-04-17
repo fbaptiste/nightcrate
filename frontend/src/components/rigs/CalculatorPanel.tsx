@@ -36,7 +36,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   const [calculatorData, setCalculatorData] = useState<RigCalculators>(
     rig.calculators,
   );
-  const [activeTab, setActiveTab] = useState<TabKey>("imaging");
+  const [activeTab, setActiveTab] = useState<TabKey>("equipment");
 
   const { data: locations = [] } = useQuery<Location[]>({
     queryKey: ["locations"],

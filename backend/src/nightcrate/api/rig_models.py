@@ -172,6 +172,7 @@ class RigOut(BaseModel):
     name: str
     description: str | None
     telescope_configuration_id: int
+    telescope_id: int
     telescope_name: str
     telescope_config_name: str
     effective_focal_length_mm: float
