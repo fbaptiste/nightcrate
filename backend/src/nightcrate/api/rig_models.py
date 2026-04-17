@@ -85,6 +85,26 @@ class SamplingAssessment(BaseModel):
     binning_recommendations: dict[int, str]
 
 
+class GuideSuitability(BaseModel):
+    mode: str  # "guide_scope" | "oag"
+    guide_focal_length_mm: float
+    guide_pixel_size_um: float
+    guide_binning: int
+    effective_guide_pixel_size_um: float
+    unbinned_guide_scale_arcsec_per_pixel: float
+    guide_scale_arcsec_per_pixel: float
+    guide_fov_width_arcmin: float
+    guide_fov_height_arcmin: float
+    centroid_accuracy_pixels: float
+    effective_guide_precision_arcsec: float
+    g_ratio: float
+    effective_error_main_pixels: float
+    rating: str  # "excellent" | "good" | "marginal" | "poor"
+    rating_reason: str  # "ratio" | "scale_cap"
+    recommendation: str
+    caveat: str
+
+
 class RigCalculators(BaseModel):
     image_scale_arcsec_per_pixel: float
     image_scale_arcsec_per_pixel_binned: dict[int, float]
@@ -98,8 +118,7 @@ class RigCalculators(BaseModel):
     image_circle_mm: float | None
     sensor_coverage_pct: float | None
     sampling_assessment: SamplingAssessment
-    guide_image_scale_arcsec_per_pixel: float | None = None
-    guide_field_of_view_arcmin: tuple[float, float] | None = None
+    guide_suitability: GuideSuitability | None = None
 
 
 class RigOut(BaseModel):

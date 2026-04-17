@@ -232,33 +232,225 @@ def test_resolve_seeing_default():
     assert name is None
 
 
-# -- Guide System --------------------------------------------------------------
+# -- Guide Suitability ---------------------------------------------------------
 
 
-def test_guide_calculations_askar_v():
-    from nightcrate.services.rig_calculators import compute_guide_metrics
+def _compute_gs(**overrides):
+    """Build a compute_guide_suitability call with Askar V guide-scope defaults."""
+    from nightcrate.services.rig_calculators import compute_guide_suitability
 
-    scale, fov = compute_guide_metrics(
+    kwargs = dict(
+        guide_scope_id=1,
+        oag_id=None,
+        guide_scope_focal_length_mm=208.0,
+        telescope_effective_focal_length_mm=360.0,
         guide_pixel_size_um=2.4,
-        guide_focal_length_mm=208.0,
         guide_resolution_x=3096,
         guide_resolution_y=2080,
+        main_pixel_size_um=3.76,
+        main_focal_length_mm=360.0,
+        guide_binning=1,
+        centroid_accuracy_pixels=0.2,
     )
-    assert scale == pytest.approx(2.380, abs=0.005)
-    assert fov[0] == pytest.approx(122.8, abs=1.0)
-    assert fov[1] == pytest.approx(82.5, abs=1.0)
+    kwargs.update(overrides)
+    return compute_guide_suitability(**kwargs)
 
 
-def test_guide_calculations_null_focal_length():
-    from nightcrate.services.rig_calculators import compute_guide_metrics
+def test_guide_suitability_askar_v_default():
+    """Spec §6.2 — Askar V guide-scope, default centroid, binning=1."""
+    gs = _compute_gs()
+    assert gs is not None
+    assert gs.mode == "guide_scope"
+    assert gs.guide_focal_length_mm == 208.0
+    assert gs.guide_scale_arcsec_per_pixel == pytest.approx(2.380, abs=0.005)
+    assert gs.unbinned_guide_scale_arcsec_per_pixel == pytest.approx(2.380, abs=0.005)
+    assert gs.guide_fov_width_arcmin == pytest.approx(122.8, abs=1.0)
+    assert gs.guide_fov_height_arcmin == pytest.approx(82.5, abs=1.0)
+    assert gs.effective_guide_precision_arcsec == pytest.approx(0.476, abs=0.005)
+    assert gs.g_ratio == pytest.approx(1.104, abs=0.005)
+    assert gs.effective_error_main_pixels == pytest.approx(0.221, abs=0.005)
+    assert gs.rating == "excellent"
+    assert gs.rating_reason == "ratio"
+    assert "differential flexure" in gs.caveat
 
-    result = compute_guide_metrics(
-        guide_pixel_size_um=2.4,
-        guide_focal_length_mm=None,
-        guide_resolution_x=3096,
-        guide_resolution_y=2080,
+
+def test_guide_suitability_c11_oag():
+    """Spec §6.1 — C11 OAG mode, guide FL from main scope."""
+    gs = _compute_gs(
+        guide_scope_id=None,
+        oag_id=1,
+        guide_scope_focal_length_mm=None,
+        telescope_effective_focal_length_mm=1960.0,
+        main_pixel_size_um=3.76,
+        main_focal_length_mm=1960.0,
     )
-    assert result is None
+    assert gs is not None
+    assert gs.mode == "oag"
+    assert gs.guide_focal_length_mm == 1960.0
+    assert gs.guide_scale_arcsec_per_pixel == pytest.approx(0.253, abs=0.002)
+    assert gs.effective_error_main_pixels == pytest.approx(0.128, abs=0.005)
+    assert gs.rating == "excellent"
+    assert "off-axis" in gs.caveat
+
+
+def test_guide_suitability_tiny_30mm_counter_example():
+    """Spec §6.3 — 30mm f/4 mini scope + ASI 120MM on C11: both cap AND ratio fail."""
+    gs = _compute_gs(
+        guide_scope_focal_length_mm=120.0,
+        telescope_effective_focal_length_mm=1960.0,
+        guide_pixel_size_um=3.75,
+        guide_resolution_x=1280,
+        guide_resolution_y=960,
+        main_pixel_size_um=3.76,
+        main_focal_length_mm=1960.0,
+    )
+    assert gs is not None
+    assert gs.guide_scale_arcsec_per_pixel == pytest.approx(6.446, abs=0.01)
+    assert gs.effective_error_main_pixels == pytest.approx(3.255, abs=0.01)
+    assert gs.rating == "poor"
+    # Both fail — cap wins reason.
+    assert gs.rating_reason == "scale_cap"
+
+
+def test_guide_suitability_50mm_borderline():
+    """Spec §6.4 — 50mm f/3.2 guide scope: fails ratio but passes cap."""
+    gs = _compute_gs(
+        guide_scope_focal_length_mm=160.0,
+        telescope_effective_focal_length_mm=1960.0,
+        guide_pixel_size_um=3.75,
+        guide_resolution_x=1280,
+        guide_resolution_y=960,
+        main_pixel_size_um=3.76,
+        main_focal_length_mm=1960.0,
+    )
+    assert gs is not None
+    assert gs.guide_scale_arcsec_per_pixel == pytest.approx(4.834, abs=0.01)
+    assert gs.effective_error_main_pixels == pytest.approx(2.442, abs=0.01)
+    assert gs.rating == "poor"
+    assert gs.rating_reason == "ratio"
+
+
+def test_guide_suitability_binning_2x_askar_v():
+    """Spec §6.5 — Askar V @ 2x2 binning: still excellent but reduced headroom."""
+    gs = _compute_gs(guide_binning=2)
+    assert gs is not None
+    assert gs.guide_binning == 2
+    assert gs.effective_guide_pixel_size_um == pytest.approx(4.8, abs=0.001)
+    # Binned scale is 2x unbinned.
+    assert gs.guide_scale_arcsec_per_pixel == pytest.approx(4.760, abs=0.01)
+    assert gs.unbinned_guide_scale_arcsec_per_pixel == pytest.approx(2.380, abs=0.005)
+    assert gs.g_ratio == pytest.approx(2.209, abs=0.01)
+    assert gs.effective_error_main_pixels == pytest.approx(0.442, abs=0.01)
+    assert gs.rating == "excellent"
+    assert gs.rating_reason == "ratio"
+
+
+def test_guide_suitability_binning_4x_triggers_scale_cap():
+    """Spec §6.5 — Askar V @ 4x4 binning: unbinned passes but binned exceeds cap."""
+    gs = _compute_gs(guide_binning=4)
+    assert gs is not None
+    assert gs.guide_scale_arcsec_per_pixel == pytest.approx(9.520, abs=0.02)
+    # Even though ratio would compute, the cap forces "poor".
+    assert gs.rating == "poor"
+    assert gs.rating_reason == "scale_cap"
+
+
+def test_guide_suitability_binning_fov_unchanged():
+    """Binning must not affect FOV (physical sensor dims are the same)."""
+    baseline = _compute_gs()
+    assert baseline is not None
+    for binning in (1, 2, 3, 4):
+        gs = _compute_gs(guide_binning=binning)
+        assert gs is not None
+        assert gs.guide_fov_width_arcmin == pytest.approx(
+            baseline.guide_fov_width_arcmin, abs=0.001
+        )
+        assert gs.guide_fov_height_arcmin == pytest.approx(
+            baseline.guide_fov_height_arcmin, abs=0.001
+        )
+
+
+def test_guide_suitability_centroid_accuracy_scales_linearly():
+    """Spec §6.6 — halving centroid halves effective precision and error."""
+    gs_default = _compute_gs(centroid_accuracy_pixels=0.2)
+    gs_tight = _compute_gs(centroid_accuracy_pixels=0.1)
+    gs_loose = _compute_gs(centroid_accuracy_pixels=0.4)
+    assert gs_default is not None and gs_tight is not None and gs_loose is not None
+    # Effective precision scales with centroid accuracy.
+    assert gs_tight.effective_guide_precision_arcsec == pytest.approx(
+        gs_default.effective_guide_precision_arcsec / 2.0, abs=0.005
+    )
+    assert gs_loose.effective_guide_precision_arcsec == pytest.approx(
+        gs_default.effective_guide_precision_arcsec * 2.0, abs=0.01
+    )
+    # g_ratio is centroid-invariant; only effective_error_main_pixels scales.
+    assert gs_tight.g_ratio == pytest.approx(gs_default.g_ratio, abs=0.001)
+    assert gs_loose.effective_error_main_pixels == pytest.approx(
+        gs_default.effective_error_main_pixels * 2.0, abs=0.01
+    )
+
+
+def test_guide_suitability_combined_binning_and_centroid():
+    """Spec §6.7 — binning=2 + centroid=0.3 drops Askar V from excellent to good."""
+    gs = _compute_gs(guide_binning=2, centroid_accuracy_pixels=0.3)
+    assert gs is not None
+    assert gs.guide_scale_arcsec_per_pixel == pytest.approx(4.760, abs=0.01)
+    assert gs.effective_guide_precision_arcsec == pytest.approx(1.428, abs=0.01)
+    assert gs.effective_error_main_pixels == pytest.approx(0.663, abs=0.005)
+    assert gs.rating == "good"
+
+
+@pytest.mark.parametrize(
+    "effective_error,expected_rating",
+    [
+        (0.5, "excellent"),
+        (0.8, "good"),
+        (1.1, "marginal"),
+        (1.5, "poor"),
+    ],
+)
+def test_guide_suitability_rating_bands(effective_error, expected_rating):
+    """Directly exercise each rating band via computed effective error values."""
+    # Synthesize inputs that produce the target effective_error_main_pixels.
+    # centroid = 0.2 → g_ratio = effective_error / 0.2
+    # Fix main_scale = 1.0 → guide_scale = g_ratio.
+    target_g_ratio = effective_error / 0.2
+    main_pixel_size = 3.76
+    main_fl = (main_pixel_size / 1.0) * 206.265  # main_scale = 1.0"/px
+    guide_scale_target = target_g_ratio  # since main_scale = 1.0
+    guide_pixel_size = 2.4
+    guide_fl = (guide_pixel_size / guide_scale_target) * 206.265
+
+    gs = _compute_gs(
+        guide_scope_focal_length_mm=guide_fl,
+        guide_pixel_size_um=guide_pixel_size,
+        main_pixel_size_um=main_pixel_size,
+        main_focal_length_mm=main_fl,
+    )
+    assert gs is not None
+    assert gs.effective_error_main_pixels == pytest.approx(effective_error, abs=0.001)
+    assert gs.rating == expected_rating
+
+
+def test_guide_suitability_no_guide_camera_returns_none():
+    gs = _compute_gs(guide_pixel_size_um=None, guide_resolution_x=None, guide_resolution_y=None)
+    assert gs is None
+
+
+def test_guide_suitability_no_optical_path_returns_none():
+    """Guide camera with no guide scope or OAG."""
+    gs = _compute_gs(
+        guide_scope_id=None,
+        oag_id=None,
+        guide_scope_focal_length_mm=None,
+    )
+    assert gs is None
+
+
+def test_guide_suitability_missing_guide_scope_focal_length_returns_none():
+    """Guide scope assigned but focal_length_mm is NULL."""
+    gs = _compute_gs(guide_scope_focal_length_mm=None)
+    assert gs is None
 
 
 # -- Full Calculator -----------------------------------------------------------
@@ -286,3 +478,37 @@ def test_full_calculators_c11():
     assert result["field_of_view_deg"][0] == pytest.approx(0.688, abs=0.002)
     assert result["dawes_limit_arcsec"] == pytest.approx(0.414, abs=0.001)
     assert result["sampling_assessment"]["assessment"] == "oversampled"
+    # No guide camera → guide_suitability is None.
+    assert result["guide_suitability"] is None
+
+
+def test_full_calculators_c11_with_oag():
+    """Guide suitability surfaces through the full calculator when guide data provided."""
+    from nightcrate.services.rig_calculators import compute_rig_calculators
+
+    result = compute_rig_calculators(
+        pixel_size_um=3.76,
+        focal_length_mm=1960.0,
+        focal_ratio=7.0,
+        aperture_mm=280.0,
+        resolution_x=6248,
+        resolution_y=4176,
+        sensor_width_mm=23.5,
+        sensor_height_mm=15.7,
+        image_circle_mm=None,
+        seeing_fwhm_low=2.0,
+        seeing_fwhm_high=4.0,
+        seeing_source="location",
+        seeing_location_name="Backyard Observatory",
+        guide_scope_id=None,
+        oag_id=1,
+        guide_pixel_size_um=2.4,
+        guide_focal_length_mm=None,  # OAG uses main FL
+        guide_resolution_x=3096,
+        guide_resolution_y=2080,
+    )
+    gs = result["guide_suitability"]
+    assert gs is not None
+    assert gs["mode"] == "oag"
+    assert gs["rating"] == "excellent"
+    assert gs["guide_focal_length_mm"] == 1960.0

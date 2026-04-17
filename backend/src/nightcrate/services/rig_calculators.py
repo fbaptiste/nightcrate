@@ -24,6 +24,27 @@ _RAD_TO_ARCSEC = 206.265  # (180/pi) * 3600
 _DEFAULT_SEEING_LOW = 2.0
 _DEFAULT_SEEING_HIGH = 4.0
 
+# Guide suitability constants.
+#
+# The 6"/pixel hard cap is a practical PHD2 guiding limit: beyond this,
+# guide star centroiding fails regardless of how favorable the G-ratio is.
+GUIDE_SCALE_HARD_CAP_ARCSEC = 6.0
+
+DEFAULT_CENTROID_ACCURACY_PIXELS = 0.2
+DEFAULT_GUIDE_BINNING = 1
+MIN_GUIDE_BINNING = 1
+MAX_GUIDE_BINNING = 4
+
+# Rating thresholds keyed on effective_error_main_pixels (guide error
+# expressed as main-camera pixels, with the current centroid accuracy).
+# The first band whose threshold is >= error_main_px wins.
+_GUIDE_RATING_BANDS: tuple[tuple[str, float], ...] = (
+    ("excellent", 0.6),
+    ("good", 1.0),
+    ("marginal", 1.2),
+)
+# Anything above the final threshold rates as "poor".
+
 
 # ---------------------------------------------------------------------------
 # Image Scale
@@ -277,31 +298,186 @@ def assess_sampling(
 
 
 # ---------------------------------------------------------------------------
-# Guide System
+# Guide Suitability
 # ---------------------------------------------------------------------------
 
 
-def compute_guide_metrics(
-    guide_pixel_size_um: float,
-    guide_focal_length_mm: float | None,
-    guide_resolution_x: int,
-    guide_resolution_y: int,
-) -> tuple[float, tuple[float, float]] | None:
-    """Compute guide camera image scale and FOV.
+@dataclass
+class GuideSuitability:
+    """Result of a guide-system suitability assessment."""
 
-    Returns (scale_arcsec_per_pixel, (fov_width_arcmin, fov_height_arcmin))
-    or None if guide focal length is not available.
+    mode: str  # "guide_scope" | "oag"
+    guide_focal_length_mm: float
+    guide_pixel_size_um: float  # native (unbinned)
+    guide_binning: int
+    effective_guide_pixel_size_um: float  # pixel_size * binning
+    unbinned_guide_scale_arcsec_per_pixel: float
+    guide_scale_arcsec_per_pixel: float  # binned
+    guide_fov_width_arcmin: float  # unchanged by binning
+    guide_fov_height_arcmin: float  # unchanged by binning
+    centroid_accuracy_pixels: float
+    effective_guide_precision_arcsec: float
+    g_ratio: float
+    effective_error_main_pixels: float
+    rating: str  # "excellent" | "good" | "marginal" | "poor"
+    rating_reason: str  # "ratio" | "scale_cap"
+    recommendation: str
+    caveat: str
+
+
+def _classify_guide_rating(effective_error_main_pixels: float) -> str:
+    """Classify effective guide error (in main pixels) against rating bands."""
+    for rating, threshold in _GUIDE_RATING_BANDS:
+        if effective_error_main_pixels <= threshold:
+            return rating
+    return "poor"
+
+
+def _build_guide_recommendation(
+    rating: str,
+    rating_reason: str,
+    guide_scale_arcsec_per_pixel: float,
+    effective_guide_precision_arcsec: float,
+    effective_error_main_pixels: float,
+) -> str:
+    """Build a human-readable recommendation for a guide suitability rating."""
+    if rating_reason == "scale_cap":
+        return (
+            f"Guide scale is {guide_scale_arcsec_per_pixel:.2f}{_ARCSEC}/pixel "
+            f"{_EMDASH} coarser than the practical limit of "
+            f"{GUIDE_SCALE_HARD_CAP_ARCSEC:.0f}{_ARCSEC}/pixel for reliable PHD2 guiding. "
+            f"Increase guide focal length or use a smaller-pixel guide camera."
+        )
+
+    precision_main_px = f"{effective_error_main_pixels:.2f} main-camera pixels"
+    precision_arcsec = f"{effective_guide_precision_arcsec:.2f}{_ARCSEC}"
+
+    if rating == "excellent":
+        return (
+            f"Guide precision of {precision_arcsec} is {precision_main_px} "
+            f"{_EMDASH} guide errors will be well below your imaging resolution."
+        )
+    if rating == "good":
+        return (
+            f"Guide precision of {precision_arcsec} is {precision_main_px} "
+            f"{_EMDASH} within the standard guideline of \u22641 main pixel."
+        )
+    if rating == "marginal":
+        return (
+            f"Guide precision of {precision_arcsec} is {precision_main_px} "
+            f"{_EMDASH} borderline; tight guiding may be difficult on high-resolution "
+            f"targets. Consider a longer guide focal length or smaller-pixel guide camera."
+        )
+    # poor (ratio-driven)
+    return (
+        f"Guide precision of {precision_arcsec} is {precision_main_px} "
+        f"{_EMDASH} guide errors will likely show as elongated stars. "
+        f"Increase guide focal length, use a guide camera with smaller pixels, "
+        f"or switch to OAG."
+    )
+
+
+_CAVEAT_GUIDE_SCOPE = (
+    "Note: guide-scope setups are subject to differential flexure between "
+    "the guide scope and main scope; even an excellent rating cannot rule "
+    "this out."
+)
+_CAVEAT_OAG = (
+    "Note: OAG eliminates differential flexure but guide stars are sampled "
+    "off-axis, where star quality may be lower than on-axis."
+)
+
+
+def compute_guide_suitability(
+    guide_scope_id: int | None,
+    oag_id: int | None,
+    guide_scope_focal_length_mm: float | None,
+    telescope_effective_focal_length_mm: float,
+    guide_pixel_size_um: float | None,
+    guide_resolution_x: int | None,
+    guide_resolution_y: int | None,
+    main_pixel_size_um: float,
+    main_focal_length_mm: float,
+    guide_binning: int = DEFAULT_GUIDE_BINNING,
+    centroid_accuracy_pixels: float = DEFAULT_CENTROID_ACCURACY_PIXELS,
+) -> GuideSuitability | None:
+    """Compute guide suitability for guide-scope or OAG mode.
+
+    Returns None when no guide system can be evaluated: missing guide
+    camera data, missing optical path, or a guide-scope path with no
+    focal length on file.
     """
-    if guide_focal_length_mm is None:
+    # Must have guide camera data.
+    if guide_pixel_size_um is None or guide_resolution_x is None or guide_resolution_y is None:
         return None
 
-    scale = compute_image_scale(guide_pixel_size_um, guide_focal_length_mm)
+    # Mode resolution and focal-length source.
+    if guide_scope_id is not None:
+        mode = "guide_scope"
+        guide_focal_length_mm = guide_scope_focal_length_mm
+    elif oag_id is not None:
+        mode = "oag"
+        guide_focal_length_mm = telescope_effective_focal_length_mm
+    else:
+        return None
 
-    # FOV in arcminutes: (pixels * scale_arcsec) / 60
-    fov_w = (guide_resolution_x * scale) / 60.0
-    fov_h = (guide_resolution_y * scale) / 60.0
+    if guide_focal_length_mm is None:
+        # Guide-scope path with no focal length on file.
+        return None
 
-    return scale, (fov_w, fov_h)
+    effective_guide_pixel_size_um = guide_pixel_size_um * guide_binning
+
+    unbinned_guide_scale = compute_image_scale(guide_pixel_size_um, guide_focal_length_mm)
+    guide_scale = compute_image_scale(effective_guide_pixel_size_um, guide_focal_length_mm)
+
+    # FOV uses unbinned dimensions: physical sensor is the same at any binning.
+    fov_w_arcmin = (guide_resolution_x * unbinned_guide_scale) / 60.0
+    fov_h_arcmin = (guide_resolution_y * unbinned_guide_scale) / 60.0
+
+    main_scale = compute_image_scale(main_pixel_size_um, main_focal_length_mm)
+
+    effective_guide_precision_arcsec = guide_scale * centroid_accuracy_pixels
+    g_ratio = guide_scale / main_scale
+    effective_error_main_pixels = g_ratio * centroid_accuracy_pixels
+
+    # Rating: worst of G-ratio band and absolute scale cap. Cap wins when both fail.
+    ratio_rating = _classify_guide_rating(effective_error_main_pixels)
+    cap_exceeded = guide_scale > GUIDE_SCALE_HARD_CAP_ARCSEC
+    if cap_exceeded:
+        rating = "poor"
+        rating_reason = "scale_cap"
+    else:
+        rating = ratio_rating
+        rating_reason = "ratio"
+
+    recommendation = _build_guide_recommendation(
+        rating,
+        rating_reason,
+        guide_scale,
+        effective_guide_precision_arcsec,
+        effective_error_main_pixels,
+    )
+    caveat = _CAVEAT_GUIDE_SCOPE if mode == "guide_scope" else _CAVEAT_OAG
+
+    return GuideSuitability(
+        mode=mode,
+        guide_focal_length_mm=guide_focal_length_mm,
+        guide_pixel_size_um=guide_pixel_size_um,
+        guide_binning=guide_binning,
+        effective_guide_pixel_size_um=effective_guide_pixel_size_um,
+        unbinned_guide_scale_arcsec_per_pixel=unbinned_guide_scale,
+        guide_scale_arcsec_per_pixel=guide_scale,
+        guide_fov_width_arcmin=fov_w_arcmin,
+        guide_fov_height_arcmin=fov_h_arcmin,
+        centroid_accuracy_pixels=centroid_accuracy_pixels,
+        effective_guide_precision_arcsec=effective_guide_precision_arcsec,
+        g_ratio=g_ratio,
+        effective_error_main_pixels=effective_error_main_pixels,
+        rating=rating,
+        rating_reason=rating_reason,
+        recommendation=recommendation,
+        caveat=caveat,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -323,10 +499,14 @@ def compute_rig_calculators(
     seeing_fwhm_high: float,
     seeing_source: str,
     seeing_location_name: str | None = None,
+    guide_scope_id: int | None = None,
+    oag_id: int | None = None,
     guide_pixel_size_um: float | None = None,
     guide_focal_length_mm: float | None = None,
     guide_resolution_x: int | None = None,
     guide_resolution_y: int | None = None,
+    guide_binning: int = DEFAULT_GUIDE_BINNING,
+    centroid_accuracy_pixels: float = DEFAULT_CENTROID_ACCURACY_PIXELS,
 ) -> dict:
     """Assemble all optical calculator results into a single dict.
 
@@ -366,22 +546,41 @@ def compute_rig_calculators(
         seeing_location_name,
     )
 
-    # Guide system (optional).
-    guide_scale = None
-    guide_fov = None
-    if (
-        guide_pixel_size_um is not None
-        and guide_resolution_x is not None
-        and guide_resolution_y is not None
-    ):
-        guide_result = compute_guide_metrics(
-            guide_pixel_size_um,
-            guide_focal_length_mm,
-            guide_resolution_x,
-            guide_resolution_y,
-        )
-        if guide_result is not None:
-            guide_scale, guide_fov = guide_result
+    guide = compute_guide_suitability(
+        guide_scope_id=guide_scope_id,
+        oag_id=oag_id,
+        guide_scope_focal_length_mm=guide_focal_length_mm,
+        telescope_effective_focal_length_mm=focal_length_mm,
+        guide_pixel_size_um=guide_pixel_size_um,
+        guide_resolution_x=guide_resolution_x,
+        guide_resolution_y=guide_resolution_y,
+        main_pixel_size_um=pixel_size_um,
+        main_focal_length_mm=focal_length_mm,
+        guide_binning=guide_binning,
+        centroid_accuracy_pixels=centroid_accuracy_pixels,
+    )
+
+    guide_dict = None
+    if guide is not None:
+        guide_dict = {
+            "mode": guide.mode,
+            "guide_focal_length_mm": guide.guide_focal_length_mm,
+            "guide_pixel_size_um": guide.guide_pixel_size_um,
+            "guide_binning": guide.guide_binning,
+            "effective_guide_pixel_size_um": guide.effective_guide_pixel_size_um,
+            "unbinned_guide_scale_arcsec_per_pixel": guide.unbinned_guide_scale_arcsec_per_pixel,
+            "guide_scale_arcsec_per_pixel": guide.guide_scale_arcsec_per_pixel,
+            "guide_fov_width_arcmin": guide.guide_fov_width_arcmin,
+            "guide_fov_height_arcmin": guide.guide_fov_height_arcmin,
+            "centroid_accuracy_pixels": guide.centroid_accuracy_pixels,
+            "effective_guide_precision_arcsec": guide.effective_guide_precision_arcsec,
+            "g_ratio": guide.g_ratio,
+            "effective_error_main_pixels": guide.effective_error_main_pixels,
+            "rating": guide.rating,
+            "rating_reason": guide.rating_reason,
+            "recommendation": guide.recommendation,
+            "caveat": guide.caveat,
+        }
 
     return {
         "image_scale_arcsec_per_pixel": image_scale,
@@ -405,6 +604,5 @@ def compute_rig_calculators(
             "recommendation": sampling.recommendation,
             "binning_recommendations": sampling.binning_recommendations,
         },
-        "guide_image_scale_arcsec_per_pixel": guide_scale,
-        "guide_field_of_view_arcmin": guide_fov,
+        "guide_suitability": guide_dict,
     }

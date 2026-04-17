@@ -459,3 +459,124 @@ async def test_calculator_with_seeing_override(client, equipment):
     data = resp.json()
     assert data["sampling_assessment"]["seeing_source"] == "override"
     assert data["sampling_assessment"]["seeing_fwhm_low"] == 1.0
+
+
+@pytest.mark.anyio
+async def test_calculator_guide_suitability_guide_scope_mode(client, equipment):
+    """Rig with guide scope + guide camera surfaces guide_suitability."""
+    payload = _rig_payload(
+        equipment,
+        guide_scope_id=equipment["guide_scope_id"],
+        guide_camera_id=equipment["guide_camera_id"],
+    )
+    create_resp = await client.post("/api/rigs", json=payload)
+    rig_id = create_resp.json()["id"]
+
+    resp = await client.get(f"/api/rigs/{rig_id}/calculators")
+    assert resp.status_code == 200
+    gs = resp.json()["guide_suitability"]
+    assert gs is not None
+    assert gs["mode"] == "guide_scope"
+    assert gs["guide_binning"] == 1
+    assert gs["centroid_accuracy_pixels"] == pytest.approx(0.2, abs=0.001)
+
+
+@pytest.mark.anyio
+async def test_calculator_guide_suitability_binning_param(client, equipment):
+    """guide_binning query param propagates through to guide_suitability."""
+    payload = _rig_payload(
+        equipment,
+        guide_scope_id=equipment["guide_scope_id"],
+        guide_camera_id=equipment["guide_camera_id"],
+    )
+    create_resp = await client.post("/api/rigs", json=payload)
+    rig_id = create_resp.json()["id"]
+
+    resp = await client.get(
+        f"/api/rigs/{rig_id}/calculators?guide_binning=2&centroid_accuracy_pixels=0.3"
+    )
+    assert resp.status_code == 200
+    gs = resp.json()["guide_suitability"]
+    assert gs["guide_binning"] == 2
+    assert gs["centroid_accuracy_pixels"] == pytest.approx(0.3, abs=0.001)
+    # Binned scale = 2 * unbinned.
+    assert gs["guide_scale_arcsec_per_pixel"] == pytest.approx(
+        2 * gs["unbinned_guide_scale_arcsec_per_pixel"], abs=0.001
+    )
+
+
+@pytest.mark.anyio
+async def test_calculator_guide_binning_validation(client, equipment):
+    create_resp = await client.post("/api/rigs", json=_rig_payload(equipment))
+    rig_id = create_resp.json()["id"]
+    resp = await client.get(f"/api/rigs/{rig_id}/calculators?guide_binning=5")
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_calculator_centroid_accuracy_validation(client, equipment):
+    create_resp = await client.post("/api/rigs", json=_rig_payload(equipment))
+    rig_id = create_resp.json()["id"]
+    resp = await client.get(f"/api/rigs/{rig_id}/calculators?centroid_accuracy_pixels=0.8")
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_calculator_guide_suitability_none_without_guide_camera(client, equipment):
+    """No guide camera → guide_suitability is null."""
+    create_resp = await client.post("/api/rigs", json=_rig_payload(equipment))
+    rig_id = create_resp.json()["id"]
+
+    resp = await client.get(f"/api/rigs/{rig_id}/calculators")
+    assert resp.status_code == 200
+    assert resp.json()["guide_suitability"] is None
+
+
+@pytest.mark.anyio
+async def test_warning_guide_camera_without_path(client, equipment):
+    """Guide camera assigned with no guide scope or OAG emits a warning."""
+    payload = _rig_payload(
+        equipment,
+        guide_camera_id=equipment["guide_camera_id"],
+        # No guide_scope_id and no oag_id.
+    )
+    resp = await client.post("/api/rigs", json=payload)
+    assert resp.status_code == 201
+    warnings = resp.json()["warnings"]
+    assert any(
+        w["field"] == "guide_camera_id" and "no guide scope or OAG" in w["message"]
+        for w in warnings
+    )
+
+
+@pytest.mark.anyio
+async def test_warning_guide_scope_missing_focal_length(client, equipment):
+    """Guide scope whose focal_length_mm is NULL emits a warning."""
+    # Insert a guide scope with NULL focal length.
+    async with get_db() as conn:
+        row = await conn.execute("SELECT manufacturer_id FROM guide_scope LIMIT 1")
+        mfr_id = (await row.fetchone())[0]
+        await conn.execute(
+            "INSERT INTO guide_scope (manufacturer_id, model_name, aperture_mm, "
+            "focal_length_mm, active, source) "
+            "VALUES (?, 'Test No FL', 50.0, NULL, 1, 'user')",
+            (mfr_id,),
+        )
+        await conn.commit()
+        no_fl_id = (await (await conn.execute("SELECT last_insert_rowid()")).fetchone())[0]
+
+    payload = _rig_payload(
+        equipment,
+        guide_scope_id=no_fl_id,
+        guide_camera_id=equipment["guide_camera_id"],
+    )
+    resp = await client.post("/api/rigs", json=payload)
+    assert resp.status_code == 201
+    warnings = resp.json()["warnings"]
+    assert any(
+        w["field"] == "guide_scope_id" and "no focal length" in w["message"] for w in warnings
+    )
+    # And calculator returns None for guide_suitability because FL is missing.
+    rig_id = resp.json()["id"]
+    calc_resp = await client.get(f"/api/rigs/{rig_id}/calculators")
+    assert calc_resp.json()["guide_suitability"] is None

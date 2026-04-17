@@ -177,6 +177,41 @@ async def _check_warnings(conn, rig_data: dict) -> list[dict]:
             }
         )
 
+    # Guide scope assigned but missing focal length — suitability can't be computed.
+    guide_scope_id = rig_data.get("guide_scope_id")
+    if guide_scope_id is not None:
+        row = await conn.execute(
+            "SELECT focal_length_mm FROM guide_scope WHERE id = ?", (guide_scope_id,)
+        )
+        result = await row.fetchone()
+        if result is not None and result["focal_length_mm"] is None:
+            warnings.append(
+                {
+                    "field": "guide_scope_id",
+                    "message": (
+                        "Guide scope has no focal length on file \u2014 cannot compute "
+                        "guide suitability. Edit the equipment record to set it."
+                    ),
+                }
+            )
+
+    # Guide camera assigned without any optical path.
+    if (
+        rig_data.get("guide_camera_id")
+        and rig_data.get("guide_scope_id") is None
+        and rig_data.get("oag_id") is None
+    ):
+        warnings.append(
+            {
+                "field": "guide_camera_id",
+                "message": (
+                    "Guide camera is assigned but no guide scope or OAG is \u2014 "
+                    "guide suitability cannot be computed. Assign a guide scope or OAG, "
+                    "or remove the guide camera."
+                ),
+            }
+        )
+
     return warnings
 
 
@@ -191,6 +226,8 @@ def _build_calculators(
     seeing_high: float,
     seeing_source: str,
     seeing_location_name: str | None,
+    guide_binning: int = 1,
+    centroid_accuracy_pixels: float = 0.2,
 ) -> dict:
     """Compute all calculator results from rig summary row data."""
     calcs = compute_rig_calculators(
@@ -207,10 +244,14 @@ def _build_calculators(
         seeing_fwhm_high=seeing_high,
         seeing_source=seeing_source,
         seeing_location_name=seeing_location_name,
+        guide_scope_id=rig_row.get("guide_scope_id"),
+        oag_id=rig_row.get("oag_id"),
         guide_pixel_size_um=rig_row.get("guide_pixel_size_um"),
         guide_focal_length_mm=rig_row.get("guide_scope_focal_length_mm"),
         guide_resolution_x=rig_row.get("guide_resolution_x"),
         guide_resolution_y=rig_row.get("guide_resolution_y"),
+        guide_binning=guide_binning,
+        centroid_accuracy_pixels=centroid_accuracy_pixels,
     )
 
     # Map service dict keys to Pydantic model keys
@@ -230,8 +271,7 @@ def _build_calculators(
         "image_circle_mm": rig_row.get("effective_image_circle_mm"),
         "sensor_coverage_pct": calcs["sensor_coverage_pct"],
         "sampling_assessment": calcs["sampling_assessment"],
-        "guide_image_scale_arcsec_per_pixel": calcs["guide_image_scale_arcsec_per_pixel"],
-        "guide_field_of_view_arcmin": calcs["guide_field_of_view_arcmin"],
+        "guide_suitability": calcs["guide_suitability"],
     }
 
 
@@ -802,7 +842,13 @@ async def get_calculators(
     location_id: int | None = Query(None, description="Location for seeing data"),
     seeing_low: float | None = Query(None, description="Override seeing low (arcsec)"),
     seeing_high: float | None = Query(None, description="Override seeing high (arcsec)"),
-    binning: int | None = Query(None, description="Binning factor (unused, for future)"),
+    guide_binning: int = Query(1, ge=1, le=4, description="Guide camera binning (1-4)"),
+    centroid_accuracy_pixels: float = Query(
+        0.2,
+        ge=0.05,
+        le=0.5,
+        description="Assumed PHD2 centroid accuracy in guide pixels",
+    ),
 ):
     """Get calculator results for a rig."""
     async with get_db() as conn:
@@ -823,5 +869,11 @@ async def get_calculators(
         )
 
         return _build_calculators(
-            rig_row, seeing_fwhm_low, seeing_fwhm_high, seeing_source, seeing_loc_name
+            rig_row,
+            seeing_fwhm_low,
+            seeing_fwhm_high,
+            seeing_source,
+            seeing_loc_name,
+            guide_binning=guide_binning,
+            centroid_accuracy_pixels=centroid_accuracy_pixels,
         )
