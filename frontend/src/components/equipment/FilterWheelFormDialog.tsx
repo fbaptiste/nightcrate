@@ -9,6 +9,7 @@ import DialogTitle from "@mui/material/DialogTitle";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import InterfaceMultiSelect from "@/components/equipment/shared/InterfaceMultiSelect";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
@@ -76,6 +77,7 @@ export default function FilterWheelFormDialog({
   onSaved,
 }: FilterWheelFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
@@ -85,6 +87,7 @@ export default function FilterWheelFormDialog({
   useEffect(() => {
     if (open) {
       setForm(item ? filterWheelToForm(item) : emptyForm());
+      setIsMine(item?.is_mine ?? false);
       setErrors({});
     }
   }, [open, item]);
@@ -108,6 +111,7 @@ export default function FilterWheelFormDialog({
     setSaving(true);
     try {
       const payload: FilterWheelCreate = {
+        is_mine: isMine,
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
         filter_size_id: form.filter_size_id,
@@ -148,6 +152,8 @@ export default function FilterWheelFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <MineCheckbox value={isMine} onChange={setIsMine} />
+
             {/* Row 1: Model name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField

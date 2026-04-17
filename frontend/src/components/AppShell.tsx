@@ -22,6 +22,7 @@ import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import BuildIcon from "@mui/icons-material/Build";
 import CodeIcon from "@mui/icons-material/Code";
 import PlaceIcon from "@mui/icons-material/Place";
+import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
 import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import TimelineIcon from "@mui/icons-material/Timeline";
@@ -37,10 +38,11 @@ const DRAWER_WIDTH_CLOSED = 52;
 
 const navItems = [
   { to: "/", label: "Home", icon: <HomeIcon /> },
-  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
-  { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
   { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
+  { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
+  { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
+  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },

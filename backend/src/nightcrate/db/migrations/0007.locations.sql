@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS location (
     state_province TEXT,
     country TEXT,
     postal_code TEXT,
+    typical_seeing_low_arcsec REAL CHECK (typical_seeing_low_arcsec IS NULL OR typical_seeing_low_arcsec > 0),
+    typical_seeing_high_arcsec REAL CHECK (typical_seeing_high_arcsec IS NULL OR typical_seeing_high_arcsec > 0),
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),

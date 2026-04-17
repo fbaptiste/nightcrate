@@ -1,7 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import { TreeItem } from "@mui/x-tree-view/TreeItem";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
+import { fetchMineCounts, type MineCounts } from "@/api/equipment";
 
 interface EquipmentSidebarProps {
   selectedCategory: string;
@@ -62,7 +64,32 @@ export function EquipmentSidebar({
   selectedCategory,
   onSelectCategory,
 }: EquipmentSidebarProps) {
-  const defaultExpanded = GROUPS.map((g) => g.id);
+  const { data: mineCounts } = useQuery<MineCounts>({
+    queryKey: ["mine-counts"],
+    queryFn: fetchMineCounts,
+  });
+
+  const MINE_ITEMS: Array<{ id: string; label: string; countKey: keyof MineCounts }> = [
+    { id: "my-cameras", label: "Cameras", countKey: "cameras" },
+    { id: "my-telescopes", label: "OTAs", countKey: "telescopes" },
+    { id: "my-filters", label: "Filters", countKey: "filters" },
+    { id: "my-mounts", label: "Mounts", countKey: "mounts" },
+    { id: "my-focusers", label: "Focusers", countKey: "focusers" },
+    { id: "my-filter-wheels", label: "Filter Wheels", countKey: "filter_wheels" },
+    { id: "my-oags", label: "OAGs", countKey: "oags" },
+    { id: "my-guide-scopes", label: "Guide Scopes", countKey: "guide_scopes" },
+    { id: "my-computers", label: "Computers", countKey: "computers" },
+    { id: "my-software", label: "Software", countKey: "software" },
+  ];
+
+  const visibleMineItems = MINE_ITEMS.filter(
+    (it) => (mineCounts?.[it.countKey] ?? 0) > 0,
+  );
+  const totalMine = mineCounts
+    ? Object.values(mineCounts).reduce((s, n) => s + n, 0)
+    : 0;
+
+  const defaultExpanded = ["group-my-equipment", ...GROUPS.map((g) => g.id)];
 
   return (
     <Box
@@ -79,11 +106,47 @@ export function EquipmentSidebar({
         defaultExpandedItems={defaultExpanded}
         selectedItems={selectedCategory}
         onSelectedItemsChange={(_event, itemId) => {
-          if (itemId && !itemId.startsWith("group-")) {
+          if (itemId && !itemId.startsWith("group-") && itemId !== "my-empty-hint") {
             onSelectCategory(itemId);
           }
         }}
       >
+        <TreeItem
+          itemId="group-my-equipment"
+          label={
+            <Typography
+              variant="caption"
+              fontWeight={700}
+              sx={{
+                textTransform: "uppercase",
+                letterSpacing: 0.8,
+                color: "text.secondary",
+              }}
+            >
+              My Equipment
+            </Typography>
+          }
+        >
+          {totalMine === 0 ? (
+            <TreeItem
+              itemId="my-empty-hint"
+              disabled
+              label={
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontStyle: "italic", lineHeight: 1.4, display: "block", py: 0.5 }}
+                >
+                  Click the star on any equipment row to add it here.
+                </Typography>
+              }
+            />
+          ) : (
+            visibleMineItems.map((item) => (
+              <TreeItem key={item.id} itemId={item.id} label={item.label} />
+            ))
+          )}
+        </TreeItem>
         {GROUPS.map((group) => (
           <TreeItem
             key={group.id}

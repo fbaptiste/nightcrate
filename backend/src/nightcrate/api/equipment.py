@@ -48,6 +48,8 @@ from nightcrate.api.equipment_models import (
     ManufacturerCreate,
     ManufacturerResponse,
     ManufacturerUpdate,
+    MineCountsResponse,
+    MineToggle,
     MountCreate,
     MountResponse,
     MountTypeCreate,
@@ -77,6 +79,34 @@ from nightcrate.db.session import get_db
 
 router = APIRouter(prefix="/api/equipment", tags=["Equipment"])
 lookup_router = APIRouter(prefix="/api/equipment", tags=["Lookup Tables"])
+
+
+# ── Mine counts ───────────────────────────────────────────────────────────────
+
+
+@router.get("/mine-counts", response_model=MineCountsResponse)
+async def get_mine_counts():
+    """Per-type counts of equipment marked as mine. Retired items still count."""
+    mapping = {
+        "cameras": "camera",
+        "telescopes": "telescope",
+        "filters": "filter",
+        "mounts": "mount",
+        "focusers": "focuser",
+        "filter_wheels": "filter_wheel",
+        "oags": "oag",
+        "guide_scopes": "guide_scope",
+        "computers": "computer",
+        "software": "software",
+    }
+    counts: dict[str, int] = {}
+    async with get_db() as conn:
+        for response_key, table in mapping.items():
+            row = await (
+                await conn.execute(f"SELECT COUNT(*) FROM {table} WHERE is_mine = 1")
+            ).fetchone()
+            counts[response_key] = row[0] if row else 0
+    return counts
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1046,7 +1076,7 @@ async def delete_sensor(sensor_id: int):
 async def _build_camera_response(conn, camera_row: dict) -> dict:
     """Build full camera response with nested objects."""
     d = dict(camera_row)
-    _bool_fields(d, "active", "cooled", "tilt_adapter", "has_usb_hub")
+    _bool_fields(d, "active", "cooled", "tilt_adapter", "has_usb_hub", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -1102,10 +1132,16 @@ async def _build_camera_response(conn, camera_row: dict) -> dict:
 @router.get("/camera", response_model=list[CameraResponse])
 async def list_cameras(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_camera_response(conn, _row_to_dict(r)))
@@ -1130,9 +1166,9 @@ async def create_camera(body: CameraCreate):
                     tilt_adapter, has_usb_hub, usb_hub_interface_id, unity_gain,
                     effective_full_well_ke, effective_read_noise_lcg_e,
                     effective_read_noise_hcg_e, effective_peak_qe_pct,
-                    hcg_threshold_gain, notes, source_url
+                    hcg_threshold_gain, notes, source_url, is_mine
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?)""",
+                          ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.sensor_id,
@@ -1154,6 +1190,7 @@ async def create_camera(body: CameraCreate):
                     body.hcg_threshold_gain,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -1182,7 +1219,7 @@ async def update_camera(camera_id: int, body: CameraUpdate):
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
         if updates:
-            for bool_field in ("cooled", "tilt_adapter", "has_usb_hub"):
+            for bool_field in ("cooled", "tilt_adapter", "has_usb_hub", "is_mine"):
                 if bool_field in updates and updates[bool_field] is not None:
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -1220,13 +1257,26 @@ async def delete_camera(camera_id: int):
     return {"ok": True}
 
 
+@router.post("/camera/{camera_id}/mine", response_model=CameraResponse)
+async def toggle_camera_mine(camera_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "camera", camera_id, "Camera")
+        await conn.execute(
+            "UPDATE camera SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), camera_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "camera", camera_id, "Camera")
+        return await _build_camera_response(conn, row)
+
+
 # ── Telescope ─────────────────────────────────────────────────────────────────
 
 
 async def _build_telescope_response(conn, telescope_row: dict) -> dict:
     """Build full telescope response with nested objects."""
     d = dict(telescope_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -1276,10 +1326,18 @@ async def _build_telescope_response(conn, telescope_row: dict) -> dict:
 @router.get("/telescope", response_model=list[TelescopeResponse])
 async def list_telescopes(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM telescope {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM telescope {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_telescope_response(conn, _row_to_dict(r)))
@@ -1301,8 +1359,8 @@ async def create_telescope(body: TelescopeCreate):
                 """INSERT INTO telescope (
                     manufacturer_id, optical_design_id, model_name,
                     aperture_mm, image_circle_mm, weight_kg, obstruction_pct, notes,
-                    source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.optical_design_id,
@@ -1313,6 +1371,7 @@ async def create_telescope(body: TelescopeCreate):
                     body.obstruction_pct,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -1340,6 +1399,8 @@ async def update_telescope(telescope_id: int, body: TelescopeUpdate):
         await _get_or_404(conn, "telescope", telescope_id, "Telescope")
         updates = body.model_dump(exclude_unset=True)
         connector_size_ids = updates.pop("connector_size_ids", None)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [telescope_id]
@@ -1378,6 +1439,19 @@ async def delete_telescope(telescope_id: int):
         await conn.execute("UPDATE telescope SET active = 0 WHERE id = ?", (telescope_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/telescope/{telescope_id}/mine", response_model=TelescopeResponse)
+async def toggle_telescope_mine(telescope_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await conn.execute(
+            "UPDATE telescope SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), telescope_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        return await _build_telescope_response(conn, row)
 
 
 # ── Telescope configuration child endpoints ───────────────────────────────────
@@ -1514,7 +1588,7 @@ async def delete_telescope_configuration(telescope_id: int, config_id: int):
 async def _build_filter_response(conn, filter_row: dict) -> dict:
     """Build full filter response with nested objects."""
     d = dict(filter_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -1570,10 +1644,16 @@ async def _build_filter_response(conn, filter_row: dict) -> dict:
 @router.get("/filter", response_model=list[FilterResponse])
 async def list_filters(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_filter_response(conn, _row_to_dict(r)))
@@ -1594,8 +1674,8 @@ async def create_filter(body: FilterCreate):
             cursor = await conn.execute(
                 """INSERT INTO filter (
                     manufacturer_id, filter_type_id, model_name,
-                    peak_transmission_pct, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    peak_transmission_pct, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.filter_type_id,
@@ -1603,6 +1683,7 @@ async def create_filter(body: FilterCreate):
                     body.peak_transmission_pct,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -1623,6 +1704,8 @@ async def update_filter(filter_id: int, body: FilterUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "filter", filter_id, "Filter")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [filter_id]
@@ -1650,6 +1733,19 @@ async def delete_filter(filter_id: int):
         await conn.execute("UPDATE filter SET active = 0 WHERE id = ?", (filter_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/filter/{filter_id}/mine", response_model=FilterResponse)
+async def toggle_filter_mine(filter_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await conn.execute(
+            "UPDATE filter SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), filter_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        return await _build_filter_response(conn, row)
 
 
 # ── Filter passband child endpoints ───────────────────────────────────────────
@@ -1847,7 +1943,7 @@ async def delete_filter_size_option(filter_id: int, option_id: int):
 async def _build_mount_response(conn, mount_row: dict) -> dict:
     """Build full mount response with nested objects."""
     d = dict(mount_row)
-    _bool_fields(d, "active", "counterweight_required", "goto_capable")
+    _bool_fields(d, "active", "counterweight_required", "goto_capable", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -1882,10 +1978,16 @@ async def _build_mount_response(conn, mount_row: dict) -> dict:
 @router.get("/mount", response_model=list[MountResponse])
 async def list_mounts(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_mount_response(conn, _row_to_dict(r)))
@@ -1907,8 +2009,9 @@ async def create_mount(body: MountCreate):
                 """INSERT INTO mount (
                     manufacturer_id, mount_type_id, model_name,
                     payload_capacity_kg, mount_weight_kg, counterweight_required,
-                    goto_capable, periodic_error_arcsec, drive_type, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    goto_capable, periodic_error_arcsec, drive_type, notes, source_url,
+                    is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.mount_type_id,
@@ -1921,6 +2024,7 @@ async def create_mount(body: MountCreate):
                     body.drive_type,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -1949,7 +2053,7 @@ async def update_mount(mount_id: int, body: MountUpdate):
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
         if updates:
-            for bool_field in ("counterweight_required", "goto_capable"):
+            for bool_field in ("counterweight_required", "goto_capable", "is_mine"):
                 if bool_field in updates and updates[bool_field] is not None:
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -1988,13 +2092,26 @@ async def delete_mount(mount_id: int):
     return {"ok": True}
 
 
+@router.post("/mount/{mount_id}/mine", response_model=MountResponse)
+async def toggle_mount_mine(mount_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "mount", mount_id, "Mount")
+        await conn.execute(
+            "UPDATE mount SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), mount_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "mount", mount_id, "Mount")
+        return await _build_mount_response(conn, row)
+
+
 # ── Focuser ───────────────────────────────────────────────────────────────────
 
 
 async def _build_focuser_response(conn, focuser_row: dict) -> dict:
     """Build full focuser response with nested objects."""
     d = dict(focuser_row)
-    _bool_fields(d, "active", "motorized", "temperature_compensation")
+    _bool_fields(d, "active", "motorized", "temperature_compensation", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2029,10 +2146,18 @@ async def _build_focuser_response(conn, focuser_row: dict) -> dict:
 @router.get("/focuser", response_model=list[FocuserResponse])
 async def list_focusers(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM focuser {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM focuser {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_focuser_response(conn, _row_to_dict(r)))
@@ -2054,8 +2179,8 @@ async def create_focuser(body: FocuserCreate):
                 """INSERT INTO focuser (
                     manufacturer_id, focuser_type_id, model_name, motorized, travel_range_mm,
                     step_size_um, total_steps, temperature_compensation,
-                    backlash_steps, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    backlash_steps, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.focuser_type_id,
@@ -2068,6 +2193,7 @@ async def create_focuser(body: FocuserCreate):
                     body.backlash_steps,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2096,7 +2222,7 @@ async def update_focuser(focuser_id: int, body: FocuserUpdate):
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
         if updates:
-            for bool_field in ("motorized", "temperature_compensation"):
+            for bool_field in ("motorized", "temperature_compensation", "is_mine"):
                 if bool_field in updates and updates[bool_field] is not None:
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -2135,13 +2261,26 @@ async def delete_focuser(focuser_id: int):
     return {"ok": True}
 
 
+@router.post("/focuser/{focuser_id}/mine", response_model=FocuserResponse)
+async def toggle_focuser_mine(focuser_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "focuser", focuser_id, "Focuser")
+        await conn.execute(
+            "UPDATE focuser SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), focuser_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "focuser", focuser_id, "Focuser")
+        return await _build_focuser_response(conn, row)
+
+
 # ── Filter Wheel ──────────────────────────────────────────────────────────────
 
 
 async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
     """Build full filter wheel response with nested objects."""
     d = dict(fw_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2194,10 +2333,18 @@ async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
 @router.get("/filter-wheel", response_model=list[FilterWheelResponse])
 async def list_filter_wheels(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_wheel {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM filter_wheel {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_filter_wheel_response(conn, _row_to_dict(r)))
@@ -2219,8 +2366,8 @@ async def create_filter_wheel(body: FilterWheelCreate):
                 """INSERT INTO filter_wheel (
                     manufacturer_id, filter_size_id, camera_side_connector_id,
                     telescope_side_connector_id, model_name, num_positions,
-                    back_focus_contribution_mm, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    back_focus_contribution_mm, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.filter_size_id,
@@ -2231,6 +2378,7 @@ async def create_filter_wheel(body: FilterWheelCreate):
                     body.back_focus_contribution_mm,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2258,6 +2406,8 @@ async def update_filter_wheel(filter_wheel_id: int, body: FilterWheelUpdate):
         await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [filter_wheel_id]
@@ -2298,13 +2448,26 @@ async def delete_filter_wheel(filter_wheel_id: int):
     return {"ok": True}
 
 
+@router.post("/filter-wheel/{filter_wheel_id}/mine", response_model=FilterWheelResponse)
+async def toggle_filter_wheel_mine(filter_wheel_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
+        await conn.execute(
+            "UPDATE filter_wheel SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), filter_wheel_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
+        return await _build_filter_wheel_response(conn, row)
+
+
 # ── OAG ───────────────────────────────────────────────────────────────────────
 
 
 async def _build_oag_response(conn, oag_row: dict) -> dict:
     """Build full OAG response with nested objects."""
     d = dict(oag_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2337,10 +2500,16 @@ async def _build_oag_response(conn, oag_row: dict) -> dict:
 @router.get("/oag", response_model=list[OagResponse])
 async def list_oags(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_oag_response(conn, _row_to_dict(r)))
@@ -2362,8 +2531,8 @@ async def create_oag(body: OagCreate):
                 """INSERT INTO oag (
                     manufacturer_id, imaging_side_connector_id, guide_camera_connector_id,
                     model_name, prism_size_mm, back_focus_contribution_mm, weight_g, notes,
-                    source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.imaging_side_connector_id,
@@ -2374,6 +2543,7 @@ async def create_oag(body: OagCreate):
                     body.weight_g,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2394,6 +2564,8 @@ async def update_oag(oag_id: int, body: OagUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "oag", oag_id, "OAG")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [oag_id]
@@ -2423,13 +2595,26 @@ async def delete_oag(oag_id: int):
     return {"ok": True}
 
 
+@router.post("/oag/{oag_id}/mine", response_model=OagResponse)
+async def toggle_oag_mine(oag_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "oag", oag_id, "OAG")
+        await conn.execute(
+            "UPDATE oag SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), oag_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "oag", oag_id, "OAG")
+        return await _build_oag_response(conn, row)
+
+
 # ── Guide Scope ───────────────────────────────────────────────────────────────
 
 
 async def _build_guide_scope_response(conn, gs_row: dict) -> dict:
     """Build full guide scope response with nested objects."""
     d = dict(gs_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2453,10 +2638,18 @@ async def _build_guide_scope_response(conn, gs_row: dict) -> dict:
 @router.get("/guide-scope", response_model=list[GuideScopeResponse])
 async def list_guide_scopes(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM guide_scope {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM guide_scope {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_guide_scope_response(conn, _row_to_dict(r)))
@@ -2477,8 +2670,8 @@ async def create_guide_scope(body: GuideScopeCreate):
             cursor = await conn.execute(
                 """INSERT INTO guide_scope (
                     manufacturer_id, guide_camera_connector_id, model_name,
-                    aperture_mm, focal_length_mm, weight_g, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    aperture_mm, focal_length_mm, weight_g, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.guide_camera_connector_id,
@@ -2488,6 +2681,7 @@ async def create_guide_scope(body: GuideScopeCreate):
                     body.weight_g,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2508,6 +2702,8 @@ async def update_guide_scope(guide_scope_id: int, body: GuideScopeUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [guide_scope_id]
@@ -2537,13 +2733,26 @@ async def delete_guide_scope(guide_scope_id: int):
     return {"ok": True}
 
 
+@router.post("/guide-scope/{guide_scope_id}/mine", response_model=GuideScopeResponse)
+async def toggle_guide_scope_mine(guide_scope_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
+        await conn.execute(
+            "UPDATE guide_scope SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), guide_scope_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
+        return await _build_guide_scope_response(conn, row)
+
+
 # ── Computer ──────────────────────────────────────────────────────────────────
 
 
 async def _build_computer_response(conn, computer_row: dict) -> dict:
     """Build full computer response with nested objects."""
     d = dict(computer_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2567,10 +2776,18 @@ async def _build_computer_response(conn, computer_row: dict) -> dict:
 @router.get("/computer", response_model=list[ComputerResponse])
 async def list_computers(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM computer {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM computer {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_computer_response(conn, _row_to_dict(r)))
@@ -2590,14 +2807,15 @@ async def create_computer(body: ComputerCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO computer (
-                    manufacturer_id, form_factor_id, model_name, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?)""",
+                    manufacturer_id, form_factor_id, model_name, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.form_factor_id,
                     body.model_name,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2618,6 +2836,8 @@ async def update_computer(computer_id: int, body: ComputerUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "computer", computer_id, "Computer")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [computer_id]
@@ -2647,13 +2867,26 @@ async def delete_computer(computer_id: int):
     return {"ok": True}
 
 
+@router.post("/computer/{computer_id}/mine", response_model=ComputerResponse)
+async def toggle_computer_mine(computer_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "computer", computer_id, "Computer")
+        await conn.execute(
+            "UPDATE computer SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), computer_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "computer", computer_id, "Computer")
+        return await _build_computer_response(conn, row)
+
+
 # ── Software ──────────────────────────────────────────────────────────────────
 
 
 async def _build_software_response(conn, sw_row: dict) -> dict:
     """Build full software response with nested objects."""
     d = dict(sw_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     mfr_id = d.pop("manufacturer_id")
     if mfr_id:
@@ -2672,10 +2905,16 @@ async def _build_software_response(conn, sw_row: dict) -> dict:
 @router.get("/software", response_model=list[SoftwareResponse])
 async def list_software(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY is_mine DESC, name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_software_response(conn, _row_to_dict(r)))
@@ -2695,14 +2934,15 @@ async def create_software(body: SoftwareCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO software (
-                    manufacturer_id, name, category, website, notes
-                ) VALUES (?, ?, ?, ?, ?)""",
+                    manufacturer_id, name, category, website, notes, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.name,
                     body.category,
                     body.website,
                     body.notes,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2729,6 +2969,8 @@ async def update_software(software_id: int, body: SoftwareUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "software", software_id, "Software")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [software_id]
@@ -2762,3 +3004,16 @@ async def delete_software(software_id: int):
         await conn.execute("UPDATE software SET active = 0 WHERE id = ?", (software_id,))
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/software/{software_id}/mine", response_model=SoftwareResponse)
+async def toggle_software_mine(software_id: int, body: MineToggle):
+    async with get_db() as conn:
+        await _get_or_404(conn, "software", software_id, "Software")
+        await conn.execute(
+            "UPDATE software SET is_mine = ? WHERE id = ?",
+            (int(body.is_mine), software_id),
+        )
+        await conn.commit()
+        row = await _get_or_404(conn, "software", software_id, "Software")
+        return await _build_software_response(conn, row)

@@ -14,6 +14,8 @@ export interface Location {
   state_province: string | null;
   country: string | null;
   postal_code: string | null;
+  typical_seeing_low_arcsec: number | null;
+  typical_seeing_high_arcsec: number | null;
   is_default: boolean;
   notes: string | null;
   created_at: string;
@@ -32,6 +34,8 @@ export interface LocationCreate {
   state_province?: string | null;
   country?: string | null;
   postal_code?: string | null;
+  typical_seeing_low_arcsec?: number | null;
+  typical_seeing_high_arcsec?: number | null;
   is_default?: boolean;
   notes?: string | null;
 }

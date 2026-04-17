@@ -4,9 +4,11 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**Last updated:** 2026-04-15
+**NightCrate version:** 0.12.0
 
-**Last full repo snapshot:** 2026-04-15
+**Last updated:** 2026-04-17
+
+**Last full repo snapshot:** 2026-04-17
 
 ---
 
@@ -24,10 +26,10 @@
 
 ## Stack and runtime
 
-- **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.11.0.
-- **Key backend libraries:** astropy ≥7.0 (astronomy), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client for weather APIs), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths).
-- **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0008.weather_cache.sql`. Pydantic for all data models.
+- **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.0.
+- **Key backend libraries:** astropy ≥7.0 (astronomy), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client for weather APIs), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
+- **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. Geist font via @fontsource-variable.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0010.rig_summary_telescope_id.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -40,34 +42,38 @@ nightcrate/
   backend/                  # Python backend (FastAPI app)
     src/nightcrate/
       api/                  # FastAPI routers (files, images, aberration, equipment,
-                            #   locations, weather, settings, admin, diagnostics)
+                            #   locations, weather, rigs, settings, admin, diagnostics)
       core/                 # App config, GPU compute abstraction, settings model
-      db/                   # Session management, migrations (0001–0008 .sql files)
+      db/                   # Session management, migrations (0001–0010 .sql files)
       seed_loader/          # CSV-driven equipment seed loader (hash, registry, loader, CLI)
       services/             # Domain logic (imaging, fits_io, xisf_io, pxiproject_io,
                             #   standard_io, archive_io, aberration, weather, astronomy,
-                            #   seeing, transparency, dew, imaging_quality, fits_header_map)
+                            #   seeing, transparency, dew, imaging_quality, fits_header_map,
+                            #   rig_calculators)
       data/seed/            # 31 CSV seed files for equipment reference data
       main.py               # App entry point, lifespan, router registration
-    tests/                  # pytest test suite (~936 tests, 92% coverage)
+    tests/                  # pytest test suite (~1124 tests, ~94% coverage on new code)
   frontend/                 # React + TypeScript frontend (Vite)
     src/
       api/                  # Typed fetch clients per backend domain
-      components/           # UI components (aberration/, equipment/, fits/, weather/,
+      components/           # UI components (aberration/, equipment/, fits/, rigs/, weather/,
                             #   AppShell, SetupWizard, ThemeProvider, ActivityConsole, etc.)
       lib/                  # Shared utilities (channelColors, colorName, namedColors,
-                            #   formUtils, unitConversion, useDebounce)
+                            #   formUtils, unitConversion, useDebounce, rigColors,
+                            #   weatherColors)
       pages/                # Route pages: Home, ImageViewer, Equipment, Locations,
-                            #   Weather, Settings, Admin, ApiDocs
+                            #   Weather, Rigs, Settings, Admin, ApiDocs
       stores/               # Zustand stores (settingsStore)
       theme/                # MUI theme configuration
-  docs/                     # Reference documents (XISF spec, weather algorithms)
+  docs/                     # Reference documents (XISF spec, weather algorithms,
+                            #   superpowers specs & plans for rigs / my-equipment /
+                            #   guide suitability)
   DB_SCHEMA.md              # Mermaid ER diagrams
   DB_SCHEMA_DDL.sql         # Authoritative CREATE TABLE statements
   CLAUDE.md                 # AI assistant instructions
   PLAN.md                   # Version roadmap and changelog
   Makefile                  # dev, backend, frontend, install, lint, format, test
-  VERSION                   # Current version (0.11.0)
+  VERSION                   # Current version (0.12.0)
 ```
 
 ---
@@ -78,7 +84,7 @@ nightcrate/
 
 **Status:** `[planned]`
 
-No catalog, project, session, or sub-frame management exists yet. The file browser and image viewer operate directly on the filesystem — there's no database-backed catalog of imaging sessions or targets. The ingestion pipeline is not built.
+No catalog, project, session, or sub-frame management exists yet. The file browser and image viewer operate directly on the filesystem — there's no database-backed catalog of imaging sessions or targets. The ingestion pipeline is not built. Rigs (v0.12.0) are the foundation — they model the user's imaging configurations and will feed the future FITS resolver + session/sub_frame layer.
 
 ### Equipment
 
@@ -86,9 +92,26 @@ No catalog, project, session, or sub-frame management exists yet. The file brows
 
 Full CRUD for 12 equipment types (camera, sensor, telescope/OTA, filter, mount, focuser, filter wheel, OAG, guide scope, computer, software) plus 10 lookup/reference tables. Fully normalized schema with junction tables for interfaces, child tables for filter passbands and size options, and telescope configurations. Equipment seed loader populates reference data from 31 CSV files on first run with hash-based change detection for re-seeding. FITS alias tables exist for future FITS-to-equipment resolution. UI: two-panel layout with TreeView sidebar + DataGrid content area, per-type form dialogs, inline CRUD for lookup tables. Soft delete with optional restore. All seed-tracking columns stripped from API responses.
 
-- **Routes:** `/equipment`, `/equipment/:category`
-- **API:** `/api/equipment/*` (5+ endpoints per type), `/api/equipment/lookups/*`
+**My Equipment (v0.12.0):** per-row `is_mine` boolean on 10 owned equipment types with partial indexes, `?mine=true` filter + is_mine-first ordering on list endpoints, `POST /api/equipment/<type>/{id}/mine` toggle, `GET /api/equipment/mine-counts`. UI: clickable star column in lists (optimistic toggle + Snackbar rollback), MineCheckbox in all 10 form dialogs, "MY EQUIPMENT" sidebar group with reactive sub-items, star indicator in rig-builder dropdowns with owned items surfaced at the top.
+
+- **Routes:** `/equipment`, `/equipment/:category` (including `my-cameras`, `my-telescopes`, etc.)
+- **API:** `/api/equipment/*` (5+ endpoints per type), `/api/equipment/lookups/*`, `/api/equipment/<type>/{id}/mine`, `/api/equipment/mine-counts`
 - **Key backend:** `api/equipment.py`, `api/equipment_models.py`, `seed_loader/`
+
+### Rigs and rig calculators
+
+**Status:** `[shipped]`
+
+User-composed imaging rig templates (one telescope configuration + one camera + optional mount / focuser / filter wheel / filter slots / OAG / guide scope / guide camera / computer / software). Full CRUD with clone, restore, and default-rig enforcement. `rig_summary` view drives list rendering with joined equipment names and guide-camera sensor data for calculators.
+
+**Calculators:** Image scale, FOV (arctan formula with sensor-dim fallback), Dawes/Rayleigh limits, sensor coverage, sampling assessment (3-tier: oversampled/well_sampled/undersampled with per-binning recommendations). **Guide suitability:** mode-aware (guide-scope vs OAG), 4-tier rating on `effective_error_main_pixels` (0.6/1.0/1.2 thresholds), 6″/pixel hard cap, binning + centroid accuracy as query params. **Guiding tolerance:** 0.5× / 1.0× / 1.5× main-scale thresholds with plain-language comparison to current guide precision.
+
+**UI:** Card-grid rig list with detail panel that opens on click. Detail panel has three tabs — **Equipment** (tree + detail pane fetching full equipment objects in parallel; shows every field including sensor photometrics, passbands, interfaces), **Imaging** (metrics + sampling chart with seeing slider), **Guiding** (two sub-tabs: Guide System and Guiding Tolerance, each with its own binning selector). Pure D3 charts (SamplingChart, GuideSuitabilityChart). "About this calculator" disclosures with attribution links.
+
+- **Route:** `/rigs`
+- **API:** `/api/rigs/*` (CRUD + `clone`, `restore`, `calculators`, `equipment-options`)
+- **Key backend:** `api/rigs.py`, `api/rig_models.py`, `services/rig_calculators.py`
+- **Specs:** `docs/superpowers/specs/2026-04-15-rig-builder-design.md`, `2026-04-16-my-equipment-design.md`, `2026-04-16-guide-suitability-design.md`
 
 ### Locations
 
@@ -158,15 +181,16 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ## Schema state
 
-Current migration: **0008** (weather_cache). 8 migrations total (`0001`–`0008`).
+Current migration: **0010** (rig_summary view recreate with telescope_id). 10 migrations total (`0001`–`0010`).
 
 - **Core app:** `settings` (single JSON row), `recent_files` — app preferences and state
-- **Equipment (migrations 0005–0006):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog
-- **Locations (migration 0007):** `location` — user imaging sites with coordinates and light pollution data
+- **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0.
+- **Locations (migration 0007, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), and `typical_seeing_low/high_arcsec` for rig calculator sampling assessment
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
+- **Rigs (migrations 0009–0010):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane
 
-Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`.
+Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`. LLM-facing seed-data + abbreviated-schema reference (for CSV authoring in Claude Desktop) in `LLM_DB_SPECS.md` at the repo root.
 
 ---
 
@@ -179,13 +203,14 @@ Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`.
   - Aberration analysis: SQLite cache keyed by (file_path, hdu, settings_json), TTL configurable (default 30 days)
   - Weather forecasts: SQLite cache keyed by source type, TTL configurable (default 6 hours, purged at 2× TTL)
   - Supplementary weather data (PWV/AOD): cached alongside forecast with non-fatal writes
+  - Frontend: TanStack Query caches rig calculator + per-equipment detail fetches; `["mine-counts"]` invalidated on any star toggle
 
 ---
 
 ## External dependencies
 
 - **Open-Meteo** — weather forecast data (standard API for main weather, ECMWF endpoint for PWV, Air Quality API for AOD). Free, no auth required.
-- No other external services called at runtime. Astronomy computations (moon, twilight, seeing) are all local via astropy + custom models.
+- No other external services called at runtime. Astronomy computations (moon, twilight, seeing) are all local via astropy + custom models. Rig calculators (image scale, FOV, guide suitability, guiding tolerance, sampling) are pure local math — no external calls.
 
 ---
 

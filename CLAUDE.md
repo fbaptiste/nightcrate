@@ -397,6 +397,88 @@ Multi-database support with first-run setup wizard and hot-swap.
 - `HourlyTimeline.tsx` uses `localTimeToMinutes()` (string parsing, no Date) and `utcToLocalMinutes()` (Intl.DateTimeFormat) for timezone-correct rendering
 - Weather page reads settings from Zustand store (shared with Settings page) for instant unit/preference sync
 
+## Rig Builder
+
+User-composed imaging rig templates that assemble equipment into a named configuration. Powers optical calculators and will feed the future FITS resolver and ingest pipeline.
+
+**Architecture:**
+- `db/migrations/0009.rig.sql` — `rig`, `rig_filter_slot`, `rig_software` (junction) tables, plus `rig_summary` view that joins equipment names for list rendering. Migration 0010 drops/recreates the view to expose `telescope_id` (edit-in-place of 0009 doesn't re-run on existing DBs).
+- `services/rig_calculators.py` — pure math module (no DB / API deps). `compute_image_scale`, `compute_fov`, `compute_resolution_limits`, `compute_sensor_coverage`, `assess_sampling` (3-band: oversampled / well_sampled / undersampled with per-binning recommendations), `compute_guide_suitability`, `compute_guiding_tolerance`, `compute_rig_calculators` aggregator. Pinned regression tests against Fred's actual C11 and Askar V configurations.
+- `api/rigs.py` — full CRUD + clone/restore/calculators/equipment-options endpoints. `rig_summary` view drives list responses; separate queries fetch filter slots + software. `_check_warnings` produces advisory warnings (retired equipment, guide-camera = imaging-camera, guide-scope missing focal length, orphan guide camera).
+- `api/rig_models.py` — Pydantic: `RigCreate`, `RigUpdate`, `RigOut`, `RigCalculators` (nests `SamplingAssessment`, `GuideSuitability | None`, `GuidingTolerance | None`), `RigWarning` (with `severity: "error"|"info"`).
+- `pages/RigsPage.tsx` — card grid + inline expansion detail panel. `RigCard` summarises rig contents and calculator highlights. `RigFormDialog` is the create/edit dialog.
+- `components/rigs/CalculatorPanel.tsx` — **tabbed** detail layout: header row with rig name + Location selector + close; tabs **Equipment / Imaging / Guiding**; each tab owns its own body. Default tab is Equipment. Owns shared state (`selectedLocationId`, `guideBinning`, `centroidAccuracy`, `guidingImageBinning`) that becomes query params on `fetchRigCalculators`.
+- `components/rigs/RigFormDialog.tsx` — equipment Autocompletes grouped by manufacturer (software grouped by category). `FilterSlotGrid` renders one slot per wheel position.
+- `components/rigs/SamplingChart.tsx` — pure D3 horizontal-bar chart showing all four binning levels against the ideal zone. Theme-aware. Blue (well sampled) / orange (oversampled) / teal (undersampled).
+
+**Key invariants:**
+- Each rig has exactly one `telescope_configuration_id` (which implies one `telescope`, always present). Camera is required. Everything else is optional.
+- Filter slots (`rig_filter_slot`) require a `filter_wheel_id`; if the wheel is cleared on update, all slots are deleted. Single-filter rigs set `single_filter_id` instead.
+- Multi-software support via `rig_software` junction — ordered by software name in responses.
+- Default rig enforcement: setting `is_default=1` on one rig clears it on all others in a single transaction (`_ensure_single_default`).
+- Soft delete via `active=0`; `?include_retired=true` or restore endpoint brings them back.
+
+## My Equipment
+
+Per-row `is_mine` boolean on 10 equipment tables (camera, telescope, filter, mount, focuser, filter_wheel, oag, guide_scope, computer, software) lets users mark gear they personally own. Owned items surface first in rig-builder dropdowns and in a dedicated "MY EQUIPMENT" sidebar group.
+
+**Schema:**
+- `is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0,1))` on each of the 10 tables (inline edit of migration 0005).
+- Partial index `idx_<table>_mine ON <table>(is_mine) WHERE is_mine = 1` per table.
+- Sensor, telescope_configuration, junction tables, child tables, lookup tables, and alias tables are **not** touched.
+- Seed loader hash contract is unaffected — `is_mine` is not in `SeedableTable.seeded_fields`, so marking an item as mine does not trigger re-seed.
+
+**API:**
+- `is_mine` on every `<Type>Create` (default `False`) / `<Type>Update` (nullable) / `<Type>Response` for the 10 types.
+- List endpoints accept `?mine=true` and default to `ORDER BY is_mine DESC, <existing sort>` so owned gear floats to the top in every list.
+- `POST /api/equipment/<type>/{id}/mine` — dedicated idempotent toggle per type; body `{is_mine: bool}`; returns the full response.
+- `GET /api/equipment/mine-counts` — single round trip returning per-type counts used by the sidebar to decide which sub-items to render.
+- Create endpoints persist `is_mine` explicitly in their INSERTs (don't rely on column default).
+
+**Frontend:**
+- `components/equipment/EquipmentList.tsx` — clickable star column (leftmost, `StarIcon`/`StarOutlineIcon`, blue primary), optimistic toggle via `toggleEquipmentMine`, rollback with Snackbar on failure, invalidates list + `["mine-counts"]` queries. Accepts `mineOnly` prop to filter the list to owned items.
+- `components/equipment/shared/MineCheckbox.tsx` — shared control wired into all 10 equipment form dialogs.
+- `components/equipment/EquipmentSidebar.tsx` — new "MY EQUIPMENT" group at top. Reactive: sub-items only render for types with count > 0 per `fetchMineCounts`. Empty state shows italic "Click the star on any equipment row to add it here."
+- `pages/EquipmentPage.tsx` — routes `my-cameras`, `my-telescopes`, etc. to the same per-type list wrappers with `mineOnly={true}`.
+- Rig builder Autocompletes (`RigFormDialog`, `FilterSlotGrid`) use `withMineGroup` helper in `components/rigs/mineGroup.ts` — duplicates owned items into a virtual "My Equipment" group at the top with a blue `StarIcon` indicator; owned items also appear in their manufacturer group with the same star.
+
+## Rig Calculators — Guide System & Guiding Tolerance
+
+Two complementary guiding calculators rendered in the Guiding tab of the rig detail panel. Guide System answers "is my guide rig precise enough for my imaging rig?" up-front; Guiding Tolerance answers the inverse "given my imaging rig, what PHD2 RMS should I aim for?"
+
+**Architecture:**
+- `services/rig_calculators.py` — `compute_guide_suitability(guide_scope_id, oag_id, …, guide_binning, centroid_accuracy_pixels)` returns `GuideSuitability | None`. `compute_guiding_tolerance(unbinned_main_scale, image_binning, guide_suitability)` always returns a `GuidingTolerance`.
+- `api/rig_models.py` — Pydantic `GuideSuitability` and `GuidingTolerance`. `RigCalculators` nests them (replaced the older top-level `guide_image_scale_*`/`guide_field_of_view_*` fields).
+- `api/rigs.py` — `GET /api/rigs/{id}/calculators` accepts `guide_binning` (1–4), `centroid_accuracy_pixels` (0.05–0.5), `image_binning` (1–4) query params. 422 on out-of-range values. Emits two new warnings: guide scope missing focal length; guide camera assigned with no OAG/guide-scope path.
+- `components/rigs/GuideSuitabilityPanel.tsx` — metrics table, rating `Chip` (excellent/good/marginal/poor), mode-aware subtitle (guide-scope vs OAG), advanced disclosure with centroid accuracy slider.
+- `components/rigs/GuideSuitabilityChart.tsx` — pure D3 horizontal bar chart (main pixel vs guide error), threshold markers at 0.6 / 1.0 / 1.2 px, scale-cap annotation when triggered.
+- `components/rigs/GuidingTolerancePanel.tsx` — "Image Scale" row in Imaging-tab style; thresholds table (Tight / Acceptable / Over budget); shaded-zone visualization with current-precision marker (bars at 0.7 opacity for dark-mode readability); interpretation line generated server-side.
+- `components/rigs/GuidingTab.tsx` — **two sub-tabs** (Guide System / Guiding Tolerance) with **two independent binning selectors** above them: "Imaging camera binning" drives Guiding Tolerance; "Guide camera binning" drives Guide System. Imaging tab's binning is separate and purely display-side.
+- `components/rigs/CalculatorAboutSection.tsx` — shared collapsed disclosure for attribution + methodology text (astronomy.tools, Open PHD Guiding, Stan Moore for Guide System; Cloudy Nights community rule of thumb for Guiding Tolerance).
+- `lib/rigColors.ts` — shared palette (`RIG_BLUE`, `RIG_ORANGE`, `RIG_TEAL`, light variants), `samplingColor()`, `ratingColor()`, `ratingTextColor()`, `ratingLabel()` helpers.
+
+**Guide System math:**
+- Mode resolution: `guide_scope_id` set → guide-scope mode (focal length from guide scope); else `oag_id` set → OAG mode (focal length from telescope configuration's `effective_focal_length_mm`); else None.
+- `guide_scale_arcsec_per_pixel = (guide_pixel_size_um × guide_binning / guide_focal_length_mm) × 206.265`
+- `effective_guide_precision_arcsec = guide_scale × centroid_accuracy_pixels` (default 0.2 px)
+- `g_ratio = guide_scale / main_scale`; `effective_error_main_pixels = g_ratio × centroid_accuracy_pixels`
+- Four rating bands on `effective_error_main_pixels`: Excellent ≤0.6, Good ≤1.0, Marginal ≤1.2, Poor >1.2.
+- **Absolute scale cap:** `guide_scale_arcsec_per_pixel > 6.0` forces Poor with `rating_reason='scale_cap'` (PHD2 community limit). Cap wins when both fail.
+- FOV uses the **unbinned** resolution (binning doesn't change physical sensor area).
+
+**Guiding Tolerance math:**
+- `tight_rms_arcsec = 0.5 × main_scale × image_binning`
+- `acceptable_rms_arcsec = 1.0 × main_scale × image_binning`
+- `noticeable_rms_arcsec = 1.5 × main_scale × image_binning`
+- When `guide_suitability` is present, its `effective_guide_precision_arcsec` is compared to the thresholds; `guide_system_within_tight` / `_within_acceptable` / `headroom_arcsec` are populated; `interpretation` string generated server-side.
+
+**Equipment tab (tree + detail):**
+- Left: SimpleTreeView grouped Imaging / Optics / Tracking / Accessories / Computing (same order as the main Equipment sidebar). Multi-item categories (filters, software, cameras when both imaging + guide present) expand to per-item leaves; singletons are leaves under their group.
+- Right: selected item's full detail. Fetches complete equipment objects via `/api/equipment/<type>/{id}` in parallel (`useQueries` for filters). TanStack Query caches across opens.
+- Includes every available field: cooling deltas, back focus, weight, connectors, interfaces as outlined chips, vendor-tuned camera specs, full sensor photometrics (pixel size, ADC depth, full well, read noise, peak QE, Bayer pattern, dual gain) for both imaging and guide cameras, telescope optical design / image circle / obstruction, all other configurations on the OTA, filter passband lines with wavelength/bandwidth/peak transmission plus filter size options, mount payload / PE / drive type, focuser step size / backlash / temp compensation.
+- Responsive: side-by-side on md+, stacked on smaller screens. Both panes scroll at 70vh.
+- Default initial selection: "Summary" when description or notes present; otherwise the imaging camera.
+
 ## Dependency & License Policy
 
 NightCrate is licensed under **MIT**. Before adding any new dependency (Python or JS/TS):

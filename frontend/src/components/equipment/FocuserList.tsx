@@ -42,11 +42,12 @@ const columns: GridColDef<Focuser>[] = [
   },
 ];
 
-export default function FocuserList() {
+export default function FocuserList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Focuser>
-      title="Focusers"
-      queryKey="focusers"
+      title={mineOnly ? "My Focusers" : "Focusers"}
+      queryKey={mineOnly ? "my-focusers" : "focusers"}
+      mineOnly={mineOnly}
       tableName="focuser"
       fetchFn={fetchFocusers}
       deleteFn={deleteFocuser}

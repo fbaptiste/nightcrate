@@ -57,6 +57,12 @@ The feature areas to cover (add new ones if you find features not currently list
 - Third-party HTTP services NightCrate calls at runtime
 - For each: what NightCrate uses it for, free vs paid, any auth required
 
+## LLM DB specs
+- Confirm `LLM_DB_SPECS.md` at the repo root reflects the current equipment/seed schema
+- The file is the seed-data-authoring reference for LLMs (Claude Desktop) preparing CSVs — so when the schema or seed CSV headers change, it needs to be refreshed
+- Check: SQL signatures in the `## SQL Schema` block match the actual migrations; CSV header lists in the per-table sections match the real files in `backend/src/nightcrate/data/seed/`; `is_mine` and other user-managed columns are explicitly noted as NOT seeded
+- Do NOT regenerate the whole file — update only what has drifted
+
 Be terse. Bullet points are fine. The goal is "an architect can quickly orient" not "complete documentation." If something has changed substantially since the last snapshot, that's worth highlighting briefly. If you're unsure whether to include something, lean toward including it — terse is fine, missing is not.
 
 When you're done, save the updated file. Tell me what you changed.

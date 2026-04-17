@@ -20,6 +20,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.10.0 — Equipment Seed Loader + Admin Page](#v0100--equipment-seed-loader--admin-page) ✅
 - [v0.10.1 — Seed Data Population + UI Improvements + Locations](#v0101--seed-data-population--ui-improvements--locations) ✅
 - [v0.11.0 — Astronomy Weather Forecast](#v0110--astronomy-weather-forecast) ✅
+- [v0.12.0 — Rigs + My Equipment + Guide Calculators](#v0120--rigs--my-equipment--guide-calculators) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -1622,6 +1623,94 @@ Key coverage achievements:
 <!-- Old inline seed loader spec (sections 1-12) removed — implemented in v0.10.0.
      Full spec preserved at docs/superpowers/specs/2026-04-08-equipment-seed-loader-design.md -->
 
+
+## v0.12.0 — Rigs + My Equipment + Guide Calculators
+
+**Status:** Done
+**Branch:** `v0.12.0/rig-builder`
+
+Four feature clusters shipped together: the Rig Builder, a "My Equipment" ownership flag with sidebar surfacing, the Guide System suitability calculator, and the v2 tabbed rig detail panel with the Guiding Tolerance calculator and a tree-view Equipment tab.
+
+Specs: `docs/superpowers/specs/2026-04-15-rig-builder-design.md`, `2026-04-16-my-equipment-design.md`, `2026-04-16-guide-suitability-design.md`. Implementation plans: `docs/superpowers/plans/2026-04-15-rig-builder.md`, `2026-04-16-my-equipment.md`.
+
+### Rig Builder
+
+- [x] Migration 0009 — `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view (edited in place to add `telescope_id`; migration 0010 recreates the view for already-migrated DBs)
+- [x] Location seeing fields (`typical_seeing_low_arcsec`, `typical_seeing_high_arcsec`) on migration 0007 (edit in place, pre-release policy)
+- [x] `services/rig_calculators.py` — pure math (image scale, FOV, Dawes/Rayleigh, sensor coverage, sampling assessment) with pinned regression tests for Fred's actual equipment
+- [x] Full CRUD API under `/api/rigs`: list / get / create / update / soft-delete / restore / clone / calculators / equipment-options
+- [x] Default-rig flag with single-active enforcement
+- [x] Filter-slot sub-resource with wheel-size validation
+- [x] `rig_software` junction (multi-select software per rig)
+- [x] Warnings system on `RigOut.warnings` (retired equipment, guide-camera-equals-imaging-camera, both wheel + single filter)
+- [x] Frontend `RigsPage` — card grid + expansion detail panel
+- [x] `RigFormDialog` with equipment dropdowns grouped by manufacturer, software multi-select, `FilterSlotGrid` for wheel slots
+- [x] `CalculatorPanel` with `SamplingChart` (pure D3, theme-aware, blue/orange/teal colorblind-safe palette)
+- [x] Seeing slider (0.5″–6.0″) under the Sampling Assessment section, client-side binning recommendations
+- [x] Nav reorder: Home, Locations, Weather, Rigs, Equipment, Image Viewer, Settings, Admin, API Docs
+
+### My Equipment
+
+- [x] `is_mine INTEGER NOT NULL DEFAULT 0 CHECK(...)` added to 10 owned equipment tables in migration 0005 (inline edit)
+- [x] Partial index `idx_<table>_mine ... WHERE is_mine = 1` on each of the 10 tables
+- [x] `<Type>Create` / `<Type>Update` / `<Type>Response` Pydantic models gain `is_mine` for all 10 owned types; TS interfaces updated
+- [x] List endpoints accept `?mine=true` and order `is_mine DESC` by default
+- [x] `POST /api/equipment/<type>/{id}/mine` toggle endpoint per type (10 endpoints, shared `MineToggle` body model)
+- [x] `GET /api/equipment/mine-counts` — single round trip returning per-type counts for sidebar rendering
+- [x] INSERT statements for all 10 create endpoints persist `is_mine` (caught during TDD — was originally missing)
+- [x] Seed loader regression test: `is_mine=1` survives re-seed without triggering hash mismatch
+- [x] Frontend `EquipmentList` — clickable star column (leftmost), optimistic toggle with Snackbar rollback, invalidates list + mine-counts
+- [x] `mineOnly` prop wires `?mine=true` through TanStack Query; custom empty state for the filtered view
+- [x] Shared `MineCheckbox` component wired into all 10 equipment form dialogs
+- [x] `EquipmentPage` routes `my-*` slugs to per-type list wrappers with `mineOnly={true}`
+- [x] `EquipmentSidebar` — new "MY EQUIPMENT" group at top, reactive sub-items driven by `mine-counts` (hides sub-items for unused types; friendly empty state when zero owned)
+- [x] Rig-builder Autocompletes (`RigFormDialog`, `FilterSlotGrid`) surface owned equipment as a "My Equipment" virtual group at the top with a blue star indicator; owned items also appear in their manufacturer group with the same star
+- [x] Shared `withMineGroup` helper in `components/rigs/mineGroup.ts`
+
+### Guide System calculator (guide suitability)
+
+- [x] `compute_guide_suitability` pure-math function + `GuideSuitability` service dataclass
+- [x] Pydantic `GuideSuitability` model; breaking change — removed top-level `guide_image_scale_arcsec_per_pixel` / `guide_field_of_view_arcmin` from `RigCalculators`, nested under `guide_suitability: GuideSuitability | None`
+- [x] Mode resolution — `guide_scope` mode uses guide scope focal length; `oag` mode uses main scope's `effective_focal_length_mm`
+- [x] Effective guide precision (arcsec) + G-ratio + effective error in main pixels
+- [x] Four rating bands on `effective_error_main_pixels`: Excellent ≤0.6, Good ≤1.0, Marginal ≤1.2, Poor >1.2
+- [x] 6″/pixel absolute scale cap (applies to binned scale; forces Poor with `rating_reason='scale_cap'`)
+- [x] Mode-specific caveats (differential flexure for guide-scope; off-axis star quality for OAG)
+- [x] Two new query params: `guide_binning` (1–4, default 1), `centroid_accuracy_pixels` (0.05–0.5, default 0.2)
+- [x] Two new warnings — missing guide-scope focal length; orphan guide camera with no optical path
+- [x] Frontend `GuideSuitabilityPanel` — metrics table, rating chip (blue/light-blue/light-orange/orange), mode-aware subtitle, advanced disclosure with centroid-accuracy slider
+- [x] Frontend `GuideSuitabilityChart` — pure D3 horizontal bar chart (main pixel vs guide error) with threshold markers at 0.6/1.0/1.2 px, scale-cap annotation when triggered
+- [x] Shared `frontend/src/lib/rigColors.ts` — `RIG_BLUE`/`RIG_ORANGE`/`RIG_TEAL` + light variants, `samplingColor()` + `ratingColor()` helpers; SamplingChart refactored to import from it
+
+### Calculators v2 — tabbed panel, Equipment tree, Guiding Tolerance
+
+- [x] Rig detail panel refactored into three tabs: Equipment / Imaging / Guiding (Guiding disabled when no guide camera)
+- [x] Location dropdown moved to the rig-name header row (single source of truth, flows to every calculator)
+- [x] Default tab is Equipment (clicking a rig opens directly to its full details)
+- [x] **Equipment tab as tree + detail pane** — left: SimpleTreeView grouped Imaging / Optics / Tracking / Accessories / Computing (mirroring the main Equipment sidebar); right: full detail for the selected item. Multi-item categories (filters, software, cameras when both imaging and guide present) expand to per-item leaves. Fetches full equipment objects via `/api/equipment/<type>/{id}` in parallel; TanStack Query caches across opens. Responsive (stacks below the tree on small screens).
+- [x] Migration 0010 — `DROP VIEW; CREATE VIEW rig_summary` adding `telescope_id` so the Equipment tab can fetch the full telescope record directly (idempotent on fresh DBs that got the updated 0009)
+- [x] `RigOut.telescope_id` exposed; TS type updated
+- [x] `compute_guiding_tolerance` pure-math function + `GuidingTolerance` service dataclass + Pydantic/TS types
+- [x] Tolerance thresholds: 0.5× (Tight), 1.0× (Acceptable), 1.5× (Noticeable) of the binned main scale
+- [x] Binning-aware via new `image_binning` query param (1–4, default 1) on `GET /api/rigs/{id}/calculators`
+- [x] Guide system comparison: `current_guide_precision_arcsec` vs thresholds → `guide_system_within_tight` / `_within_acceptable` / `headroom_arcsec`
+- [x] Plain-language interpretation line generated server-side
+- [x] Guiding tab has **two sub-tabs** (Guide System / Guiding Tolerance) each with its **own** binning selector above them — guide-camera binning drives Guide System, imaging-camera binning drives Guiding Tolerance; Imaging tab's binning is independent (purely display-side)
+- [x] Imaging-tab binning selector renamed to "Imaging camera binning" with inline layout matching the Guiding tab controls
+- [x] `GuidingTolerancePanel` — thresholds table (Tight / Acceptable / Over budget), shaded-zone visualization with current-precision marker, interpretation line, "Image Scale" metric row matching Imaging tab style
+- [x] `CalculatorAboutSection` — shared collapsed-by-default disclosure; attribution and methodology for Guide Suitability (astronomy.tools, Open PHD Guiding, Stan Moore) and Guiding Tolerance (Cloudy Nights community rule of thumb) with external links
+- [x] `RigWarning.severity` field (`"error"` | `"info"`, default `"error"`) on Pydantic + TS — reserved for future info-level advisories
+- [x] Sub-exposure calculator (Robin Glover) was added mid-session then **reverted entirely** — the spec-sheet approximations (peak QE, spectrally flat sky, zero atmospheric extinction) produced numbers that didn't track reality. Removed all Pydantic/TS types, service functions, endpoint param, warnings, and unit tests. `RigWarning.severity` was kept for future use.
+
+### v0.12.0 Completion Criteria
+
+- [x] All backend tests pass (1121 passed, 3 skipped)
+- [x] Ruff / format / bandit clean; frontend builds
+- [x] New module coverage: `rig_calculators.py` 99%, `rig_models.py` 100%, `rigs.py` 90%, `equipment.py` 94% (overall project 94%)
+- [x] Edge-condition tests added for `image_binning` query validation, guiding-tolerance linear scaling with binning, update-rig duplicate-name 409 path, retired-equipment warnings, guide-scope missing focal length, guide-camera-without-path orphan warning, mine-flag preservation across re-seed, rating-band thresholds (excellent/good/marginal/poor), 6″/px scale-cap precedence
+- [x] Migration policy followed — pre-release inline edits to 0005 and 0007; added 0009 and 0010; seed CSVs unchanged
+
+---
 
 ## FITS Equipment Resolver Spec
 

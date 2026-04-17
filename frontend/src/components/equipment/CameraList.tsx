@@ -63,11 +63,12 @@ const columns: GridColDef<Camera>[] = [
   },
 ];
 
-export default function CameraList() {
+export default function CameraList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Camera>
-      title="Cameras"
-      queryKey="cameras"
+      title={mineOnly ? "My Cameras" : "Cameras"}
+      queryKey={mineOnly ? "my-cameras" : "cameras"}
+      mineOnly={mineOnly}
       tableName="camera"
       fetchFn={fetchCameras}
       deleteFn={deleteCamera}

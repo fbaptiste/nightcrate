@@ -36,11 +36,12 @@ const columns: GridColDef<GuideScope>[] = [
   },
 ];
 
-export default function GuideScopeList() {
+export default function GuideScopeList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<GuideScope>
-      title="Guide Scopes"
-      queryKey="guide-scopes"
+      title={mineOnly ? "My Guide Scopes" : "Guide Scopes"}
+      queryKey={mineOnly ? "my-guide-scopes" : "guide-scopes"}
+      mineOnly={mineOnly}
       tableName="guide_scope"
       fetchFn={fetchGuideScopes}
       deleteFn={deleteGuideScope}

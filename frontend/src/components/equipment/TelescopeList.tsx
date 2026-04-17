@@ -151,12 +151,13 @@ const columns: GridColDef<Telescope>[] = [
   },
 ];
 
-export default function TelescopeList() {
+export default function TelescopeList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Telescope>
-      title="OTAs"
+      title={mineOnly ? "My OTAs" : "OTAs"}
       addLabel="Add OTA"
-      queryKey="telescopes"
+      queryKey={mineOnly ? "my-telescopes" : "telescopes"}
+      mineOnly={mineOnly}
       tableName="telescope"
       fetchFn={fetchTelescopes}
       deleteFn={deleteTelescope}

@@ -1,6 +1,26 @@
 """Pydantic models for equipment API request/response shapes."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# ── Shared ────────────────────────────────────────────────────────────────────
+
+
+class MineToggle(BaseModel):
+    is_mine: bool = Field(..., description="True to mark as mine; False to unmark")
+
+
+class MineCountsResponse(BaseModel):
+    cameras: int
+    telescopes: int
+    filters: int
+    mounts: int
+    focusers: int
+    filter_wheels: int
+    oags: int
+    guide_scopes: int
+    computers: int
+    software: int
+
 
 # ── Lookup tables ────────────────────────────────────────────────────────────
 
@@ -277,6 +297,7 @@ class CameraCreate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] = []
+    is_mine: bool = False
 
 
 class CameraUpdate(BaseModel):
@@ -301,6 +322,7 @@ class CameraUpdate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] | None = None
+    is_mine: bool | None = None
 
 
 class CameraResponse(BaseModel):
@@ -326,6 +348,7 @@ class CameraResponse(BaseModel):
     notes: str | None
     source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -387,6 +410,7 @@ class TelescopeCreate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     connector_size_ids: list[int] = []
+    is_mine: bool = False
 
 
 class TelescopeUpdate(BaseModel):
@@ -400,6 +424,7 @@ class TelescopeUpdate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     connector_size_ids: list[int] | None = None
+    is_mine: bool | None = None
 
 
 class TelescopeResponse(BaseModel):
@@ -415,6 +440,7 @@ class TelescopeResponse(BaseModel):
     source_url: str | None
     connectors: list[ConnectorSizeResponse]
     configurations: list[TelescopeConfigurationResponse]
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -476,6 +502,7 @@ class FilterCreate(BaseModel):
     peak_transmission_pct: float | None = None
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool = False
 
 
 class FilterUpdate(BaseModel):
@@ -485,6 +512,7 @@ class FilterUpdate(BaseModel):
     peak_transmission_pct: float | None = None
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool | None = None
 
 
 class FilterResponse(BaseModel):
@@ -497,6 +525,7 @@ class FilterResponse(BaseModel):
     source_url: str | None
     passbands: list[FilterPassbandResponse]
     size_options: list[FilterSizeOptionResponse]
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -518,6 +547,7 @@ class MountCreate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] = []
+    is_mine: bool = False
 
 
 class MountUpdate(BaseModel):
@@ -533,6 +563,7 @@ class MountUpdate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] | None = None
+    is_mine: bool | None = None
 
 
 class MountResponse(BaseModel):
@@ -549,6 +580,7 @@ class MountResponse(BaseModel):
     notes: str | None
     source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -570,6 +602,7 @@ class FocuserCreate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] = []
+    is_mine: bool = False
 
 
 class FocuserUpdate(BaseModel):
@@ -585,6 +618,7 @@ class FocuserUpdate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] | None = None
+    is_mine: bool | None = None
 
 
 class FocuserResponse(BaseModel):
@@ -601,6 +635,7 @@ class FocuserResponse(BaseModel):
     notes: str | None
     source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -620,6 +655,7 @@ class FilterWheelCreate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] = []
+    is_mine: bool = False
 
 
 class FilterWheelUpdate(BaseModel):
@@ -633,6 +669,7 @@ class FilterWheelUpdate(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     interface_ids: list[int] | None = None
+    is_mine: bool | None = None
 
 
 class FilterWheelResponse(BaseModel):
@@ -647,6 +684,7 @@ class FilterWheelResponse(BaseModel):
     notes: str | None
     source_url: str | None
     interfaces: list[ConnectionInterfaceResponse]
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -665,6 +703,7 @@ class OagCreate(BaseModel):
     weight_g: float | None = None
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool = False
 
 
 class OagUpdate(BaseModel):
@@ -677,6 +716,7 @@ class OagUpdate(BaseModel):
     weight_g: float | None = None
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool | None = None
 
 
 class OagResponse(BaseModel):
@@ -690,6 +730,7 @@ class OagResponse(BaseModel):
     weight_g: float | None
     notes: str | None
     source_url: str | None
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -707,6 +748,7 @@ class GuideScopeCreate(BaseModel):
     weight_g: float | None = None
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool = False
 
 
 class GuideScopeUpdate(BaseModel):
@@ -718,6 +760,7 @@ class GuideScopeUpdate(BaseModel):
     weight_g: float | None = None
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool | None = None
 
 
 class GuideScopeResponse(BaseModel):
@@ -730,6 +773,7 @@ class GuideScopeResponse(BaseModel):
     weight_g: float | None
     notes: str | None
     source_url: str | None
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -744,6 +788,7 @@ class ComputerCreate(BaseModel):
     model_name: str
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool = False
 
 
 class ComputerUpdate(BaseModel):
@@ -752,6 +797,7 @@ class ComputerUpdate(BaseModel):
     model_name: str | None = None
     notes: str | None = None
     source_url: str | None = None
+    is_mine: bool | None = None
 
 
 class ComputerResponse(BaseModel):
@@ -761,6 +807,7 @@ class ComputerResponse(BaseModel):
     model_name: str
     notes: str | None
     source_url: str | None
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str
@@ -778,6 +825,7 @@ class SoftwareCreate(BaseModel):
     category: str
     website: str | None = None
     notes: str | None = None
+    is_mine: bool = False
 
 
 class SoftwareUpdate(BaseModel):
@@ -786,6 +834,7 @@ class SoftwareUpdate(BaseModel):
     category: str | None = None
     website: str | None = None
     notes: str | None = None
+    is_mine: bool | None = None
 
 
 class SoftwareResponse(BaseModel):
@@ -795,6 +844,7 @@ class SoftwareResponse(BaseModel):
     category: str
     website: str | None
     notes: str | None
+    is_mine: bool
     active: bool
     created_at: str
     updated_at: str

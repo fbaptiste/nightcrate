@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DataGrid, type GridColDef, useGridApiRef } from "@mui/x-data-grid";
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Collapse from "@mui/material/Collapse";
@@ -8,15 +9,19 @@ import Divider from "@mui/material/Divider";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
+import Snackbar from "@mui/material/Snackbar";
 import Switch from "@mui/material/Switch";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import CloseIcon from "@mui/icons-material/Close";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RestoreIcon from "@mui/icons-material/RestoreFromTrash";
+import StarIcon from "@mui/icons-material/Star";
+import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { restoreEquipmentItem } from "@/api/equipment";
+import { restoreEquipmentItem, toggleEquipmentMine } from "@/api/equipment";
 import ConfirmDeleteDialog from "@/components/equipment/shared/ConfirmDeleteDialog";
 
 interface EquipmentListProps<T extends { id: number }> {
@@ -24,7 +29,7 @@ interface EquipmentListProps<T extends { id: number }> {
   addLabel?: string;
   queryKey: string;
   tableName: string;
-  fetchFn: (includeRetired?: boolean) => Promise<T[]>;
+  fetchFn: (includeRetired?: boolean, mine?: boolean) => Promise<T[]>;
   deleteFn: (id: number) => Promise<unknown>;
   columns: GridColDef<T>[];
   getItemName: (item: T) => string;
@@ -36,6 +41,7 @@ interface EquipmentListProps<T extends { id: number }> {
   }>;
   /** Optional detail panel rendered below the grid when a row is clicked. */
   renderDetail?: (item: T) => React.ReactNode;
+  mineOnly?: boolean;
 }
 
 function deriveAddLabel(title: string): string {
@@ -43,7 +49,7 @@ function deriveAddLabel(title: string): string {
   return `Add ${singular}`;
 }
 
-export default function EquipmentList<T extends { id: number; active?: boolean }>({
+export default function EquipmentList<T extends { id: number; active?: boolean; is_mine?: boolean }>({
   title,
   addLabel,
   queryKey,
@@ -54,6 +60,7 @@ export default function EquipmentList<T extends { id: number; active?: boolean }
   getItemName,
   FormDialog,
   renderDetail,
+  mineOnly = false,
 }: EquipmentListProps<T>) {
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
@@ -61,14 +68,15 @@ export default function EquipmentList<T extends { id: number; active?: boolean }
   const [deleteTarget, setDeleteTarget] = useState<T | null>(null);
   const [showRetired, setShowRetired] = useState(false);
   const [detailItem, setDetailItem] = useState<T | null>(null);
+  const [mineError, setMineError] = useState<string | null>(null);
   const apiRef = useGridApiRef();
   const pendingSelectId = useRef<number | null>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: items = [], isLoading } = useQuery({
-    queryKey: [queryKey, { showRetired }],
-    queryFn: () => fetchFn(showRetired),
+    queryKey: [queryKey, { showRetired, mineOnly }],
+    queryFn: () => fetchFn(showRetired, mineOnly),
   });
 
   // Auto-select item from URL ?select=ID param
@@ -145,6 +153,71 @@ export default function EquipmentList<T extends { id: number; active?: boolean }
     setDetailItem((prev) => (prev?.id === item.id ? null : item));
   };
 
+  const handleMineToggle = async (item: T) => {
+    const newValue = !item.is_mine;
+    // Optimistic cache update
+    queryClient.setQueryData<T[]>(
+      [queryKey, { showRetired, mineOnly }],
+      (prev) =>
+        prev?.map((row) =>
+          row.id === item.id ? ({ ...row, is_mine: newValue } as T) : row,
+        ) ?? prev,
+    );
+    try {
+      await toggleEquipmentMine(tableName, item.id, newValue);
+      void queryClient.invalidateQueries({ queryKey: [queryKey] });
+      void queryClient.invalidateQueries({ queryKey: ["mine-counts"] });
+    } catch (err) {
+      // Roll back on failure
+      queryClient.setQueryData<T[]>(
+        [queryKey, { showRetired, mineOnly }],
+        (prev) =>
+          prev?.map((row) =>
+            row.id === item.id ? ({ ...row, is_mine: !newValue } as T) : row,
+          ) ?? prev,
+      );
+      setMineError(
+        err instanceof Error ? err.message : "Failed to update 'mine' status",
+      );
+    }
+  };
+
+  const mineColumn: GridColDef<T> = {
+    field: "is_mine",
+    headerName: "",
+    width: 48,
+    sortable: false,
+    filterable: false,
+    renderHeader: () => (
+      <Tooltip title="Mine">
+        <StarOutlineIcon fontSize="small" />
+      </Tooltip>
+    ),
+    renderCell: (params) => {
+      const isMine = Boolean(params.row.is_mine);
+      return (
+        <IconButton
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            void handleMineToggle(params.row);
+          }}
+          aria-label={
+            isMine
+              ? `Remove ${getItemName(params.row)} from My Equipment`
+              : `Add ${getItemName(params.row)} to My Equipment`
+          }
+        >
+          {isMine ? (
+            <StarIcon fontSize="small" color="primary" />
+          ) : (
+            <StarOutlineIcon fontSize="small" />
+          )}
+        </IconButton>
+      );
+    },
+  };
+
   const actionsColumn: GridColDef<T> = {
     field: "actions",
     headerName: "Actions",
@@ -195,7 +268,7 @@ export default function EquipmentList<T extends { id: number; active?: boolean }
     },
   };
 
-  const allColumns = [...columns, actionsColumn];
+  const allColumns = [mineColumn, ...columns, actionsColumn];
   const buttonLabel = addLabel ?? deriveAddLabel(title);
 
   return (
@@ -245,6 +318,27 @@ export default function EquipmentList<T extends { id: number; active?: boolean }
             if (renderDetail && detailItem?.id === params.row.id) classes.push("row-selected");
             if (renderDetail) classes.push("row-clickable");
             return classes.join(" ");
+          }}
+          slots={{
+            noRowsOverlay: mineOnly
+              ? () => (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: "100%",
+                      p: 2,
+                      color: "text.secondary",
+                      fontStyle: "italic",
+                      textAlign: "center",
+                    }}
+                  >
+                    No equipment marked as yours yet. Open any item and check "Mark as
+                    mine", or click the star in a list.
+                  </Box>
+                )
+              : undefined,
           }}
           sx={{
             border: 0,
@@ -296,6 +390,17 @@ export default function EquipmentList<T extends { id: number; active?: boolean }
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      <Snackbar
+        open={mineError !== null}
+        autoHideDuration={4000}
+        onClose={() => setMineError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="error" onClose={() => setMineError(null)}>
+          {mineError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

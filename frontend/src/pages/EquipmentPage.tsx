@@ -24,26 +24,46 @@ export function EquipmentPage() {
     switch (category) {
       case "cameras":
         return <CameraList />;
+      case "my-cameras":
+        return <CameraList mineOnly />;
       case "telescopes":
         return <TelescopeList />;
+      case "my-telescopes":
+        return <TelescopeList mineOnly />;
       case "filters":
         return <FilterList />;
+      case "my-filters":
+        return <FilterList mineOnly />;
       case "sensors":
         return <SensorList />;
       case "mounts":
         return <MountList />;
+      case "my-mounts":
+        return <MountList mineOnly />;
       case "focusers":
         return <FocuserList />;
+      case "my-focusers":
+        return <FocuserList mineOnly />;
       case "filter-wheels":
         return <FilterWheelList />;
+      case "my-filter-wheels":
+        return <FilterWheelList mineOnly />;
       case "oags":
         return <OagList />;
+      case "my-oags":
+        return <OagList mineOnly />;
       case "guide-scopes":
         return <GuideScopeList />;
+      case "my-guide-scopes":
+        return <GuideScopeList mineOnly />;
       case "computers":
         return <ComputerList />;
+      case "my-computers":
+        return <ComputerList mineOnly />;
       case "software":
         return <SoftwareList />;
+      case "my-software":
+        return <SoftwareList mineOnly />;
       case "manufacturers":
         return <ManufacturerList />;
       case "lookup-tables":

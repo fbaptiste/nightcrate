@@ -36,11 +36,12 @@ const columns: GridColDef<Mount>[] = [
   },
 ];
 
-export default function MountList() {
+export default function MountList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Mount>
-      title="Mounts"
-      queryKey="mounts"
+      title={mineOnly ? "My Mounts" : "Mounts"}
+      queryKey={mineOnly ? "my-mounts" : "mounts"}
+      mineOnly={mineOnly}
       tableName="mount"
       fetchFn={fetchMounts}
       deleteFn={deleteMount}

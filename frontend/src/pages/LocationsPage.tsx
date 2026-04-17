@@ -123,6 +123,8 @@ interface FormState {
   timezone: string;
   bortle_class: string;
   sqm_reading: string;
+  typical_seeing_low_arcsec: string;
+  typical_seeing_high_arcsec: string;
   city: string;
   state_province: string;
   country: string;
@@ -139,6 +141,8 @@ function emptyForm(): FormState {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     bortle_class: "",
     sqm_reading: "",
+    typical_seeing_low_arcsec: "",
+    typical_seeing_high_arcsec: "",
     city: "",
     state_province: "",
     country: "",
@@ -156,6 +160,8 @@ function locationToForm(loc: Location): FormState {
     timezone: loc.timezone,
     bortle_class: loc.bortle_class != null ? String(loc.bortle_class) : "",
     sqm_reading: loc.sqm_reading != null ? String(loc.sqm_reading) : "",
+    typical_seeing_low_arcsec: loc.typical_seeing_low_arcsec != null ? String(loc.typical_seeing_low_arcsec) : "",
+    typical_seeing_high_arcsec: loc.typical_seeing_high_arcsec != null ? String(loc.typical_seeing_high_arcsec) : "",
     city: loc.city ?? "",
     state_province: loc.state_province ?? "",
     country: loc.country ?? "",
@@ -180,6 +186,7 @@ export default function LocationsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Location | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const [seeingGuideOpen, setSeeingGuideOpen] = useState(false);
   const [geoTimezone, setGeoTimezone] = useState<string | null>(null);
   const geoTzTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { data: timezones = [] } = useQuery({
@@ -427,6 +434,21 @@ export default function LocationsPage() {
       const s = parseFloat(form.sqm_reading);
       if (isNaN(s) || s < 10 || s > 25) e.sqm_reading = "Must be 10-25";
     }
+    if (form.typical_seeing_low_arcsec.trim()) {
+      const v = parseFloat(form.typical_seeing_low_arcsec);
+      if (isNaN(v) || v <= 0) e.typical_seeing_low_arcsec = "Must be positive";
+    }
+    if (form.typical_seeing_high_arcsec.trim()) {
+      const v = parseFloat(form.typical_seeing_high_arcsec);
+      if (isNaN(v) || v <= 0) e.typical_seeing_high_arcsec = "Must be positive";
+    }
+    if (form.typical_seeing_low_arcsec.trim() && form.typical_seeing_high_arcsec.trim()) {
+      const low = parseFloat(form.typical_seeing_low_arcsec);
+      const high = parseFloat(form.typical_seeing_high_arcsec);
+      if (!isNaN(low) && !isNaN(high) && low > high) {
+        e.typical_seeing_high_arcsec = "Must be \u2265 best seeing";
+      }
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -443,6 +465,8 @@ export default function LocationsPage() {
         timezone: form.timezone.trim(),
         bortle_class: parseOptionalInt(form.bortle_class),
         sqm_reading: parseOptionalFloat(form.sqm_reading),
+        typical_seeing_low_arcsec: parseOptionalFloat(form.typical_seeing_low_arcsec),
+        typical_seeing_high_arcsec: parseOptionalFloat(form.typical_seeing_high_arcsec),
         city: form.city.trim() || null,
         state_province: form.state_province.trim() || null,
         country: form.country.trim() || null,
@@ -790,6 +814,61 @@ export default function LocationsPage() {
                 {" "} — Bortle class and SQM are shown at the top of the forecast page.
               </Typography>
             )}
+
+            {/* Seeing Conditions */}
+            <Typography variant="subtitle2" sx={{ mt: 1, mb: -0.5 }}>
+              Seeing Conditions
+            </Typography>
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+              <TextField
+                label="Best Typical Seeing"
+                type="number"
+                value={form.typical_seeing_low_arcsec}
+                onChange={(e) => set("typical_seeing_low_arcsec", e.target.value)}
+                error={Boolean(errors.typical_seeing_low_arcsec)}
+                helperText={errors.typical_seeing_low_arcsec || "FWHM in arcseconds (e.g. 2.0)"}
+                slotProps={{ htmlInput: { step: "any", min: 0.1 } }}
+              />
+              <TextField
+                label="Worst Typical Seeing"
+                type="number"
+                value={form.typical_seeing_high_arcsec}
+                onChange={(e) => set("typical_seeing_high_arcsec", e.target.value)}
+                error={Boolean(errors.typical_seeing_high_arcsec)}
+                helperText={errors.typical_seeing_high_arcsec || "FWHM in arcseconds (e.g. 4.0)"}
+                slotProps={{ htmlInput: { step: "any", min: 0.1 } }}
+              />
+            </Box>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ mt: -1, cursor: "pointer" }}
+              onClick={() => setSeeingGuideOpen((v) => !v)}
+            >
+              {seeingGuideOpen ? "\u25BE" : "\u25B8"} How to estimate your seeing
+            </Typography>
+            {seeingGuideOpen && (
+              <Box sx={{ ml: 1, mt: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
+                <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
+                  Estimate from the FWHM of stars in your processed subs, or use these guidelines:
+                </Typography>
+                <Box component="table" sx={{ "& td, & th": { px: 1, py: 0.25, fontSize: "0.75rem" } }}>
+                  <thead>
+                    <tr><th align="left">Site Type</th><th align="left">Typical Range</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>Mountain observatory (&gt;2000m)</td><td>0.5{"\u2013"}1.5{"\u2033"}</td></tr>
+                    <tr><td>Rural dark site</td><td>1.5{"\u2013"}3.0{"\u2033"}</td></tr>
+                    <tr><td>Suburban backyard</td><td>2.0{"\u2013"}4.0{"\u2033"}</td></tr>
+                    <tr><td>Urban / rooftop</td><td>3.0{"\u2013"}5.0{"\u2033"}</td></tr>
+                  </tbody>
+                </Box>
+                <Typography variant="caption" component="p" sx={{ mt: 0.5 }}>
+                  Used by Rig calculators to assess whether your equipment matches your site conditions.
+                </Typography>
+              </Box>
+            )}
+
             <TextField
               label="Notes"
               value={form.notes}

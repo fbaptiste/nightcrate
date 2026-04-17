@@ -60,6 +60,3 @@ backend/.coverage
 
 # Temporary screenshots
 bug*.png
-
-# LLM reference docs (not part of codebase)
-LLM_DB_SPECS.md

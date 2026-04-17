@@ -13,6 +13,7 @@ import Select from "@mui/material/Select";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import { formatSnakeCase } from "@/lib/formUtils";
 import {
   createSoftware,
@@ -73,6 +74,7 @@ export default function SoftwareFormDialog({
   onSaved,
 }: SoftwareFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
@@ -82,6 +84,7 @@ export default function SoftwareFormDialog({
   useEffect(() => {
     if (open) {
       setForm(item ? softwareToForm(item) : emptyForm());
+      setIsMine(item?.is_mine ?? false);
       setErrors({});
     }
   }, [open, item]);
@@ -105,6 +108,7 @@ export default function SoftwareFormDialog({
     setSaving(true);
     try {
       const payload: SoftwareCreate = {
+        is_mine: isMine,
         name: form.name.trim(),
         manufacturer_id: form.manufacturer_id,
         category: form.category,
@@ -141,6 +145,8 @@ export default function SoftwareFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <MineCheckbox value={isMine} onChange={setIsMine} />
+
             {/* Row 1: Name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField
