@@ -92,9 +92,17 @@ export default function ImagingTab({
   return (
     <Box>
       {/* Binning selector */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="body2" gutterBottom>
-          Binning
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          mb: 2,
+          flexWrap: "wrap",
+        }}
+      >
+        <Typography variant="body2" color="text.secondary">
+          Imaging camera binning
         </Typography>
         <ToggleButtonGroup
           value={imageBinning}
@@ -105,7 +113,7 @@ export default function ImagingTab({
           size="small"
         >
           {[1, 2, 3, 4].map((b) => (
-            <ToggleButton key={b} value={b}>
+            <ToggleButton key={b} value={b} sx={{ px: 1.5, py: 0.25 }}>
               {b}&times;{b}
             </ToggleButton>
           ))}
