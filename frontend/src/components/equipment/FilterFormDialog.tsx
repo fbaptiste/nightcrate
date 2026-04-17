@@ -23,6 +23,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useQuery } from "@tanstack/react-query";
 import { parseOptionalFloat } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 
 import {
   createFilter,
@@ -142,6 +143,7 @@ export default function FilterFormDialog({
   onSaved,
 }: FilterFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isMine, setIsMine] = useState<boolean>(false);
   const [passbands, setPassbands] = useState<PassbandEntry[]>([]);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<
@@ -161,10 +163,12 @@ export default function FilterFormDialog({
     if (open) {
       if (filter) {
         setForm(filterToForm(filter));
+        setIsMine(filter.is_mine ?? false);
         setPassbands(filter.passbands.map(passbandToEntry));
         setExpandedIndex(false);
       } else {
         setForm(emptyForm());
+        setIsMine(false);
         setPassbands([]);
         setExpandedIndex(false);
       }
@@ -219,6 +223,7 @@ export default function FilterFormDialog({
     setSaving(true);
     try {
       const payload: FilterCreate = {
+        is_mine: isMine,
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
         filter_type_id: form.filter_type_id!,
@@ -286,6 +291,8 @@ export default function FilterFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <MineCheckbox value={isMine} onChange={setIsMine} />
+
             {/* Row 1: Model name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField

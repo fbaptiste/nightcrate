@@ -11,6 +11,7 @@ import Snackbar from "@mui/material/Snackbar";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import InterfaceMultiSelect from "@/components/equipment/shared/InterfaceMultiSelect";
 import { parseOptionalFloat } from "@/lib/formUtils";
@@ -82,6 +83,7 @@ export default function MountFormDialog({
   onSaved,
 }: MountFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
@@ -91,6 +93,7 @@ export default function MountFormDialog({
   useEffect(() => {
     if (open) {
       setForm(item ? mountToForm(item) : emptyForm());
+      setIsMine(item?.is_mine ?? false);
       setErrors({});
     }
   }, [open, item]);
@@ -113,6 +116,7 @@ export default function MountFormDialog({
     setSaving(true);
     try {
       const payload: MountCreate = {
+        is_mine: isMine,
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
         mount_type_id: form.mount_type_id,
@@ -155,6 +159,8 @@ export default function MountFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <MineCheckbox value={isMine} onChange={setIsMine} />
+
             {/* Row 1: Model name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField

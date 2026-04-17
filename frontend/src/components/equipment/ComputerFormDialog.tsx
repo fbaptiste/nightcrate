@@ -9,6 +9,7 @@ import DialogTitle from "@mui/material/DialogTitle";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import { fetchFormFactors } from "@/api/equipment";
 import {
@@ -57,6 +58,7 @@ export default function ComputerFormDialog({
   onSaved,
 }: ComputerFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
@@ -66,6 +68,7 @@ export default function ComputerFormDialog({
   useEffect(() => {
     if (open) {
       setForm(item ? computerToForm(item) : emptyForm());
+      setIsMine(item?.is_mine ?? false);
       setErrors({});
     }
   }, [open, item]);
@@ -88,6 +91,7 @@ export default function ComputerFormDialog({
     setSaving(true);
     try {
       const payload: ComputerCreate = {
+        is_mine: isMine,
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
         form_factor_id: form.form_factor_id,
@@ -123,6 +127,8 @@ export default function ComputerFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <MineCheckbox value={isMine} onChange={setIsMine} />
+
             {/* Row 1: Model name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField

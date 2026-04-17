@@ -11,6 +11,7 @@ import Snackbar from "@mui/material/Snackbar";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import InterfaceMultiSelect from "@/components/equipment/shared/InterfaceMultiSelect";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
@@ -82,6 +83,7 @@ export default function FocuserFormDialog({
   onSaved,
 }: FocuserFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
@@ -91,6 +93,7 @@ export default function FocuserFormDialog({
   useEffect(() => {
     if (open) {
       setForm(item ? focuserToForm(item) : emptyForm());
+      setIsMine(item?.is_mine ?? false);
       setErrors({});
     }
   }, [open, item]);
@@ -113,6 +116,7 @@ export default function FocuserFormDialog({
     setSaving(true);
     try {
       const payload: FocuserCreate = {
+        is_mine: isMine,
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
         focuser_type_id: form.focuser_type_id,
@@ -155,6 +159,8 @@ export default function FocuserFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <MineCheckbox value={isMine} onChange={setIsMine} />
+
             {/* Row 1: Model name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField

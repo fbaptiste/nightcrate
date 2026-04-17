@@ -23,6 +23,7 @@ import StarIcon from "@mui/icons-material/Star";
 import { useQuery } from "@tanstack/react-query";
 import { parseOptionalFloat } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import {
   createTelescope,
@@ -149,6 +150,7 @@ export default function TelescopeFormDialog({
   onSaved,
 }: TelescopeFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isMine, setIsMine] = useState<boolean>(false);
   const [configs, setConfigs] = useState<ConfigEntry[]>([emptyConfig()]);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState | "configs" | "native", string>>>({});
@@ -166,11 +168,13 @@ export default function TelescopeFormDialog({
     if (open) {
       if (telescope) {
         setForm(telescopeToForm(telescope));
+        setIsMine(telescope.is_mine ?? false);
         const entries = telescope.configurations.map(configToEntry);
         setConfigs(entries.length > 0 ? entries : [emptyConfig()]);
         setExpandedIndex(0);
       } else {
         setForm(emptyForm());
+        setIsMine(false);
         setConfigs([emptyConfig()]);
         setExpandedIndex(0);
       }
@@ -243,6 +247,7 @@ export default function TelescopeFormDialog({
     setSaving(true);
     try {
       const payload: TelescopeCreate = {
+        is_mine: isMine,
         model_name: form.model_name.trim(),
         manufacturer_id: form.manufacturer_id!,
         optical_design_id: form.optical_design_id,
@@ -326,6 +331,8 @@ export default function TelescopeFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <MineCheckbox value={isMine} onChange={setIsMine} />
+
             {/* Row 1: Model name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField
