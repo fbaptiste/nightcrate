@@ -162,7 +162,7 @@ export default function GuidingTolerancePanel({
               bottom: 0,
               width: pct(tolerance.tight_rms_arcsec),
               bgcolor: RIG_BLUE,
-              opacity: 0.35,
+              opacity: 0.7,
             }}
           />
           <Box
@@ -173,7 +173,7 @@ export default function GuidingTolerancePanel({
               bottom: 0,
               width: `calc(${pct(tolerance.acceptable_rms_arcsec)} - ${pct(tolerance.tight_rms_arcsec)})`,
               bgcolor: RIG_BLUE_LIGHT,
-              opacity: 0.35,
+              opacity: 0.7,
             }}
           />
           <Box
@@ -184,7 +184,7 @@ export default function GuidingTolerancePanel({
               top: 0,
               bottom: 0,
               bgcolor: RIG_ORANGE_LIGHT,
-              opacity: 0.35,
+              opacity: 0.7,
             }}
           />
           {current !== null && (
