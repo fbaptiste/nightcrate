@@ -88,10 +88,13 @@ class TestIsMinePartialIndex:
         conn = db_with_equipment_schema
         index_name = f"idx_{table}_mine"
         row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
             (index_name,),
         ).fetchone()
         assert row is not None, f"Partial index {index_name} missing for table {table}"
+        assert "WHERE is_mine = 1" in row["sql"], (
+            f"{table}: expected partial index with WHERE is_mine = 1, got: {row['sql']!r}"
+        )
 
 
 class TestIsMineDefaultAndConstraint:
@@ -154,3 +157,51 @@ class TestIsMineDefaultAndConstraint:
                 "VALUES (?, ?, 'BadCam', 2)",
                 (mfg_id, sensor_id),
             )
+
+
+# Minimal NOT NULL column sets required per table (beyond is_mine itself).
+# FK enforcement is disabled during this test, so placeholder integer 1 is
+# used for FK columns without needing real parent rows.
+_MINIMAL_INSERT: dict[str, str] = {
+    "camera": (
+        "INSERT INTO camera (manufacturer_id, sensor_id, model_name, is_mine) VALUES (1, 1, 'x', 2)"
+    ),
+    "telescope": (
+        "INSERT INTO telescope (manufacturer_id, model_name, aperture_mm, is_mine)"
+        " VALUES (1, 'x', 100.0, 2)"
+    ),
+    "filter": (
+        "INSERT INTO filter (manufacturer_id, filter_type_id, model_name, is_mine)"
+        " VALUES (1, 1, 'x', 2)"
+    ),
+    "mount": "INSERT INTO mount (manufacturer_id, model_name, is_mine) VALUES (1, 'x', 2)",
+    "focuser": "INSERT INTO focuser (manufacturer_id, model_name, is_mine) VALUES (1, 'x', 2)",
+    "filter_wheel": (
+        "INSERT INTO filter_wheel (manufacturer_id, model_name, num_positions, is_mine)"
+        " VALUES (1, 'x', 5, 2)"
+    ),
+    "oag": "INSERT INTO oag (manufacturer_id, model_name, is_mine) VALUES (1, 'x', 2)",
+    "guide_scope": (
+        "INSERT INTO guide_scope (manufacturer_id, model_name, is_mine) VALUES (1, 'x', 2)"
+    ),
+    "computer": ("INSERT INTO computer (manufacturer_id, model_name, is_mine) VALUES (1, 'x', 2)"),
+    "software": "INSERT INTO software (manufacturer_id, name, is_mine) VALUES (1, 'x', 2)",
+}
+
+
+class TestIsMineCheckConstraintAllTables:
+    """CHECK(is_mine IN (0,1)) must be enforced on every owned table."""
+
+    @pytest.mark.parametrize("table", OWNED_TABLES)
+    def test_check_constraint_rejects_invalid_value(self, db_with_equipment_schema, table):
+        """Inserting is_mine=2 must raise an IntegrityError on every owned table.
+
+        FK enforcement is disabled so that FK columns can be satisfied with
+        placeholder values, ensuring the CHECK constraint is the failing
+        condition rather than a NOT NULL or FK violation.
+        """
+        conn = db_with_equipment_schema
+        conn.execute("PRAGMA foreign_keys = OFF")
+        with pytest.raises(sqlite3.IntegrityError, match="is_mine"):
+            conn.execute(_MINIMAL_INSERT[table])
+            conn.commit()
