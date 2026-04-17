@@ -10,9 +10,12 @@ import type { RigCalculators } from "@/api/rigs";
 import { useDebounce } from "@/lib/useDebounce";
 import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 import SamplingChart from "./SamplingChart";
+import SubExposurePanel from "./SubExposurePanel";
 
 interface ImagingTabProps {
   calculators: RigCalculators;
+  kFactor: number;
+  onKFactorChange: (k: number) => void;
 }
 
 const SEEING_LABELS: { range: [number, number]; label: string }[] = [
@@ -60,7 +63,11 @@ const METRIC_TOOLTIPS: Record<string, string> = {
     "How much of the telescope's illuminated image circle the sensor covers. Values over 100% mean the sensor extends beyond the image circle, causing vignetting in the corners.",
 };
 
-export default function ImagingTab({ calculators }: ImagingTabProps) {
+export default function ImagingTab({
+  calculators,
+  kFactor,
+  onKFactorChange,
+}: ImagingTabProps) {
   const [binning, setBinning] = useState<number>(1);
   const initialSeeingMid =
     (calculators.sampling_assessment.seeing_fwhm_low +
@@ -240,6 +247,12 @@ export default function ImagingTab({ calculators }: ImagingTabProps) {
           </Box>
         </Box>
       </Box>
+
+      <SubExposurePanel
+        subExposure={calculators.sub_exposure}
+        kFactor={kFactor}
+        onKFactorChange={onKFactorChange}
+      />
     </Box>
   );
 }

@@ -18,6 +18,7 @@ export interface RigFilterSlotOut {
 export interface RigWarning {
   field: string;
   message: string;
+  severity?: "error" | "info";
 }
 
 export interface SamplingAssessment {
@@ -53,6 +54,36 @@ export interface GuideSuitability {
   caveat: string;
 }
 
+export interface SubExposureResult {
+  filter_id: number | null;
+  filter_label: string;
+  filter_slot_number: number | null;
+  effective_bandpass_nm: number;
+  filter_transmission_pct: number;
+  sky_rate_e_per_s_per_pixel: number;
+  optimal_sub_seconds: number;
+  saturation_sub_seconds: number;
+  recommended_sub_seconds: number;
+  saturation_capped: boolean;
+  standard_sub_seconds: number;
+  has_passband_data: boolean;
+}
+
+export interface SubExposureCalc {
+  location_id: number | null;
+  location_name: string | null;
+  sky_mag_per_arcsec2: number;
+  sky_brightness_source: "sqm" | "bortle" | "default";
+  sky_brightness_source_detail: string;
+  read_noise_e: number;
+  peak_qe_pct: number;
+  full_well_capacity_ke: number;
+  aperture_mm: number;
+  image_scale_arcsec_per_pixel: number;
+  k_factor: number;
+  results: SubExposureResult[];
+}
+
 export interface RigCalculators {
   image_scale_arcsec_per_pixel: number;
   image_scale_arcsec_per_pixel_binned: Record<number, number>;
@@ -67,6 +98,7 @@ export interface RigCalculators {
   sensor_coverage_pct: number | null;
   sampling_assessment: SamplingAssessment;
   guide_suitability: GuideSuitability | null;
+  sub_exposure: SubExposureCalc | null;
 }
 
 export interface Rig {
@@ -251,6 +283,7 @@ export const fetchRigCalculators = (
     seeing_high?: number;
     guide_binning?: number;
     centroid_accuracy_pixels?: number;
+    k_factor?: number;
   }
 ) => {
   const query = new URLSearchParams();
@@ -262,6 +295,9 @@ export const fetchRigCalculators = (
   }
   if (params?.centroid_accuracy_pixels !== undefined) {
     query.set("centroid_accuracy_pixels", String(params.centroid_accuracy_pixels));
+  }
+  if (params?.k_factor !== undefined) {
+    query.set("k_factor", String(params.k_factor));
   }
   const qs = query.toString();
   return apiFetch<RigCalculators>(`/rigs/${id}/calculators${qs ? `?${qs}` : ""}`);

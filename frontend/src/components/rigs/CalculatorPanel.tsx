@@ -31,6 +31,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   );
   const [guideBinning, setGuideBinning] = useState<number>(1);
   const [centroidAccuracy, setCentroidAccuracy] = useState<number>(0.2);
+  const [kFactor, setKFactor] = useState<number>(10);
   const [calculatorData, setCalculatorData] = useState<RigCalculators>(
     rig.calculators,
   );
@@ -53,8 +54,9 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
   const debouncedGuideBinning = useDebounce(guideBinning, 150);
   const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
+  const debouncedKFactor = useDebounce(kFactor, 300);
 
-  // Fetch calculator data when location or guide params change.
+  // Fetch calculator data when location, guide, or sub-exposure params change.
   useEffect(() => {
     if (selectedLocationId === null) return;
     let cancelled = false;
@@ -62,6 +64,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
       location_id: selectedLocationId,
       guide_binning: debouncedGuideBinning,
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
+      k_factor: debouncedKFactor,
     }).then((data) => {
       if (!cancelled) setCalculatorData(data);
     });
@@ -73,6 +76,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     selectedLocationId,
     debouncedGuideBinning,
     debouncedCentroidAccuracy,
+    debouncedKFactor,
   ]);
 
   const selectedLocation = locations.find((l) => l.id === selectedLocationId);
@@ -129,7 +133,13 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
       {/* Tab body */}
       {activeTab === "equipment" && <EquipmentTab rig={rig} />}
-      {activeTab === "imaging" && <ImagingTab calculators={calculatorData} />}
+      {activeTab === "imaging" && (
+        <ImagingTab
+          calculators={calculatorData}
+          kFactor={kFactor}
+          onKFactorChange={setKFactor}
+        />
+      )}
       {activeTab === "guiding" && hasGuideCamera && (
         <GuidingTab
           rig={rig}
