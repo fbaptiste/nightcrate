@@ -1102,10 +1102,16 @@ async def _build_camera_response(conn, camera_row: dict) -> dict:
 @router.get("/camera", response_model=list[CameraResponse])
 async def list_cameras(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_camera_response(conn, _row_to_dict(r)))
@@ -1130,9 +1136,9 @@ async def create_camera(body: CameraCreate):
                     tilt_adapter, has_usb_hub, usb_hub_interface_id, unity_gain,
                     effective_full_well_ke, effective_read_noise_lcg_e,
                     effective_read_noise_hcg_e, effective_peak_qe_pct,
-                    hcg_threshold_gain, notes, source_url
+                    hcg_threshold_gain, notes, source_url, is_mine
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?)""",
+                          ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.sensor_id,
@@ -1154,6 +1160,7 @@ async def create_camera(body: CameraCreate):
                     body.hcg_threshold_gain,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -1276,10 +1283,18 @@ async def _build_telescope_response(conn, telescope_row: dict) -> dict:
 @router.get("/telescope", response_model=list[TelescopeResponse])
 async def list_telescopes(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM telescope {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM telescope {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_telescope_response(conn, _row_to_dict(r)))
@@ -1301,8 +1316,8 @@ async def create_telescope(body: TelescopeCreate):
                 """INSERT INTO telescope (
                     manufacturer_id, optical_design_id, model_name,
                     aperture_mm, image_circle_mm, weight_kg, obstruction_pct, notes,
-                    source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.optical_design_id,
@@ -1313,6 +1328,7 @@ async def create_telescope(body: TelescopeCreate):
                     body.obstruction_pct,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -1570,10 +1586,16 @@ async def _build_filter_response(conn, filter_row: dict) -> dict:
 @router.get("/filter", response_model=list[FilterResponse])
 async def list_filters(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_filter_response(conn, _row_to_dict(r)))
@@ -1594,8 +1616,8 @@ async def create_filter(body: FilterCreate):
             cursor = await conn.execute(
                 """INSERT INTO filter (
                     manufacturer_id, filter_type_id, model_name,
-                    peak_transmission_pct, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    peak_transmission_pct, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.filter_type_id,
@@ -1603,6 +1625,7 @@ async def create_filter(body: FilterCreate):
                     body.peak_transmission_pct,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -1882,10 +1905,16 @@ async def _build_mount_response(conn, mount_row: dict) -> dict:
 @router.get("/mount", response_model=list[MountResponse])
 async def list_mounts(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_mount_response(conn, _row_to_dict(r)))
@@ -1907,8 +1936,9 @@ async def create_mount(body: MountCreate):
                 """INSERT INTO mount (
                     manufacturer_id, mount_type_id, model_name,
                     payload_capacity_kg, mount_weight_kg, counterweight_required,
-                    goto_capable, periodic_error_arcsec, drive_type, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    goto_capable, periodic_error_arcsec, drive_type, notes, source_url,
+                    is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.mount_type_id,
@@ -1921,6 +1951,7 @@ async def create_mount(body: MountCreate):
                     body.drive_type,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2029,10 +2060,18 @@ async def _build_focuser_response(conn, focuser_row: dict) -> dict:
 @router.get("/focuser", response_model=list[FocuserResponse])
 async def list_focusers(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM focuser {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM focuser {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_focuser_response(conn, _row_to_dict(r)))
@@ -2054,8 +2093,8 @@ async def create_focuser(body: FocuserCreate):
                 """INSERT INTO focuser (
                     manufacturer_id, focuser_type_id, model_name, motorized, travel_range_mm,
                     step_size_um, total_steps, temperature_compensation,
-                    backlash_steps, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    backlash_steps, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.focuser_type_id,
@@ -2068,6 +2107,7 @@ async def create_focuser(body: FocuserCreate):
                     body.backlash_steps,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2194,10 +2234,18 @@ async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
 @router.get("/filter-wheel", response_model=list[FilterWheelResponse])
 async def list_filter_wheels(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_wheel {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM filter_wheel {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_filter_wheel_response(conn, _row_to_dict(r)))
@@ -2219,8 +2267,8 @@ async def create_filter_wheel(body: FilterWheelCreate):
                 """INSERT INTO filter_wheel (
                     manufacturer_id, filter_size_id, camera_side_connector_id,
                     telescope_side_connector_id, model_name, num_positions,
-                    back_focus_contribution_mm, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    back_focus_contribution_mm, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.filter_size_id,
@@ -2231,6 +2279,7 @@ async def create_filter_wheel(body: FilterWheelCreate):
                     body.back_focus_contribution_mm,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2337,10 +2386,16 @@ async def _build_oag_response(conn, oag_row: dict) -> dict:
 @router.get("/oag", response_model=list[OagResponse])
 async def list_oags(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY is_mine DESC, model_name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_oag_response(conn, _row_to_dict(r)))
@@ -2362,8 +2417,8 @@ async def create_oag(body: OagCreate):
                 """INSERT INTO oag (
                     manufacturer_id, imaging_side_connector_id, guide_camera_connector_id,
                     model_name, prism_size_mm, back_focus_contribution_mm, weight_g, notes,
-                    source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.imaging_side_connector_id,
@@ -2374,6 +2429,7 @@ async def create_oag(body: OagCreate):
                     body.weight_g,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2453,10 +2509,18 @@ async def _build_guide_scope_response(conn, gs_row: dict) -> dict:
 @router.get("/guide-scope", response_model=list[GuideScopeResponse])
 async def list_guide_scopes(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM guide_scope {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM guide_scope {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_guide_scope_response(conn, _row_to_dict(r)))
@@ -2477,8 +2541,8 @@ async def create_guide_scope(body: GuideScopeCreate):
             cursor = await conn.execute(
                 """INSERT INTO guide_scope (
                     manufacturer_id, guide_camera_connector_id, model_name,
-                    aperture_mm, focal_length_mm, weight_g, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    aperture_mm, focal_length_mm, weight_g, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.guide_camera_connector_id,
@@ -2488,6 +2552,7 @@ async def create_guide_scope(body: GuideScopeCreate):
                     body.weight_g,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2567,10 +2632,18 @@ async def _build_computer_response(conn, computer_row: dict) -> dict:
 @router.get("/computer", response_model=list[ComputerResponse])
 async def list_computers(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM computer {where} ORDER BY model_name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(
+            f"SELECT * FROM computer {where} ORDER BY is_mine DESC, model_name"
+        )
         results = []
         for r in await rows.fetchall():
             results.append(await _build_computer_response(conn, _row_to_dict(r)))
@@ -2590,14 +2663,15 @@ async def create_computer(body: ComputerCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO computer (
-                    manufacturer_id, form_factor_id, model_name, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?)""",
+                    manufacturer_id, form_factor_id, model_name, notes, source_url, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.form_factor_id,
                     body.model_name,
                     body.notes,
                     body.source_url,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
@@ -2672,10 +2746,16 @@ async def _build_software_response(conn, sw_row: dict) -> dict:
 @router.get("/software", response_model=list[SoftwareResponse])
 async def list_software(
     include_retired: bool = Query(False, description="Include retired items"),
+    mine: bool = Query(False, description="Return only items marked as mine"),
 ):
     async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY name")
+        conditions = []
+        if not include_retired:
+            conditions.append("active = 1")
+        if mine:
+            conditions.append("is_mine = 1")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY is_mine DESC, name")
         results = []
         for r in await rows.fetchall():
             results.append(await _build_software_response(conn, _row_to_dict(r)))
@@ -2695,14 +2775,15 @@ async def create_software(body: SoftwareCreate):
         try:
             cursor = await conn.execute(
                 """INSERT INTO software (
-                    manufacturer_id, name, category, website, notes
-                ) VALUES (?, ?, ?, ?, ?)""",
+                    manufacturer_id, name, category, website, notes, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.name,
                     body.category,
                     body.website,
                     body.notes,
+                    int(body.is_mine),
                 ),
             )
             await conn.commit()
