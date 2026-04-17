@@ -35,9 +35,15 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   // thresholds on the backend. Independent from the Imaging tab's own
   // (purely display-side) binning selector.
   const [guidingImageBinning, setGuidingImageBinning] = useState<number>(1);
-  const [calculatorData, setCalculatorData] = useState<RigCalculators>(
-    rig.calculators,
+  // Fetched calculator data keyed by rig.id; falls back to rig.calculators
+  // (the snapshot included on the rig list response) until a fetch resolves.
+  // Keying by rig.id ensures the fallback resets cleanly when the user
+  // switches between rigs.
+  const [fetched, setFetched] = useState<{ rigId: number; data: RigCalculators } | null>(
+    null,
   );
+  const calculatorData: RigCalculators =
+    fetched?.rigId === rig.id ? fetched.data : rig.calculators;
   const [activeTab, setActiveTab] = useState<TabKey>("equipment");
 
   const { data: locations = [] } = useQuery<Location[]>({
@@ -69,7 +75,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
       image_binning: debouncedGuidingImageBinning,
     }).then((data) => {
-      if (!cancelled) setCalculatorData(data);
+      if (!cancelled) setFetched({ rigId: rig.id, data });
     });
     return () => {
       cancelled = true;

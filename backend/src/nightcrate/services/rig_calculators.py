@@ -174,10 +174,16 @@ def resolve_seeing(
 
     Priority: override > location > default (2-4").
 
+    Override activates when EITHER `override_low` or `override_high` is
+    provided; the missing side is mirrored from the provided one (so a
+    single-value slider reads as `(v, v)`).
+
     Returns (low, high, source, location_name_or_none).
     """
-    if override_low is not None and override_high is not None:
-        return override_low, override_high, "override", None
+    if override_low is not None or override_high is not None:
+        low = override_low if override_low is not None else override_high
+        high = override_high if override_high is not None else override_low
+        return low, high, "override", None
 
     if location_seeing_low is not None:
         high = location_seeing_high if location_seeing_high is not None else location_seeing_low

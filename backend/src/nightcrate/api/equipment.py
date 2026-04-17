@@ -1076,7 +1076,7 @@ async def delete_sensor(sensor_id: int):
 async def _build_camera_response(conn, camera_row: dict) -> dict:
     """Build full camera response with nested objects."""
     d = dict(camera_row)
-    _bool_fields(d, "active", "cooled", "tilt_adapter", "has_usb_hub")
+    _bool_fields(d, "active", "cooled", "tilt_adapter", "has_usb_hub", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -1219,7 +1219,7 @@ async def update_camera(camera_id: int, body: CameraUpdate):
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
         if updates:
-            for bool_field in ("cooled", "tilt_adapter", "has_usb_hub"):
+            for bool_field in ("cooled", "tilt_adapter", "has_usb_hub", "is_mine"):
                 if bool_field in updates and updates[bool_field] is not None:
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -1276,7 +1276,7 @@ async def toggle_camera_mine(camera_id: int, body: MineToggle):
 async def _build_telescope_response(conn, telescope_row: dict) -> dict:
     """Build full telescope response with nested objects."""
     d = dict(telescope_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -1399,6 +1399,8 @@ async def update_telescope(telescope_id: int, body: TelescopeUpdate):
         await _get_or_404(conn, "telescope", telescope_id, "Telescope")
         updates = body.model_dump(exclude_unset=True)
         connector_size_ids = updates.pop("connector_size_ids", None)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [telescope_id]
@@ -1586,7 +1588,7 @@ async def delete_telescope_configuration(telescope_id: int, config_id: int):
 async def _build_filter_response(conn, filter_row: dict) -> dict:
     """Build full filter response with nested objects."""
     d = dict(filter_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -1702,6 +1704,8 @@ async def update_filter(filter_id: int, body: FilterUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "filter", filter_id, "Filter")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [filter_id]
@@ -1939,7 +1943,7 @@ async def delete_filter_size_option(filter_id: int, option_id: int):
 async def _build_mount_response(conn, mount_row: dict) -> dict:
     """Build full mount response with nested objects."""
     d = dict(mount_row)
-    _bool_fields(d, "active", "counterweight_required", "goto_capable")
+    _bool_fields(d, "active", "counterweight_required", "goto_capable", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2049,7 +2053,7 @@ async def update_mount(mount_id: int, body: MountUpdate):
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
         if updates:
-            for bool_field in ("counterweight_required", "goto_capable"):
+            for bool_field in ("counterweight_required", "goto_capable", "is_mine"):
                 if bool_field in updates and updates[bool_field] is not None:
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -2107,7 +2111,7 @@ async def toggle_mount_mine(mount_id: int, body: MineToggle):
 async def _build_focuser_response(conn, focuser_row: dict) -> dict:
     """Build full focuser response with nested objects."""
     d = dict(focuser_row)
-    _bool_fields(d, "active", "motorized", "temperature_compensation")
+    _bool_fields(d, "active", "motorized", "temperature_compensation", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2218,7 +2222,7 @@ async def update_focuser(focuser_id: int, body: FocuserUpdate):
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
         if updates:
-            for bool_field in ("motorized", "temperature_compensation"):
+            for bool_field in ("motorized", "temperature_compensation", "is_mine"):
                 if bool_field in updates and updates[bool_field] is not None:
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -2276,7 +2280,7 @@ async def toggle_focuser_mine(focuser_id: int, body: MineToggle):
 async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
     """Build full filter wheel response with nested objects."""
     d = dict(fw_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2402,6 +2406,8 @@ async def update_filter_wheel(filter_wheel_id: int, body: FilterWheelUpdate):
         await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
         updates = body.model_dump(exclude_unset=True)
         interface_ids = updates.pop("interface_ids", None)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [filter_wheel_id]
@@ -2461,7 +2467,7 @@ async def toggle_filter_wheel_mine(filter_wheel_id: int, body: MineToggle):
 async def _build_oag_response(conn, oag_row: dict) -> dict:
     """Build full OAG response with nested objects."""
     d = dict(oag_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2558,6 +2564,8 @@ async def update_oag(oag_id: int, body: OagUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "oag", oag_id, "OAG")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [oag_id]
@@ -2606,7 +2614,7 @@ async def toggle_oag_mine(oag_id: int, body: MineToggle):
 async def _build_guide_scope_response(conn, gs_row: dict) -> dict:
     """Build full guide scope response with nested objects."""
     d = dict(gs_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2694,6 +2702,8 @@ async def update_guide_scope(guide_scope_id: int, body: GuideScopeUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [guide_scope_id]
@@ -2742,7 +2752,7 @@ async def toggle_guide_scope_mine(guide_scope_id: int, body: MineToggle):
 async def _build_computer_response(conn, computer_row: dict) -> dict:
     """Build full computer response with nested objects."""
     d = dict(computer_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
         await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
@@ -2826,6 +2836,8 @@ async def update_computer(computer_id: int, body: ComputerUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "computer", computer_id, "Computer")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [computer_id]
@@ -2874,7 +2886,7 @@ async def toggle_computer_mine(computer_id: int, body: MineToggle):
 async def _build_software_response(conn, sw_row: dict) -> dict:
     """Build full software response with nested objects."""
     d = dict(sw_row)
-    _bool_fields(d, "active")
+    _bool_fields(d, "active", "is_mine")
 
     mfr_id = d.pop("manufacturer_id")
     if mfr_id:
@@ -2957,6 +2969,8 @@ async def update_software(software_id: int, body: SoftwareUpdate):
     async with get_db() as conn:
         await _get_or_404(conn, "software", software_id, "Software")
         updates = body.model_dump(exclude_unset=True)
+        if "is_mine" in updates and updates["is_mine"] is not None:
+            updates["is_mine"] = int(updates["is_mine"])
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [software_id]

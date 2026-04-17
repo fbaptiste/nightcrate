@@ -111,7 +111,7 @@ SELECT
     gs.model_name AS guide_scope_name,
     gs.focal_length_mm AS guide_scope_focal_length_mm,
     r.oag_id,
-    oag.model_name AS oag_name,
+    o.model_name AS oag_name,
     -- Guide camera sensor (for guide calculator)
     gs2.pixel_size_um AS guide_pixel_size_um,
     gs2.resolution_x AS guide_resolution_x,
@@ -133,6 +133,6 @@ LEFT JOIN focuser foc ON foc.id = r.focuser_id
 LEFT JOIN camera gc ON gc.id = r.guide_camera_id
 LEFT JOIN sensor gs2 ON gs2.id = gc.sensor_id
 LEFT JOIN guide_scope gs ON gs.id = r.guide_scope_id
-LEFT JOIN oag ON oag.id = r.oag_id
+LEFT JOIN oag o ON o.id = r.oag_id
 LEFT JOIN computer comp ON comp.id = r.computer_id
 LEFT JOIN filter sf ON sf.id = r.single_filter_id;

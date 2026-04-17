@@ -302,7 +302,6 @@ async def _build_rig_response(
     location_id: int | None = None,
     override_seeing_low: float | None = None,
     override_seeing_high: float | None = None,
-    override_binning: int | None = None,
 ) -> dict:
     """Assemble a full RigOut response from a rig_summary row."""
     rig_id = rig_row["id"]
