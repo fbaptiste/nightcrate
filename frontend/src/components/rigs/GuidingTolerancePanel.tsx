@@ -34,11 +34,41 @@ export default function GuidingTolerancePanel({
         color="text.secondary"
         sx={{ display: "block", mb: 1 }}
       >
-        How much PHD2 RMS your rig can tolerate before stars elongate. At{" "}
-        {tolerance.image_binning}&times;{tolerance.image_binning} binning (main
-        scale {tolerance.main_scale_arcsec_per_pixel.toFixed(2)}
-        &Prime;/px).
+        How much PHD2 RMS your rig can tolerate before stars elongate.
       </Typography>
+
+      <Box
+        component="table"
+        sx={{
+          "& td": { py: 0.3, pr: 2, verticalAlign: "top" },
+          mb: 1.5,
+        }}
+      >
+        <tbody>
+          <tr>
+            <td>
+              <Typography variant="body2" color="text.secondary">
+                Image Scale
+              </Typography>
+            </td>
+            <td>
+              <Typography variant="body1">
+                {tolerance.main_scale_arcsec_per_pixel.toFixed(2)}&Prime;/pixel
+                {tolerance.image_binning > 1 && (
+                  <Typography
+                    component="span"
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ ml: 1 }}
+                  >
+                    (at {tolerance.image_binning}&times;{tolerance.image_binning} binning)
+                  </Typography>
+                )}
+              </Typography>
+            </td>
+          </tr>
+        </tbody>
+      </Box>
 
       {/* Thresholds block */}
       <Box
