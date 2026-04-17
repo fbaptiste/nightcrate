@@ -37,11 +37,12 @@ const columns: GridColDef<Oag>[] = [
   },
 ];
 
-export default function OagList() {
+export default function OagList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Oag>
-      title="Off-Axis Guiders"
-      queryKey="oags"
+      title={mineOnly ? "My OAGs" : "Off-Axis Guiders"}
+      queryKey={mineOnly ? "my-oags" : "oags"}
+      mineOnly={mineOnly}
       tableName="oag"
       fetchFn={fetchOags}
       deleteFn={deleteOag}

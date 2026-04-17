@@ -24,11 +24,12 @@ const columns: GridColDef<Computer>[] = [
   },
 ];
 
-export default function ComputerList() {
+export default function ComputerList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Computer>
-      title="Computers"
-      queryKey="computers"
+      title={mineOnly ? "My Computers" : "Computers"}
+      queryKey={mineOnly ? "my-computers" : "computers"}
+      mineOnly={mineOnly}
       tableName="computer"
       fetchFn={fetchComputers}
       deleteFn={deleteComputer}

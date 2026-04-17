@@ -76,11 +76,12 @@ const columns: GridColDef<Filter>[] = [
   },
 ];
 
-export default function FilterList() {
+export default function FilterList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Filter>
-      title="Filters"
-      queryKey="filters"
+      title={mineOnly ? "My Filters" : "Filters"}
+      queryKey={mineOnly ? "my-filters" : "filters"}
+      mineOnly={mineOnly}
       tableName="filter"
       fetchFn={fetchFilters}
       deleteFn={deleteFilter}

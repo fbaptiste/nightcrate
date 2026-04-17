@@ -36,12 +36,13 @@ const columns: GridColDef<Software>[] = [
   },
 ];
 
-export default function SoftwareList() {
+export default function SoftwareList({ mineOnly = false }: { mineOnly?: boolean } = {}) {
   return (
     <EquipmentList<Software>
-      title="Software"
+      title={mineOnly ? "My Software" : "Software"}
       addLabel="Add Software"
-      queryKey="software"
+      queryKey={mineOnly ? "my-software" : "software"}
+      mineOnly={mineOnly}
       tableName="software"
       fetchFn={fetchSoftwares}
       deleteFn={deleteSoftware}
