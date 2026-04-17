@@ -33,6 +33,26 @@ export interface SamplingAssessment {
   binning_recommendations: Record<number, string>;
 }
 
+export interface GuideSuitability {
+  mode: "guide_scope" | "oag";
+  guide_focal_length_mm: number;
+  guide_pixel_size_um: number;
+  guide_binning: number;
+  effective_guide_pixel_size_um: number;
+  unbinned_guide_scale_arcsec_per_pixel: number;
+  guide_scale_arcsec_per_pixel: number;
+  guide_fov_width_arcmin: number;
+  guide_fov_height_arcmin: number;
+  centroid_accuracy_pixels: number;
+  effective_guide_precision_arcsec: number;
+  g_ratio: number;
+  effective_error_main_pixels: number;
+  rating: "excellent" | "good" | "marginal" | "poor";
+  rating_reason: "ratio" | "scale_cap";
+  recommendation: string;
+  caveat: string;
+}
+
 export interface RigCalculators {
   image_scale_arcsec_per_pixel: number;
   image_scale_arcsec_per_pixel_binned: Record<number, number>;
@@ -46,8 +66,7 @@ export interface RigCalculators {
   image_circle_mm: number | null;
   sensor_coverage_pct: number | null;
   sampling_assessment: SamplingAssessment;
-  guide_image_scale_arcsec_per_pixel: number | null;
-  guide_field_of_view_arcmin: [number, number] | null;
+  guide_suitability: GuideSuitability | null;
 }
 
 export interface Rig {
@@ -226,12 +245,24 @@ export const cloneRig = (id: number) =>
 
 export const fetchRigCalculators = (
   id: number,
-  params?: { location_id?: number; seeing_low?: number; seeing_high?: number }
+  params?: {
+    location_id?: number;
+    seeing_low?: number;
+    seeing_high?: number;
+    guide_binning?: number;
+    centroid_accuracy_pixels?: number;
+  }
 ) => {
   const query = new URLSearchParams();
   if (params?.location_id) query.set("location_id", String(params.location_id));
   if (params?.seeing_low) query.set("seeing_low", String(params.seeing_low));
   if (params?.seeing_high) query.set("seeing_high", String(params.seeing_high));
+  if (params?.guide_binning !== undefined) {
+    query.set("guide_binning", String(params.guide_binning));
+  }
+  if (params?.centroid_accuracy_pixels !== undefined) {
+    query.set("centroid_accuracy_pixels", String(params.centroid_accuracy_pixels));
+  }
   const qs = query.toString();
   return apiFetch<RigCalculators>(`/rigs/${id}/calculators${qs ? `?${qs}` : ""}`);
 };

@@ -16,7 +16,9 @@ import {
   type RigCalculators,
 } from "@/api/rigs";
 import { useDebounce } from "@/lib/useDebounce";
+import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 import SamplingChart from "./SamplingChart";
+import GuideSuitabilityPanel from "./GuideSuitabilityPanel";
 
 interface CalculatorPanelProps {
   rig: Rig;
@@ -58,9 +60,14 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   );
   const [seeingSlider, setSeeingSlider] = useState<number | null>(null);
   const [binning, setBinning] = useState<number>(1);
+  const [guideBinning, setGuideBinning] = useState<number>(1);
+  const [centroidAccuracy, setCentroidAccuracy] = useState<number>(0.2);
   const [calculatorData, setCalculatorData] = useState<RigCalculators>(
     rig.calculators
   );
+
+  const debouncedGuideBinning = useDebounce(guideBinning, 150);
+  const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
 
   const { data: locations = [] } = useQuery<Location[]>({
     queryKey: ["locations"],
@@ -77,27 +84,44 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     }
   }, [locations, selectedLocationId]);
 
-  // Fetch calculator data when location changes
+  // Fetch calculator data when location or guide params change.
   useEffect(() => {
     if (selectedLocationId === null) return;
     let cancelled = false;
-    fetchRigCalculators(rig.id, { location_id: selectedLocationId }).then(
-      (data) => {
-        if (!cancelled) {
-          setCalculatorData(data);
-          // Reset seeing slider to midpoint of new location's seeing range
+    fetchRigCalculators(rig.id, {
+      location_id: selectedLocationId,
+      guide_binning: debouncedGuideBinning,
+      centroid_accuracy_pixels: debouncedCentroidAccuracy,
+    }).then((data) => {
+      if (!cancelled) {
+        setCalculatorData(data);
+        // Only reset the seeing slider when the location itself changed,
+        // not on every guide-param refetch.
+        setSeeingSlider((prev) => {
+          if (prev !== null) return prev;
           const mid =
             (data.sampling_assessment.seeing_fwhm_low +
               data.sampling_assessment.seeing_fwhm_high) /
             2;
-          setSeeingSlider(mid > 0 ? mid : null);
-        }
+          return mid > 0 ? mid : null;
+        });
       }
-    );
+    });
     return () => {
       cancelled = true;
     };
-  }, [rig.id, selectedLocationId]);
+  }, [
+    rig.id,
+    selectedLocationId,
+    debouncedGuideBinning,
+    debouncedCentroidAccuracy,
+  ]);
+
+  // Reset seeing slider when location changes (separate effect so guide-param
+  // refetches don't reset the slider mid-session).
+  useEffect(() => {
+    setSeeingSlider(null);
+  }, [selectedLocationId]);
 
   const selectedLocation = locations.find((l) => l.id === selectedLocationId);
   const hasSeeing =
@@ -259,46 +283,31 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
           </Typography>
           <Box>
             <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
-              <Box component="span" sx={{ color: "#1976d2", fontWeight: 600 }}>Blue bars</Box>
+              <Box component="span" sx={{ color: RIG_BLUE, fontWeight: 600 }}>Blue bars</Box>
               {" "}fall within the ideal range (well-sampled) — stars span 2–3 pixels, balancing resolution and signal.
             </Typography>
             <Typography variant="caption" component="p" sx={{ mb: 0.5 }}>
-              <Box component="span" sx={{ color: "#ed6c02", fontWeight: 600 }}>Orange bars</Box>
+              <Box component="span" sx={{ color: RIG_ORANGE, fontWeight: 600 }}>Orange bars</Box>
               {" "}are oversampled — pixel scale is finer than the seeing supports, wasting signal-to-noise. Consider binning.
             </Typography>
             <Typography variant="caption" component="p">
-              <Box component="span" sx={{ color: "#00695c", fontWeight: 600 }}>Teal bars</Box>
+              <Box component="span" sx={{ color: RIG_TEAL, fontWeight: 600 }}>Teal bars</Box>
               {" "}are undersampled — pixel scale is too coarse, stars look blocky. Consider a longer focal length or smaller pixels.
             </Typography>
           </Box>
         </Box>
       </Box>
 
-      {/* Guide system summary */}
-      {calculatorData.guide_image_scale_arcsec_per_pixel != null && (
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-            Guide System
-          </Typography>
-          <Box
-            component="table"
-            sx={{ "& td": { py: 0.3, pr: 2, verticalAlign: "top" } }}
-          >
-            <tbody>
-              <MetricRow
-                label="Guide Image Scale"
-                value={`${calculatorData.guide_image_scale_arcsec_per_pixel.toFixed(2)}\u2033/pixel`}
-              />
-              {calculatorData.guide_field_of_view_arcmin && (
-                <MetricRow
-                  label="Guide FOV"
-                  value={`${calculatorData.guide_field_of_view_arcmin[0].toFixed(1)}\u2032 \u00d7 ${calculatorData.guide_field_of_view_arcmin[1].toFixed(1)}\u2032`}
-                />
-              )}
-            </tbody>
-          </Box>
-        </Box>
-      )}
+      {/* Guide suitability */}
+      <GuideSuitabilityPanel
+        rig={rig}
+        suitability={calculatorData.guide_suitability}
+        mainImageScale={scale}
+        guideBinning={guideBinning}
+        onBinningChange={setGuideBinning}
+        centroidAccuracy={centroidAccuracy}
+        onCentroidChange={setCentroidAccuracy}
+      />
     </Box>
   );
 }
@@ -316,10 +325,6 @@ const METRIC_TOOLTIPS: Record<string, string> = {
     "Angular resolution limit where the first diffraction minimum of one star overlaps the central maximum of another. Slightly more conservative than Dawes.",
   "Sensor Coverage":
     "How much of the telescope's illuminated image circle the sensor covers. Values over 100% mean the sensor extends beyond the image circle, causing vignetting in the corners.",
-  "Guide Image Scale":
-    "Angular size each pixel covers on the guide camera. Coarser scales are easier for guiding software but less precise.",
-  "Guide FOV":
-    "Field of view of the guide camera. Needs to be large enough to reliably find guide stars.",
 };
 
 function MetricRow({

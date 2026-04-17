@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useTheme } from "@mui/material/styles";
 import { scaleLinear, scaleBand, select, axisBottom } from "d3";
+import { samplingColor } from "@/lib/rigColors";
 
 interface SamplingChartProps {
   imageScale: number; // unbinned arcsec/pixel
@@ -12,10 +13,6 @@ interface SamplingChartProps {
 const WIDTH = 360;
 const HEIGHT = 190;
 const MARGIN = { top: 22, right: 20, bottom: 48, left: 55 };
-
-const BLUE = "#1976d2";    // well sampled
-const ORANGE = "#ed6c02";  // oversampled (too fine, wasting SNR)
-const TEAL = "#00695c";    // undersampled (too coarse, blocky stars)
 
 const BINNING_LABELS = ["1\u00d71", "2\u00d72", "3\u00d73", "4\u00d74"];
 const BINNING_LEVELS = [1, 2, 3, 4];
@@ -100,12 +97,7 @@ export default function SamplingChart({
       const label = BINNING_LABELS[i];
       const scaledValue = imageScale * bin;
       const assessment = binningRecommendations[bin];
-      const color =
-        assessment === "well_sampled"
-          ? BLUE
-          : assessment === "oversampled"
-            ? ORANGE
-            : TEAL;
+      const color = samplingColor(assessment);
       const yPos = (yScale(label) ?? 0) + barOffset;
 
       // Bar
