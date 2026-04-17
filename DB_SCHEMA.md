@@ -1,5 +1,7 @@
 # NightCrate Database Schema
 
+**NightCrate version:** 0.12.0
+
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
 Authoritative source: `DB_SCHEMA_DDL.sql`

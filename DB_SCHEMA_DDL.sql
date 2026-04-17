@@ -1,5 +1,7 @@
--- NightCrate Equipment Database Schema — v0.8.0 (Revised)
--- SQLite DDL for all proposed equipment tables.
+-- NightCrate version: 0.12.0
+-- NightCrate Equipment Database Schema
+-- SQLite DDL for the full current schema. Originally authored at v0.8.0;
+-- extended through v0.12.0 (rig builder, My Equipment flag, location seeing).
 -- Incorporates revision spec: no custom_fields, seed tracking, alias tables,
 -- closed-vocabulary CHECK constraints, updated_at triggers.
 --
