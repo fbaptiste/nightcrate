@@ -228,13 +228,11 @@ export default function RigsPage() {
           <IconButton
             size="small"
             onClick={() => setSelectedRig(null)}
-            sx={{ position: "absolute", top: 8, right: 8 }}
+            sx={{ position: "absolute", top: 8, right: 8, zIndex: 1 }}
+            aria-label="Close rig detail"
           >
             <CloseIcon fontSize="small" />
           </IconButton>
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {resolvedSelected?.name}
-          </Typography>
           {resolvedSelected && <CalculatorPanel rig={resolvedSelected} />}
         </Paper>
       </Collapse>
