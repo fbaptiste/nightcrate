@@ -991,9 +991,10 @@ END;
 CREATE TABLE IF NOT EXISTS rig_filter_slot (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rig_id INTEGER NOT NULL REFERENCES rig(id) ON DELETE CASCADE,
-    slot_number INTEGER NOT NULL CHECK (slot_number > 0),
+    slot_number INTEGER NOT NULL CHECK (slot_number >= 1),
     filter_id INTEGER NOT NULL REFERENCES filter(id),
-    UNIQUE(rig_id, slot_number)
+    UNIQUE (rig_id, slot_number),
+    UNIQUE (rig_id, filter_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_rig_filter_slot_rig ON rig_filter_slot(rig_id);

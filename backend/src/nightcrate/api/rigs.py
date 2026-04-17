@@ -223,7 +223,7 @@ async def _check_warnings(conn, rig_data: dict) -> list[dict]:
             {
                 "field": "guide_camera_id",
                 "message": (
-                    "Guide camera is assigned but no guide scope or OAG is \u2014 "
+                    "Guide camera is assigned but no guide scope or OAG is set \u2014 "
                     "guide suitability cannot be computed. Assign a guide scope or OAG, "
                     "or remove the guide camera."
                 ),
