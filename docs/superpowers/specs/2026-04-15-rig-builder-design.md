@@ -710,6 +710,12 @@ When `seeing_source = 'location'`, append to the recommendation: " (seeing from 
 
 ### 5.6 Guide camera calculations (when guide camera + guide scope are both assigned)
 
+> **Superseded by** [`2026-04-16-guide-suitability-design.md`](2026-04-16-guide-suitability-design.md).
+> Guide camera math was replaced in v0.12.0 with a full guide-suitability assessment
+> (rating bands, 6″/pixel hard cap, binning + centroid parameters, OAG support, and a
+> nested `guide_suitability` field replacing the old top-level `guide_image_scale_*` /
+> `guide_field_of_view_*` fields on `RigCalculators`).
+
 If both `guide_camera_id` and `guide_scope_id` are present (guidescope guiding, not OAG):
 
 ```
