@@ -2,7 +2,9 @@ import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import StarIcon from "@mui/icons-material/Star";
 import type { FilterOption } from "@/api/rigs";
+import { withMineGroup } from "@/components/rigs/mineGroup";
 
 interface FilterSlotGridProps {
   numPositions: number;
@@ -25,6 +27,8 @@ export default function FilterSlotGrid({
     onChange(updated);
   };
 
+  const groupedOptions = withMineGroup(filters);
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {Array.from({ length: numPositions }, (_, i) => {
@@ -45,16 +49,31 @@ export default function FilterSlotGrid({
             >
               Slot {slotNumber}
             </Typography>
-            <Autocomplete
+            <Autocomplete<FilterOption & { __mine_group?: string }>
               size="small"
-              options={filters}
-              groupBy={(o) => o.manufacturer_name}
+              options={groupedOptions}
+              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
               value={selectedFilter}
               onChange={(_e, value) => handleSlotChange(slotNumber, value)}
               getOptionLabel={(o) =>
                 `${o.manufacturer_name} \u2014 ${o.model_name}`
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              renderOption={(props, option) => {
+                const { key, ...rest } = props as typeof props & { key?: React.Key };
+                return (
+                  <li key={key} {...rest}>
+                    {option.is_mine && (
+                      <StarIcon
+                        fontSize="small"
+                        color="primary"
+                        sx={{ mr: 0.75 }}
+                      />
+                    )}
+                    {option.manufacturer_name} — {option.model_name}
+                  </li>
+                );
+              }}
               renderInput={(params) => (
                 <TextField {...params} placeholder="Select filter" />
               )}
