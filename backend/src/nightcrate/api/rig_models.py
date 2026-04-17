@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 # ── Request Models ───────────────────────────────────────────────────────────
@@ -70,7 +72,7 @@ class RigSoftwareOut(BaseModel):
 class RigWarning(BaseModel):
     field: str
     message: str
-    severity: str = "error"  # "error" | "info"
+    severity: Literal["error", "info"] = "error"
 
 
 class SamplingAssessment(BaseModel):
@@ -79,15 +81,15 @@ class SamplingAssessment(BaseModel):
     ideal_range_high: float
     seeing_fwhm_low: float
     seeing_fwhm_high: float
-    seeing_source: str
+    seeing_source: Literal["override", "location", "default"]
     seeing_location_name: str | None
-    assessment: str
+    assessment: Literal["oversampled", "well_sampled", "undersampled"]
     recommendation: str
     binning_recommendations: dict[int, str]
 
 
 class GuideSuitability(BaseModel):
-    mode: str  # "guide_scope" | "oag"
+    mode: Literal["guide_scope", "oag"]
     guide_focal_length_mm: float
     guide_pixel_size_um: float
     guide_binning: int
@@ -100,8 +102,8 @@ class GuideSuitability(BaseModel):
     effective_guide_precision_arcsec: float
     g_ratio: float
     effective_error_main_pixels: float
-    rating: str  # "excellent" | "good" | "marginal" | "poor"
-    rating_reason: str  # "ratio" | "scale_cap"
+    rating: Literal["excellent", "good", "marginal", "poor"]
+    rating_reason: Literal["ratio", "scale_cap"]
     recommendation: str
     caveat: str
 

@@ -8,7 +8,7 @@ and guide system metrics for rig configurations.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 # Unicode constants used in recommendation text.
 _ARCSEC = "\u2033"  # double prime (arcsecond)
@@ -17,8 +17,10 @@ _TIMES = "\u00d7"  # multiplication sign
 _EMDASH = "\u2014"  # em dash
 _RSQUOTE = "\u2019"  # right single quotation mark
 
-# Conversion factor: radians to arcseconds.
-_RAD_TO_ARCSEC = 206.265  # (180/pi) * 3600
+# Pre-scaled radians-to-arcseconds factor for the common astrophotography
+# shortcut formula: arcsec_per_pixel = (pixel_size_um / focal_length_mm) × 206.265
+# (bakes the µm→m and mm→m unit scaling into the full 1 rad = 206264.8″ factor).
+_RAD_TO_ARCSEC = 206.265
 
 # Default seeing range when no location or override is provided.
 _DEFAULT_SEEING_LOW = 2.0
@@ -657,40 +659,8 @@ def compute_rig_calculators(
         image_binning=image_binning,
         guide_suitability=guide,
     )
-    tolerance_dict = {
-        "main_scale_arcsec_per_pixel": tolerance.main_scale_arcsec_per_pixel,
-        "image_binning": tolerance.image_binning,
-        "tight_rms_arcsec": tolerance.tight_rms_arcsec,
-        "acceptable_rms_arcsec": tolerance.acceptable_rms_arcsec,
-        "noticeable_rms_arcsec": tolerance.noticeable_rms_arcsec,
-        "current_guide_precision_arcsec": tolerance.current_guide_precision_arcsec,
-        "guide_system_within_tight": tolerance.guide_system_within_tight,
-        "guide_system_within_acceptable": tolerance.guide_system_within_acceptable,
-        "headroom_arcsec": tolerance.headroom_arcsec,
-        "interpretation": tolerance.interpretation,
-    }
-
-    guide_dict = None
-    if guide is not None:
-        guide_dict = {
-            "mode": guide.mode,
-            "guide_focal_length_mm": guide.guide_focal_length_mm,
-            "guide_pixel_size_um": guide.guide_pixel_size_um,
-            "guide_binning": guide.guide_binning,
-            "effective_guide_pixel_size_um": guide.effective_guide_pixel_size_um,
-            "unbinned_guide_scale_arcsec_per_pixel": guide.unbinned_guide_scale_arcsec_per_pixel,
-            "guide_scale_arcsec_per_pixel": guide.guide_scale_arcsec_per_pixel,
-            "guide_fov_width_arcmin": guide.guide_fov_width_arcmin,
-            "guide_fov_height_arcmin": guide.guide_fov_height_arcmin,
-            "centroid_accuracy_pixels": guide.centroid_accuracy_pixels,
-            "effective_guide_precision_arcsec": guide.effective_guide_precision_arcsec,
-            "g_ratio": guide.g_ratio,
-            "effective_error_main_pixels": guide.effective_error_main_pixels,
-            "rating": guide.rating,
-            "rating_reason": guide.rating_reason,
-            "recommendation": guide.recommendation,
-            "caveat": guide.caveat,
-        }
+    tolerance_dict = asdict(tolerance)
+    guide_dict = asdict(guide) if guide is not None else None
 
     return {
         "image_scale_arcsec_per_pixel": image_scale,
@@ -702,18 +672,7 @@ def compute_rig_calculators(
         "max_useful_magnification": max_mag,
         "sensor_diagonal_mm": sensor_diag,
         "sensor_coverage_pct": sensor_cov,
-        "sampling_assessment": {
-            "image_scale": sampling.image_scale,
-            "ideal_range_low": sampling.ideal_range_low,
-            "ideal_range_high": sampling.ideal_range_high,
-            "seeing_fwhm_low": sampling.seeing_fwhm_low,
-            "seeing_fwhm_high": sampling.seeing_fwhm_high,
-            "seeing_source": sampling.seeing_source,
-            "seeing_location_name": sampling.seeing_location_name,
-            "assessment": sampling.assessment,
-            "recommendation": sampling.recommendation,
-            "binning_recommendations": sampling.binning_recommendations,
-        },
+        "sampling_assessment": asdict(sampling),
         "guide_suitability": guide_dict,
         "guiding_tolerance": tolerance_dict,
     }

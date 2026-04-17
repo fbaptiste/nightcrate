@@ -91,17 +91,32 @@ async def _build_filter_slots(conn, rig_id: int) -> list[dict]:
         """,
         (rig_id,),
     )
-    slots = []
-    for r in await rows.fetchall():
-        d = _row_to_dict(r)
-        # Fetch passbands
-        pb_rows = await conn.execute(
-            "SELECT line_name FROM filter_passband WHERE filter_id = ? ORDER BY line_name",
-            (d["filter_id"],),
-        )
-        d["passbands"] = [p["line_name"] for p in await pb_rows.fetchall()]
-        slots.append(d)
+    slots = [_row_to_dict(r) for r in await rows.fetchall()]
+    if not slots:
+        return slots
+
+    # Batch-fetch passbands for all filters on this rig in one query.
+    filter_ids = [s["filter_id"] for s in slots]
+    placeholders = ",".join("?" * len(filter_ids))
+    pb_rows = await conn.execute(
+        f"SELECT filter_id, line_name FROM filter_passband "
+        f"WHERE filter_id IN ({placeholders}) ORDER BY filter_id, line_name",
+        filter_ids,
+    )
+    passbands_by_filter: dict[int, list[str]] = {fid: [] for fid in filter_ids}
+    for row in await pb_rows.fetchall():
+        if row["line_name"] is not None:
+            passbands_by_filter[row["filter_id"]].append(row["line_name"])
+    for s in slots:
+        s["passbands"] = passbands_by_filter[s["filter_id"]]
     return slots
+
+
+def _slot_as_dict(slot) -> dict:
+    """Normalize a filter slot (Pydantic model or dict) to a plain dict."""
+    if isinstance(slot, dict):
+        return slot
+    return {"slot_number": slot.slot_number, "filter_id": slot.filter_id}
 
 
 async def _validate_filter_slots(conn, slots: list, filter_wheel_id: int | None) -> None:
@@ -126,7 +141,7 @@ async def _validate_filter_slots(conn, slots: list, filter_wheel_id: int | None)
 
     num_positions = fw["num_positions"]
     for slot in slots:
-        slot_num = slot.slot_number if hasattr(slot, "slot_number") else slot["slot_number"]
+        slot_num = _slot_as_dict(slot)["slot_number"]
         if slot_num > num_positions:
             raise HTTPException(
                 status_code=422,
@@ -380,11 +395,10 @@ async def _save_filter_slots(conn, rig_id: int, slots: list) -> None:
     """Delete existing filter slots and insert new ones."""
     await conn.execute("DELETE FROM rig_filter_slot WHERE rig_id = ?", (rig_id,))
     for slot in slots:
-        slot_number = slot.slot_number if hasattr(slot, "slot_number") else slot["slot_number"]
-        filter_id = slot.filter_id if hasattr(slot, "filter_id") else slot["filter_id"]
+        s = _slot_as_dict(slot)
         await conn.execute(
             "INSERT INTO rig_filter_slot (rig_id, slot_number, filter_id) VALUES (?, ?, ?)",
-            (rig_id, slot_number, filter_id),
+            (rig_id, s["slot_number"], s["filter_id"]),
         )
 
 
@@ -712,14 +726,7 @@ async def update_rig(rig_id: int, body: RigUpdate):
 
         # Replace filter slots if provided
         if filter_slots is not None:
-            # Convert dicts to have right attribute access for _save_filter_slots
-            slot_dicts = []
-            for s in filter_slots:
-                if isinstance(s, dict):
-                    slot_dicts.append(s)
-                else:
-                    slot_dicts.append({"slot_number": s.slot_number, "filter_id": s.filter_id})
-            await _save_filter_slots(conn, rig_id, slot_dicts)
+            await _save_filter_slots(conn, rig_id, filter_slots)
 
         # Replace software links if provided
         if software_ids is not None:

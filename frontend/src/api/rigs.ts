@@ -271,9 +271,15 @@ export const fetchRigCalculators = (
   }
 ) => {
   const query = new URLSearchParams();
-  if (params?.location_id) query.set("location_id", String(params.location_id));
-  if (params?.seeing_low) query.set("seeing_low", String(params.seeing_low));
-  if (params?.seeing_high) query.set("seeing_high", String(params.seeing_high));
+  if (params?.location_id !== undefined) {
+    query.set("location_id", String(params.location_id));
+  }
+  if (params?.seeing_low !== undefined) {
+    query.set("seeing_low", String(params.seeing_low));
+  }
+  if (params?.seeing_high !== undefined) {
+    query.set("seeing_high", String(params.seeing_high));
+  }
   if (params?.guide_binning !== undefined) {
     query.set("guide_binning", String(params.guide_binning));
   }

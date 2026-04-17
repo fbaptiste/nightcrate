@@ -580,3 +580,49 @@ async def test_warning_guide_scope_missing_focal_length(client, equipment):
     rig_id = resp.json()["id"]
     calc_resp = await client.get(f"/api/rigs/{rig_id}/calculators")
     assert calc_resp.json()["guide_suitability"] is None
+
+
+@pytest.mark.anyio
+async def test_calculator_image_binning_validation(client, equipment):
+    """image_binning=5 / 0 → 422."""
+    resp = await client.post("/api/rigs", json=_rig_payload(equipment))
+    rig_id = resp.json()["id"]
+    bad_high = await client.get(f"/api/rigs/{rig_id}/calculators?image_binning=5")
+    bad_low = await client.get(f"/api/rigs/{rig_id}/calculators?image_binning=0")
+    assert bad_high.status_code == 422
+    assert bad_low.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_calculator_guiding_tolerance_scales_with_image_binning(client, equipment):
+    """image_binning=2 doubles tight/acceptable/noticeable vs image_binning=1."""
+    resp = await client.post(
+        "/api/rigs",
+        json=_rig_payload(
+            equipment,
+            guide_scope_id=equipment["guide_scope_id"],
+            guide_camera_id=equipment["guide_camera_id"],
+        ),
+    )
+    rig_id = resp.json()["id"]
+
+    r1 = await client.get(f"/api/rigs/{rig_id}/calculators?image_binning=1")
+    r2 = await client.get(f"/api/rigs/{rig_id}/calculators?image_binning=2")
+    assert r1.status_code == 200 and r2.status_code == 200
+    t1 = r1.json()["guiding_tolerance"]
+    t2 = r2.json()["guiding_tolerance"]
+    assert t1 is not None and t2 is not None
+    assert t2["tight_rms_arcsec"] == pytest.approx(2 * t1["tight_rms_arcsec"], abs=0.001)
+    assert t2["acceptable_rms_arcsec"] == pytest.approx(2 * t1["acceptable_rms_arcsec"], abs=0.001)
+    assert t2["image_binning"] == 2
+
+
+@pytest.mark.anyio
+async def test_update_rig_duplicate_name_rejected(client, equipment):
+    """Renaming a rig to collide with another returns 409."""
+    r1 = await client.post("/api/rigs", json=_rig_payload(equipment, name="First"))
+    r2 = await client.post("/api/rigs", json=_rig_payload(equipment, name="Second"))
+    assert r1.status_code == 201 and r2.status_code == 201
+    r2_id = r2.json()["id"]
+    resp = await client.put(f"/api/rigs/{r2_id}", json={"name": "First"})
+    assert resp.status_code == 409

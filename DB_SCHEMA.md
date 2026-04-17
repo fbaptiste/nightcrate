@@ -715,15 +715,26 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 | Table | Purpose |
 |-------|---------|
-| `location` | User-defined observing locations (lat/lon, elevation, display timezone, geo_timezone from coordinates, Bortle, SQM) |
+| `location` | User-defined observing locations (lat/lon, elevation, display timezone, geo_timezone, Bortle, SQM, typical_seeing_low_arcsec, typical_seeing_high_arcsec) |
 | `weather_cache` | Cached API responses (forecast, ECMWF PWV, AOD) with TTL-based expiry |
 
-### Future Tables (not in v0.8.0)
+### v0.12.0 — Rigs (3 tables + 1 view)
+
+| Table / View | Purpose |
+|--------------|---------|
+| `rig` | User-composed imaging rig: one `telescope_configuration_id` + one `camera_id` required; optional `mount_id`, `focuser_id`, `filter_wheel_id`, `single_filter_id`, `oag_id`, `guide_scope_id`, `guide_camera_id`, `computer_id`. Default-rig flag with single-active enforcement at the API layer. Soft delete via `active=0`. |
+| `rig_filter_slot` | Filter wheel slot assignments (rig_id, slot_number, filter_id). `UNIQUE(rig_id, slot_number)`. Validated at API layer against `filter_wheel.num_positions`. |
+| `rig_software` | Junction table: many-to-many between rigs and software packages (e.g. NINA + PHD2 + ASIAIR on the same rig). Primary key `(rig_id, software_id)`. |
+| `rig_summary` (view) | Joins rig with equipment to expose headline specs and equipment names for list rendering. Includes `telescope_id` (added in migration 0010) and guide camera sensor fields for calculator consumption. |
+
+### v0.12.0 — "My Equipment" flag
+
+`is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0,1))` added to 10 owned equipment tables (`camera`, `telescope`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`) with a partial index `idx_<table>_mine ON <table>(is_mine) WHERE is_mine = 1` on each. Sensors, lookup tables, junction tables, child tables, and alias tables are not touched — sensors aren't owned standalone. The flag is not tracked by the seed loader's hash contract, so marking a seeded item as mine does not trigger re-seed.
+
+### Future Tables
 
 | Table | Purpose |
 |-------|---------|
-| `rig` | Equipment profiles combining telescope config + camera + mount + accessories |
-| `filter_wheel_filter` | Junction: which filters are in a rig's wheel positions |
 | `project` | Imaging projects (targets) |
 | `session` | Single-night imaging sessions |
 | `sub_frame` | Individual FITS exposures linked to session + rig |

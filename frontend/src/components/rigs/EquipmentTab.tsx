@@ -77,10 +77,14 @@ export default function EquipmentTab({ rig }: EquipmentTabProps) {
       queryFn: () => fetchFilter(id),
     })),
   });
-  const filtersById = new Map<number, Filter>();
-  for (const q of filterQueries) {
-    if (q.data) filtersById.set(q.data.id, q.data);
-  }
+  const filtersById = useMemo(() => {
+    const map = new Map<number, Filter>();
+    for (const q of filterQueries) {
+      if (q.data) map.set(q.data.id, q.data);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterQueries.map((q) => q.data?.id ?? -1).join(",")]);
 
   const { data: mount } = useQuery<Mount>({
     queryKey: ["rig-equipment", "mount", rig.mount_id],
