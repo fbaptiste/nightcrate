@@ -13,7 +13,9 @@ interface GuidingTabProps {
   rig: Rig;
   calculators: RigCalculators;
   guideBinning: number;
-  onBinningChange: (b: number) => void;
+  onGuideBinningChange: (b: number) => void;
+  imageBinning: number;
+  onImageBinningChange: (b: number) => void;
   centroidAccuracy: number;
   onCentroidChange: (v: number) => void;
 }
@@ -24,7 +26,9 @@ export default function GuidingTab({
   rig,
   calculators,
   guideBinning,
-  onBinningChange,
+  onGuideBinningChange,
+  imageBinning,
+  onImageBinningChange,
   centroidAccuracy,
   onCentroidChange,
 }: GuidingTabProps) {
@@ -32,36 +36,21 @@ export default function GuidingTab({
 
   return (
     <Box>
-      {/* Shared binning control, above the sub-tabs so it applies to both. */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 1.5,
-          mb: 1.5,
-          flexWrap: "wrap",
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          Guide camera binning
-        </Typography>
-        <ToggleButtonGroup
-          value={guideBinning}
-          exclusive
-          size="small"
-          onChange={(_, v) => {
-            if (v !== null) onBinningChange(v);
-          }}
-        >
-          {[1, 2, 3, 4].map((b) => (
-            <ToggleButton key={b} value={b} sx={{ px: 1.5, py: 0.25 }}>
-              {b}&times;{b}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </Box>
+      {/* Shared binning controls above the sub-tabs. Guide-camera binning
+          drives Guide System; imaging-camera binning drives Guiding
+          Tolerance. */}
+      <BinningRow
+        label="Guide camera binning"
+        value={guideBinning}
+        onChange={onGuideBinningChange}
+      />
+      <BinningRow
+        label="Imaging camera binning"
+        value={imageBinning}
+        onChange={onImageBinningChange}
+      />
 
-      <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
+      <Box sx={{ borderBottom: 1, borderColor: "divider", mt: 0.5, mb: 2 }}>
         <Tabs
           value={subTab}
           onChange={(_, v: SubTab) => setSubTab(v)}
@@ -84,6 +73,50 @@ export default function GuidingTab({
       {subTab === "guiding-tolerance" && calculators.guiding_tolerance && (
         <GuidingTolerancePanel tolerance={calculators.guiding_tolerance} />
       )}
+    </Box>
+  );
+}
+
+function BinningRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (b: number) => void;
+}) {
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 1.5,
+        mb: 1,
+        flexWrap: "wrap",
+      }}
+    >
+      <Typography
+        variant="body2"
+        color="text.secondary"
+        sx={{ minWidth: 180 }}
+      >
+        {label}
+      </Typography>
+      <ToggleButtonGroup
+        value={value}
+        exclusive
+        size="small"
+        onChange={(_, v) => {
+          if (v !== null) onChange(v);
+        }}
+      >
+        {[1, 2, 3, 4].map((b) => (
+          <ToggleButton key={b} value={b} sx={{ px: 1.5, py: 0.25 }}>
+            {b}&times;{b}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
     </Box>
   );
 }

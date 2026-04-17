@@ -13,8 +13,6 @@ import SamplingChart from "./SamplingChart";
 
 interface ImagingTabProps {
   calculators: RigCalculators;
-  imageBinning: number;
-  onImageBinningChange: (b: number) => void;
 }
 
 const SEEING_LABELS: { range: [number, number]; label: string }[] = [
@@ -62,11 +60,8 @@ const METRIC_TOOLTIPS: Record<string, string> = {
     "How much of the telescope's illuminated image circle the sensor covers. Values over 100% mean the sensor extends beyond the image circle, causing vignetting in the corners.",
 };
 
-export default function ImagingTab({
-  calculators,
-  imageBinning,
-  onImageBinningChange,
-}: ImagingTabProps) {
+export default function ImagingTab({ calculators }: ImagingTabProps) {
+  const [imageBinning, setImageBinning] = useState<number>(1);
   const initialSeeingMid =
     (calculators.sampling_assessment.seeing_fwhm_low +
       calculators.sampling_assessment.seeing_fwhm_high) /
@@ -108,7 +103,7 @@ export default function ImagingTab({
           value={imageBinning}
           exclusive
           onChange={(_, val) => {
-            if (val !== null) onImageBinningChange(val);
+            if (val !== null) setImageBinning(val);
           }}
           size="small"
         >

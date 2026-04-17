@@ -31,7 +31,10 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   );
   const [guideBinning, setGuideBinning] = useState<number>(1);
   const [centroidAccuracy, setCentroidAccuracy] = useState<number>(0.2);
-  const [imageBinning, setImageBinning] = useState<number>(1);
+  // Image binning on the Guiding tab — drives the guiding-tolerance
+  // thresholds on the backend. Independent from the Imaging tab's own
+  // (purely display-side) binning selector.
+  const [guidingImageBinning, setGuidingImageBinning] = useState<number>(1);
   const [calculatorData, setCalculatorData] = useState<RigCalculators>(
     rig.calculators,
   );
@@ -54,7 +57,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
   const debouncedGuideBinning = useDebounce(guideBinning, 150);
   const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
-  const debouncedImageBinning = useDebounce(imageBinning, 150);
+  const debouncedGuidingImageBinning = useDebounce(guidingImageBinning, 150);
 
   // Fetch calculator data when any parameter changes.
   useEffect(() => {
@@ -64,7 +67,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
       location_id: selectedLocationId,
       guide_binning: debouncedGuideBinning,
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
-      image_binning: debouncedImageBinning,
+      image_binning: debouncedGuidingImageBinning,
     }).then((data) => {
       if (!cancelled) setCalculatorData(data);
     });
@@ -76,7 +79,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     selectedLocationId,
     debouncedGuideBinning,
     debouncedCentroidAccuracy,
-    debouncedImageBinning,
+    debouncedGuidingImageBinning,
   ]);
 
   const selectedLocation = locations.find((l) => l.id === selectedLocationId);
@@ -133,19 +136,15 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
       {/* Tab body */}
       {activeTab === "equipment" && <EquipmentTab rig={rig} />}
-      {activeTab === "imaging" && (
-        <ImagingTab
-          calculators={calculatorData}
-          imageBinning={imageBinning}
-          onImageBinningChange={setImageBinning}
-        />
-      )}
+      {activeTab === "imaging" && <ImagingTab calculators={calculatorData} />}
       {activeTab === "guiding" && hasGuideCamera && (
         <GuidingTab
           rig={rig}
           calculators={calculatorData}
           guideBinning={guideBinning}
-          onBinningChange={setGuideBinning}
+          onGuideBinningChange={setGuideBinning}
+          imageBinning={guidingImageBinning}
+          onImageBinningChange={setGuidingImageBinning}
           centroidAccuracy={centroidAccuracy}
           onCentroidChange={setCentroidAccuracy}
         />
