@@ -118,6 +118,7 @@ export interface Sensor {
 
 export interface Camera {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   sensor: Sensor;
   guide_sensor: Sensor | null;
@@ -162,6 +163,7 @@ export interface TelescopeConfiguration {
 
 export interface Telescope {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   optical_design: OpticalDesign | null;
   model_name: string;
@@ -197,6 +199,7 @@ export interface FilterSizeOption {
 
 export interface Filter {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   filter_type: FilterType;
   model_name: string;
@@ -212,6 +215,7 @@ export interface Filter {
 
 export interface Mount {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   mount_type: MountType | null;
   model_name: string;
@@ -231,6 +235,7 @@ export interface Mount {
 
 export interface Focuser {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   focuser_type: FocuserType | null;
   model_name: string;
@@ -250,6 +255,7 @@ export interface Focuser {
 
 export interface FilterWheel {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   filter_size: FilterSize | null;
   camera_side_connector: ConnectorSize | null;
@@ -267,6 +273,7 @@ export interface FilterWheel {
 
 export interface Oag {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   imaging_side_connector: ConnectorSize | null;
   guide_camera_connector: ConnectorSize | null;
@@ -283,6 +290,7 @@ export interface Oag {
 
 export interface GuideScope {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   guide_camera_connector: ConnectorSize | null;
   model_name: string;
@@ -298,6 +306,7 @@ export interface GuideScope {
 
 export interface Computer {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer;
   form_factor: FormFactor | null;
   model_name: string;
@@ -310,6 +319,7 @@ export interface Computer {
 
 export interface Software {
   id: number;
+  is_mine: boolean;
   manufacturer: Manufacturer | null;
   name: string;
   category: string;
@@ -390,6 +400,7 @@ export interface SensorCreate {
 export interface CameraCreate {
   manufacturer_id: number;
   sensor_id: number;
+  is_mine?: boolean;
   guide_sensor_id?: number | null;
   connector_size_id?: number | null;
   model_name: string;
@@ -427,6 +438,7 @@ export interface TelescopeConfigurationCreate {
 export interface TelescopeCreate {
   manufacturer_id: number;
   optical_design_id?: number | null;
+  is_mine?: boolean;
   model_name: string;
   aperture_mm: number;
   image_circle_mm?: number | null;
@@ -449,6 +461,7 @@ export interface FilterCreate {
   manufacturer_id: number;
   filter_type_id: number;
   model_name: string;
+  is_mine?: boolean;
   peak_transmission_pct?: number | null;
   notes?: string | null;
   source_url?: string | null;
@@ -464,6 +477,7 @@ export interface FilterSizeOptionCreate {
 export interface MountCreate {
   manufacturer_id: number;
   mount_type_id?: number | null;
+  is_mine?: boolean;
   model_name: string;
   payload_capacity_kg?: number | null;
   mount_weight_kg?: number | null;
@@ -484,6 +498,7 @@ export interface FocuserTypeCreate {
 export interface FocuserCreate {
   manufacturer_id: number;
   focuser_type_id?: number | null;
+  is_mine?: boolean;
   model_name: string;
   motorized?: boolean;
   travel_range_mm?: number | null;
@@ -499,6 +514,7 @@ export interface FocuserCreate {
 export interface FilterWheelCreate {
   manufacturer_id: number;
   filter_size_id?: number | null;
+  is_mine?: boolean;
   camera_side_connector_id?: number | null;
   telescope_side_connector_id?: number | null;
   model_name: string;
@@ -512,6 +528,7 @@ export interface FilterWheelCreate {
 export interface OagCreate {
   manufacturer_id: number;
   imaging_side_connector_id?: number | null;
+  is_mine?: boolean;
   guide_camera_connector_id?: number | null;
   model_name: string;
   prism_size_mm?: number | null;
@@ -524,6 +541,7 @@ export interface OagCreate {
 export interface GuideScopeCreate {
   manufacturer_id: number;
   guide_camera_connector_id?: number | null;
+  is_mine?: boolean;
   model_name: string;
   aperture_mm?: number | null;
   focal_length_mm?: number | null;
@@ -536,6 +554,7 @@ export interface ComputerCreate {
   manufacturer_id: number;
   form_factor_id?: number | null;
   model_name: string;
+  is_mine?: boolean;
   notes?: string | null;
   source_url?: string | null;
 }
@@ -546,6 +565,7 @@ export interface SoftwareCreate {
   category: string;
   website?: string | null;
   notes?: string | null;
+  is_mine?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -556,6 +576,14 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function retiredParam(includeRetired: boolean): string {
   return includeRetired ? "?include_retired=true" : "";
+}
+
+function listParams(includeRetired: boolean, mine: boolean): string {
+  const params = new URLSearchParams();
+  if (includeRetired) params.set("include_retired", "true");
+  if (mine) params.set("mine", "true");
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -841,8 +869,8 @@ export const deleteSensor = (id: number) =>
 // Camera
 // ---------------------------------------------------------------------------
 
-export const fetchCameras = (includeRetired = false) =>
-  apiFetch<Camera[]>(`/equipment/camera${retiredParam(includeRetired)}`);
+export const fetchCameras = (includeRetired = false, mine = false) =>
+  apiFetch<Camera[]>(`/equipment/camera${listParams(includeRetired, mine)}`);
 
 export const fetchCamera = (id: number) =>
   apiFetch<Camera>(`/equipment/camera/${id}`);
@@ -868,8 +896,8 @@ export const deleteCamera = (id: number) =>
 // Telescope
 // ---------------------------------------------------------------------------
 
-export const fetchTelescopes = (includeRetired = false) =>
-  apiFetch<Telescope[]>(`/equipment/telescope${retiredParam(includeRetired)}`);
+export const fetchTelescopes = (includeRetired = false, mine = false) =>
+  apiFetch<Telescope[]>(`/equipment/telescope${listParams(includeRetired, mine)}`);
 
 export const fetchTelescope = (id: number) =>
   apiFetch<Telescope>(`/equipment/telescope/${id}`);
@@ -922,8 +950,8 @@ export const deleteTelescopeConfig = (telescopeId: number, configId: number) =>
 // Filter
 // ---------------------------------------------------------------------------
 
-export const fetchFilters = (includeRetired = false) =>
-  apiFetch<Filter[]>(`/equipment/filter${retiredParam(includeRetired)}`);
+export const fetchFilters = (includeRetired = false, mine = false) =>
+  apiFetch<Filter[]>(`/equipment/filter${listParams(includeRetired, mine)}`);
 
 export const fetchFilter = (id: number) =>
   apiFetch<Filter>(`/equipment/filter/${id}`);
@@ -998,8 +1026,8 @@ export const deleteFilterSizeOption = (filterId: number, optionId: number) =>
 // Mount
 // ---------------------------------------------------------------------------
 
-export const fetchMounts = (includeRetired = false) =>
-  apiFetch<Mount[]>(`/equipment/mount${retiredParam(includeRetired)}`);
+export const fetchMounts = (includeRetired = false, mine = false) =>
+  apiFetch<Mount[]>(`/equipment/mount${listParams(includeRetired, mine)}`);
 
 export const fetchMount = (id: number) =>
   apiFetch<Mount>(`/equipment/mount/${id}`);
@@ -1025,8 +1053,8 @@ export const deleteMount = (id: number) =>
 // Focuser
 // ---------------------------------------------------------------------------
 
-export const fetchFocusers = (includeRetired = false) =>
-  apiFetch<Focuser[]>(`/equipment/focuser${retiredParam(includeRetired)}`);
+export const fetchFocusers = (includeRetired = false, mine = false) =>
+  apiFetch<Focuser[]>(`/equipment/focuser${listParams(includeRetired, mine)}`);
 
 export const fetchFocuser = (id: number) =>
   apiFetch<Focuser>(`/equipment/focuser/${id}`);
@@ -1052,8 +1080,8 @@ export const deleteFocuser = (id: number) =>
 // Filter Wheel
 // ---------------------------------------------------------------------------
 
-export const fetchFilterWheels = (includeRetired = false) =>
-  apiFetch<FilterWheel[]>(`/equipment/filter-wheel${retiredParam(includeRetired)}`);
+export const fetchFilterWheels = (includeRetired = false, mine = false) =>
+  apiFetch<FilterWheel[]>(`/equipment/filter-wheel${listParams(includeRetired, mine)}`);
 
 export const fetchFilterWheel = (id: number) =>
   apiFetch<FilterWheel>(`/equipment/filter-wheel/${id}`);
@@ -1079,8 +1107,8 @@ export const deleteFilterWheel = (id: number) =>
 // OAG
 // ---------------------------------------------------------------------------
 
-export const fetchOags = (includeRetired = false) =>
-  apiFetch<Oag[]>(`/equipment/oag${retiredParam(includeRetired)}`);
+export const fetchOags = (includeRetired = false, mine = false) =>
+  apiFetch<Oag[]>(`/equipment/oag${listParams(includeRetired, mine)}`);
 
 export const fetchOag = (id: number) =>
   apiFetch<Oag>(`/equipment/oag/${id}`);
@@ -1106,8 +1134,8 @@ export const deleteOag = (id: number) =>
 // Guide Scope
 // ---------------------------------------------------------------------------
 
-export const fetchGuideScopes = (includeRetired = false) =>
-  apiFetch<GuideScope[]>(`/equipment/guide-scope${retiredParam(includeRetired)}`);
+export const fetchGuideScopes = (includeRetired = false, mine = false) =>
+  apiFetch<GuideScope[]>(`/equipment/guide-scope${listParams(includeRetired, mine)}`);
 
 export const fetchGuideScope = (id: number) =>
   apiFetch<GuideScope>(`/equipment/guide-scope/${id}`);
@@ -1133,8 +1161,8 @@ export const deleteGuideScope = (id: number) =>
 // Computer
 // ---------------------------------------------------------------------------
 
-export const fetchComputers = (includeRetired = false) =>
-  apiFetch<Computer[]>(`/equipment/computer${retiredParam(includeRetired)}`);
+export const fetchComputers = (includeRetired = false, mine = false) =>
+  apiFetch<Computer[]>(`/equipment/computer${listParams(includeRetired, mine)}`);
 
 export const fetchComputer = (id: number) =>
   apiFetch<Computer>(`/equipment/computer/${id}`);
@@ -1160,8 +1188,8 @@ export const deleteComputer = (id: number) =>
 // Software
 // ---------------------------------------------------------------------------
 
-export const fetchSoftwares = (includeRetired = false) =>
-  apiFetch<Software[]>(`/equipment/software${retiredParam(includeRetired)}`);
+export const fetchSoftwares = (includeRetired = false, mine = false) =>
+  apiFetch<Software[]>(`/equipment/software${listParams(includeRetired, mine)}`);
 
 export const fetchSoftware = (id: number) =>
   apiFetch<Software>(`/equipment/software/${id}`);
@@ -1182,3 +1210,50 @@ export const updateSoftware = (id: number, data: Partial<SoftwareCreate>) =>
 
 export const deleteSoftware = (id: number) =>
   apiFetch<{ ok: boolean }>(`/equipment/software/${id}`, { method: "DELETE" });
+
+// ---------------------------------------------------------------------------
+// My Equipment — toggle + counts
+// ---------------------------------------------------------------------------
+
+const MINE_ROUTE_BY_TABLE: Record<string, string> = {
+  camera: "camera",
+  telescope: "telescope",
+  filter: "filter",
+  mount: "mount",
+  focuser: "focuser",
+  filter_wheel: "filter-wheel",
+  oag: "oag",
+  guide_scope: "guide-scope",
+  computer: "computer",
+  software: "software",
+};
+
+export function toggleEquipmentMine(
+  table: string,
+  id: number,
+  isMine: boolean,
+): Promise<unknown> {
+  const route = MINE_ROUTE_BY_TABLE[table];
+  if (!route) throw new Error(`Unknown equipment table: ${table}`);
+  return apiFetch<unknown>(`/equipment/${route}/${id}/mine`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ is_mine: isMine }),
+  });
+}
+
+export interface MineCounts {
+  cameras: number;
+  telescopes: number;
+  filters: number;
+  mounts: number;
+  focusers: number;
+  filter_wheels: number;
+  oags: number;
+  guide_scopes: number;
+  computers: number;
+  software: number;
+}
+
+export const fetchMineCounts = () =>
+  apiFetch<MineCounts>("/equipment/mine-counts");
