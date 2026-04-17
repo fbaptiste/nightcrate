@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS camera (
     hcg_threshold_gain INTEGER,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -295,6 +296,7 @@ CREATE TABLE IF NOT EXISTS camera (
 
 CREATE INDEX IF NOT EXISTS idx_camera_manufacturer ON camera(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_camera_sensor ON camera(sensor_id);
+CREATE INDEX IF NOT EXISTS idx_camera_mine ON camera(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_camera_seed_key
     ON camera(seed_key) WHERE seed_key IS NOT NULL;
@@ -328,6 +330,7 @@ CREATE TABLE IF NOT EXISTS telescope (
     obstruction_pct REAL,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -338,6 +341,7 @@ CREATE TABLE IF NOT EXISTS telescope (
 );
 
 CREATE INDEX IF NOT EXISTS idx_telescope_manufacturer ON telescope(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_telescope_mine ON telescope(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_telescope_seed_key
     ON telescope(seed_key) WHERE seed_key IS NOT NULL;
@@ -406,6 +410,7 @@ CREATE TABLE IF NOT EXISTS filter (
     peak_transmission_pct REAL,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -417,6 +422,7 @@ CREATE TABLE IF NOT EXISTS filter (
 
 CREATE INDEX IF NOT EXISTS idx_filter_manufacturer ON filter(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_filter_type ON filter(filter_type_id);
+CREATE INDEX IF NOT EXISTS idx_filter_mine ON filter(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_filter_seed_key
     ON filter(seed_key) WHERE seed_key IS NOT NULL;
@@ -508,6 +514,7 @@ CREATE TABLE IF NOT EXISTS mount (
     drive_type TEXT,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -518,6 +525,7 @@ CREATE TABLE IF NOT EXISTS mount (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mount_manufacturer ON mount(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_mount_mine ON mount(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mount_seed_key
     ON mount(seed_key) WHERE seed_key IS NOT NULL;
@@ -580,6 +588,7 @@ CREATE TABLE IF NOT EXISTS focuser (
     backlash_steps INTEGER,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -590,6 +599,7 @@ CREATE TABLE IF NOT EXISTS focuser (
 );
 
 CREATE INDEX IF NOT EXISTS idx_focuser_manufacturer ON focuser(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_focuser_mine ON focuser(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_focuser_seed_key
     ON focuser(seed_key) WHERE seed_key IS NOT NULL;
@@ -623,6 +633,7 @@ CREATE TABLE IF NOT EXISTS filter_wheel (
     back_focus_contribution_mm REAL,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -633,6 +644,7 @@ CREATE TABLE IF NOT EXISTS filter_wheel (
 );
 
 CREATE INDEX IF NOT EXISTS idx_filter_wheel_manufacturer ON filter_wheel(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_filter_wheel_mine ON filter_wheel(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_filter_wheel_seed_key
     ON filter_wheel(seed_key) WHERE seed_key IS NOT NULL;
@@ -666,6 +678,7 @@ CREATE TABLE IF NOT EXISTS oag (
     weight_g REAL,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -676,6 +689,7 @@ CREATE TABLE IF NOT EXISTS oag (
 );
 
 CREATE INDEX IF NOT EXISTS idx_oag_manufacturer ON oag(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_oag_mine ON oag(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oag_seed_key
     ON oag(seed_key) WHERE seed_key IS NOT NULL;
@@ -698,6 +712,7 @@ CREATE TABLE IF NOT EXISTS guide_scope (
     weight_g REAL,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -708,6 +723,7 @@ CREATE TABLE IF NOT EXISTS guide_scope (
 );
 
 CREATE INDEX IF NOT EXISTS idx_guide_scope_manufacturer ON guide_scope(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_guide_scope_mine ON guide_scope(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_guide_scope_seed_key
     ON guide_scope(seed_key) WHERE seed_key IS NOT NULL;
@@ -731,6 +747,7 @@ CREATE TABLE IF NOT EXISTS computer (
     model_name TEXT NOT NULL,
     notes TEXT,
     source_url TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -741,6 +758,7 @@ CREATE TABLE IF NOT EXISTS computer (
 );
 
 CREATE INDEX IF NOT EXISTS idx_computer_manufacturer ON computer(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_computer_mine ON computer(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_computer_seed_key
     ON computer(seed_key) WHERE seed_key IS NOT NULL;
@@ -763,6 +781,7 @@ CREATE TABLE IF NOT EXISTS software (
     )),
     website TEXT,
     notes TEXT,
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -773,6 +792,7 @@ CREATE TABLE IF NOT EXISTS software (
 );
 
 CREATE INDEX IF NOT EXISTS idx_software_manufacturer ON software(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_software_mine ON software(is_mine) WHERE is_mine = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_software_seed_key
     ON software(seed_key) WHERE seed_key IS NOT NULL;
