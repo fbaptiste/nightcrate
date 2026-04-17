@@ -1,4 +1,5 @@
 import Box from "@mui/material/Box";
+import Link from "@mui/material/Link";
 import { useTheme } from "@mui/material/styles";
 import Typography from "@mui/material/Typography";
 import type { GuidingTolerance } from "@/api/rigs";
@@ -7,6 +8,7 @@ import {
   RIG_BLUE_LIGHT,
   RIG_ORANGE_LIGHT,
 } from "@/lib/rigColors";
+import CalculatorAboutSection from "./CalculatorAboutSection";
 
 interface GuidingTolerancePanelProps {
   tolerance: GuidingTolerance;
@@ -216,6 +218,48 @@ export default function GuidingTolerancePanel({
         Once PHD2 logs are imported, NightCrate will compare your measured RMS
         to these thresholds automatically.
       </Typography>
+
+      <CalculatorAboutSection>
+        <Typography variant="body2" component="p">
+          <strong>Attribution.</strong> Standard astrophotography rule of thumb
+          that guide RMS should stay below main-camera pixel scale to avoid
+          visible star elongation, widely discussed on{" "}
+          <Link
+            href="https://www.cloudynights.com/topic/871543-rule-of-thumb-for-guiding-accuracy/"
+            target="_blank"
+            rel="noopener noreferrer"
+            underline="hover"
+          >
+            Cloudy Nights
+          </Link>
+          .
+        </Typography>
+        <Typography variant="body2" component="p">
+          <strong>Methodology.</strong> The inverse question to Guide System:
+          &ldquo;given my rig, what PHD2 RMS should I aim for?&rdquo; Computed
+          from the main imaging scale at the selected binning:
+        </Typography>
+        <Box component="ul" sx={{ mt: 0, mb: 1 }}>
+          <Typography component="li" variant="body2">
+            <strong>Tight</strong> = 0.5 × main_scale — stars stay round
+          </Typography>
+          <Typography component="li" variant="body2">
+            <strong>Acceptable</strong> = 1.0 × main_scale — elongation barely
+            noticeable
+          </Typography>
+          <Typography component="li" variant="body2">
+            <strong>Over budget</strong> = &gt; 1.0 × main_scale — visible
+            elongation
+          </Typography>
+        </Box>
+        <Typography variant="body2" component="p">
+          Guide RMS contributes to star FWHM in quadrature with seeing and
+          diffraction — errors below half a pixel disappear into the PSF,
+          errors above one pixel show as clear elongation. When a guide system
+          is configured, its effective precision is compared to these budgets
+          with a plain-language interpretation.
+        </Typography>
+      </CalculatorAboutSection>
     </Box>
   );
 }

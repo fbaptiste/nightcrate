@@ -3,6 +3,7 @@ import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Collapse from "@mui/material/Collapse";
 import IconButton from "@mui/material/IconButton";
+import Link from "@mui/material/Link";
 import Slider from "@mui/material/Slider";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
@@ -11,6 +12,7 @@ import Typography from "@mui/material/Typography";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import type { GuideSuitability, Rig } from "@/api/rigs";
 import { ratingColor, ratingLabel, ratingTextColor } from "@/lib/rigColors";
+import CalculatorAboutSection from "./CalculatorAboutSection";
 import GuideSuitabilityChart from "./GuideSuitabilityChart";
 
 interface GuideSuitabilityPanelProps {
@@ -247,6 +249,57 @@ export default function GuideSuitabilityPanel({
           </Box>
         </Collapse>
       </Box>
+
+      <CalculatorAboutSection>
+        <Typography variant="body2" component="p">
+          <strong>Attribution.</strong> Inspired by the{" "}
+          <Link
+            href="https://astronomy.tools/calculators/guidescope_suitability"
+            target="_blank"
+            rel="noopener noreferrer"
+            underline="hover"
+          >
+            astronomy.tools Guidescope Suitability Calculator
+          </Link>
+          , with refinements from{" "}
+          <Link
+            href="https://groups.google.com/g/open-phd-guiding"
+            target="_blank"
+            rel="noopener noreferrer"
+            underline="hover"
+          >
+            Open PHD Guiding
+          </Link>{" "}
+          discussions and Stan Moore&apos;s{" "}
+          <Link
+            href="https://www.wilmslowastro.com/tips/autoguiding.htm"
+            target="_blank"
+            rel="noopener noreferrer"
+            underline="hover"
+          >
+            &ldquo;Thoughts on Auto-Guiding&rdquo;
+          </Link>
+          .
+        </Typography>
+        <Typography variant="body2" component="p">
+          <strong>Methodology.</strong> Evaluates whether your guide system can
+          resolve errors finely enough for your imaging rig. Computes guide
+          image scale from{" "}
+          <code>(guide_pixel_size / guide_focal_length) × 206.265</code>,
+          factoring in guide camera binning. OAG setups use the main scope&apos;s
+          focal length; guide-scope setups use the guide scope&apos;s.
+        </Typography>
+        <Typography variant="body2" component="p">
+          The headline metric is <strong>effective error in main pixels</strong>{" "}
+          (<code>G-ratio × centroid_accuracy</code>, where centroid accuracy
+          defaults to 0.2 px — typical PHD2 performance). Ratings:{" "}
+          <strong>Excellent</strong> (≤0.6), <strong>Good</strong> (≤1.0),{" "}
+          <strong>Marginal</strong> (≤1.2), <strong>Poor</strong> (&gt;1.2). A
+          hard cap also rates any guide scale coarser than 6″/pixel as Poor
+          regardless of ratio, reflecting PHD2 community consensus that guiding
+          becomes unreliable beyond this resolution.
+        </Typography>
+      </CalculatorAboutSection>
     </Box>
   );
 }
