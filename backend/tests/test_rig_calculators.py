@@ -668,6 +668,100 @@ def test_sub_exposure_passband_default_fallback_sets_warning_flag():
     assert r.has_passband_data is False
 
 
+# -- Guiding Tolerance ---------------------------------------------------------
+
+
+def test_guiding_tolerance_thresholds_at_binning_1():
+    from nightcrate.services.rig_calculators import compute_guiding_tolerance
+
+    gt = compute_guiding_tolerance(
+        unbinned_main_scale_arcsec_per_pixel=1.0,
+        image_binning=1,
+        guide_suitability=None,
+    )
+    assert gt.main_scale_arcsec_per_pixel == pytest.approx(1.0)
+    assert gt.tight_rms_arcsec == pytest.approx(0.5)
+    assert gt.acceptable_rms_arcsec == pytest.approx(1.0)
+    assert gt.noticeable_rms_arcsec == pytest.approx(1.5)
+    assert gt.current_guide_precision_arcsec is None
+    assert gt.guide_system_within_tight is None
+    assert "Compare your measured" in gt.interpretation
+
+
+def test_guiding_tolerance_doubles_at_binning_2():
+    from nightcrate.services.rig_calculators import compute_guiding_tolerance
+
+    gt = compute_guiding_tolerance(
+        unbinned_main_scale_arcsec_per_pixel=1.0,
+        image_binning=2,
+        guide_suitability=None,
+    )
+    assert gt.tight_rms_arcsec == pytest.approx(1.0)
+    assert gt.acceptable_rms_arcsec == pytest.approx(2.0)
+    assert gt.image_binning == 2
+
+
+def test_guiding_tolerance_within_tight_when_guide_is_precise():
+    gs = _compute_gs()  # Askar V @ binning=1, precision ≈ 0.48"
+    from nightcrate.services.rig_calculators import compute_guiding_tolerance
+
+    # Use Askar V main scale ≈ 2.16"/px; tight = 1.08"; 0.48 is well within.
+    gt = compute_guiding_tolerance(
+        unbinned_main_scale_arcsec_per_pixel=2.155,
+        image_binning=1,
+        guide_suitability=gs,
+    )
+    assert gt.guide_system_within_tight is True
+    assert gt.guide_system_within_acceptable is True
+    assert gt.headroom_arcsec == pytest.approx(1.08 - 0.48, abs=0.05)
+    assert "comfortably within" in gt.interpretation
+
+
+def test_guiding_tolerance_exceeds_acceptable():
+    """Contrived guide system precision well above the acceptable threshold."""
+    from dataclasses import replace
+
+    gs = _compute_gs()  # baseline Askar V, precision 0.48"
+    # Swap in a much coarser precision to simulate a bad setup.
+    bad = replace(gs, effective_guide_precision_arcsec=5.0)
+    from nightcrate.services.rig_calculators import compute_guiding_tolerance
+
+    gt = compute_guiding_tolerance(
+        unbinned_main_scale_arcsec_per_pixel=2.155,  # acceptable = 2.16"
+        image_binning=1,
+        guide_suitability=bad,
+    )
+    assert gt.guide_system_within_tight is False
+    assert gt.guide_system_within_acceptable is False
+    assert "exceeds" in gt.interpretation
+
+
+def test_guiding_tolerance_in_full_calc_dict():
+    """compute_rig_calculators dict carries guiding_tolerance at the top level."""
+    from nightcrate.services.rig_calculators import compute_rig_calculators
+
+    result = compute_rig_calculators(
+        pixel_size_um=3.76,
+        focal_length_mm=360.0,
+        focal_ratio=4.5,
+        aperture_mm=80.0,
+        resolution_x=6248,
+        resolution_y=4176,
+        sensor_width_mm=23.5,
+        sensor_height_mm=15.7,
+        image_circle_mm=None,
+        seeing_fwhm_low=2.0,
+        seeing_fwhm_high=4.0,
+        seeing_source="default",
+        image_binning=2,
+    )
+    gt = result["guiding_tolerance"]
+    assert gt is not None
+    assert gt["image_binning"] == 2
+    # Unbinned main scale ≈ 2.155"/px, binned 2x = 4.31; tight = 2.155.
+    assert gt["tight_rms_arcsec"] == pytest.approx(2.155, abs=0.01)
+
+
 def test_full_calculators_c11():
     from nightcrate.services.rig_calculators import compute_rig_calculators
 

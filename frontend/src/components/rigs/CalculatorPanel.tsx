@@ -32,6 +32,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   const [guideBinning, setGuideBinning] = useState<number>(1);
   const [centroidAccuracy, setCentroidAccuracy] = useState<number>(0.2);
   const [kFactor, setKFactor] = useState<number>(10);
+  const [imageBinning, setImageBinning] = useState<number>(1);
   const [calculatorData, setCalculatorData] = useState<RigCalculators>(
     rig.calculators,
   );
@@ -55,8 +56,9 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   const debouncedGuideBinning = useDebounce(guideBinning, 150);
   const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
   const debouncedKFactor = useDebounce(kFactor, 300);
+  const debouncedImageBinning = useDebounce(imageBinning, 150);
 
-  // Fetch calculator data when location, guide, or sub-exposure params change.
+  // Fetch calculator data when any parameter changes.
   useEffect(() => {
     if (selectedLocationId === null) return;
     let cancelled = false;
@@ -65,6 +67,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
       guide_binning: debouncedGuideBinning,
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
       k_factor: debouncedKFactor,
+      image_binning: debouncedImageBinning,
     }).then((data) => {
       if (!cancelled) setCalculatorData(data);
     });
@@ -77,6 +80,7 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     debouncedGuideBinning,
     debouncedCentroidAccuracy,
     debouncedKFactor,
+    debouncedImageBinning,
   ]);
 
   const selectedLocation = locations.find((l) => l.id === selectedLocationId);
@@ -138,6 +142,8 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
           calculators={calculatorData}
           kFactor={kFactor}
           onKFactorChange={setKFactor}
+          imageBinning={imageBinning}
+          onImageBinningChange={setImageBinning}
         />
       )}
       {activeTab === "guiding" && hasGuideCamera && (

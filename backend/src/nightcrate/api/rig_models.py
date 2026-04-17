@@ -136,6 +136,19 @@ class SubExposureCalc(BaseModel):
     results: list[SubExposureResult]
 
 
+class GuidingTolerance(BaseModel):
+    main_scale_arcsec_per_pixel: float
+    image_binning: int
+    tight_rms_arcsec: float
+    acceptable_rms_arcsec: float
+    noticeable_rms_arcsec: float
+    current_guide_precision_arcsec: float | None
+    guide_system_within_tight: bool | None
+    guide_system_within_acceptable: bool | None
+    headroom_arcsec: float | None
+    interpretation: str
+
+
 class RigCalculators(BaseModel):
     image_scale_arcsec_per_pixel: float
     image_scale_arcsec_per_pixel_binned: dict[int, float]
@@ -151,6 +164,7 @@ class RigCalculators(BaseModel):
     sampling_assessment: SamplingAssessment
     guide_suitability: GuideSuitability | None = None
     sub_exposure: SubExposureCalc | None = None
+    guiding_tolerance: GuidingTolerance | None = None
 
 
 class RigOut(BaseModel):

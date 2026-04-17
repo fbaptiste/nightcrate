@@ -778,6 +778,96 @@ def compute_sub_exposure(
 
 
 # ---------------------------------------------------------------------------
+# Guiding Tolerance
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_IMAGE_BINNING = 1
+MIN_IMAGE_BINNING = 1
+MAX_IMAGE_BINNING = 4
+
+
+@dataclass
+class GuidingTolerance:
+    """How much PHD2 RMS the current rig can tolerate before stars elongate."""
+
+    main_scale_arcsec_per_pixel: float  # binned
+    image_binning: int
+    tight_rms_arcsec: float  # 0.5 × main scale
+    acceptable_rms_arcsec: float  # 1.0 × main scale
+    noticeable_rms_arcsec: float  # 1.5 × main scale
+    current_guide_precision_arcsec: float | None
+    guide_system_within_tight: bool | None
+    guide_system_within_acceptable: bool | None
+    headroom_arcsec: float | None  # tight - current; may be negative
+    interpretation: str
+
+
+def compute_guiding_tolerance(
+    unbinned_main_scale_arcsec_per_pixel: float,
+    image_binning: int,
+    guide_suitability: GuideSuitability | None,
+) -> GuidingTolerance:
+    """Compute guiding-tolerance thresholds for the current rig + binning.
+
+    The binned main scale drives all three thresholds. When a guide system
+    is configured, compare its effective precision to the thresholds and
+    generate an interpretation line.
+    """
+    binned_scale = unbinned_main_scale_arcsec_per_pixel * image_binning
+    tight = 0.5 * binned_scale
+    acceptable = 1.0 * binned_scale
+    noticeable = 1.5 * binned_scale
+
+    current: float | None = None
+    within_tight: bool | None = None
+    within_acceptable: bool | None = None
+    headroom: float | None = None
+
+    if guide_suitability is not None:
+        current = guide_suitability.effective_guide_precision_arcsec
+        within_tight = current <= tight
+        within_acceptable = current <= acceptable
+        headroom = tight - current
+
+    if current is None:
+        interpretation = (
+            "Compare your measured PHD2 RMS (in arcseconds) to these thresholds "
+            "to judge whether it\u2019s keeping up with this rig."
+        )
+    elif within_tight:
+        interpretation = (
+            f"Your guide system resolves to {current:.2f}{_ARCSEC} \u2014 comfortably "
+            f"within the {tight:.2f}{_ARCSEC} tight budget. Stars will stay round."
+        )
+    elif within_acceptable:
+        interpretation = (
+            f"Your guide system resolves to {current:.2f}{_ARCSEC} \u2014 within the "
+            f"{acceptable:.2f}{_ARCSEC} acceptable budget. Star elongation will be "
+            f"barely noticeable."
+        )
+    else:
+        interpretation = (
+            f"Your guide system resolves to {current:.2f}{_ARCSEC}, which exceeds the "
+            f"{acceptable:.2f}{_ARCSEC} acceptable budget \u2014 expect visibly "
+            f"elongated stars even with perfect tracking."
+        )
+
+    return GuidingTolerance(
+        main_scale_arcsec_per_pixel=binned_scale,
+        image_binning=image_binning,
+        tight_rms_arcsec=tight,
+        acceptable_rms_arcsec=acceptable,
+        noticeable_rms_arcsec=noticeable,
+        current_guide_precision_arcsec=current,
+        guide_system_within_tight=within_tight,
+        guide_system_within_acceptable=within_acceptable,
+        headroom_arcsec=headroom,
+        interpretation=interpretation,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Full Calculator
 # ---------------------------------------------------------------------------
 
@@ -804,6 +894,7 @@ def compute_rig_calculators(
     guide_resolution_y: int | None = None,
     guide_binning: int = DEFAULT_GUIDE_BINNING,
     centroid_accuracy_pixels: float = DEFAULT_CENTROID_ACCURACY_PIXELS,
+    image_binning: int = DEFAULT_IMAGE_BINNING,
 ) -> dict:
     """Assemble all optical calculator results into a single dict.
 
@@ -857,6 +948,25 @@ def compute_rig_calculators(
         centroid_accuracy_pixels=centroid_accuracy_pixels,
     )
 
+    # Guiding tolerance is always computable (we always have an imaging camera).
+    tolerance = compute_guiding_tolerance(
+        unbinned_main_scale_arcsec_per_pixel=image_scale,
+        image_binning=image_binning,
+        guide_suitability=guide,
+    )
+    tolerance_dict = {
+        "main_scale_arcsec_per_pixel": tolerance.main_scale_arcsec_per_pixel,
+        "image_binning": tolerance.image_binning,
+        "tight_rms_arcsec": tolerance.tight_rms_arcsec,
+        "acceptable_rms_arcsec": tolerance.acceptable_rms_arcsec,
+        "noticeable_rms_arcsec": tolerance.noticeable_rms_arcsec,
+        "current_guide_precision_arcsec": tolerance.current_guide_precision_arcsec,
+        "guide_system_within_tight": tolerance.guide_system_within_tight,
+        "guide_system_within_acceptable": tolerance.guide_system_within_acceptable,
+        "headroom_arcsec": tolerance.headroom_arcsec,
+        "interpretation": tolerance.interpretation,
+    }
+
     guide_dict = None
     if guide is not None:
         guide_dict = {
@@ -902,4 +1012,5 @@ def compute_rig_calculators(
             "binning_recommendations": sampling.binning_recommendations,
         },
         "guide_suitability": guide_dict,
+        "guiding_tolerance": tolerance_dict,
     }

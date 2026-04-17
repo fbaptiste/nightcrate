@@ -84,6 +84,19 @@ export interface SubExposureCalc {
   results: SubExposureResult[];
 }
 
+export interface GuidingTolerance {
+  main_scale_arcsec_per_pixel: number;
+  image_binning: number;
+  tight_rms_arcsec: number;
+  acceptable_rms_arcsec: number;
+  noticeable_rms_arcsec: number;
+  current_guide_precision_arcsec: number | null;
+  guide_system_within_tight: boolean | null;
+  guide_system_within_acceptable: boolean | null;
+  headroom_arcsec: number | null;
+  interpretation: string;
+}
+
 export interface RigCalculators {
   image_scale_arcsec_per_pixel: number;
   image_scale_arcsec_per_pixel_binned: Record<number, number>;
@@ -99,6 +112,7 @@ export interface RigCalculators {
   sampling_assessment: SamplingAssessment;
   guide_suitability: GuideSuitability | null;
   sub_exposure: SubExposureCalc | null;
+  guiding_tolerance: GuidingTolerance | null;
 }
 
 export interface Rig {
@@ -284,6 +298,7 @@ export const fetchRigCalculators = (
     guide_binning?: number;
     centroid_accuracy_pixels?: number;
     k_factor?: number;
+    image_binning?: number;
   }
 ) => {
   const query = new URLSearchParams();
@@ -298,6 +313,9 @@ export const fetchRigCalculators = (
   }
   if (params?.k_factor !== undefined) {
     query.set("k_factor", String(params.k_factor));
+  }
+  if (params?.image_binning !== undefined) {
+    query.set("image_binning", String(params.image_binning));
   }
   const qs = query.toString();
   return apiFetch<RigCalculators>(`/rigs/${id}/calculators${qs ? `?${qs}` : ""}`);

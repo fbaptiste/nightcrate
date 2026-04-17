@@ -16,6 +16,8 @@ interface ImagingTabProps {
   calculators: RigCalculators;
   kFactor: number;
   onKFactorChange: (k: number) => void;
+  imageBinning: number;
+  onImageBinningChange: (b: number) => void;
 }
 
 const SEEING_LABELS: { range: [number, number]; label: string }[] = [
@@ -67,8 +69,9 @@ export default function ImagingTab({
   calculators,
   kFactor,
   onKFactorChange,
+  imageBinning,
+  onImageBinningChange,
 }: ImagingTabProps) {
-  const [binning, setBinning] = useState<number>(1);
   const initialSeeingMid =
     (calculators.sampling_assessment.seeing_fwhm_low +
       calculators.sampling_assessment.seeing_fwhm_high) /
@@ -87,7 +90,7 @@ export default function ImagingTab({
   }, [calculators.image_scale_arcsec_per_pixel, debouncedSeeing]);
 
   const scale = calculators.image_scale_arcsec_per_pixel;
-  const binnedScale = scale * binning;
+  const binnedScale = scale * imageBinning;
   const [fovW, fovH] = calculators.field_of_view_arcmin;
   const [degW, degH] = calculators.field_of_view_deg;
 
@@ -99,10 +102,10 @@ export default function ImagingTab({
           Binning
         </Typography>
         <ToggleButtonGroup
-          value={binning}
+          value={imageBinning}
           exclusive
           onChange={(_, val) => {
-            if (val !== null) setBinning(val);
+            if (val !== null) onImageBinningChange(val);
           }}
           size="small"
         >

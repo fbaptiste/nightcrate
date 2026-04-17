@@ -430,6 +430,7 @@ def _build_calculators(
     seeing_location_name: str | None,
     guide_binning: int = 1,
     centroid_accuracy_pixels: float = 0.2,
+    image_binning: int = 1,
     sub_exposure: dict | None = None,
 ) -> dict:
     """Compute all calculator results from rig summary row data."""
@@ -455,6 +456,7 @@ def _build_calculators(
         guide_resolution_y=rig_row.get("guide_resolution_y"),
         guide_binning=guide_binning,
         centroid_accuracy_pixels=centroid_accuracy_pixels,
+        image_binning=image_binning,
     )
 
     # Map service dict keys to Pydantic model keys
@@ -475,6 +477,7 @@ def _build_calculators(
         "sensor_coverage_pct": calcs["sensor_coverage_pct"],
         "sampling_assessment": calcs["sampling_assessment"],
         "guide_suitability": calcs["guide_suitability"],
+        "guiding_tolerance": calcs["guiding_tolerance"],
         "sub_exposure": sub_exposure,
     }
 
@@ -1080,6 +1083,12 @@ async def get_calculators(
         le=20.0,
         description="Sub-exposure k factor (read noise allowance)",
     ),
+    image_binning: int = Query(
+        1,
+        ge=1,
+        le=4,
+        description="Imaging camera binning (1-4); drives headline scale and guiding tolerance",
+    ),
 ):
     """Get calculator results for a rig."""
     async with get_db() as conn:
@@ -1108,6 +1117,7 @@ async def get_calculators(
             seeing_loc_name,
             guide_binning=guide_binning,
             centroid_accuracy_pixels=centroid_accuracy_pixels,
+            image_binning=image_binning,
         )
 
         sensor_phot = await _fetch_rig_sensor_photometrics(conn, rig_row)
