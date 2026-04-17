@@ -456,6 +456,218 @@ def test_guide_suitability_missing_guide_scope_focal_length_returns_none():
 # -- Full Calculator -----------------------------------------------------------
 
 
+# -- Sub-Exposure (Robin Glover) -----------------------------------------------
+
+
+def _fred_c11_sub_exposure(filters, k_factor=10.0, bortle=5, sqm=None):
+    """Call compute_sub_exposure with Fred's C11 configuration."""
+    from nightcrate.services.rig_calculators import (
+        compute_image_scale,
+        compute_sub_exposure,
+    )
+
+    image_scale = compute_image_scale(3.76, 1960.0)
+    return compute_sub_exposure(
+        sensor_read_noise_e=1.5,
+        sensor_peak_qe_pct=85.0,
+        sensor_full_well_ke=50.0,
+        aperture_mm=280.0,
+        image_scale_arcsec_per_pixel=image_scale,
+        filters=filters,
+        location_name="Backyard Observatory",
+        location_sqm_reading=sqm,
+        location_bortle_class=bortle,
+        k_factor=k_factor,
+    )
+
+
+def test_sub_exposure_resolve_sky_sqm_preferred():
+    from nightcrate.services.rig_calculators import resolve_sky_brightness
+
+    mag, source, name, detail = resolve_sky_brightness(21.4, 4, "Backyard")
+    assert source == "sqm"
+    assert mag == pytest.approx(21.4)
+    assert name == "Backyard"
+    assert "SQM" in detail
+
+
+def test_sub_exposure_resolve_sky_bortle_fallback():
+    from nightcrate.services.rig_calculators import resolve_sky_brightness
+
+    mag, source, name, detail = resolve_sky_brightness(None, 5, "Backyard")
+    assert source == "bortle"
+    assert mag == pytest.approx(20.27, abs=0.01)
+    assert name == "Backyard"
+    assert "Bortle 5" in detail
+
+
+def test_sub_exposure_resolve_sky_default():
+    from nightcrate.services.rig_calculators import resolve_sky_brightness
+
+    mag, source, _name, detail = resolve_sky_brightness(None, None, None)
+    assert source == "default"
+    assert mag == pytest.approx(20.27, abs=0.01)
+    assert "Bortle 5" in detail
+
+
+def test_sub_exposure_c11_luminance_glover():
+    """Fred's C11 at Bortle 5 with a 300nm luminance filter produces ~127s optimal sub."""
+    from nightcrate.services.rig_calculators import FilterInput
+
+    lum = FilterInput(
+        filter_id=1,
+        filter_name="Luminance",
+        filter_type_name="broadband_luminance",
+        slot_number=1,
+        filter_peak_transmission_pct=95.0,
+        passbands=[(300.0, 95.0)],
+        has_passband_data=True,
+    )
+    calc = _fred_c11_sub_exposure([lum])
+    assert calc is not None
+    assert calc.sky_brightness_source == "bortle"
+    assert calc.k_factor == 10.0
+    assert len(calc.results) == 1
+    r = calc.results[0]
+    # sky_rate ≈ 1.78 e⁻/s/px — compute_sub_exposure reproduces the worked example.
+    assert r.sky_rate_e_per_s_per_pixel == pytest.approx(1.78, abs=0.1)
+    # optimal_sub ≈ 127s
+    assert r.optimal_sub_seconds == pytest.approx(127, abs=10)
+    # No saturation cap: full well of 50ke- vs ~1.8 e-/s means many hours to saturate.
+    assert not r.saturation_capped
+    # Nearest standard: 120s
+    assert r.standard_sub_seconds == 120
+
+
+def test_sub_exposure_narrowband_is_longer():
+    """7nm Ha filter produces a vastly longer optimal sub than luminance."""
+    from nightcrate.services.rig_calculators import FilterInput
+
+    ha = FilterInput(
+        filter_id=2,
+        filter_name="Ha 7nm",
+        filter_type_name="narrowband_single",
+        slot_number=5,
+        filter_peak_transmission_pct=85.0,
+        passbands=[(7.0, 85.0)],
+        has_passband_data=True,
+    )
+    calc = _fred_c11_sub_exposure([ha])
+    assert calc is not None
+    r = calc.results[0]
+    # sky_rate is much lower → optimal_sub much higher.
+    assert r.optimal_sub_seconds > 1000
+    # Standard sub clamps to the max (1800s for 7nm at B5, can be even higher).
+    assert r.standard_sub_seconds in (1200, 1800)
+
+
+def test_sub_exposure_duoband_sums_bandwidths():
+    from nightcrate.services.rig_calculators import FilterInput, get_filter_photometrics
+
+    f = FilterInput(
+        filter_id=3,
+        filter_name="Ha+Oiii 7nm",
+        filter_type_name="narrowband_dual",
+        slot_number=6,
+        filter_peak_transmission_pct=None,
+        passbands=[(7.0, 85.0), (7.0, 85.0)],
+        has_passband_data=True,
+    )
+    bandpass, trans, used_defaults = get_filter_photometrics(f)
+    assert bandpass == pytest.approx(14.0)
+    assert trans == pytest.approx(0.85)
+    assert used_defaults is False
+
+
+def test_sub_exposure_missing_sensor_photometrics_returns_none():
+    from nightcrate.services.rig_calculators import FilterInput, compute_sub_exposure
+
+    filters = [
+        FilterInput(
+            filter_id=1,
+            filter_name="L",
+            filter_type_name="broadband_luminance",
+            slot_number=1,
+            filter_peak_transmission_pct=95.0,
+            passbands=[(300.0, 95.0)],
+            has_passband_data=True,
+        )
+    ]
+    result = compute_sub_exposure(
+        sensor_read_noise_e=None,  # missing
+        sensor_peak_qe_pct=85.0,
+        sensor_full_well_ke=50.0,
+        aperture_mm=280.0,
+        image_scale_arcsec_per_pixel=0.396,
+        filters=filters,
+    )
+    assert result is None
+
+
+def test_sub_exposure_k_factor_scales_sub_length_quadratically():
+    """Doubling k should quadruple optimal sub length."""
+    from nightcrate.services.rig_calculators import FilterInput
+
+    lum = FilterInput(
+        filter_id=1,
+        filter_name="L",
+        filter_type_name="broadband_luminance",
+        slot_number=1,
+        filter_peak_transmission_pct=95.0,
+        passbands=[(300.0, 95.0)],
+        has_passband_data=True,
+    )
+    calc_k10 = _fred_c11_sub_exposure([lum], k_factor=10.0)
+    calc_k20 = _fred_c11_sub_exposure([lum], k_factor=20.0)
+    assert calc_k10 is not None and calc_k20 is not None
+    ratio = calc_k20.results[0].optimal_sub_seconds / calc_k10.results[0].optimal_sub_seconds
+    assert ratio == pytest.approx(4.0, abs=0.01)
+
+
+def test_sub_exposure_unfiltered_virtual_entry():
+    from nightcrate.services.rig_calculators import FilterInput
+
+    # Unfiltered entry: filter_id=None, passbands empty, get_filter_photometrics
+    # returns UNFILTERED_BANDPASS_NM / UNFILTERED_TRANSMISSION.
+    unf = FilterInput(
+        filter_id=None,
+        filter_name="Unfiltered",
+        filter_type_name=None,
+        slot_number=None,
+        filter_peak_transmission_pct=None,
+        passbands=[],
+        has_passband_data=True,
+    )
+    calc = _fred_c11_sub_exposure([unf])
+    assert calc is not None
+    r = calc.results[0]
+    assert r.filter_id is None
+    assert r.filter_label == "Unfiltered"
+    assert r.effective_bandpass_nm == 300.0
+
+
+def test_sub_exposure_passband_default_fallback_sets_warning_flag():
+    """Filter with no passband rows uses type defaults; has_passband_data stays False."""
+    from nightcrate.services.rig_calculators import FilterInput
+
+    f = FilterInput(
+        filter_id=1,
+        filter_name="Mystery 3nm",
+        filter_type_name="narrowband_single",
+        slot_number=1,
+        filter_peak_transmission_pct=None,
+        passbands=[],
+        has_passband_data=False,  # no passband rows in DB
+    )
+    calc = _fred_c11_sub_exposure([f])
+    assert calc is not None
+    r = calc.results[0]
+    # Defaults used: narrowband_single bandpass = 7nm, transmission 85%.
+    assert r.effective_bandpass_nm == pytest.approx(7.0)
+    assert r.filter_transmission_pct == pytest.approx(85.0)
+    assert r.has_passband_data is False
+
+
 def test_full_calculators_c11():
     from nightcrate.services.rig_calculators import compute_rig_calculators
 

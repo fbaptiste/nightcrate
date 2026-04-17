@@ -70,6 +70,7 @@ class RigSoftwareOut(BaseModel):
 class RigWarning(BaseModel):
     field: str
     message: str
+    severity: str = "error"  # "error" | "info"
 
 
 class SamplingAssessment(BaseModel):
@@ -105,6 +106,36 @@ class GuideSuitability(BaseModel):
     caveat: str
 
 
+class SubExposureResult(BaseModel):
+    filter_id: int | None
+    filter_label: str
+    filter_slot_number: int | None
+    effective_bandpass_nm: float
+    filter_transmission_pct: float
+    sky_rate_e_per_s_per_pixel: float
+    optimal_sub_seconds: float
+    saturation_sub_seconds: float
+    recommended_sub_seconds: float
+    saturation_capped: bool
+    standard_sub_seconds: int
+    has_passband_data: bool
+
+
+class SubExposureCalc(BaseModel):
+    location_id: int | None
+    location_name: str | None
+    sky_mag_per_arcsec2: float
+    sky_brightness_source: str  # "sqm" | "bortle" | "default"
+    sky_brightness_source_detail: str
+    read_noise_e: float
+    peak_qe_pct: float
+    full_well_capacity_ke: float
+    aperture_mm: float
+    image_scale_arcsec_per_pixel: float
+    k_factor: float
+    results: list[SubExposureResult]
+
+
 class RigCalculators(BaseModel):
     image_scale_arcsec_per_pixel: float
     image_scale_arcsec_per_pixel_binned: dict[int, float]
@@ -119,6 +150,7 @@ class RigCalculators(BaseModel):
     sensor_coverage_pct: float | None
     sampling_assessment: SamplingAssessment
     guide_suitability: GuideSuitability | None = None
+    sub_exposure: SubExposureCalc | None = None
 
 
 class RigOut(BaseModel):
