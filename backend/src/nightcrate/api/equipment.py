@@ -48,6 +48,7 @@ from nightcrate.api.equipment_models import (
     ManufacturerCreate,
     ManufacturerResponse,
     ManufacturerUpdate,
+    MineCountsResponse,
     MineToggle,
     MountCreate,
     MountResponse,
@@ -78,6 +79,34 @@ from nightcrate.db.session import get_db
 
 router = APIRouter(prefix="/api/equipment", tags=["Equipment"])
 lookup_router = APIRouter(prefix="/api/equipment", tags=["Lookup Tables"])
+
+
+# ── Mine counts ───────────────────────────────────────────────────────────────
+
+
+@router.get("/mine-counts", response_model=MineCountsResponse)
+async def get_mine_counts():
+    """Per-type counts of equipment marked as mine. Retired items still count."""
+    mapping = {
+        "cameras": "camera",
+        "telescopes": "telescope",
+        "filters": "filter",
+        "mounts": "mount",
+        "focusers": "focuser",
+        "filter_wheels": "filter_wheel",
+        "oags": "oag",
+        "guide_scopes": "guide_scope",
+        "computers": "computer",
+        "software": "software",
+    }
+    counts: dict[str, int] = {}
+    async with get_db() as conn:
+        for response_key, table in mapping.items():
+            row = await (
+                await conn.execute(f"SELECT COUNT(*) FROM {table} WHERE is_mine = 1")
+            ).fetchone()
+            counts[response_key] = row[0] if row else 0
+    return counts
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

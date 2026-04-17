@@ -9,6 +9,19 @@ class MineToggle(BaseModel):
     is_mine: bool = Field(..., description="True to mark as mine; False to unmark")
 
 
+class MineCountsResponse(BaseModel):
+    cameras: int
+    telescopes: int
+    filters: int
+    mounts: int
+    focusers: int
+    filter_wheels: int
+    oags: int
+    guide_scopes: int
+    computers: int
+    software: int
+
+
 # ── Lookup tables ────────────────────────────────────────────────────────────
 
 
