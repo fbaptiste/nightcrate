@@ -40,14 +40,14 @@ export default function GuidingTab({
           drives Guide System; imaging-camera binning drives Guiding
           Tolerance. */}
       <BinningRow
-        label="Guide camera binning"
-        value={guideBinning}
-        onChange={onGuideBinningChange}
-      />
-      <BinningRow
         label="Imaging camera binning"
         value={imageBinning}
         onChange={onImageBinningChange}
+      />
+      <BinningRow
+        label="Guide camera binning"
+        value={guideBinning}
+        onChange={onGuideBinningChange}
       />
 
       <Box sx={{ borderBottom: 1, borderColor: "divider", mt: 0.5, mb: 2 }}>
