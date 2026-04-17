@@ -31,7 +31,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   );
   const [guideBinning, setGuideBinning] = useState<number>(1);
   const [centroidAccuracy, setCentroidAccuracy] = useState<number>(0.2);
-  const [kFactor, setKFactor] = useState<number>(10);
   const [imageBinning, setImageBinning] = useState<number>(1);
   const [calculatorData, setCalculatorData] = useState<RigCalculators>(
     rig.calculators,
@@ -55,7 +54,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
   const debouncedGuideBinning = useDebounce(guideBinning, 150);
   const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
-  const debouncedKFactor = useDebounce(kFactor, 300);
   const debouncedImageBinning = useDebounce(imageBinning, 150);
 
   // Fetch calculator data when any parameter changes.
@@ -66,7 +64,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
       location_id: selectedLocationId,
       guide_binning: debouncedGuideBinning,
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
-      k_factor: debouncedKFactor,
       image_binning: debouncedImageBinning,
     }).then((data) => {
       if (!cancelled) setCalculatorData(data);
@@ -79,7 +76,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     selectedLocationId,
     debouncedGuideBinning,
     debouncedCentroidAccuracy,
-    debouncedKFactor,
     debouncedImageBinning,
   ]);
 
@@ -140,8 +136,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
       {activeTab === "imaging" && (
         <ImagingTab
           calculators={calculatorData}
-          kFactor={kFactor}
-          onKFactorChange={setKFactor}
           imageBinning={imageBinning}
           onImageBinningChange={setImageBinning}
         />

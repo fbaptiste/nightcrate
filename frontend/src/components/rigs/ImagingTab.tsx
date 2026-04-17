@@ -10,12 +10,9 @@ import type { RigCalculators } from "@/api/rigs";
 import { useDebounce } from "@/lib/useDebounce";
 import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 import SamplingChart from "./SamplingChart";
-import SubExposurePanel from "./SubExposurePanel";
 
 interface ImagingTabProps {
   calculators: RigCalculators;
-  kFactor: number;
-  onKFactorChange: (k: number) => void;
   imageBinning: number;
   onImageBinningChange: (b: number) => void;
 }
@@ -67,8 +64,6 @@ const METRIC_TOOLTIPS: Record<string, string> = {
 
 export default function ImagingTab({
   calculators,
-  kFactor,
-  onKFactorChange,
   imageBinning,
   onImageBinningChange,
 }: ImagingTabProps) {
@@ -250,12 +245,6 @@ export default function ImagingTab({
           </Box>
         </Box>
       </Box>
-
-      <SubExposurePanel
-        subExposure={calculators.sub_exposure}
-        kFactor={kFactor}
-        onKFactorChange={onKFactorChange}
-      />
     </Box>
   );
 }

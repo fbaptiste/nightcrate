@@ -1,7 +1,6 @@
 """Rig management API — CRUD for imaging rig templates."""
 
 import logging
-from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -15,10 +14,7 @@ from nightcrate.api.rig_models import (
 )
 from nightcrate.db.session import get_db
 from nightcrate.services.rig_calculators import (
-    DEFAULT_K_FACTOR,
-    FilterInput,
     compute_rig_calculators,
-    compute_sub_exposure,
     resolve_seeing,
 )
 
@@ -141,13 +137,7 @@ async def _validate_filter_slots(conn, slots: list, filter_wheel_id: int | None)
             )
 
 
-async def _check_warnings(
-    conn,
-    rig_data: dict,
-    sensor_phot: dict | None = None,
-    filter_inputs: list | None = None,
-    location: dict | None = None,
-) -> list[dict]:
+async def _check_warnings(conn, rig_data: dict) -> list[dict]:
     """Check for advisory warnings on a rig configuration."""
     warnings = []
 
@@ -225,201 +215,12 @@ async def _check_warnings(
             }
         )
 
-    # Sub-exposure warnings — only if the relevant data was fetched.
-    if sensor_phot is not None:
-        missing = []
-        if sensor_phot.get("read_noise_e") is None:
-            missing.append("read noise")
-        if sensor_phot.get("peak_qe_pct") is None:
-            missing.append("peak QE")
-        if sensor_phot.get("full_well_capacity_ke") is None:
-            missing.append("full well capacity")
-        if missing:
-            warnings.append(
-                {
-                    "field": "sensor",
-                    "message": (
-                        f"Sensor is missing {', '.join(missing)} \u2014 sub-exposure "
-                        f"calculator cannot run. Edit the sensor equipment record to add it."
-                    ),
-                    "severity": "info",
-                }
-            )
-
-    if location is not None and (
-        location.get("sqm_reading") is None and location.get("bortle_class") is None
-    ):
-        loc_name = location.get("name") or "this location"
-        warnings.append(
-            {
-                "field": "location.sqm_reading",
-                "message": (
-                    f"Neither Bortle nor SQM is set for {loc_name} \u2014 sub-exposure "
-                    f"uses a Bortle-5 default. Edit the location to add one for a more "
-                    f"accurate estimate."
-                ),
-                "severity": "info",
-            }
-        )
-
-    if filter_inputs is not None:
-        missing_passband = [
-            f.filter_name
-            for f in filter_inputs
-            if f.filter_id is not None and not f.has_passband_data
-        ]
-        for name in missing_passband:
-            warnings.append(
-                {
-                    "field": "filter",
-                    "message": (
-                        f"{name} has no passband data \u2014 sub-exposure uses "
-                        f"type-based defaults. Edit the filter to add bandwidth "
-                        f"and transmission for more accurate estimates."
-                    ),
-                    "severity": "info",
-                }
-            )
-
     return warnings
 
 
 async def _ensure_single_default(conn, rig_id: int) -> None:
     """Clear is_default on all rigs except the given ID."""
     await conn.execute("UPDATE rig SET is_default = 0 WHERE id != ?", (rig_id,))
-
-
-async def _fetch_rig_filter_inputs(conn, rig_row: dict) -> list:
-    """Fetch the filters on a rig (wheel slots + single filter) with passbands.
-
-    Returns a list of FilterInput objects. If the rig has neither a wheel nor
-    a single filter, returns a single virtual "Unfiltered" entry so the
-    sub-exposure calc produces one row.
-    """
-    filters: list[FilterInput] = []
-
-    rig_id = rig_row["id"]
-
-    # Filter-wheel slots
-    if rig_row.get("filter_wheel_id") is not None:
-        slot_rows = await conn.execute(
-            """
-            SELECT rfs.slot_number, f.id AS filter_id, f.model_name,
-                   f.peak_transmission_pct, ft.name AS filter_type_name
-            FROM rig_filter_slot rfs
-            JOIN filter f ON f.id = rfs.filter_id
-            LEFT JOIN filter_type ft ON ft.id = f.filter_type_id
-            WHERE rfs.rig_id = ?
-            ORDER BY rfs.slot_number
-            """,
-            (rig_id,),
-        )
-        for row in await slot_rows.fetchall():
-            fid = row["filter_id"]
-            passband_rows = await conn.execute(
-                "SELECT bandwidth_nm, peak_transmission_pct FROM filter_passband "
-                "WHERE filter_id = ?",
-                (fid,),
-            )
-            passbands = [
-                (p["bandwidth_nm"], p["peak_transmission_pct"])
-                for p in await passband_rows.fetchall()
-            ]
-            filters.append(
-                FilterInput(
-                    filter_id=fid,
-                    filter_name=row["model_name"],
-                    filter_type_name=row["filter_type_name"],
-                    slot_number=row["slot_number"],
-                    filter_peak_transmission_pct=row["peak_transmission_pct"],
-                    passbands=passbands,
-                    has_passband_data=len(passbands) > 0,
-                )
-            )
-
-    # Single filter (not on a wheel)
-    if rig_row.get("single_filter_id") is not None:
-        fid = rig_row["single_filter_id"]
-        row = await (
-            await conn.execute(
-                "SELECT f.id, f.model_name, f.peak_transmission_pct, "
-                "ft.name AS filter_type_name "
-                "FROM filter f "
-                "LEFT JOIN filter_type ft ON ft.id = f.filter_type_id "
-                "WHERE f.id = ?",
-                (fid,),
-            )
-        ).fetchone()
-        if row is not None:
-            passband_rows = await conn.execute(
-                "SELECT bandwidth_nm, peak_transmission_pct FROM filter_passband "
-                "WHERE filter_id = ?",
-                (fid,),
-            )
-            passbands = [
-                (p["bandwidth_nm"], p["peak_transmission_pct"])
-                for p in await passband_rows.fetchall()
-            ]
-            filters.append(
-                FilterInput(
-                    filter_id=fid,
-                    filter_name=row["model_name"],
-                    filter_type_name=row["filter_type_name"],
-                    slot_number=None,
-                    filter_peak_transmission_pct=row["peak_transmission_pct"],
-                    passbands=passbands,
-                    has_passband_data=len(passbands) > 0,
-                )
-            )
-
-    if not filters:
-        # Virtual "Unfiltered" entry so the sub-exposure table has at least one row.
-        filters.append(
-            FilterInput(
-                filter_id=None,
-                filter_name="Unfiltered",
-                filter_type_name=None,
-                slot_number=None,
-                filter_peak_transmission_pct=None,
-                passbands=[],
-                has_passband_data=True,  # not applicable → don't warn
-            )
-        )
-
-    return filters
-
-
-async def _fetch_rig_sensor_photometrics(conn, rig_row: dict) -> dict:
-    """Fetch imaging sensor photometrics (read noise / peak QE / full well).
-
-    Prefers camera-level `effective_*` overrides when present; falls back to
-    the sensor row. Returns a dict with read_noise_e, peak_qe_pct,
-    full_well_capacity_ke (any of which may be None).
-    """
-    row = await (
-        await conn.execute(
-            """
-            SELECT
-                s.read_noise_e AS sensor_read_noise_e,
-                s.peak_qe_pct AS sensor_peak_qe_pct,
-                s.full_well_capacity_ke AS sensor_full_well_ke,
-                c.effective_read_noise_lcg_e AS cam_read_noise_e,
-                c.effective_peak_qe_pct AS cam_peak_qe_pct,
-                c.effective_full_well_ke AS cam_full_well_ke
-            FROM camera c
-            JOIN sensor s ON s.id = c.sensor_id
-            WHERE c.id = ?
-            """,
-            (rig_row["camera_id"],),
-        )
-    ).fetchone()
-    if row is None:
-        return {"read_noise_e": None, "peak_qe_pct": None, "full_well_capacity_ke": None}
-    return {
-        "read_noise_e": row["cam_read_noise_e"] or row["sensor_read_noise_e"],
-        "peak_qe_pct": row["cam_peak_qe_pct"] or row["sensor_peak_qe_pct"],
-        "full_well_capacity_ke": row["cam_full_well_ke"] or row["sensor_full_well_ke"],
-    }
 
 
 def _build_calculators(
@@ -431,7 +232,6 @@ def _build_calculators(
     guide_binning: int = 1,
     centroid_accuracy_pixels: float = 0.2,
     image_binning: int = 1,
-    sub_exposure: dict | None = None,
 ) -> dict:
     """Compute all calculator results from rig summary row data."""
     calcs = compute_rig_calculators(
@@ -478,7 +278,6 @@ def _build_calculators(
         "sampling_assessment": calcs["sampling_assessment"],
         "guide_suitability": calcs["guide_suitability"],
         "guiding_tolerance": calcs["guiding_tolerance"],
-        "sub_exposure": sub_exposure,
     }
 
 
@@ -510,34 +309,12 @@ async def _build_rig_response(
         override_high=override_seeing_high,
     )
 
-    # Sub-exposure inputs (independent of guide params).
-    sensor_phot = await _fetch_rig_sensor_photometrics(conn, rig_row)
-    filter_inputs = await _fetch_rig_filter_inputs(conn, rig_row)
-
-    # Compute calculators once without sub-exposure so we can reuse image_scale.
     calculators = _build_calculators(
         rig_row, seeing_low, seeing_high, seeing_source, seeing_loc_name
     )
 
-    sub_exp_obj = compute_sub_exposure(
-        sensor_read_noise_e=sensor_phot["read_noise_e"],
-        sensor_peak_qe_pct=sensor_phot["peak_qe_pct"],
-        sensor_full_well_ke=sensor_phot["full_well_capacity_ke"],
-        aperture_mm=rig_row["aperture_mm"],
-        image_scale_arcsec_per_pixel=calculators["image_scale_arcsec_per_pixel"],
-        filters=filter_inputs,
-        location_id=location.get("id") if location else None,
-        location_name=location.get("name") if location else None,
-        location_sqm_reading=location.get("sqm_reading") if location else None,
-        location_bortle_class=location.get("bortle_class") if location else None,
-        k_factor=DEFAULT_K_FACTOR,
-    )
-    calculators["sub_exposure"] = asdict(sub_exp_obj) if sub_exp_obj is not None else None
-
     # Warnings
-    warnings = await _check_warnings(
-        conn, rig_row, sensor_phot=sensor_phot, filter_inputs=filter_inputs, location=location
-    )
+    warnings = await _check_warnings(conn, rig_row)
 
     _bool_fields(rig_row, "is_default", "active")
 
@@ -1078,12 +855,6 @@ async def get_calculators(
         le=0.5,
         description="Assumed PHD2 centroid accuracy in guide pixels",
     ),
-    k_factor: float = Query(
-        DEFAULT_K_FACTOR,
-        ge=3.0,
-        le=20.0,
-        description="Sub-exposure k factor (read noise allowance)",
-    ),
     image_binning: int = Query(
         1,
         ge=1,
@@ -1109,8 +880,7 @@ async def get_calculators(
             override_high=seeing_high,
         )
 
-        # Build base calculators first so sub-exposure can reuse image_scale.
-        calcs = _build_calculators(
+        return _build_calculators(
             rig_row,
             seeing_fwhm_low,
             seeing_fwhm_high,
@@ -1120,22 +890,3 @@ async def get_calculators(
             centroid_accuracy_pixels=centroid_accuracy_pixels,
             image_binning=image_binning,
         )
-
-        sensor_phot = await _fetch_rig_sensor_photometrics(conn, rig_row)
-        filter_inputs = await _fetch_rig_filter_inputs(conn, rig_row)
-        sub_exp_obj = compute_sub_exposure(
-            sensor_read_noise_e=sensor_phot["read_noise_e"],
-            sensor_peak_qe_pct=sensor_phot["peak_qe_pct"],
-            sensor_full_well_ke=sensor_phot["full_well_capacity_ke"],
-            aperture_mm=rig_row["aperture_mm"],
-            image_scale_arcsec_per_pixel=calcs["image_scale_arcsec_per_pixel"],
-            filters=filter_inputs,
-            location_id=location.get("id") if location else None,
-            location_name=location.get("name") if location else None,
-            location_sqm_reading=location.get("sqm_reading") if location else None,
-            location_bortle_class=location.get("bortle_class") if location else None,
-            k_factor=k_factor,
-        )
-        calcs["sub_exposure"] = asdict(sub_exp_obj) if sub_exp_obj is not None else None
-
-        return calcs
