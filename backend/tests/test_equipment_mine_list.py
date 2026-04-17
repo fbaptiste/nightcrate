@@ -303,3 +303,223 @@ class TestFilterMineList:
         assert len(ours) == 1
         assert ours[0]["is_mine"] is True
         assert ours[0]["model_name"] == "FilterMine Ha"
+
+
+# ── Parametrized smoke test: all 10 owned types ───────────────────────────────
+#
+# Focuses on list-level is_mine surfacing for the 7 types not covered by the
+# dedicated classes above (mount, focuser, filter_wheel, oag, guide_scope,
+# computer, software), plus re-validates camera/telescope/filter in one place.
+#
+# Each case creates two rows via POST — non-mine first (so insertion order would
+# surface it first if the ORDER BY were absent), mine second — then asserts:
+#   1. The created row's is_mine round-trips correctly from the POST response.
+#   2. The mine row appears before the non-mine row in the GET list.
+#
+# FK fields that are optional (mount_type_id, focuser_type_id, form_factor_id)
+# are omitted to keep setup minimal; the API accepts NULL for all of them.
+
+
+def _camera_payloads(mfr_id: int, sensor_id: int) -> tuple[dict, dict]:
+    return (
+        {
+            "manufacturer_id": mfr_id,
+            "sensor_id": sensor_id,
+            "model_name": "Zzz NotMine",
+            "is_mine": False,
+        },
+        {
+            "manufacturer_id": mfr_id,
+            "sensor_id": sensor_id,
+            "model_name": "Aaa Mine",
+            "is_mine": True,
+        },
+    )
+
+
+def _telescope_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    return (
+        {
+            "manufacturer_id": mfr_id,
+            "model_name": "Zzz NotMine",
+            "aperture_mm": 100.0,
+            "is_mine": False,
+        },  # noqa: E501
+        {
+            "manufacturer_id": mfr_id,
+            "model_name": "Aaa Mine",
+            "aperture_mm": 280.0,
+            "is_mine": True,
+        },  # noqa: E501
+    )
+
+
+def _filter_payloads(mfr_id: int, ft_id: int) -> tuple[dict, dict]:
+    return (
+        {
+            "manufacturer_id": mfr_id,
+            "filter_type_id": ft_id,
+            "model_name": "Zzz NotMine",
+            "is_mine": False,
+        },
+        {
+            "manufacturer_id": mfr_id,
+            "filter_type_id": ft_id,
+            "model_name": "Aaa Mine",
+            "is_mine": True,
+        },
+    )
+
+
+def _mount_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    return (
+        {"manufacturer_id": mfr_id, "model_name": "Zzz NotMine", "is_mine": False},
+        {"manufacturer_id": mfr_id, "model_name": "Aaa Mine", "is_mine": True},
+    )
+
+
+def _focuser_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    return (
+        {"manufacturer_id": mfr_id, "model_name": "Zzz NotMine", "is_mine": False},
+        {"manufacturer_id": mfr_id, "model_name": "Aaa Mine", "is_mine": True},
+    )
+
+
+def _filter_wheel_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    return (
+        {
+            "manufacturer_id": mfr_id,
+            "model_name": "Zzz NotMine",
+            "num_positions": 5,
+            "is_mine": False,
+        },  # noqa: E501
+        {"manufacturer_id": mfr_id, "model_name": "Aaa Mine", "num_positions": 7, "is_mine": True},
+    )
+
+
+def _oag_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    return (
+        {"manufacturer_id": mfr_id, "model_name": "Zzz NotMine", "is_mine": False},
+        {"manufacturer_id": mfr_id, "model_name": "Aaa Mine", "is_mine": True},
+    )
+
+
+def _guide_scope_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    return (
+        {
+            "manufacturer_id": mfr_id,
+            "model_name": "Zzz NotMine",
+            "aperture_mm": 50.0,
+            "focal_length_mm": 200.0,
+            "is_mine": False,
+        },
+        {
+            "manufacturer_id": mfr_id,
+            "model_name": "Aaa Mine",
+            "aperture_mm": 60.0,
+            "focal_length_mm": 240.0,
+            "is_mine": True,
+        },
+    )
+
+
+def _computer_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    return (
+        {"manufacturer_id": mfr_id, "model_name": "Zzz NotMine", "is_mine": False},
+        {"manufacturer_id": mfr_id, "model_name": "Aaa Mine", "is_mine": True},
+    )
+
+
+def _software_payloads(mfr_id: int, _unused: int) -> tuple[dict, dict]:
+    # manufacturer_id is optional for software; include it for consistency.
+    return (
+        {"manufacturer_id": mfr_id, "name": "Zzz NotMine", "category": "utility", "is_mine": False},
+        {"manufacturer_id": mfr_id, "name": "Aaa Mine", "category": "capture", "is_mine": True},
+    )
+
+
+# name-field key varies by type (model_name vs name for software)
+_NAME_KEY: dict[str, str] = {
+    "camera": "model_name",
+    "telescope": "model_name",
+    "filter": "model_name",
+    "mount": "model_name",
+    "focuser": "model_name",
+    "filter-wheel": "model_name",
+    "oag": "model_name",
+    "guide-scope": "model_name",
+    "computer": "model_name",
+    "software": "name",
+}
+
+_PAYLOAD_BUILDERS = {
+    "camera": _camera_payloads,
+    "telescope": _telescope_payloads,
+    "filter": _filter_payloads,
+    "mount": _mount_payloads,
+    "focuser": _focuser_payloads,
+    "filter-wheel": _filter_wheel_payloads,
+    "oag": _oag_payloads,
+    "guide-scope": _guide_scope_payloads,
+    "computer": _computer_payloads,
+    "software": _software_payloads,
+}
+
+
+@pytest.mark.parametrize("route", list(_PAYLOAD_BUILDERS.keys()))
+class TestIsMineRoundTripAllTypes:
+    """Smoke test: POST is_mine=True round-trips and the row appears first in GET list.
+
+    Complements camera/telescope/filter dedicated classes by covering the
+    remaining 7 owned types (mount, focuser, filter_wheel, oag, guide_scope,
+    computer, software).  The test also re-validates the first three so a
+    single parametrize covers all 10 owned types end-to-end.
+    """
+
+    async def test_is_mine_create_round_trip(self, client: AsyncClient, route: str):
+        """POST with is_mine=True must return is_mine=True in the response body."""
+        mfr = await _make_manufacturer(client, f"RoundTrip-{route}-Mfg")
+        aux_id = await self._aux_id(client, route, mfr["id"])
+        _, mine_payload = _PAYLOAD_BUILDERS[route](mfr["id"], aux_id)
+
+        resp = await client.post(f"/api/equipment/{route}", json=mine_payload)
+        assert resp.status_code == 201, f"POST /api/equipment/{route} failed: {resp.text}"
+        assert resp.json()["is_mine"] is True, (
+            f"POST /api/equipment/{route} did not round-trip is_mine=True"
+        )
+
+    async def test_is_mine_appears_first_in_list(self, client: AsyncClient, route: str):
+        """mine row created after non-mine row must still appear first in GET list."""
+        mfr = await _make_manufacturer(client, f"ListOrder-{route}-Mfg")
+        aux_id = await self._aux_id(client, route, mfr["id"])
+        not_mine_payload, mine_payload = _PAYLOAD_BUILDERS[route](mfr["id"], aux_id)
+        name_key = _NAME_KEY[route]
+        not_mine_name = not_mine_payload[name_key]
+        mine_name = mine_payload[name_key]
+
+        resp = await client.post(f"/api/equipment/{route}", json=not_mine_payload)
+        assert resp.status_code == 201
+        resp = await client.post(f"/api/equipment/{route}", json=mine_payload)
+        assert resp.status_code == 201
+
+        resp = await client.get(f"/api/equipment/{route}")
+        assert resp.status_code == 200
+        items = resp.json()
+        ours = [i for i in items if i.get(name_key) in {not_mine_name, mine_name}]
+        assert len(ours) == 2, f"Expected 2 rows for {route}, got {len(ours)}"
+        assert ours[0]["is_mine"] is True, f"Expected mine row to appear first for {route}"
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    async def _aux_id(self, client: AsyncClient, route: str, mfr_id: int) -> int:
+        """Return a secondary FK id for types that need one.
+
+        camera → sensor id; filter → filter_type id; all others → 0 (ignored).
+        """
+        if route == "camera":
+            sensor = await _make_sensor(client, mfr_id, f"SensorSmoke-{mfr_id}")
+            return sensor["id"]
+        if route == "filter":
+            return await _get_filter_type_id(client)
+        # All other types either use no secondary FK or accept None.
+        return 0
