@@ -34,11 +34,8 @@ from nightcrate.db.session import get_db, set_db_path
 _LOG_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# Narrow exception groups used by startup maintenance. Declared as tuple
-# constants because ruff-format on Python 3.14 strips parentheses from
-# multi-class `except (A, B):` clauses (producing a py3.14 tuple literal
-# that parses but is brittle). Using a named tuple variable sidesteps the
-# formatter bug entirely — see CLAUDE.md "Gotchas".
+# Tuple constants for narrow except clauses — sidesteps the py314
+# ruff-format bug documented in CLAUDE.md "Gotchas".
 _SEED_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
     sqlite3.Error,
     OSError,

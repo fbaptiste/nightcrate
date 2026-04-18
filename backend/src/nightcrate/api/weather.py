@@ -36,12 +36,12 @@ from nightcrate.services.imaging_quality import (
 from nightcrate.services.seeing import estimate_seeing_surface, estimate_seeing_wind_shear
 from nightcrate.services.transparency import estimate_transparency
 from nightcrate.services.weather import (
+    NearestMatchIndex,
     SupplementaryData,
     WeatherData,
     fetch_air_quality,
     fetch_pwv,
     fetch_weather,
-    nearest_match,
     parse_hourly,
 )
 
@@ -384,8 +384,8 @@ def _compute_night_data(
     night_date: date,
     tz: ZoneInfo,
     weather: WeatherData,
-    pwv_by_time: dict[str, float | None],
-    aod_by_time: dict[str, float | None],
+    pwv_index: NearestMatchIndex,
+    aod_index: NearestMatchIndex,
     moon_included: bool,
 ) -> DailySummaryResponse | None:
     """Compute a daily summary for one night, driven by actual sunset/sunrise."""
@@ -465,11 +465,11 @@ def _compute_night_data(
         seeing_scores.append(_compute_seeing(h, prev_h))
     avg_seeing = sum(seeing_scores) / len(seeing_scores)
 
-    # Transparency scores (use nearest_match for PWV and AOD)
+    # Transparency scores (O(log n) per lookup via the prebuilt indexes)
     transparency_scores = []
     for _, h in hours_data:
-        pwv_val = nearest_match(pwv_by_time, h.time)
-        aod_val = nearest_match(aod_by_time, h.time)
+        pwv_val = pwv_index.lookup(h.time)
+        aod_val = aod_index.lookup(h.time)
         transparency_scores.append(_transparency_score(h, pwv_val, aod_val))
     avg_transparency = sum(transparency_scores) / len(transparency_scores)
 
@@ -570,6 +570,10 @@ async def get_forecast(
     now_local = datetime.now(tz)
     start_date = now_local.date()
 
+    # Build nearest-match indexes once; 7 night-computations reuse them.
+    pwv_index = NearestMatchIndex(pwv_by_time)
+    aod_index = NearestMatchIndex(aod_by_time)
+
     days: list[DailySummaryResponse] = []
     for offset in range(8):  # try up to 8 days to get 7 valid nights
         d = start_date + timedelta(days=offset)
@@ -578,8 +582,8 @@ async def get_forecast(
             d,
             tz,
             weather,
-            pwv_by_time,
-            aod_by_time,
+            pwv_index,
+            aod_index,
             moon_included,
         )
         if result is not None:
@@ -699,6 +703,10 @@ async def get_hourly(
         for p in moon_polyline_data
     ]
 
+    # Build nearest-match indexes once; reused for every hour below.
+    pwv_index = NearestMatchIndex(pwv_by_time)
+    aod_index = NearestMatchIndex(aod_by_time)
+
     hours: list[HourlyWeatherResponse] = []
     for idx, (i, h) in enumerate(matched):
         prev_h = matched[idx - 1][1] if idx > 0 else None
@@ -716,9 +724,9 @@ async def get_hourly(
             cloud_cover_high_pct=h.cloud_cover_high_pct,
         )
 
-        # Transparency (PWV and AOD via nearest-match)
-        pwv_val = nearest_match(pwv_by_time, h.time)
-        aod_val = nearest_match(aod_by_time, h.time)
+        # Transparency (PWV and AOD via O(log n) lookup on prebuilt indexes)
+        pwv_val = pwv_index.lookup(h.time)
+        aod_val = aod_index.lookup(h.time)
         transparency = _transparency_score(h, pwv_val, aod_val)
 
         # Dew risk

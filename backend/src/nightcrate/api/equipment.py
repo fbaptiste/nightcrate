@@ -1,6 +1,5 @@
 """Equipment management API endpoints — CRUD for all equipment types."""
 
-import aiosqlite
 from fastapi import APIRouter, HTTPException, Query
 
 from nightcrate.api._common import (
@@ -117,10 +116,6 @@ async def get_mine_counts():
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-# Shared row-dict / bool-coercion / seed-strip / integrity-guard helpers live
-# in api/_common.py so equipment, rigs, and locations all use one definition.
-# Kept as module-private aliases here for backwards-compat with the many
-# existing call sites inside this file.
 _row_to_dict = row_to_dict
 _bool_fields = bool_fields
 _strip_seed = strip_seed
@@ -1329,7 +1324,16 @@ async def toggle_telescope_mine(telescope_id: int, body: MineToggle):
 async def create_telescope_configuration(telescope_id: int, body: TelescopeConfigurationCreate):
     async with get_db() as conn:
         await _get_or_404(conn, "telescope", telescope_id, "Telescope")
-        try:
+        with integrity_guard(
+            conflict_detail=(
+                f"Configuration name already exists for this telescope: {body.config_name}"
+            ),
+            constraint_map={
+                "idx_telescope_configuration_one_native": (
+                    "This telescope already has a native configuration (is_native=true)."
+                ),
+            },
+        ):
             cursor = await conn.execute(
                 """INSERT INTO telescope_configuration (
                     telescope_id, config_name, accessory_name, reduction_factor,
@@ -1351,25 +1355,6 @@ async def create_telescope_configuration(telescope_id: int, body: TelescopeConfi
                 ),
             )
             await conn.commit()
-        except aiosqlite.IntegrityError as exc:
-            # Two different UNIQUE constraints can trigger here — the
-            # partial index that enforces one native config per telescope,
-            # and the name uniqueness. sqlite_errorname is the structured
-            # check; we still need the message to distinguish WHICH unique.
-            errname = getattr(exc, "sqlite_errorname", "") or ""
-            if errname != "SQLITE_CONSTRAINT_UNIQUE":
-                raise
-            if "idx_telescope_configuration_one_native" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail="This telescope already has a native configuration (is_native=true).",  # noqa: E501
-                ) from exc
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Configuration name already exists for this telescope: {body.config_name}"
-                ),
-            ) from exc
         config_id = cursor.lastrowid
         row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
         result = await row.fetchone()
@@ -1403,25 +1388,19 @@ async def update_telescope_configuration(
                 updates["is_native"] = int(updates["is_native"])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [config_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Configuration name already exists for this telescope",
+                constraint_map={
+                    "idx_telescope_configuration_one_native": (
+                        "This telescope already has a native configuration (is_native=true)."
+                    ),
+                },
+            ):
                 await conn.execute(
                     f"UPDATE telescope_configuration SET {set_clause} WHERE id = ?",
                     values,
                 )
                 await conn.commit()
-            except aiosqlite.IntegrityError as exc:
-                errname = getattr(exc, "sqlite_errorname", "") or ""
-                if errname != "SQLITE_CONSTRAINT_UNIQUE":
-                    raise
-                if "idx_telescope_configuration_one_native" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="This telescope already has a native configuration (is_native=true).",  # noqa: E501
-                    ) from exc
-                raise HTTPException(
-                    status_code=409,
-                    detail="Configuration name already exists for this telescope",
-                ) from exc
         row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
         result = await row.fetchone()
         cfg = _bool_fields(_row_to_dict(result), "active", "is_native")
@@ -2701,7 +2680,10 @@ async def get_software(software_id: int):
 @router.post("/software", response_model=SoftwareResponse, status_code=201)
 async def create_software(body: SoftwareCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(
+            conflict_detail=f"Software already exists: {body.name}",
+            check_detail=f"Invalid category: {body.category}",
+        ):
             cursor = await conn.execute(
                 """INSERT INTO software (
                     manufacturer_id, name, category, website, notes, is_mine
@@ -2716,19 +2698,6 @@ async def create_software(body: SoftwareCreate):
                 ),
             )
             await conn.commit()
-        except aiosqlite.IntegrityError as exc:
-            errname = getattr(exc, "sqlite_errorname", "") or ""
-            if errname == "SQLITE_CONSTRAINT_UNIQUE":
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Software already exists: {body.name}",
-                ) from exc
-            if errname == "SQLITE_CONSTRAINT_CHECK":
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Invalid category: {body.category}",
-                ) from exc
-            raise
         software_id = cursor.lastrowid
         row = await _get_or_404(conn, "software", software_id, "Software")
         return await _build_software_response(conn, row)
@@ -2744,25 +2713,15 @@ async def update_software(software_id: int, body: SoftwareUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [software_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Software (manufacturer, name) already exists",
+                check_detail=f"Invalid category: {updates.get('category')}",
+            ):
                 await conn.execute(
                     f"UPDATE software SET {set_clause} WHERE id = ?",
                     values,
                 )
                 await conn.commit()
-            except aiosqlite.IntegrityError as exc:
-                errname = getattr(exc, "sqlite_errorname", "") or ""
-                if errname == "SQLITE_CONSTRAINT_UNIQUE":
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Software (manufacturer, name) already exists",
-                    ) from exc
-                if errname == "SQLITE_CONSTRAINT_CHECK":
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"Invalid category: {updates.get('category')}",
-                    ) from exc
-                raise
         row = await _get_or_404(conn, "software", software_id, "Software")
         return await _build_software_response(conn, row)
 

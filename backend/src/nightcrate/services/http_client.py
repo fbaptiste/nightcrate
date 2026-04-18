@@ -1,10 +1,6 @@
-"""Shared outbound HTTP client.
-
-Every outbound call from NightCrate goes through `get_json()` / `get_text()`
-so we have a single place for timeout policy, retry-on-transient, and
-structured request logging. Prior to this module each caller rolled its own
-httpx dance with inconsistent timeouts and zero retry logic.
-"""
+"""Shared outbound HTTP client — uniform timeout, one retry with jitter on
+transient failures (timeout / connection reset / 5xx), and structured log
+lines for every attempt."""
 
 import asyncio
 import logging
@@ -15,13 +11,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Uniform 30s cap for all outbound requests. Clear Outside was at 10s before
-# which was slightly aggressive; standardising.
 DEFAULT_TIMEOUT_S: float = 30.0
-
-# Exactly one retry on transient failures (timeout / connection reset / 5xx),
-# with a short jittered backoff. Good enough for intermittent upstream blips
-# without turning into a DoS on a genuinely down server.
 _RETRY_BACKOFF_MIN_S: float = 0.4
 _RETRY_BACKOFF_MAX_S: float = 0.7
 
@@ -94,8 +84,6 @@ async def get(
         delay = random.uniform(_RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S)
         await asyncio.sleep(delay)
 
-    # Unreachable in practice (loop always returns or raises), but satisfies
-    # the type checker and makes the control flow explicit.
     if last_exc is not None:
         raise last_exc
     raise RuntimeError("http_client.get: exhausted retries without a response")

@@ -1,10 +1,5 @@
 """Shared router helpers — row serialisation, boolean normalisation,
-seed-field stripping, and structured integrity-error handling.
-
-Historically these helpers were copy-pasted into each of ``api/equipment.py``,
-``api/rigs.py``, and ``api/locations.py`` — three subtly different copies.
-The common ones now live here; routers import from a single source.
-"""
+seed-field stripping, and structured integrity-error handling."""
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -13,8 +8,6 @@ from typing import Any
 import aiosqlite
 from fastapi import HTTPException
 
-# Columns stripped from API responses for every seed-tracked equipment row.
-# Kept in sync with the seed loader contract (services/seed_loader/registry.py).
 _SEED_KEYS: tuple[str, ...] = ("source", "seed_key", "seed_hash")
 
 
@@ -55,24 +48,47 @@ def strip_seed(d: dict) -> dict:
 def integrity_guard(
     *,
     conflict_detail: str,
+    constraint_map: dict[str, str] | None = None,
+    check_detail: str | None = None,
 ) -> Iterator[None]:
-    """Translate SQLite UNIQUE-constraint violations into HTTP 409.
+    """Translate SQLite integrity errors into HTTP responses.
 
-    Wraps an INSERT/UPDATE block. On ``aiosqlite.IntegrityError`` with
-    ``sqlite_errorname == 'SQLITE_CONSTRAINT_UNIQUE'``, raises
-    ``HTTPException(409, conflict_detail)`` instead of the string-matching
-    anti-pattern (``if "UNIQUE" in str(exc): ...``) that was scattered
-    across routers before. Non-UNIQUE integrity errors propagate unchanged.
+    Wraps an INSERT/UPDATE block and converts structured SQLite error names
+    (`sqlite_errorname`) into the appropriate HTTPException:
+
+    - ``SQLITE_CONSTRAINT_UNIQUE`` → 409. If ``constraint_map`` is provided,
+      the exception's ``str()`` is searched for each mapping key; the first
+      match wins and its value becomes the 409 detail. ``conflict_detail``
+      is the fallback when no mapping key matches (or when no map is given).
+    - ``SQLITE_CONSTRAINT_CHECK`` → 422 with ``check_detail`` (if set).
+      Covers closed-vocabulary CHECK constraints like `software.category`.
+
+    Non-matching integrity errors propagate unchanged.
 
     Usage::
 
         with integrity_guard(conflict_detail="Camera already exists"):
             await conn.execute("INSERT INTO camera ...")
+
+        with integrity_guard(
+            conflict_detail="Name already exists",
+            constraint_map={
+                "idx_telescope_one_native": "A native config already exists",
+            },
+        ):
+            ...
     """
     try:
         yield
     except aiosqlite.IntegrityError as exc:
         errname = getattr(exc, "sqlite_errorname", "") or ""
         if errname == "SQLITE_CONSTRAINT_UNIQUE":
+            if constraint_map:
+                msg = str(exc)
+                for needle, detail in constraint_map.items():
+                    if needle in msg:
+                        raise HTTPException(status_code=409, detail=detail) from exc
             raise HTTPException(status_code=409, detail=conflict_detail) from exc
+        if errname == "SQLITE_CONSTRAINT_CHECK" and check_detail is not None:
+            raise HTTPException(status_code=422, detail=check_detail) from exc
         raise

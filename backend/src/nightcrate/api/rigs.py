@@ -25,9 +25,6 @@ router = APIRouter(prefix="/api/rigs", tags=["Rigs"])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-# row_to_dict / bool_fields / integrity_guard live in api/_common.py.
-# Module-local aliases preserve the historical `_name` calling convention
-# used by the many call sites in this file.
 _row_to_dict = row_to_dict
 _bool_fields = bool_fields
 

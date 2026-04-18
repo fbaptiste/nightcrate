@@ -177,9 +177,6 @@ class LocationResponse(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-# row_to_dict / bool_fields / integrity_guard live in api/_common.py. Locations
-# extends row_to_dict via the `extra_fn` hook to derive sexagesimal display
-# strings for latitude/longitude; alias the module-local name for compat.
 
 
 def _add_sexagesimal_display(d: dict) -> None:

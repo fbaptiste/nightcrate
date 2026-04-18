@@ -1,12 +1,14 @@
--- NightCrate version: 0.12.0
+-- NightCrate version: 0.12.1
 -- NightCrate Equipment Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
--- extended through v0.12.0 (rig builder, My Equipment flag, location seeing).
+-- extended through v0.12.1 (rig builder, My Equipment flag, location seeing,
+-- location soft-delete, settings key-value schema).
 -- Incorporates revision spec: no custom_fields, seed tracking, alias tables,
 -- closed-vocabulary CHECK constraints, updated_at triggers.
 --
--- Existing tables (setting, recent_file, aberration_analysis, aberration_star)
--- are not included.
+-- Infrastructure tables (settings, recent_file, aberration_analysis,
+-- aberration_star, weather_cache) live in their own migrations; only the
+-- weather_cache and location tables from those groups are mirrored here.
 
 -- ============================================================
 -- SEED LOADER META
@@ -916,10 +918,15 @@ CREATE TABLE IF NOT EXISTS location (
     country TEXT,
     postal_code TEXT,
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    -- Soft-delete flag (migration 0012). List endpoints hide active=0 rows
+    -- unless ?include_retired=true; restore endpoint flips back to 1.
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_location_active ON location(active);
 
 CREATE TRIGGER IF NOT EXISTS trg_location_updated_at
 AFTER UPDATE ON location

@@ -15,7 +15,6 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
 from typing import Literal
 
 from nightcrate.services.http_client import get as http_get
@@ -180,20 +179,43 @@ def _parse_supplementary(data: dict, variable: str) -> dict[str, float | None]:
     return result
 
 
-@lru_cache(maxsize=32)
-def _prepare_nearest_lookup(
-    data_items: tuple[tuple[str, float | None], ...],
-) -> tuple[list[datetime], list[float | None]]:
-    """Pre-parse timestamps once for bisect-based nearest-match.
+class NearestMatchIndex:
+    """Prebuilt index for repeated nearest-match lookups against the same data.
 
-    Cached on the data's identity (tuple of items) so subsequent calls with
-    the same data dict skip the ~192 datetime.fromisoformat parses.
+    Building this once outside a loop is O(n log n); each lookup is O(log n).
+    Previously `nearest_match` did the sort + `datetime.fromisoformat` work
+    on every call, which added up to tens of thousands of parses per forecast.
     """
-    pairs = sorted(
-        ((datetime.fromisoformat(ts), v) for ts, v in data_items),
-        key=lambda p: p[0],
-    )
-    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+    __slots__ = ("_data", "_sorted_dts", "_sorted_vals")
+
+    def __init__(self, data: dict[str, float | None]):
+        self._data = data
+        pairs = sorted(
+            ((datetime.fromisoformat(ts), v) for ts, v in data.items()),
+            key=lambda p: p[0],
+        )
+        self._sorted_dts = [p[0] for p in pairs]
+        self._sorted_vals = [p[1] for p in pairs]
+
+    def lookup(self, target_time: str, max_gap_hours: float = 3.0) -> float | None:
+        if not self._sorted_dts:
+            return None
+        # Exact-hit fast path — avoids the datetime parse on aligned hourlies.
+        if target_time in self._data:
+            return self._data[target_time]
+
+        target_dt = datetime.fromisoformat(target_time)
+        idx = bisect.bisect_left(self._sorted_dts, target_dt)
+        best_val: float | None = None
+        best_gap = float("inf")
+        for i in (idx - 1, idx):
+            if 0 <= i < len(self._sorted_dts):
+                gap = abs((self._sorted_dts[i] - target_dt).total_seconds()) / 3600
+                if gap < best_gap and gap <= max_gap_hours:
+                    best_gap = gap
+                    best_val = self._sorted_vals[i]
+        return best_val
 
 
 def nearest_match(
@@ -203,45 +225,12 @@ def nearest_match(
 ) -> float | None:
     """Find the value for the closest timestamp within max_gap_hours.
 
-    Used for supplementary data that may have different temporal resolution
-    (e.g. 3-hourly AOD) than the main hourly weather data.
-
-    Binary-searches a pre-sorted timestamp list; the list is cached per-call
-    based on the input dict's contents so a forecast loop over ~168 hours
-    only pays the sort + parse cost once.
+    Convenience wrapper over `NearestMatchIndex` for one-off lookups. In a
+    tight loop, build the index once and call `.lookup()` directly.
     """
     if not data:
         return None
-    # Fast path: exact key hit skips the bisect entirely.
-    if target_time in data:
-        return data[target_time]
-
-    # `lru_cache` needs hashable args — convert the dict to a sorted tuple
-    # of items. The cache key is this tuple, so repeated calls with the same
-    # dict hit the cache (O(1)) instead of re-sorting/re-parsing.
-    key = tuple(sorted(data.items()))
-    sorted_dts, sorted_vals = _prepare_nearest_lookup(key)
-    if not sorted_dts:
-        return None
-
-    target_dt = datetime.fromisoformat(target_time)
-    idx = bisect.bisect_left(sorted_dts, target_dt)
-
-    # Nearest is one of idx-1 or idx (clamp at edges).
-    candidates: list[int] = []
-    if idx > 0:
-        candidates.append(idx - 1)
-    if idx < len(sorted_dts):
-        candidates.append(idx)
-
-    best_val: float | None = None
-    best_gap = float("inf")
-    for i in candidates:
-        gap = abs((sorted_dts[i] - target_dt).total_seconds()) / 3600
-        if gap < best_gap and gap <= max_gap_hours:
-            best_gap = gap
-            best_val = sorted_vals[i]
-    return best_val
+    return NearestMatchIndex(data).lookup(target_time, max_gap_hours)
 
 
 async def fetch_weather(

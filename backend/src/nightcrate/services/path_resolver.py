@@ -1,10 +1,6 @@
-"""Resolve and classify image file paths, including pxiproject and archive virtual paths.
-
-Shared between the image-viewer router (`api/images.py`) and the aberration
-inspector router (`api/aberration.py`). Previously lived as private helpers
-in images.py; extracted here so any router or service can depend on a single,
-public contract.
-"""
+"""Resolve and classify image file paths, including pxiproject and archive
+virtual paths. Shared between the image-viewer and aberration-inspector
+routers."""
 
 from pathlib import Path
 from typing import BinaryIO
