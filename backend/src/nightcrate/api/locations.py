@@ -283,7 +283,7 @@ async def list_locations(
     `include_retired=true`."""
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM location {where} ORDER BY is_default DESC, name")
+        rows = await conn.execute(f"SELECT * FROM location {where} ORDER BY is_default DESC, name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             d = _row_to_dict(r)
@@ -401,7 +401,7 @@ async def update_location(location_id: int, body: LocationUpdate):
             values = list(updates.values()) + [location_id]
             with integrity_guard(conflict_detail="Location name already exists"):
                 await conn.execute(
-                    f"UPDATE location SET {set_clause} WHERE id = ?",
+                    f"UPDATE location SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
 

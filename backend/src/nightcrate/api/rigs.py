@@ -91,7 +91,7 @@ async def _build_filter_slots(conn, rig_id: int) -> list[dict]:
     filter_ids = [s["filter_id"] for s in slots]
     placeholders = ",".join("?" * len(filter_ids))
     pb_rows = await conn.execute(
-        f"SELECT filter_id, line_name FROM filter_passband "
+        f"SELECT filter_id, line_name FROM filter_passband "  # nosec B608 - table name from internal allow-list, not user input
         f"WHERE filter_id IN ({placeholders}) ORDER BY filter_id, line_name",
         filter_ids,
     )
@@ -164,7 +164,7 @@ async def _check_warnings(conn, rig_data: dict) -> list[dict]:
     for field, table, label in equipment_checks:
         eq_id = rig_data.get(field)
         if eq_id is not None:
-            row = await conn.execute(f"SELECT active FROM {table} WHERE id = ?", (eq_id,))
+            row = await conn.execute(f"SELECT active FROM {table} WHERE id = ?", (eq_id,))  # nosec B608 - table name from internal allow-list, not user input
             result = await row.fetchone()
             if result and not result["active"]:
                 warnings.append({"field": field, "message": f"{label} is retired"})
@@ -697,7 +697,7 @@ async def update_rig(rig_id: int, body: RigUpdate):
             values = list(updates.values()) + [rig_id]
             with integrity_guard(conflict_detail="A rig with that name already exists"):
                 await conn.execute(
-                    f"UPDATE rig SET {set_clause} WHERE id = ?",
+                    f"UPDATE rig SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
 

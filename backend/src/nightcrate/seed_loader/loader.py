@@ -149,7 +149,7 @@ def _insert_row(
     placeholders = ", ".join("?" for _ in cols)
     col_str = ", ".join(cols)
     conn.execute(
-        f"INSERT INTO {table_name} ({col_str}) VALUES ({placeholders})",
+        f"INSERT INTO {table_name} ({col_str}) VALUES ({placeholders})",  # nosec B608 - table name from internal allow-list, not user input
         vals,
     )
     cur = conn.execute("SELECT last_insert_rowid()")
@@ -376,7 +376,8 @@ def _load_regular_table(
         else:
             # Update mode
             existing = conn.execute(
-                f"SELECT * FROM {table.table_name} WHERE seed_key = ?", (seed_key,)
+                f"SELECT * FROM {table.table_name} WHERE seed_key = ?",  # nosec B608 - table name from internal allow-list, not user input
+                (seed_key,),
             ).fetchone()
 
             if existing is None:
@@ -423,7 +424,7 @@ def _load_regular_table(
                 set_parts.append("seed_hash = ?")
                 set_vals = list(incoming.values()) + [incoming_hash, existing_id]
                 conn.execute(
-                    f"UPDATE {table.table_name} SET {', '.join(set_parts)} WHERE id = ?",
+                    f"UPDATE {table.table_name} SET {', '.join(set_parts)} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     set_vals,
                 )
                 table_inserted_or_updated.add(seed_key)
@@ -433,7 +434,7 @@ def _load_regular_table(
     if effective_mode == "update" and csv_seed_keys:
         placeholders = ",".join("?" for _ in csv_seed_keys)
         orphan_rows = conn.execute(
-            f"SELECT seed_key FROM {table.table_name} "
+            f"SELECT seed_key FROM {table.table_name} "  # nosec B608 - table name from internal allow-list, not user input
             f"WHERE source = 'seed' AND seed_key NOT IN ({placeholders})",
             list(csv_seed_keys),
         ).fetchall()
@@ -494,7 +495,7 @@ def _load_junction_table(
 
         # Delete existing junction rows for this parent
         conn.execute(
-            f"DELETE FROM {table.table_name} WHERE {parent_db_col} = ?",
+            f"DELETE FROM {table.table_name} WHERE {parent_db_col} = ?",  # nosec B608 - table name from internal allow-list, not user input
             (parent_id,),
         )
 
@@ -517,7 +518,7 @@ def _load_junction_table(
             col_str = ", ".join(cols)
             try:
                 conn.execute(
-                    f"INSERT INTO {table.table_name} ({col_str}) VALUES ({placeholders})",
+                    f"INSERT INTO {table.table_name} ({col_str}) VALUES ({placeholders})",  # nosec B608 - table name from internal allow-list, not user input
                     vals,
                 )
                 table_report.inserted += 1
@@ -626,7 +627,7 @@ def _load_child_table(
                     continue
 
                 existing_child = conn.execute(
-                    f"SELECT * FROM {table.table_name} WHERE seed_key = ?",
+                    f"SELECT * FROM {table.table_name} WHERE seed_key = ?",  # nosec B608 - table name from internal allow-list, not user input
                     (child_seed_key_val,),
                 ).fetchone()
 
@@ -678,7 +679,7 @@ def _load_child_table(
                 set_parts.append("seed_hash = ?")
                 set_vals = list(incoming.values()) + [incoming_hash, existing_id]
                 conn.execute(
-                    f"UPDATE {table.table_name} SET {', '.join(set_parts)} WHERE id = ?",
+                    f"UPDATE {table.table_name} SET {', '.join(set_parts)} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     set_vals,
                 )
                 fk_map[(table.table_name, child_seed_key_val)] = existing_id
@@ -688,7 +689,7 @@ def _load_child_table(
             if effective_mode == "update" and csv_child_keys:
                 placeholders = ",".join("?" for _ in csv_child_keys)
                 orphan_rows = conn.execute(
-                    f"SELECT seed_key FROM {table.table_name} "
+                    f"SELECT seed_key FROM {table.table_name} "  # nosec B608 - table name from internal allow-list, not user input
                     f"WHERE {parent_db_col} = ? "
                     f"AND source = 'seed' "
                     f"AND seed_key NOT IN ({placeholders})",

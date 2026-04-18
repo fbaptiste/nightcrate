@@ -109,7 +109,7 @@ async def get_mine_counts():
     async with get_db() as conn:
         for response_key, table in mapping.items():
             row = await (
-                await conn.execute(f"SELECT COUNT(*) FROM {table} WHERE is_mine = 1")
+                await conn.execute(f"SELECT COUNT(*) FROM {table} WHERE is_mine = 1")  # nosec B608 - table name from internal allow-list, not user input
             ).fetchone()
             counts[response_key] = row[0] if row else 0
     return counts
@@ -149,7 +149,7 @@ _RESTORABLE_TABLES = frozenset(
 
 async def _get_or_404(conn, table: str, row_id: int, label: str = "Item") -> dict:
     """Fetch a single row by ID or raise 404."""
-    row = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))
+    row = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))  # nosec B608 - table name from internal allow-list, not user input
     result = await row.fetchone()
     if result is None:
         raise HTTPException(status_code=404, detail=f"{label} not found: {row_id}")
@@ -167,7 +167,7 @@ async def restore_item(table_name: str, item_id: int):
     async with get_db() as conn:
         await _get_or_404(conn, table_name, item_id, table_name)
         await conn.execute(
-            f"UPDATE {table_name} SET active = 1 WHERE id = ?",
+            f"UPDATE {table_name} SET active = 1 WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
             (item_id,),
         )
         await conn.commit()
@@ -183,7 +183,7 @@ async def list_manufacturers(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM manufacturer {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM manufacturer {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -223,7 +223,7 @@ async def update_manufacturer(manufacturer_id: int, body: ManufacturerUpdate):
         values = list(updates.values()) + [manufacturer_id]
         with integrity_guard(conflict_detail="Manufacturer name already exists"):
             await conn.execute(
-                f"UPDATE manufacturer SET {set_clause} WHERE id = ?",
+                f"UPDATE manufacturer SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -254,7 +254,7 @@ async def list_optical_designs(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM optical_design {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM optical_design {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -294,7 +294,7 @@ async def update_optical_design(optical_design_id: int, body: OpticalDesignUpdat
         values = list(updates.values()) + [optical_design_id]
         with integrity_guard(conflict_detail="Optical design name already exists"):
             await conn.execute(
-                f"UPDATE optical_design SET {set_clause} WHERE id = ?",
+                f"UPDATE optical_design SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -325,7 +325,7 @@ async def list_mount_types(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM mount_type {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM mount_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -365,7 +365,7 @@ async def update_mount_type(mount_type_id: int, body: MountTypeUpdate):
         values = list(updates.values()) + [mount_type_id]
         with integrity_guard(conflict_detail="Mount type name already exists"):
             await conn.execute(
-                f"UPDATE mount_type SET {set_clause} WHERE id = ?",
+                f"UPDATE mount_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -396,7 +396,7 @@ async def list_connection_interfaces(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM connection_interface {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM connection_interface {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -450,7 +450,7 @@ async def update_connection_interface(
         values = list(updates.values()) + [connection_interface_id]
         with integrity_guard(conflict_detail="Connection interface name already exists"):
             await conn.execute(
-                f"UPDATE connection_interface SET {set_clause} WHERE id = ?",
+                f"UPDATE connection_interface SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -485,7 +485,7 @@ async def list_connector_sizes(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM connector_size {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM connector_size {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -525,7 +525,7 @@ async def update_connector_size(connector_size_id: int, body: ConnectorSizeUpdat
         values = list(updates.values()) + [connector_size_id]
         with integrity_guard(conflict_detail="Connector size name already exists"):
             await conn.execute(
-                f"UPDATE connector_size SET {set_clause} WHERE id = ?",
+                f"UPDATE connector_size SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -556,7 +556,7 @@ async def list_filter_sizes(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_size {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM filter_size {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -596,7 +596,7 @@ async def update_filter_size(filter_size_id: int, body: FilterSizeUpdate):
         values = list(updates.values()) + [filter_size_id]
         with integrity_guard(conflict_detail="Filter size name already exists"):
             await conn.execute(
-                f"UPDATE filter_size SET {set_clause} WHERE id = ?",
+                f"UPDATE filter_size SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -627,7 +627,7 @@ async def list_form_factors(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM form_factor {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM form_factor {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -667,7 +667,7 @@ async def update_form_factor(form_factor_id: int, body: FormFactorUpdate):
         values = list(updates.values()) + [form_factor_id]
         with integrity_guard(conflict_detail="Form factor name already exists"):
             await conn.execute(
-                f"UPDATE form_factor SET {set_clause} WHERE id = ?",
+                f"UPDATE form_factor SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -698,7 +698,7 @@ async def list_focuser_types(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM focuser_type {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM focuser_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -738,7 +738,7 @@ async def update_focuser_type(focuser_type_id: int, body: FocuserTypeUpdate):
         values = list(updates.values()) + [focuser_type_id]
         with integrity_guard(conflict_detail="Focuser type name already exists"):
             await conn.execute(
-                f"UPDATE focuser_type SET {set_clause} WHERE id = ?",
+                f"UPDATE focuser_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -769,7 +769,7 @@ async def list_filter_types(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_type {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM filter_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -808,7 +808,7 @@ async def update_filter_type(filter_type_id: int, body: FilterTypeUpdate):
         values = list(updates.values()) + [filter_type_id]
         with integrity_guard(conflict_detail="Filter type name already exists"):
             await conn.execute(
-                f"UPDATE filter_type SET {set_clause} WHERE id = ?",
+                f"UPDATE filter_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
@@ -930,7 +930,7 @@ async def update_sensor(sensor_id: int, body: SensorUpdate):
                 conflict_detail="Sensor (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE sensor SET {set_clause} WHERE id = ?",
+                    f"UPDATE sensor SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1023,7 +1023,7 @@ async def list_cameras(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_camera_response(conn, _row_to_dict(r)))
@@ -1103,7 +1103,7 @@ async def update_camera(camera_id: int, body: CameraUpdate):
                 conflict_detail="Camera (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE camera SET {set_clause} WHERE id = ?",
+                    f"UPDATE camera SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1207,7 +1207,7 @@ async def list_telescopes(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM telescope {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM telescope {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -1272,7 +1272,7 @@ async def update_telescope(telescope_id: int, body: TelescopeUpdate):
                 conflict_detail="Telescope (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE telescope SET {set_clause} WHERE id = ?",
+                    f"UPDATE telescope SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1397,7 +1397,7 @@ async def update_telescope_configuration(
                 },
             ):
                 await conn.execute(
-                    f"UPDATE telescope_configuration SET {set_clause} WHERE id = ?",
+                    f"UPDATE telescope_configuration SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1500,7 +1500,7 @@ async def list_filters(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_filter_response(conn, _row_to_dict(r)))
@@ -1553,7 +1553,7 @@ async def update_filter(filter_id: int, body: FilterUpdate):
                 conflict_detail="Filter (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE filter SET {set_clause} WHERE id = ?",
+                    f"UPDATE filter SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1646,7 +1646,7 @@ async def update_filter_passband(filter_id: int, passband_id: int, body: FilterP
             values = list(updates.values()) + [passband_id]
             try:
                 await conn.execute(
-                    f"UPDATE filter_passband SET {set_clause} WHERE id = ?",
+                    f"UPDATE filter_passband SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1740,7 +1740,8 @@ async def update_filter_size_option(filter_id: int, option_id: int, body: Filter
             values = list(updates.values()) + [option_id]
             with integrity_guard(conflict_detail="This filter already offers that size"):
                 await conn.execute(
-                    f"UPDATE filter_size_option SET {set_clause} WHERE id = ?", values
+                    f"UPDATE filter_size_option SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
+                    values,
                 )
                 await conn.commit()
         row = await conn.execute("SELECT * FROM filter_size_option WHERE id = ?", (option_id,))
@@ -1812,7 +1813,7 @@ async def list_mounts(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_mount_response(conn, _row_to_dict(r)))
@@ -1878,7 +1879,7 @@ async def update_mount(mount_id: int, body: MountUpdate):
             values = list(updates.values()) + [mount_id]
             with integrity_guard(conflict_detail="Mount (manufacturer, model_name) already exists"):
                 await conn.execute(
-                    f"UPDATE mount SET {set_clause} WHERE id = ?",
+                    f"UPDATE mount SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1967,7 +1968,7 @@ async def list_focusers(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM focuser {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM focuser {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2035,7 +2036,7 @@ async def update_focuser(focuser_id: int, body: FocuserUpdate):
                 conflict_detail="Focuser (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE focuser SET {set_clause} WHERE id = ?",
+                    f"UPDATE focuser SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -2142,7 +2143,7 @@ async def list_filter_wheels(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM filter_wheel {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM filter_wheel {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2207,7 +2208,7 @@ async def update_filter_wheel(filter_wheel_id: int, body: FilterWheelUpdate):
                 conflict_detail="Filter wheel (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE filter_wheel SET {set_clause} WHERE id = ?",
+                    f"UPDATE filter_wheel SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -2296,7 +2297,7 @@ async def list_oags(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_oag_response(conn, _row_to_dict(r)))
@@ -2351,7 +2352,7 @@ async def update_oag(oag_id: int, body: OagUpdate):
             values = list(updates.values()) + [oag_id]
             with integrity_guard(conflict_detail="OAG (manufacturer, model_name) already exists"):
                 await conn.execute(
-                    f"UPDATE oag SET {set_clause} WHERE id = ?",
+                    f"UPDATE oag SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -2421,7 +2422,7 @@ async def list_guide_scopes(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM guide_scope {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM guide_scope {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2477,7 +2478,7 @@ async def update_guide_scope(guide_scope_id: int, body: GuideScopeUpdate):
                 conflict_detail="Guide scope (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE guide_scope SET {set_clause} WHERE id = ?",
+                    f"UPDATE guide_scope SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -2547,7 +2548,7 @@ async def list_computers(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM computer {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM computer {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2599,7 +2600,7 @@ async def update_computer(computer_id: int, body: ComputerUpdate):
                 conflict_detail="Computer (manufacturer, model_name) already exists"
             ):
                 await conn.execute(
-                    f"UPDATE computer SET {set_clause} WHERE id = ?",
+                    f"UPDATE computer SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -2663,7 +2664,7 @@ async def list_software(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY is_mine DESC, name")
+        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY is_mine DESC, name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_software_response(conn, _row_to_dict(r)))
@@ -2718,7 +2719,7 @@ async def update_software(software_id: int, body: SoftwareUpdate):
                 check_detail=f"Invalid category: {updates.get('category')}",
             ):
                 await conn.execute(
-                    f"UPDATE software SET {set_clause} WHERE id = ?",
+                    f"UPDATE software SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
