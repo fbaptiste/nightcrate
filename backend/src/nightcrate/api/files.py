@@ -6,8 +6,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from nightcrate.api.images import ALL_EXTENSIONS
 from nightcrate.services import archive_io, pxiproject_io
+from nightcrate.services.path_resolver import ALL_EXTENSIONS
 
 router = APIRouter(prefix="/api/files", tags=["File Browser"])
 PROJECT_EXTENSIONS = {".pxiproject"}

@@ -7,7 +7,7 @@ for display in the Locations UI. Storage remains decimal degrees.
 from astropy import units as u
 from astropy.coordinates import Angle
 
-_SEP = ("\u00B0", "\u2032", "\u2033")  # °  prime  double-prime
+_SEP = ("\u00b0", "\u2032", "\u2033")  # °  prime  double-prime
 
 
 def _format_dms(decimal_deg: float) -> str:

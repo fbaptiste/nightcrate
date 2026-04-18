@@ -25,6 +25,21 @@ NightCrate ingests raw imaging data directories and associated log files — fro
 
 Early development. See [PLAN.md](PLAN.md) for the current version plan.
 
+## Threat model
+
+NightCrate is a **single-user, local-first** application. The backend binds
+to `127.0.0.1:8000` only — it is not reachable from the network. It trusts
+the local user completely: any process running as you can read anything
+NightCrate can read (FITS files, the active database, etc.). There is no
+authentication.
+
+This posture is intentional for a desktop-class astrophotography tool.
+**Do not expose the backend to the network or to untrusted local accounts
+without adding authentication and path allowlists.** The file-browser
+endpoints accept arbitrary filesystem paths, which is the correct behaviour
+for a local file browser but would be a severe information-disclosure
+vulnerability in any shared-access deployment.
+
 ## License
 
 NightCrate is licensed under the [MIT License](LICENSE).

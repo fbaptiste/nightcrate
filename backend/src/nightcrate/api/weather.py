@@ -161,7 +161,7 @@ async def _fetch_or_cached(
 
         row = await cursor.fetchone()
         if row is not None:
-            logger.info(
+            logger.debug(
                 "[weather-cache] HIT weather[%s] location=%s",
                 source,
                 location_id,
@@ -243,7 +243,7 @@ async def _fetch_or_cached_supplementary(
             )
             row = await cursor.fetchone()
             if row is not None:
-                logger.info(
+                logger.debug(
                     "[weather-cache] HIT %s location=%s",
                     source_key,
                     location_id,

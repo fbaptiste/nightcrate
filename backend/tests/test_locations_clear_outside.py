@@ -82,7 +82,7 @@ async def test_clear_outside_happy_path_real_fragment(client):
     mock_response = _mock_response(html_body)
     factory = _mock_async_client_factory(mock_response)
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=40.75&longitude=-74.00")
 
     assert resp.status_code == 200
@@ -104,7 +104,7 @@ async def test_clear_outside_handles_whitespace_and_entities(client):
     mock_response = _mock_response(html_body)
     factory = _mock_async_client_factory(mock_response)
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=33.45&longitude=-112.07")
 
     assert resp.status_code == 200
@@ -120,7 +120,7 @@ async def test_clear_outside_partial_bortle_only(client):
     mock_response = _mock_response(html_body)
     factory = _mock_async_client_factory(mock_response)
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=40.0&longitude=-74.0")
 
     assert resp.status_code == 200
@@ -136,7 +136,7 @@ async def test_clear_outside_partial_sqm_only(client):
     mock_response = _mock_response(html_body)
     factory = _mock_async_client_factory(mock_response)
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=40.0&longitude=-74.0")
 
     assert resp.status_code == 200
@@ -152,7 +152,7 @@ async def test_clear_outside_no_matches(client):
     mock_response = _mock_response(html_body)
     factory = _mock_async_client_factory(mock_response)
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=40.0&longitude=-74.0")
 
     assert resp.status_code == 200
@@ -171,7 +171,7 @@ async def test_clear_outside_network_error(client):
     """A network failure surfaces as 502 with our friendly detail."""
     factory = _mock_async_client_factory(httpx.ConnectError("connection refused"))
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=40.0&longitude=-74.0")
 
     assert resp.status_code == 502
@@ -184,7 +184,7 @@ async def test_clear_outside_non_2xx_response(client):
     mock_response = _mock_response("<p>Server is down</p>", status_code=503)
     factory = _mock_async_client_factory(mock_response)
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=40.0&longitude=-74.0")
 
     assert resp.status_code == 502
@@ -196,7 +196,7 @@ async def test_clear_outside_timeout_error(client):
     """Timeouts are HTTPError subclasses — also surface as 502."""
     factory = _mock_async_client_factory(httpx.ReadTimeout("timed out"))
 
-    with patch("nightcrate.api.locations.httpx.AsyncClient", factory):
+    with patch("nightcrate.services.http_client.httpx.AsyncClient", factory):
         resp = await client.get("/api/locations/clear-outside?latitude=40.0&longitude=-74.0")
 
     assert resp.status_code == 502

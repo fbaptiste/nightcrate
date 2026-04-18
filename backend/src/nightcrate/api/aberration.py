@@ -8,7 +8,6 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
-from nightcrate.api.images import _resolve_path
 from nightcrate.db.session import get_db
 from nightcrate.services import fits_io, standard_io, xisf_io
 from nightcrate.services.aberration import (
@@ -27,6 +26,7 @@ from nightcrate.services.imaging import (
     compute_image_stats,
     render_image_png,
 )
+from nightcrate.services.path_resolver import resolve_path
 
 router = APIRouter(prefix="/api/aberration", tags=["Aberration Inspector"])
 
@@ -39,7 +39,7 @@ def _validate_and_resolve(file_path: str) -> tuple[Path | BinaryIO, str]:
 
     Handles regular paths and archive virtual paths (archive.zip::entry).
     """
-    source, ft, _idx, _ck = _resolve_path(file_path)
+    source, ft, _idx, _ck = resolve_path(file_path)
     return source, ft
 
 

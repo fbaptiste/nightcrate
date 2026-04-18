@@ -97,7 +97,7 @@ def _make_mock_response(json_data: dict) -> MagicMock:
 
 
 class TestFetchWeather:
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_forecast_returns_weather_data(self, mock_client_cls):
         response_data = {**MOCK_RESPONSE_JSON, "hourly": MOCK_FORECAST_EXTRA["hourly"]}
         mock_client = AsyncMock()
@@ -117,7 +117,7 @@ class TestFetchWeather:
         assert len(result.hourly) == 3
         assert result.source == "forecast"
 
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_archive_returns_weather_data(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -137,7 +137,7 @@ class TestFetchWeather:
         assert isinstance(result, WeatherData)
         assert result.source == "archive"
 
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_hourly_fields_parsed(self, mock_client_cls):
         response_data = {**MOCK_RESPONSE_JSON, "hourly": MOCK_FORECAST_EXTRA["hourly"]}
         mock_client = AsyncMock()
@@ -167,7 +167,7 @@ class TestFetchWeather:
         assert h.wind_gusts_kmh == 15.0
         assert h.visibility_m == 20000
 
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_forecast_has_pressure_level_data(self, mock_client_cls):
         response_data = {**MOCK_RESPONSE_JSON, "hourly": MOCK_FORECAST_EXTRA["hourly"]}
         mock_client = AsyncMock()
@@ -191,7 +191,7 @@ class TestFetchWeather:
         assert h.geopotential_300hpa_m == 9200
         assert h.geopotential_500hpa_m == 5500
 
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_archive_no_pressure_level_data(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -215,7 +215,7 @@ class TestFetchWeather:
 
 
 class TestFetchAirQuality:
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_air_quality_returns_data(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -236,7 +236,7 @@ class TestFetchAirQuality:
 
 
 class TestFetchPwv:
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_pwv_returns_data(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -297,7 +297,7 @@ class TestNearestMatch:
 
 
 class TestFetchWeatherErrors:
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_http_500_raises_status_error(self, mock_client_cls):
         """A 500 response from Open-Meteo should raise httpx.HTTPStatusError."""
         mock_response = MagicMock()
@@ -395,7 +395,7 @@ class TestGetAndLogException:
     `fetch_weather` since the helper is internal. Verifies the error is
     logged and then re-raised so callers still see the original exception."""
 
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_network_error_propagates(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -411,7 +411,7 @@ class TestGetAndLogException:
                 source="forecast",
             )
 
-    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    @patch("nightcrate.services.http_client.httpx.AsyncClient")
     async def test_timeout_propagates(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)

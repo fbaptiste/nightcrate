@@ -1,6 +1,8 @@
 """NightCrate FastAPI application."""
 
 import logging
+import os
+import sqlite3
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,6 +34,21 @@ from nightcrate.db.session import get_db, set_db_path
 _LOG_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+# Narrow exception groups used by startup maintenance. Declared as tuple
+# constants because ruff-format on Python 3.14 strips parentheses from
+# multi-class `except (A, B):` clauses (producing a py3.14 tuple literal
+# that parses but is brittle). Using a named tuple variable sidesteps the
+# formatter bug entirely — see CLAUDE.md "Gotchas".
+_SEED_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
+    sqlite3.Error,
+    OSError,
+    ValueError,
+)
+_MAINT_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
+    sqlite3.Error,
+    OSError,
+)
+
 
 def _configure_logging() -> None:
     """Add timestamps to uvicorn's log output and emit nightcrate logs at DEBUG."""
@@ -42,14 +59,17 @@ def _configure_logging() -> None:
 
     # The `nightcrate.*` namespace loggers have no handlers by default, so
     # INFO/DEBUG records disappear (root's default threshold is WARNING).
-    # Attach our own stdout handler with matching format and open the gate
-    # at DEBUG. Disable propagation to avoid double-printing through root.
+    # Attach our own stdout handler with matching format. Level reads from
+    # the NIGHTCRATE_LOG_LEVEL env var (default INFO); set it to DEBUG when
+    # you need verbose traces. Disable propagation to avoid double-printing.
+    level_name = os.getenv("NIGHTCRATE_LOG_LEVEL", "INFO").upper()
+    level = logging.getLevelNamesMapping().get(level_name, logging.INFO)
     nc_logger = logging.getLogger("nightcrate")
-    nc_logger.setLevel(logging.DEBUG)
+    nc_logger.setLevel(level)
     nc_logger.propagate = False
     if not any(getattr(h, "_nightcrate_handler", False) for h in nc_logger.handlers):
         handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.DEBUG)
+        handler.setLevel(logging.NOTSET)
         handler.setFormatter(formatter)
         handler._nightcrate_handler = True  # type: ignore[attr-defined]
         nc_logger.addHandler(handler)
@@ -71,7 +91,6 @@ async def lifespan(app: FastAPI):
         # and aiosqlite's internal connection has thread restrictions.
         try:
             import importlib.resources
-            import sqlite3
 
             from nightcrate.db.session import get_db_path
             from nightcrate.seed_loader import load_all
@@ -85,33 +104,37 @@ async def lifespan(app: FastAPI):
                 sync_conn.commit()
             finally:
                 sync_conn.close()
-        except Exception:
+        except _SEED_EXPECTED_ERRS:
+            # Expected failure modes — bad CSV data, FK mismatch, file missing.
+            # Coding bugs (TypeError, NameError, AttributeError) now crash loudly.
             logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
-            # Non-fatal — don't block startup
-        # Purge stale aberration cache entries
+        # Load app settings + set GPU flag up front so the purges below
+        # don't depend on each other's side effects.
+        app_settings = await get_settings()
+        set_gpu_enabled(app_settings.gpu_acceleration)
+        startup_logger = logging.getLogger("nightcrate.startup")
+
+        # Purge stale aberration cache entries (non-fatal).
         try:
-            app_settings = await get_settings()
-            set_gpu_enabled(app_settings.gpu_acceleration)
-            ttl_days = app_settings.aberration_cache_ttl_days
             async with get_db() as conn:
                 await conn.execute(
                     "DELETE FROM aberration_analysis WHERE created_at < datetime('now', ?)",
-                    (f"-{ttl_days} days",),
+                    (f"-{app_settings.aberration_cache_ttl_days} days",),
                 )
                 await conn.commit()
-        except Exception:
-            pass  # Non-fatal — don't block startup
-        # Purge stale weather cache entries
+        except _MAINT_EXPECTED_ERRS:
+            startup_logger.warning("aberration cache purge failed", exc_info=True)
+
+        # Purge stale weather cache entries (non-fatal).
         try:
-            weather_ttl = app_settings.weather_cache_ttl_hours
             async with get_db() as conn:
                 await conn.execute(
                     "DELETE FROM weather_cache WHERE fetched_at < datetime('now', ?)",
-                    (f"-{weather_ttl * 2} hours",),
+                    (f"-{app_settings.weather_cache_ttl_hours * 2} hours",),
                 )
                 await conn.commit()
-        except Exception:
-            pass  # Non-fatal — don't block startup
+        except _MAINT_EXPECTED_ERRS:
+            startup_logger.warning("weather cache purge failed", exc_info=True)
 
     yield
 

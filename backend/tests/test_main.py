@@ -149,7 +149,10 @@ async def test_lifespan_unconfigured_db():
 
 @pytest.mark.anyio
 async def test_lifespan_seed_failure_non_fatal(configured_db):
-    """If the seed loader fails during lifespan, startup should still succeed."""
+    """Data-level failures in the seed loader (bad CSV, FK mismatch, file
+    missing) must not take down startup. Coding bugs (TypeError etc.) DO
+    propagate — that's caught by the narrow exception tuple in main.py and
+    is intentional, so tests for those live elsewhere."""
     from fastapi import FastAPI
 
     from nightcrate.main import lifespan
@@ -157,11 +160,29 @@ async def test_lifespan_seed_failure_non_fatal(configured_db):
     test_app = FastAPI()
     with patch(
         "nightcrate.seed_loader.load_all",
-        side_effect=RuntimeError("Seed failure"),
+        side_effect=ValueError("Malformed seed CSV"),
     ):
-        # Should not raise — seed failure is non-fatal
+        # Should not raise — a data-level seed failure is non-fatal.
         async with lifespan(test_app):
             pass
+
+
+@pytest.mark.anyio
+async def test_lifespan_seed_coding_bug_propagates(configured_db):
+    """A coding bug (not a data/OS error) should crash startup loudly so we
+    catch it in development instead of swallowing it as a warning."""
+    from fastapi import FastAPI
+
+    from nightcrate.main import lifespan
+
+    test_app = FastAPI()
+    with patch(
+        "nightcrate.seed_loader.load_all",
+        side_effect=TypeError("Missing positional arg"),
+    ):
+        with pytest.raises(TypeError, match="Missing positional arg"):
+            async with lifespan(test_app):
+                pass
 
 
 # ---------------------------------------------------------------------------

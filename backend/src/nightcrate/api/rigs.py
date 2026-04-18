@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
+from nightcrate.api._common import bool_fields, integrity_guard, row_to_dict
 from nightcrate.api.rig_models import (
     EquipmentOptionsOut,
     RigCalculators,
@@ -24,19 +25,11 @@ router = APIRouter(prefix="/api/rigs", tags=["Rigs"])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _row_to_dict(row) -> dict:
-    """Convert an aiosqlite.Row to a plain dict."""
-    return dict(row)
-
-
-def _bool_fields(d: dict, *keys: str) -> dict:
-    """Convert integer 0/1 fields to Python bools for Pydantic."""
-    for k in keys:
-        if k in d and d[k] is not None:
-            d[k] = bool(d[k])
-    return d
+# row_to_dict / bool_fields / integrity_guard live in api/_common.py.
+# Module-local aliases preserve the historical `_name` calling convention
+# used by the many call sites in this file.
+_row_to_dict = row_to_dict
+_bool_fields = bool_fields
 
 
 async def _resolve_location(conn, location_id: int | None) -> dict | None:
@@ -621,7 +614,7 @@ async def create_rig(body: RigCreate):
         if body.is_default:
             await _ensure_single_default(conn, -1)  # Clear all defaults temporarily
 
-        try:
+        with integrity_guard(conflict_detail=f"A rig with the name '{body.name}' already exists"):
             cursor = await conn.execute(
                 """INSERT INTO rig (
                     name, description, telescope_configuration_id, camera_id,
@@ -646,13 +639,6 @@ async def create_rig(body: RigCreate):
                     body.notes,
                 ),
             )
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"A rig with the name '{body.name}' already exists",
-                )
-            raise
 
         new_id = cursor.lastrowid
 
@@ -710,18 +696,11 @@ async def update_rig(rig_id: int, body: RigUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [rig_id]
-            try:
+            with integrity_guard(conflict_detail="A rig with that name already exists"):
                 await conn.execute(
                     f"UPDATE rig SET {set_clause} WHERE id = ?",
                     values,
                 )
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="A rig with that name already exists",
-                    )
-                raise
 
         # Replace filter slots if provided
         if filter_slots is not None:

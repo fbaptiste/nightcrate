@@ -10,14 +10,15 @@ Archive API:  https://archive-api.open-meteo.com/v1/archive
 Air Quality:  https://air-quality-api.open-meteo.com/v1/air-quality
 """
 
+import bisect
 import json
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Literal
 
-import httpx
+from nightcrate.services.http_client import get as http_get
 
 logger = logging.getLogger(__name__)
 
@@ -25,44 +26,6 @@ _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 _ECMWF_URL = "https://api.open-meteo.com/v1/ecmwf"
 _ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
-
-
-async def _get_and_log(
-    client: httpx.AsyncClient,
-    url: str,
-    params: dict,
-    label: str,
-) -> httpx.Response:
-    """GET a URL and log the outbound call with timing and status."""
-    logger.info(
-        "[open-meteo] %s → %s lat=%s lon=%s tz=%s",
-        label,
-        url,
-        params.get("latitude"),
-        params.get("longitude"),
-        params.get("timezone"),
-    )
-    t0 = time.perf_counter()
-    try:
-        response = await client.get(url, params=params)
-    except Exception as exc:
-        dt_ms = (time.perf_counter() - t0) * 1000
-        logger.warning(
-            "[open-meteo] %s ✗ EXCEPTION %s after %.0f ms",
-            label,
-            type(exc).__name__,
-            dt_ms,
-        )
-        raise
-    dt_ms = (time.perf_counter() - t0) * 1000
-    logger.info(
-        "[open-meteo] %s ← %s in %.0f ms (%d bytes)",
-        label,
-        response.status_code,
-        dt_ms,
-        len(response.content) if response.content else 0,
-    )
-    return response
 
 
 _COMMON_HOURLY = [
@@ -217,6 +180,22 @@ def _parse_supplementary(data: dict, variable: str) -> dict[str, float | None]:
     return result
 
 
+@lru_cache(maxsize=32)
+def _prepare_nearest_lookup(
+    data_items: tuple[tuple[str, float | None], ...],
+) -> tuple[list[datetime], list[float | None]]:
+    """Pre-parse timestamps once for bisect-based nearest-match.
+
+    Cached on the data's identity (tuple of items) so subsequent calls with
+    the same data dict skip the ~192 datetime.fromisoformat parses.
+    """
+    pairs = sorted(
+        ((datetime.fromisoformat(ts), v) for ts, v in data_items),
+        key=lambda p: p[0],
+    )
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
 def nearest_match(
     data: dict[str, float | None],
     target_time: str,
@@ -226,22 +205,42 @@ def nearest_match(
 
     Used for supplementary data that may have different temporal resolution
     (e.g. 3-hourly AOD) than the main hourly weather data.
+
+    Binary-searches a pre-sorted timestamp list; the list is cached per-call
+    based on the input dict's contents so a forecast loop over ~168 hours
+    only pays the sort + parse cost once.
     """
     if not data:
         return None
-    # Try exact match first (fast path)
+    # Fast path: exact key hit skips the bisect entirely.
     if target_time in data:
         return data[target_time]
 
+    # `lru_cache` needs hashable args — convert the dict to a sorted tuple
+    # of items. The cache key is this tuple, so repeated calls with the same
+    # dict hit the cache (O(1)) instead of re-sorting/re-parsing.
+    key = tuple(sorted(data.items()))
+    sorted_dts, sorted_vals = _prepare_nearest_lookup(key)
+    if not sorted_dts:
+        return None
+
     target_dt = datetime.fromisoformat(target_time)
-    best_val = None
+    idx = bisect.bisect_left(sorted_dts, target_dt)
+
+    # Nearest is one of idx-1 or idx (clamp at edges).
+    candidates: list[int] = []
+    if idx > 0:
+        candidates.append(idx - 1)
+    if idx < len(sorted_dts):
+        candidates.append(idx)
+
+    best_val: float | None = None
     best_gap = float("inf")
-    for ts, val in data.items():
-        ts_dt = datetime.fromisoformat(ts)
-        gap = abs((ts_dt - target_dt).total_seconds()) / 3600
+    for i in candidates:
+        gap = abs((sorted_dts[i] - target_dt).total_seconds()) / 3600
         if gap < best_gap and gap <= max_gap_hours:
             best_gap = gap
-            best_val = val
+            best_val = sorted_vals[i]
     return best_val
 
 
@@ -295,10 +294,9 @@ async def fetch_weather(
         params["start_date"] = start_date
         params["end_date"] = end_date
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await _get_and_log(client, url, params, f"weather[{source}]")
-        response.raise_for_status()
-        data = response.json()
+    response = await http_get(url, params=params, label=f"weather[{source}]")
+    response.raise_for_status()
+    data = response.json()
 
     hourly = parse_hourly(data["hourly"], source)
 
@@ -329,10 +327,9 @@ async def fetch_pwv(
         "forecast_days": 8,
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await _get_and_log(client, _ECMWF_URL, params, "ecmwf_pwv")
-        response.raise_for_status()
-        data = response.json()
+    response = await http_get(_ECMWF_URL, params=params, label="ecmwf_pwv")
+    response.raise_for_status()
+    data = response.json()
 
     values = _parse_supplementary(data, "total_column_integrated_water_vapour")
 
@@ -365,10 +362,9 @@ async def fetch_air_quality(
         "forecast_days": 7,
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await _get_and_log(client, _AIR_QUALITY_URL, params, "air_quality_aod")
-        response.raise_for_status()
-        data = response.json()
+    response = await http_get(_AIR_QUALITY_URL, params=params, label="air_quality_aod")
+    response.raise_for_status()
+    data = response.json()
 
     values = _parse_supplementary(data, "aerosol_optical_depth")
 
