@@ -119,3 +119,14 @@ export const fetchHourlyDetail = (locationId: number, date: string, includeMoon 
 
 export const fetchMethodology = () =>
   apiFetch<Methodology>("/weather/methodology");
+
+export interface WeatherCacheStats {
+  rows: number;
+  bytes: number;
+}
+
+export const fetchWeatherCacheStats = () =>
+  apiFetch<WeatherCacheStats>("/weather/cache/stats");
+
+export const clearWeatherCache = () =>
+  apiFetch<{ ok: boolean; deleted: number }>("/weather/cache", { method: "DELETE" });

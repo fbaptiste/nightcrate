@@ -12,6 +12,7 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchCacheSize, clearCache } from "@/api/aberration";
+import { clearWeatherCache, fetchWeatherCacheStats } from "@/api/weather";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 export function SettingsPage() {
@@ -22,6 +23,15 @@ export function SettingsPage() {
     queryFn: fetchCacheSize,
   });
   const cacheMB = cacheQuery.data ? (cacheQuery.data.bytes / (1024 * 1024)).toFixed(2) : "…";
+
+  const weatherCacheQuery = useQuery({
+    queryKey: ["weather-cache-stats"],
+    queryFn: fetchWeatherCacheStats,
+  });
+  const weatherCacheKB = weatherCacheQuery.data
+    ? (weatherCacheQuery.data.bytes / 1024).toFixed(1)
+    : "…";
+  const weatherCacheRows = weatherCacheQuery.data?.rows ?? 0;
 
   if (!settings) {
     return <Typography sx={{ p: 3 }} color="text.secondary">Loading…</Typography>;
@@ -176,6 +186,27 @@ export function SettingsPage() {
                   <MenuItem value="imperial">Imperial</MenuItem>
                 </Select>
               </FormControl>
+            </Box>
+
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 3 }}>
+              <Box>
+                <Typography variant="body1">Forecast cache</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {weatherCacheRows} {weatherCacheRows === 1 ? "entry" : "entries"} · {weatherCacheKB} KB
+                  {" "}(weather, PWV, AOD for all locations)
+                </Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={weatherCacheRows === 0}
+                onClick={async () => {
+                  await clearWeatherCache();
+                  queryClient.invalidateQueries({ queryKey: ["weather-cache-stats"] });
+                }}
+              >
+                Clear All
+              </Button>
             </Box>
           </CardContent>
         </Card>

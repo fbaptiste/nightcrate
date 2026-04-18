@@ -46,6 +46,7 @@ export default function MountList({ mineOnly = false }: { mineOnly?: boolean } =
       fetchFn={fetchMounts}
       deleteFn={deleteMount}
       columns={columns}
+      dropdownFilterFields={["mount_type"]}
       getItemName={(m) => m.model_name}
       FormDialog={MountFormDialog}
       renderDetail={(item) => (

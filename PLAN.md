@@ -3429,6 +3429,7 @@ Evaluated libraries for potential use across NightCrate. Every library must pass
 | Zustand | MIT | Frontend state management |
 | TanStack Query | MIT | Frontend data fetching |
 | react-router-dom | MIT | Frontend routing |
+| @dnd-kit/core, @dnd-kit/sortable, @dnd-kit/utilities | MIT | Accessible drag-and-drop primitives (Calculators clock reorder; candidate for other reorderable UI) |
 | Vite | MIT | Frontend build tooling |
 | TypeScript | Apache 2.0 | Frontend type system |
 

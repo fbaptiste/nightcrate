@@ -2,6 +2,7 @@ import { useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
@@ -141,14 +142,17 @@ function CreateDbDialog({
       const path = isAddExisting ? existingPath : fullPath;
       if (isAddExisting) {
         await addExistingDatabase({ path, name });
+        onCreated();
+        onClose();
       } else {
         await createDatabase({ path, name });
+        // Newly-created DBs activate immediately and reload so the whole app
+        // rebinds to the new active database.
+        await activateDatabase(path);
+        window.location.reload();
       }
-      onCreated();
-      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Operation failed.");
-    } finally {
       setSubmitting(false);
     }
   };
@@ -461,41 +465,20 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
   };
 
   const activeDb = status.active_db;
+  const sortedDatabases = [...status.known_databases].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }),
+  );
 
   return (
     <Box>
-      {activeDb && (
-        <Box
-          sx={{
-            mb: 2,
-            p: 2,
-            borderRadius: 1,
-            bgcolor: "primary.main",
-            color: "primary.contrastText",
-          }}
-        >
-          <Typography variant="body2" sx={{ opacity: 0.8, mb: 0.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
-            Active Database
-          </Typography>
-          <Typography variant="body1" fontWeight={600}>
-            {activeDb.name}
-          </Typography>
-          <Typography variant="body2" sx={{ fontFamily: "monospace", opacity: 0.9, wordBreak: "break-all" }}>
-            {activeDb.path}
-          </Typography>
-          <Typography variant="body2" sx={{ opacity: 0.8, mt: 0.5 }}>
-            {formatBytes(activeDb.size_bytes)}
-          </Typography>
-        </Box>
-      )}
-
-      {status.known_databases.filter((db) => db.path !== activeDb?.path).length > 0 && (
+      {sortedDatabases.length > 0 && (
         <Box sx={{ mb: 2 }}>
           <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 1, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
-            Other Known Databases
+            Known Databases
           </Typography>
           <List disablePadding>
-            {status.known_databases.filter((db) => db.path !== activeDb?.path).map((db) => {
+            {sortedDatabases.map((db) => {
+              const isActive = db.path === activeDb?.path;
               return (
                 <ListItem
                   key={db.path}
@@ -506,7 +489,8 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                     py: 1,
                     borderRadius: 1,
                     border: 1,
-                    borderColor: "divider",
+                    borderColor: isActive ? "primary.main" : "divider",
+                    bgcolor: isActive ? "action.selected" : "transparent",
                     opacity: db.available ? 1 : 0.55,
                     alignItems: "flex-start",
                   }}
@@ -517,6 +501,9 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                         <Typography variant="body2" fontWeight={500} sx={{ fontStyle: db.available ? "normal" : "italic" }}>
                           {db.name}
                         </Typography>
+                        {isActive && (
+                          <Chip label="Active" size="small" color="primary" />
+                        )}
                         {!db.available && (
                           <Typography variant="caption" color="text.secondary">(not found)</Typography>
                         )}
@@ -540,10 +527,21 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                     }
                   />
                   <Box sx={{ display: "flex", gap: 1, ml: 1, flexShrink: 0, alignItems: "center", pt: 0.5 }}>
-                    <Button size="small" variant="outlined" disabled={!db.available} onClick={() => handleActivate(db.path)}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={!db.available || isActive}
+                      onClick={() => handleActivate(db.path)}
+                    >
                       Activate
                     </Button>
-                    <Button size="small" variant="outlined" color="warning" onClick={() => setRemoveTarget({ path: db.path, name: db.name })}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="warning"
+                      disabled={isActive}
+                      onClick={() => setRemoveTarget({ path: db.path, name: db.name })}
+                    >
                       Remove
                     </Button>
                   </Box>

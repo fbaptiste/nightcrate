@@ -1,13 +1,17 @@
 """Location management API — CRUD for imaging locations."""
 
+import html
 import logging
+import re
 from zoneinfo import available_timezones
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, field_validator, model_validator
 from timezonefinder import TimezoneFinder
 
 from nightcrate.db.session import get_db
+from nightcrate.services.coordinate_format import format_latitude, format_longitude
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,10 @@ class LocationCreate(BaseModel):
     longitude: float
     elevation_m: float | None = None
     timezone: str
+    # Geographic/location timezone. Normally auto-derived from coordinates
+    # server-side; callers can override (e.g. advanced users who know what
+    # they're doing) — if provided, the server uses this value verbatim.
+    geo_timezone: str | None = None
     bortle_class: int | None = None
     sqm_reading: float | None = None
     city: str | None = None
@@ -124,6 +132,7 @@ class LocationUpdate(BaseModel):
     longitude: float | None = None
     elevation_m: float | None = None
     timezone: str | None = None
+    geo_timezone: str | None = None
     bortle_class: int | None = None
     sqm_reading: float | None = None
     city: str | None = None
@@ -181,6 +190,10 @@ class LocationResponse(BaseModel):
     name: str
     latitude: float
     longitude: float
+    # Sexagesimal display strings derived from latitude/longitude,
+    # formatted like "33deg27'54'' N" / "112deg04'26'' W".
+    latitude_display: str
+    longitude_display: str
     elevation_m: float | None
     timezone: str
     geo_timezone: str | None
@@ -202,7 +215,12 @@ class LocationResponse(BaseModel):
 
 
 def _row_to_dict(row) -> dict:
-    return dict(row)
+    d = dict(row)
+    if d.get("latitude") is not None:
+        d["latitude_display"] = format_latitude(d["latitude"])
+    if d.get("longitude") is not None:
+        d["longitude_display"] = format_longitude(d["longitude"])
+    return d
 
 
 def _bool_fields(d: dict, *keys: str) -> dict:
@@ -237,6 +255,60 @@ async def get_geo_timezone(
     """Look up the geographic timezone for a coordinate pair."""
     geo_tz = _lookup_geo_timezone(latitude, longitude)
     return {"geo_timezone": geo_tz}
+
+
+# ── Clear Outside scraper ────────────────────────────────────────────────────
+#
+# The public forecast page embeds the estimated sky quality in a single
+# text fragment of the form:
+#   "Est. Sky Quality: 21.69 Magnitude. Class 2 Bortle. ... mcd/m2 Brightness."
+# We fetch that page, strip tags, and extract the two numbers by regex.
+# If Clear Outside changes the layout the regex will simply miss and the
+# endpoint returns nulls — caller decides what to do.
+_CLEAR_OUTSIDE_URL = "https://clearoutside.com/forecast/{lat:.2f}/{lon:.2f}"
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+_SQM_RE = re.compile(r"Sky Quality:\s*([\d.]+)\s*Magnitude", re.IGNORECASE)
+_BORTLE_RE = re.compile(r"Class\s+(\d+)\s+Bortle", re.IGNORECASE)
+
+
+@router.get("/clear-outside")
+async def lookup_clear_outside(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+):
+    """Scrape the Clear Outside forecast page for estimated Bortle class and SQM."""
+    url = _CLEAR_OUTSIDE_URL.format(lat=latitude, lon=longitude)
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(
+                url,
+                headers={"User-Agent": "NightCrate/1.0"},
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("Clear Outside lookup failed for %s,%s: %s", latitude, longitude, exc)
+        raise HTTPException(status_code=502, detail="Could not reach Clear Outside") from exc
+
+    # Strip tags, decode HTML entities (page uses `&nbsp;` between labels
+    # and values), then collapse whitespace. `html.unescape` turns `&nbsp;`
+    # into U+00A0, which Python's `\s` matches.
+    text = _WHITESPACE_RE.sub(
+        " ",
+        html.unescape(_HTML_TAG_RE.sub(" ", response.text)),
+    )
+    sqm_match = _SQM_RE.search(text)
+    bortle_match = _BORTLE_RE.search(text)
+    sqm = float(sqm_match.group(1)) if sqm_match else None
+    bortle = int(bortle_match.group(1)) if bortle_match else None
+    logger.info(
+        "[clear-outside] %s,%s → sqm=%s bortle=%s",
+        latitude,
+        longitude,
+        sqm,
+        bortle,
+    )
+    return {"sqm": sqm, "bortle": bortle, "source_url": url}
 
 
 @router.get("", response_model=list[LocationResponse])
@@ -281,7 +353,11 @@ async def get_location(location_id: int):
 @router.post("", response_model=LocationResponse, status_code=201)
 async def create_location(body: LocationCreate):
     """Create a new location."""
-    geo_tz = _lookup_geo_timezone(body.latitude, body.longitude)
+    geo_tz = (
+        body.geo_timezone
+        if body.geo_timezone is not None
+        else _lookup_geo_timezone(body.latitude, body.longitude)
+    )
 
     async with get_db() as conn:
         # If this is the first location or is_default is set, enforce single default
@@ -350,8 +426,9 @@ async def update_location(location_id: int, body: LocationUpdate):
         if "name" in updates and updates["name"]:
             updates["name"] = updates["name"].strip()
 
-        # Recompute geo_timezone if coordinates changed
-        if "latitude" in updates or "longitude" in updates:
+        # Recompute geo_timezone if coordinates changed AND caller didn't
+        # override it explicitly. An explicit value in the request wins.
+        if ("latitude" in updates or "longitude" in updates) and "geo_timezone" not in updates:
             lat = updates.get("latitude", existing_row["latitude"])
             lon = updates.get("longitude", existing_row["longitude"])
             updates["geo_timezone"] = _lookup_geo_timezone(lat, lon)

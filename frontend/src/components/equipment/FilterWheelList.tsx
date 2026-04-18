@@ -54,6 +54,7 @@ export default function FilterWheelList({ mineOnly = false }: { mineOnly?: boole
       fetchFn={fetchFilterWheels}
       deleteFn={deleteFilterWheel}
       columns={columns}
+      dropdownFilterFields={["filter_size", "num_positions"]}
       getItemName={(fw) => fw.model_name}
       FormDialog={FilterWheelFormDialog}
       renderDetail={(item) => (

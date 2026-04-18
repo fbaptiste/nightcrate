@@ -24,6 +24,7 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import CloseIcon from "@mui/icons-material/Close";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
@@ -532,6 +533,11 @@ export function ActivityConsole({ open, onClose }: Props) {
               <OpenInNewIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          <Tooltip title="Close">
+            <IconButton size="small" onClick={onClose}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </DialogTitle>
         <DialogContent dividers sx={{ p: 0 }}>
           <ActivityContent groups={groups} copyToClipboard={copyToClipboard} />
@@ -550,7 +556,6 @@ export function ActivityConsole({ open, onClose }: Props) {
           <Button onClick={refresh} disabled={loading}>
             Refresh
           </Button>
-          <Button onClick={onClose}>Close</Button>
         </DialogActions>
 
         <Snackbar

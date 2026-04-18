@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Divider from "@mui/material/Divider";
@@ -20,15 +20,17 @@ import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import BuildIcon from "@mui/icons-material/Build";
+import CalculateOutlinedIcon from "@mui/icons-material/CalculateOutlined";
 import CodeIcon from "@mui/icons-material/Code";
 import PlaceIcon from "@mui/icons-material/Place";
 import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
 import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import TimelineIcon from "@mui/icons-material/Timeline";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { fetchHealth } from "@/api/files";
 import { fetchAdminStatus } from "@/api/admin";
+import { setActivity } from "@/api/client";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { ActivityConsole } from "@/components/ActivityConsole";
 import type { Theme } from "@/api/settings";
@@ -38,11 +40,12 @@ const DRAWER_WIDTH_CLOSED = 52;
 
 const navItems = [
   { to: "/", label: "Home", icon: <HomeIcon /> },
+  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
   { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
   { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
-  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
+  { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },
@@ -60,7 +63,25 @@ const THEME_LABELS: Record<Theme, string> = {
   browser: "System",
 };
 
+function resolvePageLabel(pathname: string): string | null {
+  const match = navItems.find((n) =>
+    n.to === "/" ? pathname === "/" : pathname === n.to || pathname.startsWith(n.to + "/"),
+  );
+  return match?.label ?? null;
+}
+
 export function AppShell() {
+  // Set a page-level activity label synchronously on route change so the
+  // route component's initial queries get tagged. Child pages (like Image
+  // Viewer) can still override with finer-grained action labels; the next
+  // route change resets the default.
+  const { pathname } = useLocation();
+  const lastPathname = useRef<string | null>(null);
+  if (lastPathname.current !== pathname) {
+    lastPathname.current = pathname;
+    setActivity(resolvePageLabel(pathname));
+  }
+
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,

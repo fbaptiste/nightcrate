@@ -11,16 +11,59 @@ Air Quality:  https://air-quality-api.open-meteo.com/v1/air-quality
 """
 
 import json
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 _ECMWF_URL = "https://api.open-meteo.com/v1/ecmwf"
 _ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+
+
+async def _get_and_log(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict,
+    label: str,
+) -> httpx.Response:
+    """GET a URL and log the outbound call with timing and status."""
+    logger.info(
+        "[open-meteo] %s → %s lat=%s lon=%s tz=%s",
+        label,
+        url,
+        params.get("latitude"),
+        params.get("longitude"),
+        params.get("timezone"),
+    )
+    t0 = time.perf_counter()
+    try:
+        response = await client.get(url, params=params)
+    except Exception as exc:
+        dt_ms = (time.perf_counter() - t0) * 1000
+        logger.warning(
+            "[open-meteo] %s ✗ EXCEPTION %s after %.0f ms",
+            label,
+            type(exc).__name__,
+            dt_ms,
+        )
+        raise
+    dt_ms = (time.perf_counter() - t0) * 1000
+    logger.info(
+        "[open-meteo] %s ← %s in %.0f ms (%d bytes)",
+        label,
+        response.status_code,
+        dt_ms,
+        len(response.content) if response.content else 0,
+    )
+    return response
+
 
 _COMMON_HOURLY = [
     "temperature_2m",
@@ -253,7 +296,7 @@ async def fetch_weather(
         params["end_date"] = end_date
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, params=params)
+        response = await _get_and_log(client, url, params, f"weather[{source}]")
         response.raise_for_status()
         data = response.json()
 
@@ -287,7 +330,7 @@ async def fetch_pwv(
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(_ECMWF_URL, params=params)
+        response = await _get_and_log(client, _ECMWF_URL, params, "ecmwf_pwv")
         response.raise_for_status()
         data = response.json()
 
@@ -323,7 +366,7 @@ async def fetch_air_quality(
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(_AIR_QUALITY_URL, params=params)
+        response = await _get_and_log(client, _AIR_QUALITY_URL, params, "air_quality_aod")
         response.raise_for_status()
         data = response.json()
 

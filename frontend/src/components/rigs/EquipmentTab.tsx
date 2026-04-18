@@ -166,8 +166,6 @@ export default function EquipmentTab({ rig }: EquipmentTabProps) {
           borderColor: "divider",
           pr: { md: 1 },
           pb: { xs: 1, md: 0 },
-          maxHeight: { md: "70vh" },
-          overflowY: { md: "auto" },
         }}
       >
         <SimpleTreeView
@@ -628,8 +626,6 @@ function DetailWrapper({
     <Box
       sx={{
         px: { xs: 0, md: 2 },
-        maxHeight: { md: "70vh" },
-        overflowY: { md: "auto" },
       }}
     >
       <Typography variant="h6" sx={{ mb: subtitle ? 0.25 : 1 }}>

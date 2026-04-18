@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DataGrid, type GridColDef, useGridApiRef } from "@mui/x-data-grid";
 import Alert from "@mui/material/Alert";
@@ -42,6 +42,13 @@ interface EquipmentListProps<T extends { id: number }> {
   /** Optional detail panel rendered below the grid when a row is clicked. */
   renderDetail?: (item: T) => React.ReactNode;
   mineOnly?: boolean;
+  /**
+   * Column fields (beyond "manufacturer") whose filter input should be a
+   * dropdown populated with the unique displayed values from the current
+   * rows. Uses each column's `valueGetter` (or the raw row field) to
+   * materialize the option list.
+   */
+  dropdownFilterFields?: string[];
 }
 
 function deriveAddLabel(title: string): string {
@@ -61,6 +68,7 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
   FormDialog,
   renderDetail,
   mineOnly = false,
+  dropdownFilterFields,
 }: EquipmentListProps<T>) {
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
@@ -268,7 +276,48 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
     },
   };
 
-  const allColumns = [mineColumn, ...columns, actionsColumn];
+  // Derive unique displayed values per field so selected columns get a
+  // dropdown filter (type: 'singleSelect') instead of a free-text input.
+  // "manufacturer" is included implicitly; wrappers can opt in additional
+  // columns via `dropdownFilterFields`.
+  const dropdownFields = useMemo(
+    () => ["manufacturer", ...(dropdownFilterFields ?? [])],
+    [dropdownFilterFields],
+  );
+
+  const dropdownOptions = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (items.length === 0) return map;
+    const naturalSort = (a: string, b: string) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    for (const field of dropdownFields) {
+      const col = columns.find((c) => c.field === field);
+      if (!col) continue;
+      const values = new Set<string>();
+      for (const item of items) {
+        let raw: unknown;
+        if (col.valueGetter) {
+          raw = (col.valueGetter as (v: unknown, r: T) => unknown)(undefined, item);
+        } else {
+          raw = (item as Record<string, unknown>)[field];
+        }
+        if (raw == null || raw === "—" || raw === "") continue;
+        values.add(String(raw));
+      }
+      if (values.size > 0) {
+        map.set(field, Array.from(values).sort(naturalSort));
+      }
+    }
+    return map;
+  }, [items, columns, dropdownFields]);
+
+  const augmentedColumns: GridColDef<T>[] = columns.map((col) => {
+    const opts = dropdownOptions.get(col.field);
+    if (!opts) return col;
+    return { ...col, type: "singleSelect", valueOptions: opts } as GridColDef<T>;
+  });
+
+  const allColumns = [mineColumn, ...augmentedColumns, actionsColumn];
   const buttonLabel = addLabel ?? deriveAddLabel(title);
 
   return (

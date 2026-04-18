@@ -1,6 +1,7 @@
 """NightCrate FastAPI application."""
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from nightcrate.api import (
     aberration,
     admin,
+    calculators,
     diagnostics,
     equipment,
     files,
@@ -32,11 +34,25 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _configure_logging() -> None:
-    """Add timestamps to uvicorn's log output."""
+    """Add timestamps to uvicorn's log output and emit nightcrate logs at DEBUG."""
     formatter = logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         for handler in logging.getLogger(name).handlers:
             handler.setFormatter(formatter)
+
+    # The `nightcrate.*` namespace loggers have no handlers by default, so
+    # INFO/DEBUG records disappear (root's default threshold is WARNING).
+    # Attach our own stdout handler with matching format and open the gate
+    # at DEBUG. Disable propagation to avoid double-printing through root.
+    nc_logger = logging.getLogger("nightcrate")
+    nc_logger.setLevel(logging.DEBUG)
+    nc_logger.propagate = False
+    if not any(getattr(h, "_nightcrate_handler", False) for h in nc_logger.handlers):
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(formatter)
+        handler._nightcrate_handler = True  # type: ignore[attr-defined]
+        nc_logger.addHandler(handler)
 
 
 @asynccontextmanager
@@ -164,6 +180,16 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Calculators",
+        "description": (
+            "Stand-alone astronomy and optical calculators: coordinate formatting "
+            "and parsing, RA/Dec ⇄ Alt/Az transforms, local sidereal time, tonight's "
+            "astronomy summary, angular/linear/temperature unit conversions, pixel "
+            "scale, field of view, raw file-size estimates, Kasten-Young airmass, "
+            "and SQM / Bortle / NELM sky-quality conversions."
+        ),
+    },
+    {
         "name": "Weather",
         "description": (
             "Weather forecast and imaging quality predictions. Provides 7-day "
@@ -217,6 +243,7 @@ app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
 app.include_router(locations.router)
 app.include_router(rigs.router)
+app.include_router(calculators.router)
 app.include_router(weather.router)
 app.include_router(settings.router)
 app.include_router(admin.router)

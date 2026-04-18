@@ -52,6 +52,7 @@ export default function FocuserList({ mineOnly = false }: { mineOnly?: boolean }
       fetchFn={fetchFocusers}
       deleteFn={deleteFocuser}
       columns={columns}
+      dropdownFilterFields={["focuser_type", "motorized"]}
       getItemName={(f) => f.model_name}
       FormDialog={FocuserFormDialog}
       renderDetail={(item) => (

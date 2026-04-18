@@ -388,3 +388,41 @@ class TestParseHourly:
         assert h.visibility_m is None
         assert h.precipitation_mm is None
         assert h.precipitation_probability_pct is None
+
+
+class TestGetAndLogException:
+    """Exception path in the shared `_get_and_log` wrapper — exercised via
+    `fetch_weather` since the helper is internal. Verifies the error is
+    logged and then re-raised so callers still see the original exception."""
+
+    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    async def test_network_error_propagates(self, mock_client_cls):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("network down"))
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(httpx.ConnectError, match="network down"):
+            await fetch_weather(
+                latitude=33.26,
+                longitude=-116.38,
+                timezone_str="America/Los_Angeles",
+                source="forecast",
+            )
+
+    @patch("nightcrate.services.weather.httpx.AsyncClient")
+    async def test_timeout_propagates(self, mock_client_cls):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(httpx.ReadTimeout):
+            await fetch_weather(
+                latitude=33.26,
+                longitude=-116.38,
+                timezone_str="America/Los_Angeles",
+                source="forecast",
+            )
