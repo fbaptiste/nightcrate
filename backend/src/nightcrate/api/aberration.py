@@ -327,7 +327,7 @@ async def cache_size() -> dict:
             row = await cursor.fetchone()
             size_bytes = int(row[0]) if row else 0
             return {"bytes": size_bytes}
-        except Exception:
+        except Exception:  # nosec B110 - dbstat is optional; fall through to row-count estimate
             pass
 
         # Fallback: row count estimate (~100 bytes per star)

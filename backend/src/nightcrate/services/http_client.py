@@ -81,7 +81,7 @@ async def get(
             last_exc = None
 
         # Jittered backoff before the retry.
-        delay = random.uniform(_RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S)
+        delay = random.uniform(_RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S)  # nosec B311 - jitter for HTTP retry, not security-sensitive
         await asyncio.sleep(delay)
 
     if last_exc is not None:
