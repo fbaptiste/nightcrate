@@ -75,7 +75,9 @@ TempUnit = Literal["C", "F", "K"]
 
 async def _load_location(location_id: int) -> dict:
     async with get_db() as conn:
-        row = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        row = await conn.execute(
+            "SELECT * FROM location WHERE id = ? AND active = 1", (location_id,)
+        )
         result = await row.fetchone()
     if result is None:
         raise HTTPException(status_code=404, detail="Location not found")

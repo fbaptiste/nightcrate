@@ -265,7 +265,7 @@ export default function SqmBortleCalc() {
       </Grid>
 
       {note && <Alert severity="warning">{note}</Alert>}
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <Alert severity="warning">{error}</Alert>}
 
       <CalculatorAboutSection>
         <Typography variant="body2" component="p">

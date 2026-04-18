@@ -118,7 +118,9 @@ during darkness.
 async def _get_location(location_id: int) -> dict:
     """Fetch a location row from the DB or raise 404."""
     async with get_db() as conn:
-        cursor = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        cursor = await conn.execute(
+            "SELECT * FROM location WHERE id = ? AND active = 1", (location_id,)
+        )
         row = await cursor.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Location not found")

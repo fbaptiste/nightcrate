@@ -32,13 +32,15 @@ _bool_fields = bool_fields
 async def _resolve_location(conn, location_id: int | None) -> dict | None:
     """Get specified location or default. Returns dict or None."""
     if location_id is not None:
-        row = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        row = await conn.execute(
+            "SELECT * FROM location WHERE id = ? AND active = 1", (location_id,)
+        )
         result = await row.fetchone()
         if result is None:
             raise HTTPException(status_code=404, detail="Location not found")
         return _row_to_dict(result)
     # Try default
-    row = await conn.execute("SELECT * FROM location WHERE is_default = 1 LIMIT 1")
+    row = await conn.execute("SELECT * FROM location WHERE is_default = 1 AND active = 1 LIMIT 1")
     result = await row.fetchone()
     return _row_to_dict(result) if result else None
 
