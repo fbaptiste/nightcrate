@@ -22,6 +22,7 @@ import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import BuildIcon from "@mui/icons-material/Build";
 import CalculateOutlinedIcon from "@mui/icons-material/CalculateOutlined";
 import CodeIcon from "@mui/icons-material/Code";
+import PublicIcon from "@mui/icons-material/Public";
 import PlaceIcon from "@mui/icons-material/Place";
 import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -46,6 +47,7 @@ const navItems = [
   { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
+  { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },

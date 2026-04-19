@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.13.0
+**NightCrate version:** 0.14.0
 
 ## Overview
 
@@ -307,3 +307,21 @@ The following tables are entirely user-created at runtime — they must **not** 
 - `location` — user's observing sites. Created via the Locations page.
 - `location_horizon` and `location_horizon_point` — custom horizon profile per location (v0.13.0). Created via the Horizon Editor inside the Location editor, or imported from N.I.N.A. `.hrz`, Stellarium, Telescopius, APCC, or Theodolite iPhone CSV. One horizon per location, 2+ points.
 - `rig`, `rig_filter_slot`, `rig_software` — user-composed imaging rigs.
+
+## Loader-populated (not seed-loader) tables
+
+Distinct from the equipment seed loader: the DSO catalog has its own
+loader at `backend/src/nightcrate/catalog_loader/` that runs at startup
+from files in the user's app-data catalogs folder
+(`APP_DIR/catalogs/openngc/`). The repo does **not** ship catalog data;
+files land there only after a user-triggered fetch from GitHub via
+Admin → Catalogs. Until that fetch happens, these tables are empty.
+Once populated, subsequent startups reload silently using a file-hash
+idempotency check.
+
+These tables must **not** have seed CSVs and are not part of the
+equipment seed loader's hash contract.
+
+- `dso` — canonical deep-sky objects (typical OpenNGC v20260307 install: 13,371 rows, including all 110 Messier and 109 Caldwell objects).
+- `dso_designation` — catalog-specific names attached to each DSO. Closed 29-catalog vocabulary: NGC, IC, Messier, Caldwell, PGC, UGC, MCG, ESO, Arp, HCG, Sharpless2, Barnard, LBN, LDN, vdB, Cederblad, PK, RCW, Gum, Mrk, Terzan, Pal, Mel, Cr, Stock, Ruprecht, Abell, Dolidze, DWB. One `UNIQUE(catalog, identifier)` → designations are globally unique across all DSOs.
+- `dso_catalog_source` — loader registry. Stores the sha256 of each source file; matching hashes on subsequent startup skip reloading. Drives the idempotency check.

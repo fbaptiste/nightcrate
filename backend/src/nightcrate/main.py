@@ -16,6 +16,7 @@ from nightcrate.api import (
     admin,
     calculators,
     diagnostics,
+    dso,
     equipment,
     files,
     horizons,
@@ -106,6 +107,30 @@ async def lifespan(app: FastAPI):
             # Expected failure modes — bad CSV data, FK mismatch, file missing.
             # Coding bugs (TypeError, NameError, AttributeError) now crash loudly.
             logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
+
+        # Load DSO catalogs from the user-writable catalogs dir. Data is
+        # downloaded on demand via Admin → Catalogs; the loader silently
+        # reports `missing` sources when the dir is empty.
+        try:
+            from nightcrate.catalog_loader import load_catalogs
+            from nightcrate.catalog_loader.registry import user_catalogs_root
+            from nightcrate.db.session import get_db_path
+
+            catalogs_conn = sqlite3.connect(str(get_db_path()))
+            try:
+                catalogs_conn.execute("PRAGMA foreign_keys = ON")
+                summary = load_catalogs(catalogs_conn, user_catalogs_root())
+                missing = [r for r in summary.results if r.status == "missing"]
+                if missing and len(missing) == len(summary.results):
+                    logging.getLogger("nightcrate").info(
+                        "[catalog_loader] no catalog files found — fetch from Admin → Catalogs",
+                    )
+            finally:
+                catalogs_conn.close()
+        except _SEED_EXPECTED_ERRS:
+            # Parse failures / DB errors shouldn't crash the app — the DSO
+            # feature is non-critical to imaging workflows.
+            logging.getLogger("nightcrate").warning("DSO catalog loader failed", exc_info=True)
         # Load app settings + set GPU flag up front so the purges below
         # don't depend on each other's side effects.
         app_settings = await get_settings()
@@ -231,6 +256,15 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Deep-Sky Objects",
+        "description": (
+            "Deep-sky object catalog browsing and designation resolution. "
+            "Backed by OpenNGC (NGC/IC/Messier/Caldwell + ~20 cross-reference "
+            "catalogs). Provides list, detail, exact-designation lookup, and "
+            "catalog-source attribution endpoints."
+        ),
+    },
+    {
         "name": "Settings",
         "description": (
             "Read and update application settings stored in the database. Controls "
@@ -278,6 +312,7 @@ app.include_router(horizons.parse_router)
 app.include_router(rigs.router)
 app.include_router(calculators.router)
 app.include_router(weather.router)
+app.include_router(dso.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(diagnostics.router)

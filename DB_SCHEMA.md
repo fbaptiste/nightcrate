@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.13.0
+**NightCrate version:** 0.14.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -739,6 +739,14 @@ Omitted from diagrams for readability. Every seedable table carries:
 |-------|---------|
 | `location_horizon` | One horizon per location (`UNIQUE(location_id)`, `ON DELETE CASCADE`). `source` CHECK ∈ `{'imported','drawn'}`. Carries optional `source_filename` and `notes`. Created in migration 0014. |
 | `location_horizon_point` | `(azimuth_deg, altitude_deg)` points, composite PK on `(horizon_id, azimuth_deg)`. CHECK on `azimuth_deg ∈ [0, 360)` and `altitude_deg ∈ [-5, 90]`. Points cascade-delete with the horizon. Index on `(horizon_id, azimuth_deg)` for ordered fetch. |
+
+### v0.14.0 — DSO Catalog (3 tables)
+
+| Table | Purpose |
+|-------|---------|
+| `dso_catalog_source` | Loader registry — one row per source file (OpenNGC main + addendum for v0.14.0). Carries `file_hash` (sha256 used for idempotent reload), `category` CHECK ∈ `{'openngc','vizier','nightcrate'}`, version, source URL, license, attribution, row_count. Created in migration 0015. |
+| `dso` | Canonical DSO row. Denormalized `primary_designation` drives display. Closed CHECK vocabulary on `obj_type` (19 values + `'Other'` escape hatch preserving the upstream code in `raw_obj_type`). Coordinates (J2000), geometry, photometry (B/V/J/H/K + surface brightness), morphology (Hubble type, z, radial velocity, proper motion), planetary-nebula central-star columns, `raw_other_id` verbatim for future re-parse, editorial placeholders (`popularity_rank`, `difficulty`, `recommended_filter_id` FK → `filter`) unused in this pass. Indexes on `obj_type`, `constellation`, `primary_designation`, `source_catalog_id`. `updated_at` trigger. |
+| `dso_designation` | Many-to-one: many designations per DSO. 29-prefix closed CHECK vocabulary on `catalog` (ngc, ic, messier, caldwell, ugc, pgc, mcg, eso, arp, hickson, sharpless2, barnard, ldn, lbn, vdb, cederblad, pk, rcw, gum, mrk, terzan, pal, mel, cr, stock, ruprecht, abell, dolidze, dwb). `UNIQUE(catalog, identifier)` — the same designation cannot point to two DSOs. Partial unique index enforces one `is_primary = 1` per DSO. `search_key` column (lowercase + whitespace/dash-stripped display form) powers fast designation lookup. |
 
 ### Future Tables
 

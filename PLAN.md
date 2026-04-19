@@ -1947,6 +1947,96 @@ come later.
 
 ---
 
+## v0.14.0 — DSO Catalog MVP (OpenNGC)
+
+**Status:** Done
+**Branch:** `v0.14.0/dso-catalog`
+
+First-pass deep-sky object catalog. Data is NOT shipped in the repo —
+on first run tables are empty and the DSO page shows a CTA pointing to
+Admin → Catalogs, which fetches the latest OpenNGC release directly
+from GitHub (`api.github.com/repos/mattiaverga/OpenNGC/releases/latest`
+→ `raw.githubusercontent.com/.../database_files/*.csv`) into
+`APP_DIR/catalogs/openngc/`. The existing loader then parses into `dso`
++ `dso_designation` + `dso_catalog_source` tables. Subsequent launches
+load from the user dir silently with hash-based skip. Admin has an
+"Update from GitHub" button for refreshes.
+
+Surfaces as a flat list page under `/catalog/dso` with type-chip
+filters, constellation dropdown (full names), free-text
+designation/name search, and a slide-up detail panel. REST API under
+`/api/dso/` for list, detail, `lookup` (exact designation → DSO),
+`facets` (distinct types/constellations with counts), and
+`catalog-sources` (attribution).
+
+**Explicitly deferred:** VizieR-sourced catalogs (Sharpless, Barnard),
+NightCrate editorial augmentation (surface brightness, popularity,
+recommended filters), plate solving, FITS `OBJECT` header resolver,
+DSS2 thumbnails, outlines, smart target planner, in-app catalog
+updater, and the shared-filesystem catalog-bundling architecture.
+Editorial columns (`popularity_rank`, `difficulty`,
+`recommended_filter_id`) exist on `dso` as nullable placeholders for
+the augmentation CSV that arrives in v0.15+.
+
+### Schema
+
+- [x] Migration 0015 — `dso_catalog_source` (loader registry + file hash), `dso` (canonical object + denormalized `primary_designation` + `source_row_hash`), `dso_designation` (many-per-dso with closed CHECK vocabulary of 29 catalog prefixes, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso, `ON DELETE CASCADE` from dso)
+- [x] Closed CHECK vocabulary on `dso.obj_type` covers the OpenNGC clean-set (minus `Dup`/`NonEx` which are handled pre-persistence) plus an `'Other'` escape hatch that preserves the upstream value in `raw_obj_type`
+
+### Loader + remote fetcher
+
+- [x] `catalog_loader/` sibling module to `seed_loader/` — `hash.py` (file-sha256 + normalized row-sha256), `registry.py` (`user_catalogs_root()` → `APP_DIR/catalogs`; hard-coded source metadata so missing `version.json` is fine; `read_installed_version()` for Admin display), `openngc_parser.py` (semicolon-delimited CSV, BOM tolerance, sexagesimal → degrees, leading-zero stripping, `Dup`/`NonEx` routing), `crossref_parser.py` (`Identifiers` column token-to-catalog dispatch with single-letter disambiguation, leading-zero normalization), `loader.py` (per-source transaction, file-hash idempotency check, `status="missing"` when files are absent, two-pass canonical-then-duplicate merge, `UNIQUE` collision drops with DEBUG log).
+- [x] `catalog_loader/remote.py` — `fetch_latest_release()` hits GitHub releases API; `download_openngc(release, root)` downloads both CSVs to a `.download/` temp dir, computes sha256, atomically renames into place, writes `version.json`. 3-attempt outer retry on top of `http_client`'s 1 retry.
+- [x] Dup-row resolution priority: NGC cross-ref → IC cross-ref → Messier cross-ref (the last handles the M102 → M101 historical-duplicate case in the addendum)
+- [x] `search_key` built from display form (`m42`, `ngc1976`, `sh2281`) so user-typed short forms hit; the API also rewrites long-form prefixes (`messier42` → `m42`) at query time
+- [x] Lifespan wiring — loader runs after migrations + equipment seed loader with a sync sqlite3 connection; if every source is `missing`, a single INFO line tells the user to fetch via Admin
+- [x] `_initialize_database` helper in `api/admin.py` does NOT call the catalog loader (DBs start with empty DSO tables by design — user fetches from GitHub on first DSO page visit)
+
+### Backend API
+
+- [x] `/api/dso` — list with `q` (designation or common-name), `type` (CSV), `constellation`, `limit`/`offset`, `sort` (whitelist) / `sort_dir`. Shortlists each item's designations to primary + messier + caldwell for payload compactness; detail returns the full list. `sort=size` orders by major-axis; `NULLS LAST` so rows with missing values sink.
+- [x] `/api/dso/{id}` — full detail + all designations + originating `CatalogSource` metadata; 404 on unknown id
+- [x] `/api/dso/lookup?q=…` — exact search_key match, returns `null` on miss
+- [x] `/api/dso/facets` — distinct obj_type + constellation values with counts, powers the chip filter bar
+- [x] `/api/dso/catalog-sources` — list of loaded sources with license + attribution
+- [x] `POST /api/admin/catalogs/reload?force=true` — re-parse the local cache (no GitHub call); returns the per-source load summary
+- [x] `GET /api/admin/catalogs/remote-version` — hits GitHub releases API, compares against local `version.json`. 502 on network failure.
+- [x] `POST /api/admin/catalogs/fetch-from-github` — downloads the latest release atomically into `APP_DIR/catalogs/openngc/` and then runs the loader. 502 on network failure; load summary + fetched tag on success.
+
+### Frontend
+
+- [x] `/catalog/dso` — single-column page: header (title + row count + attribution info icon), filter bar (debounced search 300ms, constellation dropdown showing full names sorted alphabetically with counts, colorblind-safe type-chip multi-select with counts, clear-filters button), server-side paginated/sorted MUI X DataGrid (Community tier, 9 columns including sexagesimal RA/Dec, size, magnitudes, ellipsized common name, truncated alt-designations list). Custom pagination actions with first/last buttons and a fit-to-digits go-to-page dropdown. Empty-state CTA when total=0 and no filters active — links to `/admin`.
+- [x] `DsoDetailPanel` — slide-up drawer (65vh) with coordinates (sexagesimal + decimal), size/photometry, all designations as MUI chips (primary filled, others outlined), optional morphology/kinematics + central-star sections, source attribution footer with upstream link. Shows full constellation name (e.g., Orion not Ori).
+- [x] `DsoAttributionPanel` — modal listing loaded catalog sources with version, row count, license, upstream URL, and citation
+- [x] `lib/dsoTypeNames.ts` — display label map + 4-bucket categorical color map (galaxy/blue, nebula/orange, cluster/teal, other/gray) — no red/green anywhere
+- [x] `lib/dsoFormatters.ts` — RA (`HHh MMm SS.Ss`), Dec (`±DD° MM' SS"`), size (arcmin/arcdeg auto), magnitude
+- [x] `lib/constellations.ts` — IAU 3-letter → full-name map for all 88 modern constellations
+- [x] `api/dsos.ts` — typed fetch wrappers for every endpoint + `reloadCatalogs` (force local re-parse) + `fetchRemoteVersion` (GitHub check) + `fetchCatalogsFromGitHub` (download + load)
+- [x] Admin → Catalogs section — shows installed vs. latest remote version, Load / Update / Re-download primary button that calls the fetch endpoint, plus a "Reload local cache" secondary for the force-reload path. Inline error Alert on network failures with retry hint.
+- [x] New nav entry "DSO Catalog" in `AppShell` between Calculators and Settings
+
+### Tests
+
+- [x] 39 catalog_loader tests (parser 11 · crossref 10 · loader 14 · registry 4) plus 8 remote-fetcher tests (happy path, retry, 4xx, empty body, atomic rename, prior-install safety)
+- [x] 18 DSO API tests (list pagination/filter/search/sort, detail 404, lookup normalization across 4 input forms, facets, catalog-sources) plus 5 new admin-endpoint tests (remote-version happy/no-install/502, fetch-from-github happy/no-db/502)
+- [x] Mini CSV fixtures for parser/loader tests — 11-row `mini_NGC.csv` covering HII/G/PN/OCl/Dup/NonEx/'Other'-fallback; 3-row `mini_addendum.csv` covering Barnard/Messier/Dup-via-Messier
+
+### Data
+
+- [x] No vendored catalog data. Repo ships only the schema + loader + fetch plumbing.
+- [x] First fetch downloads the current tagged release from GitHub (e.g., v20260307) into `APP_DIR/catalogs/openngc/`. Typical install: 13,308 canonical DSOs from NGC.csv + 63 from the addendum. All 110 Messier and 109 Caldwell designations present.
+- [x] `version.json` written on fetch records the tag, `fetched_at`, upstream URLs, license, sha256 per file. The registry reads the `version` field for display; the loader reads the raw CSVs.
+
+### v0.14.0 Completion Criteria
+
+- [x] Full backend suite green with 57 new tests (1,445+ passed)
+- [x] Frontend build clean
+- [x] Smoke test: `/api/health` + `/api/dso?q=M42` + `/api/dso/lookup?q=NGC1976` + `/api/dso/facets` + `/api/dso/catalog-sources` all return expected shapes on a real DB
+- [x] Re-running the app with unchanged catalog files triggers zero reload work (file hash match)
+- [x] Force reload via `/api/admin/catalogs/reload` returns a non-zero per-source load summary
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.

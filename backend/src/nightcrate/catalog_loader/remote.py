@@ -1,0 +1,220 @@
+"""GitHub-backed fetcher for the OpenNGC catalog.
+
+Two entry points:
+
+- :func:`fetch_latest_release` — queries the GitHub REST API for the
+  latest OpenNGC release tag. Does not touch the filesystem.
+- :func:`download_openngc` — downloads ``NGC.csv`` and ``addendum.csv``
+  from a given release tag into ``<catalogs_root>/openngc/`` atomically:
+  bytes land in a ``.download/`` temp dir, sha256 is computed, and only
+  after both files are on disk are they renamed into place. A
+  ``version.json`` is written last so partial states never get mistaken
+  for a complete install.
+
+Both functions wrap every HTTP call in a local retry loop on top of the
+shared ``services/http_client.get()`` (which already retries once per
+attempt on transient failures). Default is 3 outer attempts → up to 6
+underlying HTTP requests per URL in the worst case.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import random
+import shutil
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+from nightcrate.catalog_loader.registry import (
+    OPENNGC_CITATION,
+    OPENNGC_LICENSE,
+    OPENNGC_SOURCE_URL,
+)
+from nightcrate.services import http_client
+
+logger = logging.getLogger("nightcrate.catalog_loader.remote")
+
+GITHUB_RELEASES_URL = "https://api.github.com/repos/mattiaverga/OpenNGC/releases/latest"
+RAW_BASE = "https://raw.githubusercontent.com/mattiaverga/OpenNGC"
+DOWNLOAD_FILES: tuple[str, ...] = ("NGC.csv", "addendum.csv")
+
+_DEFAULT_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_MIN_S = 0.6
+_RETRY_BACKOFF_MAX_S = 1.4
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteReleaseInfo:
+    tag_name: str
+    published_at: str | None
+    release_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadedFile:
+    name: str
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadReport:
+    tag: str
+    files: list[DownloadedFile]
+    version_json_path: Path
+
+
+async def _retry(
+    coro_factory,
+    *,
+    label: str,
+    max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+):
+    """Invoke an async callable up to *max_attempts* times, with jittered
+    backoff between attempts. The final failure re-raises the last error.
+
+    This sits on top of ``http_client.get``'s own single-retry-per-call —
+    net effect is up to 2 * max_attempts underlying HTTP requests. Useful
+    for the "GitHub is briefly flaky" case without being over-aggressive.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await coro_factory()
+        except Exception as exc:  # noqa: BLE001 - diagnostic-only retry layer
+            last_exc = exc
+            logger.warning(
+                "[catalog_loader.remote] %s attempt %d/%d failed: %s",
+                label,
+                attempt,
+                max_attempts,
+                exc,
+            )
+            if attempt == max_attempts:
+                raise
+            delay = random.uniform(_RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S)  # nosec B311
+            await asyncio.sleep(delay)
+    # Unreachable, but mypy/pylance appreciate the safety.
+    raise last_exc if last_exc is not None else RuntimeError("retry loop exhausted")
+
+
+async def fetch_latest_release() -> RemoteReleaseInfo:
+    """Query the GitHub API for the latest tagged OpenNGC release."""
+
+    async def _call():
+        response = await http_client.get(
+            GITHUB_RELEASES_URL,
+            label="openngc_latest_release",
+            follow_redirects=True,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"GitHub API returned {response.status_code} for latest release")
+        data = response.json()
+        tag = data.get("tag_name")
+        if not tag:
+            raise RuntimeError("GitHub API response missing tag_name")
+        return RemoteReleaseInfo(
+            tag_name=str(tag),
+            published_at=data.get("published_at"),
+            release_url=data.get("html_url") or f"{OPENNGC_SOURCE_URL}/releases/tag/{tag}",
+        )
+
+    return await _retry(_call, label="fetch_latest_release")
+
+
+async def _download_file(url: str, dest: Path, *, label: str) -> DownloadedFile:
+    async def _call():
+        response = await http_client.get(url, label=label, follow_redirects=True, timeout=60.0)
+        if response.status_code >= 400:
+            raise RuntimeError(f"download {label} failed with status {response.status_code}")
+        content = response.content
+        if not content:
+            raise RuntimeError(f"download {label} returned empty body")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        digest = hashlib.sha256(content).hexdigest()
+        return DownloadedFile(name=dest.name, size_bytes=len(content), sha256=digest)
+
+    return await _retry(_call, label=f"download:{label}")
+
+
+def _write_version_json(
+    catalogs_root: Path,
+    release: RemoteReleaseInfo,
+    downloaded: list[DownloadedFile],
+) -> Path:
+    openngc_dir = catalogs_root / "openngc"
+    openngc_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_id": "openngc",
+        "version": release.tag_name,
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "source_url": OPENNGC_SOURCE_URL,
+        "release_url": release.release_url,
+        "license": OPENNGC_LICENSE,
+        "citation": OPENNGC_CITATION,
+        "files": {f.name: {"sha256": f.sha256, "size_bytes": f.size_bytes} for f in downloaded},
+    }
+    path = openngc_dir / "version.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+async def download_openngc(
+    release: RemoteReleaseInfo,
+    catalogs_root: Path,
+) -> DownloadReport:
+    """Download both OpenNGC files for *release* into *catalogs_root*.
+
+    The download lands in ``<catalogs_root>/openngc/.download/`` first;
+    on success, files are renamed into place and ``version.json`` is
+    written. On any mid-download failure the temp dir is cleaned up and
+    the existing install is left untouched.
+    """
+    openngc_dir = catalogs_root / "openngc"
+    tmp_dir = openngc_dir / ".download"
+    # Always start from a clean slate so partial leftovers don't corrupt the
+    # atomic rename step.
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Download both files in parallel. They write to distinct tmp paths
+        # and don't share state, so gather is safe. Halves wall-clock time
+        # on the NGC.csv + addendum.csv pair (~4 MB + ~20 KB).
+        tasks = [
+            _download_file(
+                f"{RAW_BASE}/{release.tag_name}/database_files/{filename}",
+                tmp_dir / filename,
+                label=f"openngc/{release.tag_name}/{filename}",
+            )
+            for filename in DOWNLOAD_FILES
+        ]
+        downloaded = list(await asyncio.gather(*tasks))
+
+        # Atomic move into place: rename each tmp file over the canonical path.
+        for f in downloaded:
+            src = tmp_dir / f.name
+            dest = openngc_dir / f.name
+            # Path.replace is atomic within the same filesystem.
+            src.replace(dest)
+
+        version_path = _write_version_json(catalogs_root, release, downloaded)
+        logger.info(
+            "[catalog_loader.remote] downloaded OpenNGC %s (%d files, %d bytes total)",
+            release.tag_name,
+            len(downloaded),
+            sum(f.size_bytes for f in downloaded),
+        )
+        return DownloadReport(
+            tag=release.tag_name, files=downloaded, version_json_path=version_path
+        )
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)

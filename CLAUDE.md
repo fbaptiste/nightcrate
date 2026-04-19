@@ -544,6 +544,27 @@ Per-location horizon profile (trees, hills, buildings). Imported from N.I.N.A. `
 - Smoothing is **never persisted**. Raw points are the canonical shape. Consumers that want a smooth curve re-run the same D3 path generation.
 - Azimuth stored as `[0, 360)`, never 360; display rolls to `[-180, +180]` with virtual seam points at the S boundary for continuous rendering.
 
+## DSO Catalog
+
+Deep-sky object catalog (v0.14.0 MVP). Data is **not shipped in the repo** — on first run tables are empty and the DSO page shows a CTA to Admin → Catalogs, which fetches the latest OpenNGC release from GitHub into `APP_DIR/catalogs/openngc/`. Downstream consumers (target planner, FITS `OBJECT` resolver, representative images, DSS2 thumbnails) are not yet built.
+
+**Architecture:**
+- `backend/src/nightcrate/db/migrations/0015.dso_catalog.sql` — three tables: `dso_catalog_source` (loader registry + file sha256), `dso` (canonical row, closed CHECK vocabulary on `obj_type` with `'Other'` escape hatch, denormalized `primary_designation` for display), `dso_designation` (many-per-dso, closed 29-catalog CHECK vocabulary, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso, `ON DELETE CASCADE` from dso).
+- `catalog_loader/` — sibling of `seed_loader/`. `hash.py` (file-sha256 + normalized row-sha256), `registry.py` (`user_catalogs_root()` → `APP_DIR/catalogs`; `CatalogSource` entries always returned even when files absent; `read_installed_version()` reads `version.json`), `openngc_parser.py` (semicolon-delimited CSV with BOM tolerance, sexagesimal → decimal, leading-zero normalization, `Dup`/`NonEx` routing), `crossref_parser.py` (OpenNGC `Identifiers` column dispatch with longest-match prefix + single-letter-B-or-C disambiguation + leading-zero stripping), `loader.py` (per-source transaction, file-hash idempotency, two-pass canonical-then-duplicate merge, `status="missing"` when the file isn't on disk yet), `remote.py` (GitHub releases API + `raw.githubusercontent.com` downloads into a `.download/` staging dir + atomic rename + `version.json` write; 3-attempt retry on top of `services/http_client`'s own 1 retry).
+- `api/dso.py` + `api/dso_models.py` — `/api/dso` (list with `q`/`type`/`constellation`/`sort`/pagination), `/api/dso/{id}` (full detail), `/api/dso/lookup` (exact designation resolution with long-form prefix rewrite: `messier42` → `m42`), `/api/dso/facets` (type + constellation counts), `/api/dso/catalog-sources` (attribution).
+- `api/admin.py` — `POST /api/admin/catalogs/reload?force=true` re-parses the local cache; `GET /api/admin/catalogs/remote-version` queries GitHub for the latest tag and compares to `version.json`; `POST /api/admin/catalogs/fetch-from-github` downloads + reloads. `_initialize_database()` does NOT run the catalog loader — DBs start with empty DSO tables by design.
+- Frontend: `pages/DsoCatalogPage.tsx` (empty-state CTA → Admin when total=0 and no filters; otherwise flat MUI X DataGrid), `components/dso/{DsoDetailPanel,DsoAttributionPanel}.tsx`, `api/dsos.ts` (incl. `fetchRemoteVersion`, `fetchCatalogsFromGitHub`), `lib/dsoTypeNames.ts` (colorblind-safe 4-bucket palette: galaxy blue / nebula orange / cluster teal / other gray), `lib/dsoFormatters.ts` (sexagesimal RA/Dec, size, magnitudes), `lib/constellations.ts` (IAU abbrev → full name). Admin Catalogs section shows installed vs. latest remote version and a Load / Update / Re-download button that calls the fetch endpoint, plus a "Reload local cache" secondary action for the force-reload path.
+
+**Key invariants:**
+- **No vendored data.** Repo ships neither CSV files nor a default `version.json`. Tests use mini fixtures under `backend/tests/fixtures/catalogs/openngc/` copied into tmp_path.
+- Canonical DSO vocabulary is CLOSED at the CHECK level — adding a new prefix requires both a migration AND the loader's `PREFIX_MAP` / `_NAME_CATALOG` to know about it.
+- `search_key` uses the DISPLAY-FORM prefix (``m42``, ``ngc1976``, ``sh2281``) not the full catalog name. The API's `_normalize_search_key` rewrites long-form user input (``messier42``, ``caldwell20``) to the short form so both work.
+- `Dup` rows never become their own DSO — they fold into the target via NGC → IC → Messier cross-ref priority. `NonEx` rows are dropped at parse time.
+- Leading zeros are stripped on all numeric identifiers, main file AND Identifiers column, so `PGC 000778` and `PGC 778` hash to the same designation.
+- Loader is idempotent: matching `file_hash` on subsequent startup skips the reload entirely (no DELETE, no INSERT). `force=True` bypasses this. Missing files produce `status="missing"` (not an error) and trigger a single INFO line at startup.
+- **Atomic downloads.** `remote.download_openngc` writes into `<catalogs_root>/openngc/.download/` first, verifies non-zero bodies, then atomically renames into place. A failed or empty download leaves the prior install untouched.
+- CC-BY-SA-4.0 applies to fetched data; NightCrate code stays MIT. Attribution surfaces in the DSO page's `DsoAttributionPanel`.
+
 ## Settings (key-value schema)
 
 Application settings stored in a `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` table (migration 0011, reshaped from the previous `settings(id, data JSON)` singleton). Each Pydantic field on `core/config.py:Settings` maps to one row; `get_settings()` merges rows, silently drops rows with un-parseable JSON, and falls back to defaults on `ValidationError`. `update_settings()` upserts every field in a single loop — each update bumps `updated_at`.

@@ -91,3 +91,9 @@ NightCrate is built with the following open-source libraries. We are grateful to
 | [react-katex](https://github.com/MatejBransky/react-katex) | MIT | Copyright (c) 2018 Matej Bránsky |
 | [Vite](https://vite.dev/) | MIT | Copyright (c) 2019-present, VoidZero Inc. and Vite contributors |
 | [Geist Font](https://vercel.com/font) | SIL OFL 1.1 | Copyright (c) 2023 Vercel |
+
+### Data Sources
+
+| Dataset | License | Attribution |
+|---|---|---|
+| [OpenNGC](https://github.com/mattiaverga/OpenNGC) | CC-BY-SA-4.0 | Verga, Mattia. OpenNGC — Database of NGC and IC objects. Fetched at runtime from GitHub into the user's app-data folder (`APP_DIR/catalogs/openngc/`); no catalog data is bundled with the repo. OpenNGC aggregates data from NED, SIMBAD, HyperLEDA, and other public astronomical databases. |

@@ -4,11 +4,11 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.13.0
+**NightCrate version:** 0.14.0
 
 **Last updated:** 2026-04-19
 
-**Last full repo snapshot:** 2026-04-17
+**Last full repo snapshot:** 2026-04-19
 
 ---
 
@@ -29,7 +29,7 @@
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.1.
 - **Key backend libraries:** astropy ≥7.0 (astronomy), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — now via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder (Clocks view). Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0014.location_horizon.sql`. Pydantic for all data models.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0015.dso_catalog.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -137,6 +137,21 @@ Per-location custom horizon profiles (azimuth/altitude polylines) for session pl
 - **Key frontend:** `components/locations/HorizonEditor.tsx`, `HorizonChart.tsx`, `HorizonEditorToolbar.tsx`, `HorizonPointEditPopover.tsx`, `lib/horizonReduce.ts`
 - **Schema:** migration `0014.location_horizon.sql` (`location_horizon`, `location_horizon_point`)
 
+### DSO catalog
+
+**Status:** `[shipped]` (v0.14.0 MVP)
+
+First-pass deep-sky object catalog. Data is **not shipped** in the repo — on first run the tables are empty and the DSO page shows a CTA pointing to Admin → Catalogs, which fetches the latest OpenNGC release directly from GitHub (typically ~13,371 DSOs with ~41,425 designations across 29 cross-reference catalogs: NGC, IC, Messier, Caldwell, PGC, UGC, MCG, ESO, Arp, HCG, Sharpless2, Barnard, LBN, LDN, vdB, Cederblad, PK, RCW, Gum, Mrk, Terzan, Pal, Mel, Cr, Stock, Ruprecht, Abell, Dolidze, DWB). Downloaded files land atomically in `APP_DIR/catalogs/openngc/` (platformdirs). `Dup` rows are folded into their canonical target (via NGC, IC, or Messier cross-ref); `NonEx` rows are dropped. The loader runs at startup with sha256-based change detection — unchanged catalog files trigger zero work on the next boot. An "Update from GitHub" button refreshes on demand; a "Reload local cache" action re-parses without network access.
+
+**UI:** Flat list page at `/catalog/dso` with colorblind-safe type chips (galaxy/blue, nebula/orange, cluster/teal, other/gray), constellation dropdown (full names, alphabetical), debounced free-text search against designation search_keys + common names, MUI X DataGrid (Community tier, server-side pagination/sort with first/last buttons + fit-to-digits page dropdown, `NULLS LAST` ordering), and a slide-up detail drawer showing coordinates (sexagesimal + decimal), photometry, all designations as chips, morphology/kinematics, central-star data for PNs, and source attribution. Empty-state CTA when the database has no DSOs yet. Attribution dialog lists each loaded catalog source with version, row count, license, and citation. Editorial columns (`popularity_rank`, `difficulty`, `recommended_filter_id`) exist on `dso` but are unused until v0.15+.
+
+- **Route:** `/catalog/dso`
+- **API:** `/api/dso` (list), `/api/dso/{id}` (detail), `/api/dso/lookup` (exact designation → DSO, tolerates `M42` / `messier 42` / `ngc1976` input forms), `/api/dso/facets` (type + constellation counts), `/api/dso/catalog-sources`, `POST /api/admin/catalogs/reload`, `GET /api/admin/catalogs/remote-version` (GitHub query), `POST /api/admin/catalogs/fetch-from-github` (atomic download + reload)
+- **Key backend:** `catalog_loader/` module (sibling of `seed_loader/`) including `remote.py` for GitHub fetch + atomic download + sha256 + `version.json` write, `api/dso.py`, `api/dso_models.py`
+- **Key frontend:** `pages/DsoCatalogPage.tsx` (+ empty-state CTA), Admin → Catalogs section in `pages/AdminPage.tsx`, `components/dso/{DsoDetailPanel,DsoAttributionPanel}.tsx`, `api/dsos.ts`, `lib/dsoTypeNames.ts`, `lib/dsoFormatters.ts`, `lib/constellations.ts`
+- **Schema:** migration `0015.dso_catalog.sql` (`dso`, `dso_designation`, `dso_catalog_source`)
+- **Data:** not in repo; downloaded to `APP_DIR/catalogs/openngc/` (NGC.csv + addendum.csv + version.json with sha256/citation/license).
+
 ### Image viewer
 
 **Status:** `[shipped]`
@@ -211,12 +226,13 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ## Schema state
 
-Current migration: **0014** (location horizon tables). 14 migrations total (`0001`–`0014`).
+Current migration: **0015** (DSO catalog tables). 15 migrations total (`0001`–`0015`).
 
 - **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
 - **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.
 - **Locations (migrations 0007, 0012, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), `typical_seeing_low/high_arcsec` for rig calculator sampling assessment. Migration 0012 adds `active` soft-delete column.
 - **Horizons (migration 0014):** `location_horizon` (one row per location, UNIQUE on `location_id`, source ∈ {imported, drawn}), `location_horizon_point` (composite PK on horizon_id + azimuth_deg, CHECK az ∈ [0,360), alt ∈ [-5,90]) — custom per-location horizon profiles.
+- **DSO catalog (migration 0015):** `dso_catalog_source` (loader registry + file sha256), `dso` (canonical DSO with closed `obj_type` CHECK vocabulary), `dso_designation` (many-per-dso with closed 29-catalog CHECK vocabulary, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso). Populated via fetch-on-demand from GitHub (OpenNGC), NOT vendored in the repo.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
 - **Rigs (migrations 0009–0010, 0013):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane. Migration 0013 recreates the view again to expose `sensor_adc_bit_depth` for the File Size calculator's auto-populate flow.

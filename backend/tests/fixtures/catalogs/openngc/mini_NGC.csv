@@ -1,0 +1,12 @@
+Name;Type;RA;Dec;Const;MajAx;MinAx;PosAng;B-Mag;V-Mag;J-Mag;H-Mag;K-Mag;SurfBr;Hubble;Pax;Pm-RA;Pm-Dec;RadVel;Redshift;Cstar U-Mag;Cstar B-Mag;Cstar V-Mag;M;NGC;IC;Cstar Names;Identifiers;Common names;NED notes;OpenNGC notes;Sources
+NGC1976;HII;05:35:17.3;-05:23:28;Ori;65.00;60.00;;;4.00;;;;;;;;;;;;;;042;;;;LBN 974,PGC 026257;Orion Nebula,Great Orion Nebula;;;Type:2|RA:2|Dec:2
+NGC0224;G;00:42:44.3;+41:16:09;And;190.00;60.00;35;4.36;3.44;;;;13.50;SA;;;;-300;-0.001;;;;031;;;;UGC 00454,PGC 002557,MCG +07-02-016;Andromeda Galaxy;;;Type:1|RA:1|Dec:1
+NGC7293;PN;22:29:38.5;-20:50:13;Aqr;25.00;23.00;;;7.30;;;;;;;;;;;18.40;14.10;13.40;;;;;Helix,Cstar 001;Helix Nebula;;;Type:1|RA:1|Dec:1
+IC0011;Dup;00:52:59.35;+56:37:18.8;Cas;;;;;;;;;;;;;;;;;;;;0281;;;;;;;Type:1|RA:1|Dec:1
+IC0067;NonEx;01:00:17.66;-06:54:38.7;Cet;;;;;;;;;;;;;;;;;;;;;;;;;"Nominal position; does not exist.";;Type:1|RA:1
+NGC0281;HII;00:52:59.3;+56:37:19;Cas;35.00;30.00;;;7.40;;;;;;;;;;;;;;;;;;Sh2-184,LBN 616;Pacman Nebula;;;Type:1|RA:1
+NGC5457;G;14:03:12.6;+54:20:57;UMa;28.80;26.90;0;8.31;7.86;;;;13.90;SABc;;;;241;0.000804;;;;101;;;;UGC 08981,PGC 050063,Arp 26;Pinwheel Galaxy;;;Type:1
+NGC6543;PN;17:58:33.4;+66:37:59;Dra;5.80;5.00;;;8.10;;;;;;;;;;;11.14;10.97;11.18;;;;;;Cat's Eye Nebula;;;Type:1
+NGC0869;OCl;02:19:06.0;+57:08:40;Per;18.00;;;;5.30;;;;;;;;;;;;;;;;;;Cr 024,Mel 013;h Persei;;;Type:1
+NGC0884;OCl;02:22:24.0;+57:08:45;Per;18.00;;;;5.30;;;;;;;;;;;;;;;;;;Cr 025,Mel 014;chi Persei;;;Type:1
+NGC1234;Other;01:00:00.0;+00:00:00;Cet;;;;;;;;;;;;;;;;;;;;;;;;;Custom-type row for testing 'Other' fallback;;;Type:99

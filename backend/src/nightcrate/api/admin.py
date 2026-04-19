@@ -54,7 +54,12 @@ def _db_size(path: str) -> int | None:
 
 
 def _initialize_database(db_path: Path) -> None:
-    """Run migrations and seed loader on a database."""
+    """Run migrations and the equipment seed loader on a database.
+
+    Intentionally does NOT invoke the DSO catalog loader — that data is
+    fetched on demand from GitHub via the admin UI after DB creation.
+    Running the loader here would just produce "missing file" noise.
+    """
     apply_migrations(db_path=db_path)
 
     csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
@@ -377,3 +382,108 @@ async def reseed_equipment() -> dict:
     summary["total_skipped"] = total_skipped
 
     return summary
+
+
+def _summary_to_dict(summary) -> dict:
+    return {
+        "total_dsos": summary.total_dsos,
+        "total_designations": summary.total_designations,
+        "per_source": [
+            {
+                "source_id": r.source_id,
+                "status": r.status,
+                "dso_count": r.dso_count,
+                "designation_count": r.designation_count,
+                "unresolved_duplicates": r.unresolved_duplicates,
+                "error": r.error,
+            }
+            for r in summary.results
+        ],
+    }
+
+
+def _run_loader(force: bool):
+    """Shared helper: open a sync sqlite3 connection against the active DB
+    and run the catalog loader against the user-writable catalogs dir.
+    """
+    from nightcrate.catalog_loader import load_catalogs
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+
+    config = load_config()
+    if not config.db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+
+    db_path = get_db_path()
+    sync_conn = sqlite3.connect(str(db_path))
+    try:
+        sync_conn.execute("PRAGMA foreign_keys = ON")
+        return load_catalogs(sync_conn, user_catalogs_root(), force=force)
+    finally:
+        sync_conn.close()
+
+
+@router.post("/catalogs/reload")
+async def reload_catalogs(force: bool = Query(True)) -> dict:
+    """Re-parse the local catalog cache without re-downloading.
+
+    For when the user wants the loader to re-read already-downloaded files
+    (e.g., after a schema tweak). Does NOT reach out to GitHub; use
+    ``POST /catalogs/fetch-from-github`` for that.
+    """
+    summary = _run_loader(force=force)
+    return _summary_to_dict(summary)
+
+
+@router.get("/catalogs/remote-version")
+async def remote_catalog_version() -> dict:
+    """Return the latest OpenNGC release tag available on GitHub alongside
+    the locally-installed version (if any) for comparison.
+    """
+    from nightcrate.catalog_loader import remote
+    from nightcrate.catalog_loader.registry import read_installed_version, user_catalogs_root
+
+    installed = read_installed_version(user_catalogs_root())
+    try:
+        release = await remote.fetch_latest_release()
+    except Exception as exc:  # noqa: BLE001 — surface as 502 with a clear reason
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach GitHub: {exc}",
+        ) from exc
+
+    return {
+        "latest_tag": release.tag_name,
+        "latest_published_at": release.published_at,
+        "release_url": release.release_url,
+        "installed_version": installed,
+        "has_update": installed is None or installed != release.tag_name,
+    }
+
+
+@router.post("/catalogs/fetch-from-github")
+async def fetch_catalogs_from_github() -> dict:
+    """Download the latest OpenNGC release from GitHub into the user's
+    catalogs dir and then run the loader. Returns the load summary plus
+    the fetched release tag.
+    """
+    from nightcrate.catalog_loader import remote
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+
+    config = load_config()
+    if not config.db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+
+    try:
+        release = await remote.fetch_latest_release()
+        await remote.download_openngc(release, user_catalogs_root())
+    except Exception as exc:  # noqa: BLE001 — surface as 502 with a clear reason
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to download catalog from GitHub: {exc}",
+        ) from exc
+
+    summary = _run_loader(force=True)
+    return {
+        "fetched_version": release.tag_name,
+        **_summary_to_dict(summary),
+    }
