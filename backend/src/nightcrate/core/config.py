@@ -1,9 +1,14 @@
-"""Application settings — stored in the SQLite database."""
+"""Application settings — one row per preference in the `settings` KV table.
+
+The Pydantic `Settings` model is the single source of truth for field names,
+types, and defaults. The DB layer maps field ↔ row, serialising each value
+as JSON text so composite types round-trip cleanly.
+"""
 
 import json
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from nightcrate.db.session import get_db
 
@@ -23,28 +28,58 @@ class Settings(BaseModel):
     weather_cache_ttl_hours: int = 6
     weather_moon_penalty: bool = True
     weather_units: Literal["metric", "imperial"] = "metric"
+    # User-chosen display order for the Calculators "Clocks" view. Empty list
+    # means "use the component's default order"; unknown ids are filtered on
+    # the client so new clocks added later don't break stored arrays.
+    calculators_clock_order: list[str] = []
 
 
 async def get_settings() -> Settings:
-    """Load settings from the database. Returns defaults for missing/invalid data."""
+    """Load settings from the DB. Unknown rows are ignored; missing rows fall
+    back to the Pydantic defaults. Rows whose JSON fails to decode are skipped
+    (the field keeps its default)."""
     async with get_db() as conn:
-        cursor = await conn.execute("SELECT data FROM settings WHERE id = 1")
-        row = await cursor.fetchone()
-        if row:
-            try:
-                data = json.loads(row[0])
-                return Settings(**data)
-            except json.JSONDecodeError, TypeError, ValueError:
-                pass
-    return Settings()
+        cursor = await conn.execute("SELECT key, value_json FROM settings")
+        rows = await cursor.fetchall()
+
+    known = set(Settings.model_fields.keys())
+    data: dict[str, Any] = {}
+    for row in rows:
+        key = row["key"]
+        if key not in known:
+            continue
+        # json.JSONDecodeError is a ValueError subclass — single class catches
+        # both bad JSON and any other ValueErrors json raises. Using one
+        # exception class keeps the py314 ruff-format bug at bay.
+        try:
+            data[key] = json.loads(row["value_json"])
+        except ValueError:
+            # Leave the field at its Pydantic default.
+            continue
+
+    # Schema drift (type mismatch across versions) → fall back to defaults
+    # rather than crash the app.
+    try:
+        return Settings(**data)
+    except ValidationError:
+        return Settings()
 
 
 async def update_settings(updated: Settings) -> Settings:
-    """Persist settings to the database and return the saved value."""
+    """Persist the full Settings object. Each field becomes one KV row via
+    upsert; `updated_at` is refreshed on every affected row."""
+    payload = updated.model_dump()
     async with get_db() as conn:
-        await conn.execute(
-            "UPDATE settings SET data = ? WHERE id = 1",
-            (updated.model_dump_json(),),
-        )
+        for key, value in payload.items():
+            await conn.execute(
+                """
+                INSERT INTO settings (key, value_json, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, json.dumps(value)),
+            )
         await conn.commit()
     return updated

@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.12.0
+**NightCrate version:** 0.12.1
 
-**Last updated:** 2026-04-17
+**Last updated:** 2026-04-18
 
 **Last full repo snapshot:** 2026-04-17
 
@@ -26,10 +26,10 @@
 
 ## Stack and runtime
 
-- **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.0.
-- **Key backend libraries:** astropy ≥7.0 (astronomy), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client for weather APIs), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
-- **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0010.rig_summary_telescope_id.sql`. Pydantic for all data models.
+- **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.1.
+- **Key backend libraries:** astropy ≥7.0 (astronomy), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — now via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
+- **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder (Clocks view). Geist font via @fontsource-variable.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0012.location_soft_delete.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -119,9 +119,11 @@ User-composed imaging rig templates (one telescope configuration + one camera + 
 
 CRUD for imaging locations with coordinates, timezone, elevation, Bortle class, SQM reading, and address fields. Supports multiple locations with a single default (used by weather forecasting). Validation on lat/lon ranges.
 
+**v0.12.1 additions:** sexagesimal lat/lon display (in edit form + detail panel), elevation shown in user's preferred unit with the other parenthesised, Clear Outside Bortle/SQM scraper endpoint, Display vs Location Timezone separation (with warning-dialog unlock on the coordinate-derived tz), detail slide-up panel with embedded OSM map, soft-delete via `active` column (migration 0012) — pre-empts v0.13 session-ingestion references.
+
 - **Route:** `/locations`
 - **API:** `/api/locations/*`
-- **Schema:** migration `0007.locations.sql`
+- **Schema:** migrations `0007.locations.sql`, `0012.location_soft_delete.sql`
 
 ### Image viewer
 
@@ -153,12 +155,27 @@ Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsig
 
 **Status:** `[shipped]`
 
-**Settings:** theme (light/dark/browser), GPU acceleration toggle, max worker cores, file browser favorites and last path, aberration cache TTL, weather cache TTL, weather moon penalty toggle, weather units (metric/imperial). Stored as single JSON row in SQLite `settings` table.
+**Settings:** theme (light/dark/browser), GPU acceleration toggle, max worker cores, file browser favorites and last path, aberration cache TTL, weather cache TTL, weather moon penalty toggle, weather units (metric/imperial), calculators clock order. As of v0.12.1, stored as one row per preference in the `settings(key, value_json, updated_at)` key-value table (migration 0011 — reshaped from the previous singleton JSON blob). `core/config.py:Settings` remains the Pydantic source of truth; adding a new field still requires no schema migration.
 
-**Admin:** Multi-database support with first-run setup wizard (three scenarios: fresh, available DBs, all unavailable). Create, register, activate, remove databases. DB hot-swap via `set_db_path()` + page reload. Filesystem browser with shortcuts (Home, Documents, App Data) and directory creation. App info display. Equipment re-seed trigger.
+**Admin:** Multi-database support with first-run setup wizard (three scenarios: fresh, available DBs, all unavailable). Create, register, activate, remove databases — Create now auto-activates + reloads. Database list alphabetical with the active row inlined. DB hot-swap via `set_db_path()` + page reload. Filesystem browser with shortcuts (Home, Documents, App Data) and directory creation. App info display. Equipment re-seed trigger.
 
 - **Routes:** `/settings`, `/admin`
-- **API:** `/api/settings`, `/api/admin/*`, `/api/health`
+- **API:** `/api/settings`, `/api/admin/*`, `/api/health`, `/api/weather/cache/{stats,clear}`
+
+### Calculators
+
+**Status:** `[shipped]`
+
+Standalone mini-app with 12 astronomer/astrophotographer utilities grouped into four categories. Each calculator is backed by its own API endpoint so the math is equally usable from any external client — the frontend does no math beyond live-tick display.
+
+**Calculators:** Lat/Long Converter (sexagesimal ↔ decimal), RA/Dec ↔ Alt/Az (location-aware, astropy-backed), Clocks (Local / UTC / LST / JD / MJD + Location's Display Timezone + Location Timezone; drag-to-reorder), Tonight at a Glance, Angular Units, Linear Units, Pixel Scale, Field of View, File Size, Airmass (Kasten-Young), SQM / Bortle / NELM, Temperature.
+
+- **Route:** `/calculators[/:calcId]`
+- **API:** `/api/calculators/*` (13 endpoints)
+- **Key backend:** `services/calculators.py`, `services/coordinate_format.py`
+- **Frontend:** `pages/CalculatorsPage.tsx`, `components/calculators/*`, `api/calculators.ts`, `stores/calculatorsStore.ts`
+- **Shared primitives:** `CalculatorLocationBar` (location picker for the aware calculators), `CalculatorSidebar` (Equipment-style TreeView), `CalculatorAboutSection` (reused from rigs)
+- **Deps:** `@dnd-kit/{core,sortable,utilities}` for drag-to-reorder (MIT)
 
 ### API documentation
 
@@ -181,11 +198,11 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ## Schema state
 
-Current migration: **0010** (rig_summary view recreate with telescope_id). 10 migrations total (`0001`–`0010`).
+Current migration: **0012** (location soft-delete). 12 migrations total (`0001`–`0012`).
 
-- **Core app:** `settings` (single JSON row), `recent_files` — app preferences and state
-- **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0.
-- **Locations (migration 0007, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), and `typical_seeing_low/high_arcsec` for rig calculator sampling assessment
+- **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
+- **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.
+- **Locations (migrations 0007, 0012, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), `typical_seeing_low/high_arcsec` for rig calculator sampling assessment. Migration 0012 adds `active` soft-delete column.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
 - **Rigs (migrations 0009–0010):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane

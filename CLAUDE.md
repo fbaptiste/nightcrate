@@ -479,6 +479,57 @@ Two complementary guiding calculators rendered in the Guiding tab of the rig det
 - Responsive: side-by-side on md+, stacked on smaller screens. Both panes scroll at 70vh.
 - Default initial selection: "Summary" when description or notes present; otherwise the imaging camera.
 
+## Calculators
+
+Standalone astronomy + imaging-math utilities at `/calculators[/:calcId]`. Each calculator has a backend endpoint so the math is equally usable from any external client — frontend does no math beyond live-tick display.
+
+**Architecture:**
+- `backend/src/nightcrate/api/calculators.py` — 13 endpoints under `/api/calculators/*` (lat/long sexagesimal both ways, RA/Dec ↔ Alt/Az, sidereal time, tonight, angular units, linear units, pixel scale, FOV, file size, airmass, SQM/Bortle/NELM, temperature).
+- `backend/src/nightcrate/services/calculators.py` — pure-Python service layer (no DB/FastAPI deps).
+- `backend/src/nightcrate/services/coordinate_format.py` — `format_latitude` / `format_longitude` for sexagesimal display (astropy `Angle`, `°` `′` `″` glyphs, padded DMS). Used by Locations too.
+- `frontend/src/pages/CalculatorsPage.tsx` — Equipment-style sidebar + content pane.
+- `frontend/src/components/calculators/` — 12 per-calculator components; shared `CalculatorSidebar`, `CalculatorLocationBar` (dropdown wired to default-location logic).
+- `frontend/src/api/calculators.ts` — TypeScript client + response types.
+- `frontend/src/stores/calculatorsStore.ts` — session-only `selectedLocationId`. Clock order persists via the server-side `settings` table (not localStorage).
+
+**Key details:**
+- RA/Dec ↔ Alt/Az uses `astropy.coordinates.SkyCoord` + `EarthLocation` + `AltAz` frame; airmass via Kasten-Young (1989).
+- Sidereal time: server computes via `Time(...).sidereal_time('apparent', longitude=...)`; client ticks at the sidereal rate (1.00273790935) between 60-second server refreshes.
+- Tonight: reuses `services/astronomy.py:compute_night_summary`; returns sunset/sunrise, three twilight pairs, moonrise/moonset, moon illumination + phase, astronomical dark hours, moonless dark hours.
+- SQM ↔ Bortle band mapping; SQM → NELM via Schaefer approximation; NELM → SQM via bisection.
+- Clocks drag-to-reorder via **@dnd-kit** (MIT — `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`). Chosen order persists in `settings.calculators_clock_order` (server-side, not localStorage).
+- FOV uses the full arctan form (not small-angle approximation).
+
+## Settings (key-value schema)
+
+Application settings stored in a `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` table (migration 0011, reshaped from the previous `settings(id, data JSON)` singleton). Each Pydantic field on `core/config.py:Settings` maps to one row; `get_settings()` merges rows, silently drops rows with un-parseable JSON, and falls back to defaults on `ValidationError`. `update_settings()` upserts every field in a single loop — each update bumps `updated_at`.
+
+Adding a new setting still requires no schema migration: add the Pydantic field with a default, and the KV path handles the rest.
+
+## Outbound HTTP
+
+All outbound HTTP (Open-Meteo forecast/PWV/AOD, Clear Outside scraper) goes through `backend/src/nightcrate/services/http_client.py:get()`. Uniform 30s timeout, one 500ms-backoff retry on transient failures (`TimeoutException`, `ConnectError`, 5xx), structured `[http] …` log lines. Callers still catch `httpx.HTTPError` and translate to their domain-appropriate HTTP status (typically 502 for upstream failures).
+
+## Logging
+
+- `NIGHTCRATE_LOG_LEVEL` env var drives the `nightcrate` namespace logger level (INFO default; set to `DEBUG` for verbose traces).
+- `[weather-cache]` / `[http]` / `[open-meteo]` structured log lines on hot paths.
+- Router 500s (bare `except Exception`) log via `logger.exception(...)` so server bugs leave a traceback in the log.
+
+## Shared router helpers
+
+`backend/src/nightcrate/api/_common.py`:
+- `row_to_dict(row, *, extra_fn=None)` — aiosqlite.Row → dict, with an optional post-processor (locations uses it to derive sexagesimal display strings).
+- `bool_fields(d, *keys)` — INTEGER(0/1) → Python bool, in place.
+- `strip_seed(d)` — drops `source`/`seed_key`/`seed_hash` from response dicts.
+- `integrity_guard(conflict_detail, *, constraint_map=None, check_detail=None)` — context manager that translates `aiosqlite.IntegrityError.sqlite_errorname` into HTTP 409 (UNIQUE) or 422 (CHECK). Optional `constraint_map` dispatches on partial-index name substring.
+
+Use these in every new CRUD router instead of reimplementing the pattern.
+
+## Path resolution
+
+`backend/src/nightcrate/services/path_resolver.py` — `resolve_path(path)` handles plain filesystem paths, pxiproject virtual paths (`project_dir::index`), and archive virtual paths (`archive.zip::entry`). Returns `(resolved_path_or_BytesIO, file_type, image_index, cache_key)`. Used by both `api/images.py` and `api/aberration.py`.
+
 ## Dependency & License Policy
 
 NightCrate is licensed under **MIT**. Before adding any new dependency (Python or JS/TS):

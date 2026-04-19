@@ -10,17 +10,22 @@ Archive API:  https://archive-api.open-meteo.com/v1/archive
 Air Quality:  https://air-quality-api.open-meteo.com/v1/air-quality
 """
 
+import bisect
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-import httpx
+from nightcrate.services.http_client import get as http_get
+
+logger = logging.getLogger(__name__)
 
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 _ECMWF_URL = "https://api.open-meteo.com/v1/ecmwf"
 _ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+
 
 _COMMON_HOURLY = [
     "temperature_2m",
@@ -174,6 +179,45 @@ def _parse_supplementary(data: dict, variable: str) -> dict[str, float | None]:
     return result
 
 
+class NearestMatchIndex:
+    """Prebuilt index for repeated nearest-match lookups against the same data.
+
+    Building this once outside a loop is O(n log n); each lookup is O(log n).
+    Previously `nearest_match` did the sort + `datetime.fromisoformat` work
+    on every call, which added up to tens of thousands of parses per forecast.
+    """
+
+    __slots__ = ("_data", "_sorted_dts", "_sorted_vals")
+
+    def __init__(self, data: dict[str, float | None]):
+        self._data = data
+        pairs = sorted(
+            ((datetime.fromisoformat(ts), v) for ts, v in data.items()),
+            key=lambda p: p[0],
+        )
+        self._sorted_dts = [p[0] for p in pairs]
+        self._sorted_vals = [p[1] for p in pairs]
+
+    def lookup(self, target_time: str, max_gap_hours: float = 3.0) -> float | None:
+        if not self._sorted_dts:
+            return None
+        # Exact-hit fast path — avoids the datetime parse on aligned hourlies.
+        if target_time in self._data:
+            return self._data[target_time]
+
+        target_dt = datetime.fromisoformat(target_time)
+        idx = bisect.bisect_left(self._sorted_dts, target_dt)
+        best_val: float | None = None
+        best_gap = float("inf")
+        for i in (idx - 1, idx):
+            if 0 <= i < len(self._sorted_dts):
+                gap = abs((self._sorted_dts[i] - target_dt).total_seconds()) / 3600
+                if gap < best_gap and gap <= max_gap_hours:
+                    best_gap = gap
+                    best_val = self._sorted_vals[i]
+        return best_val
+
+
 def nearest_match(
     data: dict[str, float | None],
     target_time: str,
@@ -181,25 +225,12 @@ def nearest_match(
 ) -> float | None:
     """Find the value for the closest timestamp within max_gap_hours.
 
-    Used for supplementary data that may have different temporal resolution
-    (e.g. 3-hourly AOD) than the main hourly weather data.
+    Convenience wrapper over `NearestMatchIndex` for one-off lookups. In a
+    tight loop, build the index once and call `.lookup()` directly.
     """
     if not data:
         return None
-    # Try exact match first (fast path)
-    if target_time in data:
-        return data[target_time]
-
-    target_dt = datetime.fromisoformat(target_time)
-    best_val = None
-    best_gap = float("inf")
-    for ts, val in data.items():
-        ts_dt = datetime.fromisoformat(ts)
-        gap = abs((ts_dt - target_dt).total_seconds()) / 3600
-        if gap < best_gap and gap <= max_gap_hours:
-            best_gap = gap
-            best_val = val
-    return best_val
+    return NearestMatchIndex(data).lookup(target_time, max_gap_hours)
 
 
 async def fetch_weather(
@@ -252,10 +283,9 @@ async def fetch_weather(
         params["start_date"] = start_date
         params["end_date"] = end_date
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+    response = await http_get(url, params=params, label=f"weather[{source}]")
+    response.raise_for_status()
+    data = response.json()
 
     hourly = parse_hourly(data["hourly"], source)
 
@@ -286,10 +316,9 @@ async def fetch_pwv(
         "forecast_days": 8,
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(_ECMWF_URL, params=params)
-        response.raise_for_status()
-        data = response.json()
+    response = await http_get(_ECMWF_URL, params=params, label="ecmwf_pwv")
+    response.raise_for_status()
+    data = response.json()
 
     values = _parse_supplementary(data, "total_column_integrated_water_vapour")
 
@@ -322,10 +351,9 @@ async def fetch_air_quality(
         "forecast_days": 7,
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(_AIR_QUALITY_URL, params=params)
-        response.raise_for_status()
-        data = response.json()
+    response = await http_get(_AIR_QUALITY_URL, params=params, label="air_quality_aod")
+    response.raise_for_status()
+    data = response.json()
 
     values = _parse_supplementary(data, "aerosol_optical_depth")
 

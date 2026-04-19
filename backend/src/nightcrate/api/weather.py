@@ -36,12 +36,12 @@ from nightcrate.services.imaging_quality import (
 from nightcrate.services.seeing import estimate_seeing_surface, estimate_seeing_wind_shear
 from nightcrate.services.transparency import estimate_transparency
 from nightcrate.services.weather import (
+    NearestMatchIndex,
     SupplementaryData,
     WeatherData,
     fetch_air_quality,
     fetch_pwv,
     fetch_weather,
-    nearest_match,
     parse_hourly,
 )
 
@@ -118,7 +118,9 @@ during darkness.
 async def _get_location(location_id: int) -> dict:
     """Fetch a location row from the DB or raise 404."""
     async with get_db() as conn:
-        cursor = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        cursor = await conn.execute(
+            "SELECT * FROM location WHERE id = ? AND active = 1", (location_id,)
+        )
         row = await cursor.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Location not found")
@@ -161,6 +163,11 @@ async def _fetch_or_cached(
 
         row = await cursor.fetchone()
         if row is not None:
+            logger.debug(
+                "[weather-cache] HIT weather[%s] location=%s",
+                source,
+                location_id,
+            )
             raw = json.loads(row["response_json"])
             hourly = parse_hourly(raw["hourly"], row["source"])
             return WeatherData(
@@ -171,6 +178,11 @@ async def _fetch_or_cached(
                 raw_json=row["response_json"],
             )
 
+    logger.info(
+        "[weather-cache] MISS weather[%s] location=%s → fetching",
+        source,
+        location_id,
+    )
     data = await fetch_weather(
         latitude=latitude,
         longitude=longitude,
@@ -233,6 +245,11 @@ async def _fetch_or_cached_supplementary(
             )
             row = await cursor.fetchone()
             if row is not None:
+                logger.debug(
+                    "[weather-cache] HIT %s location=%s",
+                    source_key,
+                    location_id,
+                )
                 raw = json.loads(row["response_json"])
                 # Re-parse from raw JSON
                 hourly = raw.get("hourly", {})
@@ -251,6 +268,11 @@ async def _fetch_or_cached_supplementary(
     except Exception:
         logger.debug("Cache read failed for %s (non-fatal)", source_key)
 
+    logger.info(
+        "[weather-cache] MISS %s location=%s → fetching",
+        source_key,
+        location_id,
+    )
     # Fetch fresh
     data: SupplementaryData = await fetch_fn(
         latitude=latitude,
@@ -364,8 +386,8 @@ def _compute_night_data(
     night_date: date,
     tz: ZoneInfo,
     weather: WeatherData,
-    pwv_by_time: dict[str, float | None],
-    aod_by_time: dict[str, float | None],
+    pwv_index: NearestMatchIndex,
+    aod_index: NearestMatchIndex,
     moon_included: bool,
 ) -> DailySummaryResponse | None:
     """Compute a daily summary for one night, driven by actual sunset/sunrise."""
@@ -445,11 +467,11 @@ def _compute_night_data(
         seeing_scores.append(_compute_seeing(h, prev_h))
     avg_seeing = sum(seeing_scores) / len(seeing_scores)
 
-    # Transparency scores (use nearest_match for PWV and AOD)
+    # Transparency scores (O(log n) per lookup via the prebuilt indexes)
     transparency_scores = []
     for _, h in hours_data:
-        pwv_val = nearest_match(pwv_by_time, h.time)
-        aod_val = nearest_match(aod_by_time, h.time)
+        pwv_val = pwv_index.lookup(h.time)
+        aod_val = aod_index.lookup(h.time)
         transparency_scores.append(_transparency_score(h, pwv_val, aod_val))
     avg_transparency = sum(transparency_scores) / len(transparency_scores)
 
@@ -529,21 +551,30 @@ async def get_forecast(
     moon_included = include_moon if include_moon is not None else settings.weather_moon_penalty
     ttl = settings.weather_cache_ttl_hours
 
-    weather = await _fetch_or_cached(
-        location_id=loc["id"],
-        latitude=loc["latitude"],
-        longitude=loc["longitude"],
-        timezone_str=loc["timezone"],
-        source="forecast",
-        ttl_hours=ttl,
+    # Fire all three outbound sources concurrently on cache miss: main
+    # forecast, PWV, and AOD. _fetch_supplementary_pair already gathers its
+    # PWV/AOD pair; nesting that inside the outer gather means all three
+    # requests are in flight at the same time.
+    weather, (pwv_by_time, aod_by_time) = await asyncio.gather(
+        _fetch_or_cached(
+            location_id=loc["id"],
+            latitude=loc["latitude"],
+            longitude=loc["longitude"],
+            timezone_str=loc["timezone"],
+            source="forecast",
+            ttl_hours=ttl,
+        ),
+        _fetch_supplementary_pair(loc, ttl_hours=ttl),
     )
-
-    pwv_by_time, aod_by_time = await _fetch_supplementary_pair(loc, ttl_hours=ttl)
 
     tz = ZoneInfo(loc["timezone"])
 
     now_local = datetime.now(tz)
     start_date = now_local.date()
+
+    # Build nearest-match indexes once; 7 night-computations reuse them.
+    pwv_index = NearestMatchIndex(pwv_by_time)
+    aod_index = NearestMatchIndex(aod_by_time)
 
     days: list[DailySummaryResponse] = []
     for offset in range(8):  # try up to 8 days to get 7 valid nights
@@ -553,8 +584,8 @@ async def get_forecast(
             d,
             tz,
             weather,
-            pwv_by_time,
-            aod_by_time,
+            pwv_index,
+            aod_index,
             moon_included,
         )
         if result is not None:
@@ -590,16 +621,18 @@ async def get_hourly(
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid date format, expected YYYY-MM-DD")
 
-    weather = await _fetch_or_cached(
-        location_id=loc["id"],
-        latitude=loc["latitude"],
-        longitude=loc["longitude"],
-        timezone_str=loc["timezone"],
-        source="forecast",
-        ttl_hours=ttl,
+    # All three sources fetched concurrently on cache miss.
+    weather, (pwv_by_time, aod_by_time) = await asyncio.gather(
+        _fetch_or_cached(
+            location_id=loc["id"],
+            latitude=loc["latitude"],
+            longitude=loc["longitude"],
+            timezone_str=loc["timezone"],
+            source="forecast",
+            ttl_hours=ttl,
+        ),
+        _fetch_supplementary_pair(loc, ttl_hours=ttl),
     )
-
-    pwv_by_time, aod_by_time = await _fetch_supplementary_pair(loc, ttl_hours=ttl)
 
     tz = ZoneInfo(loc["timezone"])
     astro_tz = loc.get("geo_timezone") or loc["timezone"]
@@ -672,6 +705,10 @@ async def get_hourly(
         for p in moon_polyline_data
     ]
 
+    # Build nearest-match indexes once; reused for every hour below.
+    pwv_index = NearestMatchIndex(pwv_by_time)
+    aod_index = NearestMatchIndex(aod_by_time)
+
     hours: list[HourlyWeatherResponse] = []
     for idx, (i, h) in enumerate(matched):
         prev_h = matched[idx - 1][1] if idx > 0 else None
@@ -689,9 +726,9 @@ async def get_hourly(
             cloud_cover_high_pct=h.cloud_cover_high_pct,
         )
 
-        # Transparency (PWV and AOD via nearest-match)
-        pwv_val = nearest_match(pwv_by_time, h.time)
-        aod_val = nearest_match(aod_by_time, h.time)
+        # Transparency (PWV and AOD via O(log n) lookup on prebuilt indexes)
+        pwv_val = pwv_index.lookup(h.time)
+        aod_val = aod_index.lookup(h.time)
         transparency = _transparency_score(h, pwv_val, aod_val)
 
         # Dew risk
@@ -769,3 +806,36 @@ async def get_hourly(
 async def get_methodology():
     """Return the imaging quality score methodology description."""
     return MethodologyResponse(text=METHODOLOGY)
+
+
+@router.get("/cache/stats")
+async def weather_cache_stats() -> dict:
+    """Return row count and approximate byte size of the weather_cache table."""
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT COUNT(*) FROM weather_cache")
+        rows = (await cursor.fetchone())[0]
+
+        try:
+            cursor = await conn.execute(
+                "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name = 'weather_cache'"
+            )
+            bytes_used = (await cursor.fetchone())[0]
+        except Exception:
+            # dbstat not available — estimate from stored JSON
+            cursor = await conn.execute(
+                "SELECT COALESCE(SUM(LENGTH(response_json)), 0) FROM weather_cache"
+            )
+            bytes_used = (await cursor.fetchone())[0]
+
+    return {"rows": rows, "bytes": bytes_used}
+
+
+@router.delete("/cache")
+async def clear_weather_cache() -> dict:
+    """Delete all cached weather, PWV, and AOD data. Next forecast request will re-fetch."""
+    async with get_db() as conn:
+        cursor = await conn.execute("DELETE FROM weather_cache")
+        deleted = cursor.rowcount
+        await conn.commit()
+    logger.info("[weather-cache] CLEAR — deleted %s rows", deleted)
+    return {"ok": True, "deleted": deleted}

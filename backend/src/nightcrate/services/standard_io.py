@@ -48,7 +48,7 @@ def is_float_tiff(source: Path | BinaryIO) -> bool:
         except Exception:
             try:
                 source.seek(0)
-            except Exception:
+            except Exception:  # nosec B110 - best-effort rewind; callers must not rely on position after failure
                 pass
             return False
 

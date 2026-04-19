@@ -5,6 +5,7 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import Collapse from "@mui/material/Collapse";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
@@ -16,6 +17,7 @@ import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
+import CloseIcon from "@mui/icons-material/Close";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import MyLocationIcon from "@mui/icons-material/MyLocation";
@@ -26,6 +28,7 @@ import {
   fetchLocations,
   fetchTimezones,
   fetchGeoTimezone,
+  lookupClearOutside,
   createLocation,
   updateLocation,
   setDefaultLocation,
@@ -35,6 +38,80 @@ import {
 } from "@/api/locations";
 import { EasterEggWand } from "@/components/EasterEggWand";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
+import type { WeatherUnits } from "@/api/settings";
+import { useSettingsStore } from "@/stores/settingsStore";
+
+// ─── Display helpers ────────────────────────────────────────────────────────
+// Frontend mirror of backend services/coordinate_format.py for the live
+// editor preview. Saved locations use the backend-formatted strings on
+// `Location.latitude_display` / `longitude_display`.
+const M_TO_FT = 3.28084;
+const metersToFeet = (m: number): number => m * M_TO_FT;
+const feetToMeters = (ft: number): number => ft / M_TO_FT;
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function formatDMS(absDeg: number): string {
+  const totalSec = Math.round(absDeg * 3600);
+  const d = Math.floor(totalSec / 3600);
+  const rem = totalSec - d * 3600;
+  const m = Math.floor(rem / 60);
+  const s = rem - m * 60;
+  const dPart = d < 10 ? `0${d}` : String(d);
+  return `${dPart}\u00B0${pad2(m)}\u2032${pad2(s)}\u2033`;
+}
+
+function formatLatitudeLive(deg: number): string {
+  if (isNaN(deg) || deg < -90 || deg > 90) return "";
+  return `${formatDMS(Math.abs(deg))} ${deg >= 0 ? "N" : "S"}`;
+}
+
+function formatLongitudeLive(deg: number): string {
+  if (isNaN(deg) || deg < -180 || deg > 180) return "";
+  return `${formatDMS(Math.abs(deg))} ${deg >= 0 ? "E" : "W"}`;
+}
+
+/** Render elevation in both units; primary unit is the user's preference.
+ *  The secondary (parenthesized) value renders in muted text.secondary. */
+function formatElevationBoth(
+  meters: number | null,
+  units: WeatherUnits,
+): React.ReactNode | null {
+  if (meters == null) return null;
+  const ft = Math.round(metersToFeet(meters));
+  const m = Math.round(meters);
+  const primary = units === "imperial" ? `${ft} ft` : `${m} m`;
+  const secondary = units === "imperial" ? `(${m} m)` : `(${ft} ft)`;
+  return (
+    <>
+      {primary}
+      {"  "}
+      <Typography component="span" variant="body2" color="text.secondary">
+        {secondary}
+      </Typography>
+    </>
+  );
+}
+
+/** Return the current UTC offset of an IANA timezone as "UTC-07:00". */
+function formatUtcOffset(timezone: string | null | undefined): string {
+  if (!timezone) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "longOffset",
+    }).formatToParts(new Date());
+    const tzPart = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+    // "GMT-07:00" / "GMT+00:00" — Intl uses "GMT" for offsets; prefer "UTC".
+    // `formatToParts` returns just "GMT" for UTC itself; show "UTC+00:00" instead.
+    if (tzPart === "GMT") return "UTC+00:00";
+    return tzPart.replace(/^GMT/, "UTC");
+  } catch {
+    return "";
+  }
+}
 
 const INCANTATIONS = [
   "I solemnly swear not to buy any new equipment this month",
@@ -119,8 +196,11 @@ interface FormState {
   name: string;
   latitude: string;
   longitude: string;
-  elevation_m: string;
+  // Elevation as typed by the user, in whichever unit they currently prefer
+  // (meters or feet). Converted to meters at save time.
+  elevation: string;
   timezone: string;
+  geo_timezone: string;
   bortle_class: string;
   sqm_reading: string;
   typical_seeing_low_arcsec: string;
@@ -137,8 +217,9 @@ function emptyForm(): FormState {
     name: "",
     latitude: "",
     longitude: "",
-    elevation_m: "",
+    elevation: "",
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    geo_timezone: "",
     bortle_class: "",
     sqm_reading: "",
     typical_seeing_low_arcsec: "",
@@ -151,13 +232,34 @@ function emptyForm(): FormState {
   };
 }
 
-function locationToForm(loc: Location): FormState {
+/** Map an SQM (mag/arcsec²) reading to its Bortle class using the
+ *  standard thresholds shared by the SQM input and Clear Outside lookup. */
+function sqmToBortle(sqm: number): number {
+  if (sqm >= 21.99) return 1;
+  if (sqm >= 21.69) return 2;
+  if (sqm >= 21.25) return 3;
+  if (sqm >= 20.49) return 4;
+  if (sqm >= 19.5) return 5;
+  if (sqm >= 18.94) return 6;
+  if (sqm >= 18.38) return 7;
+  if (sqm >= 17.8) return 8;
+  return 9;
+}
+
+function locationToForm(loc: Location, units: WeatherUnits): FormState {
+  const elevDisplay =
+    loc.elevation_m == null
+      ? ""
+      : units === "imperial"
+      ? String(Math.round(metersToFeet(loc.elevation_m)))
+      : String(Math.round(loc.elevation_m));
   return {
     name: loc.name,
     latitude: String(loc.latitude),
     longitude: String(loc.longitude),
-    elevation_m: loc.elevation_m != null ? String(loc.elevation_m) : "",
+    elevation: elevDisplay,
     timezone: loc.timezone,
+    geo_timezone: loc.geo_timezone ?? "",
     bortle_class: loc.bortle_class != null ? String(loc.bortle_class) : "",
     sqm_reading: loc.sqm_reading != null ? String(loc.sqm_reading) : "",
     typical_seeing_low_arcsec: loc.typical_seeing_low_arcsec != null ? String(loc.typical_seeing_low_arcsec) : "",
@@ -172,6 +274,10 @@ function locationToForm(loc: Location): FormState {
 
 export default function LocationsPage() {
   const queryClient = useQueryClient();
+  const settings = useSettingsStore((s) => s.settings);
+  const units: WeatherUnits = settings?.weather_units ?? "metric";
+  const unitIsImperial = units === "imperial";
+  const elevationUnitLabel = unitIsImperial ? "ft" : "m";
   const { data: locations = [], isLoading } = useQuery({
     queryKey: ["locations"],
     queryFn: fetchLocations,
@@ -186,8 +292,27 @@ export default function LocationsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Location | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const [lookingUpClearOutside, setLookingUpClearOutside] = useState(false);
   const [seeingGuideOpen, setSeeingGuideOpen] = useState(false);
-  const [geoTimezone, setGeoTimezone] = useState<string | null>(null);
+  const [geoTzEditable, setGeoTzEditable] = useState(false);
+  const [geoTzWarningOpen, setGeoTzWarningOpen] = useState(false);
+  // The OSM embed iframe picks a zoom to fit the bbox inside its current
+  // pixel width at load time and never reflows. If the iframe mounts during
+  // the Dialog open transition (which is the case in edit mode, where
+  // coordinates are already populated), the tiles get rendered for the
+  // pre-grow width and leave a gray gutter. Deferring the iframe mount
+  // until `onEntered` fires guarantees it sees the final dialog width.
+  const [dialogReady, setDialogReady] = useState(false);
+  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
+  const selectedLocation = selectedLocationId != null
+    ? locations.find((l) => l.id === selectedLocationId) ?? null
+    : null;
+  // Deselect if the location was deleted from the list
+  useEffect(() => {
+    if (selectedLocationId != null && !locations.some((l) => l.id === selectedLocationId)) {
+      setSelectedLocationId(null);
+    }
+  }, [locations, selectedLocationId]);
   const geoTzTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { data: timezones = [] } = useQuery({
     queryKey: ["timezones"],
@@ -195,25 +320,34 @@ export default function LocationsPage() {
     staleTime: Infinity,
   });
 
-  // Fetch geo_timezone when coordinates change (debounced 500ms)
+  // Fetch geo_timezone when coordinates change (debounced 500ms). The result
+  // populates the Location Timezone field unless the user has explicitly
+  // unlocked it — in that case we leave their manual choice alone.
   useEffect(() => {
     const lat = parseFloat(form.latitude);
     const lon = parseFloat(form.longitude);
     if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      setGeoTimezone(null);
+      if (!geoTzEditable) setForm((prev) => ({ ...prev, geo_timezone: "" }));
       return;
     }
     clearTimeout(geoTzTimerRef.current);
     geoTzTimerRef.current = setTimeout(async () => {
       try {
         const result = await fetchGeoTimezone(lat, lon);
-        setGeoTimezone(result.geo_timezone);
-        // Auto-populate timezone on new location (not editing)
-        if (!editingLocation && form.timezone === Intl.DateTimeFormat().resolvedOptions().timeZone && result.geo_timezone) {
-          setForm((prev) => ({ ...prev, timezone: result.geo_timezone! }));
-        }
+        if (geoTzEditable) return;
+        setForm((prev) => ({
+          ...prev,
+          geo_timezone: result.geo_timezone ?? "",
+          // Auto-populate display timezone on new location only
+          timezone:
+            !editingLocation &&
+            prev.timezone === Intl.DateTimeFormat().resolvedOptions().timeZone &&
+            result.geo_timezone
+              ? result.geo_timezone
+              : prev.timezone,
+        }));
       } catch {
-        setGeoTimezone(null);
+        if (!geoTzEditable) setForm((prev) => ({ ...prev, geo_timezone: "" }));
       }
     }, 500);
     return () => clearTimeout(geoTzTimerRef.current);
@@ -284,7 +418,13 @@ export default function LocationsPage() {
     try {
       const data = await res.json();
       const elev = data.elevation?.[0];
-      if (elev != null) set("elevation_m", String(Math.round(elev)));
+      if (elev != null) {
+        // Open-Meteo returns meters; round in the user's preferred unit.
+        const display = unitIsImperial
+          ? String(Math.round(metersToFeet(elev)))
+          : String(Math.round(elev));
+        set("elevation", display);
+      }
     } catch {
       setSnack({ msg: "Elevation lookup returned invalid data", severity: "error" });
     }
@@ -402,19 +542,58 @@ export default function LocationsPage() {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
+  const handleClearOutsideLookup = async () => {
+    const lat = parseFloat(form.latitude);
+    const lon = parseFloat(form.longitude);
+    if (isNaN(lat) || isNaN(lon)) {
+      setSnack({ msg: "Set coordinates first", severity: "error" });
+      return;
+    }
+    setLookingUpClearOutside(true);
+    try {
+      const data = await lookupClearOutside(lat, lon);
+      if (data.sqm == null) {
+        setSnack({
+          msg: "Could not find SQM on Clear Outside",
+          severity: "error",
+        });
+      } else {
+        // Populate SQM and derive Bortle from it. Clear Outside's Bortle
+        // value is intentionally ignored — keep a single source of truth.
+        const bortle = sqmToBortle(data.sqm);
+        setForm((prev) => ({
+          ...prev,
+          sqm_reading: String(data.sqm),
+          bortle_class: String(bortle),
+        }));
+        setSnack({
+          msg: "Populated SQM from Clear Outside; Bortle derived from SQM.",
+          severity: "info",
+        });
+      }
+    } catch (err) {
+      setSnack({
+        msg: err instanceof Error ? err.message : "Clear Outside lookup failed",
+        severity: "error",
+      });
+    } finally {
+      setLookingUpClearOutside(false);
+    }
+  };
+
   const openCreate = () => {
     setEditingLocation(null);
     setForm(emptyForm());
     setErrors({});
-    setGeoTimezone(null);
+    setGeoTzEditable(false);
     setDialogOpen(true);
   };
 
   const openEdit = (loc: Location) => {
     setEditingLocation(loc);
-    setForm(locationToForm(loc));
+    setForm(locationToForm(loc, units));
     setErrors({});
-    setGeoTimezone(loc.geo_timezone);
+    setGeoTzEditable(false);
     setDialogOpen(true);
   };
 
@@ -457,12 +636,22 @@ export default function LocationsPage() {
     if (!validate()) return;
     setSaving(true);
     try {
+      const elevationInput = parseOptionalFloat(form.elevation);
+      const elevationMeters =
+        elevationInput != null && unitIsImperial
+          ? feetToMeters(elevationInput)
+          : elevationInput;
       const payload: LocationCreate = {
         name: form.name.trim(),
         latitude: parseFloat(form.latitude),
         longitude: parseFloat(form.longitude),
-        elevation_m: parseOptionalFloat(form.elevation_m),
+        elevation_m: elevationMeters,
         timezone: form.timezone.trim(),
+        // Only send an explicit geo_timezone if the user actually unlocked
+        // and changed it; otherwise let the backend derive it from coords.
+        ...(geoTzEditable && form.geo_timezone.trim()
+          ? { geo_timezone: form.geo_timezone.trim() }
+          : {}),
         bortle_class: parseOptionalInt(form.bortle_class),
         sqm_reading: parseOptionalFloat(form.sqm_reading),
         typical_seeing_low_arcsec: parseOptionalFloat(form.typical_seeing_low_arcsec),
@@ -529,13 +718,29 @@ export default function LocationsPage() {
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {locations.map((loc) => (
-          <Paper key={loc.id} variant="outlined" sx={{ p: 2 }}>
+          <Paper
+            key={loc.id}
+            variant="outlined"
+            onClick={() =>
+              setSelectedLocationId((prev) => (prev === loc.id ? null : loc.id))
+            }
+            sx={{
+              p: 2,
+              cursor: "pointer",
+              borderColor: selectedLocationId === loc.id ? "primary.main" : undefined,
+              bgcolor: selectedLocationId === loc.id ? "action.selected" : undefined,
+              "&:hover": { borderColor: "primary.main" },
+            }}
+          >
             <Box sx={{ display: "flex", alignItems: "flex-start", gap: 2 }}>
               {/* Default star */}
               <Tooltip title={loc.is_default ? "Default location" : "Set as default"} arrow>
                 <IconButton
                   size="small"
-                  onClick={() => !loc.is_default && handleSetDefault(loc)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!loc.is_default) handleSetDefault(loc);
+                  }}
                   sx={{ mt: 0.25, color: loc.is_default ? "warning.main" : "action.disabled" }}
                 >
                   {loc.is_default ? <StarIcon /> : <StarOutlineIcon />}
@@ -552,15 +757,18 @@ export default function LocationsPage() {
                 </Box>
 
                 <Typography variant="body2" color="text.secondary">
-                  {loc.latitude.toFixed(4)}, {loc.longitude.toFixed(4)}
-                  {loc.elevation_m != null && ` · ${loc.elevation_m}m`}
-                  {" · "}{loc.timezone}
+                  <strong>Display Timezone:</strong> {loc.timezone}
+                  {loc.geo_timezone && (
+                    <>
+                      {"  \u00B7  "}
+                      <strong>Location Timezone:</strong> {loc.geo_timezone}
+                    </>
+                  )}
                 </Typography>
 
                 {(loc.city || loc.state_province || loc.country) && (
                   <Typography variant="body2" color="text.secondary">
                     {[loc.city, loc.state_province, loc.country].filter(Boolean).join(", ")}
-                    {loc.postal_code && ` ${loc.postal_code}`}
                   </Typography>
                 )}
 
@@ -571,17 +779,9 @@ export default function LocationsPage() {
                   {loc.sqm_reading != null && (
                     <Chip label={`SQM ${loc.sqm_reading}`} size="small" variant="outlined" />
                   )}
-                  <Typography
-                    variant="caption"
-                    component="a"
-                    href={`https://clearoutside.com/forecast/${loc.latitude.toFixed(2)}/${loc.longitude.toFixed(2)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ color: "primary.main", textDecoration: "none", "&:hover": { textDecoration: "underline" } }}
-                  >
-                    Clear Outside
-                  </Typography>
-                  <EasterEggWand lines={INCANTATIONS} tooltip="Cast a clear sky incantation" />
+                  <Box onClick={(e) => e.stopPropagation()} sx={{ display: "flex" }}>
+                    <EasterEggWand lines={INCANTATIONS} tooltip="Cast a clear sky incantation" />
+                  </Box>
                 </Box>
 
                 {loc.notes && (
@@ -594,12 +794,24 @@ export default function LocationsPage() {
               {/* Actions */}
               <Box sx={{ display: "flex", gap: 0.5 }}>
                 <Tooltip title="Edit" arrow>
-                  <IconButton size="small" onClick={() => openEdit(loc)}>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEdit(loc);
+                    }}
+                  >
                     <EditIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
                 <Tooltip title="Delete" arrow>
-                  <IconButton size="small" onClick={() => setDeleteTarget(loc)}>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(loc);
+                    }}
+                  >
                     <DeleteIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
@@ -609,8 +821,28 @@ export default function LocationsPage() {
         ))}
       </Box>
 
+      {/* Slide-up detail panel */}
+      <Collapse in={selectedLocation !== null} unmountOnExit>
+        {selectedLocation && (
+          <LocationDetail
+            loc={selectedLocation}
+            units={units}
+            onClose={() => setSelectedLocationId(null)}
+          />
+        )}
+      </Collapse>
+
       {/* Create / Edit dialog */}
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        TransitionProps={{
+          onEntered: () => setDialogReady(true),
+          onExited: () => setDialogReady(false),
+        }}
+      >
         <DialogTitle>{editingLocation ? "Edit Location" : "Add Location"}</DialogTitle>
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
@@ -680,7 +912,11 @@ export default function LocationsPage() {
                 onChange={(e) => set("latitude", e.target.value)}
                 required
                 error={Boolean(errors.latitude)}
-                helperText={errors.latitude || "-90 to 90"}
+                helperText={
+                  errors.latitude ||
+                  formatLatitudeLive(parseFloat(form.latitude)) ||
+                  "-90 to 90"
+                }
                 slotProps={{ htmlInput: { step: "any", min: -90, max: 90 } }}
               />
               <TextField
@@ -690,13 +926,38 @@ export default function LocationsPage() {
                 onChange={(e) => set("longitude", e.target.value)}
                 required
                 error={Boolean(errors.longitude)}
-                helperText={errors.longitude || "-180 to 180"}
+                helperText={
+                  errors.longitude ||
+                  formatLongitudeLive(parseFloat(form.longitude)) ||
+                  "-180 to 180"
+                }
                 slotProps={{ htmlInput: { step: "any", min: -180, max: 180 } }}
               />
             </Box>
 
+            {/* Elevation — user types in their preferred unit; helper text
+                shows the other unit so both are visible at a glance. */}
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+              <TextField
+                label={`Elevation (${elevationUnitLabel})`}
+                type="number"
+                value={form.elevation}
+                onChange={(e) => set("elevation", e.target.value)}
+                helperText={
+                  (() => {
+                    const v = parseFloat(form.elevation);
+                    if (isNaN(v)) return " ";
+                    return unitIsImperial
+                      ? `= ${Math.round(feetToMeters(v))} m`
+                      : `= ${Math.round(metersToFeet(v))} ft`;
+                  })()
+                }
+                slotProps={{ htmlInput: { step: "any" } }}
+              />
+            </Box>
+
             {/* Map preview when lat/lon are available */}
-            {form.latitude && form.longitude && !isNaN(parseFloat(form.latitude)) && !isNaN(parseFloat(form.longitude)) && (
+            {dialogReady && form.latitude && form.longitude && !isNaN(parseFloat(form.latitude)) && !isNaN(parseFloat(form.longitude)) && (
               <Box
                 sx={{
                   border: 1,
@@ -714,14 +975,11 @@ export default function LocationsPage() {
               </Box>
             )}
 
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
-              <TextField
-                label="Elevation (m)"
-                type="number"
-                value={form.elevation_m}
-                onChange={(e) => set("elevation_m", e.target.value)}
-                slotProps={{ htmlInput: { step: "any" } }}
-              />
+            {/* Display / Location Timezone pair. Location Timezone is locked
+                by default — clicking the disabled field opens a warning; the
+                overlay is absolutely positioned over the Autocomplete so the
+                two fields stay the same size and aligned. */}
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, alignItems: "start" }}>
               <Autocomplete
                 options={timezones}
                 value={timezones.includes(form.timezone) ? form.timezone : null}
@@ -731,7 +989,7 @@ export default function LocationsPage() {
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    label="Timezone"
+                    label="Display Timezone"
                     required
                     error={Boolean(errors.timezone)}
                     helperText={errors.timezone}
@@ -740,13 +998,38 @@ export default function LocationsPage() {
                 size="small"
                 freeSolo
               />
+              <Box sx={{ position: "relative" }}>
+                <Autocomplete
+                  options={timezones}
+                  value={timezones.includes(form.geo_timezone) ? form.geo_timezone : null}
+                  inputValue={form.geo_timezone}
+                  onInputChange={(_e, value) => set("geo_timezone", value)}
+                  onChange={(_e, value) => set("geo_timezone", value ?? "")}
+                  disabled={!geoTzEditable}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Location Timezone"
+                      helperText="Used for astronomy (sunset/sunrise, darkness, moon)."
+                    />
+                  )}
+                  size="small"
+                  freeSolo
+                />
+                {!geoTzEditable && (
+                  <Box
+                    onClick={() => setGeoTzWarningOpen(true)}
+                    sx={{
+                      position: "absolute",
+                      inset: 0,
+                      cursor: "pointer",
+                      zIndex: 1,
+                    }}
+                    aria-label="Unlock Location Timezone"
+                  />
+                )}
+              </Box>
             </Box>
-            {geoTimezone && (
-              <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
-                Coordinates timezone: <strong>{geoTimezone}</strong>
-                {geoTimezone !== form.timezone && " (differs from display timezone)"}
-              </Typography>
-            )}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField
                 label="Bortle Class"
@@ -780,16 +1063,7 @@ export default function LocationsPage() {
                   if (val && !form.bortle_class) {
                     const s = parseFloat(val);
                     if (!isNaN(s)) {
-                      let b = 9;
-                      if (s >= 21.99) b = 1;
-                      else if (s >= 21.69) b = 2;
-                      else if (s >= 21.25) b = 3;
-                      else if (s >= 20.49) b = 4;
-                      else if (s >= 19.50) b = 5;
-                      else if (s >= 18.94) b = 6;
-                      else if (s >= 18.38) b = 7;
-                      else if (s >= 17.80) b = 8;
-                      set("bortle_class", String(b));
+                      set("bortle_class", String(sqmToBortle(s)));
                     }
                   }
                 }}
@@ -799,20 +1073,32 @@ export default function LocationsPage() {
               />
             </Box>
             {form.latitude && form.longitude && !isNaN(parseFloat(form.latitude)) && !isNaN(parseFloat(form.longitude)) && (
-              <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
-                Don't know your Bortle class?{" "}
-                <Typography
-                  variant="caption"
-                  component="a"
-                  href={`https://clearoutside.com/forecast/${parseFloat(form.latitude).toFixed(2)}/${parseFloat(form.longitude).toFixed(2)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  sx={{ color: "primary.main", textDecoration: "none", "&:hover": { textDecoration: "underline" } }}
+              <>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<SearchIcon />}
+                  onClick={handleClearOutsideLookup}
+                  disabled={lookingUpClearOutside}
+                  sx={{ alignSelf: "flex-start", mt: -1 }}
                 >
-                  Look it up on Clear Outside
+                  {lookingUpClearOutside ? "Looking up..." : "Lookup Bortle / SQM"}
+                </Button>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
+                  Scrapes the{" "}
+                  <Typography
+                    variant="caption"
+                    component="a"
+                    href={`https://clearoutside.com/forecast/${parseFloat(form.latitude).toFixed(2)}/${parseFloat(form.longitude).toFixed(2)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{ color: "primary.main", textDecoration: "none", "&:hover": { textDecoration: "underline" } }}
+                  >
+                    Clear Outside forecast page
+                  </Typography>
+                  {" "}to pre-fill Bortle class and SQM.
                 </Typography>
-                {" "} — Bortle class and SQM are shown at the top of the forecast page.
-              </Typography>
+              </>
             )}
 
             {/* Seeing Conditions */}
@@ -882,6 +1168,41 @@ export default function LocationsPage() {
           <Button onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button>
           <Button onClick={handleSave} variant="contained" disabled={saving}>
             {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Location Timezone unlock warning */}
+      <Dialog
+        open={geoTzWarningOpen}
+        onClose={() => setGeoTzWarningOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Edit Location Timezone?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            The Location Timezone is auto-derived from this location's
+            coordinates and is used for astronomy calculations — sunset and
+            sunrise times, twilight windows, and moon phase/altitude. It
+            should always match the timezone of the physical location.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Change it only if the auto-detected value is wrong (e.g. near a
+            timezone boundary where the lookup picks the neighbour).
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setGeoTzWarningOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={() => {
+              setGeoTzEditable(true);
+              setGeoTzWarningOpen(false);
+            }}
+          >
+            Enable Editing
           </Button>
         </DialogActions>
       </Dialog>
@@ -968,5 +1289,183 @@ export default function LocationsPage() {
         </Alert>
       </Snackbar>
     </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Detail panel — all location fields + embedded OSM map
+// ---------------------------------------------------------------------------
+
+function DetailField({ label, value }: { label: string; value: React.ReactNode }) {
+  if (value == null || value === "") return null;
+  return (
+    <Box sx={{ display: "flex", gap: 1 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ minWidth: 150, flexShrink: 0 }}>
+        {label}
+      </Typography>
+      <Typography variant="body2" component="div">
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
+function LocationDetail({
+  loc,
+  units,
+  onClose,
+}: {
+  loc: Location;
+  units: WeatherUnits;
+  onClose: () => void;
+}) {
+  const address = [loc.city, loc.state_province, loc.country]
+    .filter(Boolean)
+    .join(", ");
+  const addressLine = address || null;
+
+  const seeingRange =
+    loc.typical_seeing_low_arcsec != null && loc.typical_seeing_high_arcsec != null
+      ? `${loc.typical_seeing_low_arcsec}\u2033\u2013${loc.typical_seeing_high_arcsec}\u2033`
+      : loc.typical_seeing_low_arcsec != null
+      ? `${loc.typical_seeing_low_arcsec}\u2033 (best)`
+      : loc.typical_seeing_high_arcsec != null
+      ? `${loc.typical_seeing_high_arcsec}\u2033 (worst)`
+      : null;
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mt: 2, position: "relative" }}>
+      <IconButton
+        size="small"
+        onClick={onClose}
+        sx={{ position: "absolute", top: 8, right: 8 }}
+        aria-label="Close detail"
+      >
+        <CloseIcon fontSize="small" />
+      </IconButton>
+
+      <Typography variant="h6" sx={{ mb: 1.5 }}>
+        {loc.name}
+        {loc.is_default && (
+          <Chip
+            label="Default"
+            size="small"
+            color="warning"
+            variant="outlined"
+            sx={{ ml: 1, verticalAlign: "middle" }}
+          />
+        )}
+      </Typography>
+
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+          gap: 3,
+        }}
+      >
+        {/* Left column — details */}
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+          <DetailField
+            label="Latitude"
+            value={
+              <>
+                {loc.latitude_display}
+                {"  "}
+                <Typography component="span" variant="body2" color="text.secondary">
+                  ({loc.latitude.toFixed(6)})
+                </Typography>
+              </>
+            }
+          />
+          <DetailField
+            label="Longitude"
+            value={
+              <>
+                {loc.longitude_display}
+                {"  "}
+                <Typography component="span" variant="body2" color="text.secondary">
+                  ({loc.longitude.toFixed(6)})
+                </Typography>
+              </>
+            }
+          />
+          <DetailField
+            label="Elevation"
+            value={formatElevationBoth(loc.elevation_m, units)}
+          />
+          <DetailField
+            label="Display Timezone"
+            value={
+              <>
+                {loc.timezone}
+                {formatUtcOffset(loc.timezone) && (
+                  <>
+                    {"  "}
+                    <Typography component="span" variant="body2" color="text.secondary">
+                      ({formatUtcOffset(loc.timezone)})
+                    </Typography>
+                  </>
+                )}
+              </>
+            }
+          />
+          <DetailField
+            label="Location Timezone"
+            value={
+              loc.geo_timezone ? (
+                <>
+                  {loc.geo_timezone}
+                  {formatUtcOffset(loc.geo_timezone) && (
+                    <>
+                      {"  "}
+                      <Typography component="span" variant="body2" color="text.secondary">
+                        ({formatUtcOffset(loc.geo_timezone)})
+                      </Typography>
+                    </>
+                  )}
+                </>
+              ) : null
+            }
+          />
+          <DetailField label="Address" value={addressLine} />
+          <DetailField label="Bortle Class" value={loc.bortle_class} />
+          <DetailField
+            label="SQM"
+            value={
+              loc.sqm_reading != null ? `${loc.sqm_reading} mag/arcsec\u00B2` : null
+            }
+          />
+          <DetailField label="Typical Seeing" value={seeingRange} />
+          {loc.notes && (
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                Notes
+              </Typography>
+              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                {loc.notes}
+              </Typography>
+            </Box>
+          )}
+        </Box>
+
+        {/* Right column — map */}
+        <Box
+          sx={{
+            border: 1,
+            borderColor: "divider",
+            borderRadius: 1,
+            overflow: "hidden",
+            minHeight: 260,
+          }}
+        >
+          <iframe
+            title={`Map of ${loc.name}`}
+            src={`https://www.openstreetmap.org/export/embed.html?bbox=${loc.longitude - 0.05},${loc.latitude - 0.03},${loc.longitude + 0.05},${loc.latitude + 0.03}&layer=mapnik&marker=${loc.latitude},${loc.longitude}`}
+            style={{ width: "100%", height: "100%", border: "none", minHeight: 260 }}
+          />
+        </Box>
+      </Box>
+    </Paper>
   );
 }

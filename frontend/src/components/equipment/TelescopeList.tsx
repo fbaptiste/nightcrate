@@ -162,6 +162,7 @@ export default function TelescopeList({ mineOnly = false }: { mineOnly?: boolean
       fetchFn={fetchTelescopes}
       deleteFn={deleteTelescope}
       columns={columns}
+      dropdownFilterFields={["optical_design"]}
       getItemName={(t) => t.model_name}
       FormDialog={TelescopeForm}
       renderDetail={(item) => (

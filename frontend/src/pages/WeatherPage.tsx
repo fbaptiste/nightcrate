@@ -8,6 +8,7 @@ import Typography from "@mui/material/Typography";
 import { fetchLocations, type Location } from "../api/locations";
 import type { WeatherUnits } from "../api/settings";
 import { useSettingsStore } from "../stores/settingsStore";
+import { setActivity } from "../api/client";
 import { fetchForecast, fetchHourlyDetail } from "../api/weather";
 import LocationSelector from "../components/weather/LocationSelector";
 import DailyCard from "../components/weather/DailyCard";
@@ -94,8 +95,15 @@ export default function WeatherPage() {
 
   // Reset selectedDate when location changes
   const handleLocationChange = (id: number) => {
+    const loc = locations.find((l) => l.id === id);
+    if (loc) setActivity(`Weather — ${loc.name}`);
     setLocationId(id);
     setSelectedDate(null);
+  };
+
+  const handleDaySelect = (date: string) => {
+    setActivity(`Weather — Hourly ${date}`);
+    setSelectedDate(date);
   };
 
   return (
@@ -170,7 +178,7 @@ export default function WeatherPage() {
               selected={selectedDate === day.date}
               moonIncluded={includeMoon ?? true}
               units={units}
-              onClick={() => setSelectedDate(day.date)}
+              onClick={() => handleDaySelect(day.date)}
             />
           ))}
         </Box>

@@ -1,6 +1,9 @@
 """NightCrate FastAPI application."""
 
 import logging
+import os
+import sqlite3
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from nightcrate.api import (
     aberration,
     admin,
+    calculators,
     diagnostics,
     equipment,
     files,
@@ -30,13 +34,42 @@ from nightcrate.db.session import get_db, set_db_path
 _LOG_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+# Tuple constants for narrow except clauses — sidesteps the py314
+# ruff-format bug documented in CLAUDE.md "Gotchas".
+_SEED_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
+    sqlite3.Error,
+    OSError,
+    ValueError,
+)
+_MAINT_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
+    sqlite3.Error,
+    OSError,
+)
+
 
 def _configure_logging() -> None:
-    """Add timestamps to uvicorn's log output."""
+    """Add timestamps to uvicorn's log output and emit nightcrate logs at DEBUG."""
     formatter = logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         for handler in logging.getLogger(name).handlers:
             handler.setFormatter(formatter)
+
+    # The `nightcrate.*` namespace loggers have no handlers by default, so
+    # INFO/DEBUG records disappear (root's default threshold is WARNING).
+    # Attach our own stdout handler with matching format. Level reads from
+    # the NIGHTCRATE_LOG_LEVEL env var (default INFO); set it to DEBUG when
+    # you need verbose traces. Disable propagation to avoid double-printing.
+    level_name = os.getenv("NIGHTCRATE_LOG_LEVEL", "INFO").upper()
+    level = logging.getLevelNamesMapping().get(level_name, logging.INFO)
+    nc_logger = logging.getLogger("nightcrate")
+    nc_logger.setLevel(level)
+    nc_logger.propagate = False
+    if not any(getattr(h, "_nightcrate_handler", False) for h in nc_logger.handlers):
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.NOTSET)
+        handler.setFormatter(formatter)
+        handler._nightcrate_handler = True  # type: ignore[attr-defined]
+        nc_logger.addHandler(handler)
 
 
 @asynccontextmanager
@@ -55,7 +88,6 @@ async def lifespan(app: FastAPI):
         # and aiosqlite's internal connection has thread restrictions.
         try:
             import importlib.resources
-            import sqlite3
 
             from nightcrate.db.session import get_db_path
             from nightcrate.seed_loader import load_all
@@ -69,33 +101,37 @@ async def lifespan(app: FastAPI):
                 sync_conn.commit()
             finally:
                 sync_conn.close()
-        except Exception:
+        except _SEED_EXPECTED_ERRS:
+            # Expected failure modes — bad CSV data, FK mismatch, file missing.
+            # Coding bugs (TypeError, NameError, AttributeError) now crash loudly.
             logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
-            # Non-fatal — don't block startup
-        # Purge stale aberration cache entries
+        # Load app settings + set GPU flag up front so the purges below
+        # don't depend on each other's side effects.
+        app_settings = await get_settings()
+        set_gpu_enabled(app_settings.gpu_acceleration)
+        startup_logger = logging.getLogger("nightcrate.startup")
+
+        # Purge stale aberration cache entries (non-fatal).
         try:
-            app_settings = await get_settings()
-            set_gpu_enabled(app_settings.gpu_acceleration)
-            ttl_days = app_settings.aberration_cache_ttl_days
             async with get_db() as conn:
                 await conn.execute(
                     "DELETE FROM aberration_analysis WHERE created_at < datetime('now', ?)",
-                    (f"-{ttl_days} days",),
+                    (f"-{app_settings.aberration_cache_ttl_days} days",),
                 )
                 await conn.commit()
-        except Exception:
-            pass  # Non-fatal — don't block startup
-        # Purge stale weather cache entries
+        except _MAINT_EXPECTED_ERRS:
+            startup_logger.warning("aberration cache purge failed", exc_info=True)
+
+        # Purge stale weather cache entries (non-fatal).
         try:
-            weather_ttl = app_settings.weather_cache_ttl_hours
             async with get_db() as conn:
                 await conn.execute(
                     "DELETE FROM weather_cache WHERE fetched_at < datetime('now', ?)",
-                    (f"-{weather_ttl * 2} hours",),
+                    (f"-{app_settings.weather_cache_ttl_hours * 2} hours",),
                 )
                 await conn.commit()
-        except Exception:
-            pass  # Non-fatal — don't block startup
+        except _MAINT_EXPECTED_ERRS:
+            startup_logger.warning("weather cache purge failed", exc_info=True)
 
     yield
 
@@ -164,6 +200,16 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Calculators",
+        "description": (
+            "Stand-alone astronomy and optical calculators: coordinate formatting "
+            "and parsing, RA/Dec ⇄ Alt/Az transforms, local sidereal time, tonight's "
+            "astronomy summary, angular/linear/temperature unit conversions, pixel "
+            "scale, field of view, raw file-size estimates, Kasten-Young airmass, "
+            "and SQM / Bortle / NELM sky-quality conversions."
+        ),
+    },
+    {
         "name": "Weather",
         "description": (
             "Weather forecast and imaging quality predictions. Provides 7-day "
@@ -217,6 +263,7 @@ app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
 app.include_router(locations.router)
 app.include_router(rigs.router)
+app.include_router(calculators.router)
 app.include_router(weather.router)
 app.include_router(settings.router)
 app.include_router(admin.router)

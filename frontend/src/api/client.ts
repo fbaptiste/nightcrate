@@ -20,10 +20,23 @@ export function getActivity(): string | null {
 // Fetch wrapper
 // ---------------------------------------------------------------------------
 
+/** HTTP headers can only contain ISO-8859-1 code points. Normalize common
+ *  typographic characters to ASCII and strip anything still out of range so
+ *  Headers.set() never throws on user-supplied names (rigs, locations, …). */
+function sanitizeActivityLabel(label: string): string {
+  return label
+    .replace(/[\u2012-\u2015]/g, "-") // figure/en/em/horizontal-bar dashes
+    .replace(/[\u2018\u2019]/g, "'") // curly single quotes
+    .replace(/[\u201C\u201D]/g, '"') // curly double quotes
+    .replace(/\u2026/g, "...") // ellipsis
+    // eslint-disable-next-line no-control-regex
+    .replace(/[^\x00-\xFF]/g, "");
+}
+
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
   if (_activity) {
-    headers.set("X-Activity", _activity);
+    headers.set("X-Activity", sanitizeActivityLabel(_activity));
   }
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
   if (!res.ok) {

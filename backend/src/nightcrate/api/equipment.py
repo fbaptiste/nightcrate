@@ -2,6 +2,12 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
+from nightcrate.api._common import (
+    bool_fields,
+    integrity_guard,
+    row_to_dict,
+    strip_seed,
+)
 from nightcrate.api.equipment_models import (
     CameraCreate,
     CameraResponse,
@@ -103,36 +109,16 @@ async def get_mine_counts():
     async with get_db() as conn:
         for response_key, table in mapping.items():
             row = await (
-                await conn.execute(f"SELECT COUNT(*) FROM {table} WHERE is_mine = 1")
+                await conn.execute(f"SELECT COUNT(*) FROM {table} WHERE is_mine = 1")  # nosec B608 - table name from internal allow-list, not user input
             ).fetchone()
             counts[response_key] = row[0] if row else 0
     return counts
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _row_to_dict(row) -> dict:
-    """Convert an aiosqlite.Row to a plain dict."""
-    return dict(row)
-
-
-def _bool_fields(d: dict, *keys) -> dict:
-    """Convert integer 0/1 fields to Python bools for Pydantic."""
-    for k in keys:
-        if k in d and d[k] is not None:
-            d[k] = bool(d[k])
-    return d
-
-
-_SEED_KEYS = ("source", "seed_key", "seed_hash")
-
-
-def _strip_seed(d: dict) -> dict:
-    """Remove seed-tracking columns from a response dict."""
-    for k in _SEED_KEYS:
-        d.pop(k, None)
-    return d
+_row_to_dict = row_to_dict
+_bool_fields = bool_fields
+_strip_seed = strip_seed
 
 
 _RESTORABLE_TABLES = frozenset(
@@ -163,7 +149,7 @@ _RESTORABLE_TABLES = frozenset(
 
 async def _get_or_404(conn, table: str, row_id: int, label: str = "Item") -> dict:
     """Fetch a single row by ID or raise 404."""
-    row = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))
+    row = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))  # nosec B608 - table name from internal allow-list, not user input
     result = await row.fetchone()
     if result is None:
         raise HTTPException(status_code=404, detail=f"{label} not found: {row_id}")
@@ -181,7 +167,7 @@ async def restore_item(table_name: str, item_id: int):
     async with get_db() as conn:
         await _get_or_404(conn, table_name, item_id, table_name)
         await conn.execute(
-            f"UPDATE {table_name} SET active = 1 WHERE id = ?",
+            f"UPDATE {table_name} SET active = 1 WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
             (item_id,),
         )
         await conn.commit()
@@ -197,7 +183,7 @@ async def list_manufacturers(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM manufacturer {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM manufacturer {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -213,18 +199,12 @@ async def get_manufacturer(manufacturer_id: int):
 @lookup_router.post("/manufacturer", response_model=ManufacturerResponse, status_code=201)
 async def create_manufacturer(body: ManufacturerCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Manufacturer already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO manufacturer (name, website, notes) VALUES (?, ?, ?)",
                 (body.name, body.website, body.notes),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Manufacturer already exists: {body.name}"
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "manufacturer", row_id, "Manufacturer"),
@@ -241,16 +221,12 @@ async def update_manufacturer(manufacturer_id: int, body: ManufacturerUpdate):
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [manufacturer_id]
-        try:
+        with integrity_guard(conflict_detail="Manufacturer name already exists"):
             await conn.execute(
-                f"UPDATE manufacturer SET {set_clause} WHERE id = ?",
+                f"UPDATE manufacturer SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Manufacturer name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "manufacturer", manufacturer_id, "Manufacturer"),
             "active",
@@ -278,7 +254,7 @@ async def list_optical_designs(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM optical_design {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM optical_design {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -294,18 +270,12 @@ async def get_optical_design(optical_design_id: int):
 @lookup_router.post("/optical-design", response_model=OpticalDesignResponse, status_code=201)
 async def create_optical_design(body: OpticalDesignCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Optical design already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO optical_design (name, description) VALUES (?, ?)",
                 (body.name, body.description),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Optical design already exists: {body.name}"
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "optical_design", row_id, "Optical design"),
@@ -322,16 +292,12 @@ async def update_optical_design(optical_design_id: int, body: OpticalDesignUpdat
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [optical_design_id]
-        try:
+        with integrity_guard(conflict_detail="Optical design name already exists"):
             await conn.execute(
-                f"UPDATE optical_design SET {set_clause} WHERE id = ?",
+                f"UPDATE optical_design SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Optical design name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "optical_design", optical_design_id, "Optical design"),
             "active",
@@ -359,7 +325,7 @@ async def list_mount_types(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM mount_type {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM mount_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -375,18 +341,12 @@ async def get_mount_type(mount_type_id: int):
 @lookup_router.post("/mount-type", response_model=MountTypeResponse, status_code=201)
 async def create_mount_type(body: MountTypeCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Mount type already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO mount_type (name, description) VALUES (?, ?)",
                 (body.name, body.description),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Mount type already exists: {body.name}"
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "mount_type", row_id, "Mount type"),
@@ -403,16 +363,12 @@ async def update_mount_type(mount_type_id: int, body: MountTypeUpdate):
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [mount_type_id]
-        try:
+        with integrity_guard(conflict_detail="Mount type name already exists"):
             await conn.execute(
-                f"UPDATE mount_type SET {set_clause} WHERE id = ?",
+                f"UPDATE mount_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Mount type name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "mount_type", mount_type_id, "Mount type"),
             "active",
@@ -440,7 +396,7 @@ async def list_connection_interfaces(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM connection_interface {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM connection_interface {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -463,19 +419,12 @@ async def get_connection_interface(connection_interface_id: int):
 )
 async def create_connection_interface(body: ConnectionInterfaceCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Connection interface already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO connection_interface (name, category, notes) VALUES (?, ?, ?)",
                 (body.name, body.category, body.notes),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Connection interface already exists: {body.name}",
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "connection_interface", row_id, "Connection interface"),
@@ -499,18 +448,12 @@ async def update_connection_interface(
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [connection_interface_id]
-        try:
+        with integrity_guard(conflict_detail="Connection interface name already exists"):
             await conn.execute(
-                f"UPDATE connection_interface SET {set_clause} WHERE id = ?",
+                f"UPDATE connection_interface SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail="Connection interface name already exists"
-                )
-            raise
         return _bool_fields(
             await _get_or_404(
                 conn, "connection_interface", connection_interface_id, "Connection interface"
@@ -542,7 +485,7 @@ async def list_connector_sizes(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM connector_size {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM connector_size {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -558,18 +501,12 @@ async def get_connector_size(connector_size_id: int):
 @lookup_router.post("/connector-size", response_model=ConnectorSizeResponse, status_code=201)
 async def create_connector_size(body: ConnectorSizeCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Connector size already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO connector_size (name, diameter_mm, notes) VALUES (?, ?, ?)",
                 (body.name, body.diameter_mm, body.notes),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Connector size already exists: {body.name}"
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "connector_size", row_id, "Connector size"),
@@ -586,16 +523,12 @@ async def update_connector_size(connector_size_id: int, body: ConnectorSizeUpdat
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [connector_size_id]
-        try:
+        with integrity_guard(conflict_detail="Connector size name already exists"):
             await conn.execute(
-                f"UPDATE connector_size SET {set_clause} WHERE id = ?",
+                f"UPDATE connector_size SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Connector size name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "connector_size", connector_size_id, "Connector size"),
             "active",
@@ -623,7 +556,7 @@ async def list_filter_sizes(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_size {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM filter_size {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -639,18 +572,12 @@ async def get_filter_size(filter_size_id: int):
 @lookup_router.post("/filter-size", response_model=FilterSizeResponse, status_code=201)
 async def create_filter_size(body: FilterSizeCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Filter size already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO filter_size (name, description) VALUES (?, ?)",
                 (body.name, body.description),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Filter size already exists: {body.name}"
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "filter_size", row_id, "Filter size"),
@@ -667,16 +594,12 @@ async def update_filter_size(filter_size_id: int, body: FilterSizeUpdate):
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [filter_size_id]
-        try:
+        with integrity_guard(conflict_detail="Filter size name already exists"):
             await conn.execute(
-                f"UPDATE filter_size SET {set_clause} WHERE id = ?",
+                f"UPDATE filter_size SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Filter size name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "filter_size", filter_size_id, "Filter size"),
             "active",
@@ -704,7 +627,7 @@ async def list_form_factors(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM form_factor {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM form_factor {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -720,18 +643,12 @@ async def get_form_factor(form_factor_id: int):
 @lookup_router.post("/form-factor", response_model=FormFactorResponse, status_code=201)
 async def create_form_factor(body: FormFactorCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Form factor already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO form_factor (name, description) VALUES (?, ?)",
                 (body.name, body.description),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Form factor already exists: {body.name}"
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "form_factor", row_id, "Form factor"),
@@ -748,16 +665,12 @@ async def update_form_factor(form_factor_id: int, body: FormFactorUpdate):
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [form_factor_id]
-        try:
+        with integrity_guard(conflict_detail="Form factor name already exists"):
             await conn.execute(
-                f"UPDATE form_factor SET {set_clause} WHERE id = ?",
+                f"UPDATE form_factor SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Form factor name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "form_factor", form_factor_id, "Form factor"),
             "active",
@@ -785,7 +698,7 @@ async def list_focuser_types(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM focuser_type {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM focuser_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -801,18 +714,12 @@ async def get_focuser_type(focuser_type_id: int):
 @lookup_router.post("/focuser-type", response_model=FocuserTypeResponse, status_code=201)
 async def create_focuser_type(body: FocuserTypeCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Focuser type already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO focuser_type (name, notes) VALUES (?, ?)",
                 (body.name, body.notes),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Focuser type already exists: {body.name}"
-                )
-            raise
         row_id = cursor.lastrowid
         return _bool_fields(
             await _get_or_404(conn, "focuser_type", row_id, "Focuser type"),
@@ -829,16 +736,12 @@ async def update_focuser_type(focuser_type_id: int, body: FocuserTypeUpdate):
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [focuser_type_id]
-        try:
+        with integrity_guard(conflict_detail="Focuser type name already exists"):
             await conn.execute(
-                f"UPDATE focuser_type SET {set_clause} WHERE id = ?",
+                f"UPDATE focuser_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Focuser type name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type"),
             "active",
@@ -866,7 +769,7 @@ async def list_filter_types(
 ):
     async with get_db() as conn:
         where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_type {where} ORDER BY name")
+        rows = await conn.execute(f"SELECT * FROM filter_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
         return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
 
 
@@ -882,18 +785,12 @@ async def get_filter_type(filter_type_id: int):
 @lookup_router.post("/filter-type", response_model=FilterTypeResponse, status_code=201)
 async def create_filter_type(body: FilterTypeCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Filter type already exists: {body.name}"):
             cursor = await conn.execute(
                 "INSERT INTO filter_type (name, display_name, description) VALUES (?, ?, ?)",
                 (body.name, body.display_name, body.description),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409, detail=f"Filter type already exists: {body.name}"
-                )
-            raise
         return _bool_fields(
             await _get_or_404(conn, "filter_type", cursor.lastrowid, "Filter type"),
             "active",
@@ -909,16 +806,12 @@ async def update_filter_type(filter_type_id: int, body: FilterTypeUpdate):
             return _bool_fields(existing, "active")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [filter_type_id]
-        try:
+        with integrity_guard(conflict_detail="Filter type name already exists"):
             await conn.execute(
-                f"UPDATE filter_type SET {set_clause} WHERE id = ?",
+                f"UPDATE filter_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                 values,
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="Filter type name already exists")
-            raise
         return _bool_fields(
             await _get_or_404(conn, "filter_type", filter_type_id, "Filter type"),
             "active",
@@ -986,7 +879,7 @@ async def get_sensor(sensor_id: int):
 @router.post("/sensor", response_model=SensorResponse, status_code=201)
 async def create_sensor(body: SensorCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Sensor already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO sensor (
                     manufacturer_id, model_name, sensor_type,
@@ -1015,13 +908,6 @@ async def create_sensor(body: SensorCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Sensor already exists: {body.model_name}",
-                )
-            raise
         sensor_id = cursor.lastrowid
         row = await conn.execute(f"{_SENSOR_JOIN_SQL} WHERE s.id = ?", (sensor_id,))
         result = await row.fetchone()
@@ -1040,18 +926,14 @@ async def update_sensor(sensor_id: int, body: SensorUpdate):
                 updates["dual_gain"] = int(updates["dual_gain"])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [sensor_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Sensor (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE sensor SET {set_clause} WHERE id = ?",
+                    f"UPDATE sensor SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409, detail="Sensor (manufacturer, model_name) already exists"
-                    )
-                raise
 
         row = await conn.execute(f"{_SENSOR_JOIN_SQL} WHERE s.id = ?", (sensor_id,))
         result = await row.fetchone()
@@ -1141,7 +1023,7 @@ async def list_cameras(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_camera_response(conn, _row_to_dict(r)))
@@ -1158,7 +1040,7 @@ async def get_camera(camera_id: int):
 @router.post("/camera", response_model=CameraResponse, status_code=201)
 async def create_camera(body: CameraCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Camera already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO camera (
                     manufacturer_id, sensor_id, guide_sensor_id, connector_size_id,
@@ -1194,13 +1076,6 @@ async def create_camera(body: CameraCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Camera already exists: {body.model_name}",
-                )
-            raise
         camera_id = cursor.lastrowid
         for iface_id in body.interface_ids:
             await conn.execute(
@@ -1224,18 +1099,14 @@ async def update_camera(camera_id: int, body: CameraUpdate):
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [camera_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Camera (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE camera SET {set_clause} WHERE id = ?",
+                    f"UPDATE camera SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409, detail="Camera (manufacturer, model_name) already exists"
-                    )
-                raise
         if interface_ids is not None:
             await conn.execute("DELETE FROM camera_interface WHERE camera_id = ?", (camera_id,))
             for iface_id in interface_ids:
@@ -1336,7 +1207,7 @@ async def list_telescopes(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM telescope {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM telescope {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -1354,7 +1225,7 @@ async def get_telescope(telescope_id: int):
 @router.post("/telescope", response_model=TelescopeResponse, status_code=201)
 async def create_telescope(body: TelescopeCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Telescope already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO telescope (
                     manufacturer_id, optical_design_id, model_name,
@@ -1375,13 +1246,6 @@ async def create_telescope(body: TelescopeCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Telescope already exists: {body.model_name}",
-                )
-            raise
         telescope_id = cursor.lastrowid
         for cs_id in body.connector_size_ids:
             await conn.execute(
@@ -1404,19 +1268,14 @@ async def update_telescope(telescope_id: int, body: TelescopeUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [telescope_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Telescope (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE telescope SET {set_clause} WHERE id = ?",
+                    f"UPDATE telescope SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Telescope (manufacturer, model_name) already exists",
-                    )
-                raise
         if connector_size_ids is not None:
             await conn.execute(
                 "DELETE FROM telescope_connector WHERE telescope_id = ?", (telescope_id,)
@@ -1465,7 +1324,16 @@ async def toggle_telescope_mine(telescope_id: int, body: MineToggle):
 async def create_telescope_configuration(telescope_id: int, body: TelescopeConfigurationCreate):
     async with get_db() as conn:
         await _get_or_404(conn, "telescope", telescope_id, "Telescope")
-        try:
+        with integrity_guard(
+            conflict_detail=(
+                f"Configuration name already exists for this telescope: {body.config_name}"
+            ),
+            constraint_map={
+                "idx_telescope_configuration_one_native": (
+                    "This telescope already has a native configuration (is_native=true)."
+                ),
+            },
+        ):
             cursor = await conn.execute(
                 """INSERT INTO telescope_configuration (
                     telescope_id, config_name, accessory_name, reduction_factor,
@@ -1487,21 +1355,6 @@ async def create_telescope_configuration(telescope_id: int, body: TelescopeConfi
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            exc_str = str(exc)
-            if "UNIQUE" in exc_str and "idx_telescope_configuration_one_native" in exc_str:
-                raise HTTPException(
-                    status_code=409,
-                    detail="This telescope already has a native configuration (is_native=true).",  # noqa: E501
-                )
-            if "UNIQUE" in exc_str:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Configuration name already exists for this telescope: {body.config_name}"
-                    ),
-                )
-            raise
         config_id = cursor.lastrowid
         row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
         result = await row.fetchone()
@@ -1535,25 +1388,19 @@ async def update_telescope_configuration(
                 updates["is_native"] = int(updates["is_native"])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [config_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Configuration name already exists for this telescope",
+                constraint_map={
+                    "idx_telescope_configuration_one_native": (
+                        "This telescope already has a native configuration (is_native=true)."
+                    ),
+                },
+            ):
                 await conn.execute(
-                    f"UPDATE telescope_configuration SET {set_clause} WHERE id = ?",
+                    f"UPDATE telescope_configuration SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                exc_str = str(exc)
-                if "UNIQUE" in exc_str and "idx_telescope_configuration_one_native" in exc_str:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="This telescope already has a native configuration (is_native=true).",  # noqa: E501
-                    )
-                if "UNIQUE" in exc_str:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Configuration name already exists for this telescope",
-                    )
-                raise
         row = await conn.execute("SELECT * FROM telescope_configuration WHERE id = ?", (config_id,))
         result = await row.fetchone()
         cfg = _bool_fields(_row_to_dict(result), "active", "is_native")
@@ -1653,7 +1500,7 @@ async def list_filters(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_filter_response(conn, _row_to_dict(r)))
@@ -1670,7 +1517,7 @@ async def get_filter(filter_id: int):
 @router.post("/filter", response_model=FilterResponse, status_code=201)
 async def create_filter(body: FilterCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Filter already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO filter (
                     manufacturer_id, filter_type_id, model_name,
@@ -1687,13 +1534,6 @@ async def create_filter(body: FilterCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Filter already exists: {body.model_name}",
-                )
-            raise
         filter_id = cursor.lastrowid
         row = await _get_or_404(conn, "filter", filter_id, "Filter")
         return await _build_filter_response(conn, row)
@@ -1709,19 +1549,14 @@ async def update_filter(filter_id: int, body: FilterUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [filter_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Filter (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE filter SET {set_clause} WHERE id = ?",
+                    f"UPDATE filter SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Filter (manufacturer, model_name) already exists",
-                    )
-                raise
         row = await _get_or_404(conn, "filter", filter_id, "Filter")
         return await _build_filter_response(conn, row)
 
@@ -1811,7 +1646,7 @@ async def update_filter_passband(filter_id: int, passband_id: int, body: FilterP
             values = list(updates.values()) + [passband_id]
             try:
                 await conn.execute(
-                    f"UPDATE filter_passband SET {set_clause} WHERE id = ?",
+                    f"UPDATE filter_passband SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
@@ -1872,7 +1707,7 @@ async def _build_size_option_response(conn, so_row) -> dict:
 async def create_filter_size_option(filter_id: int, body: FilterSizeOptionCreate):
     async with get_db() as conn:
         await _get_or_404(conn, "filter", filter_id, "Filter")
-        try:
+        with integrity_guard(conflict_detail="This filter already offers that size"):
             cursor = await conn.execute(
                 """INSERT INTO filter_size_option (
                     filter_id, filter_size_id, mounted_thickness_mm, notes
@@ -1880,10 +1715,6 @@ async def create_filter_size_option(filter_id: int, body: FilterSizeOptionCreate
                 (filter_id, body.filter_size_id, body.mounted_thickness_mm, body.notes),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(status_code=409, detail="This filter already offers that size")
-            raise
         row = await conn.execute(
             "SELECT * FROM filter_size_option WHERE id = ?", (cursor.lastrowid,)
         )
@@ -1907,17 +1738,12 @@ async def update_filter_size_option(filter_id: int, option_id: int, body: Filter
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [option_id]
-            try:
+            with integrity_guard(conflict_detail="This filter already offers that size"):
                 await conn.execute(
-                    f"UPDATE filter_size_option SET {set_clause} WHERE id = ?", values
+                    f"UPDATE filter_size_option SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
+                    values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409, detail="This filter already offers that size"
-                    )
-                raise
         row = await conn.execute("SELECT * FROM filter_size_option WHERE id = ?", (option_id,))
         return await _build_size_option_response(conn, await row.fetchone())
 
@@ -1987,7 +1813,7 @@ async def list_mounts(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_mount_response(conn, _row_to_dict(r)))
@@ -2004,7 +1830,7 @@ async def get_mount(mount_id: int):
 @router.post("/mount", response_model=MountResponse, status_code=201)
 async def create_mount(body: MountCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Mount already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO mount (
                     manufacturer_id, mount_type_id, model_name,
@@ -2028,13 +1854,6 @@ async def create_mount(body: MountCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Mount already exists: {body.model_name}",
-                )
-            raise
         mount_id = cursor.lastrowid
         for iface_id in body.interface_ids:
             await conn.execute(
@@ -2058,19 +1877,12 @@ async def update_mount(mount_id: int, body: MountUpdate):
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [mount_id]
-            try:
+            with integrity_guard(conflict_detail="Mount (manufacturer, model_name) already exists"):
                 await conn.execute(
-                    f"UPDATE mount SET {set_clause} WHERE id = ?",
+                    f"UPDATE mount SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Mount (manufacturer, model_name) already exists",
-                    )
-                raise
         if interface_ids is not None:
             await conn.execute("DELETE FROM mount_interface WHERE mount_id = ?", (mount_id,))
             for iface_id in interface_ids:
@@ -2156,7 +1968,7 @@ async def list_focusers(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM focuser {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM focuser {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2174,7 +1986,7 @@ async def get_focuser(focuser_id: int):
 @router.post("/focuser", response_model=FocuserResponse, status_code=201)
 async def create_focuser(body: FocuserCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Focuser already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO focuser (
                     manufacturer_id, focuser_type_id, model_name, motorized, travel_range_mm,
@@ -2197,13 +2009,6 @@ async def create_focuser(body: FocuserCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Focuser already exists: {body.model_name}",
-                )
-            raise
         focuser_id = cursor.lastrowid
         for iface_id in body.interface_ids:
             await conn.execute(
@@ -2227,19 +2032,14 @@ async def update_focuser(focuser_id: int, body: FocuserUpdate):
                     updates[bool_field] = int(updates[bool_field])
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [focuser_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Focuser (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE focuser SET {set_clause} WHERE id = ?",
+                    f"UPDATE focuser SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Focuser (manufacturer, model_name) already exists",
-                    )
-                raise
         if interface_ids is not None:
             await conn.execute("DELETE FROM focuser_interface WHERE focuser_id = ?", (focuser_id,))
             for iface_id in interface_ids:
@@ -2343,7 +2143,7 @@ async def list_filter_wheels(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM filter_wheel {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM filter_wheel {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2361,7 +2161,7 @@ async def get_filter_wheel(filter_wheel_id: int):
 @router.post("/filter-wheel", response_model=FilterWheelResponse, status_code=201)
 async def create_filter_wheel(body: FilterWheelCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Filter wheel already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO filter_wheel (
                     manufacturer_id, filter_size_id, camera_side_connector_id,
@@ -2382,13 +2182,6 @@ async def create_filter_wheel(body: FilterWheelCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Filter wheel already exists: {body.model_name}",
-                )
-            raise
         filter_wheel_id = cursor.lastrowid
         for iface_id in body.interface_ids:
             await conn.execute(
@@ -2411,19 +2204,14 @@ async def update_filter_wheel(filter_wheel_id: int, body: FilterWheelUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [filter_wheel_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Filter wheel (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE filter_wheel SET {set_clause} WHERE id = ?",
+                    f"UPDATE filter_wheel SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Filter wheel (manufacturer, model_name) already exists",
-                    )
-                raise
         if interface_ids is not None:
             await conn.execute(
                 "DELETE FROM filter_wheel_interface WHERE filter_wheel_id = ?", (filter_wheel_id,)
@@ -2509,7 +2297,7 @@ async def list_oags(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY is_mine DESC, model_name")
+        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_oag_response(conn, _row_to_dict(r)))
@@ -2526,7 +2314,7 @@ async def get_oag(oag_id: int):
 @router.post("/oag", response_model=OagResponse, status_code=201)
 async def create_oag(body: OagCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"OAG already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO oag (
                     manufacturer_id, imaging_side_connector_id, guide_camera_connector_id,
@@ -2547,13 +2335,6 @@ async def create_oag(body: OagCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"OAG already exists: {body.model_name}",
-                )
-            raise
         oag_id = cursor.lastrowid
         row = await _get_or_404(conn, "oag", oag_id, "OAG")
         return await _build_oag_response(conn, row)
@@ -2569,19 +2350,12 @@ async def update_oag(oag_id: int, body: OagUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [oag_id]
-            try:
+            with integrity_guard(conflict_detail="OAG (manufacturer, model_name) already exists"):
                 await conn.execute(
-                    f"UPDATE oag SET {set_clause} WHERE id = ?",
+                    f"UPDATE oag SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="OAG (manufacturer, model_name) already exists",
-                    )
-                raise
         row = await _get_or_404(conn, "oag", oag_id, "OAG")
         return await _build_oag_response(conn, row)
 
@@ -2648,7 +2422,7 @@ async def list_guide_scopes(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM guide_scope {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM guide_scope {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2666,7 +2440,7 @@ async def get_guide_scope(guide_scope_id: int):
 @router.post("/guide-scope", response_model=GuideScopeResponse, status_code=201)
 async def create_guide_scope(body: GuideScopeCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Guide scope already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO guide_scope (
                     manufacturer_id, guide_camera_connector_id, model_name,
@@ -2685,13 +2459,6 @@ async def create_guide_scope(body: GuideScopeCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Guide scope already exists: {body.model_name}",
-                )
-            raise
         guide_scope_id = cursor.lastrowid
         row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
         return await _build_guide_scope_response(conn, row)
@@ -2707,19 +2474,14 @@ async def update_guide_scope(guide_scope_id: int, body: GuideScopeUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [guide_scope_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Guide scope (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE guide_scope SET {set_clause} WHERE id = ?",
+                    f"UPDATE guide_scope SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Guide scope (manufacturer, model_name) already exists",
-                    )
-                raise
         row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
         return await _build_guide_scope_response(conn, row)
 
@@ -2786,7 +2548,7 @@ async def list_computers(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM computer {where} ORDER BY is_mine DESC, model_name"
+            f"SELECT * FROM computer {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -2804,7 +2566,7 @@ async def get_computer(computer_id: int):
 @router.post("/computer", response_model=ComputerResponse, status_code=201)
 async def create_computer(body: ComputerCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(conflict_detail=f"Computer already exists: {body.model_name}"):
             cursor = await conn.execute(
                 """INSERT INTO computer (
                     manufacturer_id, form_factor_id, model_name, notes, source_url, is_mine
@@ -2819,13 +2581,6 @@ async def create_computer(body: ComputerCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Computer already exists: {body.model_name}",
-                )
-            raise
         computer_id = cursor.lastrowid
         row = await _get_or_404(conn, "computer", computer_id, "Computer")
         return await _build_computer_response(conn, row)
@@ -2841,19 +2596,14 @@ async def update_computer(computer_id: int, body: ComputerUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [computer_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Computer (manufacturer, model_name) already exists"
+            ):
                 await conn.execute(
-                    f"UPDATE computer SET {set_clause} WHERE id = ?",
+                    f"UPDATE computer SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Computer (manufacturer, model_name) already exists",
-                    )
-                raise
         row = await _get_or_404(conn, "computer", computer_id, "Computer")
         return await _build_computer_response(conn, row)
 
@@ -2914,7 +2664,7 @@ async def list_software(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY is_mine DESC, name")
+        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY is_mine DESC, name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_software_response(conn, _row_to_dict(r)))
@@ -2931,7 +2681,10 @@ async def get_software(software_id: int):
 @router.post("/software", response_model=SoftwareResponse, status_code=201)
 async def create_software(body: SoftwareCreate):
     async with get_db() as conn:
-        try:
+        with integrity_guard(
+            conflict_detail=f"Software already exists: {body.name}",
+            check_detail=f"Invalid category: {body.category}",
+        ):
             cursor = await conn.execute(
                 """INSERT INTO software (
                     manufacturer_id, name, category, website, notes, is_mine
@@ -2946,19 +2699,6 @@ async def create_software(body: SoftwareCreate):
                 ),
             )
             await conn.commit()
-        except Exception as exc:
-            exc_str = str(exc)
-            if "UNIQUE" in exc_str:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Software already exists: {body.name}",
-                )
-            if "CHECK" in exc_str:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Invalid category: {body.category}",
-                )
-            raise
         software_id = cursor.lastrowid
         row = await _get_or_404(conn, "software", software_id, "Software")
         return await _build_software_response(conn, row)
@@ -2974,25 +2714,15 @@ async def update_software(software_id: int, body: SoftwareUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [software_id]
-            try:
+            with integrity_guard(
+                conflict_detail="Software (manufacturer, name) already exists",
+                check_detail=f"Invalid category: {updates.get('category')}",
+            ):
                 await conn.execute(
-                    f"UPDATE software SET {set_clause} WHERE id = ?",
+                    f"UPDATE software SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
                 await conn.commit()
-            except Exception as exc:
-                exc_str = str(exc)
-                if "UNIQUE" in exc_str:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Software (manufacturer, name) already exists",
-                    )
-                if "CHECK" in exc_str:
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"Invalid category: {updates.get('category')}",
-                    )
-                raise
         row = await _get_or_404(conn, "software", software_id, "Software")
         return await _build_software_response(conn, row)
 

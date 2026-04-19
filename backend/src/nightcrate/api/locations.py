@@ -1,13 +1,19 @@
 """Location management API — CRUD for imaging locations."""
 
+import html
 import logging
+import re
 from zoneinfo import available_timezones
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, field_validator, model_validator
 from timezonefinder import TimezoneFinder
 
+from nightcrate.api._common import bool_fields, integrity_guard, row_to_dict
 from nightcrate.db.session import get_db
+from nightcrate.services.coordinate_format import format_latitude, format_longitude
+from nightcrate.services.http_client import get as http_get
 
 logger = logging.getLogger(__name__)
 
@@ -60,70 +66,23 @@ def _get_timezones() -> list[str]:
 # ── Models ────────────────────────────────────────────────────────────────────
 
 
-class LocationCreate(BaseModel):
-    name: str
-    latitude: float
-    longitude: float
-    elevation_m: float | None = None
-    timezone: str
-    bortle_class: int | None = None
-    sqm_reading: float | None = None
-    city: str | None = None
-    state_province: str | None = None
-    country: str | None = None
-    postal_code: str | None = None
-    is_default: bool = False
-    notes: str | None = None
-    typical_seeing_low_arcsec: float | None = None
-    typical_seeing_high_arcsec: float | None = None
+class _LocationBase(BaseModel):
+    """Shared fields + validators for LocationCreate and LocationUpdate.
 
-    @field_validator("latitude")
-    @classmethod
-    def check_lat(cls, v: float) -> float:
-        if not -90 <= v <= 90:
-            raise ValueError("Latitude must be between -90 and 90")
-        return v
+    All fields are optional here; the subclasses narrow the required set
+    (Create needs name/lat/lon/timezone; Update keeps everything optional).
+    Validators live here once instead of being copy-pasted into both models.
+    """
 
-    @field_validator("longitude")
-    @classmethod
-    def check_lon(cls, v: float) -> float:
-        if not -180 <= v <= 180:
-            raise ValueError("Longitude must be between -180 and 180")
-        return v
-
-    @field_validator("bortle_class")
-    @classmethod
-    def check_bortle(cls, v: int | None) -> int | None:
-        if v is not None and not 1 <= v <= 9:
-            raise ValueError("Bortle class must be between 1 and 9")
-        return v
-
-    @field_validator("sqm_reading")
-    @classmethod
-    def check_sqm(cls, v: float | None) -> float | None:
-        if v is not None and not 10 <= v <= 25:
-            raise ValueError("SQM reading must be between 10 and 25")
-        return v
-
-    @model_validator(mode="after")
-    def check_seeing_range(self) -> LocationCreate:
-        low = self.typical_seeing_low_arcsec
-        high = self.typical_seeing_high_arcsec
-        if low is not None and low <= 0:
-            raise ValueError("typical_seeing_low_arcsec must be positive")
-        if high is not None and high <= 0:
-            raise ValueError("typical_seeing_high_arcsec must be positive")
-        if low is not None and high is not None and low > high:
-            raise ValueError("typical_seeing_low_arcsec must be \u2264 typical_seeing_high_arcsec")
-        return self
-
-
-class LocationUpdate(BaseModel):
     name: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     elevation_m: float | None = None
     timezone: str | None = None
+    # Geographic/location timezone. Normally auto-derived from coordinates
+    # server-side; callers can override — if provided, the server uses the
+    # supplied value verbatim.
+    geo_timezone: str | None = None
     bortle_class: int | None = None
     sqm_reading: float | None = None
     city: str | None = None
@@ -164,7 +123,7 @@ class LocationUpdate(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def check_seeing_range(self) -> LocationUpdate:
+    def check_seeing_range(self) -> _LocationBase:
         low = self.typical_seeing_low_arcsec
         high = self.typical_seeing_high_arcsec
         if low is not None and low <= 0:
@@ -176,11 +135,29 @@ class LocationUpdate(BaseModel):
         return self
 
 
+class LocationCreate(_LocationBase):
+    """Required: name, latitude, longitude, timezone. Everything else optional."""
+
+    name: str
+    latitude: float
+    longitude: float
+    timezone: str
+    is_default: bool = False
+
+
+class LocationUpdate(_LocationBase):
+    """All fields optional — standard PATCH-style partial update."""
+
+
 class LocationResponse(BaseModel):
     id: int
     name: str
     latitude: float
     longitude: float
+    # Sexagesimal display strings derived from latitude/longitude,
+    # formatted like "33deg27'54'' N" / "112deg04'26'' W".
+    latitude_display: str
+    longitude_display: str
     elevation_m: float | None
     timezone: str
     geo_timezone: str | None
@@ -193,6 +170,7 @@ class LocationResponse(BaseModel):
     typical_seeing_low_arcsec: float | None
     typical_seeing_high_arcsec: float | None
     is_default: bool
+    active: bool = True
     notes: str | None
     created_at: str
     updated_at: str
@@ -201,15 +179,18 @@ class LocationResponse(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+def _add_sexagesimal_display(d: dict) -> None:
+    if d.get("latitude") is not None:
+        d["latitude_display"] = format_latitude(d["latitude"])
+    if d.get("longitude") is not None:
+        d["longitude_display"] = format_longitude(d["longitude"])
+
+
 def _row_to_dict(row) -> dict:
-    return dict(row)
+    return row_to_dict(row, extra_fn=_add_sexagesimal_display)
 
 
-def _bool_fields(d: dict, *keys: str) -> dict:
-    for k in keys:
-        if k in d:
-            d[k] = bool(d[k])
-    return d
+_bool_fields = bool_fields
 
 
 async def _ensure_single_default(conn, new_default_id: int) -> None:
@@ -239,15 +220,74 @@ async def get_geo_timezone(
     return {"geo_timezone": geo_tz}
 
 
+# ── Clear Outside scraper ────────────────────────────────────────────────────
+#
+# The public forecast page embeds the estimated sky quality in a single
+# text fragment of the form:
+#   "Est. Sky Quality: 21.69 Magnitude. Class 2 Bortle. ... mcd/m2 Brightness."
+# We fetch that page, strip tags, and extract the two numbers by regex.
+# If Clear Outside changes the layout the regex will simply miss and the
+# endpoint returns nulls — caller decides what to do.
+_CLEAR_OUTSIDE_URL = "https://clearoutside.com/forecast/{lat:.2f}/{lon:.2f}"
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+_SQM_RE = re.compile(r"Sky Quality:\s*([\d.]+)\s*Magnitude", re.IGNORECASE)
+_BORTLE_RE = re.compile(r"Class\s+(\d+)\s+Bortle", re.IGNORECASE)
+
+
+@router.get("/clear-outside")
+async def lookup_clear_outside(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+):
+    """Scrape the Clear Outside forecast page for estimated Bortle class and SQM."""
+    url = _CLEAR_OUTSIDE_URL.format(lat=latitude, lon=longitude)
+    try:
+        response = await http_get(
+            url,
+            headers={"User-Agent": "NightCrate/1.0"},
+            label=f"clear_outside[{latitude:.2f},{longitude:.2f}]",
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("Clear Outside lookup failed for %s,%s: %s", latitude, longitude, exc)
+        raise HTTPException(status_code=502, detail="Could not reach Clear Outside") from exc
+
+    # Strip tags, decode HTML entities (page uses `&nbsp;` between labels
+    # and values), then collapse whitespace. `html.unescape` turns `&nbsp;`
+    # into U+00A0, which Python's `\s` matches.
+    text = _WHITESPACE_RE.sub(
+        " ",
+        html.unescape(_HTML_TAG_RE.sub(" ", response.text)),
+    )
+    sqm_match = _SQM_RE.search(text)
+    bortle_match = _BORTLE_RE.search(text)
+    sqm = float(sqm_match.group(1)) if sqm_match else None
+    bortle = int(bortle_match.group(1)) if bortle_match else None
+    logger.info(
+        "[clear-outside] %s,%s → sqm=%s bortle=%s",
+        latitude,
+        longitude,
+        sqm,
+        bortle,
+    )
+    return {"sqm": sqm, "bortle": bortle, "source_url": url}
+
+
 @router.get("", response_model=list[LocationResponse])
-async def list_locations():
-    """List all locations, default first."""
+async def list_locations(
+    include_retired: bool = Query(False, description="Include soft-deleted locations"),
+):
+    """List locations, default first. Soft-deleted rows are hidden unless
+    `include_retired=true`."""
     async with get_db() as conn:
-        rows = await conn.execute("SELECT * FROM location ORDER BY is_default DESC, name")
+        where = "" if include_retired else "WHERE active = 1"
+        rows = await conn.execute(f"SELECT * FROM location {where} ORDER BY is_default DESC, name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             d = _row_to_dict(r)
-            _bool_fields(d, "is_default")
+            _bool_fields(d, "is_default", "active")
             results.append(d)
         return results
 
@@ -256,12 +296,14 @@ async def list_locations():
 async def get_default_location():
     """Get the default location, or null if none set."""
     async with get_db() as conn:
-        row = await conn.execute("SELECT * FROM location WHERE is_default = 1 LIMIT 1")
+        row = await conn.execute(
+            "SELECT * FROM location WHERE is_default = 1 AND active = 1 LIMIT 1"
+        )
         result = await row.fetchone()
         if result is None:
             return None
         d = _row_to_dict(result)
-        _bool_fields(d, "is_default")
+        _bool_fields(d, "is_default", "active")
         return d
 
 
@@ -281,7 +323,11 @@ async def get_location(location_id: int):
 @router.post("", response_model=LocationResponse, status_code=201)
 async def create_location(body: LocationCreate):
     """Create a new location."""
-    geo_tz = _lookup_geo_timezone(body.latitude, body.longitude)
+    geo_tz = (
+        body.geo_timezone
+        if body.geo_timezone is not None
+        else _lookup_geo_timezone(body.latitude, body.longitude)
+    )
 
     async with get_db() as conn:
         # If this is the first location or is_default is set, enforce single default
@@ -289,7 +335,7 @@ async def create_location(body: LocationCreate):
         count = (await count_row.fetchone())["cnt"]
         make_default = body.is_default or count == 0
 
-        try:
+        with integrity_guard(conflict_detail=f"Location already exists: {body.name}"):
             cursor = await conn.execute(
                 """INSERT INTO location (
                     name, latitude, longitude, elevation_m, timezone, geo_timezone,
@@ -316,13 +362,6 @@ async def create_location(body: LocationCreate):
                     body.notes,
                 ),
             )
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Location already exists: {body.name}",
-                )
-            raise
 
         new_id = cursor.lastrowid
         if make_default:
@@ -350,8 +389,9 @@ async def update_location(location_id: int, body: LocationUpdate):
         if "name" in updates and updates["name"]:
             updates["name"] = updates["name"].strip()
 
-        # Recompute geo_timezone if coordinates changed
-        if "latitude" in updates or "longitude" in updates:
+        # Recompute geo_timezone if coordinates changed AND caller didn't
+        # override it explicitly. An explicit value in the request wins.
+        if ("latitude" in updates or "longitude" in updates) and "geo_timezone" not in updates:
             lat = updates.get("latitude", existing_row["latitude"])
             lon = updates.get("longitude", existing_row["longitude"])
             updates["geo_timezone"] = _lookup_geo_timezone(lat, lon)
@@ -359,18 +399,11 @@ async def update_location(location_id: int, body: LocationUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [location_id]
-            try:
+            with integrity_guard(conflict_detail="Location name already exists"):
                 await conn.execute(
-                    f"UPDATE location SET {set_clause} WHERE id = ?",
+                    f"UPDATE location SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Location name already exists",
-                    )
-                raise
 
         if updates.get("is_default") == 1:
             await _ensure_single_default(conn, location_id)
@@ -406,7 +439,10 @@ async def set_default_location(location_id: int):
 
 @router.delete("/{location_id}")
 async def delete_location(location_id: int):
-    """Delete a location. If it was the default, the next location becomes default."""
+    """Soft-delete a location (`active = 0`). If it was the default, promote
+    the next active location. The row is preserved so future session records
+    that reference this location_id don't orphan — retrieve with
+    `?include_retired=true` and restore via the `/restore` endpoint."""
     async with get_db() as conn:
         existing = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
         row = await existing.fetchone()
@@ -414,11 +450,16 @@ async def delete_location(location_id: int):
             raise HTTPException(status_code=404, detail="Location not found")
 
         was_default = bool(row["is_default"])
-        await conn.execute("DELETE FROM location WHERE id = ?", (location_id,))
+        await conn.execute(
+            "UPDATE location SET active = 0, is_default = 0 WHERE id = ?",
+            (location_id,),
+        )
 
-        # If we deleted the default, promote the first remaining location
+        # Promote the first remaining ACTIVE location to default if needed.
         if was_default:
-            next_row = await conn.execute("SELECT id FROM location ORDER BY name LIMIT 1")
+            next_row = await conn.execute(
+                "SELECT id FROM location WHERE active = 1 ORDER BY name LIMIT 1"
+            )
             next_loc = await next_row.fetchone()
             if next_loc:
                 await conn.execute(
@@ -428,3 +469,21 @@ async def delete_location(location_id: int):
 
         await conn.commit()
     return {"ok": True}
+
+
+@router.post("/{location_id}/restore", response_model=LocationResponse)
+async def restore_location(location_id: int):
+    """Restore a soft-deleted location (`active = 1`)."""
+    async with get_db() as conn:
+        existing = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        if await existing.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Location not found")
+        await conn.execute(
+            "UPDATE location SET active = 1 WHERE id = ?",
+            (location_id,),
+        )
+        await conn.commit()
+        row = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        d = _row_to_dict(await row.fetchone())
+        _bool_fields(d, "is_default", "active")
+        return d

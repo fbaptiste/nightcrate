@@ -97,8 +97,10 @@ async def test_update_location(client):
 
 
 @pytest.mark.anyio
-async def test_delete_location(client):
-    """Create a location, delete it, verify gone."""
+async def test_delete_location_soft_deletes(client):
+    """Delete marks `active=0` but keeps the row — the default list hides it,
+    GET by id still returns it (so callers can show retired items when they
+    want to), and `?include_retired=true` puts it back in the list."""
     create = await client.post("/api/locations", json=SAMPLE_LOCATION)
     loc_id = create.json()["id"]
 
@@ -106,8 +108,34 @@ async def test_delete_location(client):
     assert del_resp.status_code == 200
     assert del_resp.json()["ok"] is True
 
+    # GET by id: still returns (active=False).
     get_resp = await client.get(f"/api/locations/{loc_id}")
-    assert get_resp.status_code == 404
+    assert get_resp.status_code == 200
+    assert get_resp.json()["active"] is False
+
+    # Default list: excludes retired rows.
+    list_default = await client.get("/api/locations")
+    assert all(row["id"] != loc_id for row in list_default.json())
+
+    # With include_retired: shows it.
+    list_all = await client.get("/api/locations?include_retired=true")
+    assert any(row["id"] == loc_id for row in list_all.json())
+
+
+@pytest.mark.anyio
+async def test_restore_location(client):
+    """Soft-deleted location can be restored via POST /{id}/restore."""
+    create = await client.post("/api/locations", json=SAMPLE_LOCATION)
+    loc_id = create.json()["id"]
+    await client.delete(f"/api/locations/{loc_id}")
+
+    restore = await client.post(f"/api/locations/{loc_id}/restore")
+    assert restore.status_code == 200
+    assert restore.json()["active"] is True
+
+    # And the default list contains it again.
+    list_default = await client.get("/api/locations")
+    assert any(row["id"] == loc_id for row in list_default.json())
 
 
 @pytest.mark.anyio

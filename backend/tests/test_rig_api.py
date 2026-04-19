@@ -68,11 +68,11 @@ async def _seed_equipment():
         )
         guide_sensor = (await (await conn.execute("SELECT last_insert_rowid()")).fetchone())[0]
 
-        # Camera
+        # Camera — synthetic test name that won't collide with seed data.
         await conn.execute(
             "INSERT INTO camera (manufacturer_id, sensor_id, model_name, cooled, "
             "tilt_adapter, has_usb_hub, active, source) "
-            "VALUES (?, ?, 'ASI 2600MM Pro', 1, 0, 0, 1, 'user')",
+            "VALUES (?, ?, 'TEST Imaging Camera', 1, 0, 0, 1, 'user')",
             (zwo_mfr, sensor),
         )
         camera = (await (await conn.execute("SELECT last_insert_rowid()")).fetchone())[0]
@@ -81,7 +81,7 @@ async def _seed_equipment():
         await conn.execute(
             "INSERT INTO camera (manufacturer_id, sensor_id, model_name, cooled, "
             "tilt_adapter, has_usb_hub, active, source) "
-            "VALUES (?, ?, 'ASI 178MM', 0, 0, 0, 1, 'user')",
+            "VALUES (?, ?, 'TEST Guide Camera', 0, 0, 0, 1, 'user')",
             (zwo_mfr, guide_sensor),
         )
         guide_camera = (await (await conn.execute("SELECT last_insert_rowid()")).fetchone())[0]
@@ -199,7 +199,7 @@ async def test_create_rig(client, equipment):
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "C11 Deep Sky"
-    assert data["camera_name"] == "ASI 2600MM Pro"
+    assert data["camera_name"] == "TEST Imaging Camera"
     assert data["telescope_config_name"] == "0.7x Reducer"
     assert data["calculators"]["image_scale_arcsec_per_pixel"] == pytest.approx(0.396, abs=0.001)
 

@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.12.0
+**NightCrate version:** 0.12.1
 
 ## Overview
 
@@ -115,13 +115,14 @@ CREATE TABLE filter_alias (filter_id FK, alias TEXT UNIQUE, source CHECK, confir
 -- USER DATA (NOT seeded — do not author CSV files for these)
 -- ============================================================
 
--- Imaging locations (migration 0007, inline-edited in v0.12.0 to add typical_seeing_*).
+-- Imaging locations (migrations 0007, 0012; inline-edited in v0.12.0).
 CREATE TABLE location (name TEXT UNIQUE, latitude REAL, longitude REAL, elevation_m REAL,
     timezone TEXT, geo_timezone TEXT,
     bortle_class INT CHECK (1..9), sqm_reading REAL CHECK (10..25),
     typical_seeing_low_arcsec REAL, typical_seeing_high_arcsec REAL,
     city TEXT, state_province TEXT, country TEXT, postal_code TEXT,
-    is_default BOOL, notes TEXT);
+    is_default BOOL, active BOOL,  -- v0.12.1 soft-delete
+    notes TEXT);
 
 -- Rigs (migration 0009; v0.12.0). User-composed equipment templates.
 CREATE TABLE rig (name TEXT UNIQUE, description TEXT,

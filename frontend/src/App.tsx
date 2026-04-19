@@ -11,6 +11,7 @@ import { EquipmentPage } from "@/pages/EquipmentPage";
 import { AdminPage } from "@/pages/AdminPage";
 import LocationsPage from "@/pages/LocationsPage";
 import RigsPage from "@/pages/RigsPage";
+import CalculatorsPage from "@/pages/CalculatorsPage";
 import WeatherPage from "./pages/WeatherPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { fetchHealth } from "@/api/admin";
@@ -28,6 +29,8 @@ const router = createBrowserRouter([
       { path: "locations", element: <LocationsPage /> },
       { path: "rigs", element: <RigsPage /> },
       { path: "weather", element: <WeatherPage /> },
+      { path: "calculators", element: <CalculatorsPage /> },
+      { path: "calculators/:calcId", element: <CalculatorsPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "api-docs", element: <ApiDocsPage /> },

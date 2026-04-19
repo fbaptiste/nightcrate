@@ -14,6 +14,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import RigCard from "@/components/rigs/RigCard";
 import RigFormDialog from "@/components/rigs/RigFormDialog";
 import CalculatorPanel from "@/components/rigs/CalculatorPanel";
+import { setActivity } from "@/api/client";
 import {
   fetchRigs,
   cloneRig,
@@ -66,7 +67,11 @@ export default function RigsPage() {
   };
 
   const handleSelect = (rig: Rig) => {
-    setSelectedRig((prev) => (prev?.id === rig.id ? null : rig));
+    setSelectedRig((prev) => {
+      const next = prev?.id === rig.id ? null : rig;
+      setActivity(next ? `Rigs — ${next.name}` : "Rigs");
+      return next;
+    });
   };
 
   const handleClone = async (id: number) => {

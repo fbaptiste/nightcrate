@@ -73,6 +73,7 @@ export default function CameraList({ mineOnly = false }: { mineOnly?: boolean } 
       fetchFn={fetchCameras}
       deleteFn={deleteCamera}
       columns={columns}
+      dropdownFilterFields={["sensor", "cooled"]}
       getItemName={(c) => c.model_name}
       FormDialog={CameraForm}
       renderDetail={(item) => (

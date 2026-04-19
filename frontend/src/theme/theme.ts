@@ -17,12 +17,15 @@ const sharedTypography = {
   caption: { fontSize: "0.75rem" },
 };
 
-const sharedComponents = {
+const makeCssBaseline = (colorScheme: "light" | "dark") => ({
   MuiCssBaseline: {
     styleOverrides: {
-      body: { margin: 0 },
+      body: { margin: 0, colorScheme },
     },
   },
+});
+
+const sharedComponents = {
   MuiButton: {
     styleOverrides: {
       root: {
@@ -84,6 +87,7 @@ export const lightTheme = createTheme({
     },
   },
   components: {
+    ...makeCssBaseline("light"),
     ...sharedComponents,
     MuiDrawer: {
       styleOverrides: {
@@ -122,6 +126,7 @@ export const darkTheme = createTheme({
     },
   },
   components: {
+    ...makeCssBaseline("dark"),
     ...sharedComponents,
     MuiDrawer: {
       styleOverrides: {

@@ -18,6 +18,7 @@ export interface Settings {
   weather_cache_ttl_hours: number;
   weather_moon_penalty: boolean;
   weather_units: WeatherUnits;
+  calculators_clock_order: string[];
 }
 
 export function fetchSettings(): Promise<Settings> {

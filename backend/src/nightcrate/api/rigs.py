@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
+from nightcrate.api._common import bool_fields, integrity_guard, row_to_dict
 from nightcrate.api.rig_models import (
     EquipmentOptionsOut,
     RigCalculators,
@@ -24,31 +25,22 @@ router = APIRouter(prefix="/api/rigs", tags=["Rigs"])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _row_to_dict(row) -> dict:
-    """Convert an aiosqlite.Row to a plain dict."""
-    return dict(row)
-
-
-def _bool_fields(d: dict, *keys: str) -> dict:
-    """Convert integer 0/1 fields to Python bools for Pydantic."""
-    for k in keys:
-        if k in d and d[k] is not None:
-            d[k] = bool(d[k])
-    return d
+_row_to_dict = row_to_dict
+_bool_fields = bool_fields
 
 
 async def _resolve_location(conn, location_id: int | None) -> dict | None:
     """Get specified location or default. Returns dict or None."""
     if location_id is not None:
-        row = await conn.execute("SELECT * FROM location WHERE id = ?", (location_id,))
+        row = await conn.execute(
+            "SELECT * FROM location WHERE id = ? AND active = 1", (location_id,)
+        )
         result = await row.fetchone()
         if result is None:
             raise HTTPException(status_code=404, detail="Location not found")
         return _row_to_dict(result)
     # Try default
-    row = await conn.execute("SELECT * FROM location WHERE is_default = 1 LIMIT 1")
+    row = await conn.execute("SELECT * FROM location WHERE is_default = 1 AND active = 1 LIMIT 1")
     result = await row.fetchone()
     return _row_to_dict(result) if result else None
 
@@ -99,7 +91,7 @@ async def _build_filter_slots(conn, rig_id: int) -> list[dict]:
     filter_ids = [s["filter_id"] for s in slots]
     placeholders = ",".join("?" * len(filter_ids))
     pb_rows = await conn.execute(
-        f"SELECT filter_id, line_name FROM filter_passband "
+        f"SELECT filter_id, line_name FROM filter_passband "  # nosec B608 - table name from internal allow-list, not user input
         f"WHERE filter_id IN ({placeholders}) ORDER BY filter_id, line_name",
         filter_ids,
     )
@@ -172,7 +164,7 @@ async def _check_warnings(conn, rig_data: dict) -> list[dict]:
     for field, table, label in equipment_checks:
         eq_id = rig_data.get(field)
         if eq_id is not None:
-            row = await conn.execute(f"SELECT active FROM {table} WHERE id = ?", (eq_id,))
+            row = await conn.execute(f"SELECT active FROM {table} WHERE id = ?", (eq_id,))  # nosec B608 - table name from internal allow-list, not user input
             result = await row.fetchone()
             if result and not result["active"]:
                 warnings.append({"field": field, "message": f"{label} is retired"})
@@ -351,6 +343,7 @@ async def _build_rig_response(
         "sensor_width_mm": rig_row.get("sensor_width_mm"),
         "sensor_height_mm": rig_row.get("sensor_height_mm"),
         "sensor_type": rig_row["sensor_type"],
+        "sensor_adc_bit_depth": rig_row.get("sensor_adc_bit_depth"),
         "filter_wheel_id": rig_row.get("filter_wheel_id"),
         "filter_wheel_name": rig_row.get("filter_wheel_name"),
         "filter_wheel_positions": rig_row.get("filter_wheel_positions"),
@@ -621,7 +614,7 @@ async def create_rig(body: RigCreate):
         if body.is_default:
             await _ensure_single_default(conn, -1)  # Clear all defaults temporarily
 
-        try:
+        with integrity_guard(conflict_detail=f"A rig with the name '{body.name}' already exists"):
             cursor = await conn.execute(
                 """INSERT INTO rig (
                     name, description, telescope_configuration_id, camera_id,
@@ -646,13 +639,6 @@ async def create_rig(body: RigCreate):
                     body.notes,
                 ),
             )
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"A rig with the name '{body.name}' already exists",
-                )
-            raise
 
         new_id = cursor.lastrowid
 
@@ -710,18 +696,11 @@ async def update_rig(rig_id: int, body: RigUpdate):
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [rig_id]
-            try:
+            with integrity_guard(conflict_detail="A rig with that name already exists"):
                 await conn.execute(
-                    f"UPDATE rig SET {set_clause} WHERE id = ?",
+                    f"UPDATE rig SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
-            except Exception as exc:
-                if "UNIQUE" in str(exc):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="A rig with that name already exists",
-                    )
-                raise
 
         # Replace filter slots if provided
         if filter_slots is not None:

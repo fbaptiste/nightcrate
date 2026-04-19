@@ -157,6 +157,7 @@ class RigOut(BaseModel):
     sensor_width_mm: float | None
     sensor_height_mm: float | None
     sensor_type: str
+    sensor_adc_bit_depth: int | None
     filter_wheel_id: int | None
     filter_wheel_name: str | None
     filter_wheel_positions: int | None

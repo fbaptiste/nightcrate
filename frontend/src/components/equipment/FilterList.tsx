@@ -86,6 +86,7 @@ export default function FilterList({ mineOnly = false }: { mineOnly?: boolean } 
       fetchFn={fetchFilters}
       deleteFn={deleteFilter}
       columns={columns}
+      dropdownFilterFields={["filter_type", "passbands"]}
       getItemName={(f) => f.model_name}
       FormDialog={FilterForm}
       renderDetail={(item) => (

@@ -21,6 +21,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.10.1 — Seed Data Population + UI Improvements + Locations](#v0101--seed-data-population--ui-improvements--locations) ✅
 - [v0.11.0 — Astronomy Weather Forecast](#v0110--astronomy-weather-forecast) ✅
 - [v0.12.0 — Rigs + My Equipment + Guide Calculators](#v0120--rigs--my-equipment--guide-calculators) ✅
+- [v0.12.1 — Calculators + Maintenance & Architectural Review](#v0121--calculators--maintenance--architectural-review) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -1709,6 +1710,92 @@ Specs: `docs/superpowers/specs/2026-04-15-rig-builder-design.md`, `2026-04-16-my
 - [x] New module coverage: `rig_calculators.py` 99%, `rig_models.py` 100%, `rigs.py` 90%, `equipment.py` 94% (overall project 94%)
 - [x] Edge-condition tests added for `image_binning` query validation, guiding-tolerance linear scaling with binning, update-rig duplicate-name 409 path, retired-equipment warnings, guide-scope missing focal length, guide-camera-without-path orphan warning, mine-flag preservation across re-seed, rating-band thresholds (excellent/good/marginal/poor), 6″/px scale-cap precedence
 - [x] Migration policy followed — pre-release inline edits to 0005 and 0007; added 0009 and 0010; seed CSVs unchanged
+
+---
+
+## v0.12.1 — Calculators + Maintenance & Architectural Review
+
+**Status:** Done
+**Branch:** `v0.12.1/maintenance-ui-polish`
+
+Two halves: a new Calculators mini-app (12 astronomer/astrophotographer
+utilities, each backed by an API endpoint so they're usable from any
+client), and a maintenance pass that actioned 13 of 25 findings from a
+full senior-engineer review of the Python backend + SQL schema.
+
+### Calculators feature
+
+- [x] Nav entry + routes under `/calculators[/:calcId]`, Equipment-style sidebar with four groups (Coordinates & Time, Angles & Distances, Imaging Math, Sky Conditions)
+- [x] 13 backend endpoints under `/api/calculators/*`: lat/long sexagesimal (forward + reverse), RA/Dec ↔ Alt/Az (astropy SkyCoord + AltAz transform, location-aware), sidereal time, tonight, angular unit conversion, linear unit conversion, pixel scale, FOV, file size, airmass (Kasten-Young), SQM/Bortle/NELM, temperature
+- [x] Shared `CalculatorLocationBar` — location-aware calculators (RA/Dec↔Alt/Az, LST, Tonight) dropdown-select any saved Location, default to the `is_default` row
+- [x] 12 React calculator components, all consuming the backend API (no client-side math beyond live tick for clocks)
+- [x] Drag-to-reorder Clocks view (dnd-kit) with the chosen order persisted to the `settings` table
+- [x] Coordinate-format service (`services/coordinate_format.py`) with sexagesimal formatter used by Locations sexagesimal display fields
+- [x] Two additional clocks: local time for the selected Location's Display Timezone and Location Timezone
+
+### Settings table redesigned (KV)
+
+- [x] Migration 0011 — `settings(id, data JSON)` singleton reshaped into `settings(key, value_json, updated_at)` key-value table
+- [x] `core/config.py` — Pydantic `Settings` still the source of truth; load path merges KV rows + skips bad JSON + falls back to defaults on ValidationError
+- [x] `test_config.py` rewritten for the new schema — 14 tests including corrupt-single-row, unknown-key-ignored, type-drift-returns-defaults, empty-table, upsert-not-duplicating, updated_at-refresh, composite and null round-trips
+- [x] Settings page — new "Forecast cache" row showing row count + KB with Clear All button
+- [x] `DELETE /api/weather/cache` + `GET /api/weather/cache/stats` endpoints
+
+### Locations polish
+
+- [x] Clear Outside Bortle/SQM scraper (`GET /api/locations/clear-outside`) — regex-extracts `Est. Sky Quality: NN Magnitude. Class N Bortle` from the forecast HTML; NightCrate stores SQM and derives Bortle from it
+- [x] Sexagesimal lat/lon display in detail panel + live editor helperText; decimal in parentheses in the muted text.secondary gray
+- [x] Elevation shown in the user's preferred unit (ft for imperial, m for metric) with the other unit parenthesised in gray
+- [x] UTC offset shown next to each timezone in the detail panel
+- [x] Display Timezone / Location Timezone in the edit form, with Location Timezone locked behind a warning dialog (users rarely want to override the coordinate-derived value)
+- [x] Location detail slide-up panel with embedded OSM map, mount delayed until `onEntered` so the map tiles fill the final iframe width
+- [x] `geo_timezone` field on `LocationCreate` / `LocationUpdate` — user override wins over `timezonefinder` auto-derivation
+- [x] Location soft-delete: migration 0012 adds `active` column, restore endpoint, `?include_retired` list param. Pre-empts v0.13 session-ingestion landmine (hard-delete of a referenced location)
+
+### Activity console + logging
+
+- [x] `[open-meteo]` + `[weather-cache]` structured log lines; `NIGHTCRATE_LOG_LEVEL` env var (INFO default) drives verbosity
+- [x] `X-Activity` header sanitiser — non-Latin-1 chars (em-dashes, Unicode in rig names) stripped before `Headers.set()` so the header doesn't throw
+- [x] Page-level activity labels set in AppShell on route change; per-page action labels on Weather (location + date), Rigs (rig open), Equipment (sub-category)
+- [x] Activity Console close-X added to the dialog title
+- [x] Forecast endpoint fires all three Open-Meteo sources (weather + PWV + AOD) concurrently via `asyncio.gather`
+
+### Equipment
+
+- [x] Column-filter dropdowns on common manufacturer column + per-type (Cameras: sensor, cooled; OTA: optical design; Filters: type, passbands; Mounts: type; Focusers: type, motorized; Filter Wheels: filter size, positions; Software: category)
+- [x] Camera model names get a space after ASI/QHY/ATR prefixes in the seed CSV (80 rows updated)
+
+### Admin
+
+- [x] Create-DB workflow auto-activates the new DB + reloads
+- [x] Database list alphabetical; active row inlined (no separate banner) with Activate/Remove disabled on the active row
+
+### Architectural review pass (13 of 25 findings actioned)
+
+- [x] `api/_common.py` — shared `row_to_dict`, `bool_fields`, `strip_seed`, `integrity_guard` context manager replacing ~44 `"UNIQUE" in str(exc)` sites via `sqlite_errorname` structured check
+- [x] `integrity_guard` extended with `constraint_map` (dispatch on partial-index name) and `check_detail` (for `SQLITE_CONSTRAINT_CHECK`); 4 special-case blocks in `equipment.py` (telescope native-config, software category) collapse into guarded `with` blocks
+- [x] `services/path_resolver.py` — `resolve_path`, `file_type`, `file_type_from_ext`, `detect_tiff_type_from_buf` moved out of `api/images.py`; `api/aberration.py` no longer imports privates from a sibling router
+- [x] `services/http_client.py` — uniform 30s timeout, one 500ms-backoff retry on transient failures (`TimeoutException`, `ConnectError`, 5xx), structured logging. All 4 outbound HTTP sites migrated
+- [x] `services/weather.py:NearestMatchIndex` — bisect-based O(log n) lookup over pre-parsed sorted timestamps; built once per forecast, reused across ~168 hour computations. Previous O(n) linear scan with per-call `datetime.fromisoformat` was ~100ms of wasted CPU per forecast
+- [x] `LocationBase` — Create/Update share field definitions + validators instead of duplicating 80 lines
+- [x] Startup maintenance blocks: silent `except Exception: pass` replaced with `logger.warning(exc_info=True)`; narrowed to `(sqlite3.Error, OSError)` tuple constant (sidesteps py314 ruff-format multi-exception bug); latent `app_settings` scoping bug fixed
+- [x] Seed-loader exception narrowed to `(sqlite3.Error, OSError, ValueError)` — coding bugs now crash loudly
+- [x] `api/images.py` — 8 bare `except Exception → HTTP 500` blocks gained `logger.exception(...)` so server bugs leave a traceback
+- [x] `idx_camera_guide_sensor` added to migration 0006 (inline, pre-release policy)
+- [x] README threat-model section documenting the single-user local-first posture
+
+### Skipped with rationale (documented in commit message of review batch)
+
+Items #3 (0011 transactional wrapping — yoyo already handles it), #4 (code-gen seed-tracking DDL), #5 (`rig_summary` view), #11 + #12 (`Depends(get_db)` refactor — no concrete forcing function), #17 (closed-vocab CHECK → lookup tables), #19 (composite sort indexes), #25 (`_build_calculators` indirection). #2 (equipment factory) explicitly deferred to a future branch — preparatory work (#1, #20) completed, so the next round starts from a stronger base.
+
+### v0.12.1 Completion Criteria
+
+- [x] All backend tests pass (1345 passed, 3 skipped)
+- [x] Ruff / format / bandit clean (bandit findings all pre-existing B608 false positives for Pydantic-driven dynamic SET clauses); frontend builds
+- [x] Coverage: `core/config.py` 100%, `services/weather.py` 100%, `services/coordinate_format.py` 100%, `services/calculators.py` 99%, `api/calculators.py` 96%, `api/locations.py` 92%, `api/weather.py` 84%
+- [x] 127-test calculators edge-cases suite, 15-test Clear Outside scraper suite, 24-test coordinate format suite, 5-test weather cache suite
+- [x] New migrations: 0011 (settings KV), 0012 (location soft-delete); in-place pre-release edits to 0006
+- [x] Dependency additions: @dnd-kit/core + /sortable + /utilities (MIT) for Clocks drag-to-reorder; registered in README + PLAN
 
 ---
 
@@ -3429,6 +3516,7 @@ Evaluated libraries for potential use across NightCrate. Every library must pass
 | Zustand | MIT | Frontend state management |
 | TanStack Query | MIT | Frontend data fetching |
 | react-router-dom | MIT | Frontend routing |
+| @dnd-kit/core, @dnd-kit/sortable, @dnd-kit/utilities | MIT | Accessible drag-and-drop primitives (Calculators clock reorder; candidate for other reorderable UI) |
 | Vite | MIT | Frontend build tooling |
 | TypeScript | Apache 2.0 | Frontend type system |
 

@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.12.0
+**NightCrate version:** 0.12.1
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -717,7 +717,7 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 | Table | Purpose |
 |-------|---------|
-| `location` | User-defined observing locations (lat/lon, elevation, display timezone, geo_timezone, Bortle, SQM, typical_seeing_low_arcsec, typical_seeing_high_arcsec) |
+| `location` | User-defined observing locations (lat/lon, elevation, display timezone, geo_timezone, Bortle, SQM, typical_seeing_low_arcsec, typical_seeing_high_arcsec). Soft-delete via `active=0` (migration 0012) — pre-empts future session-ingestion references. |
 | `weather_cache` | Cached API responses (forecast, ECMWF PWV, AOD) with TTL-based expiry |
 
 ### v0.12.0 — Rigs (3 tables + 1 view)

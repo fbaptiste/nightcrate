@@ -11,6 +11,7 @@ import Typography from "@mui/material/Typography";
 import Stack from "@mui/material/Stack";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import InfoIcon from "@mui/icons-material/Info";
+import { Inline } from "@/components/calculators/Math";
 
 const FACTORS = [
   {
@@ -124,9 +125,11 @@ export default function MethodologyInfo() {
             Cloud Gating
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Other factors are multiplied by &radic;(sky_clarity / 100). At 50% cloud cover,
-            other factors contribute 71% of their normal weight. At 90% cloud cover, 32%.
-            At 100% cloud, 0. Perfect seeing can&rsquo;t save a cloudy night.
+            Other factors are multiplied by{" "}
+            <Inline>{String.raw`\sqrt{\text{sky clarity} / 100}`}</Inline>. At
+            50% cloud cover, other factors contribute 71% of their normal
+            weight. At 90% cloud cover, 32%. At 100% cloud, 0. Perfect seeing
+            can&rsquo;t save a cloudy night.
           </Typography>
 
           <Typography variant="subtitle2" sx={{ mb: 0.5 }}>

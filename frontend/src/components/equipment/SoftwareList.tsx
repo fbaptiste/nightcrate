@@ -47,6 +47,7 @@ export default function SoftwareList({ mineOnly = false }: { mineOnly?: boolean 
       fetchFn={fetchSoftwares}
       deleteFn={deleteSoftware}
       columns={columns}
+      dropdownFilterFields={["category"]}
       getItemName={(s) => s.name}
       FormDialog={SoftwareFormDialog}
       renderDetail={(item) => (

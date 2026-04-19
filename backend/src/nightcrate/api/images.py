@@ -1,6 +1,7 @@
 """Unified image API endpoints — dispatches by file type (FITS, XISF, PNG/JPEG/TIFF)."""
 
 import asyncio
+import logging
 import threading
 import time
 from dataclasses import asdict
@@ -29,13 +30,14 @@ from nightcrate.services.imaging import (
     render_image_png,
     resolve_auto_stretch,
 )
+from nightcrate.services.path_resolver import (
+    FITS_EXTENSIONS,
+    resolve_path,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/images", tags=["Image Viewer"])
-
-FITS_EXTENSIONS = {".fits", ".fit", ".fts"}
-XISF_EXTENSIONS = {".xisf"}
-STANDARD_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
-ALL_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | STANDARD_EXTENSIONS
 
 # ---------------------------------------------------------------------------
 # In-memory image data cache — avoids redundant file loads when multiple
@@ -129,100 +131,6 @@ def _get_or_compute_stats(
 STRUCTURAL_KEYWORDS = fits_io.STRUCTURAL_KEYWORDS
 
 
-def _file_type(p: Path) -> str:
-    """Return 'fits', 'xisf', 'float_tiff', or 'standard' based on extension and content."""
-    ext = p.suffix.lower()
-    if ext in FITS_EXTENSIONS:
-        return "fits"
-    if ext in XISF_EXTENSIONS:
-        return "xisf"
-    if ext in STANDARD_EXTENSIONS:
-        if ext in (".tif", ".tiff") and standard_io.is_float_tiff(p):
-            return "float_tiff"
-        return "standard"
-    raise HTTPException(
-        status_code=400,
-        detail=f"Unsupported file type: {ext}. Supported: {', '.join(sorted(ALL_EXTENSIONS))}",
-    )
-
-
-def _file_type_from_ext(entry_name: str) -> str:
-    """Determine file type from extension only (no disk check)."""
-    suffix = Path(entry_name).suffix.lower()
-    if suffix in FITS_EXTENSIONS:
-        return "fits"
-    if suffix in XISF_EXTENSIONS:
-        return "xisf"
-    if suffix in STANDARD_EXTENSIONS:
-        if suffix in {".tif", ".tiff"}:
-            return "tiff_unknown"
-        return "standard"
-    raise HTTPException(status_code=422, detail=f"Unsupported format: {entry_name}")
-
-
-def _detect_tiff_type_from_buf(buf: BinaryIO) -> str:
-    import tifffile
-
-    try:
-        with tifffile.TiffFile(buf) as tif:
-            is_float = tif.pages[0].dtype.kind == "f"
-        buf.seek(0)
-        return "float_tiff" if is_float else "standard"
-    except Exception:
-        buf.seek(0)
-        return "standard"
-
-
-def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int, tuple | None]:
-    """Validate and resolve a file path.
-
-    Returns (resolved_path, file_type, image_index, cache_key).
-    image_index is only meaningful for pxiproject virtual paths; 0 otherwise.
-    cache_key is set for archive entries so they can share the data/stats caches
-    (and per-key locks) that prevent redundant computation and concurrent GPU access.
-    For regular Path files, cache_key is None — those use path + mtime directly.
-    """
-    if "::" in path:
-        left, right = path.rsplit("::", 1)
-        left_path = Path(left).resolve()
-
-        # pxiproject: right side is an integer index
-        try:
-            idx = int(right)
-            if not left_path.is_dir():
-                raise HTTPException(status_code=404, detail=f"Project not found: {left_path}")
-            return left_path, "pxiproject", idx, None
-        except ValueError:
-            pass
-
-        # Archive handling
-        if archive_io.is_archive(left_path):
-            if not left_path.is_file():
-                raise HTTPException(status_code=404, detail=f"Archive not found: {left}")
-            try:
-                buf = archive_io.extract_entry(left_path, right)
-            except FileNotFoundError:
-                raise HTTPException(status_code=404, detail=f"Entry not found: {right}")
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-            ft = _file_type_from_ext(right)
-            if ft == "tiff_unknown":
-                ft = _detect_tiff_type_from_buf(buf)
-            # Cache key uses archive path + mtime + entry so concurrent
-            # requests for the same entry share cached data and locks.
-            cache_key = (str(left_path), left_path.stat().st_mtime, right)
-            return buf, ft, 0, cache_key
-
-        raise HTTPException(status_code=400, detail=f"Invalid virtual path: {path}")
-
-    p = Path(path)
-    if not p.is_absolute():
-        raise HTTPException(status_code=400, detail="Path must be absolute")
-    if not p.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    return p, _file_type(p), 0, None
-
-
 def _load_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int):
     """Load normalized image data for any supported file type."""
     if ft == "pxiproject":
@@ -241,7 +149,7 @@ async def get_extensions(
     path: str = Query(..., description="Absolute path to image file"),
 ) -> list[dict]:
     """List extensions/layers in the file, with stretch capability flag."""
-    p, ft, idx, _ck = _resolve_path(path)
+    p, ft, idx, _ck = resolve_path(path)
     stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject")
     try:
         if ft == "pxiproject":
@@ -265,7 +173,7 @@ async def get_header(
     hdu: int = Query(0, description="Extension index"),
 ) -> list[dict]:
     """Return metadata cards for the specified extension."""
-    p, ft, idx, _ck = _resolve_path(path)
+    p, ft, idx, _ck = resolve_path(path)
     try:
         if ft == "pxiproject":
             return pxiproject_io.read_header(p, idx)
@@ -277,6 +185,7 @@ async def get_header(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("read_header failed for %s (ft=%s, hdu=%s)", path, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -321,6 +230,7 @@ async def edit_header(request: HeaderEditRequest) -> list[dict]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("update_header failed for %s (hdu=%s, ops=%d)", p, request.hdu, len(ops))
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -330,7 +240,7 @@ async def get_metadata(
     hdu: int = Query(0, description="Extension index"),
 ) -> dict:
     """Return canonical metadata and unrecognized keywords for a file."""
-    p, ft, idx, _ck = _resolve_path(path)
+    p, ft, idx, _ck = resolve_path(path)
     try:
         if ft == "pxiproject":
             cards = pxiproject_io.read_header(p, idx)
@@ -343,6 +253,7 @@ async def get_metadata(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("fits_keywords failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
     # Build a raw header dict from cards (first occurrence wins for dupes)
@@ -385,7 +296,7 @@ async def get_stats(
 
     Only applicable to FITS, XISF, float TIFF, and pxiproject. Returns 404 for standard images.
     """
-    p, ft, idx, ck = _resolve_path(path)
+    p, ft, idx, ck = resolve_path(path)
     if ft == "standard":
         raise HTTPException(
             status_code=404, detail="Stats not available for standard image formats"
@@ -395,6 +306,7 @@ async def get_stats(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("stats failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -433,7 +345,7 @@ async def get_pixel(
     y: int = Query(..., description="Y coordinate (row)"),
 ) -> dict:
     """Return raw pixel values at the given (x, y) coordinate."""
-    p, ft, idx, ck = _resolve_path(path)
+    p, ft, idx, ck = resolve_path(path)
     try:
         return await asyncio.to_thread(_read_pixel, p, ft, idx, hdu, x, y, ck)
     except HTTPException:
@@ -441,6 +353,7 @@ async def get_pixel(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("pixel read failed for %s (x=%s, y=%s, hdu=%s)", p, x, y, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -508,12 +421,13 @@ async def get_histogram(
     bins: int = Query(256, description="Number of histogram bins"),
 ) -> dict:
     """Return per-channel histogram data for the image."""
-    p, ft, idx, ck = _resolve_path(path)
+    p, ft, idx, ck = resolve_path(path)
     try:
         return await asyncio.to_thread(_load_and_histogram, p, ft, idx, hdu, bins, ck)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("histogram failed for %s (ft=%s, hdu=%s, bins=%s)", p, ft, hdu, bins)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -541,7 +455,7 @@ async def get_stats_and_histogram(
     bins: int = Query(256, description="Number of histogram bins"),
 ) -> dict:
     """Return stats and histogram in a single response (one data load)."""
-    p, ft, idx, ck = _resolve_path(path)
+    p, ft, idx, ck = resolve_path(path)
     if ft == "standard":
         raise HTTPException(
             status_code=404,
@@ -552,6 +466,7 @@ async def get_stats_and_histogram(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("stats+histogram failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -599,7 +514,7 @@ async def get_image(
     b_highlight: float | None = Query(None),
 ) -> Response:
     """Return the image as a PNG. Stretch is applied for scientific formats."""
-    p, ft, idx, ck = _resolve_path(path)
+    p, ft, idx, ck = resolve_path(path)
 
     linked = StretchParams(stretch=stretch, shadow=shadow, midtone=midtone, highlight=highlight)
 
@@ -637,6 +552,7 @@ async def get_image(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("image render failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 

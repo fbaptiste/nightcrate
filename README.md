@@ -25,6 +25,21 @@ NightCrate ingests raw imaging data directories and associated log files — fro
 
 Early development. See [PLAN.md](PLAN.md) for the current version plan.
 
+## Threat model
+
+NightCrate is a **single-user, local-first** application. The backend binds
+to `127.0.0.1:8000` only — it is not reachable from the network. It trusts
+the local user completely: any process running as you can read anything
+NightCrate can read (FITS files, the active database, etc.). There is no
+authentication.
+
+This posture is intentional for a desktop-class astrophotography tool.
+**Do not expose the backend to the network or to untrusted local accounts
+without adding authentication and path allowlists.** The file-browser
+endpoints accept arbitrary filesystem paths, which is the correct behaviour
+for a local file browser but would be a severe information-disclosure
+vulnerability in any shared-access deployment.
+
 ## License
 
 NightCrate is licensed under the [MIT License](LICENSE).
@@ -71,5 +86,8 @@ NightCrate is built with the following open-source libraries. We are grateful to
 | [Zustand](https://github.com/pmndrs/zustand) | MIT | Copyright (c) 2019 Paul Henschel |
 | [TanStack Query](https://tanstack.com/query) | MIT | Copyright (c) 2021-present Tanner Linsley |
 | [React Router](https://reactrouter.com/) | MIT | Copyright (c) React Training LLC 2015-2019; Copyright (c) Remix Software Inc. 2020-2021; Copyright (c) Shopify Inc. 2022-2023 |
+| [dnd kit](https://dndkit.com/) (@dnd-kit/core, @dnd-kit/sortable, @dnd-kit/utilities) | MIT | Copyright (c) 2021, Claudéric Demers |
+| [KaTeX](https://katex.org/) | MIT | Copyright (c) 2013-2020 Khan Academy and other contributors |
+| [react-katex](https://github.com/MatejBransky/react-katex) | MIT | Copyright (c) 2018 Matej Bránsky |
 | [Vite](https://vite.dev/) | MIT | Copyright (c) 2019-present, VoidZero Inc. and Vite contributors |
 | [Geist Font](https://vercel.com/font) | SIL OFL 1.1 | Copyright (c) 2023 Vercel |

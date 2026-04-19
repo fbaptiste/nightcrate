@@ -1,5 +1,7 @@
+import { useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import { setActivity } from "@/api/client";
 import { EquipmentSidebar } from "@/components/equipment/EquipmentSidebar";
 import { EquipmentPlaceholder } from "@/components/equipment/EquipmentPlaceholder";
 import CameraList from "@/components/equipment/CameraList";
@@ -16,9 +18,24 @@ import SoftwareList from "@/components/equipment/SoftwareList";
 import ManufacturerList from "@/components/equipment/ManufacturerList";
 import LookupTablesPanel from "@/components/equipment/LookupTablesPanel";
 
+function formatCategoryLabel(category: string): string {
+  return category
+    .split("-")
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+    .join(" ");
+}
+
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
   const navigate = useNavigate();
+
+  // Refine the page-level activity label to include the sub-category so the
+  // Activity Console groups requests like "Equipment — Cameras" separately.
+  const lastCategory = useRef<string | null>(null);
+  if (lastCategory.current !== category) {
+    lastCategory.current = category;
+    setActivity(`Equipment — ${formatCategoryLabel(category)}`);
+  }
 
   const content = (() => {
     switch (category) {
