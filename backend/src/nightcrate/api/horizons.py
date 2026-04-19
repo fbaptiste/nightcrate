@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from nightcrate.api._common import integrity_guard
 from nightcrate.api.horizon_models import (
     HorizonImportResponse,
+    HorizonParseResponse,
     HorizonPointModel,
     HorizonPut,
     HorizonResponse,
@@ -32,8 +33,13 @@ from nightcrate.services.horizon import (
     sanitize_filename,
 )
 
+logger = logging.getLogger(__name__)
 
-async def parse_upload_file(file: UploadFile) -> HorizonParseResult:
+router = APIRouter(prefix="/api/locations/{location_id}/horizon", tags=["Horizons"])
+parse_router = APIRouter(prefix="/api/horizons", tags=["Horizons"])
+
+
+async def _parse_upload_file(file: UploadFile) -> HorizonParseResult:
     """Read an UploadFile as UTF-8 text and parse it. Translates UTF-8 and
     parser failures into HTTP 400s. Shared by ``POST /horizon/import`` and
     ``POST /horizons/parse``."""
@@ -49,11 +55,6 @@ async def parse_upload_file(file: UploadFile) -> HorizonParseResult:
         return parse_horizon_text(text, source_filename=file.filename)
     except HorizonParseError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/locations/{location_id}/horizon", tags=["Horizons"])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -192,7 +193,7 @@ async def delete_horizon(location_id: int) -> Response:
 async def import_horizon(location_id: int, file: UploadFile = File(...)) -> HorizonImportResponse:
     async with get_db() as conn:
         await _fetch_location(conn, location_id, allow_inactive=False)
-        result = await parse_upload_file(file)
+        result = await _parse_upload_file(file)
         horizon = await _replace_horizon(
             conn,
             location_id,
@@ -270,3 +271,19 @@ async def export_csv_endpoint(location_id: int) -> Response:
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{slug}_horizon.csv"'},
         )
+
+
+# ── Stateless parse (staged-save flow) ───────────────────────────────────────
+
+
+@parse_router.post("/parse", response_model=HorizonParseResponse)
+async def parse_horizon(file: UploadFile = File(...)) -> HorizonParseResponse:
+    """Parse a horizon file and return points + warnings without touching
+    the database. Powers the Location editor's staged-save flow: imported
+    points land in staged state and persist only on the outer Save."""
+    result = await _parse_upload_file(file)
+    return HorizonParseResponse(
+        points=[HorizonPointModel(azimuth_deg=az, altitude_deg=alt) for az, alt in result.points],
+        warnings=result.warnings,
+        source_filename=result.source_filename,
+    )

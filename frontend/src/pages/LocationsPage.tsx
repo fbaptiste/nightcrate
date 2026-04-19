@@ -54,6 +54,9 @@ import {
   type HorizonPoint,
 } from "@/api/horizons";
 import type { HorizonExportFormat } from "@/api/horizons";
+import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
+import type { WeatherUnits } from "@/api/settings";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 /**
  * Staged horizon change for the Location editor. ``none`` means no
@@ -67,16 +70,12 @@ type StagedHorizon =
   | { kind: "delete" };
 
 function formsDiffer(a: FormState, b: FormState): boolean {
-  // FormState is all primitives; shallow equality on keys is sufficient.
   const keys = Object.keys(a) as (keyof FormState)[];
   for (const k of keys) {
     if (a[k] !== b[k]) return true;
   }
   return false;
 }
-import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
-import type { WeatherUnits } from "@/api/settings";
-import { useSettingsStore } from "@/stores/settingsStore";
 
 // ─── Display helpers ────────────────────────────────────────────────────────
 // Frontend mirror of backend services/coordinate_format.py for the live
@@ -734,18 +733,23 @@ export default function LocationsPage() {
       if (editingLocation) {
         // Persist any staged horizon change first — its validation is
         // stricter (≥2 points). If it fails, we don't touch the location.
+        // Clear staged state + invalidate the query as soon as the horizon
+        // is committed, so that a subsequent location-update failure doesn't
+        // leave the user thinking their horizon is still pending (a Discard
+        // at that point would silently lose nothing it claims to).
         if (stagedHorizon.kind === "set") {
           await saveHorizon(editingLocation.id, {
             source: "drawn",
             points: stagedHorizon.points,
           });
+          setStagedHorizon({ kind: "none" });
+          queryClient.invalidateQueries({ queryKey: ["horizon", editingLocation.id] });
         } else if (stagedHorizon.kind === "delete") {
           await deleteHorizon(editingLocation.id);
-        }
-        await updateLocation(editingLocation.id, payload);
-        if (stagedHorizon.kind !== "none") {
+          setStagedHorizon({ kind: "none" });
           queryClient.invalidateQueries({ queryKey: ["horizon", editingLocation.id] });
         }
+        await updateLocation(editingLocation.id, payload);
         setSnack({ msg: "Location updated.", severity: "info" });
       } else {
         await createLocation(payload);
