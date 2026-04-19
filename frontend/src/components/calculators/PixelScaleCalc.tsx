@@ -17,6 +17,8 @@ import {
   type PixelScaleResponse,
 } from "@/api/calculators";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
+import RigPickerMenu from "@/components/calculators/RigPickerMenu";
+import { Block } from "@/components/calculators/Math";
 import { useDebounce } from "@/lib/useDebounce";
 
 function parseNumber(raw: string): number | null {
@@ -88,6 +90,14 @@ export default function PixelScaleCalc() {
     <Stack spacing={3}>
       <Typography variant="h5">Pixel Scale</Typography>
 
+      <RigPickerMenu
+        onApply={(rig) => {
+          setFocalLength(String(rig.effective_focal_length_mm));
+          setPixelSize(String(rig.pixel_size_um));
+          setReducer("1.0");
+        }}
+      />
+
       <Grid container spacing={3}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card variant="outlined">
@@ -105,7 +115,7 @@ export default function PixelScaleCalc() {
                   fullWidth
                 />
                 <TextField
-                  label="Pixel size (\u00B5m)"
+                  label={"Pixel size (\u00B5m)"}
                   type="number"
                   value={pixelSize}
                   onChange={(e) => setPixelSize(e.target.value)}
@@ -118,7 +128,10 @@ export default function PixelScaleCalc() {
                   value={reducer}
                   onChange={(e) => setReducer(e.target.value)}
                   inputProps={{ step: "any", min: 0 }}
-                  helperText="Effective focal length = focal \u00D7 factor. Use 0.7 for a 0.7\u00D7 reducer, 1.5 for a 1.5\u00D7 extender."
+                  helperText={
+                    "Effective focal length = focal \u00D7 factor. " +
+                    "Use 0.7 for a 0.7\u00D7 reducer, 1.5 for a 1.5\u00D7 extender."
+                  }
                   fullWidth
                 />
               </Stack>
@@ -182,12 +195,16 @@ export default function PixelScaleCalc() {
       </Grid>
 
       <CalculatorAboutSection>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          <strong>Formula:</strong>
+        </Typography>
+        <Block>
+          {String.raw`\text{arcsec/pixel} = \frac{\text{pixel size (}\mu\text{m)}}{\text{effective focal length (mm)}} \times 206.265`}
+        </Block>
         <Typography variant="body2">
-          <strong>Formula:</strong> arcsec/pixel = (pixel_&micro;m /
-          effective_focal_mm) &times; 206.265. Standard astrophotography
-          rule of thumb: sample at 1.5&ndash;3&times;FWHM for well-sampled
-          imaging; 2&ndash;4&times;FWHM is typical at suburban seeing
-          (~3&Prime;).
+          Standard astrophotography rule of thumb: sample at 1.5&ndash;3&times;FWHM for
+          well-sampled imaging; 2&ndash;4&times;FWHM is typical at suburban
+          seeing (~3&Prime;).
         </Typography>
       </CalculatorAboutSection>
 

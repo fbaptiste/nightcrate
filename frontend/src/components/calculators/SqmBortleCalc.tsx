@@ -17,6 +17,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 
 import { fetchSqmBortle } from "@/api/calculators";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
+import { Block } from "@/components/calculators/Math";
 import { useDebounce } from "@/lib/useDebounce";
 
 type Field = "sqm" | "bortle" | "nelm";
@@ -149,7 +150,7 @@ export default function SqmBortleCalc() {
                 SQM
               </Typography>
               <TextField
-                label="mag/arcsec\u00B2"
+                label={"mag/arcsec\u00B2"}
                 type="number"
                 value={sqmText}
                 onChange={(e) => handleSqmChange(e.target.value)}
@@ -268,15 +269,16 @@ export default function SqmBortleCalc() {
       {error && <Alert severity="warning">{error}</Alert>}
 
       <CalculatorAboutSection>
-        <Typography variant="body2" component="p">
+        <Typography variant="body2" component="p" sx={{ mb: 1 }}>
           SQM &rarr; Bortle uses the standard band mapping (see Bortle 2001
           / community tables). SQM &harr; NELM uses Schaefer&rsquo;s
-          approximation:{" "}
-          <code>
-            NELM &asymp; 7.93 &minus; 5 &times; log10(10^(4.316 &minus; SQM/5)
-            + 1)
-          </code>
-          . These are rough conversions &mdash; NELM especially varies with
+          approximation:
+        </Typography>
+        <Block>
+          {String.raw`\text{NELM} \approx 7.93 - 5 \log_{10}\!\left(10^{4.316 - \text{SQM}/5} + 1\right)`}
+        </Block>
+        <Typography variant="body2" component="p">
+          These are rough conversions &mdash; NELM especially varies with
           observer visual acuity.
         </Typography>
       </CalculatorAboutSection>

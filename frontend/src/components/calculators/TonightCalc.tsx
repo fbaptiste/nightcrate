@@ -34,23 +34,6 @@ function todayInTimezone(timezone: string): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-/** Render a UTC ISO timestamp as HH:MM in the given IANA timezone. */
-function formatClockInTz(isoUtc: string | null, timezone: string): string {
-  if (!isoUtc) return DASH;
-  try {
-    const dt = new Date(isoUtc);
-    if (isNaN(dt.getTime())) return DASH;
-    return new Intl.DateTimeFormat("en-GB", {
-      timeZone: timezone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(dt);
-  } catch {
-    return DASH;
-  }
-}
-
 /** Hours (float) → "Nh MM m" rounded to the nearest minute. */
 function formatDurationHours(hours: number | null | undefined): string {
   if (hours == null || !isFinite(hours) || hours <= 0) return `0h 0m`;
@@ -183,21 +166,18 @@ export default function TonightCalc() {
           Evening
         </Typography>
         <Grid container spacing={2}>
-          <TransitionCell
-            label="Sunset"
-            time={formatClockInTz(data?.sunset ?? null, tz)}
-          />
+          <TransitionCell label="Sunset" time={data?.sunset ?? DASH} />
           <TransitionCell
             label="Civil twilight end"
-            time={formatClockInTz(data?.civil_twilight_end ?? null, tz)}
+            time={data?.civil_twilight_end ?? DASH}
           />
           <TransitionCell
             label="Nautical twilight end"
-            time={formatClockInTz(data?.nautical_twilight_end ?? null, tz)}
+            time={data?.nautical_twilight_end ?? DASH}
           />
           <TransitionCell
             label="Astronomical twilight end"
-            time={formatClockInTz(data?.astronomical_twilight_end ?? null, tz)}
+            time={data?.astronomical_twilight_end ?? DASH}
           />
         </Grid>
       </Paper>
@@ -210,20 +190,17 @@ export default function TonightCalc() {
         <Grid container spacing={2}>
           <TransitionCell
             label="Astronomical twilight start"
-            time={formatClockInTz(data?.astronomical_twilight_start ?? null, tz)}
+            time={data?.astronomical_twilight_start ?? DASH}
           />
           <TransitionCell
             label="Nautical twilight start"
-            time={formatClockInTz(data?.nautical_twilight_start ?? null, tz)}
+            time={data?.nautical_twilight_start ?? DASH}
           />
           <TransitionCell
             label="Civil twilight start"
-            time={formatClockInTz(data?.civil_twilight_start ?? null, tz)}
+            time={data?.civil_twilight_start ?? DASH}
           />
-          <TransitionCell
-            label="Sunrise"
-            time={formatClockInTz(data?.sunrise ?? null, tz)}
-          />
+          <TransitionCell label="Sunrise" time={data?.sunrise ?? DASH} />
         </Grid>
       </Paper>
 
@@ -262,7 +239,7 @@ export default function TonightCalc() {
                 Moonrise
               </Typography>
               <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                {formatClockInTz(data?.moonrise ?? null, tz)}
+                {data?.moonrise ?? DASH}
               </Typography>
             </Box>
             <Box>
@@ -270,7 +247,7 @@ export default function TonightCalc() {
                 Moonset
               </Typography>
               <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                {formatClockInTz(data?.moonset ?? null, tz)}
+                {data?.moonset ?? DASH}
               </Typography>
             </Box>
           </Box>

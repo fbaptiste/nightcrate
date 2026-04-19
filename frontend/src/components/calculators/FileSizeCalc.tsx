@@ -21,6 +21,8 @@ import {
   type FileSizeResponse,
 } from "@/api/calculators";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
+import RigPickerMenu from "@/components/calculators/RigPickerMenu";
+import { Block } from "@/components/calculators/Math";
 import { useDebounce } from "@/lib/useDebounce";
 import { RIG_ORANGE } from "@/lib/rigColors";
 
@@ -98,6 +100,17 @@ export default function FileSizeCalc() {
   return (
     <Stack spacing={3}>
       <Typography variant="h5">File Size Estimator</Typography>
+
+      <RigPickerMenu
+        onApply={(rig) => {
+          setWidth(String(rig.sensor_resolution_x));
+          setHeight(String(rig.sensor_resolution_y));
+          if (rig.sensor_adc_bit_depth != null) {
+            // 12/14-bit ADCs are normally stored as 16-bit FITS; map >16 → 32.
+            setBitDepth(rig.sensor_adc_bit_depth > 16 ? 32 : 16);
+          }
+        }}
+      />
 
       <Grid container spacing={3}>
         <Grid size={{ xs: 12, md: 6 }}>
@@ -250,10 +263,15 @@ export default function FileSizeCalc() {
       </Grid>
 
       <CalculatorAboutSection>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          <strong>Formula:</strong>
+        </Typography>
+        <Block>
+          {String.raw`\text{bytes/frame} = \text{width} \times \text{height} \times \frac{\text{bit depth}}{8} \times \text{compression}`}
+        </Block>
         <Typography variant="body2">
-          <strong>Formula:</strong> bytes/frame = width &times; height &times;
-          (bit_depth / 8) &times; compression. RICE/LZW typically reduce FITS
-          to 50&ndash;70% of raw; set compression &approx; 0.6 to model that.
+          RICE/LZW typically reduce FITS to 50&ndash;70% of raw; set
+          compression {"\u2248"} 0.6 to model that.
         </Typography>
       </CalculatorAboutSection>
 

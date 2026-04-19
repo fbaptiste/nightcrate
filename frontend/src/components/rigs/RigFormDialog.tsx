@@ -685,10 +685,10 @@ export default function RigFormDialog({
                 <TextField {...params} label="Computer" />
               )}
             />
-            <Autocomplete<SoftwareOption & { __mine_group?: string }, true>
+            <Autocomplete<SoftwareOption, true>
               multiple
-              options={withMineGroup(options?.software ?? [])}
-              groupBy={(o) => o.__mine_group ?? o.category}
+              options={options?.software ?? []}
+              groupBy={(o) => o.category}
               getOptionLabel={(o) => o.name}
               value={
                 options?.software.filter((s) =>

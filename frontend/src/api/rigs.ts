@@ -103,6 +103,7 @@ export interface Rig {
   sensor_width_mm: number | null;
   sensor_height_mm: number | null;
   sensor_type: string;
+  sensor_adc_bit_depth: number | null;
   filter_wheel_id: number | null;
   filter_wheel_name: string | null;
   filter_wheel_positions: number | null;

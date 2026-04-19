@@ -343,6 +343,7 @@ async def _build_rig_response(
         "sensor_width_mm": rig_row.get("sensor_width_mm"),
         "sensor_height_mm": rig_row.get("sensor_height_mm"),
         "sensor_type": rig_row["sensor_type"],
+        "sensor_adc_bit_depth": rig_row.get("sensor_adc_bit_depth"),
         "filter_wheel_id": rig_row.get("filter_wheel_id"),
         "filter_wheel_name": rig_row.get("filter_wheel_name"),
         "filter_wheel_positions": rig_row.get("filter_wheel_positions"),

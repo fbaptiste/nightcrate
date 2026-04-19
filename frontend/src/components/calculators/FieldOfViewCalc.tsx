@@ -20,6 +20,8 @@ import {
   type FovResponse,
 } from "@/api/calculators";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
+import RigPickerMenu from "@/components/calculators/RigPickerMenu";
+import { Block, Inline } from "@/components/calculators/Math";
 import { useDebounce } from "@/lib/useDebounce";
 
 type InputMode = "sensor" | "pixels";
@@ -171,6 +173,21 @@ export default function FieldOfViewCalc() {
     <Stack spacing={3}>
       <Typography variant="h5">Field of View</Typography>
 
+      <RigPickerMenu
+        onApply={(rig) => {
+          setFocalLength(String(rig.effective_focal_length_mm));
+          setPixelSize(String(rig.pixel_size_um));
+          setPixelsX(String(rig.sensor_resolution_x));
+          setPixelsY(String(rig.sensor_resolution_y));
+          if (rig.sensor_width_mm != null) {
+            setSensorWidth(String(rig.sensor_width_mm));
+          }
+          if (rig.sensor_height_mm != null) {
+            setSensorHeight(String(rig.sensor_height_mm));
+          }
+        }}
+      />
+
       <Grid container spacing={3}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card variant="outlined">
@@ -244,7 +261,7 @@ export default function FieldOfViewCalc() {
                       fullWidth
                     />
                     <TextField
-                      label="Pixel size (\u00B5m)"
+                      label={"Pixel size (\u00B5m)"}
                       type="number"
                       value={pixelSize}
                       onChange={(e) => setPixelSize(e.target.value)}
@@ -316,10 +333,15 @@ export default function FieldOfViewCalc() {
       </Grid>
 
       <CalculatorAboutSection>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          <strong>Formula:</strong>
+        </Typography>
+        <Block>
+          {String.raw`\text{FOV} = 2 \arctan\!\left(\frac{\text{sensor dimension}}{2 \times \text{focal length}}\right)`}
+        </Block>
         <Typography variant="body2">
-          <strong>Formula:</strong> FOV = 2 &times; arctan(sensor_dim /
-          (2 &times; focal)). Diagonal is &radic;(w&sup2; + h&sup2;)
-          &mdash; approximate but close for small fields.
+          Diagonal is <Inline>{String.raw`\sqrt{w^2 + h^2}`}</Inline> —
+          approximate but close for small fields.
         </Typography>
       </CalculatorAboutSection>
 

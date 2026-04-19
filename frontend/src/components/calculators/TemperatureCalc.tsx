@@ -10,6 +10,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 
 import { fetchTemperature, type TemperatureUnit } from "@/api/calculators";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
+import { Block } from "@/components/calculators/Math";
 import { useDebounce } from "@/lib/useDebounce";
 
 type Field = "C" | "F" | "K";
@@ -92,7 +93,7 @@ export default function TemperatureCalc() {
 
       <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
         <TextField
-          label="\u00B0C"
+          label={"\u00B0C"}
           type="number"
           value={celsius}
           onChange={(e) => handleChange("C", e.target.value)}
@@ -101,7 +102,7 @@ export default function TemperatureCalc() {
           InputProps={{
             endAdornment: (
               <InputAdornment position="end">
-                <Tooltip title="Copy \u00B0C">
+                <Tooltip title={"Copy \u00B0C"}>
                   <span>
                     <IconButton
                       size="small"
@@ -118,7 +119,7 @@ export default function TemperatureCalc() {
           }}
         />
         <TextField
-          label="\u00B0F"
+          label={"\u00B0F"}
           type="number"
           value={fahrenheit}
           onChange={(e) => handleChange("F", e.target.value)}
@@ -127,7 +128,7 @@ export default function TemperatureCalc() {
           InputProps={{
             endAdornment: (
               <InputAdornment position="end">
-                <Tooltip title="Copy \u00B0F">
+                <Tooltip title={"Copy \u00B0F"}>
                   <span>
                     <IconButton
                       size="small"
@@ -179,8 +180,10 @@ export default function TemperatureCalc() {
       {error && <Alert severity="warning">{error}</Alert>}
 
       <CalculatorAboutSection>
+        <Block>
+          {String.raw`C = (F - 32) \times \tfrac{5}{9} = K - 273.15`}
+        </Block>
         <Typography variant="body2" component="p">
-          <code>C = (F &minus; 32) &times; 5/9 = K &minus; 273.15</code>.
           Formulas are exact; all rounding happens at display.
         </Typography>
       </CalculatorAboutSection>

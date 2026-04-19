@@ -257,7 +257,7 @@ export default function LinearUnitsCalc() {
           use the international foot (1 ft = 0.3048 m). Astronomical
           units use IAU 2012/2015 definitions: 1 AU = 149&thinsp;597&thinsp;870.7 km,
           1 light-year = 9.4607&times;10<sup>15</sup> m, 1 parsec =
-          648&thinsp;000/&pi; AU &approx; 3.0857&times;10<sup>16</sup> m.
+          648&thinsp;000/&pi; AU {"\u2248"} 3.0857&times;10<sup>16</sup> m.
           Kiloparsecs (kpc) and megaparsecs (Mpc) are used for galactic
           and extragalactic scales.
         </Typography>

@@ -18,6 +18,7 @@ import {
   type AirmassResponse,
 } from "@/api/calculators";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
+import { Block, Inline } from "@/components/calculators/Math";
 import { useDebounce } from "@/lib/useDebounce";
 
 function parseNumber(raw: string): number | null {
@@ -111,7 +112,7 @@ export default function AirmassCalc() {
                   alignItems={{ xs: "stretch", sm: "center" }}
                 >
                   <TextField
-                    label="Altitude (\u00B0)"
+                    label={"Altitude (\u00B0)"}
                     type="number"
                     value={altitudeRaw}
                     onChange={(e) => setAltitudeRaw(e.target.value)}
@@ -247,12 +248,17 @@ export default function AirmassCalc() {
       </Grid>
 
       <CalculatorAboutSection>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          <strong>Kasten-Young (1989) formula:</strong>
+        </Typography>
+        <Block>
+          {String.raw`X = \frac{1}{\cos z + 0.50572 \, (6.07995 + 90 - z)^{-1.6364}}`}
+        </Block>
         <Typography variant="body2">
-          <strong>Kasten-Young (1989) formula:</strong> X = 1 / (cos(z) +
-          0.50572 &times; (6.07995 + 90 &minus; z)<sup>&minus;1.6364</sup>)
-          where z = zenith angle (degrees). Valid across the full sky down
-          to the horizon; more accurate than the plane-parallel sec(z)
-          approximation.
+          where <Inline>{String.raw`z`}</Inline> is the zenith angle in
+          degrees. Valid across the full sky down to the horizon; more
+          accurate than the plane-parallel{" "}
+          <Inline>{String.raw`\sec z`}</Inline> approximation.
         </Typography>
       </CalculatorAboutSection>
 
