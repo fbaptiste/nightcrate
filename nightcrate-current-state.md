@@ -133,7 +133,7 @@ Per-location custom horizon profiles (azimuth/altitude polylines) for session pl
 
 - **Route:** rendered inside `/locations` (editor dialog + detail panel)
 - **API:** `/api/locations/{id}/horizon` (GET/PUT/DELETE/import), `/api/locations/{id}/horizon/export/{format}`, `POST /api/horizons/parse` (stateless)
-- **Key backend:** `services/horizon.py`, `api/horizons.py`, `api/horizons_parse.py`, `api/horizon_models.py`
+- **Key backend:** `services/horizon.py`, `api/horizons.py` (two routers: `/api/locations/{id}/horizon/*` and `/api/horizons/parse`), `api/horizon_models.py`
 - **Key frontend:** `components/locations/HorizonEditor.tsx`, `HorizonChart.tsx`, `HorizonEditorToolbar.tsx`, `HorizonPointEditPopover.tsx`, `lib/horizonReduce.ts`
 - **Schema:** migration `0014.location_horizon.sql` (`location_horizon`, `location_horizon_point`)
 

@@ -1901,8 +1901,7 @@ come later.
 ### Backend
 
 - [x] `services/horizon.py` — forgiving parser with sniff step: detects Theodolite CSV by header row (`HDG_DEG` / `VERT` columns); else falls through to generic 2-column `az alt` text with `#`/`;` comments. Normalizes azimuth to `[0, 360)`, validates altitude `[-5, 90]`, sorts, offsets exact duplicates by +0.01°, rejects files with <2 points. Three exporters — N.I.N.A. `.hrz`, Stellarium polygonal-landscape zip, CSV. Filename sanitizer for download dispositions
-- [x] `api/horizons.py` — 7 endpoints under `/api/locations/{id}/horizon`: GET, PUT (drawn, ≥2 points via Pydantic validator), DELETE, POST /import, GET /export/nina.hrz, /export/stellarium.zip, /export/csv. Import persists; export allows soft-deleted locations for recovery. INSERT wrapped in `integrity_guard` for concurrent-save safety
-- [x] `api/horizons_parse.py` — stateless `POST /api/horizons/parse` (no DB write) supporting the frontend's staged-save flow. Reuses `parse_upload_file` helper with `api/horizons.py`
+- [x] `api/horizons.py` — 7 endpoints under `/api/locations/{id}/horizon`: GET, PUT (drawn, ≥2 points via Pydantic validator), DELETE, POST /import, GET /export/nina.hrz, /export/stellarium.zip, /export/csv. Import persists; export allows soft-deleted locations for recovery. INSERT wrapped in `integrity_guard` for concurrent-save safety. Also exposes a sibling `parse_router` with stateless `POST /api/horizons/parse` (no DB write) supporting the frontend's staged-save flow; both endpoints share the `_parse_upload_file` helper
 - [x] `api/horizon_models.py` — `HorizonPut`, `HorizonResponse`, `HorizonImportResponse`, `HorizonParseResponse` Pydantic models
 
 ### Frontend
