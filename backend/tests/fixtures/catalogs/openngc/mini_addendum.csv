@@ -1,0 +1,4 @@
+Name;Type;RA;Dec;Const;MajAx;MinAx;PosAng;B-Mag;V-Mag;J-Mag;H-Mag;K-Mag;SurfBr;Hubble;Pax;Pm-RA;Pm-Dec;RadVel;Redshift;Cstar U-Mag;Cstar B-Mag;Cstar V-Mag;M;NGC;IC;Cstar Names;Identifiers;Common names;NED notes;OpenNGC notes;Sources
+B033;DrkN;05:40:59.0;-02:27:30;Ori;6.00;4.00;90;;;;;;;;;;;;;;;;;;;;;Horsehead Nebula;;;Type:2|RA:2|Dec:2
+M040;**;12:22:13.8;+58:04:59;UMa;;;;;;;;;;;;;;;;;;;040;;;;;Winnecke 4;;;Type:99|RA:1|Dec:1
+M102;Dup;14:03:12.54;+54:20:56.2;UMa;;;;;;;;;;;;;;;;;;;101;;;;;;;Identification controversial — folds into M101.;Type:1|RA:1|Dec:1

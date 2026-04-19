@@ -446,7 +446,7 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
         onClose={() => setMineError(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="error" onClose={() => setMineError(null)}>
+        <Alert severity="warning" onClose={() => setMineError(null)}>
           {mineError}
         </Alert>
       </Snackbar>

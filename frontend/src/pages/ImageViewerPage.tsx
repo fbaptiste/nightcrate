@@ -733,7 +733,7 @@ export function ImageViewerPage() {
                   </Box>
                 )}
                 {aberrationQuery.isError && (
-                  <Alert severity="error" sx={{ m: 2 }}>{String(aberrationQuery.error)}</Alert>
+                  <Alert severity="warning" sx={{ m: 2 }}>{String(aberrationQuery.error)}</Alert>
                 )}
               </Box>
             </Box>
@@ -1162,7 +1162,7 @@ export function ImageViewerPage() {
         onClose={() => setErrorMsg(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="error" onClose={() => setErrorMsg(null)} variant="filled">
+        <Alert severity="warning" onClose={() => setErrorMsg(null)} variant="filled">
           {errorMsg}
         </Alert>
       </Snackbar>

@@ -1409,7 +1409,7 @@ export default function LocationsPage() {
               />
             </Box>
             {addressError && (
-              <Alert severity="error">{addressError}</Alert>
+              <Alert severity="warning">{addressError}</Alert>
             )}
           </Box>
         </DialogContent>

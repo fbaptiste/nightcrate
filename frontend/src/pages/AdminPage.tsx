@@ -41,6 +41,15 @@ import {
   type AppInfo,
   type ReseedResult,
 } from "@/api/admin";
+import {
+  fetchCatalogSources,
+  fetchCatalogsFromGitHub,
+  fetchRemoteVersion,
+  reloadCatalogs,
+  type CatalogSource,
+  type FetchFromGitHubResponse,
+  type RemoteCatalogStatus,
+} from "@/api/dsos";
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return "unknown";
@@ -277,7 +286,7 @@ function CreateDbDialog({
               </>
             )}
             {error && (
-              <Alert severity="error" onClose={() => setError(null)}>
+              <Alert severity="warning" onClose={() => setError(null)}>
                 {error}
               </Alert>
             )}
@@ -621,9 +630,50 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
 // ---------------------------------------------------------------------------
 
 export function AdminPage() {
+  const queryClient = useQueryClient();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [reseeding, setReseeding] = useState(false);
   const [reseedResult, setReseedResult] = useState<ReseedResult | null>(null);
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const [catalogFetchResult, setCatalogFetchResult] =
+    useState<FetchFromGitHubResponse | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  const catalogSourcesQuery = useQuery({
+    queryKey: ["catalog-sources"],
+    queryFn: fetchCatalogSources,
+  });
+
+  const remoteVersionQuery = useQuery<RemoteCatalogStatus, Error>({
+    queryKey: ["catalog-remote-version"],
+    queryFn: fetchRemoteVersion,
+    // Keep it quiet — only refetch when the user clicks "Check again"
+    // (via invalidateQueries) or the admin page re-mounts. No background polling.
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  async function runCatalogOp(
+    action: () => Promise<FetchFromGitHubResponse>,
+    { refreshRemote }: { refreshRemote: boolean },
+  ) {
+    setCatalogBusy(true);
+    setCatalogFetchResult(null);
+    setCatalogError(null);
+    try {
+      const result = await action();
+      setCatalogFetchResult(result);
+      const keys: string[][] = [["dsos"], ["dso-facets"], ["catalog-sources"]];
+      if (refreshRemote) keys.push(["catalog-remote-version"]);
+      await Promise.all(
+        keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+      );
+    } catch (err) {
+      setCatalogError(err instanceof Error ? err.message : "Operation failed");
+    } finally {
+      setCatalogBusy(false);
+    }
+  }
 
   const infoQuery = useQuery({
     queryKey: ["admin-info"],
@@ -728,13 +778,166 @@ export function AdminPage() {
         )}
       </Paper>
 
+      {/* Catalogs Section */}
+      <Typography variant="h6" sx={{ mb: 1, mt: 3 }}>
+        Catalogs
+      </Typography>
+      <Paper sx={{ p: 2 }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          NightCrate does not ship deep-sky object data. The OpenNGC catalog is
+          fetched directly from GitHub and cached under your app-data folder.
+          Click Load on first use, or Update whenever a newer release is
+          available upstream.
+        </Typography>
+
+        {/* Remote version status strip */}
+        <Box
+          sx={{
+            mb: 2,
+            p: 1.5,
+            bgcolor: "action.hover",
+            borderRadius: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            flexWrap: "wrap",
+          }}
+        >
+          {remoteVersionQuery.isLoading ? (
+            <Typography variant="body2" color="text.secondary">
+              Checking GitHub…
+            </Typography>
+          ) : remoteVersionQuery.isError ? (
+            <>
+              <Typography variant="body2" color="warning.main">
+                Could not reach GitHub — try again in a moment.
+              </Typography>
+              <Button
+                size="small"
+                onClick={() =>
+                  queryClient.invalidateQueries({ queryKey: ["catalog-remote-version"] })
+                }
+              >
+                Check again
+              </Button>
+            </>
+          ) : remoteVersionQuery.data ? (
+            <>
+              <Typography variant="body2">
+                <strong>Installed:</strong>{" "}
+                {remoteVersionQuery.data.installed_version ?? "Not loaded"}
+              </Typography>
+              <Typography variant="body2">
+                <strong>Latest on GitHub:</strong>{" "}
+                {remoteVersionQuery.data.latest_tag}
+                {remoteVersionQuery.data.latest_published_at
+                  ? ` (${remoteVersionQuery.data.latest_published_at.slice(0, 10)})`
+                  : ""}
+              </Typography>
+              {remoteVersionQuery.data.has_update &&
+                remoteVersionQuery.data.installed_version !== null && (
+                  <Typography variant="body2" color="primary.main">
+                    Update available
+                  </Typography>
+                )}
+            </>
+          ) : null}
+        </Box>
+
+        {catalogSourcesQuery.data && catalogSourcesQuery.data.length > 0 && (
+          <Box sx={{ mb: 2 }}>
+            {catalogSourcesQuery.data.map((src: CatalogSource) => (
+              <Box key={src.id} sx={{ py: 0.5 }}>
+                <Typography variant="body2">
+                  <strong>{src.display_name}</strong>
+                  {src.version ? ` — ${src.version}` : ""} ·{" "}
+                  {src.row_count.toLocaleString()} rows
+                  {src.license ? ` · ${src.license}` : ""}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+        )}
+
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+          <Button
+            variant="contained"
+            disabled={catalogBusy}
+            onClick={() => runCatalogOp(fetchCatalogsFromGitHub, { refreshRemote: true })}
+          >
+            {catalogBusy ? (
+              <CircularProgress size={20} color="inherit" />
+            ) : remoteVersionQuery.data?.installed_version == null ? (
+              "Load from GitHub"
+            ) : remoteVersionQuery.data.has_update ? (
+              "Update from GitHub"
+            ) : (
+              "Re-download from GitHub"
+            )}
+          </Button>
+          {remoteVersionQuery.data?.installed_version != null && (
+            <Button
+              variant="outlined"
+              disabled={catalogBusy}
+              onClick={() =>
+                runCatalogOp(
+                  async () => ({ fetched_version: null, ...(await reloadCatalogs()) }),
+                  { refreshRemote: false },
+                )
+              }
+            >
+              Reload local cache
+            </Button>
+          )}
+        </Box>
+
+        {catalogError && (
+          <Alert
+            severity="warning"
+            sx={{ mt: 2 }}
+            onClose={() => setCatalogError(null)}
+          >
+            {catalogError} — try again in a moment.
+          </Alert>
+        )}
+
+        {catalogFetchResult && (
+          <Box sx={{ mt: 2, p: 1.5, bgcolor: "action.hover", borderRadius: 1 }}>
+            <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+              {catalogFetchResult.fetched_version
+                ? `Downloaded ${catalogFetchResult.fetched_version} · `
+                : ""}
+              {catalogFetchResult.total_dsos.toLocaleString()} DSOs,{" "}
+              {catalogFetchResult.total_designations.toLocaleString()} designations
+            </Typography>
+            {catalogFetchResult.per_source.map((src) => (
+              <Typography
+                key={src.source_id}
+                variant="caption"
+                sx={{ display: "block", fontFamily: "monospace" }}
+              >
+                {src.source_id}: {src.status}
+                {src.dso_count > 0 ? ` · ${src.dso_count} dsos` : ""}
+                {src.designation_count > 0
+                  ? ` · ${src.designation_count} designations`
+                  : ""}
+                {src.unresolved_duplicates > 0
+                  ? ` · ${src.unresolved_duplicates} unresolved`
+                  : ""}
+                {src.error ? ` · error: ${src.error}` : ""}
+              </Typography>
+            ))}
+          </Box>
+        )}
+      </Paper>
+
       <Snackbar
         open={errorMsg !== null}
         autoHideDuration={6000}
         onClose={() => setErrorMsg(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="error" onClose={() => setErrorMsg(null)} sx={{ width: "100%" }}>
+        <Alert severity="warning" onClose={() => setErrorMsg(null)} sx={{ width: "100%" }}>
           {errorMsg}
         </Alert>
       </Snackbar>

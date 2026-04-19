@@ -622,3 +622,150 @@ async def test_reseed_with_active_database(client, tmp_path):
     assert "total_updated" in data
     assert "total_unchanged" in data
     assert "total_skipped" in data
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/catalogs/remote-version
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_remote_version_reports_installed_and_latest(client, tmp_path, monkeypatch):
+    """With a version.json present locally + GitHub reachable, returns both
+    tags and flags has_update correctly."""
+    # Point user_catalogs_root at the tmp_path.
+    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+    openngc_dir = tmp_path / "catalogs" / "openngc"
+    openngc_dir.mkdir(parents=True)
+    (openngc_dir / "version.json").write_text('{"version": "v20231203"}', encoding="utf-8")
+
+    from nightcrate.catalog_loader import remote
+
+    async def fake_fetch():
+        return remote.RemoteReleaseInfo(
+            tag_name="v20260307",
+            published_at="2026-03-07T17:18:41Z",
+            release_url="https://github.com/mattiaverga/OpenNGC/releases/tag/v20260307",
+        )
+
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.fetch_latest_release", fake_fetch)
+
+    resp = await client.get("/api/admin/catalogs/remote-version")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["latest_tag"] == "v20260307"
+    assert data["installed_version"] == "v20231203"
+    assert data["has_update"] is True
+
+
+@pytest.mark.anyio
+async def test_remote_version_no_installation(client, tmp_path, monkeypatch):
+    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+
+    from nightcrate.catalog_loader import remote
+
+    async def fake_fetch():
+        return remote.RemoteReleaseInfo(tag_name="v20260307", published_at=None, release_url="")
+
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.fetch_latest_release", fake_fetch)
+
+    resp = await client.get("/api/admin/catalogs/remote-version")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["installed_version"] is None
+    assert data["has_update"] is True
+
+
+@pytest.mark.anyio
+async def test_remote_version_returns_502_on_github_failure(client, tmp_path, monkeypatch):
+    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+
+    async def fake_fetch():
+        raise RuntimeError("GitHub unreachable")
+
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.fetch_latest_release", fake_fetch)
+
+    resp = await client.get("/api/admin/catalogs/remote-version")
+    assert resp.status_code == 502
+    assert "Could not reach GitHub" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/catalogs/fetch-from-github
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_fetch_from_github_no_database(client):
+    resp = await client.post("/api/admin/catalogs/fetch-from-github")
+    assert resp.status_code == 400
+    assert "no database" in resp.json()["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_fetch_from_github_happy_path(client, tmp_path, monkeypatch):
+    """Happy path: create a DB, mock the remote fetch/download, verify the
+    endpoint runs the loader and returns a populated summary."""
+    import shutil
+
+    # Set up a database
+    db_path = str(tmp_path / "catalogs_db.db")
+    setup_resp = await client.post(
+        "/api/admin/database/setup",
+        json={"path": db_path, "name": "Catalogs Test"},
+    )
+    assert setup_resp.status_code == 200
+
+    # Point user_catalogs_root at tmp_path and simulate the download by
+    # copying mini fixtures into the expected layout.
+    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+    openngc_dir = tmp_path / "catalogs" / "openngc"
+    openngc_dir.mkdir(parents=True)
+
+    mini_fixture = Path(__file__).parent / "fixtures" / "catalogs" / "openngc"
+
+    from nightcrate.catalog_loader import remote
+
+    async def fake_fetch():
+        return remote.RemoteReleaseInfo(tag_name="v20260307", published_at=None, release_url="")
+
+    async def fake_download(release, catalogs_root):
+        # Simulate a real download by staging the mini fixtures under the
+        # expected filenames.
+        shutil.copy(mini_fixture / "mini_NGC.csv", openngc_dir / "NGC.csv")
+        shutil.copy(mini_fixture / "mini_addendum.csv", openngc_dir / "addendum.csv")
+        (openngc_dir / "version.json").write_text('{"version": "v20260307"}', encoding="utf-8")
+        return remote.DownloadReport(
+            tag=release.tag_name,
+            files=[],
+            version_json_path=openngc_dir / "version.json",
+        )
+
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.fetch_latest_release", fake_fetch)
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.download_openngc", fake_download)
+
+    resp = await client.post("/api/admin/catalogs/fetch-from-github")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["fetched_version"] == "v20260307"
+    assert data["total_dsos"] > 0
+    assert any(s["status"] == "loaded" for s in data["per_source"])
+
+
+@pytest.mark.anyio
+async def test_fetch_from_github_network_failure_returns_502(client, tmp_path, monkeypatch):
+    db_path = str(tmp_path / "catalogs_db.db")
+    setup_resp = await client.post(
+        "/api/admin/database/setup",
+        json={"path": db_path, "name": "Catalogs Test"},
+    )
+    assert setup_resp.status_code == 200
+
+    async def fake_fetch():
+        raise RuntimeError("GitHub unreachable")
+
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.fetch_latest_release", fake_fetch)
+
+    resp = await client.post("/api/admin/catalogs/fetch-from-github")
+    assert resp.status_code == 502
+    assert "Failed to download" in resp.json()["detail"]
