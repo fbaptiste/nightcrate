@@ -1,8 +1,8 @@
--- NightCrate version: 0.12.1
+-- NightCrate version: 0.12.2
 -- NightCrate Equipment Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.12.1 (rig builder, My Equipment flag, location seeing,
--- location soft-delete, settings key-value schema).
+-- location soft-delete, settings key-value schema, rig_summary ADC bit depth).
 -- Incorporates revision spec: no custom_fields, seed tracking, alias tables,
 -- closed-vocabulary CHECK constraints, updated_at triggers.
 --
@@ -1016,8 +1016,10 @@ CREATE TABLE IF NOT EXISTS rig_software (
 );
 
 -- Convenience view resolving equipment names + headline specs for rig listing.
--- Includes guide camera sensor data for guide calculator computations and
--- telescope_id for the Equipment tab's detail view.
+-- Includes guide camera sensor data for guide calculator computations,
+-- telescope_id for the Equipment tab's detail view, and sensor_adc_bit_depth
+-- (from the imaging camera's sensor) for the File Size calculator's
+-- auto-populate-from-rig flow.
 CREATE VIEW IF NOT EXISTS rig_summary AS
 SELECT
     r.id,
@@ -1046,6 +1048,7 @@ SELECT
     s.sensor_width_mm,
     s.sensor_height_mm,
     s.sensor_type,
+    s.adc_bit_depth AS sensor_adc_bit_depth,
     -- Mount
     r.mount_id,
     m.model_name AS mount_name,

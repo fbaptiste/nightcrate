@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.12.1
+**NightCrate version:** 0.12.2
 
 **Last updated:** 2026-04-18
 
@@ -96,7 +96,7 @@ Full CRUD for 12 equipment types (camera, sensor, telescope/OTA, filter, mount, 
 
 - **Routes:** `/equipment`, `/equipment/:category` (including `my-cameras`, `my-telescopes`, etc.)
 - **API:** `/api/equipment/*` (5+ endpoints per type), `/api/equipment/lookups/*`, `/api/equipment/<type>/{id}/mine`, `/api/equipment/mine-counts`
-- **Key backend:** `api/equipment.py`, `api/equipment_models.py`, `seed_loader/`
+- **Key backend:** `api/equipment.py`, `api/equipment_factory.py` (v0.12.2 — `build_lookup_router` + `build_equipment_router` consolidate duplicated CRUD for 9 lookup tables + 8 mid-complexity equipment tables; `sensor`, `telescope`, and `filter` stay hand-written because of unique children/junctions), `api/equipment_models.py`, `seed_loader/`
 
 ### Rigs and rig calculators
 
@@ -174,8 +174,9 @@ Standalone mini-app with 12 astronomer/astrophotographer utilities grouped into 
 - **API:** `/api/calculators/*` (13 endpoints)
 - **Key backend:** `services/calculators.py`, `services/coordinate_format.py`
 - **Frontend:** `pages/CalculatorsPage.tsx`, `components/calculators/*`, `api/calculators.ts`, `stores/calculatorsStore.ts`
-- **Shared primitives:** `CalculatorLocationBar` (location picker for the aware calculators), `CalculatorSidebar` (Equipment-style TreeView), `CalculatorAboutSection` (reused from rigs)
-- **Deps:** `@dnd-kit/{core,sortable,utilities}` for drag-to-reorder (MIT)
+- **Shared primitives:** `CalculatorLocationBar` (location picker for the aware calculators), `CalculatorSidebar` (Equipment-style TreeView), `CalculatorAboutSection` (reused from rigs), `RigPickerMenu` (auto-populate from a rig — Pixel Scale / Field of View / File Size; loads focal length, pixel size, sensor dims, ADC bit depth from the selected rig and leaves fields editable)
+- **Math rendering:** KaTeX via `react-katex`. `components/calculators/Math.tsx` exposes `<Inline>` / `<Block>` wrappers used in the About sections of Pixel Scale, Field of View, File Size, Airmass, SQM/Bortle/NELM, Temperature, and the Weather methodology accordion
+- **Deps:** `@dnd-kit/{core,sortable,utilities}` for drag-to-reorder (MIT); `katex` + `react-katex` + `@types/react-katex` for math rendering (MIT)
 
 ### API documentation
 
@@ -198,14 +199,14 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ## Schema state
 
-Current migration: **0012** (location soft-delete). 12 migrations total (`0001`–`0012`).
+Current migration: **0013** (rig_summary ADC bit depth). 13 migrations total (`0001`–`0013`).
 
 - **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
 - **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.
 - **Locations (migrations 0007, 0012, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), `typical_seeing_low/high_arcsec` for rig calculator sampling assessment. Migration 0012 adds `active` soft-delete column.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
-- **Rigs (migrations 0009–0010):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane
+- **Rigs (migrations 0009–0010, 0013):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane. Migration 0013 recreates the view again to expose `sensor_adc_bit_depth` for the File Size calculator's auto-populate flow.
 
 Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`. LLM-facing seed-data + abbreviated-schema reference (for CSV authoring in Claude Desktop) in `LLM_DB_SPECS.md` at the repo root.
 

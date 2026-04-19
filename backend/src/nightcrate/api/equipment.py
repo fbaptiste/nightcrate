@@ -4,10 +4,12 @@ from fastapi import APIRouter, HTTPException, Query
 
 from nightcrate.api._common import (
     bool_fields,
+    get_or_404,
     integrity_guard,
     row_to_dict,
     strip_seed,
 )
+from nightcrate.api.equipment_factory import build_equipment_router, build_lookup_router
 from nightcrate.api.equipment_models import (
     CameraCreate,
     CameraResponse,
@@ -147,15 +149,6 @@ _RESTORABLE_TABLES = frozenset(
 )
 
 
-async def _get_or_404(conn, table: str, row_id: int, label: str = "Item") -> dict:
-    """Fetch a single row by ID or raise 404."""
-    row = await conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))  # nosec B608 - table name from internal allow-list, not user input
-    result = await row.fetchone()
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"{label} not found: {row_id}")
-    return _row_to_dict(result)
-
-
 # ── Restore (generic) ────────────────────────────────────────────────────────
 
 
@@ -165,7 +158,7 @@ async def restore_item(table_name: str, item_id: int):
     if table_name not in _RESTORABLE_TABLES:
         raise HTTPException(status_code=400, detail=f"Unknown table: {table_name}")
     async with get_db() as conn:
-        await _get_or_404(conn, table_name, item_id, table_name)
+        await get_or_404(conn, table_name, item_id, table_name)
         await conn.execute(
             f"UPDATE {table_name} SET active = 1 WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
             (item_id,),
@@ -174,660 +167,90 @@ async def restore_item(table_name: str, item_id: int):
     return {"ok": True}
 
 
-# ── Manufacturer ─────────────────────────────────────────────────────────────
+# ── Lookup tables (factory-built) ────────────────────────────────────────────
 
 
-@lookup_router.get("/manufacturer", response_model=list[ManufacturerResponse])
-async def list_manufacturers(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM manufacturer {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/manufacturer/{manufacturer_id}", response_model=ManufacturerResponse)
-async def get_manufacturer(manufacturer_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "manufacturer", manufacturer_id, "Manufacturer"),
-            "active",
-        )
-
-
-@lookup_router.post("/manufacturer", response_model=ManufacturerResponse, status_code=201)
-async def create_manufacturer(body: ManufacturerCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Manufacturer already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO manufacturer (name, website, notes) VALUES (?, ?, ?)",
-                (body.name, body.website, body.notes),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "manufacturer", row_id, "Manufacturer"),
-            "active",
-        )
-
-
-@lookup_router.put("/manufacturer/{manufacturer_id}", response_model=ManufacturerResponse)
-async def update_manufacturer(manufacturer_id: int, body: ManufacturerUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "manufacturer", manufacturer_id, "Manufacturer")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [manufacturer_id]
-        with integrity_guard(conflict_detail="Manufacturer name already exists"):
-            await conn.execute(
-                f"UPDATE manufacturer SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "manufacturer", manufacturer_id, "Manufacturer"),
-            "active",
-        )
-
-
-@lookup_router.delete("/manufacturer/{manufacturer_id}")
-async def delete_manufacturer(manufacturer_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "manufacturer", manufacturer_id, "Manufacturer")
-        await conn.execute(
-            "UPDATE manufacturer SET active = 0 WHERE id = ?",
-            (manufacturer_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Optical Design ────────────────────────────────────────────────────────────
-
-
-@lookup_router.get("/optical-design", response_model=list[OpticalDesignResponse])
-async def list_optical_designs(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM optical_design {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/optical-design/{optical_design_id}", response_model=OpticalDesignResponse)
-async def get_optical_design(optical_design_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "optical_design", optical_design_id, "Optical design"),
-            "active",
-        )
-
-
-@lookup_router.post("/optical-design", response_model=OpticalDesignResponse, status_code=201)
-async def create_optical_design(body: OpticalDesignCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Optical design already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO optical_design (name, description) VALUES (?, ?)",
-                (body.name, body.description),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "optical_design", row_id, "Optical design"),
-            "active",
-        )
-
-
-@lookup_router.put("/optical-design/{optical_design_id}", response_model=OpticalDesignResponse)
-async def update_optical_design(optical_design_id: int, body: OpticalDesignUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "optical_design", optical_design_id, "Optical design")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [optical_design_id]
-        with integrity_guard(conflict_detail="Optical design name already exists"):
-            await conn.execute(
-                f"UPDATE optical_design SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "optical_design", optical_design_id, "Optical design"),
-            "active",
-        )
-
-
-@lookup_router.delete("/optical-design/{optical_design_id}")
-async def delete_optical_design(optical_design_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "optical_design", optical_design_id, "Optical design")
-        await conn.execute(
-            "UPDATE optical_design SET active = 0 WHERE id = ?",
-            (optical_design_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Mount Type ────────────────────────────────────────────────────────────────
-
-
-@lookup_router.get("/mount-type", response_model=list[MountTypeResponse])
-async def list_mount_types(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM mount_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/mount-type/{mount_type_id}", response_model=MountTypeResponse)
-async def get_mount_type(mount_type_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "mount_type", mount_type_id, "Mount type"),
-            "active",
-        )
-
-
-@lookup_router.post("/mount-type", response_model=MountTypeResponse, status_code=201)
-async def create_mount_type(body: MountTypeCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Mount type already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO mount_type (name, description) VALUES (?, ?)",
-                (body.name, body.description),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "mount_type", row_id, "Mount type"),
-            "active",
-        )
-
-
-@lookup_router.put("/mount-type/{mount_type_id}", response_model=MountTypeResponse)
-async def update_mount_type(mount_type_id: int, body: MountTypeUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "mount_type", mount_type_id, "Mount type")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [mount_type_id]
-        with integrity_guard(conflict_detail="Mount type name already exists"):
-            await conn.execute(
-                f"UPDATE mount_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "mount_type", mount_type_id, "Mount type"),
-            "active",
-        )
-
-
-@lookup_router.delete("/mount-type/{mount_type_id}")
-async def delete_mount_type(mount_type_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "mount_type", mount_type_id, "Mount type")
-        await conn.execute(
-            "UPDATE mount_type SET active = 0 WHERE id = ?",
-            (mount_type_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Connection Interface ──────────────────────────────────────────────────────
-
-
-@lookup_router.get("/connection-interface", response_model=list[ConnectionInterfaceResponse])
-async def list_connection_interfaces(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM connection_interface {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get(
-    "/connection-interface/{connection_interface_id}",
+build_lookup_router(
+    lookup_router,
+    table="manufacturer",
+    url_slug="manufacturer",
+    label="Manufacturer",
+    create_model=ManufacturerCreate,
+    update_model=ManufacturerUpdate,
+    response_model=ManufacturerResponse,
+)
+build_lookup_router(
+    lookup_router,
+    table="optical_design",
+    url_slug="optical-design",
+    label="Optical design",
+    create_model=OpticalDesignCreate,
+    update_model=OpticalDesignUpdate,
+    response_model=OpticalDesignResponse,
+)
+build_lookup_router(
+    lookup_router,
+    table="mount_type",
+    url_slug="mount-type",
+    label="Mount type",
+    create_model=MountTypeCreate,
+    update_model=MountTypeUpdate,
+    response_model=MountTypeResponse,
+)
+build_lookup_router(
+    lookup_router,
+    table="connection_interface",
+    url_slug="connection-interface",
+    label="Connection interface",
+    create_model=ConnectionInterfaceCreate,
+    update_model=ConnectionInterfaceUpdate,
     response_model=ConnectionInterfaceResponse,
 )
-async def get_connection_interface(connection_interface_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(
-                conn, "connection_interface", connection_interface_id, "Connection interface"
-            ),
-            "active",
-        )
-
-
-@lookup_router.post(
-    "/connection-interface", response_model=ConnectionInterfaceResponse, status_code=201
+build_lookup_router(
+    lookup_router,
+    table="connector_size",
+    url_slug="connector-size",
+    label="Connector size",
+    create_model=ConnectorSizeCreate,
+    update_model=ConnectorSizeUpdate,
+    response_model=ConnectorSizeResponse,
 )
-async def create_connection_interface(body: ConnectionInterfaceCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Connection interface already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO connection_interface (name, category, notes) VALUES (?, ?, ?)",
-                (body.name, body.category, body.notes),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "connection_interface", row_id, "Connection interface"),
-            "active",
-        )
-
-
-@lookup_router.put(
-    "/connection-interface/{connection_interface_id}",
-    response_model=ConnectionInterfaceResponse,
+build_lookup_router(
+    lookup_router,
+    table="filter_size",
+    url_slug="filter-size",
+    label="Filter size",
+    create_model=FilterSizeCreate,
+    update_model=FilterSizeUpdate,
+    response_model=FilterSizeResponse,
 )
-async def update_connection_interface(
-    connection_interface_id: int, body: ConnectionInterfaceUpdate
-):
-    async with get_db() as conn:
-        existing = await _get_or_404(
-            conn, "connection_interface", connection_interface_id, "Connection interface"
-        )
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [connection_interface_id]
-        with integrity_guard(conflict_detail="Connection interface name already exists"):
-            await conn.execute(
-                f"UPDATE connection_interface SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(
-                conn, "connection_interface", connection_interface_id, "Connection interface"
-            ),
-            "active",
-        )
-
-
-@lookup_router.delete("/connection-interface/{connection_interface_id}")
-async def delete_connection_interface(connection_interface_id: int):
-    async with get_db() as conn:
-        await _get_or_404(
-            conn, "connection_interface", connection_interface_id, "Connection interface"
-        )
-        await conn.execute(
-            "UPDATE connection_interface SET active = 0 WHERE id = ?",
-            (connection_interface_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Connector Size ────────────────────────────────────────────────────────────
-
-
-@lookup_router.get("/connector-size", response_model=list[ConnectorSizeResponse])
-async def list_connector_sizes(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM connector_size {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/connector-size/{connector_size_id}", response_model=ConnectorSizeResponse)
-async def get_connector_size(connector_size_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "connector_size", connector_size_id, "Connector size"),
-            "active",
-        )
-
-
-@lookup_router.post("/connector-size", response_model=ConnectorSizeResponse, status_code=201)
-async def create_connector_size(body: ConnectorSizeCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Connector size already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO connector_size (name, diameter_mm, notes) VALUES (?, ?, ?)",
-                (body.name, body.diameter_mm, body.notes),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "connector_size", row_id, "Connector size"),
-            "active",
-        )
-
-
-@lookup_router.put("/connector-size/{connector_size_id}", response_model=ConnectorSizeResponse)
-async def update_connector_size(connector_size_id: int, body: ConnectorSizeUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "connector_size", connector_size_id, "Connector size")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [connector_size_id]
-        with integrity_guard(conflict_detail="Connector size name already exists"):
-            await conn.execute(
-                f"UPDATE connector_size SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "connector_size", connector_size_id, "Connector size"),
-            "active",
-        )
-
-
-@lookup_router.delete("/connector-size/{connector_size_id}")
-async def delete_connector_size(connector_size_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "connector_size", connector_size_id, "Connector size")
-        await conn.execute(
-            "UPDATE connector_size SET active = 0 WHERE id = ?",
-            (connector_size_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Filter Size ───────────────────────────────────────────────────────────────
-
-
-@lookup_router.get("/filter-size", response_model=list[FilterSizeResponse])
-async def list_filter_sizes(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_size {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/filter-size/{filter_size_id}", response_model=FilterSizeResponse)
-async def get_filter_size(filter_size_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "filter_size", filter_size_id, "Filter size"),
-            "active",
-        )
-
-
-@lookup_router.post("/filter-size", response_model=FilterSizeResponse, status_code=201)
-async def create_filter_size(body: FilterSizeCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Filter size already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO filter_size (name, description) VALUES (?, ?)",
-                (body.name, body.description),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "filter_size", row_id, "Filter size"),
-            "active",
-        )
-
-
-@lookup_router.put("/filter-size/{filter_size_id}", response_model=FilterSizeResponse)
-async def update_filter_size(filter_size_id: int, body: FilterSizeUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "filter_size", filter_size_id, "Filter size")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [filter_size_id]
-        with integrity_guard(conflict_detail="Filter size name already exists"):
-            await conn.execute(
-                f"UPDATE filter_size SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "filter_size", filter_size_id, "Filter size"),
-            "active",
-        )
-
-
-@lookup_router.delete("/filter-size/{filter_size_id}")
-async def delete_filter_size(filter_size_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "filter_size", filter_size_id, "Filter size")
-        await conn.execute(
-            "UPDATE filter_size SET active = 0 WHERE id = ?",
-            (filter_size_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Computer Type ─────────────────────────────────────────────────────────────
-
-
-@lookup_router.get("/form-factor", response_model=list[FormFactorResponse])
-async def list_form_factors(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM form_factor {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/form-factor/{form_factor_id}", response_model=FormFactorResponse)
-async def get_form_factor(form_factor_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "form_factor", form_factor_id, "Form factor"),
-            "active",
-        )
-
-
-@lookup_router.post("/form-factor", response_model=FormFactorResponse, status_code=201)
-async def create_form_factor(body: FormFactorCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Form factor already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO form_factor (name, description) VALUES (?, ?)",
-                (body.name, body.description),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "form_factor", row_id, "Form factor"),
-            "active",
-        )
-
-
-@lookup_router.put("/form-factor/{form_factor_id}", response_model=FormFactorResponse)
-async def update_form_factor(form_factor_id: int, body: FormFactorUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "form_factor", form_factor_id, "Form factor")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [form_factor_id]
-        with integrity_guard(conflict_detail="Form factor name already exists"):
-            await conn.execute(
-                f"UPDATE form_factor SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "form_factor", form_factor_id, "Form factor"),
-            "active",
-        )
-
-
-@lookup_router.delete("/form-factor/{form_factor_id}")
-async def delete_form_factor(form_factor_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "form_factor", form_factor_id, "Form factor")
-        await conn.execute(
-            "UPDATE form_factor SET active = 0 WHERE id = ?",
-            (form_factor_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Focuser Type ──────────────────────────────────────────────────────────────
-
-
-@lookup_router.get("/focuser-type", response_model=list[FocuserTypeResponse])
-async def list_focuser_types(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM focuser_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/focuser-type/{focuser_type_id}", response_model=FocuserTypeResponse)
-async def get_focuser_type(focuser_type_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type"),
-            "active",
-        )
-
-
-@lookup_router.post("/focuser-type", response_model=FocuserTypeResponse, status_code=201)
-async def create_focuser_type(body: FocuserTypeCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Focuser type already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO focuser_type (name, notes) VALUES (?, ?)",
-                (body.name, body.notes),
-            )
-            await conn.commit()
-        row_id = cursor.lastrowid
-        return _bool_fields(
-            await _get_or_404(conn, "focuser_type", row_id, "Focuser type"),
-            "active",
-        )
-
-
-@lookup_router.put("/focuser-type/{focuser_type_id}", response_model=FocuserTypeResponse)
-async def update_focuser_type(focuser_type_id: int, body: FocuserTypeUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [focuser_type_id]
-        with integrity_guard(conflict_detail="Focuser type name already exists"):
-            await conn.execute(
-                f"UPDATE focuser_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type"),
-            "active",
-        )
-
-
-@lookup_router.delete("/focuser-type/{focuser_type_id}")
-async def delete_focuser_type(focuser_type_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "focuser_type", focuser_type_id, "Focuser type")
-        await conn.execute(
-            "UPDATE focuser_type SET active = 0 WHERE id = ?",
-            (focuser_type_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
-
-
-# ── Filter Type (read-only) ───────────────────────────────────────────────────
-
-
-@lookup_router.get("/filter-type", response_model=list[FilterTypeResponse])
-async def list_filter_types(
-    include_retired: bool = Query(False, description="Include retired items"),
-):
-    async with get_db() as conn:
-        where = "" if include_retired else "WHERE active = 1"
-        rows = await conn.execute(f"SELECT * FROM filter_type {where} ORDER BY name")  # nosec B608 - table name from internal allow-list, not user input
-        return [_bool_fields(_row_to_dict(r), "active") for r in await rows.fetchall()]
-
-
-@lookup_router.get("/filter-type/{filter_type_id}", response_model=FilterTypeResponse)
-async def get_filter_type(filter_type_id: int):
-    async with get_db() as conn:
-        return _bool_fields(
-            await _get_or_404(conn, "filter_type", filter_type_id, "Filter type"),
-            "active",
-        )
-
-
-@lookup_router.post("/filter-type", response_model=FilterTypeResponse, status_code=201)
-async def create_filter_type(body: FilterTypeCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Filter type already exists: {body.name}"):
-            cursor = await conn.execute(
-                "INSERT INTO filter_type (name, display_name, description) VALUES (?, ?, ?)",
-                (body.name, body.display_name, body.description),
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "filter_type", cursor.lastrowid, "Filter type"),
-            "active",
-        )
-
-
-@lookup_router.put("/filter-type/{filter_type_id}", response_model=FilterTypeResponse)
-async def update_filter_type(filter_type_id: int, body: FilterTypeUpdate):
-    async with get_db() as conn:
-        existing = await _get_or_404(conn, "filter_type", filter_type_id, "Filter type")
-        updates = body.model_dump(exclude_unset=True)
-        if not updates:
-            return _bool_fields(existing, "active")
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [filter_type_id]
-        with integrity_guard(conflict_detail="Filter type name already exists"):
-            await conn.execute(
-                f"UPDATE filter_type SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                values,
-            )
-            await conn.commit()
-        return _bool_fields(
-            await _get_or_404(conn, "filter_type", filter_type_id, "Filter type"),
-            "active",
-        )
-
-
-@lookup_router.delete("/filter-type/{filter_type_id}")
-async def delete_filter_type(filter_type_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "filter_type", filter_type_id, "Filter type")
-        await conn.execute(
-            "UPDATE filter_type SET active = 0 WHERE id = ?",
-            (filter_type_id,),
-        )
-        await conn.commit()
-    return {"ok": True}
+build_lookup_router(
+    lookup_router,
+    table="form_factor",
+    url_slug="form-factor",
+    label="Form factor",
+    create_model=FormFactorCreate,
+    update_model=FormFactorUpdate,
+    response_model=FormFactorResponse,
+)
+build_lookup_router(
+    lookup_router,
+    table="focuser_type",
+    url_slug="focuser-type",
+    label="Focuser type",
+    create_model=FocuserTypeCreate,
+    update_model=FocuserTypeUpdate,
+    response_model=FocuserTypeResponse,
+)
+build_lookup_router(
+    lookup_router,
+    table="filter_type",
+    url_slug="filter-type",
+    label="Filter type",
+    create_model=FilterTypeCreate,
+    update_model=FilterTypeUpdate,
+    response_model=FilterTypeResponse,
+)
 
 
 # ── Sensor ────────────────────────────────────────────────────────────────────
@@ -917,7 +340,7 @@ async def create_sensor(body: SensorCreate):
 @router.put("/sensor/{sensor_id}", response_model=SensorResponse)
 async def update_sensor(sensor_id: int, body: SensorUpdate):
     async with get_db() as conn:
-        await _get_or_404(conn, "sensor", sensor_id, "Sensor")
+        await get_or_404(conn, "sensor", sensor_id, "Sensor")
 
         updates = body.model_dump(exclude_unset=True)
         if updates:
@@ -943,7 +366,7 @@ async def update_sensor(sensor_id: int, body: SensorUpdate):
 @router.delete("/sensor/{sensor_id}")
 async def delete_sensor(sensor_id: int):
     async with get_db() as conn:
-        await _get_or_404(conn, "sensor", sensor_id, "Sensor")
+        await get_or_404(conn, "sensor", sensor_id, "Sensor")
         await conn.execute(
             "UPDATE sensor SET active = 0 WHERE id = ?",
             (sensor_id,),
@@ -961,7 +384,7 @@ async def _build_camera_response(conn, camera_row: dict) -> dict:
     _bool_fields(d, "active", "cooled", "tilt_adapter", "has_usb_hub", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
@@ -980,7 +403,7 @@ async def _build_camera_response(conn, camera_row: dict) -> dict:
     cs_id = d.pop("connector_size_id")
     if cs_id:
         d["connector_size"] = _bool_fields(
-            await _get_or_404(conn, "connector_size", cs_id, "Connector size"),
+            await get_or_404(conn, "connector_size", cs_id, "Connector size"),
             "active",
         )
     else:
@@ -989,7 +412,7 @@ async def _build_camera_response(conn, camera_row: dict) -> dict:
     uh_id = d.pop("usb_hub_interface_id")
     if uh_id:
         d["usb_hub_interface"] = _bool_fields(
-            await _get_or_404(conn, "connection_interface", uh_id, "Connection interface"),
+            await get_or_404(conn, "connection_interface", uh_id, "Connection interface"),
             "active",
         )
     else:
@@ -1011,134 +434,18 @@ async def _build_camera_response(conn, camera_row: dict) -> dict:
     return d
 
 
-@router.get("/camera", response_model=list[CameraResponse])
-async def list_cameras(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM camera {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_camera_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/camera/{camera_id}", response_model=CameraResponse)
-async def get_camera(camera_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "camera", camera_id, "Camera")
-        return await _build_camera_response(conn, row)
-
-
-@router.post("/camera", response_model=CameraResponse, status_code=201)
-async def create_camera(body: CameraCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Camera already exists: {body.model_name}"):
-            cursor = await conn.execute(
-                """INSERT INTO camera (
-                    manufacturer_id, sensor_id, guide_sensor_id, connector_size_id,
-                    model_name, cooled, cooling_delta_c, back_focus_mm, weight_g,
-                    tilt_adapter, has_usb_hub, usb_hub_interface_id, unity_gain,
-                    effective_full_well_ke, effective_read_noise_lcg_e,
-                    effective_read_noise_hcg_e, effective_peak_qe_pct,
-                    hcg_threshold_gain, notes, source_url, is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.sensor_id,
-                    body.guide_sensor_id,
-                    body.connector_size_id,
-                    body.model_name,
-                    int(body.cooled),
-                    body.cooling_delta_c,
-                    body.back_focus_mm,
-                    body.weight_g,
-                    int(body.tilt_adapter),
-                    int(body.has_usb_hub),
-                    body.usb_hub_interface_id,
-                    body.unity_gain,
-                    body.effective_full_well_ke,
-                    body.effective_read_noise_lcg_e,
-                    body.effective_read_noise_hcg_e,
-                    body.effective_peak_qe_pct,
-                    body.hcg_threshold_gain,
-                    body.notes,
-                    body.source_url,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        camera_id = cursor.lastrowid
-        for iface_id in body.interface_ids:
-            await conn.execute(
-                "INSERT INTO camera_interface (camera_id, interface_id) VALUES (?, ?)",
-                (camera_id, iface_id),
-            )
-        await conn.commit()
-        row = await _get_or_404(conn, "camera", camera_id, "Camera")
-        return await _build_camera_response(conn, row)
-
-
-@router.put("/camera/{camera_id}", response_model=CameraResponse)
-async def update_camera(camera_id: int, body: CameraUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "camera", camera_id, "Camera")
-        updates = body.model_dump(exclude_unset=True)
-        interface_ids = updates.pop("interface_ids", None)
-        if updates:
-            for bool_field in ("cooled", "tilt_adapter", "has_usb_hub", "is_mine"):
-                if bool_field in updates and updates[bool_field] is not None:
-                    updates[bool_field] = int(updates[bool_field])
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [camera_id]
-            with integrity_guard(
-                conflict_detail="Camera (manufacturer, model_name) already exists"
-            ):
-                await conn.execute(
-                    f"UPDATE camera SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        if interface_ids is not None:
-            await conn.execute("DELETE FROM camera_interface WHERE camera_id = ?", (camera_id,))
-            for iface_id in interface_ids:
-                await conn.execute(
-                    "INSERT INTO camera_interface (camera_id, interface_id) VALUES (?, ?)",
-                    (camera_id, iface_id),
-                )
-            await conn.commit()
-        row = await _get_or_404(conn, "camera", camera_id, "Camera")
-        return await _build_camera_response(conn, row)
-
-
-@router.delete("/camera/{camera_id}")
-async def delete_camera(camera_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "camera", camera_id, "Camera")
-        await conn.execute("UPDATE camera SET active = 0 WHERE id = ?", (camera_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/camera/{camera_id}/mine", response_model=CameraResponse)
-async def toggle_camera_mine(camera_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "camera", camera_id, "Camera")
-        await conn.execute(
-            "UPDATE camera SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), camera_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "camera", camera_id, "Camera")
-        return await _build_camera_response(conn, row)
+build_equipment_router(
+    router,
+    table="camera",
+    url_slug="camera",
+    label="Camera",
+    create_model=CameraCreate,
+    update_model=CameraUpdate,
+    response_model=CameraResponse,
+    response_builder=_build_camera_response,
+    bool_columns=("cooled", "tilt_adapter", "has_usb_hub", "is_mine"),
+    interface_junction=("camera_interface", "camera_id"),
+)
 
 
 # ── Telescope ─────────────────────────────────────────────────────────────────
@@ -1150,14 +457,14 @@ async def _build_telescope_response(conn, telescope_row: dict) -> dict:
     _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
     od_id = d.pop("optical_design_id")
     if od_id:
         d["optical_design"] = _bool_fields(
-            await _get_or_404(conn, "optical_design", od_id, "Optical design"),
+            await get_or_404(conn, "optical_design", od_id, "Optical design"),
             "active",
         )
     else:
@@ -1218,7 +525,7 @@ async def list_telescopes(
 @router.get("/telescope/{telescope_id}", response_model=TelescopeResponse)
 async def get_telescope(telescope_id: int):
     async with get_db() as conn:
-        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        row = await get_or_404(conn, "telescope", telescope_id, "Telescope")
         return await _build_telescope_response(conn, row)
 
 
@@ -1253,14 +560,14 @@ async def create_telescope(body: TelescopeCreate):
                 (telescope_id, cs_id),
             )
         await conn.commit()
-        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        row = await get_or_404(conn, "telescope", telescope_id, "Telescope")
         return await _build_telescope_response(conn, row)
 
 
 @router.put("/telescope/{telescope_id}", response_model=TelescopeResponse)
 async def update_telescope(telescope_id: int, body: TelescopeUpdate):
     async with get_db() as conn:
-        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await get_or_404(conn, "telescope", telescope_id, "Telescope")
         updates = body.model_dump(exclude_unset=True)
         connector_size_ids = updates.pop("connector_size_ids", None)
         if "is_mine" in updates and updates["is_mine"] is not None:
@@ -1287,14 +594,14 @@ async def update_telescope(telescope_id: int, body: TelescopeUpdate):
                     (telescope_id, cs_id),
                 )
             await conn.commit()
-        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        row = await get_or_404(conn, "telescope", telescope_id, "Telescope")
         return await _build_telescope_response(conn, row)
 
 
 @router.delete("/telescope/{telescope_id}")
 async def delete_telescope(telescope_id: int):
     async with get_db() as conn:
-        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await get_or_404(conn, "telescope", telescope_id, "Telescope")
         await conn.execute("UPDATE telescope SET active = 0 WHERE id = ?", (telescope_id,))
         await conn.commit()
     return {"ok": True}
@@ -1303,13 +610,13 @@ async def delete_telescope(telescope_id: int):
 @router.post("/telescope/{telescope_id}/mine", response_model=TelescopeResponse)
 async def toggle_telescope_mine(telescope_id: int, body: MineToggle):
     async with get_db() as conn:
-        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await get_or_404(conn, "telescope", telescope_id, "Telescope")
         await conn.execute(
             "UPDATE telescope SET is_mine = ? WHERE id = ?",
             (int(body.is_mine), telescope_id),
         )
         await conn.commit()
-        row = await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        row = await get_or_404(conn, "telescope", telescope_id, "Telescope")
         return await _build_telescope_response(conn, row)
 
 
@@ -1323,7 +630,7 @@ async def toggle_telescope_mine(telescope_id: int, body: MineToggle):
 )
 async def create_telescope_configuration(telescope_id: int, body: TelescopeConfigurationCreate):
     async with get_db() as conn:
-        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await get_or_404(conn, "telescope", telescope_id, "Telescope")
         with integrity_guard(
             conflict_detail=(
                 f"Configuration name already exists for this telescope: {body.config_name}"
@@ -1372,7 +679,7 @@ async def update_telescope_configuration(
     telescope_id: int, config_id: int, body: TelescopeConfigurationUpdate
 ):
     async with get_db() as conn:
-        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await get_or_404(conn, "telescope", telescope_id, "Telescope")
         check = await conn.execute(
             "SELECT id FROM telescope_configuration WHERE id = ? AND telescope_id = ?",
             (config_id, telescope_id),
@@ -1412,7 +719,7 @@ async def update_telescope_configuration(
 @router.delete("/telescope/{telescope_id}/configuration/{config_id}")
 async def delete_telescope_configuration(telescope_id: int, config_id: int):
     async with get_db() as conn:
-        await _get_or_404(conn, "telescope", telescope_id, "Telescope")
+        await get_or_404(conn, "telescope", telescope_id, "Telescope")
         check = await conn.execute(
             "SELECT id FROM telescope_configuration WHERE id = ? AND telescope_id = ?",
             (config_id, telescope_id),
@@ -1438,11 +745,11 @@ async def _build_filter_response(conn, filter_row: dict) -> dict:
     _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
     d["filter_type"] = _bool_fields(
-        await _get_or_404(conn, "filter_type", d.pop("filter_type_id"), "Filter type"),
+        await get_or_404(conn, "filter_type", d.pop("filter_type_id"), "Filter type"),
         "active",
     )
 
@@ -1473,7 +780,7 @@ async def _build_filter_response(conn, filter_row: dict) -> dict:
         so = _row_to_dict(row)
         fs_id = so.pop("filter_size_id")
         fs = _bool_fields(
-            await _get_or_404(conn, "filter_size", fs_id, "Filter size"),
+            await get_or_404(conn, "filter_size", fs_id, "Filter size"),
             "active",
         )
         _strip_seed(fs)
@@ -1510,7 +817,7 @@ async def list_filters(
 @router.get("/filter/{filter_id}", response_model=FilterResponse)
 async def get_filter(filter_id: int):
     async with get_db() as conn:
-        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        row = await get_or_404(conn, "filter", filter_id, "Filter")
         return await _build_filter_response(conn, row)
 
 
@@ -1535,14 +842,14 @@ async def create_filter(body: FilterCreate):
             )
             await conn.commit()
         filter_id = cursor.lastrowid
-        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        row = await get_or_404(conn, "filter", filter_id, "Filter")
         return await _build_filter_response(conn, row)
 
 
 @router.put("/filter/{filter_id}", response_model=FilterResponse)
 async def update_filter(filter_id: int, body: FilterUpdate):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         updates = body.model_dump(exclude_unset=True)
         if "is_mine" in updates and updates["is_mine"] is not None:
             updates["is_mine"] = int(updates["is_mine"])
@@ -1557,14 +864,14 @@ async def update_filter(filter_id: int, body: FilterUpdate):
                     values,
                 )
                 await conn.commit()
-        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        row = await get_or_404(conn, "filter", filter_id, "Filter")
         return await _build_filter_response(conn, row)
 
 
 @router.delete("/filter/{filter_id}")
 async def delete_filter(filter_id: int):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         await conn.execute("UPDATE filter SET active = 0 WHERE id = ?", (filter_id,))
         await conn.commit()
     return {"ok": True}
@@ -1573,13 +880,13 @@ async def delete_filter(filter_id: int):
 @router.post("/filter/{filter_id}/mine", response_model=FilterResponse)
 async def toggle_filter_mine(filter_id: int, body: MineToggle):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         await conn.execute(
             "UPDATE filter SET is_mine = ? WHERE id = ?",
             (int(body.is_mine), filter_id),
         )
         await conn.commit()
-        row = await _get_or_404(conn, "filter", filter_id, "Filter")
+        row = await get_or_404(conn, "filter", filter_id, "Filter")
         return await _build_filter_response(conn, row)
 
 
@@ -1593,7 +900,7 @@ async def toggle_filter_mine(filter_id: int, body: MineToggle):
 )
 async def create_filter_passband(filter_id: int, body: FilterPassbandCreate):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         try:
             cursor = await conn.execute(
                 """INSERT INTO filter_passband (
@@ -1633,7 +940,7 @@ async def create_filter_passband(filter_id: int, body: FilterPassbandCreate):
 )
 async def update_filter_passband(filter_id: int, passband_id: int, body: FilterPassbandUpdate):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         check = await conn.execute(
             "SELECT id FROM filter_passband WHERE id = ? AND filter_id = ?",
             (passband_id, filter_id),
@@ -1670,7 +977,7 @@ async def update_filter_passband(filter_id: int, passband_id: int, body: FilterP
 @router.delete("/filter/{filter_id}/passband/{passband_id}")
 async def delete_filter_passband(filter_id: int, passband_id: int):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         check = await conn.execute(
             "SELECT id FROM filter_passband WHERE id = ? AND filter_id = ?",
             (passband_id, filter_id),
@@ -1688,7 +995,7 @@ async def delete_filter_passband(filter_id: int, passband_id: int):
 async def _build_size_option_response(conn, so_row) -> dict:
     so = _row_to_dict(so_row)
     fs = _bool_fields(
-        await _get_or_404(conn, "filter_size", so.pop("filter_size_id"), "Filter size"),
+        await get_or_404(conn, "filter_size", so.pop("filter_size_id"), "Filter size"),
         "active",
     )
     _strip_seed(fs)
@@ -1706,7 +1013,7 @@ async def _build_size_option_response(conn, so_row) -> dict:
 )
 async def create_filter_size_option(filter_id: int, body: FilterSizeOptionCreate):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         with integrity_guard(conflict_detail="This filter already offers that size"):
             cursor = await conn.execute(
                 """INSERT INTO filter_size_option (
@@ -1727,7 +1034,7 @@ async def create_filter_size_option(filter_id: int, body: FilterSizeOptionCreate
 )
 async def update_filter_size_option(filter_id: int, option_id: int, body: FilterSizeOptionUpdate):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         check = await conn.execute(
             "SELECT id FROM filter_size_option WHERE id = ? AND filter_id = ?",
             (option_id, filter_id),
@@ -1751,7 +1058,7 @@ async def update_filter_size_option(filter_id: int, option_id: int, body: Filter
 @router.delete("/filter/{filter_id}/size-option/{option_id}")
 async def delete_filter_size_option(filter_id: int, option_id: int):
     async with get_db() as conn:
-        await _get_or_404(conn, "filter", filter_id, "Filter")
+        await get_or_404(conn, "filter", filter_id, "Filter")
         check = await conn.execute(
             "SELECT id FROM filter_size_option WHERE id = ? AND filter_id = ?",
             (option_id, filter_id),
@@ -1772,14 +1079,14 @@ async def _build_mount_response(conn, mount_row: dict) -> dict:
     _bool_fields(d, "active", "counterweight_required", "goto_capable", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
     mt_id = d.pop("mount_type_id")
     if mt_id:
         d["mount_type"] = _bool_fields(
-            await _get_or_404(conn, "mount_type", mt_id, "Mount type"),
+            await get_or_404(conn, "mount_type", mt_id, "Mount type"),
             "active",
         )
     else:
@@ -1801,120 +1108,18 @@ async def _build_mount_response(conn, mount_row: dict) -> dict:
     return d
 
 
-@router.get("/mount", response_model=list[MountResponse])
-async def list_mounts(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM mount {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_mount_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/mount/{mount_id}", response_model=MountResponse)
-async def get_mount(mount_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "mount", mount_id, "Mount")
-        return await _build_mount_response(conn, row)
-
-
-@router.post("/mount", response_model=MountResponse, status_code=201)
-async def create_mount(body: MountCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Mount already exists: {body.model_name}"):
-            cursor = await conn.execute(
-                """INSERT INTO mount (
-                    manufacturer_id, mount_type_id, model_name,
-                    payload_capacity_kg, mount_weight_kg, counterweight_required,
-                    goto_capable, periodic_error_arcsec, drive_type, notes, source_url,
-                    is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.mount_type_id,
-                    body.model_name,
-                    body.payload_capacity_kg,
-                    body.mount_weight_kg,
-                    int(body.counterweight_required),
-                    int(body.goto_capable),
-                    body.periodic_error_arcsec,
-                    body.drive_type,
-                    body.notes,
-                    body.source_url,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        mount_id = cursor.lastrowid
-        for iface_id in body.interface_ids:
-            await conn.execute(
-                "INSERT INTO mount_interface (mount_id, interface_id) VALUES (?, ?)",
-                (mount_id, iface_id),
-            )
-        await conn.commit()
-        row = await _get_or_404(conn, "mount", mount_id, "Mount")
-        return await _build_mount_response(conn, row)
-
-
-@router.put("/mount/{mount_id}", response_model=MountResponse)
-async def update_mount(mount_id: int, body: MountUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "mount", mount_id, "Mount")
-        updates = body.model_dump(exclude_unset=True)
-        interface_ids = updates.pop("interface_ids", None)
-        if updates:
-            for bool_field in ("counterweight_required", "goto_capable", "is_mine"):
-                if bool_field in updates and updates[bool_field] is not None:
-                    updates[bool_field] = int(updates[bool_field])
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [mount_id]
-            with integrity_guard(conflict_detail="Mount (manufacturer, model_name) already exists"):
-                await conn.execute(
-                    f"UPDATE mount SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        if interface_ids is not None:
-            await conn.execute("DELETE FROM mount_interface WHERE mount_id = ?", (mount_id,))
-            for iface_id in interface_ids:
-                await conn.execute(
-                    "INSERT INTO mount_interface (mount_id, interface_id) VALUES (?, ?)",
-                    (mount_id, iface_id),
-                )
-            await conn.commit()
-        row = await _get_or_404(conn, "mount", mount_id, "Mount")
-        return await _build_mount_response(conn, row)
-
-
-@router.delete("/mount/{mount_id}")
-async def delete_mount(mount_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "mount", mount_id, "Mount")
-        await conn.execute("UPDATE mount SET active = 0 WHERE id = ?", (mount_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/mount/{mount_id}/mine", response_model=MountResponse)
-async def toggle_mount_mine(mount_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "mount", mount_id, "Mount")
-        await conn.execute(
-            "UPDATE mount SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), mount_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "mount", mount_id, "Mount")
-        return await _build_mount_response(conn, row)
+build_equipment_router(
+    router,
+    table="mount",
+    url_slug="mount",
+    label="Mount",
+    create_model=MountCreate,
+    update_model=MountUpdate,
+    response_model=MountResponse,
+    response_builder=_build_mount_response,
+    bool_columns=("counterweight_required", "goto_capable", "is_mine"),
+    interface_junction=("mount_interface", "mount_id"),
+)
 
 
 # ── Focuser ───────────────────────────────────────────────────────────────────
@@ -1926,14 +1131,14 @@ async def _build_focuser_response(conn, focuser_row: dict) -> dict:
     _bool_fields(d, "active", "motorized", "temperature_compensation", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
     ft_id = d.pop("focuser_type_id")
     if ft_id:
         d["focuser_type"] = _bool_fields(
-            await _get_or_404(conn, "focuser_type", ft_id, "Focuser type"),
+            await get_or_404(conn, "focuser_type", ft_id, "Focuser type"),
             "active",
         )
     else:
@@ -1955,123 +1160,18 @@ async def _build_focuser_response(conn, focuser_row: dict) -> dict:
     return d
 
 
-@router.get("/focuser", response_model=list[FocuserResponse])
-async def list_focusers(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(
-            f"SELECT * FROM focuser {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
-        )
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_focuser_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/focuser/{focuser_id}", response_model=FocuserResponse)
-async def get_focuser(focuser_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "focuser", focuser_id, "Focuser")
-        return await _build_focuser_response(conn, row)
-
-
-@router.post("/focuser", response_model=FocuserResponse, status_code=201)
-async def create_focuser(body: FocuserCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Focuser already exists: {body.model_name}"):
-            cursor = await conn.execute(
-                """INSERT INTO focuser (
-                    manufacturer_id, focuser_type_id, model_name, motorized, travel_range_mm,
-                    step_size_um, total_steps, temperature_compensation,
-                    backlash_steps, notes, source_url, is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.focuser_type_id,
-                    body.model_name,
-                    int(body.motorized),
-                    body.travel_range_mm,
-                    body.step_size_um,
-                    body.total_steps,
-                    int(body.temperature_compensation),
-                    body.backlash_steps,
-                    body.notes,
-                    body.source_url,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        focuser_id = cursor.lastrowid
-        for iface_id in body.interface_ids:
-            await conn.execute(
-                "INSERT INTO focuser_interface (focuser_id, interface_id) VALUES (?, ?)",
-                (focuser_id, iface_id),
-            )
-        await conn.commit()
-        row = await _get_or_404(conn, "focuser", focuser_id, "Focuser")
-        return await _build_focuser_response(conn, row)
-
-
-@router.put("/focuser/{focuser_id}", response_model=FocuserResponse)
-async def update_focuser(focuser_id: int, body: FocuserUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "focuser", focuser_id, "Focuser")
-        updates = body.model_dump(exclude_unset=True)
-        interface_ids = updates.pop("interface_ids", None)
-        if updates:
-            for bool_field in ("motorized", "temperature_compensation", "is_mine"):
-                if bool_field in updates and updates[bool_field] is not None:
-                    updates[bool_field] = int(updates[bool_field])
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [focuser_id]
-            with integrity_guard(
-                conflict_detail="Focuser (manufacturer, model_name) already exists"
-            ):
-                await conn.execute(
-                    f"UPDATE focuser SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        if interface_ids is not None:
-            await conn.execute("DELETE FROM focuser_interface WHERE focuser_id = ?", (focuser_id,))
-            for iface_id in interface_ids:
-                await conn.execute(
-                    "INSERT INTO focuser_interface (focuser_id, interface_id) VALUES (?, ?)",
-                    (focuser_id, iface_id),
-                )
-            await conn.commit()
-        row = await _get_or_404(conn, "focuser", focuser_id, "Focuser")
-        return await _build_focuser_response(conn, row)
-
-
-@router.delete("/focuser/{focuser_id}")
-async def delete_focuser(focuser_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "focuser", focuser_id, "Focuser")
-        await conn.execute("UPDATE focuser SET active = 0 WHERE id = ?", (focuser_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/focuser/{focuser_id}/mine", response_model=FocuserResponse)
-async def toggle_focuser_mine(focuser_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "focuser", focuser_id, "Focuser")
-        await conn.execute(
-            "UPDATE focuser SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), focuser_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "focuser", focuser_id, "Focuser")
-        return await _build_focuser_response(conn, row)
+build_equipment_router(
+    router,
+    table="focuser",
+    url_slug="focuser",
+    label="Focuser",
+    create_model=FocuserCreate,
+    update_model=FocuserUpdate,
+    response_model=FocuserResponse,
+    response_builder=_build_focuser_response,
+    bool_columns=("motorized", "temperature_compensation", "is_mine"),
+    interface_junction=("focuser_interface", "focuser_id"),
+)
 
 
 # ── Filter Wheel ──────────────────────────────────────────────────────────────
@@ -2083,14 +1183,14 @@ async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
     _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
     fs_id = d.pop("filter_size_id")
     if fs_id:
         d["filter_size"] = _bool_fields(
-            await _get_or_404(conn, "filter_size", fs_id, "Filter size"),
+            await get_or_404(conn, "filter_size", fs_id, "Filter size"),
             "active",
         )
     else:
@@ -2099,7 +1199,7 @@ async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
     cs_cam_id = d.pop("camera_side_connector_id")
     if cs_cam_id:
         d["camera_side_connector"] = _bool_fields(
-            await _get_or_404(conn, "connector_size", cs_cam_id, "Connector size"),
+            await get_or_404(conn, "connector_size", cs_cam_id, "Connector size"),
             "active",
         )
     else:
@@ -2108,7 +1208,7 @@ async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
     cs_tel_id = d.pop("telescope_side_connector_id")
     if cs_tel_id:
         d["telescope_side_connector"] = _bool_fields(
-            await _get_or_404(conn, "connector_size", cs_tel_id, "Connector size"),
+            await get_or_404(conn, "connector_size", cs_tel_id, "Connector size"),
             "active",
         )
     else:
@@ -2130,123 +1230,17 @@ async def _build_filter_wheel_response(conn, fw_row: dict) -> dict:
     return d
 
 
-@router.get("/filter-wheel", response_model=list[FilterWheelResponse])
-async def list_filter_wheels(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(
-            f"SELECT * FROM filter_wheel {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
-        )
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_filter_wheel_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/filter-wheel/{filter_wheel_id}", response_model=FilterWheelResponse)
-async def get_filter_wheel(filter_wheel_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
-        return await _build_filter_wheel_response(conn, row)
-
-
-@router.post("/filter-wheel", response_model=FilterWheelResponse, status_code=201)
-async def create_filter_wheel(body: FilterWheelCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Filter wheel already exists: {body.model_name}"):
-            cursor = await conn.execute(
-                """INSERT INTO filter_wheel (
-                    manufacturer_id, filter_size_id, camera_side_connector_id,
-                    telescope_side_connector_id, model_name, num_positions,
-                    back_focus_contribution_mm, notes, source_url, is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.filter_size_id,
-                    body.camera_side_connector_id,
-                    body.telescope_side_connector_id,
-                    body.model_name,
-                    body.num_positions,
-                    body.back_focus_contribution_mm,
-                    body.notes,
-                    body.source_url,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        filter_wheel_id = cursor.lastrowid
-        for iface_id in body.interface_ids:
-            await conn.execute(
-                "INSERT INTO filter_wheel_interface (filter_wheel_id, interface_id) VALUES (?, ?)",
-                (filter_wheel_id, iface_id),
-            )
-        await conn.commit()
-        row = await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
-        return await _build_filter_wheel_response(conn, row)
-
-
-@router.put("/filter-wheel/{filter_wheel_id}", response_model=FilterWheelResponse)
-async def update_filter_wheel(filter_wheel_id: int, body: FilterWheelUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
-        updates = body.model_dump(exclude_unset=True)
-        interface_ids = updates.pop("interface_ids", None)
-        if "is_mine" in updates and updates["is_mine"] is not None:
-            updates["is_mine"] = int(updates["is_mine"])
-        if updates:
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [filter_wheel_id]
-            with integrity_guard(
-                conflict_detail="Filter wheel (manufacturer, model_name) already exists"
-            ):
-                await conn.execute(
-                    f"UPDATE filter_wheel SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        if interface_ids is not None:
-            await conn.execute(
-                "DELETE FROM filter_wheel_interface WHERE filter_wheel_id = ?", (filter_wheel_id,)
-            )
-            for iface_id in interface_ids:
-                await conn.execute(
-                    "INSERT INTO filter_wheel_interface"
-                    " (filter_wheel_id, interface_id) VALUES (?, ?)",
-                    (filter_wheel_id, iface_id),
-                )
-            await conn.commit()
-        row = await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
-        return await _build_filter_wheel_response(conn, row)
-
-
-@router.delete("/filter-wheel/{filter_wheel_id}")
-async def delete_filter_wheel(filter_wheel_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
-        await conn.execute("UPDATE filter_wheel SET active = 0 WHERE id = ?", (filter_wheel_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/filter-wheel/{filter_wheel_id}/mine", response_model=FilterWheelResponse)
-async def toggle_filter_wheel_mine(filter_wheel_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
-        await conn.execute(
-            "UPDATE filter_wheel SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), filter_wheel_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "filter_wheel", filter_wheel_id, "Filter wheel")
-        return await _build_filter_wheel_response(conn, row)
+build_equipment_router(
+    router,
+    table="filter_wheel",
+    url_slug="filter-wheel",
+    label="Filter wheel",
+    create_model=FilterWheelCreate,
+    update_model=FilterWheelUpdate,
+    response_model=FilterWheelResponse,
+    response_builder=_build_filter_wheel_response,
+    interface_junction=("filter_wheel_interface", "filter_wheel_id"),
+)
 
 
 # ── OAG ───────────────────────────────────────────────────────────────────────
@@ -2258,14 +1252,14 @@ async def _build_oag_response(conn, oag_row: dict) -> dict:
     _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
     isc_id = d.pop("imaging_side_connector_id")
     if isc_id:
         d["imaging_side_connector"] = _bool_fields(
-            await _get_or_404(conn, "connector_size", isc_id, "Connector size"),
+            await get_or_404(conn, "connector_size", isc_id, "Connector size"),
             "active",
         )
     else:
@@ -2274,7 +1268,7 @@ async def _build_oag_response(conn, oag_row: dict) -> dict:
     gcc_id = d.pop("guide_camera_connector_id")
     if gcc_id:
         d["guide_camera_connector"] = _bool_fields(
-            await _get_or_404(conn, "connector_size", gcc_id, "Connector size"),
+            await get_or_404(conn, "connector_size", gcc_id, "Connector size"),
             "active",
         )
     else:
@@ -2285,101 +1279,16 @@ async def _build_oag_response(conn, oag_row: dict) -> dict:
     return d
 
 
-@router.get("/oag", response_model=list[OagResponse])
-async def list_oags(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM oag {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_oag_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/oag/{oag_id}", response_model=OagResponse)
-async def get_oag(oag_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "oag", oag_id, "OAG")
-        return await _build_oag_response(conn, row)
-
-
-@router.post("/oag", response_model=OagResponse, status_code=201)
-async def create_oag(body: OagCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"OAG already exists: {body.model_name}"):
-            cursor = await conn.execute(
-                """INSERT INTO oag (
-                    manufacturer_id, imaging_side_connector_id, guide_camera_connector_id,
-                    model_name, prism_size_mm, back_focus_contribution_mm, weight_g, notes,
-                    source_url, is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.imaging_side_connector_id,
-                    body.guide_camera_connector_id,
-                    body.model_name,
-                    body.prism_size_mm,
-                    body.back_focus_contribution_mm,
-                    body.weight_g,
-                    body.notes,
-                    body.source_url,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        oag_id = cursor.lastrowid
-        row = await _get_or_404(conn, "oag", oag_id, "OAG")
-        return await _build_oag_response(conn, row)
-
-
-@router.put("/oag/{oag_id}", response_model=OagResponse)
-async def update_oag(oag_id: int, body: OagUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "oag", oag_id, "OAG")
-        updates = body.model_dump(exclude_unset=True)
-        if "is_mine" in updates and updates["is_mine"] is not None:
-            updates["is_mine"] = int(updates["is_mine"])
-        if updates:
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [oag_id]
-            with integrity_guard(conflict_detail="OAG (manufacturer, model_name) already exists"):
-                await conn.execute(
-                    f"UPDATE oag SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        row = await _get_or_404(conn, "oag", oag_id, "OAG")
-        return await _build_oag_response(conn, row)
-
-
-@router.delete("/oag/{oag_id}")
-async def delete_oag(oag_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "oag", oag_id, "OAG")
-        await conn.execute("UPDATE oag SET active = 0 WHERE id = ?", (oag_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/oag/{oag_id}/mine", response_model=OagResponse)
-async def toggle_oag_mine(oag_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "oag", oag_id, "OAG")
-        await conn.execute(
-            "UPDATE oag SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), oag_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "oag", oag_id, "OAG")
-        return await _build_oag_response(conn, row)
+build_equipment_router(
+    router,
+    table="oag",
+    url_slug="oag",
+    label="OAG",
+    create_model=OagCreate,
+    update_model=OagUpdate,
+    response_model=OagResponse,
+    response_builder=_build_oag_response,
+)
 
 
 # ── Guide Scope ───────────────────────────────────────────────────────────────
@@ -2391,14 +1300,14 @@ async def _build_guide_scope_response(conn, gs_row: dict) -> dict:
     _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
     gcc_id = d.pop("guide_camera_connector_id")
     if gcc_id:
         d["guide_camera_connector"] = _bool_fields(
-            await _get_or_404(conn, "connector_size", gcc_id, "Connector size"),
+            await get_or_404(conn, "connector_size", gcc_id, "Connector size"),
             "active",
         )
     else:
@@ -2409,103 +1318,16 @@ async def _build_guide_scope_response(conn, gs_row: dict) -> dict:
     return d
 
 
-@router.get("/guide-scope", response_model=list[GuideScopeResponse])
-async def list_guide_scopes(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(
-            f"SELECT * FROM guide_scope {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
-        )
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_guide_scope_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/guide-scope/{guide_scope_id}", response_model=GuideScopeResponse)
-async def get_guide_scope(guide_scope_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
-        return await _build_guide_scope_response(conn, row)
-
-
-@router.post("/guide-scope", response_model=GuideScopeResponse, status_code=201)
-async def create_guide_scope(body: GuideScopeCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Guide scope already exists: {body.model_name}"):
-            cursor = await conn.execute(
-                """INSERT INTO guide_scope (
-                    manufacturer_id, guide_camera_connector_id, model_name,
-                    aperture_mm, focal_length_mm, weight_g, notes, source_url, is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.guide_camera_connector_id,
-                    body.model_name,
-                    body.aperture_mm,
-                    body.focal_length_mm,
-                    body.weight_g,
-                    body.notes,
-                    body.source_url,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        guide_scope_id = cursor.lastrowid
-        row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
-        return await _build_guide_scope_response(conn, row)
-
-
-@router.put("/guide-scope/{guide_scope_id}", response_model=GuideScopeResponse)
-async def update_guide_scope(guide_scope_id: int, body: GuideScopeUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
-        updates = body.model_dump(exclude_unset=True)
-        if "is_mine" in updates and updates["is_mine"] is not None:
-            updates["is_mine"] = int(updates["is_mine"])
-        if updates:
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [guide_scope_id]
-            with integrity_guard(
-                conflict_detail="Guide scope (manufacturer, model_name) already exists"
-            ):
-                await conn.execute(
-                    f"UPDATE guide_scope SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
-        return await _build_guide_scope_response(conn, row)
-
-
-@router.delete("/guide-scope/{guide_scope_id}")
-async def delete_guide_scope(guide_scope_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
-        await conn.execute("UPDATE guide_scope SET active = 0 WHERE id = ?", (guide_scope_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/guide-scope/{guide_scope_id}/mine", response_model=GuideScopeResponse)
-async def toggle_guide_scope_mine(guide_scope_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
-        await conn.execute(
-            "UPDATE guide_scope SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), guide_scope_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "guide_scope", guide_scope_id, "Guide scope")
-        return await _build_guide_scope_response(conn, row)
+build_equipment_router(
+    router,
+    table="guide_scope",
+    url_slug="guide-scope",
+    label="Guide scope",
+    create_model=GuideScopeCreate,
+    update_model=GuideScopeUpdate,
+    response_model=GuideScopeResponse,
+    response_builder=_build_guide_scope_response,
+)
 
 
 # ── Computer ──────────────────────────────────────────────────────────────────
@@ -2517,14 +1339,14 @@ async def _build_computer_response(conn, computer_row: dict) -> dict:
     _bool_fields(d, "active", "is_mine")
 
     d["manufacturer"] = _bool_fields(
-        await _get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
+        await get_or_404(conn, "manufacturer", d.pop("manufacturer_id"), "Manufacturer"),
         "active",
     )
 
     ct_id = d.pop("form_factor_id")
     if ct_id:
         d["form_factor"] = _bool_fields(
-            await _get_or_404(conn, "form_factor", ct_id, "Form factor"),
+            await get_or_404(conn, "form_factor", ct_id, "Form factor"),
             "active",
         )
     else:
@@ -2535,99 +1357,16 @@ async def _build_computer_response(conn, computer_row: dict) -> dict:
     return d
 
 
-@router.get("/computer", response_model=list[ComputerResponse])
-async def list_computers(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(
-            f"SELECT * FROM computer {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
-        )
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_computer_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/computer/{computer_id}", response_model=ComputerResponse)
-async def get_computer(computer_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "computer", computer_id, "Computer")
-        return await _build_computer_response(conn, row)
-
-
-@router.post("/computer", response_model=ComputerResponse, status_code=201)
-async def create_computer(body: ComputerCreate):
-    async with get_db() as conn:
-        with integrity_guard(conflict_detail=f"Computer already exists: {body.model_name}"):
-            cursor = await conn.execute(
-                """INSERT INTO computer (
-                    manufacturer_id, form_factor_id, model_name, notes, source_url, is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.form_factor_id,
-                    body.model_name,
-                    body.notes,
-                    body.source_url,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        computer_id = cursor.lastrowid
-        row = await _get_or_404(conn, "computer", computer_id, "Computer")
-        return await _build_computer_response(conn, row)
-
-
-@router.put("/computer/{computer_id}", response_model=ComputerResponse)
-async def update_computer(computer_id: int, body: ComputerUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "computer", computer_id, "Computer")
-        updates = body.model_dump(exclude_unset=True)
-        if "is_mine" in updates and updates["is_mine"] is not None:
-            updates["is_mine"] = int(updates["is_mine"])
-        if updates:
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [computer_id]
-            with integrity_guard(
-                conflict_detail="Computer (manufacturer, model_name) already exists"
-            ):
-                await conn.execute(
-                    f"UPDATE computer SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        row = await _get_or_404(conn, "computer", computer_id, "Computer")
-        return await _build_computer_response(conn, row)
-
-
-@router.delete("/computer/{computer_id}")
-async def delete_computer(computer_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "computer", computer_id, "Computer")
-        await conn.execute("UPDATE computer SET active = 0 WHERE id = ?", (computer_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/computer/{computer_id}/mine", response_model=ComputerResponse)
-async def toggle_computer_mine(computer_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "computer", computer_id, "Computer")
-        await conn.execute(
-            "UPDATE computer SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), computer_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "computer", computer_id, "Computer")
-        return await _build_computer_response(conn, row)
+build_equipment_router(
+    router,
+    table="computer",
+    url_slug="computer",
+    label="Computer",
+    create_model=ComputerCreate,
+    update_model=ComputerUpdate,
+    response_model=ComputerResponse,
+    response_builder=_build_computer_response,
+)
 
 
 # ── Software ──────────────────────────────────────────────────────────────────
@@ -2641,7 +1380,7 @@ async def _build_software_response(conn, sw_row: dict) -> dict:
     mfr_id = d.pop("manufacturer_id")
     if mfr_id:
         d["manufacturer"] = _bool_fields(
-            await _get_or_404(conn, "manufacturer", mfr_id, "Manufacturer"),
+            await get_or_404(conn, "manufacturer", mfr_id, "Manufacturer"),
             "active",
         )
     else:
@@ -2652,98 +1391,16 @@ async def _build_software_response(conn, sw_row: dict) -> dict:
     return d
 
 
-@router.get("/software", response_model=list[SoftwareResponse])
-async def list_software(
-    include_retired: bool = Query(False, description="Include retired items"),
-    mine: bool = Query(False, description="Return only items marked as mine"),
-):
-    async with get_db() as conn:
-        conditions = []
-        if not include_retired:
-            conditions.append("active = 1")
-        if mine:
-            conditions.append("is_mine = 1")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM software {where} ORDER BY is_mine DESC, name")  # nosec B608 - table name from internal allow-list, not user input
-        results = []
-        for r in await rows.fetchall():
-            results.append(await _build_software_response(conn, _row_to_dict(r)))
-        return results
-
-
-@router.get("/software/{software_id}", response_model=SoftwareResponse)
-async def get_software(software_id: int):
-    async with get_db() as conn:
-        row = await _get_or_404(conn, "software", software_id, "Software")
-        return await _build_software_response(conn, row)
-
-
-@router.post("/software", response_model=SoftwareResponse, status_code=201)
-async def create_software(body: SoftwareCreate):
-    async with get_db() as conn:
-        with integrity_guard(
-            conflict_detail=f"Software already exists: {body.name}",
-            check_detail=f"Invalid category: {body.category}",
-        ):
-            cursor = await conn.execute(
-                """INSERT INTO software (
-                    manufacturer_id, name, category, website, notes, is_mine
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    body.manufacturer_id,
-                    body.name,
-                    body.category,
-                    body.website,
-                    body.notes,
-                    int(body.is_mine),
-                ),
-            )
-            await conn.commit()
-        software_id = cursor.lastrowid
-        row = await _get_or_404(conn, "software", software_id, "Software")
-        return await _build_software_response(conn, row)
-
-
-@router.put("/software/{software_id}", response_model=SoftwareResponse)
-async def update_software(software_id: int, body: SoftwareUpdate):
-    async with get_db() as conn:
-        await _get_or_404(conn, "software", software_id, "Software")
-        updates = body.model_dump(exclude_unset=True)
-        if "is_mine" in updates and updates["is_mine"] is not None:
-            updates["is_mine"] = int(updates["is_mine"])
-        if updates:
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [software_id]
-            with integrity_guard(
-                conflict_detail="Software (manufacturer, name) already exists",
-                check_detail=f"Invalid category: {updates.get('category')}",
-            ):
-                await conn.execute(
-                    f"UPDATE software SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
-                )
-                await conn.commit()
-        row = await _get_or_404(conn, "software", software_id, "Software")
-        return await _build_software_response(conn, row)
-
-
-@router.delete("/software/{software_id}")
-async def delete_software(software_id: int):
-    async with get_db() as conn:
-        await _get_or_404(conn, "software", software_id, "Software")
-        await conn.execute("UPDATE software SET active = 0 WHERE id = ?", (software_id,))
-        await conn.commit()
-    return {"ok": True}
-
-
-@router.post("/software/{software_id}/mine", response_model=SoftwareResponse)
-async def toggle_software_mine(software_id: int, body: MineToggle):
-    async with get_db() as conn:
-        await _get_or_404(conn, "software", software_id, "Software")
-        await conn.execute(
-            "UPDATE software SET is_mine = ? WHERE id = ?",
-            (int(body.is_mine), software_id),
-        )
-        await conn.commit()
-        row = await _get_or_404(conn, "software", software_id, "Software")
-        return await _build_software_response(conn, row)
+build_equipment_router(
+    router,
+    table="software",
+    url_slug="software",
+    label="Software",
+    create_model=SoftwareCreate,
+    update_model=SoftwareUpdate,
+    response_model=SoftwareResponse,
+    response_builder=_build_software_response,
+    name_column="name",
+    order_by="is_mine DESC, name",
+    check_detail_fn=lambda d: f"Invalid category: {d.get('category')}",
+)

@@ -22,6 +22,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.11.0 — Astronomy Weather Forecast](#v0110--astronomy-weather-forecast) ✅
 - [v0.12.0 — Rigs + My Equipment + Guide Calculators](#v0120--rigs--my-equipment--guide-calculators) ✅
 - [v0.12.1 — Calculators + Maintenance & Architectural Review](#v0121--calculators--maintenance--architectural-review) ✅
+- [v0.12.2 — Equipment Factory Refactor](#v0122--equipment-factory-refactor) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -1732,6 +1733,9 @@ full senior-engineer review of the Python backend + SQL schema.
 - [x] Drag-to-reorder Clocks view (dnd-kit) with the chosen order persisted to the `settings` table
 - [x] Coordinate-format service (`services/coordinate_format.py`) with sexagesimal formatter used by Locations sexagesimal display fields
 - [x] Two additional clocks: local time for the selected Location's Display Timezone and Location Timezone
+- [x] Rig picker on Pixel Scale / Field of View / File Size — `RigPickerMenu` loads focal length / pixel size / sensor dims / ADC bit depth from the selected rig (load-defaults-then-editable)
+- [x] KaTeX math rendering (`katex`, `react-katex`, MIT) for formulas in Pixel Scale, Field of View, File Size, Airmass (Kasten-Young), SQM/Bortle/NELM, Temperature, and the Weather methodology accordion
+- [x] Migration 0013 extends `rig_summary` view with `sensor_adc_bit_depth` so File Size can auto-select 16- vs 32-bit storage from the rig's camera sensor
 
 ### Settings table redesigned (KV)
 
@@ -1764,6 +1768,20 @@ full senior-engineer review of the Python backend + SQL schema.
 
 - [x] Column-filter dropdowns on common manufacturer column + per-type (Cameras: sensor, cooled; OTA: optical design; Filters: type, passbands; Mounts: type; Focusers: type, motorized; Filter Wheels: filter size, positions; Software: category)
 - [x] Camera model names get a space after ASI/QHY/ATR prefixes in the seed CSV (80 rows updated)
+- [x] Software Autocomplete in rig builder no longer duplicates starred items into a top "My Equipment" group (other equipment types still do)
+
+### UI bug fixes
+
+- [x] Tonight at a Glance: backend returns `HH:MM` strings already in the display timezone; frontend was treating them as ISO-UTC and showing em-dashes. Dropped `formatClockInTz` and passed through directly
+- [x] JSX Unicode-escape sweep — `label="\u00B0C"` (and equivalents on Field of View, Airmass, SQM/Bortle, Pixel Scale) in JSX attribute form doesn't escape; wrapped in `{...}` expressions across 5 calculator files
+- [x] `&approx;` isn't in React's named-entity table; replaced with `{"\u2248"}` in FileSize and LinearUnits calculators
+- [x] Native form controls (date-input popup, scrollbars) now match theme via `MuiCssBaseline.body.colorScheme = "dark"/"light"`
+
+### Code review + security hardening
+
+- [x] Soft-delete filter added to `/api/calculators/*`, `/api/weather/*`, `/api/rigs/*` location helpers — migration 0012 added the `active` column but three downstream consumers weren't threaded through (reviewer-caught, commit `3740537`)
+- [x] `SqmBortleCalc` error Alert downgraded from red → amber per colorblind palette (commit `3740537`)
+- [x] Bandit annotation pass — 62 pre-existing false positives (59 B608 f-string SQL with internal allow-list tables; 2 B110 best-effort try/except fallbacks; 1 B311 `random.uniform` for HTTP retry jitter) annotated with per-call `# nosec`. Post-pass: 0 Low / 0 Medium / 0 High (commits `81c386e`, `9c15f54`)
 
 ### Admin
 
@@ -1791,11 +1809,71 @@ Items #3 (0011 transactional wrapping — yoyo already handles it), #4 (code-gen
 ### v0.12.1 Completion Criteria
 
 - [x] All backend tests pass (1345 passed, 3 skipped)
-- [x] Ruff / format / bandit clean (bandit findings all pre-existing B608 false positives for Pydantic-driven dynamic SET clauses); frontend builds
+- [x] Ruff / format / bandit clean (0 Low / 0 Medium / 0 High after per-call `# nosec` annotations for pre-existing false positives); frontend builds
 - [x] Coverage: `core/config.py` 100%, `services/weather.py` 100%, `services/coordinate_format.py` 100%, `services/calculators.py` 99%, `api/calculators.py` 96%, `api/locations.py` 92%, `api/weather.py` 84%
 - [x] 127-test calculators edge-cases suite, 15-test Clear Outside scraper suite, 24-test coordinate format suite, 5-test weather cache suite
-- [x] New migrations: 0011 (settings KV), 0012 (location soft-delete); in-place pre-release edits to 0006
-- [x] Dependency additions: @dnd-kit/core + /sortable + /utilities (MIT) for Clocks drag-to-reorder; registered in README + PLAN
+- [x] New migrations: 0011 (settings KV), 0012 (location soft-delete), 0013 (rig_summary ADC bit depth); in-place pre-release edits to 0006
+- [x] Dependency additions: @dnd-kit/core + /sortable + /utilities (MIT) for Clocks drag-to-reorder; `katex` + `react-katex` + `@types/react-katex` (MIT) for math rendering in calculator About sections; registered in README + PLAN
+
+---
+
+## v0.12.2 — Equipment Factory Refactor
+
+**Status:** Done
+**Branch:** `v0.12.2/equipment-factory`
+
+Internal refactor of `api/equipment.py` (2,749 lines, 76 routes) to
+consolidate duplicated CRUD patterns into shared factories. Addressed
+item #2 from the v0.12.1 architectural review, which was deferred
+until the shared helpers from #1 and #20 were in place. No user-visible
+changes; zero change to API surface; all 1,345 tests stayed green.
+
+Outcome: `api/equipment.py` went from 2,749 → 1,416 lines (−48%); the
+new `api/equipment_factory.py` is ~300 lines. Combined equipment code
+dropped from 2,749 → ~1,720 lines (−37%). Coverage on `equipment.py`
+went from 96% → 98%.
+
+### Phase A — Lookup-table factory
+
+- [x] Coverage baseline recorded (`equipment.py` 96%, 1,355 stmts) before touching code
+- [x] `build_lookup_router(...)` — single factory emitting list / get / create / update / soft-delete for the 9 lookup tables: `manufacturer`, `optical_design`, `mount_type`, `connection_interface`, `connector_size`, `filter_size`, `form_factor`, `focuser_type`, `filter_type`
+- [x] Each lookup collapses to ~10 lines of config (table name, label, Create/Update/Response models). INSERT columns introspected from the Create model — no hand-written column list
+- [x] ~655 lines → ~90 lines in this phase (9 × 5 endpoints collapsed to 9 factory calls)
+- [x] All existing tests green; URL shape, status codes, conflict messages, return shapes preserved
+
+### Phase B — Equipment-table factory (mid-complexity CRUD types)
+
+- [x] `build_equipment_router(...)` covering 4 interface-junction types: `camera`, `mount`, `focuser`, `filter_wheel`. Factory handles the junction rebuild (via `executemany`), is_mine toggle, bool-field coercion
+- [x] Same factory covering 3 simple equipment types: `computer`, `oag`, `guide_scope` — plain CRUD + `is_mine`, no junction
+- [x] `software` handled via the same factory + a `check_detail_fn` hook for the `category` CHECK constraint → 422 response
+- [x] Per-type `response_builder` callback for the nested response shape (manufacturer, interfaces, per-type lookups). The factory does NOT try to genericize nested joins — each type's response builder stays explicit
+- [x] ~1,200 lines → ~90 lines in this phase (8 × 6 endpoints collapsed to 8 factory calls + 8 preserved `_build_X_response` helpers)
+
+### Incremental improvements (from simplification review)
+
+- [x] `_common.get_or_404` shared helper — previously inlined in every router (`equipment.py`, `rigs.py`, `locations.py`, `calculators.py`, `weather.py`). Factory + equipment.py now use the shared version; removing the local `_get_or_404` alias in `equipment.py` renamed 51 call sites
+- [x] Junction rebuild uses `await conn.executemany(sql, rows)` instead of an await-in-loop — saves 3–4 round-trips per rebuild on typical interface counts
+- [x] Single commit per CREATE (was two: one after INSERT, one after junction inserts). Transactional correctness + one less round-trip
+- [x] PUT short-circuit when the body is empty AND no `interface_ids` — returns the existing row immediately instead of re-reading
+- [x] `interface_junction_table` + `interface_fk_column` grouped into a single `interface_junction: tuple[str, str] | None` parameter
+
+### Explicitly NOT in scope (kept hand-written)
+
+- `sensor` — unique shape (no `is_mine`, no junction, no children); factoring it in would add accidental complexity
+- `telescope` — 3 extra endpoints for `telescope_configuration` child table + `telescope_connector` junction; structure is unique enough that forcing it into the factory is a net loss
+- `filter` — 6 extra endpoints (3 for passbands + 3 for size options); same rationale
+- Extracting `_build_X_response` functions into a generic helper — nested joins differ enough per type that a generic is worse than explicit code
+- `INSERT ... RETURNING *` to eliminate the post-write re-read (SQLite 3.35+ supports it). Flagged by the efficiency review as the single biggest remaining perf win; deferred to a follow-up because the behavior change warrants its own PR
+- Any change to API URL shape, field names, response payloads, status codes, or error semantics
+- Any change to the SQL schema or migrations
+
+### v0.12.2 Completion Criteria
+
+- [x] All backend tests pass (1,345 passed, 3 skipped) — same count as baseline
+- [x] Coverage on `api/equipment.py` at 98% (up from 96% baseline); `equipment_factory.py` at 99%
+- [x] Ruff / format / bandit clean (0 Low / 0 Medium / 0 High)
+- [x] No change to `/api/equipment/*` request/response shapes — verified by the existing 199-test `test_equipment_api.py` suite passing unchanged
+- [x] Line count reduction recorded: `equipment.py` 2,749 → 1,416 (−1,333 lines, −48%); total equipment code 2,749 → ~1,720 (−37%)
 
 ---
 

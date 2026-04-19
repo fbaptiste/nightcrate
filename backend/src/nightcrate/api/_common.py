@@ -44,6 +44,22 @@ def strip_seed(d: dict) -> dict:
     return d
 
 
+async def get_or_404(conn: Any, table: str, row_id: int, label: str = "Item") -> dict:
+    """Fetch a single row by ID or raise 404.
+
+    ``table`` is an internal constant (never user input); see the existing
+    ``# nosec B608`` rationale across the equipment routes.
+    """
+    row = await conn.execute(
+        f"SELECT * FROM {table} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
+        (row_id,),
+    )
+    result = await row.fetchone()
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"{label} not found: {row_id}")
+    return row_to_dict(result)
+
+
 @contextmanager
 def integrity_guard(
     *,

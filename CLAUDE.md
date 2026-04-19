@@ -294,16 +294,18 @@ Full CRUD API for all equipment types under `/api/equipment/`.
 
 **Architecture:**
 - `api/equipment_models.py` — Pydantic Create/Update/Response models for all types
-- `api/equipment.py` — single router with all CRUD endpoints
-- Helpers: `_row_to_dict`, `_bool_fields`, `_get_or_404`, `_strip_seed`, `_build_*_response` per complex type
+- `api/equipment.py` — hand-written routes for the unique-shape types (`sensor`, `telescope` + configurations + connectors, `filter` + passbands + size options) plus thin factory calls for the rest
+- `api/equipment_factory.py` — `build_lookup_router` (9 lookup tables, 5 endpoints each) and `build_equipment_router` (8 mid-complexity equipment tables: 6 endpoints each, optional interface-junction rebuild, optional CHECK-constraint hook, caller-supplied `response_builder` for nested shapes)
+- Helpers: `_common.row_to_dict`, `_common.bool_fields`, `_common.get_or_404`, `_common.strip_seed`, `_common.integrity_guard`; per-type `_build_X_response` helpers in `equipment.py` for the nested manufacturer + interface + per-type lookups
 - Soft delete: DELETE sets `active=0`, list endpoints accept `?include_retired=true`
 - Seed tracking columns stripped from all responses via `_SEED_KEYS` constant
 
 **Endpoints per type:**
-- 10 lookup tables: 5 endpoints each (list, get, create, update, soft-delete)
-- `sensor`, `camera`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`: 5 endpoints each
-- `telescope`: 5 endpoints + 3 child endpoints for configurations (create, update, delete)
-- `filter`: 5 endpoints + 3 child endpoints for passbands + 3 child endpoints for size options (create, update, delete)
+- 9 lookup tables (factory-built): 5 endpoints each (list, get, create, update, soft-delete)
+- `camera`, `mount`, `focuser`, `filter_wheel`, `computer`, `oag`, `guide_scope`, `software` (factory-built): 6 endpoints each (list / get / create / update / soft-delete / mine-toggle); the first four rebuild an interface junction on create/update; `software` adds a 422 response on `category` CHECK violations
+- `sensor` (hand-written): 5 endpoints; no `is_mine`, no junction, no children
+- `telescope` (hand-written): 5 endpoints + 3 child endpoints for configurations (create/update/delete) + connector junction rebuild
+- `filter` (hand-written): 5 endpoints + 3 child endpoints for passbands + 3 child endpoints for size options (create/update/delete)
 
 **Frontend Equipment page:**
 - `pages/EquipmentPage.tsx` — two-panel layout with TreeView sidebar + content area
@@ -488,17 +490,21 @@ Standalone astronomy + imaging-math utilities at `/calculators[/:calcId]`. Each 
 - `backend/src/nightcrate/services/calculators.py` — pure-Python service layer (no DB/FastAPI deps).
 - `backend/src/nightcrate/services/coordinate_format.py` — `format_latitude` / `format_longitude` for sexagesimal display (astropy `Angle`, `°` `′` `″` glyphs, padded DMS). Used by Locations too.
 - `frontend/src/pages/CalculatorsPage.tsx` — Equipment-style sidebar + content pane.
-- `frontend/src/components/calculators/` — 12 per-calculator components; shared `CalculatorSidebar`, `CalculatorLocationBar` (dropdown wired to default-location logic).
+- `frontend/src/components/calculators/` — 12 per-calculator components; shared `CalculatorSidebar`, `CalculatorLocationBar` (dropdown wired to default-location logic), `RigPickerMenu` (auto-populate for Pixel Scale / Field of View / File Size), `Math.tsx` (thin `InlineMath` / `BlockMath` wrappers over react-katex).
 - `frontend/src/api/calculators.ts` — TypeScript client + response types.
 - `frontend/src/stores/calculatorsStore.ts` — session-only `selectedLocationId`. Clock order persists via the server-side `settings` table (not localStorage).
 
 **Key details:**
 - RA/Dec ↔ Alt/Az uses `astropy.coordinates.SkyCoord` + `EarthLocation` + `AltAz` frame; airmass via Kasten-Young (1989).
 - Sidereal time: server computes via `Time(...).sidereal_time('apparent', longitude=...)`; client ticks at the sidereal rate (1.00273790935) between 60-second server refreshes.
-- Tonight: reuses `services/astronomy.py:compute_night_summary`; returns sunset/sunrise, three twilight pairs, moonrise/moonset, moon illumination + phase, astronomical dark hours, moonless dark hours.
+- Tonight: reuses `services/astronomy.py:compute_night_summary`; returns sunset/sunrise, three twilight pairs, moonrise/moonset, moon illumination + phase, astronomical dark hours, moonless dark hours. Backend returns `HH:MM` strings already rendered in the display timezone — the frontend must pass them through verbatim, not re-parse as ISO-UTC.
 - SQM ↔ Bortle band mapping; SQM → NELM via Schaefer approximation; NELM → SQM via bisection.
 - Clocks drag-to-reorder via **@dnd-kit** (MIT — `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`). Chosen order persists in `settings.calculators_clock_order` (server-side, not localStorage).
 - FOV uses the full arctan form (not small-angle approximation).
+- Rig auto-populate: Pixel Scale / Field of View / File Size each render `<RigPickerMenu onApply={...} />` above their inputs. `onApply` receives the full `Rig` object and copies focal length, pixel size, sensor width/height (mm + px), and ADC bit depth into local state. Fields remain editable after a rig is applied. `sensor_adc_bit_depth` is sourced from migration 0013's extension of the `rig_summary` view.
+- Formula rendering via **KaTeX** (MIT — `katex`, `react-katex`, `@types/react-katex`). CSS imported once in `main.tsx`. Used in About sections of Pixel Scale, Field of View, File Size, Airmass, SQM/Bortle/NELM, Temperature, and the Weather methodology accordion.
+- **JSX Unicode gotcha:** JSX does NOT interpret backslash escapes in attribute-string form (`label="\u00B0C"` passes 8 literal characters). Wrap the string in a JS expression: `label={"\u00B0C"}`. Similarly, `&approx;` is not in React's named-entity table; use `{"\u2248"}` instead.
+- **Native form-control theming:** `MuiCssBaseline` sets `body.colorScheme = "dark"/"light"` per theme so the native date-input popup, scrollbars, and other browser-rendered form elements match the current theme.
 
 ## Settings (key-value schema)
 
