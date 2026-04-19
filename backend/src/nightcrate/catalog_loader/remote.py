@@ -171,15 +171,25 @@ async def download_openngc(
 ) -> DownloadReport:
     """Download both OpenNGC files for *release* into *catalogs_root*.
 
-    The download lands in ``<catalogs_root>/openngc/.download/`` first;
-    on success, files are renamed into place and ``version.json`` is
-    written. On any mid-download failure the temp dir is cleaned up and
-    the existing install is left untouched.
+    Atomicity model: ``version.json`` is the commit marker. The flow is:
+
+    1. Download all files into ``<catalogs_root>/openngc/.download/``
+       (in parallel). If any download fails, the tmp dir is cleaned up
+       and the prior install is left intact.
+    2. Delete the existing ``version.json`` — from this point until step
+       4 completes the install is "in progress" and the registry will
+       report "Not loaded".
+    3. Rename the downloaded CSVs over the canonical paths. Each rename
+       is atomic per-file; if a crash happens between renames, the
+       install still shows "Not loaded" because there's no version.json
+       yet, which prompts the user to re-fetch.
+    4. Write the new ``version.json`` last as the commit.
+
+    Partial failure never produces a stale version-vs-data mismatch: if
+    version.json is present, it correctly describes the CSVs on disk.
     """
     openngc_dir = catalogs_root / "openngc"
     tmp_dir = openngc_dir / ".download"
-    # Always start from a clean slate so partial leftovers don't corrupt the
-    # atomic rename step.
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -198,11 +208,17 @@ async def download_openngc(
         ]
         downloaded = list(await asyncio.gather(*tasks))
 
-        # Atomic move into place: rename each tmp file over the canonical path.
+        # Invalidate the commit marker BEFORE the CSV renames. If we crash
+        # anywhere between here and the _write_version_json call below, the
+        # registry will read no version.json → report "Not loaded" → user
+        # re-fetches. Better than a stale-version / new-data mismatch.
+        version_json_path = openngc_dir / "version.json"
+        version_json_path.unlink(missing_ok=True)
+
+        # Per-file atomic rename into place.
         for f in downloaded:
             src = tmp_dir / f.name
             dest = openngc_dir / f.name
-            # Path.replace is atomic within the same filesystem.
             src.replace(dest)
 
         version_path = _write_version_json(catalogs_root, release, downloaded)

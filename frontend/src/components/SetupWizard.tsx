@@ -450,7 +450,7 @@ export function SetupWizard() {
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
         <Alert
-          severity="error"
+          severity="warning"
           onClose={() => setErrorMsg(null)}
           sx={{ width: "100%" }}
         >

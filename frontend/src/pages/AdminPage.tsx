@@ -286,7 +286,7 @@ function CreateDbDialog({
               </>
             )}
             {error && (
-              <Alert severity="error" onClose={() => setError(null)}>
+              <Alert severity="warning" onClose={() => setError(null)}>
                 {error}
               </Alert>
             )}
@@ -893,7 +893,7 @@ export function AdminPage() {
 
         {catalogError && (
           <Alert
-            severity="error"
+            severity="warning"
             sx={{ mt: 2 }}
             onClose={() => setCatalogError(null)}
           >
@@ -937,7 +937,7 @@ export function AdminPage() {
         onClose={() => setErrorMsg(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert severity="error" onClose={() => setErrorMsg(null)} sx={{ width: "100%" }}>
+        <Alert severity="warning" onClose={() => setErrorMsg(null)} sx={{ width: "100%" }}>
           {errorMsg}
         </Alert>
       </Snackbar>
