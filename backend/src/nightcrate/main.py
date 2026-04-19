@@ -18,6 +18,7 @@ from nightcrate.api import (
     diagnostics,
     equipment,
     files,
+    horizons,
     images,
     locations,
     rigs,
@@ -191,6 +192,16 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Horizons",
+        "description": (
+            "Per-location custom horizon profiles (azimuth/altitude polylines) for "
+            "session planning and visibility analysis. Import from N.I.N.A. .hrz, "
+            "Theodolite CSV, Telescopius, APCC, or generic two-column text. Export "
+            "to N.I.N.A., Stellarium, or CSV. Includes a stateless parse endpoint "
+            "used by the staged-save editor flow."
+        ),
+    },
+    {
         "name": "Rigs",
         "description": (
             "Imaging rig templates: user-composed equipment configurations with "
@@ -262,6 +273,8 @@ app.include_router(aberration.router)
 app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
 app.include_router(locations.router)
+app.include_router(horizons.router)
+app.include_router(horizons.parse_router)
 app.include_router(rigs.router)
 app.include_router(calculators.router)
 app.include_router(weather.router)

@@ -60,3 +60,9 @@ backend/.coverage
 
 # Temporary screenshots
 bug*.png
+
+# Claude Code scheduled task runtime state
+.claude/scheduled_tasks.lock
+
+# Local sample data (horizon files, session logs — user-local, not part of codebase)
+sample_data/

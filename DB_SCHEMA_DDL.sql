@@ -1,8 +1,9 @@
--- NightCrate version: 0.12.2
+-- NightCrate version: 0.13.0
 -- NightCrate Equipment Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
--- extended through v0.12.1 (rig builder, My Equipment flag, location seeing,
--- location soft-delete, settings key-value schema, rig_summary ADC bit depth).
+-- extended through v0.13.0 (rig builder, My Equipment flag, location seeing,
+-- location soft-delete, settings key-value schema, rig_summary ADC bit depth,
+-- custom horizons).
 -- Incorporates revision spec: no custom_fields, seed tracking, alias tables,
 -- closed-vocabulary CHECK constraints, updated_at triggers.
 --
@@ -1090,3 +1091,30 @@ LEFT JOIN guide_scope gs ON gs.id = r.guide_scope_id
 LEFT JOIN oag o ON o.id = r.oag_id
 LEFT JOIN computer comp ON comp.id = r.computer_id
 LEFT JOIN filter sf ON sf.id = r.single_filter_id;
+
+
+-- ── Custom Horizons (migration 0014) ────────────────────────────────────────
+-- One horizon per location. Points cascade-delete with the horizon, which
+-- cascade-deletes with the parent location. A soft-deleted location keeps
+-- its horizon rows inaccessible until restored (horizon CASCADE triggers
+-- only on hard delete).
+
+CREATE TABLE location_horizon (
+    id              INTEGER PRIMARY KEY,
+    location_id     INTEGER NOT NULL UNIQUE REFERENCES location(id) ON DELETE CASCADE,
+    source          TEXT NOT NULL CHECK (source IN ('imported', 'drawn')),
+    source_filename TEXT,
+    notes           TEXT,
+    created_at      TIMESTAMP NOT NULL DEFAULT (datetime('now')),
+    updated_at      TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE location_horizon_point (
+    horizon_id      INTEGER NOT NULL REFERENCES location_horizon(id) ON DELETE CASCADE,
+    azimuth_deg     REAL NOT NULL CHECK (azimuth_deg >= 0 AND azimuth_deg < 360),
+    altitude_deg    REAL NOT NULL CHECK (altitude_deg >= -5 AND altitude_deg <= 90),
+    PRIMARY KEY (horizon_id, azimuth_deg)
+);
+
+CREATE INDEX idx_location_horizon_point_azimuth
+    ON location_horizon_point (horizon_id, azimuth_deg);

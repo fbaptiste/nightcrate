@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.12.2
+**NightCrate version:** 0.13.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -732,6 +732,13 @@ Omitted from diagrams for readability. Every seedable table carries:
 ### v0.12.0 — "My Equipment" flag
 
 `is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0,1))` added to 10 owned equipment tables (`camera`, `telescope`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`) with a partial index `idx_<table>_mine ON <table>(is_mine) WHERE is_mine = 1` on each. Sensors, lookup tables, junction tables, child tables, and alias tables are not touched — sensors aren't owned standalone. The flag is not tracked by the seed loader's hash contract, so marking a seeded item as mine does not trigger re-seed.
+
+### v0.13.0 — Custom Horizons (2 tables)
+
+| Table | Purpose |
+|-------|---------|
+| `location_horizon` | One horizon per location (`UNIQUE(location_id)`, `ON DELETE CASCADE`). `source` CHECK ∈ `{'imported','drawn'}`. Carries optional `source_filename` and `notes`. Created in migration 0014. |
+| `location_horizon_point` | `(azimuth_deg, altitude_deg)` points, composite PK on `(horizon_id, azimuth_deg)`. CHECK on `azimuth_deg ∈ [0, 360)` and `altitude_deg ∈ [-5, 90]`. Points cascade-delete with the horizon. Index on `(horizon_id, azimuth_deg)` for ordered fetch. |
 
 ### Future Tables
 

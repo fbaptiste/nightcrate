@@ -23,6 +23,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.12.0 — Rigs + My Equipment + Guide Calculators](#v0120--rigs--my-equipment--guide-calculators) ✅
 - [v0.12.1 — Calculators + Maintenance & Architectural Review](#v0121--calculators--maintenance--architectural-review) ✅
 - [v0.12.2 — Equipment Factory Refactor](#v0122--equipment-factory-refactor) ✅
+- [v0.13.0 — Custom Horizons](#v0130--custom-horizons) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -1874,6 +1875,75 @@ went from 96% → 98%.
 - [x] Ruff / format / bandit clean (0 Low / 0 Medium / 0 High)
 - [x] No change to `/api/equipment/*` request/response shapes — verified by the existing 199-test `test_equipment_api.py` suite passing unchanged
 - [x] Line count reduction recorded: `equipment.py` 2,749 → 1,416 (−1,333 lines, −48%); total equipment code 2,749 → ~1,720 (−37%)
+
+---
+
+## v0.13.0 — Custom Horizons
+
+**Status:** Done
+**Branch:** `v0.13.0/custom-horizons`
+
+Per-location custom horizon profile — the measured obstruction pattern
+(trees, hills, buildings) visible from an observing site. Import from
+N.I.N.A. `.hrz` / Telescopius / APCC / Theodolite iPhone CSV / generic
+two-column text; draw, drag, add, delete, reduce, and trace over points
+in a dedicated editor; export to N.I.N.A. `.hrz` (also works in APCC
+and Telescopius), Stellarium polygonal landscape zip, and CSV. Per
+v0.13.0 scope the horizon is stored and rendered but not yet consumed
+by target planning, altitude overlays, or session scoring — those
+come later.
+
+### Schema
+
+- [x] Migration 0014 — `location_horizon` (1:1 with location, `UNIQUE(location_id)`, CHECK on `source ∈ {'imported', 'drawn'}`) + `location_horizon_point` (composite PK on `horizon_id, azimuth_deg`, CHECK on `azimuth_deg ∈ [0, 360)` and `altitude_deg ∈ [-5, 90]`). `ON DELETE CASCADE` from location through horizon to points
+- [x] Soft-deleting a location leaves the horizon rows intact (location is already soft-delete via `active = 0`); a hard delete cascades normally
+
+### Backend
+
+- [x] `services/horizon.py` — forgiving parser with sniff step: detects Theodolite CSV by header row (`HDG_DEG` / `VERT` columns); else falls through to generic 2-column `az alt` text with `#`/`;` comments. Normalizes azimuth to `[0, 360)`, validates altitude `[-5, 90]`, sorts, offsets exact duplicates by +0.01°, rejects files with <2 points. Three exporters — N.I.N.A. `.hrz`, Stellarium polygonal-landscape zip, CSV. Filename sanitizer for download dispositions
+- [x] `api/horizons.py` — 7 endpoints under `/api/locations/{id}/horizon`: GET, PUT (drawn, ≥2 points via Pydantic validator), DELETE, POST /import, GET /export/nina.hrz, /export/stellarium.zip, /export/csv. Import persists; export allows soft-deleted locations for recovery. INSERT wrapped in `integrity_guard` for concurrent-save safety. Also exposes a sibling `parse_router` with stateless `POST /api/horizons/parse` (no DB write) supporting the frontend's staged-save flow; both endpoints share the `_parse_upload_file` helper
+- [x] `api/horizon_models.py` — `HorizonPut`, `HorizonResponse`, `HorizonImportResponse`, `HorizonParseResponse` Pydantic models
+
+### Frontend
+
+- [x] `api/horizons.ts` — typed fetch clients plus `parseHorizonFile` (stateless) and `downloadHorizonExport` (browser anchor click, no frontend buffering)
+- [x] `components/locations/HorizonChart.tsx` — SVG + D3 panorama. N-centered x-axis, auto-fit y, three stacked layers: solid-orange editable line + teal fill, dashed-orange trace-reference, dotted-blue original-comparison. Editable mode: double-click to add, drag to move, right-click for precision popover. Smooth mode: readonly centripetal Catmull-Rom; editing disabled. Raw-points toggle for measurement dots. Implicit 0° dashed baseline when <2 points
+- [x] `components/locations/HorizonEditor.tsx` — modal dialog editor with toolbar (import, export dropdown, reduce, clear, undo/redo, altitude-range toggle, trace/reference chip, compare toggle, smooth toggle, point counter) + point-edit popover + reduce preview dialog + clear-trace confirm + too-few-points guard + unsaved-changes discard guard + keyboard shortcuts (⌘Z/⌘⇧Z)
+- [x] `lib/horizonReduce.ts` — Douglas-Peucker simplification using vertical altitude distance as the error metric. Iterative (stack-based, safe on long point lists)
+- [x] LocationsPage integration — compact readonly `LocationHorizonReadonly` card with Raw/Smoothed switch in the detail panel + full `LocationHorizonEditSection` inside the Location editor dialog (small preview chart + summary + Edit/Delete buttons + staged-delete Undo link)
+
+### Staged-save flow
+
+- [x] Horizon editor buttons renamed **Keep changes** (stages in parent) and **Discard changes** (dirty-checked). `onSave` no longer writes to the server; the outer Location editor's Save is the single persistence action
+- [x] `LocationsPage` owns `stagedHorizon: {kind: "none" | "set" | "delete"}`. Horizon editor → parent flows points; parent persists on Location Save via `saveHorizon` / `deleteHorizon`. Dirty guard on Location editor Cancel/X/Escape now covers location fields AND staged horizon changes
+- [x] Import flow routes through the stateless `/api/horizons/parse` endpoint — no DB write until outer Save
+- [x] Export menu greys out when staged changes exist (stale data avoidance)
+
+### UX polish
+
+- [x] Reduce dialog — slider + live point-count + **before/after preview chart** (reduced solid, original dashed) + legend. Dialog widened to `maxWidth="md"`. Original line snapshots at dialog-open (not live `points`) so slider drag doesn't churn
+- [x] Compare toggle — overlays the horizon as it was when the editor opened (dotted blue, linear not smoothed). On by default when there's an existing horizon
+- [x] Trace-from-current — single toolbar button / chip with × toggle. Committed to history so Undo reverses the trace atomically; clear-with-edits prompts Discard / Keep / Cancel
+- [x] Horizon section moved above Notes in the Location editor (Notes stays last)
+- [x] SQM ↔ Bortle arrow button between the two fields — explicit recalc of Bortle from SQM even when Bortle already has a value (tooltip "Calculate approximate Bortle from this SQM value")
+- [x] OsmMap wrapper — click-to-interact (iframe doesn't capture scroll by default), bottom-right reset button that remounts the iframe to restore initial bbox. Applied to both the editor map preview and the detail-panel map
+- [x] Display Timezone field gained a helper text `"Used for showing times in the UI (weather, forecasts, clocks)."` matching the existing Location Timezone helper
+- [x] Editor is a normal modal (not fullScreen) with `maxWidth="lg"` to match other editor dialogs
+
+### Explicit non-goals for v0.13.0
+
+- Horizon is **not** consumed by any downstream feature yet (planner, altitude overlay, session scoring) — those land when their features are built
+- No frontend component tests — deferred for the broader frontend test suite effort
+- No persistence of the smoothed/derived horizon — decided against (`woolly-snacking-eclipse` plan). Smoothing is deterministic from raw points; rendering re-computes
+
+### v0.13.0 Completion Criteria
+
+- [x] Backend tests: 1,408 passed, 3 skipped (baseline 1,405 + 63 new tests: parser 22, exporter 17, API 24)
+- [x] Ruff lint / format / bandit — 0 Low / 0 Medium / 0 High
+- [x] Frontend build — clean
+- [x] Migration 0014 applied; existing databases get the two new tables on startup
+- [x] Theodolite sample fixture committed at `backend/tests/fixtures/horizons/theodolite_sample.csv`
+- [x] No new frontend or backend dependencies required (all new work uses existing D3, MUI, FastAPI, aiosqlite, astropy)
 
 ---
 

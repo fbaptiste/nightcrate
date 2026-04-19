@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.12.2
+**NightCrate version:** 0.13.0
 
-**Last updated:** 2026-04-18
+**Last updated:** 2026-04-19
 
 **Last full repo snapshot:** 2026-04-17
 
@@ -29,7 +29,7 @@
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.1.
 - **Key backend libraries:** astropy ≥7.0 (astronomy), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — now via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder (Clocks view). Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0012.location_soft_delete.sql`. Pydantic for all data models.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0014.location_horizon.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -125,6 +125,18 @@ CRUD for imaging locations with coordinates, timezone, elevation, Bortle class, 
 - **API:** `/api/locations/*`
 - **Schema:** migrations `0007.locations.sql`, `0012.location_soft_delete.sql`
 
+### Custom Horizons
+
+**Status:** `[shipped]`
+
+Per-location custom horizon profiles (azimuth/altitude polylines) for session planning visibility analysis. Import from N.I.N.A. `.hrz`, Theodolite iPhone CSV (14-column sniff), Telescopius, APCC, or generic two-column text. Export to N.I.N.A. `.hrz`, Stellarium zip, or CSV. Interactive SVG editor with D3 renders a N-centered panorama (-180° to +180° around North), drag-to-move points, right-click popover for azimuth/altitude numeric entry + delete, Douglas-Peucker point reduction with vertical-altitude error metric, centripetal Catmull-Rom (α=0.5) smoothing for display, compare-to-original overlay (blue dotted, always linear), and trace-mode reference overlay (orange dashed) from imported data. Staged-save UX: horizon edits stage inside the Location editor dialog; the outer dialog's Save is the single persistence action that writes both location fields and horizon together. Detail panel shows a read-only horizon chart with a Raw/Smoothed switch.
+
+- **Route:** rendered inside `/locations` (editor dialog + detail panel)
+- **API:** `/api/locations/{id}/horizon` (GET/PUT/DELETE/import), `/api/locations/{id}/horizon/export/{format}`, `POST /api/horizons/parse` (stateless)
+- **Key backend:** `services/horizon.py`, `api/horizons.py` (two routers: `/api/locations/{id}/horizon/*` and `/api/horizons/parse`), `api/horizon_models.py`
+- **Key frontend:** `components/locations/HorizonEditor.tsx`, `HorizonChart.tsx`, `HorizonEditorToolbar.tsx`, `HorizonPointEditPopover.tsx`, `lib/horizonReduce.ts`
+- **Schema:** migration `0014.location_horizon.sql` (`location_horizon`, `location_horizon_point`)
+
 ### Image viewer
 
 **Status:** `[shipped]`
@@ -199,11 +211,12 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ## Schema state
 
-Current migration: **0013** (rig_summary ADC bit depth). 13 migrations total (`0001`–`0013`).
+Current migration: **0014** (location horizon tables). 14 migrations total (`0001`–`0014`).
 
 - **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
 - **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.
 - **Locations (migrations 0007, 0012, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), `typical_seeing_low/high_arcsec` for rig calculator sampling assessment. Migration 0012 adds `active` soft-delete column.
+- **Horizons (migration 0014):** `location_horizon` (one row per location, UNIQUE on `location_id`, source ∈ {imported, drawn}), `location_horizon_point` (composite PK on horizon_id + azimuth_deg, CHECK az ∈ [0,360), alt ∈ [-5,90]) — custom per-location horizon profiles.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
 - **Rigs (migrations 0009–0010, 0013):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane. Migration 0013 recreates the view again to expose `sensor_adc_bit_depth` for the File Size calculator's auto-populate flow.

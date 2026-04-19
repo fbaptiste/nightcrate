@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.12.2
+**NightCrate version:** 0.13.0
 
 ## Overview
 
@@ -299,3 +299,11 @@ Maps FITS TELESCOP header values to telescopes.
 ### filter_alias.csv
 Header: `filter_seed_key,alias,confirmed,source`
 Maps FITS FILTER header values to filters (e.g., "Ha", "H-alpha", "Halpha" → same filter).
+
+## User-managed tables (NOT seeded)
+
+The following tables are entirely user-created at runtime — they must **not** have seed CSVs:
+
+- `location` — user's observing sites. Created via the Locations page.
+- `location_horizon` and `location_horizon_point` — custom horizon profile per location (v0.13.0). Created via the Horizon Editor inside the Location editor, or imported from N.I.N.A. `.hrz`, Stellarium, Telescopius, APCC, or Theodolite iPhone CSV. One horizon per location, 2+ points.
+- `rig`, `rig_filter_slot`, `rig_software` — user-composed imaging rigs.
