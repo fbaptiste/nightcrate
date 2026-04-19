@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.12.1
+**NightCrate version:** 0.12.2
 
 ## Overview
 
@@ -139,6 +139,7 @@ CREATE TABLE rig_software (rig_id FK CASCADE, software_id FK, PRIMARY KEY (rig_i
 
 -- rig_summary: convenience view joining equipment names + guide-camera sensor for list rendering.
 -- Recreated in migration 0010 to expose telescope_id for the Equipment tab's detail fetch.
+-- Recreated in migration 0013 to expose sensor_adc_bit_depth for the File Size calculator.
 ```
 
 ---
