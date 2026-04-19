@@ -9,10 +9,14 @@ import Collapse from "@mui/material/Collapse";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
+import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import Snackbar from "@mui/material/Snackbar";
+import Stack from "@mui/material/Stack";
+import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
@@ -20,7 +24,9 @@ import AddIcon from "@mui/icons-material/Add";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import MyLocationIcon from "@mui/icons-material/MyLocation";
+import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import SearchIcon from "@mui/icons-material/Search";
 import StarIcon from "@mui/icons-material/Star";
 import StarOutlineIcon from "@mui/icons-material/StarOutline";
@@ -37,6 +43,37 @@ import {
   type LocationCreate,
 } from "@/api/locations";
 import { EasterEggWand } from "@/components/EasterEggWand";
+import HorizonChart from "@/components/locations/HorizonChart";
+import HorizonEditor from "@/components/locations/HorizonEditor";
+import {
+  deleteHorizon,
+  downloadHorizonExport,
+  fetchHorizon,
+  parseHorizonFile,
+  saveHorizon,
+  type HorizonPoint,
+} from "@/api/horizons";
+import type { HorizonExportFormat } from "@/api/horizons";
+
+/**
+ * Staged horizon change for the Location editor. ``none`` means no
+ * pending change, so the server state applies. ``set`` stages a new
+ * point list. ``delete`` stages removal of the horizon. The outer
+ * Location editor's Save commits whichever is set.
+ */
+type StagedHorizon =
+  | { kind: "none" }
+  | { kind: "set"; points: HorizonPoint[] }
+  | { kind: "delete" };
+
+function formsDiffer(a: FormState, b: FormState): boolean {
+  // FormState is all primitives; shallow equality on keys is sufficient.
+  const keys = Object.keys(a) as (keyof FormState)[];
+  for (const k of keys) {
+    if (a[k] !== b[k]) return true;
+  }
+  return false;
+}
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import type { WeatherUnits } from "@/api/settings";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -304,6 +341,14 @@ export default function LocationsPage() {
   // until `onEntered` fires guarantees it sees the final dialog width.
   const [dialogReady, setDialogReady] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
+  // Staged horizon for the currently-open Location editor. Edits in the
+  // Horizon Editor flow through this state; nothing is persisted until
+  // the user hits Save on the outer Location dialog.
+  const [stagedHorizon, setStagedHorizon] = useState<StagedHorizon>({ kind: "none" });
+  // Snapshot of the form when the dialog opened, used for the Cancel
+  // dirty check. Ref so it doesn't re-render.
+  const originalFormRef = useRef<FormState>(emptyForm());
+  const [confirmDiscardLocation, setConfirmDiscardLocation] = useState(false);
   const selectedLocation = selectedLocationId != null
     ? locations.find((l) => l.id === selectedLocationId) ?? null
     : null;
@@ -583,18 +628,42 @@ export default function LocationsPage() {
 
   const openCreate = () => {
     setEditingLocation(null);
-    setForm(emptyForm());
+    const fresh = emptyForm();
+    setForm(fresh);
+    originalFormRef.current = fresh;
     setErrors({});
     setGeoTzEditable(false);
+    setStagedHorizon({ kind: "none" });
     setDialogOpen(true);
   };
 
   const openEdit = (loc: Location) => {
     setEditingLocation(loc);
-    setForm(locationToForm(loc, units));
+    const snapshot = locationToForm(loc, units);
+    setForm(snapshot);
+    originalFormRef.current = snapshot;
     setErrors({});
     setGeoTzEditable(false);
+    setStagedHorizon({ kind: "none" });
     setDialogOpen(true);
+  };
+
+  const hasUnsavedChanges = (): boolean => {
+    if (stagedHorizon.kind !== "none") return true;
+    return formsDiffer(form, originalFormRef.current);
+  };
+
+  const attemptClose = () => {
+    if (hasUnsavedChanges()) {
+      setConfirmDiscardLocation(true);
+    } else {
+      setDialogOpen(false);
+    }
+  };
+
+  const confirmDiscardAndClose = () => {
+    setConfirmDiscardLocation(false);
+    setDialogOpen(false);
   };
 
   const validate = (): boolean => {
@@ -663,7 +732,20 @@ export default function LocationsPage() {
         notes: form.notes.trim() || null,
       };
       if (editingLocation) {
+        // Persist any staged horizon change first — its validation is
+        // stricter (≥2 points). If it fails, we don't touch the location.
+        if (stagedHorizon.kind === "set") {
+          await saveHorizon(editingLocation.id, {
+            source: "drawn",
+            points: stagedHorizon.points,
+          });
+        } else if (stagedHorizon.kind === "delete") {
+          await deleteHorizon(editingLocation.id);
+        }
         await updateLocation(editingLocation.id, payload);
+        if (stagedHorizon.kind !== "none") {
+          queryClient.invalidateQueries({ queryKey: ["horizon", editingLocation.id] });
+        }
         setSnack({ msg: "Location updated.", severity: "info" });
       } else {
         await createLocation(payload);
@@ -835,8 +917,8 @@ export default function LocationsPage() {
       {/* Create / Edit dialog */}
       <Dialog
         open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        maxWidth="sm"
+        onClose={attemptClose}
+        maxWidth="md"
         fullWidth
         TransitionProps={{
           onEntered: () => setDialogReady(true),
@@ -958,21 +1040,12 @@ export default function LocationsPage() {
 
             {/* Map preview when lat/lon are available */}
             {dialogReady && form.latitude && form.longitude && !isNaN(parseFloat(form.latitude)) && !isNaN(parseFloat(form.longitude)) && (
-              <Box
-                sx={{
-                  border: 1,
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  overflow: "hidden",
-                  height: 180,
-                }}
-              >
-                <iframe
-                  title="Location map preview"
-                  src={`https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(form.longitude) - 0.05},${parseFloat(form.latitude) - 0.03},${parseFloat(form.longitude) + 0.05},${parseFloat(form.latitude) + 0.03}&layer=mapnik&marker=${form.latitude},${form.longitude}`}
-                  style={{ width: "100%", height: "100%", border: "none" }}
-                />
-              </Box>
+              <OsmMap
+                latitude={parseFloat(form.latitude)}
+                longitude={parseFloat(form.longitude)}
+                title="Location map preview"
+                height={180}
+              />
             )}
 
             {/* Display / Location Timezone pair. Location Timezone is locked
@@ -992,7 +1065,10 @@ export default function LocationsPage() {
                     label="Display Timezone"
                     required
                     error={Boolean(errors.timezone)}
-                    helperText={errors.timezone}
+                    helperText={
+                      errors.timezone ||
+                      "Used for showing times in the UI (weather, forecasts, clocks)."
+                    }
                   />
                 )}
                 size="small"
@@ -1030,7 +1106,7 @@ export default function LocationsPage() {
                 )}
               </Box>
             </Box>
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Stack direction="row" spacing={1} alignItems="center">
               <TextField
                 label="Bortle Class"
                 type="number"
@@ -1051,7 +1127,23 @@ export default function LocationsPage() {
                 error={Boolean(errors.bortle_class)}
                 helperText={errors.bortle_class || "1 (darkest) to 9 (brightest)"}
                 slotProps={{ htmlInput: { min: 1, max: 9 } }}
+                sx={{ flex: 1 }}
               />
+              <Tooltip title="Calculate approximate Bortle from this SQM value">
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={!form.sqm_reading.trim() || isNaN(parseFloat(form.sqm_reading))}
+                    onClick={() => {
+                      const s = parseFloat(form.sqm_reading);
+                      if (!isNaN(s)) set("bortle_class", String(sqmToBortle(s)));
+                    }}
+                    aria-label="Calculate Bortle from SQM"
+                  >
+                    <ArrowBackIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
               <TextField
                 label="SQM Reading"
                 type="number"
@@ -1070,8 +1162,9 @@ export default function LocationsPage() {
                 error={Boolean(errors.sqm_reading)}
                 helperText={errors.sqm_reading || "mag/arcsec²"}
                 slotProps={{ htmlInput: { step: "any", min: 10, max: 25 } }}
+                sx={{ flex: 1 }}
               />
-            </Box>
+            </Stack>
             {form.latitude && form.longitude && !isNaN(parseFloat(form.latitude)) && !isNaN(parseFloat(form.longitude)) && (
               <>
                 <Button
@@ -1155,6 +1248,29 @@ export default function LocationsPage() {
               </Box>
             )}
 
+            {editingLocation ? (
+              <LocationHorizonEditSection
+                location={editingLocation}
+                staged={stagedHorizon}
+                onStageChange={setStagedHorizon}
+              />
+            ) : (
+              <Box
+                sx={{
+                  mt: 1,
+                  p: 1.5,
+                  border: 1,
+                  borderColor: "divider",
+                  borderStyle: "dashed",
+                  borderRadius: 1,
+                }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  Save this location first, then reopen the editor to add a horizon.
+                </Typography>
+              </Box>
+            )}
+
             <TextField
               label="Notes"
               value={form.notes}
@@ -1165,9 +1281,32 @@ export default function LocationsPage() {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button>
+          <Button onClick={attemptClose} disabled={saving}>Cancel</Button>
           <Button onClick={handleSave} variant="contained" disabled={saving}>
             {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Discard-changes confirm on Location editor close */}
+      <Dialog
+        open={confirmDiscardLocation}
+        onClose={() => setConfirmDiscardLocation(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Discard unsaved changes?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            You have unsaved changes to this location
+            {stagedHorizon.kind !== "none" ? ", including horizon changes" : ""}.
+            Close the editor and discard them?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDiscardLocation(false)}>Keep editing</Button>
+          <Button color="warning" onClick={confirmDiscardAndClose}>
+            Discard
           </Button>
         </DialogActions>
       </Dialog>
@@ -1295,6 +1434,103 @@ export default function LocationsPage() {
 // ---------------------------------------------------------------------------
 // Detail panel — all location fields + embedded OSM map
 // ---------------------------------------------------------------------------
+
+/**
+ * OpenStreetMap iframe wrapper that doesn't steal scroll/drag unless
+ * the user explicitly activates it. Solves the "scrolling the dialog
+ * zooms the map instead" problem. A reset button reloads the iframe
+ * to restore the initial view after accidental zooming.
+ */
+function OsmMap({
+  latitude,
+  longitude,
+  title,
+  height,
+}: {
+  latitude: number;
+  longitude: number;
+  title: string;
+  height: number | string;
+}) {
+  const [interactive, setInteractive] = useState(false);
+  const [mapKey, setMapKey] = useState(0);
+
+  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${longitude - 0.05},${latitude - 0.03},${longitude + 0.05},${latitude + 0.03}&layer=mapnik&marker=${latitude},${longitude}`;
+
+  const reset = () => {
+    setMapKey((k) => k + 1);
+    setInteractive(false);
+  };
+
+  return (
+    <Box
+      onMouseLeave={() => setInteractive(false)}
+      sx={{
+        position: "relative",
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+        height,
+        minHeight: height,
+      }}
+    >
+      <iframe
+        key={mapKey}
+        title={title}
+        src={src}
+        style={{
+          width: "100%",
+          height: "100%",
+          border: "none",
+          pointerEvents: interactive ? "auto" : "none",
+        }}
+      />
+      {!interactive && (
+        <Box
+          onClick={() => setInteractive(true)}
+          sx={{
+            position: "absolute",
+            inset: 0,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+            pb: 1,
+          }}
+        >
+          <Chip
+            size="small"
+            label="Click to interact"
+            sx={{
+              pointerEvents: "none",
+              bgcolor: "background.paper",
+              opacity: 0.9,
+              boxShadow: 1,
+            }}
+          />
+        </Box>
+      )}
+      <Tooltip title="Reset map view">
+        <IconButton
+          onClick={reset}
+          size="small"
+          sx={{
+            position: "absolute",
+            bottom: 4,
+            right: 4,
+            bgcolor: "background.paper",
+            boxShadow: 1,
+            "&:hover": { bgcolor: "background.paper" },
+          }}
+        >
+          <RestartAltIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+}
+
 
 function DetailField({ label, value }: { label: string; value: React.ReactNode }) {
   if (value == null || value === "") return null;
@@ -1450,22 +1686,281 @@ function LocationDetail({
         </Box>
 
         {/* Right column — map */}
-        <Box
-          sx={{
-            border: 1,
-            borderColor: "divider",
-            borderRadius: 1,
-            overflow: "hidden",
-            minHeight: 260,
-          }}
-        >
-          <iframe
-            title={`Map of ${loc.name}`}
-            src={`https://www.openstreetmap.org/export/embed.html?bbox=${loc.longitude - 0.05},${loc.latitude - 0.03},${loc.longitude + 0.05},${loc.latitude + 0.03}&layer=mapnik&marker=${loc.latitude},${loc.longitude}`}
-            style={{ width: "100%", height: "100%", border: "none", minHeight: 260 }}
-          />
-        </Box>
+        <OsmMap
+          latitude={loc.latitude}
+          longitude={loc.longitude}
+          title={`Map of ${loc.name}`}
+          height={260}
+        />
+      </Box>
+
+      <Box sx={{ mt: 2 }}>
+        <LocationHorizonReadonly location={loc} />
       </Box>
     </Paper>
+  );
+}
+
+
+/**
+ * Read-only horizon view for the Locations detail panel. Renders just the
+ * chart plus a Raw/Smoothed toggle. All editing lives in the Location
+ * editor dialog via ``LocationHorizonEditSection``.
+ */
+function LocationHorizonReadonly({ location }: { location: Location }) {
+  const [showRaw, setShowRaw] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(720);
+
+  const { data: horizon } = useQuery({
+    queryKey: ["horizon", location.id],
+    queryFn: () => fetchHorizon(location.id),
+  });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) setWidth(Math.max(360, Math.floor(w)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const hasHorizon = horizon !== null && horizon !== undefined && horizon.points.length >= 2;
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+        <Typography variant="subtitle1" sx={{ flex: 1 }}>
+          Horizon
+        </Typography>
+        {hasHorizon && (
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={showRaw}
+                onChange={(e) => setShowRaw(e.target.checked)}
+              />
+            }
+            label={
+              <Typography variant="caption" color="text.secondary">
+                {showRaw ? "Raw" : "Smoothed"}
+              </Typography>
+            }
+            sx={{ mr: 0 }}
+          />
+        )}
+      </Box>
+
+      <Box ref={containerRef} sx={{ width: "100%" }}>
+        {hasHorizon ? (
+          <HorizonChart
+            points={horizon.points}
+            mode="readonly"
+            showRawPoints={showRaw}
+            width={width}
+            height={200}
+          />
+        ) : (
+          <Box
+            sx={{
+              height: 140,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "text.secondary",
+              border: 1,
+              borderColor: "divider",
+              borderStyle: "dashed",
+              borderRadius: 1,
+            }}
+          >
+            <Typography variant="body2">
+              No horizon defined. Edit this location to add one.
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    </Paper>
+  );
+}
+
+
+/**
+ * Editor-dialog horizon section: Create/Edit/Delete buttons + summary,
+ * plus the full-screen editor launched on Edit. Shown only for
+ * already-saved locations (horizons are keyed by location ID).
+ */
+interface LocationHorizonEditSectionProps {
+  location: Location;
+  staged: StagedHorizon;
+  onStageChange: (next: StagedHorizon) => void;
+}
+
+function LocationHorizonEditSection({
+  location,
+  staged,
+  onStageChange,
+}: LocationHorizonEditSectionProps) {
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [snack, setSnack] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [chartWidth, setChartWidth] = useState(560);
+
+  const { data: horizon } = useQuery({
+    queryKey: ["horizon", location.id],
+    queryFn: () => fetchHorizon(location.id),
+  });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) setChartWidth(Math.max(320, Math.floor(w)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Effective horizon the user sees = staged if pending, else server.
+  // Same value seeds the Horizon Editor when opened.
+  const effectivePoints: HorizonPoint[] | null =
+    staged.kind === "set"
+      ? staged.points
+      : staged.kind === "delete"
+        ? null
+        : (horizon?.points ?? null);
+
+  const effectiveCount = effectivePoints?.length ?? 0;
+  const hasEffective = effectiveCount >= 2;
+
+  const handleKeepChanges = async (points: HorizonPoint[]) => {
+    onStageChange({ kind: "set", points });
+  };
+
+  const handleImport = async (file: File) => {
+    // Stateless parse — no DB write. The editor loads these points into
+    // its in-memory state; the user still has to click Keep changes
+    // and then the outer Location editor's Save to persist.
+    const result = await parseHorizonFile(file);
+    return { points: result.points, warnings: result.warnings };
+  };
+
+  const handleExport = (format: HorizonExportFormat) => {
+    downloadHorizonExport(location.id, format);
+  };
+
+  const handleDelete = () => onStageChange({ kind: "delete" });
+  const handleUndoDelete = () => onStageChange({ kind: "none" });
+
+  // Build a short summary line describing the effective state
+  let summary: string;
+  if (staged.kind === "delete") {
+    summary = "Pending deletion \u2014 Save to apply.";
+  } else if (staged.kind === "set") {
+    summary = `${staged.points.length} points \u00B7 pending unsaved changes`;
+  } else if (horizon && horizon.points.length >= 2) {
+    summary = `${horizon.points.length} points \u00B7 ${
+      horizon.source === "imported"
+        ? `imported from ${horizon.source_filename ?? "file"}`
+        : "drawn"
+    }`;
+  } else {
+    summary = "No horizon defined for this location.";
+  }
+
+  return (
+    <Box sx={{ mt: 1 }}>
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        Horizon
+      </Typography>
+      <Box
+        sx={{
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          p: 1.5,
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.25,
+        }}
+      >
+        <Box ref={containerRef} sx={{ width: "100%" }}>
+          {hasEffective && effectivePoints ? (
+            <HorizonChart
+              points={effectivePoints}
+              mode="readonly"
+              width={chartWidth}
+              height={120}
+            />
+          ) : (
+            <Box
+              sx={{
+                height: 80,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "text.secondary",
+                border: 1,
+                borderColor: "divider",
+                borderStyle: "dashed",
+                borderRadius: 1,
+              }}
+            >
+              <Typography variant="body2">
+                {staged.kind === "delete"
+                  ? "Horizon will be deleted on Save"
+                  : "No horizon defined"}
+              </Typography>
+            </Box>
+          )}
+        </Box>
+        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+          <Typography
+            variant="body2"
+            color={staged.kind !== "none" ? "warning.main" : "text.secondary"}
+            sx={{ flex: 1, minWidth: 180 }}
+          >
+            {summary}
+          </Typography>
+          {staged.kind === "delete" ? (
+            <Button size="small" onClick={handleUndoDelete}>
+              Undo delete
+            </Button>
+          ) : (
+            <>
+              <Button size="small" variant="outlined" onClick={() => setEditorOpen(true)}>
+                {hasEffective ? "Edit" : "Create"}
+              </Button>
+              {hasEffective && (
+                <Button size="small" color="warning" onClick={handleDelete}>
+                  Delete
+                </Button>
+              )}
+            </>
+          )}
+        </Stack>
+      </Box>
+      <HorizonEditor
+        open={editorOpen}
+        locationName={location.name}
+        initialPoints={effectivePoints}
+        onClose={() => setEditorOpen(false)}
+        onSave={handleKeepChanges}
+        onImport={handleImport}
+        onExport={handleExport}
+        exportsDisabled={staged.kind !== "none"}
+      />
+      <Snackbar
+        open={snack !== null}
+        autoHideDuration={2500}
+        onClose={() => setSnack(null)}
+        message={snack}
+      />
+    </Box>
   );
 }

@@ -18,6 +18,8 @@ from nightcrate.api import (
     diagnostics,
     equipment,
     files,
+    horizons,
+    horizons_parse,
     images,
     locations,
     rigs,
@@ -262,6 +264,8 @@ app.include_router(aberration.router)
 app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
 app.include_router(locations.router)
+app.include_router(horizons.router)
+app.include_router(horizons_parse.router)
 app.include_router(rigs.router)
 app.include_router(calculators.router)
 app.include_router(weather.router)

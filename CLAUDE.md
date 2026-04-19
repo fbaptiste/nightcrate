@@ -506,6 +506,45 @@ Standalone astronomy + imaging-math utilities at `/calculators[/:calcId]`. Each 
 - **JSX Unicode gotcha:** JSX does NOT interpret backslash escapes in attribute-string form (`label="\u00B0C"` passes 8 literal characters). Wrap the string in a JS expression: `label={"\u00B0C"}`. Similarly, `&approx;` is not in React's named-entity table; use `{"\u2248"}` instead.
 - **Native form-control theming:** `MuiCssBaseline` sets `body.colorScheme = "dark"/"light"` per theme so the native date-input popup, scrollbars, and other browser-rendered form elements match the current theme.
 
+## Custom Horizons
+
+Per-location horizon profile (trees, hills, buildings). Imported from N.I.N.A. `.hrz` / Telescopius / APCC / Theodolite iPhone CSV / generic 2-col text, edited in a dedicated dialog, exported to N.I.N.A., Stellarium, or CSV. Shipped in v0.13.0 — data is stored and displayed but not yet consumed by planner, altitude overlays, or session scoring.
+
+**Architecture:**
+- `backend/src/nightcrate/db/migrations/0014.location_horizon.sql` — `location_horizon` (1:1 with location, UNIQUE on `location_id`, source ∈ `{'imported','drawn'}`) + `location_horizon_point` (composite PK on `(horizon_id, azimuth_deg)`, CHECK on az `[0,360)` and alt `[-5,90]`). `ON DELETE CASCADE` from location → horizon → points.
+- `services/horizon.py` — forgiving parser: sniffs Theodolite CSV (by `HDG_DEG`/`VERT` header columns), else falls through to 2-col text. Normalizes az to `[0,360)`, validates alt, sorts, offsets exact duplicates by +0.01° (N.I.N.A. vertical-obstruction convention), rejects <2 points. Three exporters — `.hrz`, Stellarium polygonal zip, CSV — plus a filename sanitizer.
+- `api/horizons.py` — 7 endpoints under `/api/locations/{id}/horizon` (GET / PUT / DELETE / POST `/import` / GET `/export/{nina.hrz,stellarium.zip,csv}`). Export allows soft-deleted locations for recovery. INSERT wrapped in `integrity_guard` for concurrent-save safety. Shared `parse_upload_file` helper (read + UTF-8 decode + parse, 400 on failure) used by both `/import` and the stateless `/parse` endpoint.
+- `api/horizons_parse.py` — stateless `POST /api/horizons/parse` (no DB write). Powers the frontend's staged-save flow.
+- `api/horizon_models.py` — `HorizonPut` (≥2-point validator), `HorizonResponse`, `HorizonImportResponse`, `HorizonParseResponse`.
+
+**Frontend:**
+- `components/locations/HorizonChart.tsx` — SVG + D3 panorama. N-centered x-axis (S on both edges), auto-fit y with a single-pass reduce over all visible layers. Three stacked layers: solid-orange editable line + teal fill; dashed-orange **trace reference**; dotted-blue **original comparison**. Editable mode: double-click to add, drag to move (0.1° snap), right-click for precision popover. Readonly mode: smooth Catmull-Rom (raw-points toggle flips to linear + measurement dots). Implicit dashed 0° baseline when <2 points.
+- `components/locations/HorizonEditor.tsx` — MUI modal dialog (`maxWidth="lg"`, not fullScreen) with toolbar + point-edit popover + reduce preview dialog + clear-trace confirm + too-few-points guard + ⌘Z/⌘⇧Z undo/redo. Buttons are **Keep changes** / **Discard changes** — "Keep" stages the result in the parent via `onSave`, does NOT persist directly.
+- `components/locations/HorizonEditorToolbar.tsx` — import / export dropdown / reduce / clear / undo / redo / altitude-range toggle / trace chip / compare toggle / smooth toggle / point counter.
+- `components/locations/HorizonPointEditPopover.tsx` — right-click popover with az/alt numeric inputs + Delete.
+- `lib/horizonReduce.ts` — Douglas-Peucker using **vertical altitude distance** as the error metric (preserves peak obstructions). Iterative (stack-based, safe on long point lists).
+- `api/horizons.ts` — typed fetch clients. `fetchHorizon` returns `null` on 404 (no horizon defined); `parseHorizonFile` is the stateless parse path; `downloadHorizonExport` triggers a browser anchor-click download so the frontend never buffers the bytes.
+
+**Staged-save flow (key UX decision):**
+- Horizon persistence is owned by the outer Location editor, not the horizon dialog. `LocationHorizonEditSection` in `LocationsPage.tsx` holds tri-state `{kind: "none" | "set" | "delete"}` staged data.
+- Horizon editor's **Keep changes** updates the parent's staged state via `onSave(points)` — no network I/O inside the callback.
+- Import routes through `parseHorizonFile` (no DB write) so the imported points land in staged state.
+- Delete in the horizon section marks `{kind: "delete"}` — preview goes blank with a "Pending deletion — Save to apply" chip and Undo link.
+- Location editor's Save persists staged horizon (PUT or DELETE) **before** updating location fields (horizon validation is stricter; fail fast).
+- Location editor's Cancel/X/Escape runs a dirty check against both the form and the staged horizon; shows a Discard-changes prompt when anything is unsaved.
+- Export menu is disabled (`exportsDisabled={staged.kind !== "none"}`) while staged changes exist, to avoid serving stale server data.
+
+**Chart layering:**
+- Editable orange + teal fill sits on top.
+- Trace reference is a dashed centripetal-Catmull-Rom curve (smooth shape guide, user traces over it).
+- Original comparison is a dotted **linear** curve in `RIG_BLUE` (shows exactly what was stored; never smoothed).
+- Reduce dialog reuses the same chart in readonly mode with the pre-reduce snapshot as `referencePoints` and the live reduced-preview as `points` — the before/after visualization pattern.
+
+**Key invariants:**
+- ≥2 points required to save a horizon (enforced Pydantic-side and in the editor via the too-few-points dialog; <2 falls back to empty dashed 0° baseline).
+- Smoothing is **never persisted**. Raw points are the canonical shape. Consumers that want a smooth curve re-run the same D3 path generation.
+- Azimuth stored as `[0, 360)`, never 360; display rolls to `[-180, +180]` with virtual seam points at the S boundary for continuous rendering.
+
 ## Settings (key-value schema)
 
 Application settings stored in a `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` table (migration 0011, reshaped from the previous `settings(id, data JSON)` singleton). Each Pydantic field on `core/config.py:Settings` maps to one row; `get_settings()` merges rows, silently drops rows with un-parseable JSON, and falls back to defaults on `ValidationError`. `update_settings()` upserts every field in a single loop — each update bumps `updated_at`.
