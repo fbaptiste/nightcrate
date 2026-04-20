@@ -23,12 +23,12 @@ import asyncio
 import hashlib
 import json
 import logging
-import random
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nightcrate.catalog_loader._common import retry_with_backoff
 from nightcrate.catalog_loader.registry import (
     OPENNGC_CITATION,
     OPENNGC_LICENSE,
@@ -41,10 +41,6 @@ logger = logging.getLogger("nightcrate.catalog_loader.remote")
 GITHUB_RELEASES_URL = "https://api.github.com/repos/mattiaverga/OpenNGC/releases/latest"
 RAW_BASE = "https://raw.githubusercontent.com/mattiaverga/OpenNGC"
 DOWNLOAD_FILES: tuple[str, ...] = ("NGC.csv", "addendum.csv")
-
-_DEFAULT_MAX_ATTEMPTS = 3
-_RETRY_BACKOFF_MIN_S = 0.6
-_RETRY_BACKOFF_MAX_S = 1.4
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,40 +62,6 @@ class DownloadReport:
     tag: str
     files: list[DownloadedFile]
     version_json_path: Path
-
-
-async def _retry(
-    coro_factory,
-    *,
-    label: str,
-    max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
-):
-    """Invoke an async callable up to *max_attempts* times, with jittered
-    backoff between attempts. The final failure re-raises the last error.
-
-    This sits on top of ``http_client.get``'s own single-retry-per-call —
-    net effect is up to 2 * max_attempts underlying HTTP requests. Useful
-    for the "GitHub is briefly flaky" case without being over-aggressive.
-    """
-    last_exc: BaseException | None = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return await coro_factory()
-        except Exception as exc:  # noqa: BLE001 - diagnostic-only retry layer
-            last_exc = exc
-            logger.warning(
-                "[catalog_loader.remote] %s attempt %d/%d failed: %s",
-                label,
-                attempt,
-                max_attempts,
-                exc,
-            )
-            if attempt == max_attempts:
-                raise
-            delay = random.uniform(_RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S)  # nosec B311
-            await asyncio.sleep(delay)
-    # Unreachable, but mypy/pylance appreciate the safety.
-    raise last_exc if last_exc is not None else RuntimeError("retry loop exhausted")
 
 
 async def fetch_latest_release() -> RemoteReleaseInfo:
@@ -124,7 +86,7 @@ async def fetch_latest_release() -> RemoteReleaseInfo:
             release_url=data.get("html_url") or f"{OPENNGC_SOURCE_URL}/releases/tag/{tag}",
         )
 
-    return await _retry(_call, label="fetch_latest_release")
+    return await retry_with_backoff(_call, logger=logger, label="fetch_latest_release")
 
 
 async def _download_file(url: str, dest: Path, *, label: str) -> DownloadedFile:
@@ -140,7 +102,7 @@ async def _download_file(url: str, dest: Path, *, label: str) -> DownloadedFile:
         digest = hashlib.sha256(content).hexdigest()
         return DownloadedFile(name=dest.name, size_bytes=len(content), sha256=digest)
 
-    return await _retry(_call, label=f"download:{label}")
+    return await retry_with_backoff(_call, logger=logger, label=f"download:{label}")
 
 
 def _write_version_json(

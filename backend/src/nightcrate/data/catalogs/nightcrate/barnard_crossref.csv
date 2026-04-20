@@ -1,0 +1,7 @@
+# Barnard catalog crossref: intentionally empty in v0.15.0.
+# Dark nebulae and any emission regions at the same line of sight are physically
+# distinct objects. B33 (Horsehead) and IC 434 (backing emission) should remain
+# separate DSOs; merging would conflate two different physical phenomena.
+# File is tracked by the loader registry so the architecture stays symmetric
+# with sharpless_crossref.csv. Future editorial decisions may add rows.
+barnard_number,target_designation,notes

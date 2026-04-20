@@ -52,7 +52,8 @@ def fake_transport(monkeypatch):
     async def _noop_sleep(_):
         return None
 
-    monkeypatch.setattr("nightcrate.catalog_loader.remote.asyncio.sleep", _noop_sleep)
+    # Retry backoff lives in the shared helper now.
+    monkeypatch.setattr("nightcrate.catalog_loader._common.asyncio.sleep", _noop_sleep)
 
     return {"mapping": mapping, "calls": calls}
 

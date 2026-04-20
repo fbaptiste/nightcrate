@@ -7,6 +7,8 @@ export interface DsoDesignation {
   is_primary: boolean;
 }
 
+export type DistanceMethod = "50mgc" | "curated" | "redshift";
+
 export interface DsoListItem {
   id: number;
   primary_designation: string;
@@ -18,6 +20,8 @@ export interface DsoListItem {
   min_axis_arcmin: number | null;
   mag_v: number | null;
   mag_b: number | null;
+  distance_pc: number | null;
+  distance_method: DistanceMethod | null;
   common_name: string | null;
   designations: DsoDesignation[];
 }
@@ -58,6 +62,8 @@ export interface DsoDetail extends Omit<DsoListItem, "designations"> {
   cstar_mag_b: number | null;
   cstar_mag_v: number | null;
   cstar_id: string | null;
+  common_name_augmented: boolean;
+  surface_brightness_augmented: boolean;
   ned_notes: string | null;
   openngc_notes: string | null;
   raw_other_id: string | null;
@@ -65,15 +71,35 @@ export interface DsoDetail extends Omit<DsoListItem, "designations"> {
   source: CatalogSource;
 }
 
+export interface TypeGroupFacet {
+  name: string;
+  display_order: number;
+  count: number;
+  raw_types: string[];
+}
+
+export interface RawTypeFacet {
+  code: string;
+  count: number;
+}
+
+export interface ConstellationFacet {
+  code: string;
+  count: number;
+}
+
 export interface DsoFacets {
-  obj_types: { value: string; count: number }[];
-  constellations: { value: string; count: number }[];
+  type_groups: TypeGroupFacet[];
+  raw_types: RawTypeFacet[];
+  constellations: ConstellationFacet[];
 }
 
 export interface DsoListParams {
   q?: string | null;
   type?: string[];
+  type_group?: string[];
   constellation?: string | null;
+  has_distance?: boolean | null;
   limit?: number;
   offset?: number;
   sort?: string;
@@ -84,7 +110,9 @@ export function fetchDsos(params: DsoListParams): Promise<DsoListResponse> {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
   if (params.type?.length) qs.set("type", params.type.join(","));
+  if (params.type_group?.length) qs.set("type_group", params.type_group.join(","));
   if (params.constellation) qs.set("constellation", params.constellation);
+  if (params.has_distance != null) qs.set("has_distance", String(params.has_distance));
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);
@@ -138,5 +166,68 @@ export interface FetchFromGitHubResponse extends ReloadCatalogsResponse {
 
 export const fetchCatalogsFromGitHub = () =>
   apiFetch<FetchFromGitHubResponse>("/admin/catalogs/fetch-from-github", {
+    method: "POST",
+  });
+
+// ── VizieR per-source endpoints (v0.15.0) ────────────────────────────────────
+
+export type VizierSourceShortId = "sharpless" | "barnard";
+
+export interface VizierRemoteVersion {
+  source_id: string;
+  catalog_id: string;
+  display_name: string;
+  latest_tag: string;
+  installed_version: string | null;
+  release_url: string;
+  has_update: boolean;
+}
+
+export interface VizierFetchResponse {
+  source_id: string;
+  fetched_at: string;
+  size_bytes: number;
+  total_dsos: number;
+  total_designations: number;
+  per_source: FetchFromGitHubResponse["per_source"];
+}
+
+export const fetchVizierRemoteVersion = (shortId: VizierSourceShortId) =>
+  apiFetch<VizierRemoteVersion>(`/admin/catalogs/vizier/${shortId}/remote-version`);
+
+export const fetchVizierCatalog = (shortId: VizierSourceShortId) =>
+  apiFetch<VizierFetchResponse>(`/admin/catalogs/vizier/${shortId}/fetch`, {
+    method: "POST",
+  });
+
+export const reloadNightcrateCatalogs = () =>
+  apiFetch<ReloadCatalogsResponse>("/admin/catalogs/nightcrate/reload", {
+    method: "POST",
+  });
+
+// ── 50 MGC (GitHub, not VizieR) — v0.15.0 ───────────────────────────────────
+
+export interface Mgc50RemoteVersion {
+  source_id: string;
+  display_name: string;
+  repository_url: string;
+  raw_url: string;
+  installed_fetched_at: string | null;
+  installed_sha256: string | null;
+  has_update: boolean;
+}
+
+export interface Mgc50FetchResponse extends ReloadCatalogsResponse {
+  source_id: string;
+  fetched_at: string;
+  size_bytes: number;
+  sha256: string;
+}
+
+export const fetch50mgcRemoteVersion = () =>
+  apiFetch<Mgc50RemoteVersion>("/admin/catalogs/50mgc/remote-version");
+
+export const fetch50mgcFromGitHub = () =>
+  apiFetch<Mgc50FetchResponse>("/admin/catalogs/50mgc/fetch", {
     method: "POST",
   });

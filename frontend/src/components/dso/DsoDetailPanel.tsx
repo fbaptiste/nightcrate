@@ -6,11 +6,17 @@ import Drawer from "@mui/material/Drawer";
 import IconButton from "@mui/material/IconButton";
 import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import CloseIcon from "@mui/icons-material/Close";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import StarIcon from "@mui/icons-material/Star";
+import { useState } from "react";
 import { fetchDso } from "@/api/dsos";
+import DsoDistanceHelpDialog from "@/components/dso/DsoDistanceHelpDialog";
 import { displayConstellation } from "@/lib/constellations";
+import { formatDistance, formatDistanceMethod } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import {
   formatDec,
@@ -24,7 +30,21 @@ interface Props {
   onClose: () => void;
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function AugmentedBadge({ tooltip }: { tooltip: string }) {
+  return (
+    <Tooltip title={tooltip} placement="top">
+      <StarIcon
+        sx={{
+          fontSize: 12,
+          color: "primary.main",
+          cursor: "help",
+        }}
+      />
+    </Tooltip>
+  );
+}
+
+function Field({ label, value }: { label: React.ReactNode; value: React.ReactNode }) {
   if (value == null || value === "" || value === "—") return null;
   return (
     <Box sx={{ display: "flex", gap: 2, py: 0.5 }}>
@@ -43,6 +63,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export default function DsoDetailPanel({ dsoId, onClose }: Props) {
+  const [distanceHelpOpen, setDistanceHelpOpen] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["dso", dsoId],
     queryFn: () => fetchDso(dsoId!),
@@ -80,9 +101,14 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                 )}
               </Stack>
               {data.common_name && (
-                <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 0.5 }}>
-                  {data.common_name}
-                </Typography>
+                <Stack direction="row" alignItems="center" gap={0.75} sx={{ mt: 0.5 }}>
+                  <Typography variant="subtitle1" color="text.secondary">
+                    {data.common_name}
+                  </Typography>
+                  {data.common_name_augmented && (
+                    <AugmentedBadge tooltip="Refined by NightCrate editorial data" />
+                  )}
+                </Stack>
               )}
             </>
           )}
@@ -122,16 +148,83 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                 value={data.position_angle_deg != null ? `${data.position_angle_deg.toFixed(0)}°` : "—"}
               />
               <Field label="V (visual) magnitude" value={formatMagnitude(data.mag_v)} />
-              <Field label="B (blue) magnitude" value={formatMagnitude(data.mag_b)} />
-              <Field label="J / H / K" value={
-                data.mag_j != null || data.mag_h != null || data.mag_k != null
-                  ? `${formatMagnitude(data.mag_j)} / ${formatMagnitude(data.mag_h)} / ${formatMagnitude(data.mag_k)}`
-                  : "—"
-              } />
+              <Field
+                label={
+                  <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
+                    B (blue) magnitude
+                    <Tooltip
+                      title={
+                        "\u2248 photographic magnitude (Johnson B is modern CCD photometry; " +
+                        "historical mpg values differ by ~0.1\u20130.3 mag)."
+                      }
+                      placement="top"
+                    >
+                      <HelpOutlineIcon
+                        sx={{ fontSize: 14, color: "text.disabled", cursor: "help" }}
+                      />
+                    </Tooltip>
+                  </Box>
+                }
+                value={formatMagnitude(data.mag_b)}
+              />
+              <Field
+                label="J / H / K"
+                value={
+                  data.mag_j != null || data.mag_h != null || data.mag_k != null
+                    ? `${formatMagnitude(data.mag_j)} / ${formatMagnitude(data.mag_h)} / ${formatMagnitude(data.mag_k)}`
+                    : "—"
+                }
+              />
               <Field
                 label="Surface brightness"
-                value={data.surface_brightness != null ? `${data.surface_brightness.toFixed(2)} mag/arcsec²` : "—"}
+                value={
+                  data.surface_brightness != null ? (
+                    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
+                      {data.surface_brightness.toFixed(2)} mag/arcsec²
+                      {data.surface_brightness_augmented && (
+                        <AugmentedBadge
+                          tooltip="Added by NightCrate editorial data (OpenNGC doesn't provide surface brightness for non-galaxy objects)"
+                        />
+                      )}
+                    </Box>
+                  ) : (
+                    "—"
+                  )
+                }
               />
+              {data.distance_pc != null && (
+                <Field
+                  label={
+                    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
+                      Distance
+                      <Tooltip title="How distances are computed" placement="top">
+                        <IconButton
+                          size="small"
+                          onClick={() => setDistanceHelpOpen(true)}
+                          sx={{ p: 0 }}
+                          aria-label="distance help"
+                        >
+                          <HelpOutlineIcon
+                            sx={{ fontSize: 14, color: "text.disabled" }}
+                          />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  }
+                  value={
+                    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
+                      {data.distance_method === "redshift" ? "~" : ""}
+                      {formatDistance(data.distance_pc)?.compact}
+                      <Chip
+                        label={formatDistanceMethod(data.distance_method)}
+                        size="small"
+                        variant="outlined"
+                        sx={{ height: 18, fontSize: "0.65rem" }}
+                      />
+                    </Box>
+                  }
+                />
+              )}
             </Box>
 
             <Box>
@@ -225,6 +318,10 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
           </Stack>
         )}
       </Box>
+      <DsoDistanceHelpDialog
+        open={distanceHelpOpen}
+        onClose={() => setDistanceHelpOpen(false)}
+      />
     </Drawer>
   );
 }

@@ -1,0 +1,29 @@
+# Maps Sharpless 2 numbers to existing DSOs. When Sh2-N is loaded, if listed here,
+# it is merged onto target_designation rather than creating a new DSO.
+# Unlisted Sh2 numbers create their own DSO.
+sharpless_number,target_designation,notes
+25,NGC 6523,Lagoon Nebula / M8
+30,NGC 6514,Trifid Nebula / M20
+45,NGC 6618,Omega/Swan Nebula / M17
+49,NGC 6611,Eagle Nebula / M16
+54,NGC 6604,Associated HII region
+86,NGC 6820,Emission region around NGC 6823 cluster
+105,NGC 6888,Crescent Nebula (Wolf-Rayet bubble)
+108,IC 1318,Gamma Cygni complex
+117,NGC 7000,North America Nebula
+131,IC 1396,Elephant's Trunk HII complex
+142,NGC 7380,Wizard Nebula
+162,NGC 7635,Bubble Nebula
+171,NGC 7822,Cederblad 214 region
+184,NGC 281,Pacman Nebula
+190,IC 1805,Heart Nebula
+199,IC 1848,Soul Nebula
+237,NGC 1931,Small emission complex in Auriga
+248,IC 443,Jellyfish Nebula (SNR, classified HII in SHARPLESS)
+252,NGC 2174,Monkey Head Nebula
+273,NGC 2264,Cone / Christmas Tree region
+275,NGC 2237,Rosette Nebula
+279,NGC 1973,Running Man Nebula
+281,NGC 1976,Orion Nebula / M42
+296,IC 2177,Seagull Nebula
+311,NGC 2467,Skull and Crossbones / Mandrill Nebula

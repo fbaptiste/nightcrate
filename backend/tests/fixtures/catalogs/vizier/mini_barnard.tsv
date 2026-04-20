@@ -1,0 +1,11 @@
+#
+# VizieR-like mini fixture for the Barnard loader tests.
+#
+_RAJ2000	_DEJ2000	Barn	Diam	Durch	Names
+deg	deg	--	arcmin	--	--
+--------	--------	---	------	--	--
+85.2458	-2.4583	33		-2 1258	Horsehead
+266.5000	-23.5833	72	30		Snake Nebula
+296.0000	6.0000	142	30
+296.2000	5.8000	143	30		E Nebula
+272.0000	0.5000	104	50

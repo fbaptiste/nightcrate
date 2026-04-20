@@ -1,0 +1,76 @@
+# NightCrate DSO augmentation data. MIT licensed.
+# designation: any recognized designation; resolved via dso_designation.search_key
+# common_name_override: replaces OpenNGC common_name when present
+# surface_brightness: mag/arcsec^2; for non-galaxy DSOs only (galaxies use OpenNGC)
+# distance_pc: parsecs; wins over 50 MGC and redshift-derived distances when present
+# notes: freeform; not stored in DB in v0.15.0
+designation,common_name_override,surface_brightness,distance_pc,notes
+# --- Iconic emission nebulae (common-name fills + curated distances) ---
+NGC 1976,Orion Nebula,,412,Gaia-era distance (Kounkel+ 2017)
+NGC 1982,De Mairan's Nebula,,412,M43 is adjacent to M42
+NGC 1973,Running Man Nebula,,400,Associated with Orion complex
+NGC 6523,Lagoon Nebula,,1250,M8
+NGC 6514,Trifid Nebula,,1680,M20
+NGC 6611,Eagle Nebula,,1740,M16
+NGC 6618,Omega Nebula,,1700,M17 (aka Swan / Horseshoe / Checkmark)
+NGC 7000,North America Nebula,,800,Cygnus (Kiminki & Kobulnicky 2015)
+NGC 2237,Rosette Nebula,,1550,Nebulosity around cluster NGC 2244
+NGC 2264,Cone Nebula,,770,Christmas Tree Cluster region
+IC 5070,Pelican Nebula,,800,Cygnus; adjacent to NGC 7000
+IC 1805,Heart Nebula,,2400,Cassiopeia
+IC 1848,Soul Nebula,,2400,Cassiopeia; aka Embryo Nebula
+IC 1396,Elephant's Trunk Nebula,,870,HII complex in Cepheus
+IC 443,Jellyfish Nebula,,1500,Supernova remnant in Gemini
+IC 2177,Seagull Nebula,,1200,Monoceros/Canis Major border
+NGC 7380,Wizard Nebula,,2200,Cepheus
+NGC 7635,Bubble Nebula,,2390,Cassiopeia (Wolf-Rayet bubble)
+NGC 281,Pacman Nebula,,2800,Cassiopeia
+NGC 1499,California Nebula,,330,Perseus
+NGC 6888,Crescent Nebula,,1500,Cygnus (Wolf-Rayet bubble)
+NGC 2174,Monkey Head Nebula,,2200,Orion
+NGC 1931,Auriga Nebula,,2000,Small emission complex
+NGC 7822,Cederblad 214 complex,,960,Cepheus
+NGC 6820,,,2000,Sh2-86 region; associated with NGC 6823 cluster
+IC 1318,Butterfly Nebula,,1800,Gamma Cygni region (not to be confused with NGC 6302)
+NGC 6960,Western Veil Nebula,,740,Witch's Broom; Cygnus Loop west
+NGC 6992,Eastern Veil Nebula,,740,Network Nebula; Cygnus Loop east
+NGC 6995,,,740,Part of Eastern Veil complex
+# --- Planetary nebulae (curated distances + non-galaxy surface brightness) ---
+NGC 6720,Ring Nebula,20.5,800,M57 (Gaia DR2 central-star parallax)
+NGC 6853,Dumbbell Nebula,20.0,380,M27; Apple Core
+NGC 7293,Helix Nebula,22.5,200,Nearest bright PN to Earth
+NGC 6543,Cat's Eye Nebula,,1000,Draco
+NGC 2392,Clown Face Nebula,,900,Gemini (aka Eskimo Nebula; modern nomenclature avoids the latter)
+NGC 7662,Blue Snowball,,1700,Andromeda
+NGC 3242,Ghost of Jupiter,,550,Hydra
+NGC 6302,Butterfly Nebula (Bug),,1170,Scorpius
+NGC 246,Skull Nebula,,490,Cetus
+NGC 2438,,,1400,PN in line of sight of M46
+# --- Supernova remnants ---
+NGC 1952,Crab Nebula,19.0,2000,M1 (only SNR in Messier catalog)
+# --- Reflection nebulae ---
+NGC 7023,Iris Nebula,,400,Cepheus
+NGC 2261,Hubble's Variable Nebula,,780,Monoceros
+# --- Clusters with iconic names and well-measured distances ---
+NGC 2632,Beehive Cluster,,187,M44; Praesepe
+NGC 1039,,,494,M34
+NGC 884,Double Cluster (h Persei),,2300,Paired with NGC 869
+NGC 869,Double Cluster (chi Persei),,2300,Paired with NGC 884
+NGC 6205,Great Hercules Cluster,,7200,M13
+NGC 7078,,,10400,M15
+NGC 5139,Omega Centauri,,5240,Largest Milky Way globular
+NGC 104,47 Tucanae,,4700,Second-brightest globular after Omega Cen
+NGC 5272,,,10400,M3
+# --- Sharpless-only common names (Sh2 without crossref) ---
+Sh2-155,Cave Nebula,,725,Cepheus
+Sh2-240,Spaghetti Nebula,,800,Simeis 147; Taurus/Auriga SNR
+Sh2-276,Barnard's Loop,,500,Orion arc
+Sh2-264,Angel Fish Nebula,,400,Lambda Orionis ring
+Sh2-308,Dolphin Nebula,,1500,Wolf-Rayet bubble in Canis Major
+Sh2-101,Tulip Nebula,,1900,Cygnus; near Cyg X-1
+Sh2-261,Lower's Nebula,,,Orion
+# --- Barnard dark nebulae with well-known names ---
+B33,Horsehead Nebula,,450,Silhouetted against IC 434
+B72,Snake Nebula,,170,Ophiuchus
+B142,,,,E Nebula (paired with B143)
+B143,E Nebula,,,Aquila dark complex (paired with B142)

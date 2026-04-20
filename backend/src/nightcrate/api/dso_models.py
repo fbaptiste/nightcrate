@@ -36,6 +36,8 @@ class DsoListItem(BaseModel):
     min_axis_arcmin: float | None
     mag_v: float | None
     mag_b: float | None
+    distance_pc: float | None
+    distance_method: str | None
     common_name: str | None
     # Shortlist: primary + messier + caldwell (see api/dso.py).
     designations: list[DsoDesignation]
@@ -74,9 +76,36 @@ class DsoDetail(BaseModel):
     cstar_mag_b: float | None
     cstar_mag_v: float | None
     cstar_id: str | None
+    distance_pc: float | None
+    distance_method: str | None
     common_name: str | None
+    common_name_augmented: bool
+    surface_brightness_augmented: bool
     ned_notes: str | None
     openngc_notes: str | None
     raw_other_id: str | None
     designations: list[DsoDesignation]
     source: CatalogSource
+
+
+class TypeGroupFacet(BaseModel):
+    name: str
+    display_order: int
+    count: int
+    raw_types: list[str]
+
+
+class RawTypeFacet(BaseModel):
+    code: str
+    count: int
+
+
+class ConstellationFacet(BaseModel):
+    code: str
+    count: int
+
+
+class DsoFacetsResponse(BaseModel):
+    type_groups: list[TypeGroupFacet]
+    raw_types: list[RawTypeFacet]
+    constellations: list[ConstellationFacet]

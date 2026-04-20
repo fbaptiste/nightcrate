@@ -2037,6 +2037,85 @@ the augmentation CSV that arrives in v0.15+.
 
 ---
 
+## v0.15.0 — DSO Augmentation & VizieR Integration
+
+**Status:** Done
+**Branch:** `v0.15.0/dso-augmentation`
+
+Extends the v0.14.0 DSO catalog with two VizieR-sourced catalogs
+(Sharpless 2, Barnard), the **50 Mpc Galaxy Catalog** (Ohlson+ 2024,
+fetched from a GitHub mirror because the CDS endpoint was intermittently
+flaky), a NightCrate editorial augmentation layer (common names,
+non-galaxy surface brightness, curated distances), and a post-load
+Hubble-law redshift backfill for galaxies with no measured distance.
+Adds Telescopius-style user-facing type groups, distance display with
+pc/ly dual units, a B-Mag tooltip clarifying the Johnson-B ↔
+photographic-magnitude approximation, and a distance help dialog with
+KaTeX-rendered math. See `docs/dso-catalog-architecture.md` for the
+precedence rules between sources.
+
+### Schema
+
+- [x] Migration 0016 adds four columns on `dso`: `distance_pc` (parsecs), `distance_method` (CHECK ∈ `{50mgc, curated, redshift}`, nullable), `common_name_augmented` / `surface_brightness_augmented` `{0,1}` provenance flags. Partial index on `distance_method WHERE NOT NULL`.
+
+### Loader additions
+
+- [x] `catalog_loader/vizier.py` + `vizier_tsv.py` — CDS VizieR TSV fetcher parallel to the v0.14.0 GitHub fetcher. Atomic `.download/` → rename, sha256, per-source entry in `vizier/version.json` as the commit marker. Raw HTTP via `services/http_client.get` — no astroquery dependency. Rotates through three CDS mirrors (Strasbourg → India → South Africa) on retry exhaustion.
+- [x] `catalog_loader/sharpless_loader.py` — HII-region loader with crossref-aware creation (two-pass: merge-if-crossref, else standalone DSO with Sh2 primary designation). Crossref side-input hash is folded into the source's effective hash so a crossref edit alone invalidates the cache.
+- [x] `catalog_loader/barnard_loader.py` — dark-nebula loader. No crossref merging — dark nebulae and emission regions at the same line of sight are physically distinct.
+- [x] `catalog_loader/mgc50_fetch.py` + `mgc50_parser.py` + `mgc50_augmenter.py` — 50 Mpc Galaxy Catalog (Ohlson+ 2024, J/AJ/167/31). Fetched from the author's GitHub mirror (`github.com/davidohlson/50MGC`, default branch `master`) rather than VizieR because CDS has been flaky. The GitHub mirror distributes the catalog as a FITS binary table at `data/catalog.fits`; parsed via astropy, using the lowercase column names `pgc`, `bestdist`, `bestdist_error`, `bestdist_method`. Galaxy distance augmenter writes `distance_pc` with `distance_method='50mgc'` where NULL. About 83% of 50 MGC values are themselves flow-corrected redshift distances, but they remain preferred over NightCrate's naive Hubble-law fallback because the authors apply flow correction.
+- [x] `catalog_loader/redshift_distance.py` — post-load Hubble-law backfill. Runs after every fetched source has loaded; fills `distance_pc` on galaxy DSOs with a positive `redshift` but no prior distance. Formula `d = z·c/H₀` with H₀ = 70 km/s/Mpc, non-relativistic. Method tag `'redshift'`. Skips z ≤ 0 (blueshift / measurement noise) and non-galaxy types. Not a fetched source — no `dso_catalog_source` row.
+- [x] `catalog_loader/augment_loader.py` — NightCrate editorial CSV loader. Overrides common_name, fills non-galaxy surface_brightness (galaxy values ignored with DEBUG log — OpenNGC is authoritative), sets curated distances. Unresolved designations log WARNING and are skipped.
+- [x] Load order updated in `loader.py:load_catalogs`: openngc → openngc_addendum → vizier_sharpless → vizier_barnard → nightcrate_* stubs → nightcrate_augment → github_50mgc → (post-load) `apply_redshift_distances`. Precedence is `curated > 50 MGC > redshift`, enforced structurally via the `WHERE distance_pc IS NULL` guard in each augmenter.
+- [x] Shared loader primitives extracted into `catalog_loader/_common.py` (`maybe_float`, `maybe_str`, `normalize_designation`, `upsert_catalog_source`, `insert_dso`, `insert_designation`, `check_source_state`, generic `retry_with_backoff`). Replaces duplication that built up across the five per-source loaders.
+- [x] Constellation codes for Sharpless/Barnard derived from RA/Dec via cached `astropy.SkyCoord.get_constellation()` in `services/astronomy.py`. Added `distance_modulus_to_parsecs`, `redshift_to_parsecs`, and the `SPEED_OF_LIGHT_KM_S` / `HUBBLE_CONSTANT_KM_S_MPC` constants alongside.
+
+### Type grouping
+
+- [x] `services/dso_type_groups.py` dispatch table maps OpenNGC's 19 `obj_type` codes to 13 user-facing groups (Galaxy / Emission Nebula / Open Cluster / Globular Cluster / Planetary Nebula / Reflection Nebula / Dark Nebula / Supernova Remnant / Other Nebula / Stellar Association / Star / Multiple / Galaxy Group / Other). `Cl+N` rolls up under Emission Nebula — amateurs imaging NGC 2264/7023 target the nebulosity.
+
+### Seed data
+
+- [x] `data/catalogs/nightcrate/dso_augment.csv` — ~65 curated rows covering iconic emission nebulae (Orion 412 pc, Lagoon 1.25 kpc, …), planetary nebulae (Ring 0.8 kpc with SB, Helix 200 pc, …), the Crab SNR, reflection nebulae, bright clusters (M44, Double Cluster, M13, M15, Omega Cen), Sharpless-only targets (Cave, Barnard's Loop, Tulip, …), and key Barnard dark nebulae (Horsehead, Snake, E-nebula).
+- [x] `data/catalogs/nightcrate/sharpless_crossref.csv` — 25 Sh2 ↔ NGC/IC mappings.
+- [x] `data/catalogs/nightcrate/barnard_crossref.csv` — intentionally empty (header only).
+- [x] `data/catalogs/nightcrate/LICENSE-MIT.txt` + `version.json`.
+
+### Backend API
+
+- [x] `/api/dso` — new query params: `type_group` (comma-separated group names → union of raw types), `has_distance`. New sortable field: `distance_pc`.
+- [x] `/api/dso/{id}` — response now includes `distance_pc`, `distance_method`, `common_name_augmented`, `surface_brightness_augmented`.
+- [x] `/api/dso/facets` — response reshape. Returns `type_groups[]` (with counts + raw_types), `raw_types[]` (for Advanced filters), `constellations[]`.
+- [x] Admin endpoints: `GET /api/admin/catalogs/vizier/{source_id}/remote-version`, `POST /api/admin/catalogs/vizier/{source_id}/fetch` for each of `sharpless|barnard`, `GET /api/admin/catalogs/50mgc/remote-version`, `POST /api/admin/catalogs/50mgc/fetch` (dedicated GitHub path — 50 MGC moved off VizieR), plus `POST /api/admin/catalogs/nightcrate/reload`.
+
+### Frontend
+
+- [x] `lib/distanceFormat.ts` — auto-scaling pc/kpc/Mpc + ly/kly/Mly formatter, 3 sig figs.
+- [x] `lib/dsoTypeGroups.ts` — display-only style map referencing `rigColors`.
+- [x] `pages/DsoCatalogPage.tsx` — type-group chips as primary filter, raw-type chips in an Advanced expander, Distance column in the grid.
+- [x] `components/dso/DsoDetailPanel.tsx` — distance row with method chip, "~" prefix on redshift-derived values, help-icon button next to the Distance label that opens `DsoDistanceHelpDialog`, B-Mag tooltip, `AugmentedBadge` (star icon) next to augmented common_name / surface_brightness values.
+- [x] `components/dso/DsoDistanceHelpDialog.tsx` — modal explaining the three distance methods with KaTeX-rendered formulas (`d = c·z/H₀`, distance modulus) and caveats on peculiar velocities, H₀ uncertainty, non-relativistic approximation, and the 50 MGC flow-correction note.
+- [x] `components/dso/DsoAttributionPanel.tsx` — CDS VizieR acknowledgment block plus a "Redshift-derived distances" section.
+- [x] `components/dso/CatalogsAdminSection.tsx` — new per-source table in Admin → Catalogs with individual fetch/reload buttons. OpenNGC + 2 VizieR (Sharpless, Barnard) + 50 MGC (GitHub fetch) + NightCrate bundled.
+
+### Tests
+
+- [x] 55+ new backend tests across VizieR TSV parser, 50 MGC FITS parser (happy path, PGC ≤ 0 sentinel, NaN / non-positive bestdist, optional error + method columns, column-missing hard error), VizieR + GitHub fetchers (mirror fallback, retry exhaustion, atomic rename, short-body rejection), Sharpless / Barnard loaders, augment loader, 50 MGC augmenter (precedence against curated), post-load redshift backfill (pinned cases incl. formula regression at z=0.02), type-group dispatch, and API extensions. Mini fixtures at `backend/tests/fixtures/catalogs/{openngc,vizier}/`; the 50 MGC FITS fixture is composed at test-time via astropy's `BinTableHDU.from_columns`.
+
+### Docs
+
+- [x] New `docs/dso-catalog-architecture.md` — ~1-page primer on source precedence, atomicity, galaxy-vs-non-galaxy surface brightness, type grouping, and how to add a new catalog source.
+- [x] `DB_SCHEMA.md`, `DB_SCHEMA_DDL.sql`, `LLM_DB_SPECS.md`, `nightcrate-current-state.md`, `CLAUDE.md`, `PLAN.md` updated for v0.15.0.
+
+### v0.15.0 Completion Criteria
+
+- [x] Migration 0016 applies cleanly
+- [x] Full backend suite green (new tests included)
+- [x] Frontend build clean
+- [x] ruff / format / bandit clean (0 / 0 / 0)
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.

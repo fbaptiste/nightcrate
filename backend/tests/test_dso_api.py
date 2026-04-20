@@ -202,11 +202,15 @@ async def test_facets_returns_types_and_constellations_with_counts(client, dso_l
     resp = await client.get("/api/dso/facets")
     assert resp.status_code == 200
     body = resp.json()
-    type_counts = {t["value"]: t["count"] for t in body["obj_types"]}
-    assert type_counts["HII"] == 2  # NGC1976 + NGC0281
-    assert type_counts["G"] == 2  # NGC0224 + NGC5457
-    const_counts = {c["value"]: c["count"] for c in body["constellations"]}
+    raw_counts = {t["code"]: t["count"] for t in body["raw_types"]}
+    assert raw_counts["HII"] == 2  # NGC1976 + NGC0281
+    assert raw_counts["G"] == 2  # NGC0224 + NGC5457
+    const_counts = {c["code"]: c["count"] for c in body["constellations"]}
     assert const_counts["Per"] == 2
+    # Type groups aggregate raw codes. "Emission Nebula" covers HII+EmN+Cl+N.
+    group_counts = {g["name"]: g["count"] for g in body["type_groups"]}
+    assert group_counts["Emission Nebula"] == 2
+    assert group_counts["Galaxy"] == 2
 
 
 @pytest.mark.anyio
@@ -215,6 +219,70 @@ async def test_catalog_sources_endpoint(client, dso_loaded):
     assert resp.status_code == 200
     sources = resp.json()
     ids = {s["source_id"] for s in sources}
-    assert ids == {"openngc", "openngc_addendum"}
-    # Attribution is always populated (from version.json).
+    # OpenNGC + nightcrate bundled sources always register in tests; VizieR
+    # sources stay "missing" and don't show up until fetched.
+    assert {"openngc", "openngc_addendum"} <= ids
+    assert "nightcrate_augment" in ids
+    # Attribution is always populated.
     assert all(s["attribution"] for s in sources)
+
+
+# ── v0.15.0 extensions: type_group, has_distance, distance sort, facets ─────
+
+
+@pytest.mark.anyio
+async def test_list_filter_by_type_group(client, dso_loaded):
+    """type_group=Emission Nebula expands to HII+EmN+Cl+N."""
+    resp = await client.get("/api/dso?type_group=Emission Nebula")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    types = {i["obj_type"] for i in items}
+    # Mini fixture contains HII only in this group.
+    assert types <= {"HII", "EmN", "Cl+N"}
+    assert len(items) >= 1
+
+
+@pytest.mark.anyio
+async def test_list_filter_by_has_distance_true(client, dso_loaded):
+    resp = await client.get("/api/dso?has_distance=true")
+    items = resp.json()["items"]
+    assert all(i["distance_pc"] is not None for i in items)
+
+
+@pytest.mark.anyio
+async def test_list_filter_by_has_distance_false(client, dso_loaded):
+    resp = await client.get("/api/dso?has_distance=false")
+    items = resp.json()["items"]
+    assert all(i["distance_pc"] is None for i in items)
+
+
+@pytest.mark.anyio
+async def test_list_sort_by_distance_pc_nulls_last(client, dso_loaded):
+    resp = await client.get("/api/dso?sort=distance_pc&sort_dir=asc&limit=500")
+    items = resp.json()["items"]
+    with_dist = [i for i in items if i["distance_pc"] is not None]
+    without = [i for i in items if i["distance_pc"] is None]
+    # All items with a distance come before items without.
+    assert items[: len(with_dist)] == with_dist
+    assert items[len(with_dist) :] == without
+
+
+@pytest.mark.anyio
+async def test_facets_includes_type_groups_and_raw_types(client, dso_loaded):
+    resp = await client.get("/api/dso/facets")
+    body = resp.json()
+    assert "type_groups" in body
+    assert "raw_types" in body
+    # Every type_groups entry carries a raw_types list.
+    assert all("raw_types" in g for g in body["type_groups"])
+
+
+@pytest.mark.anyio
+async def test_detail_includes_distance_and_augmentation_flags(client, dso_loaded):
+    # M42 has a curated distance per the bundled augment CSV.
+    search = (await client.get("/api/dso?q=M42")).json()
+    m42 = next(i for i in search["items"] if i["primary_designation"] == "M 42")
+    detail = (await client.get(f"/api/dso/{m42['id']}")).json()
+    assert detail["distance_pc"] == pytest.approx(412.0, abs=1e-3)
+    assert detail["distance_method"] == "curated"
+    assert detail["common_name_augmented"] is True

@@ -603,3 +603,64 @@ def compute_moon_polyline(
         )
 
     return points
+
+
+# ── Distance-modulus helpers ────────────────────────────────────────────────
+
+
+def distance_modulus_to_parsecs(modulus: float) -> float:
+    """Convert a distance modulus μ to distance in parsecs.
+
+    Standard formula: ``d_pc = 10 ** ((mu / 5) + 1)``.
+
+    Sanity: μ = 0 → 10 pc (definition); μ = 30 → 10 Mpc.
+    """
+    return 10.0 ** ((modulus / 5.0) + 1.0)
+
+
+# ── Hubble-law distances (v0.15.0 redshift backfill) ────────────────────────
+# Speed of light is SI exact. H₀ = 70 km/s/Mpc is a middle-ground value
+# between Planck CMB (~67.4) and local distance-ladder (~73) measurements.
+# See ``DsoDistanceHelpDialog`` on the frontend for user-facing caveats.
+SPEED_OF_LIGHT_KM_S: float = 299792.458
+HUBBLE_CONSTANT_KM_S_MPC: float = 70.0
+
+
+def redshift_to_parsecs(z: float) -> float | None:
+    """Return the Hubble-law distance in parsecs for redshift *z*.
+
+    Returns ``None`` when the redshift is non-positive (blueshifted Local
+    Group companions, measurement noise, or callers that forgot to
+    pre-filter). Non-relativistic formula — callers wanting high-z
+    precision should apply a cosmological correction separately.
+    """
+    if z <= 0:
+        return None
+    d_mpc = (z * SPEED_OF_LIGHT_KM_S) / HUBBLE_CONSTANT_KM_S_MPC
+    return d_mpc * 1_000_000.0
+
+
+# ── Constellation lookup (v0.15.0, Sharpless/Barnard loaders) ───────────────
+
+# Lazy-initialised SkyCoord scaffolding. astropy's constellation boundary
+# tables take ~100ms to load on first call; cache so per-row lookups stay
+# cheap.
+_CONSTELLATION_CACHE: dict[tuple[float, float], str] = {}
+
+
+def constellation_for_coords(ra_deg: float, dec_deg: float) -> str:
+    """Return the 3-letter IAU constellation code for a J2000 position.
+
+    Results are cached per ``(ra_deg, dec_deg)`` so re-loading the same
+    catalog doesn't re-hit astropy's constellation-boundary machinery.
+    """
+    from astropy.coordinates import SkyCoord
+
+    key = (round(ra_deg, 6), round(dec_deg, 6))
+    cached = _CONSTELLATION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    coord = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg)
+    code: str = coord.get_constellation(short_name=True)
+    _CONSTELLATION_CACHE[key] = code
+    return code

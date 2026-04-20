@@ -69,15 +69,23 @@ def _designations_of(conn: sqlite3.Connection, primary_designation: str) -> list
 def test_end_to_end_load_mini_fixture(db: sqlite3.Connection, catalogs_root: Path):
     summary = load_catalogs(db, catalogs_root)
 
-    assert all(r.status == "loaded" for r in summary.results), [
-        (r.source_id, r.status, r.error) for r in summary.results
+    # Assertions target the OpenNGC path; VizieR sources are expected
+    # "missing" in tests (no fixtures staged) and nightcrate sources load
+    # from the bundled package. Only the two OpenNGC sources should be
+    # "loaded" against our mini fixture.
+    openngc_results = [r for r in summary.results if r.source_id.startswith("openngc")]
+    assert all(r.status == "loaded" for r in openngc_results), [
+        (r.source_id, r.status, r.error) for r in openngc_results
     ]
 
     counts = _counts(db)
     # mini_NGC: 11 rows - 1 NonEx - 1 Dup = 9 canonical. mini_addendum: 3 - 1 Dup = 2.
     assert counts["dso"] == 9 + 2
-    assert counts["dso_catalog_source"] == 2
-    # At least one designation per DSO (often several).
+    # Sources that actually run a loader register a catalog_source row:
+    # 2 (OpenNGC) + 1 (nightcrate_augment) = 3. The crossref stubs register
+    # no row (they're side-inputs / placeholders), and VizieR sources stay
+    # "missing" in tests.
+    assert counts["dso_catalog_source"] == 3
     assert counts["dso_designation"] >= counts["dso"]
 
 
@@ -143,11 +151,14 @@ def test_unchanged_reload_is_noop(db: sqlite3.Connection, catalogs_root: Path):
     after = _counts(db)
 
     assert before == after
-    assert all(r.status == "unchanged" for r in second.results), [
-        (r.source_id, r.status) for r in second.results
+    # Only check OpenNGC sources — VizieR sources stay "missing" and
+    # nightcrate sources skip the hash-check path.
+    openngc_second = [r for r in second.results if r.source_id.startswith("openngc")]
+    assert all(r.status == "unchanged" for r in openngc_second), [
+        (r.source_id, r.status) for r in openngc_second
     ]
-    # First call loaded; second call stayed unchanged.
-    assert all(r.status == "loaded" for r in first.results)
+    openngc_first = [r for r in first.results if r.source_id.startswith("openngc")]
+    assert all(r.status == "loaded" for r in openngc_first)
 
 
 def test_force_reload_replaces_rows(db: sqlite3.Connection, catalogs_root: Path):
@@ -156,15 +167,20 @@ def test_force_reload_replaces_rows(db: sqlite3.Connection, catalogs_root: Path)
     summary = load_catalogs(db, catalogs_root, force=True)
     after = _counts(db)
     assert before == after
-    assert all(r.status == "loaded" for r in summary.results)
+    openngc_results = [r for r in summary.results if r.source_id.startswith("openngc")]
+    assert all(r.status == "loaded" for r in openngc_results)
 
 
 def test_each_source_gets_distinct_catalog_source_row(db: sqlite3.Connection, catalogs_root: Path):
     load_catalogs(db, catalogs_root)
     cur = db.cursor()
+    # Only the OpenNGC + bundled nightcrate sources register in tests; VizieR
+    # sources stay "missing" and do not insert catalog_source rows.
     cur.execute("SELECT source_id FROM dso_catalog_source ORDER BY source_id")
     ids = [r[0] for r in cur.fetchall()]
-    assert ids == ["openngc", "openngc_addendum"]
+    assert "openngc" in ids
+    assert "openngc_addendum" in ids
+    assert "nightcrate_augment" in ids
 
 
 def test_unique_catalog_identifier_constraint(db: sqlite3.Connection, catalogs_root: Path):
@@ -198,7 +214,15 @@ def test_search_key_normalization(db: sqlite3.Connection, catalogs_root: Path):
 def test_registry_exposes_expected_sources(catalogs_root: Path):
     sources = get_sources(catalogs_root)
     ids = {s.source_id for s in sources}
-    assert ids == {"openngc", "openngc_addendum"}
+    assert {"openngc", "openngc_addendum"} <= ids
+    assert {"vizier_sharpless", "vizier_barnard", "github_50mgc"} <= ids
+    assert {
+        "nightcrate_augment",
+        "nightcrate_sharpless_crossref",
+        "nightcrate_barnard_crossref",
+    } <= ids
+    # OpenNGC sources use the openngc parser.
     for src in sources:
-        assert src.parser == "openngc"
-        assert src.category == "openngc"
+        if src.source_id.startswith("openngc"):
+            assert src.parser == "openngc"
+            assert src.category == "openngc"

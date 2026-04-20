@@ -38,6 +38,12 @@ export default function DsoAttributionPanel({ open, onClose }: Props) {
           carries its own license, which must be preserved on redistribution.
         </Typography>
 
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
+          VizieR sources are retrieved via the CDS VizieR catalogue access tool,
+          CDS, Strasbourg, France (DOI: 10.26093/cds/vizier). Any scientific use
+          of VizieR data should acknowledge that service.
+        </Typography>
+
         {isLoading && <CircularProgress size={20} />}
 
         <Stack spacing={2}>
@@ -85,6 +91,19 @@ export default function DsoAttributionPanel({ open, onClose }: Props) {
             </Box>
           ))}
         </Stack>
+
+        <Box sx={{ mt: 3, p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
+          <Typography variant="subtitle1" fontWeight={600}>
+            Redshift-derived distances
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 1 }}>
+            For galaxies without a measured distance, NightCrate computes an
+            approximate distance using Hubble's law (H₀ = 70 km/s/Mpc) from
+            the redshift value provided by OpenNGC. See the "How distances
+            are computed" help dialog on the DSO detail panel for the method
+            and caveats.
+          </Typography>
+        </Box>
       </DialogContent>
     </Dialog>
   );
