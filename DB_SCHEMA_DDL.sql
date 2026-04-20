@@ -1,4 +1,4 @@
--- NightCrate version: 0.15.0
+-- NightCrate version: 0.17.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1264,22 +1264,50 @@ ALTER TABLE dso ADD COLUMN common_name_augmented INTEGER NOT NULL DEFAULT 0
 -- eviction is driven by last_access_at; fetch_error rows record failed
 -- attempts so repeated polls don't re-fire a broken CDS fetch.
 
+-- v0.17.0 / migration 0018 widens the variant CHECK to include
+-- 'rig_framed' + 'fov_simulator' and adds nullable FOV descriptor
+-- columns (deg × 1000, as ints, to avoid float-equality pitfalls in
+-- the unique index). The unique index uses COALESCE so rig-independent
+-- entries (NULL FOV) don't collide with rig-dependent ones at the same
+-- dso_id.
 CREATE TABLE IF NOT EXISTS thumbnail_cache (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    dso_id         INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
-    variant        TEXT    NOT NULL CHECK (variant IN ('list', 'detail')),
-    width          INTEGER NOT NULL,
-    height         INTEGER NOT NULL,
-    file_path      TEXT    NOT NULL UNIQUE,
-    source         TEXT    NOT NULL CHECK (source IN (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    dso_id               INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    variant              TEXT    NOT NULL CHECK (variant IN (
+        'list', 'detail', 'rig_framed', 'fov_simulator'
+    )),
+    width                INTEGER NOT NULL,
+    height               INTEGER NOT NULL,
+    fov_major_deg_x1000  INTEGER,
+    fov_minor_deg_x1000  INTEGER,
+    center_ra_deg_x1000  INTEGER,
+    center_dec_deg_x1000 INTEGER,
+    file_path            TEXT    NOT NULL UNIQUE,
+    source               TEXT    NOT NULL CHECK (source IN (
         'dss2_color', 'dss2_red', 'dss2_blue', 'placeholder'
     )),
-    bytes          INTEGER NOT NULL,
-    fetched_at     TEXT    NOT NULL DEFAULT (datetime('now')),
-    last_access_at TEXT    NOT NULL DEFAULT (datetime('now')),
-    fetch_error    TEXT,
-    UNIQUE (dso_id, variant, width, height)
+    bytes                INTEGER NOT NULL,
+    fetched_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_access_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    fetch_error          TEXT
 );
+
+-- Unique index wraps FOV columns in COALESCE(-1) and centre-coord
+-- columns in COALESCE(-999999). Distinct sentinels keep a legitimate
+-- 0.0 RA (celestial equator) from colliding with NULL, and rig-
+-- independent entries (NULL FOV) from colliding with rig-dependent
+-- ones at the same dso_id.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_thumbnail_cache_unique
+    ON thumbnail_cache(
+        dso_id,
+        variant,
+        width,
+        height,
+        COALESCE(fov_major_deg_x1000, -1),
+        COALESCE(fov_minor_deg_x1000, -1),
+        COALESCE(center_ra_deg_x1000, -999999),
+        COALESCE(center_dec_deg_x1000, -999999)
+    );
 
 CREATE INDEX IF NOT EXISTS idx_thumbnail_cache_last_access
     ON thumbnail_cache(last_access_at);

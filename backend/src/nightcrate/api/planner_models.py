@@ -40,8 +40,10 @@ class PlannerTargetItem(BaseModel):
     hours_visible: float
     max_altitude_deg: float
     peak_time_utc: str
-    transit_time_utc: str | None
-    altitude_at_transit_deg: float | None
+    # Meridian transit is always reported — sidereal geometry doesn't
+    # care about astro-dark.
+    transit_time_utc: str
+    altitude_at_transit_deg: float
     min_moon_separation_deg: float | None
     coverage_pct: float | None = None
 
@@ -87,7 +89,26 @@ class ThumbnailCacheStats(BaseModel):
     total_bytes: int
     row_count: int
     max_bytes: int
+    # Monotonic counter the frontend appends to thumbnail URLs as a
+    # cache-buster so clearing the backend cache also evicts whatever
+    # copies the user's browser HTTP cache is holding.
+    generation: int = 0
 
 
 class CacheClearResponse(BaseModel):
     deleted_files: int
+
+
+class NearbyDsoItem(BaseModel):
+    id: int
+    primary_designation: str
+    ra_deg: float
+    dec_deg: float
+    maj_axis_arcmin: float | None
+    min_axis_arcmin: float | None
+    obj_type: str
+    type_group: str | None
+
+
+class NearbyDsosResponse(BaseModel):
+    items: list[NearbyDsoItem]

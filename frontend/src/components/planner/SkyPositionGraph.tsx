@@ -59,7 +59,13 @@ interface HoverInfo {
   objAz: number;
   moonAlt: number;
   aboveHorizon: boolean;
+  snappedToMeridian: boolean;
 }
+
+// Magnetic-snap radius around the meridian line, in CSS pixels. Wide
+// enough to be easy to land on without a precise mouse, narrow enough
+// that it feels intentional rather than sticky.
+const MERIDIAN_SNAP_PX = 6;
 
 export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
   const theme = useTheme();
@@ -158,23 +164,50 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
     const mx = e.clientX - rect.left;
-    const t = layout.x.invert(mx);
+
+    // Magnetic snap: when the cursor is close to the meridian line,
+    // lock onto the analytical transit instant exactly. Matters for
+    // two reasons — (1) readout shows the precise transit time /
+    // altitude rather than a 5-minute sampled neighbour, and (2)
+    // gives the user a "positive stop" that feels deliberate.
+    let snapTime: Date | null = null;
+    let snapX = mx;
+    if (track.transit_time_utc) {
+      const meridianT = new Date(track.transit_time_utc);
+      const meridianX = layout.x(meridianT);
+      if (
+        meridianX >= layout.MARGIN.left &&
+        meridianX <= width - layout.MARGIN.right &&
+        Math.abs(mx - meridianX) <= MERIDIAN_SNAP_PX
+      ) {
+        snapTime = meridianT;
+        snapX = meridianX;
+      }
+    }
+
+    const t = snapTime ?? layout.x.invert(mx);
     const idx = d3.bisector((d: Date) => d).left(layout.times, t);
     const clamped = Math.max(0, Math.min(layout.times.length - 1, idx));
-    const objAlt = track.object_altitude_deg[clamped];
+    // When snapped, use the sky-track's analytical peak altitude
+    // (equal to the altitude at transit since peak=transit when
+    // transit lies inside the charted window) rather than a
+    // 5-minute-sampled neighbour. Azimuth + moon stay sampled — the
+    // chart doesn't expose sub-minute analytical values for those.
+    const objAlt = snapTime ? track.peak_altitude_deg : track.object_altitude_deg[clamped];
     const horizon = track.horizon_altitude_at_object_az[clamped];
-    const localTime = layout.times[clamped].toLocaleTimeString([], {
+    const localTime = (snapTime ?? layout.times[clamped]).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
       timeZone: tz,
     });
     setHover({
-      xPx: layout.x(layout.times[clamped]),
+      xPx: snapTime ? snapX : layout.x(layout.times[clamped]),
       timeLocal: localTime,
       objAlt,
       objAz: track.object_azimuth_deg[clamped],
       moonAlt: track.moon_altitude_deg[clamped],
       aboveHorizon: objAlt > horizon,
+      snappedToMeridian: snapTime != null,
     });
   }
 
@@ -358,6 +391,14 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
         >
           <Typography variant="caption" fontWeight={600}>
             {hover.timeLocal}
+            {hover.snappedToMeridian && (
+              <Box
+                component="span"
+                sx={{ ml: 0.75, color: "text.secondary", fontWeight: 400 }}
+              >
+                (meridian)
+              </Box>
+            )}
           </Typography>
           <div>
             Object: {hover.objAlt.toFixed(1)}° alt, {hover.objAz.toFixed(0)}° az

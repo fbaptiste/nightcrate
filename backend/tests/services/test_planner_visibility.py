@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date
 
+import astropy.units as u_astro
 import numpy as np
 import pytest
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+from astropy.time import Time
 
 from nightcrate.services.planner_visibility import (
     DsoCoord,
@@ -35,6 +38,15 @@ M31 = DsoCoord(dso_id=2, ra_deg=10.6847, dec_deg=41.2687, maj_axis_arcmin=190.0)
 
 # A deep southern target — never rises from Phoenix
 CROSS = DsoCoord(dso_id=3, ra_deg=186.65, dec_deg=-63.1, maj_axis_arcmin=90.0)
+
+# M51 (Whirlpool) — RA 13h30m, Dec +47°. At Phoenix on 2026-04-19 its
+# meridian crossing (LST ≈ 13.5h) falls inside the astro-dark window
+# (which runs roughly 08:30 PM → 04:21 AM local / LST 07:50 → 15:41).
+M51 = DsoCoord(dso_id=4, ra_deg=202.4696, dec_deg=47.1953, maj_axis_arcmin=11.2)
+
+# M8 (Lagoon) — RA 18h03m, Dec −24°. At Phoenix on 2026-04-19 it
+# transits at LST ≈ 18h, which lands after astro-dark ends.
+M8 = DsoCoord(dso_id=5, ra_deg=270.917, dec_deg=-24.387, maj_axis_arcmin=90.0)
 
 
 def _snapshot(dsos, *, flat_min: float = 30.0):
@@ -117,6 +129,110 @@ def test_moon_separation_set_only_when_visible():
     """If the DSO is never visible, min_moon_separation_deg is None."""
     snap = _snapshot([CROSS])
     assert snap.per_dso[CROSS.dso_id].min_moon_separation_deg is None
+
+
+def test_transit_always_reported_even_outside_dark_hours():
+    """Meridian transit is a sidereal fact about the object, not a
+    function of the astro-dark window. M42 peaks late December (lower
+    transit in April is around midday), so its transit may fall
+    outside the ~5-hour astro-dark window — but the planner must still
+    report it."""
+    snap = _snapshot([M42])
+    vis = snap.per_dso[M42.dso_id]
+    assert vis.transit_time_utc is not None
+    # Altitude at upper transit = 90° − |lat − dec|. Phoenix 33.45°,
+    # M42 Dec −5.39° → alt = 90 − 38.84 = 51.16°.
+    assert vis.altitude_at_transit_deg == pytest.approx(51.16, abs=0.1)
+
+
+def test_transit_reported_for_never_visible_southern_target():
+    """Deep southern CROSS never rises from Phoenix, but its transit
+    (below the southern horizon) is still reported — altitude will be
+    negative, which callers can use to tell "never visible"."""
+    snap = _snapshot([CROSS])
+    vis = snap.per_dso[CROSS.dso_id]
+    assert vis.transit_time_utc is not None
+    # Geometric (J2000) upper-transit alt = 90 − |33.45 − (−63.1)| =
+    # −6.55°. Apparent (precessed to obstime) shifts by ~0.1–0.2°,
+    # which is the whole reason we route this through astropy now.
+    assert vis.altitude_at_transit_deg == pytest.approx(-6.55, abs=0.5)
+
+
+def test_peak_equals_transit_when_transit_inside_dark():
+    """M51 culminates in the middle of the Phoenix April astro-dark
+    window, so peak and transit should refer to the same instant at
+    the same altitude — no sample-grid rounding allowed to drift them
+    apart by ±2.5 min like the old argmax logic did."""
+    snap = _snapshot([M51])
+    vis = snap.per_dso[M51.dso_id]
+    # Transit is inside the dark window for this target/date.
+    assert snap.dark_window.start_utc <= vis.transit_time_utc <= snap.dark_window.end_utc
+    assert vis.peak_time_utc == vis.transit_time_utc
+    assert vis.max_altitude_deg == vis.altitude_at_transit_deg
+    # Geometric (J2000) upper-transit alt = 90 − |33.45 − 47.20| =
+    # 76.25°. Apparent (precessed to obstime) differs by ~0.1–0.2°
+    # — intentional: we evaluate altitude through the same astropy
+    # pipeline as the sampled array so the two columns agree.
+    assert vis.max_altitude_deg == pytest.approx(76.25, abs=0.5)
+
+
+def test_peak_at_dark_start_when_transit_before_window():
+    """M42 in April is already setting in the west at astro-dark
+    start — its true transit is in the afternoon (before the window).
+    Peak should therefore be evaluated at dark_start."""
+    snap = _snapshot([M42])
+    vis = snap.per_dso[M42.dso_id]
+    # Transit precedes dark_start.
+    assert vis.transit_time_utc < snap.dark_window.start_utc
+    # Peak picks the higher of the two window endpoints. For a setting
+    # target, the start is higher — so peak_time == dark_start exactly.
+    assert vis.peak_time_utc == snap.dark_window.start_utc
+
+
+def test_peak_at_dark_end_when_transit_after_window():
+    """M8 (Lagoon) rises late in Phoenix April; its transit falls
+    after astro-dark ends. Peak evaluates at the higher endpoint —
+    which for a rising target is ``dark_end``."""
+    snap = _snapshot([M8])
+    vis = snap.per_dso[M8.dso_id]
+    assert vis.transit_time_utc > snap.dark_window.end_utc
+    assert vis.peak_time_utc == snap.dark_window.end_utc
+
+
+def test_transit_altitude_matches_astropy_apparent_frame():
+    """Regression for "max alt 55° / transit alt 54°" splits.
+
+    Both ``max_altitude_deg`` (sampled array at endpoints, or the
+    analytical transit slot) and ``altitude_at_transit_deg`` must
+    come out of the same astropy AltAz transform — otherwise a J2000
+    → apparent precession drift (~0.1° at high declinations on a
+    25-year epoch) shows up as a 1° toFixed-rounding split between
+    the two columns.
+
+    M51 at dec +47° sits close to a precession-sensitive latitude
+    from Phoenix. Evaluating alt at the computed transit time via
+    astropy yields ~76.4° in 2026; the J2000 geometric formula
+    ``90 − |lat − dec|`` gives 76.25°. This test locks in the
+    astropy value so a future regression to the formula-only path
+    is caught immediately.
+    """
+    snap = _snapshot([M51])
+    vis = snap.per_dso[M51.dso_id]
+    # Independent astropy evaluation at the reported transit instant.
+    loc = EarthLocation(
+        lat=PHOENIX.latitude_deg * u_astro.deg,
+        lon=PHOENIX.longitude_deg * u_astro.deg,
+        height=(PHOENIX.elevation_m or 0.0) * u_astro.m,
+    )
+    coord = SkyCoord(ra=M51.ra_deg * u_astro.deg, dec=M51.dec_deg * u_astro.deg, frame="icrs")
+    altaz = coord.transform_to(AltAz(obstime=Time(vis.transit_time_utc), location=loc))
+    expected = float(altaz.alt.deg)
+    # ``altitude_at_transit_deg`` is rounded to 2 decimals on output;
+    # allow ≤ 0.01° difference from the independent re-evaluation.
+    assert vis.altitude_at_transit_deg == pytest.approx(expected, abs=0.01)
+    # And the peak altitude is the same source (transit-in-window),
+    # so they must agree byte-for-byte.
+    assert vis.max_altitude_deg == vis.altitude_at_transit_deg
 
 
 def test_moon_separation_positive_when_visible():

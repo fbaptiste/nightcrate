@@ -42,8 +42,10 @@ export interface PlannerTargetItem {
   hours_visible: number;
   max_altitude_deg: number;
   peak_time_utc: string;
-  transit_time_utc: string | null;
-  altitude_at_transit_deg: number | null;
+  /** Meridian crossing — always populated (computed analytically from
+   *  sidereal geometry). */
+  transit_time_utc: string;
+  altitude_at_transit_deg: number;
   min_moon_separation_deg: number | null;
   coverage_pct: number | null;
 }
@@ -135,6 +137,42 @@ export interface ThumbnailCacheStats {
   total_bytes: number;
   row_count: number;
   max_bytes: number;
+  /** Monotonic counter — appended to thumbnail URLs as ``&_g=N``.
+   *  Increments on every cache clear so the browser HTTP cache can't
+   *  serve stale images when the backend cache is wiped. */
+  generation: number;
+}
+
+export interface NearbyDsoItem {
+  id: number;
+  primary_designation: string;
+  ra_deg: number;
+  dec_deg: number;
+  maj_axis_arcmin: number | null;
+  min_axis_arcmin: number | null;
+  obj_type: string;
+  type_group: string | null;
+}
+
+export interface NearbyDsosResponse {
+  items: NearbyDsoItem[];
+}
+
+export function fetchNearbyDsos(params: {
+  raCenterDeg: number;
+  decCenterDeg: number;
+  extentDeg: number;
+  excludeId?: number | null;
+  limit?: number;
+}): Promise<NearbyDsosResponse> {
+  const qs = new URLSearchParams({
+    ra_center_deg: params.raCenterDeg.toFixed(6),
+    dec_center_deg: params.decCenterDeg.toFixed(6),
+    extent_deg: params.extentDeg.toFixed(6),
+  });
+  if (params.excludeId != null) qs.set("exclude_id", String(params.excludeId));
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  return apiFetch<NearbyDsosResponse>(`/planner/dsos/in-region?${qs.toString()}`);
 }
 
 export const fetchThumbnailCacheStats = () =>
@@ -145,12 +183,50 @@ export const clearThumbnailCache = () =>
     method: "POST",
   });
 
+export type ThumbnailVariant = "list" | "detail" | "rig_framed" | "fov_simulator";
+
+export interface ThumbnailUrlOptions {
+  /** Required for ``rig_framed`` + ``fov_simulator``; ignored otherwise. */
+  fovMajorDeg?: number;
+  fovMinorDeg?: number;
+  /** Panned sky centre — only honoured for ``fov_simulator``. When
+   *  omitted the backend falls back to the DSO's native coordinates. */
+  centerRaDeg?: number;
+  centerDecDeg?: number;
+  /** Cache-generation counter — appended as ``&_g=N``. Bumps on cache
+   *  clear so stale browser-cached entries are never reused. Sourced
+   *  from ``useThumbnailCacheStore``. */
+  generation?: number;
+  /** Long-poll window in milliseconds. On a cache miss the backend
+   *  holds the request open up to this long waiting for the CDS fetch
+   *  to complete, then serves the real image in the same round trip.
+   *  ``0`` (default) restores the old behaviour — immediate placeholder,
+   *  client polls with backoff. Worth setting for the simulator
+   *  (2–4 s) so the first visible image lands at CDS latency rather
+   *  than CDS + next-poll-cadence. Backend caps at 10 s. */
+  waitMs?: number;
+}
+
 /** Build the <img src> URL for a thumbnail — the backend handles cache lookup.
+ *
  *  Image requests bypass the apiFetch wrapper, so we fold the current
  *  activity label into the query string directly (matches
- *  ``api/images.ts:imageUrl`` — required for the Activity Console). */
-export function thumbnailUrl(dsoId: number, variant: "list" | "detail" = "list"): string {
+ *  ``api/images.ts:imageUrl`` — required for the Activity Console).
+ *  ``fovMajorDeg`` / ``fovMinorDeg`` are required for the rig-dependent
+ *  variants; caller is trusted to pass them. */
+export function thumbnailUrl(
+  dsoId: number,
+  variant: ThumbnailVariant = "list",
+  opts: ThumbnailUrlOptions = {},
+): string {
+  const q = new URLSearchParams({ variant });
+  if (opts.fovMajorDeg != null) q.set("fov_major_deg", opts.fovMajorDeg.toFixed(4));
+  if (opts.fovMinorDeg != null) q.set("fov_minor_deg", opts.fovMinorDeg.toFixed(4));
+  if (opts.centerRaDeg != null) q.set("center_ra_deg", opts.centerRaDeg.toFixed(4));
+  if (opts.centerDecDeg != null) q.set("center_dec_deg", opts.centerDecDeg.toFixed(4));
+  if (opts.generation != null) q.set("_g", String(opts.generation));
+  if (opts.waitMs != null && opts.waitMs > 0) q.set("wait_ms", String(opts.waitMs));
   const activity = getActivity();
-  const suffix = activity ? `&_activity=${encodeURIComponent(activity)}` : "";
-  return `/api/planner/thumbnails/${dsoId}?variant=${variant}${suffix}`;
+  if (activity) q.set("_activity", activity);
+  return `/api/planner/thumbnails/${dsoId}?${q.toString()}`;
 }

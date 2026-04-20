@@ -299,12 +299,256 @@ async def test_clear_cache_deletes_all(tmp_path):
     assert row["n"] == 0
 
 
-def test_compute_fov_deg_uses_minimum_when_size_missing():
-    assert thumbnails.compute_fov_deg("list", None) == 0.1
-    assert thumbnails.compute_fov_deg("detail", None) == 0.5
+def test_compute_angular_extent_uses_minimum_when_size_missing():
+    assert thumbnails.compute_angular_extent_deg("list", dso_maj_axis_arcmin=None) == pytest.approx(
+        0.125, abs=1e-3
+    )
+    # 5' fallback × 1.5 / 60 = 0.125, clamped by the 0.1° floor → 0.125 wins
+    assert thumbnails.compute_angular_extent_deg("detail", dso_maj_axis_arcmin=None) == 1.0
 
 
-def test_compute_fov_deg_scales_with_major_axis():
+def test_compute_angular_extent_list_scales_with_major_axis():
     # 30' major axis → 0.5 deg. × 1.5 multiplier = 0.75 deg for list variant.
-    assert thumbnails.compute_fov_deg("list", 30.0) == pytest.approx(0.75, abs=1e-3)
-    assert thumbnails.compute_fov_deg("detail", 30.0) == pytest.approx(1.25, abs=1e-3)
+    assert thumbnails.compute_angular_extent_deg("list", dso_maj_axis_arcmin=30.0) == pytest.approx(
+        0.75, abs=1e-3
+    )
+
+
+def test_compute_angular_extent_detail_wider_min():
+    # Pass B widened the detail min to 1.0° and the multiplier to 3.5×.
+    # A tiny 2' object → 2/60 × 3.5 = 0.117, clamped up to 1.0° minimum.
+    assert thumbnails.compute_angular_extent_deg("detail", dso_maj_axis_arcmin=2.0) == 1.0
+    # A large 60' object → 60/60 × 3.5 = 3.5° (above the minimum).
+    assert thumbnails.compute_angular_extent_deg(
+        "detail", dso_maj_axis_arcmin=60.0
+    ) == pytest.approx(3.5, abs=1e-3)
+
+
+def test_compute_angular_extent_rig_framed_matches_rig_major():
+    assert thumbnails.compute_angular_extent_deg(
+        "rig_framed",
+        dso_maj_axis_arcmin=5.0,
+        fov_major_deg=0.37,
+        fov_minor_deg=0.28,
+    ) == pytest.approx(0.37, abs=1e-6)
+
+
+def test_compute_angular_extent_rig_framed_requires_fov():
+    with pytest.raises(ValueError, match="rig_framed"):
+        thumbnails.compute_angular_extent_deg("rig_framed", dso_maj_axis_arcmin=5.0)
+
+
+def test_compute_angular_extent_fov_simulator_rig_major_over_050():
+    # Tile extent = fov_major / 0.5 so the sensor rectangle fills 50%
+    # of the tile's max dimension. C11-like 0.37×0.28 rig: 0.37/0.5 =
+    # 0.74°. Object size is intentionally NOT a factor — the zoom
+    # stays tied to the rig only.
+    extent = thumbnails.compute_angular_extent_deg(
+        "fov_simulator",
+        dso_maj_axis_arcmin=5.0,
+        fov_major_deg=0.37,
+        fov_minor_deg=0.28,
+    )
+    assert extent == pytest.approx(0.74, abs=1e-3)
+
+
+def test_compute_angular_extent_fov_simulator_ignores_object_size():
+    # M42 at 65' with a tiny 0.1×0.08° rig. Object dominates
+    # visually but tile extent is locked to the rig: 0.1/0.5 = 0.2°.
+    extent = thumbnails.compute_angular_extent_deg(
+        "fov_simulator",
+        dso_maj_axis_arcmin=65.0,
+        fov_major_deg=0.1,
+        fov_minor_deg=0.08,
+    )
+    assert extent == pytest.approx(0.2, abs=1e-3)
+
+
+def test_compute_angular_extent_fov_simulator_uses_larger_axis():
+    # Portrait rigs (minor > major, rare but possible) should still
+    # pick the larger dimension. 0.45 / 0.5 = 0.9.
+    extent = thumbnails.compute_angular_extent_deg(
+        "fov_simulator",
+        dso_maj_axis_arcmin=5.0,
+        fov_major_deg=0.3,
+        fov_minor_deg=0.45,
+    )
+    assert extent == pytest.approx(0.9, abs=1e-3)
+
+
+def test_compute_angular_extent_fov_simulator_requires_both_fov_dims():
+    with pytest.raises(ValueError, match="fov_simulator"):
+        thumbnails.compute_angular_extent_deg(
+            "fov_simulator", dso_maj_axis_arcmin=5.0, fov_major_deg=0.37
+        )
+
+
+def test_make_key_rounds_fov_to_milli_degree():
+    k1 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.3701, fov_minor_deg=0.2801)
+    k2 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.3702, fov_minor_deg=0.2804)
+    # 0.3701 × 1000 = 370.1 → rounds to 370; 0.3702 → 370. Match.
+    assert k1.fov_major_deg_x1000 == k2.fov_major_deg_x1000 == 370
+    assert k1.fov_minor_deg_x1000 == k2.fov_minor_deg_x1000 == 280
+
+
+def test_make_key_distinguishes_rigs_at_0_01_degree_spacing():
+    k1 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.370, fov_minor_deg=0.280)
+    k2 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.380, fov_minor_deg=0.290)
+    assert k1.fov_major_deg_x1000 != k2.fov_major_deg_x1000
+
+
+def test_make_key_rig_independent_variants_ignore_fov_args():
+    # Even if a caller accidentally passes FOV values, list / detail keys
+    # must stay rig-independent so the cache doesn't fork.
+    k = thumbnails.make_key(42, "list", fov_major_deg=0.37, fov_minor_deg=0.28)
+    assert k.fov_major_deg_x1000 is None
+    assert k.fov_minor_deg_x1000 is None
+
+
+def test_make_key_rig_dependent_variants_require_fov():
+    with pytest.raises(ValueError, match="rig_framed"):
+        thumbnails.make_key(42, "rig_framed")
+    with pytest.raises(ValueError, match="fov_simulator"):
+        thumbnails.make_key(42, "fov_simulator", fov_major_deg=0.37)
+
+
+def test_make_key_sky_center_only_recorded_for_fov_simulator():
+    # Stray center coords on a non-simulator variant must be discarded
+    # so the list/detail caches don't fork on a bug elsewhere.
+    k = thumbnails.make_key(42, "list", center_ra_deg=100.0, center_dec_deg=20.0)
+    assert k.center_ra_deg_x1000 is None
+    assert k.center_dec_deg_x1000 is None
+
+
+def test_make_key_sky_center_rounds_to_milli_degree():
+    k = thumbnails.make_key(
+        42,
+        "fov_simulator",
+        fov_major_deg=0.37,
+        fov_minor_deg=0.28,
+        center_ra_deg=202.4731,
+        center_dec_deg=47.1954,
+    )
+    assert k.center_ra_deg_x1000 == 202473
+    assert k.center_dec_deg_x1000 == 47195
+
+
+def test_make_key_sky_center_distinguishes_panned_from_native():
+    native = thumbnails.make_key(42, "fov_simulator", fov_major_deg=0.37, fov_minor_deg=0.28)
+    panned = thumbnails.make_key(
+        42,
+        "fov_simulator",
+        fov_major_deg=0.37,
+        fov_minor_deg=0.28,
+        center_ra_deg=10.0,
+        center_dec_deg=-5.0,
+    )
+    assert native.center_ra_deg_x1000 is None
+    assert panned.center_ra_deg_x1000 == 10000
+    assert native != panned
+
+
+async def test_rig_framed_cache_miss_enqueues_fetch(fake_hips):
+    fake_hips["mapping"]["DSS2%2Fcolor"] = FakeResponse(body=_FAKE_JPEG)
+
+    async with get_db() as conn:
+        result = await thumbnails.get_thumbnail(
+            conn,
+            dso_id=42,
+            variant="rig_framed",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            maj_axis_arcmin=5.0,
+            max_cache_bytes=10 * 1024 * 1024,
+            conn_factory=get_db,
+            fov_major_deg=0.37,
+            fov_minor_deg=0.28,
+        )
+    assert result.status == "placeholder"
+
+    for t in list(thumbnails._in_flight.values()):
+        await t
+
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT source, fov_major_deg_x1000, fov_minor_deg_x1000 "
+            "FROM thumbnail_cache WHERE dso_id = 42 AND variant = 'rig_framed'"
+        )
+        row = await cursor.fetchone()
+    assert row["source"] == "dss2_color"
+    assert row["fov_major_deg_x1000"] == 370
+    assert row["fov_minor_deg_x1000"] == 280
+
+
+async def test_rig_framed_two_distinct_rigs_get_separate_rows(fake_hips):
+    fake_hips["mapping"]["DSS2%2Fcolor"] = FakeResponse(body=_FAKE_JPEG)
+
+    for fov_major, fov_minor in ((0.37, 0.28), (0.80, 0.60)):
+        async with get_db() as conn:
+            await thumbnails.get_thumbnail(
+                conn,
+                dso_id=55,
+                variant="rig_framed",
+                ra_deg=10.0,
+                dec_deg=20.0,
+                maj_axis_arcmin=5.0,
+                max_cache_bytes=10 * 1024 * 1024,
+                conn_factory=get_db,
+                fov_major_deg=fov_major,
+                fov_minor_deg=fov_minor,
+            )
+        for t in list(thumbnails._in_flight.values()):
+            await t
+
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT COUNT(*) AS n FROM thumbnail_cache WHERE dso_id = 55 AND variant='rig_framed'"
+        )
+        assert (await cursor.fetchone())["n"] == 2
+
+
+async def test_sync_orphan_files_deletes_untracked(tmp_path):
+    thumb_dir = tmp_path / "thumbnails"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    # One tracked, one orphan, one non-matching filename (should be left alone).
+    tracked = thumb_dir / "1_list_180x180.jpg"
+    orphan = thumb_dir / "2_detail_800x800.jpg"
+    other = thumb_dir / "README.txt"
+    tracked.write_bytes(b"x")
+    orphan.write_bytes(b"x")
+    other.write_bytes(b"x")
+
+    async with get_db() as conn:
+        await conn.execute(
+            "INSERT INTO thumbnail_cache (dso_id, variant, width, height, "
+            "file_path, source, bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (1, "list", 180, 180, str(tracked), "dss2_color", 1),
+        )
+        await conn.commit()
+
+        removed = await thumbnails.sync_orphan_files(conn)
+
+    assert removed == 1
+    assert tracked.exists()
+    assert not orphan.exists()
+    assert other.exists()  # non-thumbnail files untouched
+
+
+def test_filename_regex_matches_panned_fov_simulator():
+    # The panned fov_simulator filename has both the FOV pair and the
+    # sky-centre pair; the regex must accept either/both suffixes.
+    match = thumbnails._THUMB_FILENAME_RE.match(
+        "42_fov_simulator_800x800_370_280_c202473_47195.jpg"
+    )
+    assert match is not None
+    assert match.group("variant") == "fov_simulator"
+    assert match.group("fmaj") == "370"
+    assert match.group("cra") == "202473"
+    assert match.group("cdec") == "47195"
+
+
+def test_filename_regex_accepts_negative_dec():
+    # Southern declinations carry a leading minus sign.
+    match = thumbnails._THUMB_FILENAME_RE.match("7_fov_simulator_800x800_100_80_c50000_-15500.jpg")
+    assert match is not None
+    assert match.group("cdec") == "-15500"

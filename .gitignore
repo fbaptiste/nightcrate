@@ -58,8 +58,8 @@ instructions/
 .playwright-mcp/
 backend/.coverage
 
-# Temporary screenshots
-bug*.png
+# Ad-hoc testing screenshots at the repo root
+/*.png
 
 # Claude Code scheduled task runtime state
 .claude/scheduled_tasks.lock

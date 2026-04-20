@@ -23,7 +23,7 @@ help:
 
 ## Start backend and frontend together (Ctrl+C stops both)
 dev:
-	@(cd backend && uv run uvicorn nightcrate.main:app --reload --port 8000) & \
+	@(cd backend && NIGHTCRATE_LOG_LEVEL=DEBUG uv run uvicorn nightcrate.main:app --reload --port 8000) & \
 	(cd frontend && npm run dev) & \
 	trap '' INT TERM; \
 	wait; \
@@ -31,7 +31,7 @@ dev:
 
 ## Start backend only (port 8000)
 backend:
-	cd backend && uv run uvicorn nightcrate.main:app --reload --port 8000
+	cd backend && NIGHTCRATE_LOG_LEVEL=DEBUG uv run uvicorn nightcrate.main:app --reload --port 8000
 
 ## Start frontend only (port 5173)
 frontend:

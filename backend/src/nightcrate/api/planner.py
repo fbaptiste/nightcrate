@@ -16,6 +16,7 @@ fetch, LRU eviction) is in ``services/thumbnails``.
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -25,6 +26,8 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from nightcrate.api.planner_models import (
     CacheClearResponse,
     DarkWindowOut,
+    NearbyDsoItem,
+    NearbyDsosResponse,
     PlannerLocationSummary,
     PlannerRigSummary,
     PlannerTargetItem,
@@ -33,7 +36,7 @@ from nightcrate.api.planner_models import (
     ThumbnailCacheStats,
     TwilightBandsOut,
 )
-from nightcrate.core.config import get_settings
+from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import thumbnails
 from nightcrate.services.dso_type_groups import group_for_raw_type
@@ -369,7 +372,7 @@ async def list_targets(
             hours_visible=vis.hours_visible,
             max_altitude_deg=vis.max_altitude_deg,
             peak_time_utc=vis.peak_time_utc.isoformat(),
-            transit_time_utc=vis.transit_time_utc.isoformat() if vis.transit_time_utc else None,
+            transit_time_utc=vis.transit_time_utc.isoformat(),
             altitude_at_transit_deg=vis.altitude_at_transit_deg,
             min_moon_separation_deg=vis.min_moon_separation_deg,
             coverage_pct=coverage,
@@ -473,11 +476,46 @@ async def target_sky_track(
 # ── Thumbnails ───────────────────────────────────────────────────────────────
 
 
+_RIG_DEPENDENT_VARIANTS = {"rig_framed", "fov_simulator"}
+
+
 @router.get("/thumbnails/{dso_id}")
 async def get_thumbnail(
     dso_id: int,
-    variant: Literal["list", "detail"] = "list",
+    variant: Literal["list", "detail", "rig_framed", "fov_simulator"] = "list",
+    fov_major_deg: float | None = None,
+    fov_minor_deg: float | None = None,
+    center_ra_deg: float | None = None,
+    center_dec_deg: float | None = None,
+    wait_ms: int = Query(0, ge=0, le=10000),
 ) -> Response:
+    if variant in _RIG_DEPENDENT_VARIANTS:
+        if fov_major_deg is None or fov_minor_deg is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"variant={variant!r} requires fov_major_deg and fov_minor_deg query parameters"
+                ),
+            )
+        if fov_major_deg <= 0 or fov_minor_deg <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="fov_major_deg and fov_minor_deg must be positive",
+            )
+
+    # Sky-centre override is only valid for the simulator variant — for
+    # any other caller it's almost certainly a bug, so 400 rather than
+    # silently ignoring.
+    if (center_ra_deg is not None or center_dec_deg is not None) and variant != "fov_simulator":
+        raise HTTPException(
+            status_code=400,
+            detail="center_ra_deg / center_dec_deg are only valid for variant=fov_simulator",
+        )
+    if center_ra_deg is not None and not (0.0 <= center_ra_deg < 360.0):
+        raise HTTPException(status_code=400, detail="center_ra_deg must be in [0, 360)")
+    if center_dec_deg is not None and not (-90.0 <= center_dec_deg <= 90.0):
+        raise HTTPException(status_code=400, detail="center_dec_deg must be in [-90, 90]")
+
     settings = await get_settings()
     max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
 
@@ -501,6 +539,11 @@ async def get_thumbnail(
             else None,
             max_cache_bytes=max_bytes,
             conn_factory=get_db,
+            fov_major_deg=fov_major_deg,
+            fov_minor_deg=fov_minor_deg,
+            center_ra_deg=center_ra_deg,
+            center_dec_deg=center_dec_deg,
+            wait_timeout_s=wait_ms / 1000.0,
         )
 
     if result.status == "hit":
@@ -510,19 +553,108 @@ async def get_thumbnail(
             headers={"Cache-Control": "public, max-age=86400"},
         )
     if result.status == "placeholder":
+        # Hard no-cache on the placeholder: the client polls by changing
+        # the URL's ``__v`` cache-buster, but if a browser caches the
+        # 1×1 PNG under the *base* URL, the next render serves stale
+        # placeholder bytes even after the real image is in the backend
+        # cache. Both the standard ``Cache-Control`` directive and the
+        # legacy ``Pragma`` header are needed for older intermediaries.
         return Response(
             content=result.body,
             media_type=result.content_type,
             status_code=202,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
         )
     # error → 204 with no body (the error-backoff branch).
-    return Response(status_code=204)
+    return Response(
+        status_code=204,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/dsos/in-region", response_model=NearbyDsosResponse)
+async def dsos_in_region(
+    ra_center_deg: float = Query(..., ge=0.0, lt=360.0),
+    dec_center_deg: float = Query(..., ge=-90.0, le=90.0),
+    extent_deg: float = Query(..., gt=0.0),
+    exclude_id: int | None = Query(None),
+    limit: int = Query(500, ge=1, le=500),
+) -> NearbyDsosResponse:
+    """DSOs inside a sky region, for the FOV simulator annotation overlay.
+
+    The region is a bounding box centred on (ra_center, dec_center) with
+    side ``extent_deg``, inflated by 10% so objects whose centre sits
+    just outside the frame but whose angular extent reaches inward are
+    still returned.
+
+    TODO: RA wrap-around near 0h/24h is not handled — a target whose
+    region crosses RA=0 silently drops objects on the far side of the
+    meridian. Acceptable for Pass B; revisit when planning targets near
+    the celestial prime meridian.
+    """
+    half = (extent_deg / 2.0) * 1.1
+    dec_min = max(-90.0, dec_center_deg - half)
+    dec_max = min(90.0, dec_center_deg + half)
+    # RA half-width widens at high declination so the sky-angular
+    # bounding box stays roughly isotropic.
+    cos_dec = max(math.cos(math.radians(dec_center_deg)), 1e-6)
+    ra_half = half / cos_dec
+    ra_min = ra_center_deg - ra_half
+    ra_max = ra_center_deg + ra_half
+
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            """
+            SELECT id, primary_designation, ra_deg, dec_deg,
+                   maj_axis_arcmin, min_axis_arcmin, obj_type
+            FROM dso
+            WHERE active = 1
+              AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL
+              AND dec_deg BETWEEN ? AND ?
+              AND ra_deg  BETWEEN ? AND ?
+              AND (? IS NULL OR id != ?)
+            ORDER BY COALESCE(maj_axis_arcmin, 0) DESC
+            LIMIT ?
+            """,
+            (dec_min, dec_max, ra_min, ra_max, exclude_id, exclude_id, limit),
+        )
+        rows = await cursor.fetchall()
+
+    items = [
+        NearbyDsoItem(
+            id=int(r["id"]),
+            primary_designation=str(r["primary_designation"]),
+            ra_deg=float(r["ra_deg"]),
+            dec_deg=float(r["dec_deg"]),
+            maj_axis_arcmin=float(r["maj_axis_arcmin"])
+            if r["maj_axis_arcmin"] is not None
+            else None,
+            min_axis_arcmin=float(r["min_axis_arcmin"])
+            if r["min_axis_arcmin"] is not None
+            else None,
+            obj_type=str(r["obj_type"]),
+            type_group=group_for_raw_type(str(r["obj_type"])),
+        )
+        for r in rows
+    ]
+    return NearbyDsosResponse(items=items)
 
 
 @router.post("/thumbnails/cache/clear", response_model=CacheClearResponse)
 async def clear_thumbnail_cache() -> CacheClearResponse:
     async with get_db() as conn:
         deleted = await thumbnails.clear_cache(conn)
+    # Bump the cache-generation counter so clients can discriminate
+    # newly-fetched images from whatever the browser HTTP-cache holds
+    # under the old URLs. Every thumbnail URL carries ``&_g=N`` sourced
+    # from this counter.
+    settings = await get_settings()
+    settings.thumbnail_cache_generation += 1
+    await update_settings(settings)
     return CacheClearResponse(deleted_files=deleted)
 
 
@@ -532,4 +664,7 @@ async def thumbnail_cache_stats() -> ThumbnailCacheStats:
     max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
     async with get_db() as conn:
         stats = await thumbnails.cache_stats(conn, max_bytes=max_bytes)
-    return ThumbnailCacheStats(**stats)
+    return ThumbnailCacheStats(
+        **stats,
+        generation=settings.thumbnail_cache_generation,
+    )
