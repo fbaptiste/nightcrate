@@ -615,7 +615,7 @@ async def mgc50_remote_version() -> dict:
 
     GitHub raw-content endpoints don't expose a meaningful "latest tag"
     for the 50 MGC repo (it's a single ``main`` branch with an
-    occasionally-updated ``tablea1.dat``). So the UI just reports an
+    occasionally-updated ``catalog.fits``). So the UI just reports an
     installed timestamp if present; clicking Fetch re-downloads.
     """
     from nightcrate.catalog_loader.mgc50_fetch import (
@@ -642,7 +642,7 @@ async def mgc50_remote_version() -> dict:
 
 @router.post("/catalogs/50mgc/fetch")
 async def mgc50_fetch() -> dict:
-    """Download ``tablea1.dat`` from the 50 MGC GitHub mirror atomically
+    """Download ``catalog.fits`` from the 50 MGC GitHub mirror atomically
     and run the loader.
     """
     from nightcrate.catalog_loader.mgc50_fetch import fetch_50mgc_from_github

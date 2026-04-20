@@ -48,8 +48,8 @@ CDS_CITATION = (
 # bug documented in CLAUDE.md "Gotchas" where `except (A, B):` gets its
 # parens stripped into the Python 2 `except A, B:` form.
 _VERSION_JSON_ERRS: tuple[type[BaseException], ...] = (json.JSONDecodeError, OSError)
-# VizieR downloads can take a while (HyperLEDA-filtered TSV is ~20 MB over a
-# slow CDS connection). Give them a generous timeout.
+# VizieR downloads can take a while over a slow CDS connection (Barnard
+# VII/220A can stretch past a minute). Give them a generous timeout.
 _DOWNLOAD_TIMEOUT_S = 180.0
 
 

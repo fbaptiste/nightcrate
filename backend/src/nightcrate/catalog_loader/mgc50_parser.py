@@ -64,10 +64,7 @@ def _maybe_str(value) -> str | None:
     if value is None:
         return None
     if isinstance(value, bytes):
-        try:
-            value = value.decode("utf-8", errors="replace")
-        except Exception:  # noqa: BLE001 — defensive
-            return None
+        value = value.decode("utf-8", errors="replace")
     text = str(value).strip()
     return text or None
 

@@ -605,7 +605,7 @@ def compute_moon_polyline(
     return points
 
 
-# ── Distance-modulus helpers (v0.15.0, HyperLEDA augmenter) ─────────────────
+# ── Distance-modulus helpers ────────────────────────────────────────────────
 
 
 def distance_modulus_to_parsecs(modulus: float) -> float:

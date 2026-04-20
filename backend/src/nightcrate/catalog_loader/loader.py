@@ -572,7 +572,10 @@ def load_catalogs(
       2. Sharpless (reads nightcrate_sharpless_crossref as a side-input)
       3. Barnard
       4. NightCrate augmentation CSV (sets curated distances)
-      5. HyperLEDA (only fills where distance_pc IS NULL — curated wins)
+      5. 50 MGC (galaxy distance augmenter; only fills where
+         distance_pc IS NULL — curated wins)
+      6. Redshift backfill (post-load Hubble-law pass for galaxies
+         still without a distance)
 
     Parameters
     ----------

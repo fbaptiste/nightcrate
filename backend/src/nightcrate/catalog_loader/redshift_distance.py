@@ -72,9 +72,6 @@ def apply_redshift_distances(conn: sqlite3.Connection) -> RedshiftAugmentSummary
             summary.skipped_non_positive_z += 1
             continue
         distance_pc = redshift_to_parsecs(z)
-        if distance_pc is None:
-            # redshift_to_parsecs already guards z<=0, so this is defensive.
-            continue
         cur.execute(
             """
             UPDATE dso

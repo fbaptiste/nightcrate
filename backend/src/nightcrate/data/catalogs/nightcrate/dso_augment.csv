@@ -2,7 +2,7 @@
 # designation: any recognized designation; resolved via dso_designation.search_key
 # common_name_override: replaces OpenNGC common_name when present
 # surface_brightness: mag/arcsec^2; for non-galaxy DSOs only (galaxies use OpenNGC)
-# distance_pc: parsecs; wins over HyperLEDA when present
+# distance_pc: parsecs; wins over 50 MGC and redshift-derived distances when present
 # notes: freeform; not stored in DB in v0.15.0
 designation,common_name_override,surface_brightness,distance_pc,notes
 # --- Iconic emission nebulae (common-name fills + curated distances) ---

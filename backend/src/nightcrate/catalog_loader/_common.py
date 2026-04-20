@@ -1,7 +1,7 @@
 """Shared helpers used by the per-source DSO loaders.
 
 v0.14.0 had a single OpenNGC-specific loader. v0.15.0 added four more
-parser strategies (Sharpless, Barnard, HyperLEDA, augment CSV) that all
+parser strategies (Sharpless, Barnard, 50 MGC, augment CSV) that all
 share the same low-level patterns — file-hash check, source-registry
 upsert, DSO/designation inserts, string normalisation. This module
 holds those primitives so the per-strategy loaders stay focused on

@@ -89,16 +89,14 @@ def load_sharpless(
     """
     result = SourceResult(source_id=source.source_id, status="skipped")
 
-    if not source.file_path.exists():
-        preflight = check_source_state(conn, source, "", force=force)
-        if preflight.preset_result is not None:
-            return preflight.preset_result
-        return result  # defensive — shouldn't reach here
-
+    # check_source_state emits status='missing' when the main file is absent;
+    # skip the hash work in that case rather than raising in file_sha256.
     crossref_hash = (
         file_sha256(crossref_path) if crossref_path is not None and crossref_path.exists() else "-"
     )
-    effective_hash = f"{file_sha256(source.file_path)}:{crossref_hash}"
+    effective_hash = (
+        f"{file_sha256(source.file_path)}:{crossref_hash}" if source.file_path.exists() else ""
+    )
 
     preflight = check_source_state(conn, source, effective_hash, force=force)
     if preflight.preset_result is not None:

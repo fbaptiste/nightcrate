@@ -1,9 +1,10 @@
 """Static registry of DSO catalog sources known to the loader.
 
 v0.14.0 shipped two sources (OpenNGC + addendum, fetched from GitHub).
-v0.15.0 adds VizieR-sourced catalogs (Sharpless, Barnard, HyperLEDA) and
-vendored NightCrate editorial CSVs (augmentation + Sharpless crossref,
-plus the intentionally-empty Barnard crossref for symmetry).
+v0.15.0 adds VizieR-sourced catalogs (Sharpless, Barnard), a GitHub-
+sourced 50 MGC catalog, and vendored NightCrate editorial CSVs
+(augmentation + Sharpless crossref, plus the intentionally-empty Barnard
+crossref for symmetry).
 
 Most entries return regardless of whether the backing file exists on
 disk — the loader emits ``status="missing"`` for absent files and the
@@ -53,7 +54,7 @@ class CatalogSource:
     license: str | None
     attribution: str
     # Parser strategy identifier — dispatches to the right loader in
-    # loader.py. One of: 'openngc', 'sharpless', 'barnard', 'hyperleda',
+    # loader.py. One of: 'openngc', 'sharpless', 'barnard', 'mgc50',
     # 'augment', 'sharpless_crossref', 'barnard_crossref'.
     parser: str
 

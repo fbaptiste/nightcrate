@@ -1243,15 +1243,16 @@ CREATE UNIQUE INDEX idx_dso_designation_primary_per_dso
 
 
 -- ── DSO Augmentation (migration 0016) ──────────────────────────────────────
--- distance_pc / distance_method carry both HyperLEDA-sourced galaxy
--- distances and NightCrate-curated non-galaxy distances. common_name_
--- augmented and surface_brightness_augmented flag which rows had editorial
--- overrides applied so the detail panel can show a subtle "augmented"
--- indicator. See docs/dso-catalog-architecture.md for precedence rules.
+-- distance_pc / distance_method carry galaxy distances from three sources
+-- layered by precedence: curated (NightCrate editorial) > 50mgc (Ohlson+
+-- 2024) > redshift (post-load Hubble-law backfill). common_name_augmented
+-- and surface_brightness_augmented flag rows with editorial overrides so
+-- the detail panel can show a subtle "augmented" indicator. See
+-- docs/dso-catalog-architecture.md for precedence rules.
 
 ALTER TABLE dso ADD COLUMN distance_pc REAL;
 ALTER TABLE dso ADD COLUMN distance_method TEXT
-    CHECK (distance_method IS NULL OR distance_method IN ('hyperleda', 'curated'));
+    CHECK (distance_method IS NULL OR distance_method IN ('50mgc', 'curated', 'redshift'));
 ALTER TABLE dso ADD COLUMN surface_brightness_augmented INTEGER NOT NULL DEFAULT 0
     CHECK (surface_brightness_augmented IN (0, 1));
 ALTER TABLE dso ADD COLUMN common_name_augmented INTEGER NOT NULL DEFAULT 0

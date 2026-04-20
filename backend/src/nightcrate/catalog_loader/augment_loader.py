@@ -7,7 +7,9 @@ Applies editorial overrides on top of the base OpenNGC + VizieR data:
   brightness uses OpenNGC's different methodology and is authoritative).
 - ``distance_pc`` fills ``dso.distance_pc`` with
   ``distance_method = 'curated'``. Because this loader runs BEFORE
-  HyperLEDA, a curated value stops HyperLEDA from overwriting it.
+  the 50 MGC augmenter and the redshift backfill, a curated value
+  stops them from overwriting it via their ``WHERE distance_pc IS NULL``
+  guards.
 
 Rows whose ``designation`` doesn't resolve to an existing DSO are
 logged at WARNING and skipped (the augment file enriches known objects,
