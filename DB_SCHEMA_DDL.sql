@@ -1258,6 +1258,34 @@ ALTER TABLE dso ADD COLUMN surface_brightness_augmented INTEGER NOT NULL DEFAULT
 ALTER TABLE dso ADD COLUMN common_name_augmented INTEGER NOT NULL DEFAULT 0
     CHECK (common_name_augmented IN (0, 1));
 
+
+-- ── Target Planner thumbnail cache (migration 0017) ────────────────────────
+-- Metadata-only table (files live on disk under APP_DIR/thumbnails/). LRU
+-- eviction is driven by last_access_at; fetch_error rows record failed
+-- attempts so repeated polls don't re-fire a broken CDS fetch.
+
+CREATE TABLE IF NOT EXISTS thumbnail_cache (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    dso_id         INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    variant        TEXT    NOT NULL CHECK (variant IN ('list', 'detail')),
+    width          INTEGER NOT NULL,
+    height         INTEGER NOT NULL,
+    file_path      TEXT    NOT NULL UNIQUE,
+    source         TEXT    NOT NULL CHECK (source IN (
+        'dss2_color', 'dss2_red', 'dss2_blue', 'placeholder'
+    )),
+    bytes          INTEGER NOT NULL,
+    fetched_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_access_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    fetch_error    TEXT,
+    UNIQUE (dso_id, variant, width, height)
+);
+
+CREATE INDEX IF NOT EXISTS idx_thumbnail_cache_last_access
+    ON thumbnail_cache(last_access_at);
+CREATE INDEX IF NOT EXISTS idx_thumbnail_cache_dso
+    ON thumbnail_cache(dso_id);
+
 CREATE INDEX IF NOT EXISTS idx_dso_distance_method
     ON dso(distance_method)
     WHERE distance_method IS NOT NULL;

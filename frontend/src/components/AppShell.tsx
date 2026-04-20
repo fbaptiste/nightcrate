@@ -26,6 +26,7 @@ import PublicIcon from "@mui/icons-material/Public";
 import PlaceIcon from "@mui/icons-material/Place";
 import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
+import StarsIcon from "@mui/icons-material/Stars";
 import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
@@ -47,6 +48,7 @@ const navItems = [
   { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
+  { to: "/planner", label: "Planner", icon: <StarsIcon /> },
   { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },

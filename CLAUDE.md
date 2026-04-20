@@ -576,6 +576,28 @@ Deep-sky object catalog (v0.14.0 MVP + v0.15.0 augmentation). Data is **not ship
 - **Atomic downloads.** Every fetcher writes into a `.download/` staging dir first, verifies a reasonable body size (`_MIN_BODY_BYTES = 1024`), then atomically renames into place. `version.json` is the commit marker — written LAST so a crash mid-rename leaves the source reported as "Not loaded". VizieR rotates through three CDS mirrors before giving up.
 - CC-BY-SA-4.0 applies to OpenNGC; CDS public applies to VizieR / 50 MGC; NightCrate editorial data is MIT. Attribution surfaces in the DSO page's `DsoAttributionPanel`.
 
+## Target Planner (v0.16.0)
+
+Location-driven "what's up tonight" at `/planner`. Lists DSOs geometrically visible during astronomical darkness, with optional rig selection adding FOV coverage % + a "frames well" filter. Custom horizons (v0.13.0) used automatically; otherwise the `planner_min_altitude_deg` setting is the flat floor.
+
+**Architecture:**
+- `services/planner_visibility.py` — vectorized astropy alt/az over all active DSOs at 5-minute sampling inside the astro-dark window. `PlannerLocation` / `DsoCoord` / `VisibilitySnapshot` value objects. `VisibilityCache` is process-wide, keyed on `(location_id, date, updated_at, horizon_updated_at)` — editing the location's coordinates or horizon invalidates automatically. 4-entry LRU, 15-minute TTL. Moon separation is **closest approach during the visibility window** — not at-peak (spec deviation; at-peak is misleading when moon is below horizon at the object's transit but rises during the visible window).
+- `services/planner_sky_track.py` — per-DSO altitude/azimuth/moon/horizon arrays across civil dusk − 30 min → civil dawn + 30 min for the detail-panel graph. Not cached; sub-100ms per DSO.
+- `services/thumbnails.py` + `services/hips_client.py` — CDS Aladin hips2fits fetch (DSS2 Color → DSS2 red fallback), disk cache under `APP_DIR/thumbnails/`, LRU eviction via `_evict_lru` on every successful fetch. Miss returns a 1×1 transparent PNG with HTTP 202 + enqueues a background `asyncio.create_task` (deduped via `_in_flight` map, capped via `_fetch_semaphore = 4`). Double-failure inserts a `fetch_error` sentinel row that expires after 1 hour — no refetch storms. Metadata in `thumbnail_cache` (migration 0017), files on disk.
+- `services/rig_calculators.py` — added `compute_coverage_pct` (max of major/minor fill %) + `frames_well` (15–90%).
+- `services/horizon.py` — added `interpolate_horizon_altitude` (wrap-safe numpy-vectorized linear interp against a sorted azimuth polyline).
+- `api/planner.py` + `api/planner_models.py` — `/api/planner/targets` (filter + sort + paginate in memory against the cached snapshot), `/targets/{id}/sky-track`, `/thumbnails/{id}?variant=list|detail`, `/thumbnails/cache/{clear,stats}`.
+- Frontend: `pages/PlannerPage.tsx`, `components/planner/{ThumbnailCell,SkyPositionGraph,PlannerDetailPanel}.tsx`, `api/planner.ts`. `thumbnailUrl()` in `api/planner.ts` returns a full `/api/planner/thumbnails/...` URL for direct `<img src>` use (bypasses `apiFetch`).
+- `ThumbnailCell` detects the placeholder via `naturalWidth <= 1` and retries every 2 seconds with a cache-buster query param. `onError` swaps to a neutral icon for 204 / error cases.
+
+**Key invariants:**
+- The visibility snapshot is computed over ALL active DSOs and filtered in memory — filter changes don't recompute alt/az. Cache keying is location + date + updated_at, not filter values.
+- `moon_separation_at_peak_deg` does NOT exist (spec field name) — use `min_moon_separation_deg`. `None` when never visible during astro-dark.
+- Thumbnail variants: `list` = 180×180 at `max(maj_axis × 1.5, 0.1°)` FOV; `detail` = 600×600 at `max(maj_axis × 2.5, 0.5°)`. Displayed at 60 px (list) and ~240 px (detail) CSS.
+- `thumb_dir()` ensures `APP_DIR/thumbnails/` exists on first access — don't precheck in callers.
+
+**Settings (5 new):** `planner_min_altitude_deg` (30), `planner_min_visibility_hours` (2.0), `planner_max_magnitude` (12.0), `planner_min_size_arcmin` (5.0), `thumbnail_cache_max_mb` (20). All in the Settings page under the Target Planner card.
+
 ## Settings (key-value schema)
 
 Application settings stored in a `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` table (migration 0011, reshaped from the previous `settings(id, data JSON)` singleton). Each Pydantic field on `core/config.py:Settings` maps to one row; `get_settings()` merges rows, silently drops rows with un-parseable JSON, and falls back to defaults on `ValidationError`. `update_settings()` upserts every field in a single loop — each update bumps `updated_at`.

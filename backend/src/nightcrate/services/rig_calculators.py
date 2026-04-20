@@ -682,3 +682,52 @@ def compute_rig_calculators(
         "guide_suitability": guide_dict,
         "guiding_tolerance": tolerance_dict,
     }
+
+
+# ---------------------------------------------------------------------------
+# FOV Coverage (Target Planner)
+# ---------------------------------------------------------------------------
+
+# "Frames well" bounds for the Target Planner. Below 15% the object looks
+# lost in the frame; above 90% it's cropped or tight.
+COVERAGE_FRAMES_WELL_MIN_PCT = 15.0
+COVERAGE_FRAMES_WELL_MAX_PCT = 90.0
+
+
+def compute_coverage_pct(
+    fov_major_deg: float,
+    fov_minor_deg: float,
+    maj_axis_arcmin: float | None,
+    min_axis_arcmin: float | None,
+) -> float | None:
+    """Return ``max(major_fill_pct, minor_fill_pct)`` or None.
+
+    The max — not the average — is the right quantity: if either axis
+    doesn't fit, the object doesn't fit. A 30'×10' object in a
+    20'×60' frame is at 150% on the bound axis, even though it fills
+    only half on the other.
+
+    Both object axes are converted arcmin → deg. NULL ``maj_axis`` returns
+    None; a NULL ``min_axis`` is backfilled from the major axis so
+    circularly symmetric rows (nebulae entered without a minor axis)
+    still get a coverage number.
+    """
+    if maj_axis_arcmin is None or maj_axis_arcmin <= 0:
+        return None
+    if fov_major_deg <= 0 or fov_minor_deg <= 0:
+        return None
+
+    obj_maj_deg = maj_axis_arcmin / 60.0
+    min_axis = min_axis_arcmin if min_axis_arcmin and min_axis_arcmin > 0 else maj_axis_arcmin
+    obj_min_deg = min_axis / 60.0
+
+    major_fill = obj_maj_deg / fov_major_deg * 100.0
+    minor_fill = obj_min_deg / fov_minor_deg * 100.0
+    return round(max(major_fill, minor_fill), 1)
+
+
+def frames_well(coverage_pct: float | None) -> bool:
+    """True when a DSO's FOV coverage is in the comfortable composition band."""
+    if coverage_pct is None:
+        return False
+    return COVERAGE_FRAMES_WELL_MIN_PCT <= coverage_pct <= COVERAGE_FRAMES_WELL_MAX_PCT

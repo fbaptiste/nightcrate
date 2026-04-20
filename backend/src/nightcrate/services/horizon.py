@@ -23,9 +23,12 @@ import csv
 import io
 import re
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import StringIO
+
+import numpy as np
 
 THEODOLITE_AZ_COL = "HDG_DEG"
 THEODOLITE_ALT_COL = "VERT"
@@ -305,6 +308,41 @@ def export_stellarium_zip(
         zf.writestr("horizon.txt", horizon_txt)
         zf.writestr("readme.txt", _STELLARIUM_README)
     return buf.getvalue()
+
+
+# ── Azimuth interpolation (Target Planner visibility) ────────────────────────
+
+
+def interpolate_horizon_altitude(
+    points: Sequence[tuple[float, float]],
+    azimuths_deg: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate a custom horizon's altitude at the given azimuths.
+
+    ``points`` is the location's horizon polyline, sorted ascending by
+    azimuth with values in ``[0, 360)``. This function wraps the polyline
+    at the 360° seam so azimuths near 0°/360° interpolate across the
+    shortest arc.
+
+    Returns an array the same shape as ``azimuths_deg`` giving horizon
+    altitude in degrees at each azimuth.
+    """
+    if len(points) < 2:
+        raise ValueError("Need at least 2 horizon points to interpolate.")
+
+    az = np.asarray([p[0] for p in points], dtype=np.float64)
+    alt = np.asarray([p[1] for p in points], dtype=np.float64)
+
+    # Extend the polyline with a wrapped copy of the last point at
+    # azimuth - 360 (so queries near 0° see the last point "behind" them)
+    # and a wrapped copy of the first point at azimuth + 360 (so queries
+    # near 360° see the first point "ahead"). This is what makes the
+    # interpolation continuous across the 0°/360° seam.
+    az_wrapped = np.concatenate(([az[-1] - 360.0], az, [az[0] + 360.0]))
+    alt_wrapped = np.concatenate(([alt[-1]], alt, [alt[0]]))
+
+    query = np.mod(np.asarray(azimuths_deg, dtype=np.float64), 360.0)
+    return np.interp(query, az_wrapped, alt_wrapped)
 
 
 # ── Filename sanitization ─────────────────────────────────────────────────────

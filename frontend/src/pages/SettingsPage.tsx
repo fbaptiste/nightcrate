@@ -13,6 +13,7 @@ import Typography from "@mui/material/Typography";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchCacheSize, clearCache } from "@/api/aberration";
 import { clearWeatherCache, fetchWeatherCacheStats } from "@/api/weather";
+import { clearThumbnailCache, fetchThumbnailCacheStats } from "@/api/planner";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 export function SettingsPage() {
@@ -33,13 +34,34 @@ export function SettingsPage() {
     : "…";
   const weatherCacheRows = weatherCacheQuery.data?.rows ?? 0;
 
+  const thumbnailCacheQuery = useQuery({
+    queryKey: ["thumbnail-cache-stats"],
+    queryFn: fetchThumbnailCacheStats,
+  });
+  const thumbnailCacheMB = thumbnailCacheQuery.data
+    ? (thumbnailCacheQuery.data.total_bytes / (1024 * 1024)).toFixed(2)
+    : "…";
+  const thumbnailMaxMB = thumbnailCacheQuery.data
+    ? Math.round(thumbnailCacheQuery.data.max_bytes / (1024 * 1024))
+    : 20;
+  const thumbnailRows = thumbnailCacheQuery.data?.row_count ?? 0;
+
   if (!settings) {
     return <Typography sx={{ p: 3 }} color="text.secondary">Loading…</Typography>;
   }
 
   return (
-    <Box sx={{ display: "flex", justifyContent: "center", p: 4, overflow: "auto" }}>
-      <Box sx={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: "column", gap: 3 }}>
+    <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 4 }}>
+      <Box
+        sx={{
+          width: "100%",
+          maxWidth: 560,
+          mx: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+        }}
+      >
         <Typography variant="h5">Settings</Typography>
 
         {/* Appearance */}
@@ -203,6 +225,115 @@ export function SettingsPage() {
                 onClick={async () => {
                   await clearWeatherCache();
                   queryClient.invalidateQueries({ queryKey: ["weather-cache-stats"] });
+                }}
+              >
+                Clear All
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Target Planner */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 2, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
+              Target Planner
+            </Typography>
+
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="body1" gutterBottom>Minimum altitude (flat horizon fallback)</Typography>
+              <TextField
+                type="number"
+                size="small"
+                value={settings.planner_min_altitude_deg}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (!isNaN(n) && n >= 0 && n <= 60) update({ planner_min_altitude_deg: n });
+                }}
+                inputProps={{ min: 0, max: 60 }}
+                sx={{ width: 120 }}
+              />
+              <FormHelperText>
+                Minimum altitude for "visible" when the location has no custom horizon (0–60°).
+              </FormHelperText>
+            </Box>
+
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="body1" gutterBottom>Default minimum hours visible</Typography>
+              <TextField
+                type="number"
+                size="small"
+                value={settings.planner_min_visibility_hours}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  if (!isNaN(n) && n >= 0 && n <= 12) update({ planner_min_visibility_hours: n });
+                }}
+                inputProps={{ min: 0, max: 12, step: 0.5 }}
+                sx={{ width: 120 }}
+              />
+            </Box>
+
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="body1" gutterBottom>Default maximum magnitude</Typography>
+              <TextField
+                type="number"
+                size="small"
+                value={settings.planner_max_magnitude}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  if (!isNaN(n) && n >= 5 && n <= 18) update({ planner_max_magnitude: n });
+                }}
+                inputProps={{ min: 5, max: 18, step: 0.5 }}
+                sx={{ width: 120 }}
+              />
+            </Box>
+
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="body1" gutterBottom>Default minimum size (arcmin)</Typography>
+              <TextField
+                type="number"
+                size="small"
+                value={settings.planner_min_size_arcmin}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  if (!isNaN(n) && n >= 0 && n <= 60) update({ planner_min_size_arcmin: n });
+                }}
+                inputProps={{ min: 0, max: 60, step: 1 }}
+                sx={{ width: 120 }}
+              />
+            </Box>
+
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="body1" gutterBottom>Thumbnail cache (MB)</Typography>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <Select
+                  value={settings.thumbnail_cache_max_mb}
+                  onChange={(e) => update({ thumbnail_cache_max_mb: Number(e.target.value) })}
+                >
+                  {[10, 20, 50, 100, 200].map((mb) => (
+                    <MenuItem key={mb} value={mb}>{mb} MB</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormHelperText>
+                Disk budget for DSS2 thumbnails under APP_DIR/thumbnails. LRU eviction on overflow.
+              </FormHelperText>
+            </Box>
+
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <Box>
+                <Typography variant="body1">Cached thumbnails</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {thumbnailRows} {thumbnailRows === 1 ? "image" : "images"} · {thumbnailCacheMB} MB of {thumbnailMaxMB} MB
+                </Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={thumbnailRows === 0}
+                onClick={async () => {
+                  await clearThumbnailCache();
+                  queryClient.invalidateQueries({ queryKey: ["thumbnail-cache-stats"] });
                 }}
               >
                 Clear All

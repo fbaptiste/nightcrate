@@ -2116,6 +2116,73 @@ precedence rules between sources.
 
 ---
 
+## v0.16.0 — Target Planner (Pass A)
+
+**Status:** Done
+**Branch:** `v0.16.0/target-planner`
+
+First-pass "what's up tonight" planner: `/planner` shows a location-
+driven list of DSOs geometrically visible during astro-dark, with
+standard-framed DSS2 Color thumbnails, filterable by type group,
+visibility hours, magnitude, and angular size. Selecting a rig adds a
+FOV coverage column and the "frames well" filter. Detail panel has the
+larger thumbnail + a D3 sky-position graph styled after the weather
+hourly timeline. See `docs/target-planner.md` for architecture.
+
+### Schema
+
+- [x] Migration 0017 adds `thumbnail_cache` (metadata + LRU index). Thumbnail files live on disk under `APP_DIR/thumbnails/`.
+
+### Settings additions (5)
+
+- [x] `planner_min_altitude_deg` (30), `planner_min_visibility_hours` (2.0), `planner_max_magnitude` (12.0), `planner_min_size_arcmin` (5.0), `thumbnail_cache_max_mb` (20). All surface in the Settings page under a new **Target Planner** card with inline editors + cache-size readout + clear-cache button.
+
+### Backend services
+
+- [x] `services/planner_visibility.py` — vectorized astropy alt/az over the astro-dark window with 5-minute sampling. `PlannerLocation` / `DsoCoord` / `DsoVisibility` / `VisibilitySnapshot` value objects; in-process `VisibilityCache` keyed on `(location_id, date, updated_at, horizon_updated_at)` with a 4-entry LRU / 15-minute TTL.
+- [x] `services/planner_sky_track.py` — per-DSO high-res track for the detail-panel graph (civil dusk − 30 min → civil dawn + 30 min, 5-minute spacing, moon altitude + per-azimuth horizon line).
+- [x] `services/thumbnails.py` + `services/hips_client.py` — CDS Aladin hips2fits fetch (color → red fallback), atomic write, LRU eviction on successful fetch, 1-hour error backoff, in-flight-dedupe via `asyncio.create_task` + module-level map, concurrent-fetch cap of 4 via semaphore.
+- [x] `services/rig_calculators.py` — added `compute_coverage_pct` (max of major/minor fill %) + `frames_well` (15–90%).
+- [x] `services/horizon.py` — added `interpolate_horizon_altitude` (wrap-safe linear interpolation for numpy azimuth arrays).
+
+### Backend API (`/api/planner`)
+
+- [x] `GET /api/planner/targets` — list with type_group / min_hours / max_magnitude / min_size / frames_well filters; sortable by hours_visible / max_altitude / coverage_pct / mag_v / primary_designation. Response includes location summary, rig summary (if selected), dark_window, moon_phase, paginated items.
+- [x] `GET /api/planner/targets/{dso_id}/sky-track` — per-DSO altitude / azimuth / moon altitude / horizon reference arrays + twilight band boundaries.
+- [x] `GET /api/planner/thumbnails/{dso_id}?variant=list|detail` — 200 JPEG on hit, 202 placeholder PNG + background fetch on miss, 204 on error-backoff.
+- [x] `POST /api/planner/thumbnails/cache/clear` + `GET /api/planner/thumbnails/cache/stats` for Settings.
+
+### Frontend
+
+- [x] `/planner` route + "Planner" nav entry (StarsIcon) wired between Calculators and DSO Catalog.
+- [x] `pages/PlannerPage.tsx` — location + rig selectors, type-group chips, three sliders, frames-well toggle, DataGrid with thumbnail cell + 11 columns (10 + conditional FOV coverage), detail-panel dialog.
+- [x] `components/planner/ThumbnailCell.tsx` — placeholder-detection via `naturalWidth`, 2-second retry with cache-buster, neutral-icon fallback on permanent failure.
+- [x] `components/planner/SkyPositionGraph.tsx` — D3 SVG with twilight bands, object + moon + horizon lines, visible-area shading, hover tooltip.
+- [x] `components/planner/PlannerDetailPanel.tsx` — MUI Dialog with detail thumbnail + metadata chips + sky graph + coverage narrative ("fills the frame nicely at 45%", "covers 173% — will be cropped").
+- [x] `api/planner.ts` — typed fetchers + `thumbnailUrl()` composer. `thumbnailUrl` includes the `/api` prefix since `<img src>` bypasses the apiFetch wrapper.
+- [x] Settings page — new **Target Planner** card with per-field inputs + cache-size readout + Clear All button.
+
+### Spec deviations
+
+- **Moon separation**: spec called for "at peak altitude"; implemented as **closest approach during visibility window** instead. At-peak can be wildly misleading when the moon is below the horizon at the object's transit but rises later during the visible window. Documented in the visibility-engine module docstring.
+
+### Tests
+
+- [x] `tests/services/test_planner_visibility.py` — 16 tests incl. Phoenix 2026-04-19 regression, southern target never rising, polar-summer empty-snapshot, custom-horizon-vs-flat comparison, cache reuse + invalidation on `updated_at` change, azimuth-interpolation bracketed by degree markers.
+- [x] `tests/services/test_planner_sky_track.py` — sample count, array lengths, horizon flat-vs-custom, twilight boundaries, moon phase.
+- [x] `tests/services/test_planner_coverage.py` — FOV coverage including null-axis fallback, clipped-on-minor, zero-FOV rejection, frames_well band.
+- [x] `tests/services/test_planner_thumbnails.py` — 9 tests across cache hit/miss, color→red fallback, double-failure recording, error-backoff short-circuit, LRU eviction, clear-cache, FOV sizing.
+- [x] `tests/test_planner_api.py` — integration coverage for all 5 routes.
+
+### v0.16.0 Completion Criteria
+
+- [x] Migration 0017 applies cleanly
+- [x] Full backend suite green (1594 passed, 3 skipped — +45 new)
+- [x] Frontend build clean
+- [x] ruff / format / bandit clean (0 / 0 / 0)
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.
