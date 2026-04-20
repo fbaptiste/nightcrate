@@ -1,0 +1,16 @@
+{
+  "category": "nightcrate",
+  "version": "0.15.0",
+  "files": {
+    "dso_augment.csv": {
+      "description": "NightCrate editorial DSO augmentation: common-name overrides, non-galaxy surface brightness, curated distances."
+    },
+    "sharpless_crossref.csv": {
+      "description": "Maps Sharpless 2 identifiers to existing DSOs from other catalogs (NGC/IC/Messier) to avoid duplicate entries for the same region."
+    },
+    "barnard_crossref.csv": {
+      "description": "Barnard crossref placeholder (intentionally empty — see file comment)."
+    }
+  },
+  "license": "MIT"
+}

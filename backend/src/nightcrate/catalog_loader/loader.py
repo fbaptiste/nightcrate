@@ -504,13 +504,59 @@ def _load_source(
     return result
 
 
+def _dispatch_source(
+    conn: sqlite3.Connection,
+    source: CatalogSource,
+    sharpless_crossref_path: Path | None,
+    *,
+    force: bool,
+) -> SourceResult:
+    """Route a ``CatalogSource`` to the parser-specific loader."""
+    # Local imports: the per-parser modules import back into this module for
+    # ``SourceResult``/``CatalogLoadStatus`` so we defer at call-time.
+    from nightcrate.catalog_loader import (
+        augment_loader,
+        barnard_loader,
+        mgc50_augmenter,
+        sharpless_loader,
+    )
+
+    if source.parser == "openngc":
+        return _load_source(conn, source, force=force)
+    if source.parser == "sharpless":
+        return sharpless_loader.load_sharpless(
+            conn, source, crossref_path=sharpless_crossref_path, force=force
+        )
+    if source.parser == "barnard":
+        return barnard_loader.load_barnard(conn, source, force=force)
+    if source.parser == "mgc50":
+        return mgc50_augmenter.augment_from_mgc50(conn, source, force=force)
+    if source.parser == "augment":
+        return augment_loader.load_augment(conn, source, force=force)
+    if source.parser in {"sharpless_crossref", "barnard_crossref"}:
+        # These files are side-inputs consumed by other loaders (Sharpless
+        # reads sharpless_crossref.csv directly during its own load). The
+        # registry entry exists for attribution + hash tracking only.
+        result = SourceResult(source_id=source.source_id, status="skipped")
+        if source.file_path.exists():
+            # Surface as "loaded" (with zero rows) so the Admin table shows
+            # a successful entry rather than "missing" for the bundled files.
+            result.status = "loaded"
+        else:
+            result.status = "missing"
+            result.error = f"file not found: {source.file_path}"
+        return result
+    logger.warning("[catalog_loader] unknown parser %r for %s", source.parser, source.source_id)
+    return SourceResult(source_id=source.source_id, status="failed", error="unknown parser")
+
+
 def load_catalogs(
     conn: sqlite3.Connection,
     catalogs_root: Path,
     *,
     force: bool = False,
 ) -> LoadSummary:
-    """Load all registered DSO catalog sources.
+    """Load all registered DSO catalog sources in dependency order.
 
     Callers pass a standard :class:`sqlite3.Connection` (NOT aiosqlite) — the
     loader is synchronous for the same reason the equipment seed loader is:
@@ -521,6 +567,13 @@ def load_catalogs(
     ``ON DELETE CASCADE`` on ``dso_designation`` fires when the loader
     wipes rows before reload.
 
+    Load order (matters for augmenters that depend on existing DSOs):
+      1. OpenNGC + addendum
+      2. Sharpless (reads nightcrate_sharpless_crossref as a side-input)
+      3. Barnard
+      4. NightCrate augmentation CSV (sets curated distances)
+      5. HyperLEDA (only fills where distance_pc IS NULL — curated wins)
+
     Parameters
     ----------
     conn
@@ -530,10 +583,45 @@ def load_catalogs(
     force
         If True, reload every source regardless of file-hash equality.
     """
-    # Make sure FK cascade is active — the loader relies on it.
     conn.execute("PRAGMA foreign_keys = ON")
 
+    sources = get_sources(catalogs_root)
+    # Sharpless reads its crossref CSV directly during load; find the path
+    # up front so we can pass it along.
+    sharpless_crossref_path: Path | None = next(
+        (s.file_path for s in sources if s.source_id == "nightcrate_sharpless_crossref"),
+        None,
+    )
+
+    # Explicit load order overrides the registry's natural order so that
+    # augmenters run after the base catalogs they augment. Redshift-derived
+    # distances are applied at the very end as a post-load computation —
+    # they're not a fetched source, so they don't appear in the registry.
+    load_order = (
+        "openngc",
+        "openngc_addendum",
+        "vizier_sharpless",
+        "vizier_barnard",
+        "nightcrate_sharpless_crossref",
+        "nightcrate_barnard_crossref",
+        "nightcrate_augment",
+        "github_50mgc",
+    )
+    by_id = {s.source_id: s for s in sources}
+    ordered = [by_id[sid] for sid in load_order if sid in by_id]
+
     summary = LoadSummary()
-    for source in get_sources(catalogs_root):
-        summary.results.append(_load_source(conn, source, force=force))
+    for source in ordered:
+        summary.results.append(_dispatch_source(conn, source, sharpless_crossref_path, force=force))
+
+    # Hubble-law backfill for galaxies with redshift but no distance yet.
+    # Not a fetched source — a local computation that runs last so the
+    # precedence stays: curated > 50 MGC > redshift.
+    try:
+        from nightcrate.catalog_loader.redshift_distance import apply_redshift_distances
+
+        apply_redshift_distances(conn)
+    except sqlite3.Error:
+        logger.exception("[catalog_loader] redshift backfill failed")
+
     return summary

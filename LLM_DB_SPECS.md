@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.14.0
+**NightCrate version:** 0.15.0
 
 ## Overview
 
@@ -322,6 +322,6 @@ idempotency check.
 These tables must **not** have seed CSVs and are not part of the
 equipment seed loader's hash contract.
 
-- `dso` — canonical deep-sky objects (typical OpenNGC v20260307 install: 13,371 rows, including all 110 Messier and 109 Caldwell objects).
+- `dso` — canonical deep-sky objects (typical full install: ~13,371 OpenNGC + ~200 standalone Sharpless + ~349 Barnard). v0.15.0 adds `distance_pc` (parsecs), `distance_method` (`curated` > `hyperleda` precedence, nullable), `common_name_augmented`/`surface_brightness_augmented` `{0,1}` provenance flags populated by the NightCrate augmentation CSV.
 - `dso_designation` — catalog-specific names attached to each DSO. Closed 29-catalog vocabulary: NGC, IC, Messier, Caldwell, PGC, UGC, MCG, ESO, Arp, HCG, Sharpless2, Barnard, LBN, LDN, vdB, Cederblad, PK, RCW, Gum, Mrk, Terzan, Pal, Mel, Cr, Stock, Ruprecht, Abell, Dolidze, DWB. One `UNIQUE(catalog, identifier)` → designations are globally unique across all DSOs.
-- `dso_catalog_source` — loader registry. Stores the sha256 of each source file; matching hashes on subsequent startup skip reloading. Drives the idempotency check.
+- `dso_catalog_source` — loader registry. Stores the sha256 of each source file; matching hashes on subsequent startup skip reloading. v0.15.0 registers 5 additional sources: `vizier_sharpless`, `vizier_barnard`, `vizier_hyperleda` (fetched from CDS VizieR), `nightcrate_augment`, `nightcrate_sharpless_crossref`, `nightcrate_barnard_crossref` (bundled in-repo under `backend/src/nightcrate/data/catalogs/nightcrate/`).

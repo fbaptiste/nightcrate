@@ -487,3 +487,184 @@ async def fetch_catalogs_from_github() -> dict:
         "fetched_version": release.tag_name,
         **_summary_to_dict(summary),
     }
+
+
+# ---------------------------------------------------------------------------
+# VizieR per-source fetch endpoints (v0.15.0)
+# ---------------------------------------------------------------------------
+
+
+_VIZIER_FETCH_SPECS: dict[str, dict] = {
+    "sharpless": {
+        "source_id": "vizier_sharpless",
+        "catalog_id": "VII/20/catalog",
+        "output_filename": "sharpless_VII_20.tsv",
+        "display_name": "Sharpless 2 (VII/20)",
+        "citation": "Sharpless 1959 ApJS 4, 257. Retrieved via VizieR.",
+        "column_filter": None,
+        "additional_params": {},
+    },
+    "barnard": {
+        "source_id": "vizier_barnard",
+        "catalog_id": "VII/220A/barnard",
+        "output_filename": "barnard_VII_220.tsv",
+        "display_name": "Barnard dark nebulae (VII/220A)",
+        "citation": "Barnard 1927 (VizieR VII/220A).",
+        "column_filter": None,
+        "additional_params": {},
+    },
+    # 50 MGC moved to a dedicated GitHub fetch endpoint
+    # (POST /api/admin/catalogs/50mgc/fetch) — see fetch_50mgc_from_github
+    # below. The data origin is still VizieR J/AJ/167/31 but the fetch
+    # path is the author's GitHub mirror for reliability.
+}
+
+
+def _build_vizier_spec(short_id: str):
+    from nightcrate.catalog_loader.vizier import VizierFetchSpec
+
+    cfg = _VIZIER_FETCH_SPECS.get(short_id)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"Unknown VizieR source: {short_id}")
+    return VizierFetchSpec(
+        source_id=cfg["source_id"],
+        catalog_id=cfg["catalog_id"],
+        output_filename=cfg["output_filename"],
+        display_name=cfg["display_name"],
+        citation=cfg["citation"],
+        column_filter=cfg["column_filter"],
+        additional_params=cfg["additional_params"],
+    )
+
+
+@router.get("/catalogs/vizier/{source_id}/remote-version")
+async def vizier_remote_version(source_id: str) -> dict:
+    """Return the installed version for a VizieR source plus a pointer to
+    the upstream catalog. VizieR doesn't expose release tags the way GitHub
+    does, so ``latest_tag`` is always the fixed catalog ID — the ``fetch_date``
+    of the installed copy is what tells the user whether they might want to
+    re-fetch.
+    """
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+    from nightcrate.catalog_loader.vizier import read_installed_version
+
+    spec = _build_vizier_spec(source_id)
+    installed_files = read_installed_version(user_catalogs_root())
+    entry = installed_files.get(spec.output_filename)
+
+    return {
+        "source_id": spec.source_id,
+        "catalog_id": spec.catalog_id,
+        "display_name": spec.display_name,
+        "latest_tag": spec.catalog_id,
+        "installed_version": entry.get("fetch_date") if entry else None,
+        "release_url": f"https://vizier.cds.unistra.fr/viz-bin/VizieR?-source={spec.catalog_id}",
+        # "Update available" reduces to "has never been fetched" for VizieR —
+        # the frontend can still call ``fetch`` to re-pull the latest data.
+        "has_update": entry is None,
+    }
+
+
+@router.post("/catalogs/vizier/{source_id}/fetch")
+async def vizier_fetch(source_id: str) -> dict:
+    """Download a VizieR source TSV atomically and run the loader."""
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+    from nightcrate.catalog_loader.vizier import fetch_vizier_catalog
+
+    config = load_config()
+    if not config.db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+
+    spec = _build_vizier_spec(source_id)
+    try:
+        result = await fetch_vizier_catalog(spec, user_catalogs_root())
+    except Exception as exc:  # noqa: BLE001 — surface 502 with reason
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to download {spec.display_name} from VizieR: {exc}",
+        ) from exc
+
+    summary = _run_loader(force=True)
+    return {
+        "source_id": spec.source_id,
+        "fetched_at": result.fetched_at,
+        "size_bytes": result.size_bytes,
+        **_summary_to_dict(summary),
+    }
+
+
+@router.post("/catalogs/nightcrate/reload")
+async def reload_nightcrate_catalogs() -> dict:
+    """Re-read the vendored NightCrate CSVs (augment + crossref files) and
+    re-run the loader so edits to those files take effect without restarting
+    the app.
+    """
+    summary = _run_loader(force=True)
+    return _summary_to_dict(summary)
+
+
+# ---------------------------------------------------------------------------
+# 50 MGC (GitHub fetch, not VizieR) — v0.15.0
+# ---------------------------------------------------------------------------
+
+
+@router.get("/catalogs/50mgc/remote-version")
+async def mgc50_remote_version() -> dict:
+    """Status of the 50 MGC fetch: whether the file has been downloaded
+    and when.
+
+    GitHub raw-content endpoints don't expose a meaningful "latest tag"
+    for the 50 MGC repo (it's a single ``main`` branch with an
+    occasionally-updated ``tablea1.dat``). So the UI just reports an
+    installed timestamp if present; clicking Fetch re-downloads.
+    """
+    from nightcrate.catalog_loader.mgc50_fetch import (
+        MGC50_RAW_URL,
+        MGC50_REPO_URL,
+        read_installed_fetch,
+    )
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+
+    installed = read_installed_fetch(user_catalogs_root())
+    return {
+        "source_id": "github_50mgc",
+        "display_name": "50 Mpc Galaxy Catalog (Ohlson+ 2024)",
+        "repository_url": MGC50_REPO_URL,
+        "raw_url": MGC50_RAW_URL,
+        "installed_fetched_at": installed.get("fetched_at"),
+        "installed_sha256": installed.get("sha256"),
+        # There's no "update available" semantic here — GitHub raw URLs don't
+        # carry tag metadata for this repo. The user re-fetches when they
+        # feel like it.
+        "has_update": installed.get("fetched_at") is None,
+    }
+
+
+@router.post("/catalogs/50mgc/fetch")
+async def mgc50_fetch() -> dict:
+    """Download ``tablea1.dat`` from the 50 MGC GitHub mirror atomically
+    and run the loader.
+    """
+    from nightcrate.catalog_loader.mgc50_fetch import fetch_50mgc_from_github
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+
+    config = load_config()
+    if not config.db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+
+    try:
+        result = await fetch_50mgc_from_github(user_catalogs_root())
+    except Exception as exc:  # noqa: BLE001 — surface 502 with reason
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to download 50 MGC from GitHub: {exc}",
+        ) from exc
+
+    summary = _run_loader(force=True)
+    return {
+        "source_id": "github_50mgc",
+        "fetched_at": result.fetched_at,
+        "size_bytes": result.size_bytes,
+        "sha256": result.sha256,
+        **_summary_to_dict(summary),
+    }

@@ -9,8 +9,10 @@ import {
 } from "@mui/x-data-grid";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import InputAdornment from "@mui/material/InputAdornment";
 import InputLabel from "@mui/material/InputLabel";
@@ -35,7 +37,9 @@ import { useDebounce } from "@/lib/useDebounce";
 import DsoAttributionPanel from "@/components/dso/DsoAttributionPanel";
 import DsoDetailPanel from "@/components/dso/DsoDetailPanel";
 import { displayConstellation } from "@/lib/constellations";
+import { formatDistance } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
+import { typeGroupStyle } from "@/lib/dsoTypeGroups";
 import {
   formatDec,
   formatMagnitude,
@@ -130,8 +134,11 @@ export default function DsoCatalogPage() {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query, 300);
 
+  const [typeGroupFilter, setTypeGroupFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [constellation, setConstellation] = useState<string>("");
+  const [hasDistance, setHasDistance] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pagination, setPagination] = useState<GridPaginationModel>({
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
@@ -148,7 +155,9 @@ export default function DsoCatalogPage() {
   const listParams = {
     q: debouncedQuery || null,
     type: typeFilter,
+    type_group: typeGroupFilter,
     constellation: constellation || null,
+    has_distance: hasDistance ? true : null,
     limit: pagination.pageSize,
     offset: pagination.page * pagination.pageSize,
     sort,
@@ -176,14 +185,30 @@ export default function DsoCatalogPage() {
     setPagination((p) => ({ ...p, page: 0 }));
   };
 
-  const clearFilters = () => {
-    setQuery("");
-    setTypeFilter([]);
-    setConstellation("");
+  const toggleTypeGroup = (groupName: string) => {
+    setTypeGroupFilter((current) =>
+      current.includes(groupName)
+        ? current.filter((g) => g !== groupName)
+        : [...current, groupName],
+    );
     setPagination((p) => ({ ...p, page: 0 }));
   };
 
-  const filtersActive = debouncedQuery || typeFilter.length > 0 || constellation;
+  const clearFilters = () => {
+    setQuery("");
+    setTypeFilter([]);
+    setTypeGroupFilter([]);
+    setConstellation("");
+    setHasDistance(false);
+    setPagination((p) => ({ ...p, page: 0 }));
+  };
+
+  const filtersActive =
+    debouncedQuery ||
+    typeFilter.length > 0 ||
+    typeGroupFilter.length > 0 ||
+    constellation ||
+    hasDistance;
 
   // The empty-state CTA fires only when the backend has zero DSOs total AND
   // the user isn't filtering — a filter returning zero rows is a different
@@ -255,6 +280,13 @@ export default function DsoCatalogPage() {
       width: 80,
       type: "number",
       valueFormatter: (value) => formatMagnitude(value as number | null),
+    },
+    {
+      field: "distance_pc",
+      headerName: "Distance",
+      width: 110,
+      type: "number",
+      valueFormatter: (value) => formatDistance(value as number | null)?.primary ?? "",
     },
     {
       field: "common_name",
@@ -355,15 +387,30 @@ export default function DsoCatalogPage() {
               </MenuItem>
               {[...(facetsQuery.data?.constellations ?? [])]
                 .sort((a, b) =>
-                  displayConstellation(a.value).localeCompare(displayConstellation(b.value)),
+                  displayConstellation(a.code).localeCompare(displayConstellation(b.code)),
                 )
                 .map((c) => (
-                  <MenuItem key={c.value} value={c.value}>
-                    {displayConstellation(c.value)} ({c.count.toLocaleString()})
+                  <MenuItem key={c.code} value={c.code}>
+                    {displayConstellation(c.code)} ({c.count.toLocaleString()})
                   </MenuItem>
                 ))}
             </Select>
           </FormControl>
+
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={hasDistance}
+                onChange={(e) => {
+                  setHasDistance(e.target.checked);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+              />
+            }
+            label="Has distance"
+            sx={{ m: 0 }}
+          />
 
           {filtersActive && (
             <Button size="small" variant="text" onClick={clearFilters}>
@@ -372,26 +419,64 @@ export default function DsoCatalogPage() {
           )}
         </Stack>
 
-        {/* Type chips */}
+        {/* Primary type-group chips */}
         <Box sx={{ mt: 2, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
-          {facetsQuery.data?.obj_types.map((t) => {
-            const active = typeFilter.includes(t.value);
-            return (
-              <Chip
-                key={t.value}
-                label={`${displayDsoType(t.value)} (${t.count.toLocaleString()})`}
-                size="small"
-                onClick={() => toggleType(t.value)}
-                variant={active ? "filled" : "outlined"}
-                sx={{
-                  bgcolor: active ? dsoTypeColor(t.value) : undefined,
-                  color: active ? "#ffffff" : undefined,
-                  borderColor: dsoTypeColor(t.value),
-                  fontWeight: 500,
-                }}
-              />
-            );
-          })}
+          {[...(facetsQuery.data?.type_groups ?? [])]
+            .filter((g) => g.count > 0)
+            .sort((a, b) => a.display_order - b.display_order)
+            .map((g) => {
+              const active = typeGroupFilter.includes(g.name);
+              const style = typeGroupStyle(g.name);
+              return (
+                <Chip
+                  key={g.name}
+                  label={`${g.name} (${g.count.toLocaleString()})`}
+                  size="small"
+                  onClick={() => toggleTypeGroup(g.name)}
+                  variant={active ? "filled" : "outlined"}
+                  sx={{
+                    bgcolor: active ? style.bg : undefined,
+                    color: active ? "#ffffff" : undefined,
+                    borderColor: style.bg,
+                    fontWeight: 500,
+                  }}
+                />
+              );
+            })}
+        </Box>
+
+        {/* Advanced filters — raw OpenNGC type codes for power users */}
+        <Box sx={{ mt: 1.5 }}>
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => setAdvancedOpen((open) => !open)}
+            sx={{ textTransform: "none", fontSize: "0.75rem" }}
+          >
+            {advancedOpen ? "▾" : "▸"} Advanced filters
+          </Button>
+          {advancedOpen && (
+            <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+              {facetsQuery.data?.raw_types.map((t) => {
+                const active = typeFilter.includes(t.code);
+                return (
+                  <Chip
+                    key={t.code}
+                    label={`${displayDsoType(t.code)} (${t.count.toLocaleString()})`}
+                    size="small"
+                    onClick={() => toggleType(t.code)}
+                    variant={active ? "filled" : "outlined"}
+                    sx={{
+                      bgcolor: active ? dsoTypeColor(t.code) : undefined,
+                      color: active ? "#ffffff" : undefined,
+                      borderColor: dsoTypeColor(t.code),
+                      fontWeight: 500,
+                    }}
+                  />
+                );
+              })}
+            </Box>
+          )}
         </Box>
       </Paper>
 

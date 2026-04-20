@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.14.0
+**NightCrate version:** 0.15.0
 
 **Last updated:** 2026-04-19
 
@@ -29,7 +29,7 @@
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.1.
 - **Key backend libraries:** astropy ≥7.0 (astronomy), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — now via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder (Clocks view). Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0015.dso_catalog.sql`. Pydantic for all data models.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0016.dso_augmentation.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -139,18 +139,27 @@ Per-location custom horizon profiles (azimuth/altitude polylines) for session pl
 
 ### DSO catalog
 
-**Status:** `[shipped]` (v0.14.0 MVP)
+**Status:** `[shipped]` (v0.14.0 MVP + v0.15.0 augmentation)
 
-First-pass deep-sky object catalog. Data is **not shipped** in the repo — on first run the tables are empty and the DSO page shows a CTA pointing to Admin → Catalogs, which fetches the latest OpenNGC release directly from GitHub (typically ~13,371 DSOs with ~41,425 designations across 29 cross-reference catalogs: NGC, IC, Messier, Caldwell, PGC, UGC, MCG, ESO, Arp, HCG, Sharpless2, Barnard, LBN, LDN, vdB, Cederblad, PK, RCW, Gum, Mrk, Terzan, Pal, Mel, Cr, Stock, Ruprecht, Abell, Dolidze, DWB). Downloaded files land atomically in `APP_DIR/catalogs/openngc/` (platformdirs). `Dup` rows are folded into their canonical target (via NGC, IC, or Messier cross-ref); `NonEx` rows are dropped. The loader runs at startup with sha256-based change detection — unchanged catalog files trigger zero work on the next boot. An "Update from GitHub" button refreshes on demand; a "Reload local cache" action re-parses without network access.
+Deep-sky object catalog. Data is **not shipped** in the repo — on first run the tables are empty and the DSO page shows a CTA pointing to Admin → Catalogs. v0.15.0 expands from OpenNGC-only to a multi-source layered model:
 
-**UI:** Flat list page at `/catalog/dso` with colorblind-safe type chips (galaxy/blue, nebula/orange, cluster/teal, other/gray), constellation dropdown (full names, alphabetical), debounced free-text search against designation search_keys + common names, MUI X DataGrid (Community tier, server-side pagination/sort with first/last buttons + fit-to-digits page dropdown, `NULLS LAST` ordering), and a slide-up detail drawer showing coordinates (sexagesimal + decimal), photometry, all designations as chips, morphology/kinematics, central-star data for PNs, and source attribution. Empty-state CTA when the database has no DSOs yet. Attribution dialog lists each loaded catalog source with version, row count, license, and citation. Editorial columns (`popularity_rank`, `difficulty`, `recommended_filter_id`) exist on `dso` but are unused until v0.15+.
+- **OpenNGC** (GitHub) — base rows. ~13,371 DSOs + designations across 29 cross-reference catalogs.
+- **Sharpless 2** (VizieR VII/20) — HII regions. Merged onto existing OpenNGC DSOs via `sharpless_crossref.csv` where a known identity exists (e.g., Sh2-281 → NGC 1976); standalone otherwise.
+- **Barnard** (VizieR VII/220A) — dark nebulae. Always standalone — never merged with backing emission regions.
+- **50 MGC** (Ohlson+ 2024, J/AJ/167/31) — galaxy distance augmenter, not a DSO source. Fetched from the author's **GitHub mirror** (`github.com/davidohlson/50MGC`, default branch `master`) rather than VizieR because CDS has been intermittently flaky. The GitHub mirror ships the catalog as a FITS binary table at `data/catalog.fits`; parsed via astropy, using the lowercase column names `pgc`, `bestdist`, `bestdist_error`, `bestdist_method`. Fills `distance_pc` on existing galaxy DSOs via PGC cross-reference, honoring curated distances via `WHERE distance_pc IS NULL`. About 83% of 50 MGC values are themselves flow-corrected redshift distances; the remainder are Cepheid, TRGB, or SBF measurements.
+- **NightCrate augmentation** (bundled MIT) — common-name overrides, non-galaxy surface brightness, curated distances. Applied before 50 MGC so curated wins.
+- **Redshift-derived Hubble-law distances** — post-load computation. Galaxies that still have no distance after the four fetched sources but carry a non-zero `redshift` get `d = z·c/H₀` with H₀ = 70 km/s/Mpc, tagged `distance_method='redshift'`. Not a fetched source and not represented in `dso_catalog_source` — purely a final pass inside `load_catalogs`.
+
+VizieR fetches (Sharpless, Barnard) rotate through three CDS mirrors (Strasbourg → India → South Africa) on retry exhaustion. GitHub fetches (OpenNGC, 50 MGC) use `raw.githubusercontent.com` exclusively. All fetchers use the same atomic pattern (`.download/` → rename, sha256, `version.json` commit marker). Constellation codes for Sharpless/Barnard rows come from `astropy.SkyCoord.get_constellation()` (cached). Shared loader primitives live in `catalog_loader/_common.py`.
+
+**UI additions:** type-group filter chips (Galaxy / Emission Nebula / Planetary Nebula / etc.) via the backend's `services/dso_type_groups.py` dispatch — raw OpenNGC codes moved to an "Advanced filters" expander. Distance column in the grid + detail panel with pc/ly dual-unit auto-scaling (`lib/distanceFormat.ts`). B-Mag tooltip clarifying Johnson B ≈ photographic magnitude. Subtle "augmented" star icon next to common_name / surface_brightness when the value came from the NightCrate editorial layer.
 
 - **Route:** `/catalog/dso`
-- **API:** `/api/dso` (list), `/api/dso/{id}` (detail), `/api/dso/lookup` (exact designation → DSO, tolerates `M42` / `messier 42` / `ngc1976` input forms), `/api/dso/facets` (type + constellation counts), `/api/dso/catalog-sources`, `POST /api/admin/catalogs/reload`, `GET /api/admin/catalogs/remote-version` (GitHub query), `POST /api/admin/catalogs/fetch-from-github` (atomic download + reload)
-- **Key backend:** `catalog_loader/` module (sibling of `seed_loader/`) including `remote.py` for GitHub fetch + atomic download + sha256 + `version.json` write, `api/dso.py`, `api/dso_models.py`
-- **Key frontend:** `pages/DsoCatalogPage.tsx` (+ empty-state CTA), Admin → Catalogs section in `pages/AdminPage.tsx`, `components/dso/{DsoDetailPanel,DsoAttributionPanel}.tsx`, `api/dsos.ts`, `lib/dsoTypeNames.ts`, `lib/dsoFormatters.ts`, `lib/constellations.ts`
-- **Schema:** migration `0015.dso_catalog.sql` (`dso`, `dso_designation`, `dso_catalog_source`)
-- **Data:** not in repo; downloaded to `APP_DIR/catalogs/openngc/` (NGC.csv + addendum.csv + version.json with sha256/citation/license).
+- **API:** `/api/dso` (list + `type_group` / `has_distance` filters + `distance_pc` sortable), `/api/dso/{id}` (detail, now with distance + augmentation flags), `/api/dso/lookup`, `/api/dso/facets` (now returns `type_groups` + `raw_types` + `constellations`), `/api/dso/catalog-sources`, + `POST /api/admin/catalogs/reload`, `GET/POST /api/admin/catalogs/vizier/{source_id}/{remote-version,fetch}` (per-source VizieR endpoints for Sharpless / Barnard), `GET/POST /api/admin/catalogs/50mgc/{remote-version,fetch}` (50 MGC GitHub fetch — not VizieR), `POST /api/admin/catalogs/nightcrate/reload`.
+- **Key backend:** `catalog_loader/` module: `remote.py` (OpenNGC GitHub fetch), `vizier.py` + `vizier_tsv.py` (CDS, 3-mirror fallback), `mgc50_fetch.py` + `mgc50_parser.py` (50 MGC GitHub FITS binary table via astropy), `sharpless_loader.py` + `barnard_loader.py` (standalone DSO creation), `mgc50_augmenter.py` (distance augmenter), `redshift_distance.py` (Hubble-law post-load backfill), `augment_loader.py` (editorial overrides), `_common.py` (shared loader primitives + `retry_with_backoff`). `services/dso_type_groups.py` type-group dispatch. `services/astronomy.py` exposes `redshift_to_parsecs`, `distance_modulus_to_parsecs`, and the `SPEED_OF_LIGHT_KM_S` / `HUBBLE_CONSTANT_KM_S_MPC` constants.
+- **Key frontend:** `pages/DsoCatalogPage.tsx` (type-group chips + Advanced expander + distance column), `components/dso/DsoDetailPanel.tsx` (distance row with "~" prefix on redshift-derived values + help-icon opening the distance dialog, B-Mag tooltip, AugmentedBadge), `components/dso/DsoDistanceHelpDialog.tsx` (KaTeX-rendered explanation of the three distance methods), `components/dso/DsoAttributionPanel.tsx` (CDS acknowledgment + per-catalog citations + redshift-derived section), `components/dso/CatalogsAdminSection.tsx` (per-source rows in Admin — OpenNGC + Sharpless + Barnard + 50 MGC GitHub + NightCrate bundled), `lib/distanceFormat.ts`, `lib/dsoTypeGroups.ts`.
+- **Schema:** migrations `0015.dso_catalog.sql` + `0016.dso_augmentation.sql` (adds `distance_pc`, `distance_method` with CHECK vocabulary `{'50mgc', 'curated', 'redshift'}`, `common_name_augmented`, `surface_brightness_augmented` on `dso`).
+- **Data:** not in repo; downloaded to `APP_DIR/catalogs/{openngc,vizier,github/50mgc}/`. NightCrate editorial CSVs bundled at `backend/src/nightcrate/data/catalogs/nightcrate/` (`dso_augment.csv`, `sharpless_crossref.csv`, `barnard_crossref.csv`).
 
 ### Image viewer
 
@@ -226,13 +235,13 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ## Schema state
 
-Current migration: **0015** (DSO catalog tables). 15 migrations total (`0001`–`0015`).
+Current migration: **0016** (DSO augmentation columns). 16 migrations total (`0001`–`0016`).
 
 - **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
 - **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.
 - **Locations (migrations 0007, 0012, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), `typical_seeing_low/high_arcsec` for rig calculator sampling assessment. Migration 0012 adds `active` soft-delete column.
 - **Horizons (migration 0014):** `location_horizon` (one row per location, UNIQUE on `location_id`, source ∈ {imported, drawn}), `location_horizon_point` (composite PK on horizon_id + azimuth_deg, CHECK az ∈ [0,360), alt ∈ [-5,90]) — custom per-location horizon profiles.
-- **DSO catalog (migration 0015):** `dso_catalog_source` (loader registry + file sha256), `dso` (canonical DSO with closed `obj_type` CHECK vocabulary), `dso_designation` (many-per-dso with closed 29-catalog CHECK vocabulary, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso). Populated via fetch-on-demand from GitHub (OpenNGC), NOT vendored in the repo.
+- **DSO catalog (migrations 0015 + 0016):** `dso_catalog_source` (loader registry + file sha256), `dso` (canonical DSO with closed `obj_type` CHECK vocabulary, + `distance_pc` / `distance_method` / `common_name_augmented` / `surface_brightness_augmented` added in 0016), `dso_designation` (many-per-dso with closed 29-catalog CHECK vocabulary, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso). Populated via fetch-on-demand from GitHub (OpenNGC) + VizieR (Sharpless, Barnard, HyperLEDA). NightCrate augmentation CSV (common names, non-galaxy surface brightness, curated distances) bundled in-repo under `data/catalogs/nightcrate/`.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
 - **Rigs (migrations 0009–0010, 0013):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane. Migration 0013 recreates the view again to expose `sensor_adc_bit_depth` for the File Size calculator's auto-populate flow.

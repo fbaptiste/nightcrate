@@ -9,12 +9,17 @@ from fastapi import APIRouter, HTTPException, Query
 
 from nightcrate.api.dso_models import (
     CatalogSource,
+    ConstellationFacet,
     DsoDesignation,
     DsoDetail,
+    DsoFacetsResponse,
     DsoListItem,
     DsoListResponse,
+    RawTypeFacet,
+    TypeGroupFacet,
 )
 from nightcrate.db.session import get_db
+from nightcrate.services.dso_type_groups import TYPE_GROUPS, raw_types_for_group
 
 router = APIRouter(prefix="/api/dso", tags=["Deep-Sky Objects"])
 
@@ -30,6 +35,7 @@ SORT_COLUMNS: dict[str, str] = {
     # by the major axis alone is the intuitive behavior — the largest
     # dimension drives the perceived footprint even when the minor is missing.
     "size": "maj_axis_arcmin",
+    "distance_pc": "distance_pc",
 }
 
 # Catalogs whose designations ship alongside the list response. Detail
@@ -105,7 +111,17 @@ async def _load_designations(
 async def list_dsos(
     q: str | None = Query(None, description="Free-text search over designations and common names"),
     type: str | None = Query(None, description="Comma-separated obj_type values"),
+    type_group: str | None = Query(
+        None,
+        description=(
+            "Comma-separated type-group names (e.g., 'Emission Nebula,Planetary Nebula'). "
+            "Resolves to the union of raw types for those groups."
+        ),
+    ),
     constellation: str | None = Query(None, description="3-letter IAU constellation code"),
+    has_distance: bool | None = Query(
+        None, description="If set, filter DSOs with/without a populated distance_pc"
+    ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sort: str = Query("primary_designation"),
@@ -124,9 +140,28 @@ async def list_dsos(
             where_clauses.append(f"d.obj_type IN ({placeholders})")
             params.extend(type_values)
 
+    if type_group:
+        # Resolve each group name to its raw type codes; union them all.
+        group_names = [g.strip() for g in type_group.split(",") if g.strip()]
+        raw_codes: list[str] = []
+        for gname in group_names:
+            raw_codes.extend(raw_types_for_group(gname))
+        if raw_codes:
+            placeholders = ",".join("?" * len(raw_codes))
+            where_clauses.append(f"d.obj_type IN ({placeholders})")
+            params.extend(raw_codes)
+        else:
+            # Unknown group name → zero matches.
+            where_clauses.append("1 = 0")
+
     if constellation:
         where_clauses.append("d.constellation = ?")
         params.append(constellation)
+
+    if has_distance is True:
+        where_clauses.append("d.distance_pc IS NOT NULL")
+    elif has_distance is False:
+        where_clauses.append("d.distance_pc IS NULL")
 
     if q:
         search_key = _normalize_search_key(q)
@@ -155,7 +190,7 @@ async def list_dsos(
         # coordinates) sink to the bottom regardless of direction — users
         # expect "unknown" at the end, not at the top of an ascending list.
         # order_col/order_dir from SORT_COLUMNS whitelist; params use placeholders.
-        list_sql = f"SELECT d.id, d.primary_designation, d.obj_type, d.ra_deg, d.dec_deg, d.constellation, d.maj_axis_arcmin, d.min_axis_arcmin, d.mag_v, d.mag_b, d.common_name FROM dso d WHERE {where_sql} ORDER BY d.{order_col} {order_dir} NULLS LAST, d.id ASC LIMIT ? OFFSET ?"  # noqa: S608, E501  # nosec B608
+        list_sql = f"SELECT d.id, d.primary_designation, d.obj_type, d.ra_deg, d.dec_deg, d.constellation, d.maj_axis_arcmin, d.min_axis_arcmin, d.mag_v, d.mag_b, d.distance_pc, d.distance_method, d.common_name FROM dso d WHERE {where_sql} ORDER BY d.{order_col} {order_dir} NULLS LAST, d.id ASC LIMIT ? OFFSET ?"  # noqa: S608, E501  # nosec B608
         cursor = await conn.execute(list_sql, [*params, limit, offset])
         rows = await cursor.fetchall()
 
@@ -176,6 +211,8 @@ async def list_dsos(
                 min_axis_arcmin=row["min_axis_arcmin"],
                 mag_v=row["mag_v"],
                 mag_b=row["mag_b"],
+                distance_pc=row["distance_pc"],
+                distance_method=row["distance_method"],
                 common_name=row["common_name"],
                 designations=designations.get(row["id"], []),
             )
@@ -208,15 +245,15 @@ async def lookup_dso(
         return await _fetch_detail(conn, int(row["id"]))
 
 
-@router.get("/facets")
-async def list_facets() -> dict:
-    """Distinct obj_types and constellations with counts — powers the UI filter bar."""
+@router.get("/facets", response_model=DsoFacetsResponse)
+async def list_facets() -> DsoFacetsResponse:
+    """Distinct obj_type codes, type groups, and constellations with counts."""
     async with get_db() as conn:
         cursor = await conn.execute(
             "SELECT obj_type, COUNT(*) AS n FROM dso WHERE active = 1 "
             "GROUP BY obj_type ORDER BY obj_type"
         )
-        types = [{"value": r["obj_type"], "count": r["n"]} for r in await cursor.fetchall()]
+        raw_counts: dict[str, int] = {r["obj_type"]: r["n"] for r in await cursor.fetchall()}
 
         cursor = await conn.execute(
             "SELECT constellation, COUNT(*) AS n FROM dso "
@@ -224,9 +261,26 @@ async def list_facets() -> dict:
             "GROUP BY constellation ORDER BY constellation"
         )
         constellations = [
-            {"value": r["constellation"], "count": r["n"]} for r in await cursor.fetchall()
+            ConstellationFacet(code=r["constellation"], count=r["n"])
+            for r in await cursor.fetchall()
         ]
-    return {"obj_types": types, "constellations": constellations}
+
+    raw_types = [RawTypeFacet(code=code, count=count) for code, count in sorted(raw_counts.items())]
+    type_groups = [
+        TypeGroupFacet(
+            name=group.name,
+            display_order=group.display_order,
+            count=sum(raw_counts.get(raw, 0) for raw in group.raw_types),
+            raw_types=list(group.raw_types),
+        )
+        for group in TYPE_GROUPS
+    ]
+
+    return DsoFacetsResponse(
+        type_groups=type_groups,
+        raw_types=raw_types,
+        constellations=constellations,
+    )
 
 
 @router.get("/catalog-sources", response_model=list[CatalogSource])
@@ -315,7 +369,11 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         cstar_mag_b=row["cstar_mag_b"],
         cstar_mag_v=row["cstar_mag_v"],
         cstar_id=row["cstar_id"],
+        distance_pc=row["distance_pc"],
+        distance_method=row["distance_method"],
         common_name=row["common_name"],
+        common_name_augmented=bool(row["common_name_augmented"]),
+        surface_brightness_augmented=bool(row["surface_brightness_augmented"]),
         ned_notes=row["ned_notes"],
         openngc_notes=row["openngc_notes"],
         raw_other_id=row["raw_other_id"],

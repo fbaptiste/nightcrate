@@ -1,9 +1,9 @@
--- NightCrate version: 0.14.0
+-- NightCrate version: 0.15.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
--- extended through v0.14.0 (rig builder, My Equipment flag, location seeing,
+-- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
 -- location soft-delete, settings key-value schema, rig_summary ADC bit depth,
--- custom horizons, DSO catalog).
+-- custom horizons, DSO catalog, DSO augmentation).
 -- Incorporates revision spec: no custom_fields, seed tracking, alias tables,
 -- closed-vocabulary CHECK constraints, updated_at triggers.
 --
@@ -1240,3 +1240,23 @@ CREATE INDEX idx_dso_designation_search_key  ON dso_designation(search_key);
 CREATE UNIQUE INDEX idx_dso_designation_primary_per_dso
     ON dso_designation(dso_id) WHERE is_primary = 1;
 
+
+
+-- ── DSO Augmentation (migration 0016) ──────────────────────────────────────
+-- distance_pc / distance_method carry both HyperLEDA-sourced galaxy
+-- distances and NightCrate-curated non-galaxy distances. common_name_
+-- augmented and surface_brightness_augmented flag which rows had editorial
+-- overrides applied so the detail panel can show a subtle "augmented"
+-- indicator. See docs/dso-catalog-architecture.md for precedence rules.
+
+ALTER TABLE dso ADD COLUMN distance_pc REAL;
+ALTER TABLE dso ADD COLUMN distance_method TEXT
+    CHECK (distance_method IS NULL OR distance_method IN ('hyperleda', 'curated'));
+ALTER TABLE dso ADD COLUMN surface_brightness_augmented INTEGER NOT NULL DEFAULT 0
+    CHECK (surface_brightness_augmented IN (0, 1));
+ALTER TABLE dso ADD COLUMN common_name_augmented INTEGER NOT NULL DEFAULT 0
+    CHECK (common_name_augmented IN (0, 1));
+
+CREATE INDEX IF NOT EXISTS idx_dso_distance_method
+    ON dso(distance_method)
+    WHERE distance_method IS NOT NULL;
