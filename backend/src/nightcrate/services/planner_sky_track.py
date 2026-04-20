@@ -20,6 +20,7 @@ import numpy as np
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
 
+from nightcrate.services.astronomy import compute_illumination_pct
 from nightcrate.services.horizon import interpolate_horizon_altitude
 from nightcrate.services.planner_visibility import (
     PlannerLocation,
@@ -112,7 +113,8 @@ def _find_sun_crossings(
         # Linear interpolation between samples.
         a0 = float(alt[idx])
         a1 = float(alt[idx + 1])
-        frac = (threshold - a0) / (a1 - a0) if a1 != a0 else 0.0
+        # The mask guarantees a0 and a1 bracket the threshold, so a1 != a0.
+        frac = (threshold - a0) / (a1 - a0)
         dt_sec = (times[idx + 1] - times[idx]).sec
         return (times[idx] + TimeDelta(frac * dt_sec, format="sec")).to_datetime(timezone=UTC)
 
@@ -234,14 +236,11 @@ def compute_sky_track(
     else:
         horizon_alt = np.full_like(obj_alt, flat_min_altitude_deg)
 
-    # Moon phase at local midnight — shared with the visibility snapshot.
-    from nightcrate.services.planner_visibility import _moon_phase_pct
-
     tz = ZoneInfo(location.timezone)
     midnight_local = datetime(
         night_date.year, night_date.month, night_date.day, 0, 0, 0, tzinfo=tz
     ) + timedelta(hours=24)
-    moon_phase = _moon_phase_pct(earth_loc, Time(midnight_local.astimezone(UTC)))
+    moon_phase = compute_illumination_pct(Time(midnight_local.astimezone(UTC)))
 
     times_utc = [t.to_datetime(timezone=UTC) for t in times]
 
@@ -264,7 +263,8 @@ def compute_sky_track(
         # Reject ±180° wrap-arounds via a step-size bound — adjacent
         # 5-minute samples advance HA by ~1.25°.
         if a <= 0 < b and (b - a) < 90.0:
-            frac = -a / (b - a) if (b - a) != 0 else 0.0
+            # The `a <= 0 < b` guard guarantees (b - a) > 0.
+            frac = -a / (b - a)
             dt = (times_utc[i + 1] - times_utc[i]).total_seconds()
             transit_time_utc = times_utc[i] + timedelta(seconds=frac * dt)
             # Interpolate altitude at the crossing too — same fraction.

@@ -5,7 +5,7 @@
  * composed client-side so the DataGrid can drop them straight into
  * <img src>.
  */
-import { apiFetch } from "./client";
+import { apiFetch, getActivity } from "./client";
 
 export interface PlannerLocationSummary {
   id: number;
@@ -145,7 +145,12 @@ export const clearThumbnailCache = () =>
     method: "POST",
   });
 
-/** Build the <img src> URL for a thumbnail — the backend handles cache lookup. */
+/** Build the <img src> URL for a thumbnail — the backend handles cache lookup.
+ *  Image requests bypass the apiFetch wrapper, so we fold the current
+ *  activity label into the query string directly (matches
+ *  ``api/images.ts:imageUrl`` — required for the Activity Console). */
 export function thumbnailUrl(dsoId: number, variant: "list" | "detail" = "list"): string {
-  return `/api/planner/thumbnails/${dsoId}?variant=${variant}`;
+  const activity = getActivity();
+  const suffix = activity ? `&_activity=${encodeURIComponent(activity)}` : "";
+  return `/api/planner/thumbnails/${dsoId}?variant=${variant}${suffix}`;
 }

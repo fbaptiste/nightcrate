@@ -241,8 +241,6 @@ async def _fetch_and_store(
     )
 
     async with _fetch_semaphore:
-        body: bytes | None = None
-        source: str | None = None
         try:
             body = await fetch_hips_image(color_url)
             source = "dss2_color"
@@ -274,10 +272,6 @@ async def _fetch_and_store(
                     fetch_error=f"color: {color_exc}; red: {red_exc}",
                 )
                 return
-
-    if body is None or source is None:
-        # Belt-and-braces — the try/except above covers both branches.
-        return
 
     path = _thumb_path(dso_id, variant, dim.width, dim.height)
     path.write_bytes(body)

@@ -30,8 +30,14 @@ export default function ThumbnailCell({
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    // Reset retry state when the DSO changes (e.g., user scrolls).
+    // Reset retry state when the DSO changes (e.g., user scrolls). Also
+    // cancel any pending retry timer from the previous DSO — otherwise
+    // it fires later and forces an unnecessary refetch of the new one.
     retryCountRef.current = 0;
+    if (retryTimerRef.current != null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     setVersion(0);
     setFailed(false);
   }, [dsoId, variant]);

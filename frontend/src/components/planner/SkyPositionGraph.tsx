@@ -13,6 +13,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import type { SkyTrackResponse } from "@/api/planner";
+import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {
   track: SkyTrackResponse;
@@ -20,8 +21,11 @@ interface Props {
   height?: number;
 }
 
-const COLOR_OBJECT = "#1976d2"; // blue — colorblind-safe
-const COLOR_MOON = "#ed6c02"; // orange
+// Object + moon colours reuse the canonical rig palette — keeps the
+// planner visually consistent with the rest of the app and stays on
+// the colorblind-safe blue/orange/teal trio.
+const COLOR_OBJECT = RIG_BLUE;
+const COLOR_MOON = RIG_ORANGE;
 
 function blockedSkyFill(mode: "light" | "dark") {
   // Filled area below the horizon (sky that the horizon profile blocks).
@@ -157,10 +161,6 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
     const t = layout.x.invert(mx);
     const idx = d3.bisector((d: Date) => d).left(layout.times, t);
     const clamped = Math.max(0, Math.min(layout.times.length - 1, idx));
-    if (clamped < 0 || clamped >= layout.times.length) {
-      setHover(null);
-      return;
-    }
     const objAlt = track.object_altitude_deg[clamped];
     const horizon = track.horizon_altitude_at_object_az[clamped];
     const localTime = layout.times[clamped].toLocaleTimeString([], {

@@ -6,12 +6,11 @@ min_moon_separation, rise/set/transit). Vectorized over the full DSO set
 via astropy SkyCoord + AltAz broadcasting so a full ~14 k-row snapshot
 runs in under a second on typical hardware.
 
-Spec deviation from §7.2: the original spec proposed
-``moon_separation_at_peak_deg`` — swapped to
-``min_moon_separation_deg`` (closest approach during the visibility
-window) because the at-peak value can be wildly misleading when the
-moon is below the horizon at the object's transit but approaches
-during the visible window.
+Moon separation is tracked as the closest approach during the
+visibility window rather than at peak altitude — the at-peak value can
+be misleading when the moon is below the horizon at the object's
+transit but rises to approach during the still-visible portion of the
+window.
 """
 
 from __future__ import annotations
@@ -194,19 +193,6 @@ def _sample_grid(start: datetime, end: datetime) -> Time:
     return t0 + offsets
 
 
-def _moon_phase_pct(earth_loc: EarthLocation, reference_time: Time) -> float:
-    """Moon illumination fraction (%) at ``reference_time``.
-
-    Thin alias so existing call sites keep their location-passing
-    signature; the underlying Meeus calculation lives in
-    ``services.astronomy.compute_illumination_pct``.
-    """
-    # earth_loc is unused — the Meeus computation is geocentric. Kept in
-    # the signature for call-site symmetry with compute_visibility_snapshot.
-    del earth_loc
-    return compute_illumination_pct(reference_time)
-
-
 def _reduce_per_dso(
     dsos: Sequence[DsoCoord],
     times: Time,
@@ -298,7 +284,7 @@ def compute_visibility_snapshot(
     midnight_local = datetime(
         night_date.year, night_date.month, night_date.day, 0, 0, 0, tzinfo=tz
     ) + timedelta(hours=24)
-    moon_phase = _moon_phase_pct(earth_loc, Time(midnight_local.astimezone(UTC)))
+    moon_phase = compute_illumination_pct(Time(midnight_local.astimezone(UTC)))
 
     if dark.start_utc is None or dark.end_utc is None or not dsos:
         return VisibilitySnapshot(

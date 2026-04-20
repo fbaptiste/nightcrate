@@ -15,12 +15,12 @@ fetch, LRU eviction) is in ``services/thumbnails``.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from fastapi.responses import Response as FastAPIResponse
 
 from nightcrate.api.planner_models import (
     CacheClearResponse,
@@ -267,7 +267,11 @@ async def list_targets(
         night_date = date_ if date_ is not None else _tonight_date(location.timezone)
         dsos = await _load_dso_coords(conn)
 
-    snapshot = default_cache.get_or_compute(
+    # The visibility snapshot does ~1 second of vectorized astropy work on
+    # cache miss. Off-load to a worker thread so we don't block the event
+    # loop — all other requests (including thumbnail polling) stall otherwise.
+    snapshot = await asyncio.to_thread(
+        default_cache.get_or_compute,
         location,
         night_date,
         dsos,
@@ -430,7 +434,9 @@ async def target_sky_track(
         raise HTTPException(status_code=404, detail=f"DSO {dso_id} not found / no coords")
 
     night_date = date_ if date_ is not None else _tonight_date(location.timezone)
-    track = compute_sky_track(
+    # Per-DSO astropy work is ~100 ms — still worth keeping off the loop.
+    track = await asyncio.to_thread(
+        compute_sky_track,
         location,
         night_date,
         (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
@@ -498,19 +504,19 @@ async def get_thumbnail(
         )
 
     if result.status == "hit":
-        return FastAPIResponse(
+        return Response(
             content=result.body,
             media_type=result.content_type,
             headers={"Cache-Control": "public, max-age=86400"},
         )
     if result.status == "placeholder":
-        return FastAPIResponse(
+        return Response(
             content=result.body,
             media_type=result.content_type,
             status_code=202,
         )
     # error → 204 with no body (the error-backoff branch).
-    return FastAPIResponse(status_code=204)
+    return Response(status_code=204)
 
 
 @router.post("/thumbnails/cache/clear", response_model=CacheClearResponse)
