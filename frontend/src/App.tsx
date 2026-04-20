@@ -13,6 +13,7 @@ import LocationsPage from "@/pages/LocationsPage";
 import RigsPage from "@/pages/RigsPage";
 import CalculatorsPage from "@/pages/CalculatorsPage";
 import DsoCatalogPage from "@/pages/DsoCatalogPage";
+import PlannerPage from "@/pages/PlannerPage";
 import WeatherPage from "./pages/WeatherPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { fetchHealth } from "@/api/admin";
@@ -33,6 +34,7 @@ const router = createBrowserRouter([
       { path: "calculators", element: <CalculatorsPage /> },
       { path: "calculators/:calcId", element: <CalculatorsPage /> },
       { path: "catalog/dso", element: <DsoCatalogPage /> },
+      { path: "planner", element: <PlannerPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "api-docs", element: <ApiDocsPage /> },

@@ -22,6 +22,7 @@ from nightcrate.api import (
     horizons,
     images,
     locations,
+    planner,
     rigs,
     settings,
     weather,
@@ -313,6 +314,7 @@ app.include_router(rigs.router)
 app.include_router(calculators.router)
 app.include_router(weather.router)
 app.include_router(dso.router)
+app.include_router(planner.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(diagnostics.router)

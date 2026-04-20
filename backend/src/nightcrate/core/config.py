@@ -32,6 +32,15 @@ class Settings(BaseModel):
     # means "use the component's default order"; unknown ids are filtered on
     # the client so new clocks added later don't break stored arrays.
     calculators_clock_order: list[str] = []
+    # Target Planner thresholds. Used both as the flat-horizon floor for
+    # locations without a custom horizon and as the initial slider values
+    # on the planner page.
+    planner_min_altitude_deg: int = 30
+    planner_min_visibility_hours: float = 2.0
+    planner_max_magnitude: float = 12.0
+    planner_min_size_arcmin: float = 5.0
+    # Disk budget for the HiPS/DSS2 thumbnail LRU cache under APP_DIR/thumbnails/.
+    thumbnail_cache_max_mb: int = 20
 
 
 async def get_settings() -> Settings:

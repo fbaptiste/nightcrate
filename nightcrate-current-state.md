@@ -137,6 +137,24 @@ Per-location custom horizon profiles (azimuth/altitude polylines) for session pl
 - **Key frontend:** `components/locations/HorizonEditor.tsx`, `HorizonChart.tsx`, `HorizonEditorToolbar.tsx`, `HorizonPointEditPopover.tsx`, `lib/horizonReduce.ts`
 - **Schema:** migration `0014.location_horizon.sql` (`location_horizon`, `location_horizon_point`)
 
+### Target Planner (v0.16.0, Pass A)
+
+**Status:** `[shipped]`
+
+Location-driven "what's up tonight" page at `/planner`. Lists every active DSO geometrically visible during astronomical darkness, scored by hours-visible; optional rig selection adds FOV coverage % and a "frames well" filter. Custom horizons (v0.13.0) are used automatically when present; locations without a horizon fall back to a flat `planner_min_altitude_deg` floor from Settings.
+
+Backend: vectorized astropy alt/az over 14 k DSOs runs in well under a second per night with a process-wide 4-entry LRU. Sky-track service produces a 5-minute resolution per-DSO altitude/azimuth + moon-altitude + horizon-reference track for the detail panel's D3 graph.
+
+Thumbnails: DSS2 Color JPEGs (falling back to DSS2 red) fetched from CDS Aladin's hips2fits, cached on disk under `APP_DIR/thumbnails/`. LRU eviction when total size exceeds `thumbnail_cache_max_mb`. Misses return a 1×1 transparent PNG with HTTP 202; the frontend polls every 2 s until the real image lands.
+
+- **Route:** `/planner`
+- **API:** `GET /api/planner/targets`, `GET /api/planner/targets/{dso_id}/sky-track`, `GET/POST /api/planner/thumbnails/{dso_id}`, `POST /api/planner/thumbnails/cache/clear`, `GET /api/planner/thumbnails/cache/stats`
+- **Key backend:** `services/planner_visibility.py` (engine + cache), `services/planner_sky_track.py`, `services/thumbnails.py` + `services/hips_client.py`, `services/rig_calculators.py:compute_coverage_pct`, `services/horizon.py:interpolate_horizon_altitude`
+- **Key frontend:** `pages/PlannerPage.tsx`, `components/planner/{ThumbnailCell,SkyPositionGraph,PlannerDetailPanel}.tsx`, `api/planner.ts`
+- **Schema:** migration 0017 (`thumbnail_cache` metadata table; files on disk)
+- **Settings:** `planner_min_altitude_deg` (30°), `planner_min_visibility_hours` (2h), `planner_max_magnitude` (12), `planner_min_size_arcmin` (5'), `thumbnail_cache_max_mb` (20)
+- **Deliberate deviations from spec:** moon distance is **closest approach during the visibility window**, not at-peak — the at-peak value can be misleading when the moon is below horizon at transit but rises during the visible window.
+
 ### DSO catalog
 
 **Status:** `[shipped]` (v0.14.0 MVP + v0.15.0 augmentation)
@@ -242,6 +260,7 @@ Current migration: **0016** (DSO augmentation columns). 16 migrations total (`00
 - **Locations (migrations 0007, 0012, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), `typical_seeing_low/high_arcsec` for rig calculator sampling assessment. Migration 0012 adds `active` soft-delete column.
 - **Horizons (migration 0014):** `location_horizon` (one row per location, UNIQUE on `location_id`, source ∈ {imported, drawn}), `location_horizon_point` (composite PK on horizon_id + azimuth_deg, CHECK az ∈ [0,360), alt ∈ [-5,90]) — custom per-location horizon profiles.
 - **DSO catalog (migrations 0015 + 0016):** `dso_catalog_source` (loader registry + file sha256), `dso` (canonical DSO with closed `obj_type` CHECK vocabulary, + `distance_pc` / `distance_method` / `common_name_augmented` / `surface_brightness_augmented` added in 0016; `distance_method` CHECK ∈ `{'50mgc', 'curated', 'redshift'}`), `dso_designation` (many-per-dso with closed 29-catalog CHECK vocabulary, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso). Populated via fetch-on-demand from GitHub (OpenNGC + 50 MGC FITS) + VizieR (Sharpless, Barnard). NightCrate augmentation CSV (common names, non-galaxy surface brightness, curated distances) bundled in-repo under `data/catalogs/nightcrate/`.
+- **Target Planner thumbnails (migration 0017):** `thumbnail_cache` — metadata for the LRU disk cache under `APP_DIR/thumbnails/` that serves DSS2 Color JPEG thumbnails fetched from CDS Aladin's hips2fits. FK cascade-deletes when a DSO disappears. `fetch_error` rows record failed attempts for a 1-hour backoff window. Files live on disk, not in the DB.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
 - **Rigs (migrations 0009–0010, 0013):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane. Migration 0013 recreates the view again to expose `sensor_adc_bit_depth` for the File Size calculator's auto-populate flow.

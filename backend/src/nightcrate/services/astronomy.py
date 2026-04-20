@@ -193,49 +193,48 @@ def _find_crossing_independent(
     return _find_crossing(times, altitudes, threshold, direction, start_idx=0)
 
 
-def _moon_phase_info(time: Time, location: EarthLocation) -> MoonInfo:
-    """Compute moon phase information at a given time.
+def compute_illumination_pct(time: Time) -> float:
+    """Moon illumination fraction (0–100) at ``time`` via the Meeus method.
 
-    Uses the Meeus method: compute the phase angle i (Sun-Moon-Earth angle)
-    from 3D geocentric positions, then illumination = (1 + cos(i)) / 2.
+    Shared by ``_moon_phase_info`` and by the planner's visibility
+    snapshot. Computes the phase angle i (Sun-Moon-Earth) from 3D
+    barycentric positions, then illumination = (1 + cos(i)) / 2.
     """
     from astropy.coordinates import get_body_barycentric
 
-    sun = get_body("sun", time, location)
-    moon = get_body("moon", time, location)
-
-    # Phase angle (i): the angle at the Moon between Sun and Earth.
     sun_pos = get_body_barycentric("sun", time).get_xyz().to(u.km).value
     moon_pos = get_body_barycentric("moon", time).get_xyz().to(u.km).value
     earth_pos = get_body_barycentric("earth", time).get_xyz().to(u.km).value
-
-    # Vectors from the Moon's perspective
     moon_to_sun = sun_pos - moon_pos
     moon_to_earth = earth_pos - moon_pos
-
-    # Phase angle via dot product
-    cos_i = np.dot(moon_to_sun, moon_to_earth) / (
-        np.linalg.norm(moon_to_sun) * np.linalg.norm(moon_to_earth)
+    cos_i = float(
+        np.clip(
+            np.dot(moon_to_sun, moon_to_earth)
+            / (np.linalg.norm(moon_to_sun) * np.linalg.norm(moon_to_earth)),
+            -1.0,
+            1.0,
+        )
     )
-    cos_i = np.clip(cos_i, -1.0, 1.0)
+    return round((1.0 + cos_i) / 2.0 * 100.0, 1)
 
-    # Illumination fraction (Meeus formula)
-    illumination_pct = float((1.0 + cos_i) / 2.0 * 100.0)
 
-    # Elongation (angular separation as seen from Earth)
+def _moon_phase_info(time: Time, location: EarthLocation) -> MoonInfo:
+    """Compute moon phase information at a given time."""
+    sun = get_body("sun", time, location)
+    moon = get_body("moon", time, location)
+
+    illumination_pct = compute_illumination_pct(time)
     elongation_deg = float(sun.separation(moon).deg)
 
-    # Waxing vs waning from ecliptic longitude difference
+    # Waxing vs waning from ecliptic longitude difference.
     sun_ecl = sun.geocentricmeanecliptic
     moon_ecl = moon.geocentricmeanecliptic
     delta_lon = (moon_ecl.lon - sun_ecl.lon).deg % 360
 
-    phase_name = _phase_name_from_delta_lon(delta_lon)
-
     return MoonInfo(
-        illumination_pct=round(illumination_pct, 1),
+        illumination_pct=illumination_pct,
         elongation_deg=round(elongation_deg, 1),
-        phase_name=phase_name,
+        phase_name=_phase_name_from_delta_lon(delta_lon),
         moonrise=None,  # filled in by caller
         moonset=None,  # filled in by caller
     )
