@@ -13,8 +13,10 @@ import Typography from "@mui/material/Typography";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchCacheSize, clearCache } from "@/api/aberration";
 import { clearWeatherCache, fetchWeatherCacheStats } from "@/api/weather";
+import { useEffect } from "react";
 import { clearThumbnailCache, fetchThumbnailCacheStats } from "@/api/planner";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 
 export function SettingsPage() {
   const { settings, update } = useSettingsStore();
@@ -45,6 +47,16 @@ export function SettingsPage() {
     ? Math.round(thumbnailCacheQuery.data.max_bytes / (1024 * 1024))
     : 20;
   const thumbnailRows = thumbnailCacheQuery.data?.row_count ?? 0;
+  // Push the latest ``generation`` into the cache-buster store so
+  // every ``ThumbnailCell`` re-renders with a fresh ``&_g=N`` URL
+  // suffix after a clear — which defeats any stale 200 responses the
+  // browser's HTTP cache is still holding from before the clear.
+  const setGeneration = useThumbnailCacheStore((s) => s.setGeneration);
+  useEffect(() => {
+    if (thumbnailCacheQuery.data?.generation != null) {
+      setGeneration(thumbnailCacheQuery.data.generation);
+    }
+  }, [thumbnailCacheQuery.data?.generation, setGeneration]);
 
   if (!settings) {
     return <Typography sx={{ p: 3 }} color="text.secondary">Loading…</Typography>;

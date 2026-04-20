@@ -15,6 +15,7 @@ import StarIcon from "@mui/icons-material/Star";
 import { useState } from "react";
 import { fetchDso } from "@/api/dsos";
 import DsoDistanceHelpDialog from "@/components/dso/DsoDistanceHelpDialog";
+import ThumbnailCell from "@/components/planner/ThumbnailCell";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance, formatDistanceMethod } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
@@ -121,7 +122,30 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
       <Box sx={{ flex: 1, overflowY: "auto", px: 3, py: 2 }}>
         {isLoading && <CircularProgress />}
         {data && (
-          <Stack spacing={3}>
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={3}
+            alignItems="flex-start"
+          >
+            {/* DSS2 preview thumbnail — the "detail" variant is pre-sized
+                for this kind of use (wide extent, 800×800 source). */}
+            {dsoId != null && (
+              <Box
+                sx={{
+                  width: { xs: "100%", md: 280 },
+                  maxWidth: 320,
+                  aspectRatio: "1 / 1",
+                  flexShrink: 0,
+                  borderRadius: 1,
+                  overflow: "hidden",
+                  border: 1,
+                  borderColor: "divider",
+                }}
+              >
+                <ThumbnailCell dsoId={dsoId} size={320} variant="detail" fill />
+              </Box>
+            )}
+            <Stack spacing={3} sx={{ flex: 1, minWidth: 0 }}>
             <Box>
               <Typography variant="overline" color="text.secondary">
                 Coordinates
@@ -315,6 +339,7 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                 )}
               </Typography>
             </Box>
+            </Stack>
           </Stack>
         )}
       </Box>

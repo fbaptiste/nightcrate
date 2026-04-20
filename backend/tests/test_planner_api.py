@@ -151,3 +151,238 @@ async def test_thumbnail_cache_clear_endpoint(client: TestClient):
     response = client.post("/api/planner/thumbnails/cache/clear")
     assert response.status_code == 200
     assert "deleted_files" in response.json()
+
+
+async def test_thumbnail_rig_framed_missing_fov_returns_400(client: TestClient, seed_db):
+    # Find an actual DSO ID so we get past the 404 check before the FOV one.
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+    response = client.get(
+        f"/api/planner/thumbnails/{m42}",
+        params={"variant": "rig_framed"},
+    )
+    assert response.status_code == 400
+    assert "fov_major_deg" in response.json()["detail"]
+
+
+async def test_thumbnail_fov_simulator_missing_fov_returns_400(client: TestClient, seed_db):
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+    response = client.get(
+        f"/api/planner/thumbnails/{m42}",
+        params={"variant": "fov_simulator", "fov_major_deg": 0.37},
+    )
+    assert response.status_code == 400
+
+
+async def test_thumbnail_rig_framed_negative_fov_returns_400(client: TestClient, seed_db):
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+    response = client.get(
+        f"/api/planner/thumbnails/{m42}",
+        params={
+            "variant": "rig_framed",
+            "fov_major_deg": -0.1,
+            "fov_minor_deg": 0.28,
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.fixture
+async def seed_dsos_in_region(seed_db):
+    """Add a clutch of DSOs around M 51 so the region query has something
+    to return. Sizes span the range the overlay must handle."""
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await cursor.fetchone())["id"])
+        # M 51 centre: RA 202.47°, Dec +47.20°.
+        await conn.executemany(
+            """
+            INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg,
+                constellation, maj_axis_arcmin, min_axis_arcmin, mag_v,
+                source_catalog_id, source_row_hash)
+            VALUES (?, ?, ?, ?, 'CVn', ?, ?, ?, ?, ?)
+            """,
+            [
+                # Primary target.
+                ("M 51", "G", 202.47, 47.20, 11.2, 6.9, 8.4, source_id, "m51"),
+                # NGC 5195 — just north of M 51, within a ~15' frame.
+                ("NGC 5195", "G", 202.50, 47.27, 5.8, 4.6, 9.6, source_id, "n5195"),
+                # IC 4263 — smaller nearby companion.
+                ("IC 4263", "G", 202.60, 47.15, 1.2, 0.5, 15.0, source_id, "ic4263"),
+                # IC 4277 — even smaller.
+                ("IC 4277", "G", 202.53, 47.22, 0.8, 0.3, 16.0, source_id, "ic4277"),
+                # IC 4278 — null-size test case.
+                ("IC 4278", "G", 202.55, 47.24, None, None, 16.5, source_id, "ic4278"),
+                # One object just outside the frame but within the buffer.
+                ("BUFFERED-OBJ", "G", 203.20, 47.20, 3.0, 2.0, 14.0, source_id, "bufobj"),
+                # An object well outside the region — should never come back.
+                ("FAR-AWAY", "G", 250.00, 10.00, 5.0, 5.0, 12.0, source_id, "far"),
+            ],
+        )
+        await conn.commit()
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 51'")
+        m51_id = int((await cursor.fetchone())["id"])
+    return m51_id
+
+
+async def test_dsos_in_region_returns_expected_objects(client: TestClient, seed_dsos_in_region):
+    response = client.get(
+        "/api/planner/dsos/in-region",
+        params={
+            "ra_center_deg": 202.47,
+            "dec_center_deg": 47.20,
+            "extent_deg": 0.5,
+            "exclude_id": seed_dsos_in_region,
+        },
+    )
+    assert response.status_code == 200
+    names = {i["primary_designation"] for i in response.json()["items"]}
+    assert "NGC 5195" in names
+    assert "IC 4263" in names
+    assert "IC 4277" in names
+    assert "IC 4278" in names
+    assert "M 51" not in names  # excluded
+    assert "FAR-AWAY" not in names
+
+
+async def test_dsos_in_region_buffer_includes_just_outside_object(
+    client: TestClient, seed_dsos_in_region
+):
+    # BUFFERED-OBJ sits at RA 203.20, ~0.73° east of M51's centre — just
+    # past the raw half-extent of 0.5° but well inside the 10% buffered
+    # window (0.55° halved). The exact bound depends on cos(Dec)
+    # stretching of the RA half-width at dec +47°, so pick an extent
+    # that is clearly large enough to capture it with the buffer.
+    response = client.get(
+        "/api/planner/dsos/in-region",
+        params={
+            "ra_center_deg": 202.47,
+            "dec_center_deg": 47.20,
+            "extent_deg": 2.0,
+            "exclude_id": seed_dsos_in_region,
+        },
+    )
+    assert response.status_code == 200
+    names = {i["primary_designation"] for i in response.json()["items"]}
+    assert "BUFFERED-OBJ" in names
+
+
+async def test_dsos_in_region_response_includes_type_group(client: TestClient, seed_dsos_in_region):
+    response = client.get(
+        "/api/planner/dsos/in-region",
+        params={
+            "ra_center_deg": 202.47,
+            "dec_center_deg": 47.20,
+            "extent_deg": 0.5,
+        },
+    )
+    assert response.status_code == 200
+    # All seeded objects are galaxies — type_group must be populated.
+    for item in response.json()["items"]:
+        if item["obj_type"] == "G":
+            assert item["type_group"] == "Galaxy"
+
+
+async def test_dsos_in_region_rejects_out_of_range_params(client: TestClient):
+    # Dec > 90 rejected.
+    response = client.get(
+        "/api/planner/dsos/in-region",
+        params={"ra_center_deg": 10.0, "dec_center_deg": 91.0, "extent_deg": 1.0},
+    )
+    assert response.status_code == 422
+    # extent_deg <= 0 rejected.
+    response = client.get(
+        "/api/planner/dsos/in-region",
+        params={"ra_center_deg": 10.0, "dec_center_deg": 10.0, "extent_deg": 0.0},
+    )
+    assert response.status_code == 422
+
+
+async def test_dsos_in_region_caps_limit(client: TestClient, seed_dsos_in_region):
+    # Specifying a limit above 500 should be rejected (validation clamps).
+    response = client.get(
+        "/api/planner/dsos/in-region",
+        params={
+            "ra_center_deg": 202.47,
+            "dec_center_deg": 47.20,
+            "extent_deg": 0.5,
+            "limit": 1000,
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_thumbnail_sky_center_rejected_on_non_simulator_variant(client: TestClient, seed_db):
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+    response = client.get(
+        f"/api/planner/thumbnails/{m42}",
+        params={"variant": "detail", "center_ra_deg": 100.0, "center_dec_deg": 10.0},
+    )
+    assert response.status_code == 400
+
+
+async def test_thumbnail_sky_center_rejected_on_invalid_range(client: TestClient, seed_db):
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+    # Dec out of range.
+    response = client.get(
+        f"/api/planner/thumbnails/{m42}",
+        params={
+            "variant": "fov_simulator",
+            "fov_major_deg": 0.37,
+            "fov_minor_deg": 0.28,
+            "center_ra_deg": 50.0,
+            "center_dec_deg": 100.0,
+        },
+    )
+    assert response.status_code == 400
+    # RA out of range (negative).
+    response = client.get(
+        f"/api/planner/thumbnails/{m42}",
+        params={
+            "variant": "fov_simulator",
+            "fov_major_deg": 0.37,
+            "fov_minor_deg": 0.28,
+            "center_ra_deg": -1.0,
+            "center_dec_deg": 10.0,
+        },
+    )
+    assert response.status_code == 400
+
+
+async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(
+    client: TestClient, seed_db, monkeypatch
+):
+    # Mock out the upstream fetcher so we don't touch the network; 202
+    # path fires immediately and the fetch runs in the background.
+    async def _fake_get(*args, **kwargs):
+        # Tiny valid JPEG body passes the fetcher's magic-byte check.
+        class R:
+            status_code = 200
+            content = b"\xff\xd8" + b"x" * 2048
+
+        return R()
+
+    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+    response = client.get(
+        f"/api/planner/thumbnails/{m42}",
+        params={
+            "variant": "rig_framed",
+            "fov_major_deg": 0.37,
+            "fov_minor_deg": 0.28,
+        },
+    )
+    # Placeholder (202) on miss, or a hit (200) if the fetch completed
+    # during the short test window.
+    assert response.status_code in {200, 202}

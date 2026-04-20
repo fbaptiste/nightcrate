@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.15.0
+**NightCrate version:** 0.17.0
 
-**Last updated:** 2026-04-19
+**Last updated:** 2026-04-20
 
 **Last full repo snapshot:** 2026-04-19
 
@@ -137,21 +137,23 @@ Per-location custom horizon profiles (azimuth/altitude polylines) for session pl
 - **Key frontend:** `components/locations/HorizonEditor.tsx`, `HorizonChart.tsx`, `HorizonEditorToolbar.tsx`, `HorizonPointEditPopover.tsx`, `lib/horizonReduce.ts`
 - **Schema:** migration `0014.location_horizon.sql` (`location_horizon`, `location_horizon_point`)
 
-### Target Planner (v0.16.0, Pass A)
+### Target Planner (v0.16.0 Pass A + v0.17.0 Pass B)
 
 **Status:** `[shipped]`
 
-Location-driven "what's up tonight" page at `/planner`. Lists every active DSO geometrically visible during astronomical darkness, scored by hours-visible; optional rig selection adds FOV coverage % and a "frames well" filter. Custom horizons (v0.13.0) are used automatically when present; locations without a horizon fall back to a flat `planner_min_altitude_deg` floor from Settings.
+Location-driven "what's up tonight" page at `/planner`. Lists every active DSO geometrically visible during astronomical darkness, scored by hours-visible; optional rig selection adds FOV coverage %, a "frames well" filter, an "In my rig" thumbnail column showing the object framed by the rig's sensor, and a rotatable FOV Simulator in the detail panel. Custom horizons (v0.13.0) are used automatically when present; locations without a horizon fall back to a flat `planner_min_altitude_deg` floor from Settings.
 
 Backend: vectorized astropy alt/az over 14 k DSOs runs in well under a second per night with a process-wide 4-entry LRU. Sky-track service produces a 5-minute resolution per-DSO altitude/azimuth + moon-altitude + horizon-reference track for the detail panel's D3 graph.
 
-Thumbnails: DSS2 Color JPEGs (falling back to DSS2 red) fetched from CDS Aladin's hips2fits, cached on disk under `APP_DIR/thumbnails/`. LRU eviction when total size exceeds `thumbnail_cache_max_mb`. Misses return a 1×1 transparent PNG with HTTP 202; the frontend polls every 2 s until the real image lands.
+Thumbnails: DSS2 Color JPEGs (falling back to DSS2 red) fetched from CDS Aladin's hips2fits, cached on disk under `APP_DIR/thumbnails/`. Four variants — `list` (object-framed 180×180), `detail` (object-framed 800×800, Pass B widened), `rig_framed` (rig-major-axis-framed 180×180), `fov_simulator` (wide-view 800×800 sized to `max(rig_diag × 1.5, obj × 2)`, **tiled** into a 5×5 grid around the target so users can pan). Cache keyed on (dso_id, variant, width, height, rounded FOV, rounded sky-centre); NULL fields wrap in distinct `COALESCE` sentinels (`-1` for FOV, `-999999` for RA/Dec) so list/detail/rig-framed/centre/panned entries share a namespace without collision. LRU eviction when total size exceeds `thumbnail_cache_max_mb`. Misses return a 1×1 PNG with HTTP 202 OR — when the client passes `wait_ms=N` — hold the request open for up to 10 s awaiting the background fetch task under `asyncio.shield`, returning the real image in the same round trip. Frontend simulator tiles long-poll with `waitMs=4000` on the first attempt and `waitMs=0` on retries (backoff schedule 400/900/1500/2500 ms); `ThumbnailCell` catches the cached-`<img>` race via `imgRef` + `useLayoutEffect([src])` so revisits don't leave spinners on top of already-rendered tiles. App-startup orphan sweep deletes on-disk files not referenced by the cache table.
+
+FOV Simulator: drag-to-rotate orange sensor rectangle overlaid on the pannable tile mosaic. Numeric input, arrow keys (±5°), Shift+arrow (±1°), R resets. North-up east-left convention; rotation is session-only. Tile grid starts at 1×1 (centre only — just one CDS fetch on first open), promotes to 3×3 on the centre's `onReady`, then 5×5 two seconds later; call site carries `key={dsoId:fov_major:fov_minor}` to remount on target/rig change so the old `gridN=5` state can't stampede 25 concurrent CDS fetches before the reset runs. Annotation overlay uses per-tile gnomonic projection (`lib/dsoAnnotations.ts::projectRaDecToTilePixel` picks the tile whose tangent is nearest each annotation, then projects on that tile's tangent) so blue circles sit on their galaxies in neighbour tiles at high declinations — a single grid-wide projection can't describe 25 independent tangent planes, and a flat plate-carrée approximation drifts ≈47 px on the dec axis at dec ≈+69°. A shared `tileCenterAt` helper keeps the tile-layout formula in lockstep between `FovSimulator.computeTiles` and the overlay. Faint dashed tile-boundary lines render inside the pan group (opacity 0.14, stroke + dash counter-scale by zoom) to signal the mosaic so subtle per-tile seams read as intentional.
 
 - **Route:** `/planner`
-- **API:** `GET /api/planner/targets`, `GET /api/planner/targets/{dso_id}/sky-track`, `GET/POST /api/planner/thumbnails/{dso_id}`, `POST /api/planner/thumbnails/cache/clear`, `GET /api/planner/thumbnails/cache/stats`
+- **API:** `GET /api/planner/targets`, `GET /api/planner/targets/{dso_id}/sky-track`, `GET /api/planner/thumbnails/{dso_id}` (optional `wait_ms` long-poll window, `center_ra_deg` / `center_dec_deg` for panned simulator tiles), `POST /api/planner/thumbnails/cache/clear`, `GET /api/planner/thumbnails/cache/stats`, `GET /api/planner/dsos/in-region` (annotation overlay)
 - **Key backend:** `services/planner_visibility.py` (engine + cache), `services/planner_sky_track.py`, `services/thumbnails.py` + `services/hips_client.py`, `services/rig_calculators.py:compute_coverage_pct`, `services/horizon.py:interpolate_horizon_altitude`
-- **Key frontend:** `pages/PlannerPage.tsx`, `components/planner/{ThumbnailCell,SkyPositionGraph,PlannerDetailPanel}.tsx`, `api/planner.ts`
-- **Schema:** migration 0017 (`thumbnail_cache` metadata table; files on disk)
+- **Key frontend:** `pages/PlannerPage.tsx`, `components/planner/{ThumbnailCell,SkyPositionGraph,PlannerDetailPanel,FovSimulator,DsoAnnotationOverlay,DsoAnnotationPopover}.tsx`, `lib/dsoAnnotations.ts`, `stores/thumbnailCacheStore.ts`, `api/planner.ts`
+- **Schema:** migrations 0017 (`thumbnail_cache`), 0018 (rig-framed + fov_simulator variants + FOV descriptor columns), 0019 (panned centre columns + unique-index rebuild)
 - **Settings:** `planner_min_altitude_deg` (30°), `planner_min_visibility_hours` (2h), `planner_max_magnitude` (12), `planner_min_size_arcmin` (5'), `thumbnail_cache_max_mb` (20)
 - **Deliberate deviations from spec:** moon distance is **closest approach during the visibility window**, not at-peak — the at-peak value can be misleading when the moon is below horizon at transit but rises during the visible window.
 
@@ -260,7 +262,7 @@ Current migration: **0016** (DSO augmentation columns). 16 migrations total (`00
 - **Locations (migrations 0007, 0012, inline-edited in v0.12.0):** `location` — user imaging sites with coordinates, light pollution (Bortle + SQM), `typical_seeing_low/high_arcsec` for rig calculator sampling assessment. Migration 0012 adds `active` soft-delete column.
 - **Horizons (migration 0014):** `location_horizon` (one row per location, UNIQUE on `location_id`, source ∈ {imported, drawn}), `location_horizon_point` (composite PK on horizon_id + azimuth_deg, CHECK az ∈ [0,360), alt ∈ [-5,90]) — custom per-location horizon profiles.
 - **DSO catalog (migrations 0015 + 0016):** `dso_catalog_source` (loader registry + file sha256), `dso` (canonical DSO with closed `obj_type` CHECK vocabulary, + `distance_pc` / `distance_method` / `common_name_augmented` / `surface_brightness_augmented` added in 0016; `distance_method` CHECK ∈ `{'50mgc', 'curated', 'redshift'}`), `dso_designation` (many-per-dso with closed 29-catalog CHECK vocabulary, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso). Populated via fetch-on-demand from GitHub (OpenNGC + 50 MGC FITS) + VizieR (Sharpless, Barnard). NightCrate augmentation CSV (common names, non-galaxy surface brightness, curated distances) bundled in-repo under `data/catalogs/nightcrate/`.
-- **Target Planner thumbnails (migration 0017):** `thumbnail_cache` — metadata for the LRU disk cache under `APP_DIR/thumbnails/` that serves DSS2 Color JPEG thumbnails fetched from CDS Aladin's hips2fits. FK cascade-deletes when a DSO disappears. `fetch_error` rows record failed attempts for a 1-hour backoff window. Files live on disk, not in the DB.
+- **Target Planner thumbnails (migration 0017, extended by migrations 0018 + 0019):** `thumbnail_cache` — metadata for the LRU disk cache under `APP_DIR/thumbnails/` that serves DSS2 Color JPEG thumbnails fetched from CDS Aladin's hips2fits. FK cascade-deletes when a DSO disappears. `fetch_error` rows record failed attempts for a 1-hour backoff window. Files live on disk, not in the DB. v0.17.0 migration 0018 widens the variant CHECK to include `rig_framed` + `fov_simulator`, adds nullable `fov_major_deg_x1000` / `fov_minor_deg_x1000` columns, and rebuilds the unique index over `COALESCE(-1)`-wrapped FOV columns. Migration 0019 ALTER-adds `center_ra_deg_x1000` / `center_dec_deg_x1000` for panned FOV-simulator tiles at arbitrary sky centres, using a distinct `COALESCE(-999999)` sentinel so legitimate 0.0 RA (celestial equator) can't collide with NULL.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
 - **Rigs (migrations 0009–0010, 0013):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane. Migration 0013 recreates the view again to expose `sensor_adc_bit_depth` for the File Size calculator's auto-populate flow.

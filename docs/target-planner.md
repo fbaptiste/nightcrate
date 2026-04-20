@@ -1,4 +1,4 @@
-# Target Planner (v0.16.0, Pass A)
+# Target Planner (v0.16.0 Pass A + v0.17.0 Pass B)
 
 One-page overview for developers extending the planner later. User
 documentation lives elsewhere.
@@ -68,17 +68,82 @@ frontend/
 - LRU eviction runs after every successful fetch — deterministic, no
   background sweeper.
 
+## Pass B additions (v0.17.0)
+
+### Thumbnail variants
+
+Two new cache variants extend the Pass A set (with their backend-
+computed angular extent):
+
+- `rig_framed` — 180×180, extent = rig major-axis FOV exactly. The list
+  renders it in a box sized by the rig's sensor aspect ratio and lets
+  `object-fit: cover` crop the stored square image to the right
+  proportions.
+- `fov_simulator` — 800×800, extent = `max(rig_diagonal × 1.5, object × 2)`
+  so the rig rectangle has room to rotate with comfortable margin
+  regardless of rig or target scale.
+
+The Pass A `detail` variant grew from 600×600 → 800×800 with the
+extent formula tightened from `×2.5 / 0.5°` to `×3.5 / 1.0°`. Migration
+0018 wipes the old cache (rows + files, via the startup orphan sweep)
+so stale Pass A `detail` JPEGs don't briefly show before their LRU
+eviction.
+
+### Cache key with FOV
+
+Rig-dependent variants add two columns to the key: `fov_major_deg_x1000`
+and `fov_minor_deg_x1000` (rounded deg × 1000 as an int to sidestep
+float-equality pitfalls). Two rigs that differ by < 0.001° share a
+cache entry; rigs that differ by ≥ 0.01° get separate entries. Edit
+a rig's focal reducer and the cache picks up the new shape without
+orphaning anything.
+
+The `UNIQUE` index wraps the nullable FOV columns in `COALESCE(..,-1)`
+so a `list` or `detail` entry (FOV = NULL) doesn't collide with a
+`rig_framed` one at the same `dso_id`.
+
+### Orphan sweep
+
+`services.thumbnails.sync_orphan_files()` runs once on app startup
+(from `main.py` lifespan). It scans `APP_DIR/thumbnails/`, parses each
+file with `_THUMB_FILENAME_RE`, and deletes any file whose name
+doesn't correspond to a live row. Non-thumbnail files (README, etc.)
+are left alone. Needed because migration 0018 wipes the DB rows but
+SQL migrations can't `unlink()`.
+
+### Frontend — FOV simulator
+
+`components/planner/FovSimulator.tsx` — the detail-panel hero when a
+rig is selected. Wide-view DSS2 background + CSS-rotated orange
+rectangle sized to the rig's angular FOV scaled to the image's pixel
+extent. Drag the edge, use ← → keys (±5°), Shift+arrow (±1°), the
+numeric input, or the reset button. Rotation is session-only — closing
+the detail panel resets to 0° (Pass C will own persistence).
+
+North-up east-left convention throughout. A "what does this mean?"
+tooltip explains that the rotation shown is relative to sky north, not
+the user's actual rotator angle (mount orientation + rotator position
+produce the real captured-image rotation).
+
+### Frontend — second list column
+
+`PlannerPage.tsx` renders an "In my rig" column right after the Pass A
+thumbnail column when a rig is selected. Column width + image CSS use
+the rig's major/minor ratio so the cell reads like a viewfinder.
+
 ## Extending — where to hook the next pieces
 
-- **Weather integration (Pass B):** surface `imaging_quality` + cloud
-  gating per-target in the list. The weather snapshot is already
-  keyed by location + date; a small join at API time would do it.
-- **Rig-framed thumbnails (Pass B):** switch the thumbnail `fov_deg`
-  from max(major × 1.5, 0.1°) to the rig's actual FOV. Cache key
-  grows an extra variant for rig-framed.
+- **Saved rotation per (rig, dso):** clean bolt-on — one new table
+  (`user_fov_preference`) and two new routes (GET/PUT). Add
+  a "Save rotation" button next to the simulator's input field.
+- **Mosaic planning:** extend the simulator to support multi-panel
+  layout; `FovSimulator` becomes a single panel with a sibling
+  "add panel" action.
+- **Weather integration:** surface `imaging_quality` + cloud gating
+  per-target in the list. The weather snapshot is already keyed by
+  location + date.
 - **Date picker:** the API already accepts `date` — just surface it in
-  the UI and add a note that visibility-snapshot caching keys on the
-  date so different picks don't collide.
-- **Moon distance filter:** add a numeric slider and a `min_moon_distance_deg`
-  query param; trivial in-memory filter since separation is already
-  computed.
+  the UI and the visibility cache keys already handle separate dates
+  cleanly.
+- **Moon distance filter:** trivial in-memory filter since separation
+  is already computed.

@@ -7,6 +7,7 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import aiosqlite
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -159,6 +160,18 @@ async def lifespan(app: FastAPI):
                 await conn.commit()
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("weather cache purge failed", exc_info=True)
+
+        # Sweep orphan thumbnail files left by migration 0018 (or manual
+        # tampering). Non-fatal — a failed sweep just means a few stale
+        # .jpg files linger on disk.
+        try:
+            from nightcrate.services.thumbnails import sync_orphan_files
+
+            async with get_db() as conn:
+                conn.row_factory = aiosqlite.Row
+                await sync_orphan_files(conn)
+        except _MAINT_EXPECTED_ERRS:
+            startup_logger.warning("thumbnail orphan sweep failed", exc_info=True)
 
     yield
 

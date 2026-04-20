@@ -6,6 +6,16 @@ enqueue a background fetch from CDS Aladin's ``hips2fits``; the frontend
 re-requests after a short delay and serves the cached image on the
 retry.
 
+Four variants share the cache (v0.17.0 / Pass B):
+
+    ``list``          180×180, object-framed (Pass A)
+    ``detail``        800×800, object-framed, wide extent (Pass A, resized)
+    ``rig_framed``    180×180, fetched at the rig's FOV major axis; the
+                      browser crops to the rig's aspect via ``object-fit``
+    ``fov_simulator`` 800×800, wide view covering rig-diag × 1.5 or
+                      object × 2 (whichever's bigger). Backs the
+                      detail-panel rotatable overlay.
+
 Failures record a ``fetch_error`` row so repeated client polls don't
 restart fetch storms against CDS. Errors expire after a 1-hour backoff.
 """
@@ -14,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -31,7 +42,11 @@ from nightcrate.services.hips_client import (
 
 logger = logging.getLogger("nightcrate.thumbnails")
 
-Variant = Literal["list", "detail"]
+Variant = Literal["list", "detail", "rig_framed", "fov_simulator"]
+
+# Rig-dependent variants require fov_major_deg + fov_minor_deg query
+# params; rig-independent ones reject those params as unused input.
+_RIG_DEPENDENT: frozenset[Variant] = frozenset({"rig_framed", "fov_simulator"})
 
 # 1×1 transparent PNG — small, valid, renders cleanly as a placeholder
 # while the background fetch runs.
@@ -48,10 +63,8 @@ _FETCH_ERROR_BACKOFF = timedelta(hours=1)
 _MAX_CONCURRENT_FETCHES = 4
 _fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
 
-# Dedupe in-flight fetches keyed on (dso_id, variant). Concurrent polls
-# for the same thumbnail wait on the same task rather than enqueuing
-# duplicates.
-_in_flight: dict[tuple[int, Variant], asyncio.Task] = {}
+
+# ── Dataclasses ──────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,33 +84,139 @@ class ThumbnailResult:
     status: Literal["hit", "placeholder", "error"]
 
 
+@dataclass(frozen=True, slots=True)
+class ThumbnailKey:
+    """Composite cache key — dso + variant + dimensions + rig FOV + sky center.
+
+    FOV values are stored / compared as (deg × 1000) integers so two
+    rigs that round to the same 0.001° share a cache entry. NULL fields
+    use ``-1`` / ``-999999`` under COALESCE in the DB so a list/detail
+    entry doesn't collide with a rig-framed one at the same dso_id.
+
+    ``center_ra_deg_x1000`` / ``center_dec_deg_x1000`` are only populated
+    for panned ``fov_simulator`` views — the user dragged the background
+    so the image no longer sits on the DSO's native RA/Dec. When both are
+    None, the image fetches / caches at the DSO's own coordinates (the
+    "initial view" case, unchanged from pre-pan behaviour).
+    """
+
+    dso_id: int
+    variant: Variant
+    width: int
+    height: int
+    fov_major_deg_x1000: int | None = None
+    fov_minor_deg_x1000: int | None = None
+    center_ra_deg_x1000: int | None = None
+    center_dec_deg_x1000: int | None = None
+
+
+# Dedupe in-flight fetches keyed on the full ThumbnailKey. Concurrent
+# polls for the same thumbnail wait on the same task rather than
+# enqueuing duplicates.
+_in_flight: dict[ThumbnailKey, asyncio.Task] = {}
+
+
 # ── Variant sizing ───────────────────────────────────────────────────────────
 
 _DIMENSIONS: dict[Variant, ThumbnailDimensions] = {
     "list": ThumbnailDimensions(180, 180),
-    "detail": ThumbnailDimensions(600, 600),
+    # Pass B widens detail from 600×600 → 800×800 to accommodate the
+    # wider FOV-simulator extent.
+    "detail": ThumbnailDimensions(800, 800),
+    "rig_framed": ThumbnailDimensions(180, 180),
+    "fov_simulator": ThumbnailDimensions(800, 800),
 }
-
-# Angular extent multipliers / minimums (deg). Converted from the
-# DSO's major axis (arcmin).
-_EXTENT: dict[Variant, tuple[float, float]] = {
-    # (multiplier on maj_axis_deg, minimum_deg)
-    "list": (1.5, 0.1),
-    "detail": (2.5, 0.5),
-}
-
-
-def compute_fov_deg(variant: Variant, maj_axis_arcmin: float | None) -> float:
-    """Return the angular extent to request from hips2fits in degrees."""
-    multiplier, minimum = _EXTENT[variant]
-    if maj_axis_arcmin is None or maj_axis_arcmin <= 0:
-        return minimum
-    maj_deg = maj_axis_arcmin / 60.0
-    return max(maj_deg * multiplier, minimum)
 
 
 def dimensions_for(variant: Variant) -> ThumbnailDimensions:
     return _DIMENSIONS[variant]
+
+
+def compute_angular_extent_deg(
+    variant: Variant,
+    *,
+    dso_maj_axis_arcmin: float | None,
+    fov_major_deg: float | None = None,
+    fov_minor_deg: float | None = None,
+) -> float:
+    """Angular extent (deg) to request from ``hips2fits`` for *variant*.
+
+    ``list`` and ``detail`` scale with the DSO's major axis; ``rig_framed``
+    matches the rig's major-axis FOV exactly; ``fov_simulator`` frames
+    the rig's diagonal × 1.5 (or the object × 2, whichever's larger).
+
+    Small / missing DSO sizes fall back to a minimum so the image is
+    always readable.
+    """
+    if variant == "list":
+        maj_deg = (dso_maj_axis_arcmin or 5.0) / 60.0
+        return max(maj_deg * 1.5, 0.1)
+    if variant == "detail":
+        maj_deg = (dso_maj_axis_arcmin or 10.0) / 60.0
+        return max(maj_deg * 3.5, 1.0)
+    if variant == "rig_framed":
+        if fov_major_deg is None or fov_major_deg <= 0:
+            raise ValueError("rig_framed variant requires a positive fov_major_deg")
+        return fov_major_deg
+    if variant == "fov_simulator":
+        if fov_major_deg is None or fov_minor_deg is None:
+            raise ValueError("fov_simulator variant requires fov_major_deg + fov_minor_deg")
+        if fov_major_deg <= 0 or fov_minor_deg <= 0:
+            raise ValueError("fov_simulator FOV dimensions must be positive")
+        # Tile extent: the sensor rectangle fills 50% of the tile's max
+        # dimension. Computed against rig geometry only so the zoom is
+        # predictable regardless of which DSO is loaded. The frontend
+        # stitches these tiles into a grid around the object so panning
+        # stays local — ±1 tile initially (3×3) and ±2 tiles once the
+        # 5×5 outer ring preloads.
+        return max(fov_major_deg, fov_minor_deg) / 0.5
+    raise ValueError(f"Unknown variant: {variant}")
+
+
+def _to_x1000(value: float | None) -> int | None:
+    """Round deg float → int × 1000. ``None`` passes through."""
+    if value is None:
+        return None
+    return round(value * 1000)
+
+
+def make_key(
+    dso_id: int,
+    variant: Variant,
+    *,
+    fov_major_deg: float | None = None,
+    fov_minor_deg: float | None = None,
+    center_ra_deg: float | None = None,
+    center_dec_deg: float | None = None,
+) -> ThumbnailKey:
+    """Build the cache key — rig-dependent variants require FOV params.
+
+    ``center_ra_deg`` / ``center_dec_deg`` are only meaningful for the
+    ``fov_simulator`` variant (panned views). They are silently
+    discarded for other variants so callers can't accidentally fork
+    their caches on unrelated fields.
+    """
+    if variant in _RIG_DEPENDENT and (fov_major_deg is None or fov_minor_deg is None):
+        raise ValueError(f"variant {variant!r} requires fov_major_deg + fov_minor_deg")
+    dim = dimensions_for(variant)
+    # Rig-independent variants deliberately ignore passed-in FOV values so
+    # a stray param can never fork the cache.
+    if variant not in _RIG_DEPENDENT:
+        fov_major_deg = None
+        fov_minor_deg = None
+    if variant != "fov_simulator":
+        center_ra_deg = None
+        center_dec_deg = None
+    return ThumbnailKey(
+        dso_id=dso_id,
+        variant=variant,
+        width=dim.width,
+        height=dim.height,
+        fov_major_deg_x1000=_to_x1000(fov_major_deg),
+        fov_minor_deg_x1000=_to_x1000(fov_minor_deg),
+        center_ra_deg_x1000=_to_x1000(center_ra_deg),
+        center_dec_deg_x1000=_to_x1000(center_dec_deg),
+    )
 
 
 # ── Filesystem helpers ───────────────────────────────────────────────────────
@@ -110,27 +229,73 @@ def thumb_dir() -> Path:
     return d
 
 
-def _thumb_path(dso_id: int, variant: Variant, width: int, height: int) -> Path:
-    return thumb_dir() / f"{dso_id}_{variant}_{width}x{height}.jpg"
+def _thumb_path(key: ThumbnailKey) -> Path:
+    """Disk location for *key*. Suffix carries the rounded FOV on
+    rig-dependent variants (so two rigs don't clobber each other's
+    JPEGs) and the panned sky-region centre for fov_simulator views.
+    """
+    base = f"{key.dso_id}_{key.variant}_{key.width}x{key.height}"
+    if key.fov_major_deg_x1000 is not None and key.fov_minor_deg_x1000 is not None:
+        base += f"_{key.fov_major_deg_x1000}_{key.fov_minor_deg_x1000}"
+    if key.center_ra_deg_x1000 is not None and key.center_dec_deg_x1000 is not None:
+        # ``c`` prefix + underscore-safe formatting. Negative Decs pick
+        # up a leading ``-`` which the regex below accounts for.
+        base += f"_c{key.center_ra_deg_x1000}_{key.center_dec_deg_x1000}"
+    return thumb_dir() / f"{base}.jpg"
+
+
+# File-name pattern — must parse any stem produced by ``_thumb_path``.
+# Groups: dso_id, variant, width, height, fov_major_x1000?, fov_minor_x1000?,
+# center_ra_x1000?, center_dec_x1000?
+_THUMB_FILENAME_RE = re.compile(
+    r"^(?P<dso_id>\d+)_"
+    r"(?P<variant>list|detail|rig_framed|fov_simulator)_"
+    r"(?P<width>\d+)x(?P<height>\d+)"
+    r"(?:_(?P<fmaj>-?\d+)_(?P<fmin>-?\d+))?"
+    r"(?:_c(?P<cra>-?\d+)_(?P<cdec>-?\d+))?"
+    r"\.jpg$"
+)
 
 
 # ── Cache lookup and insertion ───────────────────────────────────────────────
 
 
-async def _lookup_cache_row(
-    conn: aiosqlite.Connection,
-    dso_id: int,
-    variant: Variant,
-    width: int,
-    height: int,
-) -> aiosqlite.Row | None:
+def _coalesce_fov(v: int | None) -> int:
+    """Match the DB's ``COALESCE(.., -1)`` wrapping for FOV columns."""
+    return v if v is not None else -1
+
+
+def _coalesce_center(v: int | None) -> int:
+    """Match the DB's ``COALESCE(.., -999999)`` wrapping for sky-centre columns.
+
+    Uses a distinct sentinel from the FOV columns so a legitimate 0.0
+    centre (valid RA on the celestial equator) can't collide with the
+    NULL sentinel.
+    """
+    return v if v is not None else -999999
+
+
+async def _lookup_cache_row(conn: aiosqlite.Connection, key: ThumbnailKey) -> aiosqlite.Row | None:
     cursor = await conn.execute(
         """
         SELECT id, file_path, source, bytes, fetched_at, fetch_error
         FROM thumbnail_cache
         WHERE dso_id = ? AND variant = ? AND width = ? AND height = ?
+          AND COALESCE(fov_major_deg_x1000, -1) = ?
+          AND COALESCE(fov_minor_deg_x1000, -1) = ?
+          AND COALESCE(center_ra_deg_x1000, -999999) = ?
+          AND COALESCE(center_dec_deg_x1000, -999999) = ?
         """,
-        (dso_id, variant, width, height),
+        (
+            key.dso_id,
+            key.variant,
+            key.width,
+            key.height,
+            _coalesce_fov(key.fov_major_deg_x1000),
+            _coalesce_fov(key.fov_minor_deg_x1000),
+            _coalesce_center(key.center_ra_deg_x1000),
+            _coalesce_center(key.center_dec_deg_x1000),
+        ),
     )
     return await cursor.fetchone()
 
@@ -179,11 +344,8 @@ async def _evict_lru(conn: aiosqlite.Connection, max_bytes: int) -> int:
 
 async def _insert_cache_row(
     conn: aiosqlite.Connection,
+    key: ThumbnailKey,
     *,
-    dso_id: int,
-    variant: Variant,
-    width: int,
-    height: int,
     file_path: str,
     source: str,
     bytes_size: int,
@@ -192,10 +354,26 @@ async def _insert_cache_row(
     await conn.execute(
         """
         INSERT INTO thumbnail_cache (
-            dso_id, variant, width, height, file_path, source, bytes, fetch_error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            dso_id, variant, width, height,
+            fov_major_deg_x1000, fov_minor_deg_x1000,
+            center_ra_deg_x1000, center_dec_deg_x1000,
+            file_path, source, bytes, fetch_error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (dso_id, variant, width, height, file_path, source, bytes_size, fetch_error),
+        (
+            key.dso_id,
+            key.variant,
+            key.width,
+            key.height,
+            key.fov_major_deg_x1000,
+            key.fov_minor_deg_x1000,
+            key.center_ra_deg_x1000,
+            key.center_dec_deg_x1000,
+            file_path,
+            source,
+            bytes_size,
+            fetch_error,
+        ),
     )
     await conn.commit()
 
@@ -205,12 +383,11 @@ async def _insert_cache_row(
 
 async def _fetch_and_store(
     conn: aiosqlite.Connection,
+    key: ThumbnailKey,
     *,
-    dso_id: int,
-    variant: Variant,
     ra_deg: float,
     dec_deg: float,
-    maj_axis_arcmin: float | None,
+    extent_deg: float,
     max_cache_bytes: int,
 ) -> None:
     """Fetch DSS2 Color (with DSS2 red fallback) and persist the result.
@@ -220,24 +397,21 @@ async def _fetch_and_store(
     overwrites it cleanly. A persistent-failure branch inserts a
     ``fetch_error`` sentinel row so subsequent polls short-circuit.
     """
-    dim = dimensions_for(variant)
-    fov = compute_fov_deg(variant, maj_axis_arcmin)
-
     color_url = build_hips2fits_url(
         HIPS_DSS2_COLOR,
         ra_deg=ra_deg,
         dec_deg=dec_deg,
-        width=dim.width,
-        height=dim.height,
-        fov_deg=fov,
+        width=key.width,
+        height=key.height,
+        fov_deg=extent_deg,
     )
     red_url = build_hips2fits_url(
         HIPS_DSS2_RED,
         ra_deg=ra_deg,
         dec_deg=dec_deg,
-        width=dim.width,
-        height=dim.height,
-        fov_deg=fov,
+        width=key.width,
+        height=key.height,
+        fov_deg=extent_deg,
     )
 
     async with _fetch_semaphore:
@@ -247,7 +421,7 @@ async def _fetch_and_store(
         except Exception as color_exc:  # noqa: BLE001 — fallback on any failure
             logger.info(
                 "[thumbnails] dso=%s color fetch failed (%s); trying DSS2 red",
-                dso_id,
+                key.dso_id,
                 color_exc,
             )
             try:
@@ -256,31 +430,25 @@ async def _fetch_and_store(
             except Exception as red_exc:  # noqa: BLE001 — record failure, backoff
                 logger.warning(
                     "[thumbnails] dso=%s both color and red fetches failed: %s / %s",
-                    dso_id,
+                    key.dso_id,
                     color_exc,
                     red_exc,
                 )
                 await _insert_cache_row(
                     conn,
-                    dso_id=dso_id,
-                    variant=variant,
-                    width=dim.width,
-                    height=dim.height,
-                    file_path=str(_thumb_path(dso_id, variant, dim.width, dim.height)),
+                    key,
+                    file_path=str(_thumb_path(key)),
                     source="placeholder",
                     bytes_size=0,
                     fetch_error=f"color: {color_exc}; red: {red_exc}",
                 )
                 return
 
-    path = _thumb_path(dso_id, variant, dim.width, dim.height)
+    path = _thumb_path(key)
     path.write_bytes(body)
     await _insert_cache_row(
         conn,
-        dso_id=dso_id,
-        variant=variant,
-        width=dim.width,
-        height=dim.height,
+        key,
         file_path=str(path),
         source=source,
         bytes_size=len(body),
@@ -290,12 +458,11 @@ async def _fetch_and_store(
 
 async def _background_wrapper(
     conn_factory,
+    key: ThumbnailKey,
     *,
-    dso_id: int,
-    variant: Variant,
     ra_deg: float,
     dec_deg: float,
-    maj_axis_arcmin: float | None,
+    extent_deg: float,
     max_cache_bytes: int,
 ) -> None:
     """Run a fetch against a fresh aiosqlite connection.
@@ -308,17 +475,16 @@ async def _background_wrapper(
             conn.row_factory = aiosqlite.Row
             await _fetch_and_store(
                 conn,
-                dso_id=dso_id,
-                variant=variant,
+                key,
                 ra_deg=ra_deg,
                 dec_deg=dec_deg,
-                maj_axis_arcmin=maj_axis_arcmin,
+                extent_deg=extent_deg,
                 max_cache_bytes=max_cache_bytes,
             )
     except Exception:  # noqa: BLE001 — background task mustn't crash the server
-        logger.exception("[thumbnails] background fetch crashed for dso=%s", dso_id)
+        logger.exception("[thumbnails] background fetch crashed for dso=%s", key.dso_id)
     finally:
-        _in_flight.pop((dso_id, variant), None)
+        _in_flight.pop(key, None)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -334,6 +500,11 @@ async def get_thumbnail(
     maj_axis_arcmin: float | None,
     max_cache_bytes: int,
     conn_factory,
+    fov_major_deg: float | None = None,
+    fov_minor_deg: float | None = None,
+    center_ra_deg: float | None = None,
+    center_dec_deg: float | None = None,
+    wait_timeout_s: float = 0.0,
 ) -> ThumbnailResult:
     """Serve a thumbnail by variant, enqueuing a fetch on cache miss.
 
@@ -341,16 +512,59 @@ async def get_thumbnail(
     lookup + touch). ``conn_factory`` is an async context-manager
     factory (typically ``nightcrate.db.session.get_db``) used by the
     background task to open its own connection after the response is
-    sent.
+    sent. ``fov_major_deg`` / ``fov_minor_deg`` are required for the
+    rig-dependent variants (``rig_framed``, ``fov_simulator``) and
+    rejected with a ``ValueError`` when missing.
+
+    ``center_ra_deg`` / ``center_dec_deg`` are only honoured for the
+    ``fov_simulator`` variant and are the override used for panned
+    views. When either is None the simulator falls back to the DSO's
+    native coordinates (``ra_deg`` / ``dec_deg``) — the initial-view
+    case, which shares a cache entry with the pre-pan behaviour.
+
+    ``wait_timeout_s`` > 0 turns the endpoint into a long-poll: on a
+    cache miss the request holds open, awaiting the background fetch
+    task, and returns the real image in the same HTTP round trip. If
+    the fetch doesn't complete within the window the call falls through
+    to the placeholder path so the client can retry. Defaults to 0 for
+    backwards compatibility with pollers (list/detail variants don't
+    benefit from holding connections open — the simulator does).
     """
-    dim = dimensions_for(variant)
-    row = await _lookup_cache_row(conn, dso_id, variant, dim.width, dim.height)
+    key = make_key(
+        dso_id,
+        variant,
+        fov_major_deg=fov_major_deg,
+        fov_minor_deg=fov_minor_deg,
+        center_ra_deg=center_ra_deg,
+        center_dec_deg=center_dec_deg,
+    )
+    # Effective sky centre — panned views override the DSO's native
+    # coords; every other variant pins to the DSO.
+    effective_ra = (
+        center_ra_deg if variant == "fov_simulator" and center_ra_deg is not None else ra_deg
+    )
+    effective_dec = (
+        center_dec_deg if variant == "fov_simulator" and center_dec_deg is not None else dec_deg
+    )
+    logger.debug(
+        "[thumb] req dso=%d variant=%s fov=(%s,%s) center=(%s,%s) -> sky=(%.5f,%.5f)",
+        dso_id,
+        variant,
+        f"{fov_major_deg:.4f}" if fov_major_deg is not None else "—",
+        f"{fov_minor_deg:.4f}" if fov_minor_deg is not None else "—",
+        f"{center_ra_deg:.4f}" if center_ra_deg is not None else "—",
+        f"{center_dec_deg:.4f}" if center_dec_deg is not None else "—",
+        effective_ra,
+        effective_dec,
+    )
+    row = await _lookup_cache_row(conn, key)
 
     if row is not None and row["fetch_error"] is None and row["source"] != "placeholder":
         # Cache hit. Serve bytes from disk, refresh LRU timestamp.
         try:
             body = Path(row["file_path"]).read_bytes()
             await _touch_last_access(conn, row["id"])
+            logger.debug("[thumb] hit dso=%d variant=%s bytes=%d", dso_id, variant, len(body))
             return ThumbnailResult(body=body, content_type="image/jpeg", status="hit")
         except FileNotFoundError:
             # Metadata orphan — the file was deleted out-of-band. Drop the
@@ -372,20 +586,72 @@ async def get_thumbnail(
         await _delete_cache_row(conn, row["id"])
 
     # Miss: schedule the background fetch (dedup via in-flight map).
-    key = (dso_id, variant)
-    if key not in _in_flight:
+    task = _in_flight.get(key)
+    if task is None:
+        extent_deg = compute_angular_extent_deg(
+            variant,
+            dso_maj_axis_arcmin=maj_axis_arcmin,
+            fov_major_deg=fov_major_deg,
+            fov_minor_deg=fov_minor_deg,
+        )
+        logger.debug(
+            "[thumb] miss dso=%d variant=%s extent=%.4f° — enqueueing fetch",
+            dso_id,
+            variant,
+            extent_deg,
+        )
         task = asyncio.create_task(
             _background_wrapper(
                 conn_factory,
-                dso_id=dso_id,
-                variant=variant,
-                ra_deg=ra_deg,
-                dec_deg=dec_deg,
-                maj_axis_arcmin=maj_axis_arcmin,
+                key,
+                ra_deg=effective_ra,
+                dec_deg=effective_dec,
+                extent_deg=extent_deg,
                 max_cache_bytes=max_cache_bytes,
             )
         )
         _in_flight[key] = task
+    else:
+        logger.debug(
+            "[thumb] miss dso=%d variant=%s — fetch already in flight",
+            dso_id,
+            variant,
+        )
+
+    # Long-poll path: wait up to ``wait_timeout_s`` for the background
+    # fetch to land the real image, then re-read the cache row and
+    # serve it in the same HTTP round trip. ``asyncio.shield`` is
+    # required — if the browser disconnects while we're waiting the
+    # FastAPI handler gets cancelled, and without the shield that
+    # cancellation would propagate into the CDS fetch and abort a
+    # half-completed download. With the shield we just exit the wait,
+    # leaving the background task to finish on its own.
+    if wait_timeout_s > 0:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), wait_timeout_s)
+        except TimeoutError:
+            pass
+        else:
+            row = await _lookup_cache_row(conn, key)
+            if row is not None and row["fetch_error"] is None and row["source"] != "placeholder":
+                try:
+                    body = Path(row["file_path"]).read_bytes()
+                    await _touch_last_access(conn, row["id"])
+                    logger.debug(
+                        "[thumb] long-poll hit dso=%d variant=%s bytes=%d",
+                        dso_id,
+                        variant,
+                        len(body),
+                    )
+                    return ThumbnailResult(body=body, content_type="image/jpeg", status="hit")
+                except FileNotFoundError:
+                    # Extremely unlikely — fetch just wrote the file —
+                    # but if it happens, fall through to placeholder so
+                    # the client retries and hits the orphan-metadata
+                    # branch on the next pass.
+                    pass
+            if row is not None and row["fetch_error"] is not None:
+                return ThumbnailResult(body=b"", content_type="image/png", status="error")
 
     return ThumbnailResult(body=_PLACEHOLDER_PNG, content_type="image/png", status="placeholder")
 
@@ -401,6 +667,36 @@ async def clear_cache(conn: aiosqlite.Connection) -> int:
     await conn.execute("DELETE FROM thumbnail_cache")
     await conn.commit()
     return deleted
+
+
+async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
+    """Delete on-disk thumbnail files not referenced by ``thumbnail_cache``.
+
+    Called once on app startup (after migrations run) to clean up the
+    stale Pass A ``detail`` JPEGs left behind when migration 0018 wiped
+    the table. Also guards against manual tampering on subsequent boots.
+
+    Returns the count of files removed.
+    """
+    d = APP_DIR / "thumbnails"
+    if not d.is_dir():
+        return 0
+
+    cursor = await conn.execute("SELECT file_path FROM thumbnail_cache")
+    known = {str(Path(row["file_path"]).resolve()) for row in await cursor.fetchall()}
+
+    removed = 0
+    for entry in d.iterdir():
+        if not entry.is_file() or entry.suffix != ".jpg":
+            continue
+        if not _THUMB_FILENAME_RE.match(entry.name):
+            continue
+        if str(entry.resolve()) not in known:
+            entry.unlink(missing_ok=True)
+            removed += 1
+    if removed:
+        logger.info("[thumbnails] startup sweep removed %d orphan file(s)", removed)
+    return removed
 
 
 async def cache_stats(conn: aiosqlite.Connection, *, max_bytes: int) -> dict[str, int]:

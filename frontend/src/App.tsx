@@ -16,7 +16,9 @@ import DsoCatalogPage from "@/pages/DsoCatalogPage";
 import PlannerPage from "@/pages/PlannerPage";
 import WeatherPage from "./pages/WeatherPage";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 import { fetchHealth } from "@/api/admin";
+import { fetchThumbnailCacheStats } from "@/api/planner";
 import { SetupWizard } from "@/components/SetupWizard";
 
 const router = createBrowserRouter([
@@ -44,10 +46,27 @@ const router = createBrowserRouter([
 
 function AppContent() {
   const load = useSettingsStore((s) => s.load);
+  const setGeneration = useThumbnailCacheStore((s) => s.setGeneration);
   const { data: health, isLoading } = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
   });
+
+  // Thumbnail cache generation: hydrate once on startup so every
+  // ThumbnailCell's URL carries the current ``&_g=N`` suffix from the
+  // first render. The Settings page keeps the store in sync after a
+  // manual clear.
+  const { data: thumbnailStats } = useQuery({
+    queryKey: ["thumbnail-cache-stats"],
+    queryFn: fetchThumbnailCacheStats,
+    enabled: health?.db_configured === true,
+    staleTime: Infinity,
+  });
+  useEffect(() => {
+    if (thumbnailStats?.generation != null) {
+      setGeneration(thumbnailStats.generation);
+    }
+  }, [thumbnailStats?.generation, setGeneration]);
 
   useEffect(() => {
     if (health?.db_configured) {

@@ -41,6 +41,10 @@ class Settings(BaseModel):
     planner_min_size_arcmin: float = 5.0
     # Disk budget for the HiPS/DSS2 thumbnail LRU cache under APP_DIR/thumbnails/.
     thumbnail_cache_max_mb: int = 20
+    # Monotonic counter appended to thumbnail URLs as ``&_g=N`` so that
+    # clearing the cache invalidates any copies the user's browser HTTP
+    # cache holds. Incremented by the cache-clear endpoint.
+    thumbnail_cache_generation: int = 0
 
 
 async def get_settings() -> Settings:

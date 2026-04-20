@@ -96,7 +96,25 @@ class DarkWindow:
 
 @dataclass(frozen=True, slots=True)
 class DsoVisibility:
-    """Per-DSO visibility summary over the astro-dark window."""
+    """Per-DSO visibility summary over the astro-dark window.
+
+    Peak and transit used to be two independent numbers that could
+    disagree by up to the sample spacing (±2.5 min at 5-min sampling).
+    That produced inconsistent UI rows like "peak 55° @ 08:39 / transit
+    55° @ 08:36" for objects culminating during the window, where by
+    geometric definition the two are the same instant. The reduction
+    now collapses them: whenever the object's upper transit lands
+    inside the astro-dark window, ``peak_time_utc`` IS the transit and
+    ``max_altitude_deg`` is the analytical altitude at transit. When
+    the transit falls outside the window, peak is the higher of the
+    altitudes at the window's two endpoints.
+
+    ``transit_time_utc`` and ``altitude_at_transit_deg`` are always
+    populated — they're pure sidereal geometry, independent of what
+    astro-dark does tonight. Callers that want to know whether the
+    meridian crossing is imaging-actionable compare ``transit_time_utc``
+    to whatever time window they care about.
+    """
 
     dso_id: int
     hours_visible: float
@@ -108,12 +126,10 @@ class DsoVisibility:
     min_moon_separation_deg: float | None
     rise_time_utc: datetime | None
     set_time_utc: datetime | None
-    # Meridian crossing (upper culmination) within the astro-dark window.
-    # ``None`` when the object's true transit falls outside astro-dark
-    # — the sampled peak in that case is at a window edge, which means
-    # the altitude function is still monotonic across the sample grid.
-    transit_time_utc: datetime | None
-    altitude_at_transit_deg: float | None
+    # Meridian crossing (upper culmination). Altitude can be negative
+    # for a target that never rises at this location.
+    transit_time_utc: datetime
+    altitude_at_transit_deg: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,28 +216,34 @@ def _reduce_per_dso(
     az_deg: np.ndarray,  # (N, T)
     moon_separation_deg: np.ndarray,  # (N, T)
     visible_mask: np.ndarray,  # (N, T) boolean
+    *,
+    transit_times: Sequence[datetime],
+    alt_at_transit: np.ndarray,  # (N,)
+    dark_start_utc: datetime,
+    dark_end_utc: datetime,
+    lat_deg: float,
 ) -> dict[int, DsoVisibility]:
-    """Reduce the (N, T) arrays into one DsoVisibility per DSO.
+    """Collapse the (N, T) arrays into one ``DsoVisibility`` per DSO.
 
-    ``peak_time`` is the time of max altitude across the whole astro-dark
-    window regardless of visibility; ``rise``/``set`` are the first/last
-    visible samples. ``transit`` matches ``peak`` when the peak sample
-    also happens to be visible.
+    - ``hours_visible``, ``rise``/``set``, ``min_moon_separation`` are
+      still derived from the 5-min sampled mask (sub-minute precision
+      on those isn't useful for planning).
+    - ``peak_time_utc`` / ``max_altitude_deg`` are **analytical**: the
+      transit instant if it falls inside the dark window, else the
+      higher-altitude dark-window endpoint. No more sampled argmax —
+      that was the source of ±2.5-min drift from the analytical
+      transit time.
+    - ``transit_time_utc`` / ``altitude_at_transit_deg`` always come
+      from sidereal geometry (analytic, full datetime precision).
     """
     n_samples = alt_deg.shape[1]
     out: dict[int, DsoVisibility] = {}
-
-    peak_idx = alt_deg.argmax(axis=1)
-    rows = np.arange(alt_deg.shape[0])
-    max_alt = alt_deg[rows, peak_idx]
-    az_peak = az_deg[rows, peak_idx]
 
     visible_counts = visible_mask.sum(axis=1)
     hours_visible = visible_counts * (_SAMPLE_MINUTES / 60.0)
 
     # First and last visible index per row (N,). -1 when never visible.
     first_visible = np.where(visible_mask.any(axis=1), visible_mask.argmax(axis=1), -1)
-    # reverse-argmax via reversed columns
     last_visible = np.where(
         visible_mask.any(axis=1),
         n_samples - 1 - visible_mask[:, ::-1].argmax(axis=1),
@@ -234,34 +256,120 @@ def _reduce_per_dso(
     min_sep = sep_visible.min(axis=1)
 
     times_utc = [t.to_datetime(timezone=UTC) for t in times]
+    # The 5-min sample grid is built from ``dark_start_utc`` to
+    # ``dark_end_utc`` inclusive, so the first and last columns of
+    # ``alt_deg`` / ``az_deg`` are the exact endpoint altitudes we need
+    # for the fallback peak — no extra astropy call.
+    alt_start = alt_deg[:, 0]
+    alt_end = alt_deg[:, -1]
+    az_start = az_deg[:, 0]
+    az_end = az_deg[:, -1]
 
     for i, dso in enumerate(dsos):
-        peak_i = int(peak_idx[i])
-        peak_time = times_utc[peak_i]
+        t_transit = transit_times[i]
+        transit_in = dark_start_utc <= t_transit <= dark_end_utc
+
+        if transit_in:
+            # Peak IS the transit by geometric definition.
+            peak_time = t_transit
+            max_alt = float(round(float(alt_at_transit[i]), 2))
+            # Azimuth at upper transit: 0° (north) if the object transits
+            # north of zenith, else 180° (south). The exact value at
+            # ``dec == lat`` (zenith transit) is undefined; 180° is a
+            # harmless default for that measure-zero case.
+            az_peak = 0.0 if float(dso.dec_deg) > lat_deg else 180.0
+        elif alt_start[i] >= alt_end[i]:
+            peak_time = dark_start_utc
+            max_alt = float(round(float(alt_start[i]), 2))
+            az_peak = float(round(float(az_start[i]), 2))
+        else:
+            peak_time = dark_end_utc
+            max_alt = float(round(float(alt_end[i]), 2))
+            az_peak = float(round(float(az_end[i]), 2))
+
         rise_time = times_utc[int(first_visible[i])] if first_visible[i] >= 0 else None
         set_time = times_utc[int(last_visible[i])] if last_visible[i] >= 0 else None
-        # Transit = strictly interior local max. The altitude function
-        # has exactly one maximum per sidereal day — if the sampled
-        # argmax is an edge sample, the object is still climbing or
-        # descending and the real transit falls outside astro-dark.
-        interior = 0 < peak_i < n_samples - 1
-        transit_time = peak_time if interior else None
-        transit_alt = float(round(max_alt[i], 2)) if interior else None
+
         out[dso.dso_id] = DsoVisibility(
             dso_id=dso.dso_id,
             hours_visible=float(round(hours_visible[i], 2)),
-            max_altitude_deg=float(round(max_alt[i], 2)),
+            max_altitude_deg=max_alt,
             peak_time_utc=peak_time,
-            azimuth_at_peak_deg=float(round(az_peak[i], 2)),
+            azimuth_at_peak_deg=az_peak,
             min_moon_separation_deg=None
             if not np.isfinite(min_sep[i])
             else float(round(min_sep[i], 1)),
             rise_time_utc=rise_time,
             set_time_utc=set_time,
-            transit_time_utc=transit_time,
-            altitude_at_transit_deg=transit_alt,
+            transit_time_utc=t_transit,
+            altitude_at_transit_deg=float(round(float(alt_at_transit[i]), 2)),
         )
     return out
+
+
+# Mean sidereal day length in hours (Earth rotation period).
+_SIDEREAL_DAY_HOURS = 23.9344696
+
+
+def _compute_upper_transits(
+    earth_loc: EarthLocation,
+    night_date: date,
+    tz: str,
+    coords: SkyCoord,
+) -> tuple[list[datetime], np.ndarray]:
+    """Upper-transit time + altitude for each ICRS coord, within the
+    24-hour window centred on local midnight of ``night_date``.
+
+    Two-step:
+
+    1. Find the transit *time* analytically: solve LST = RA at a
+       reference instant (local noon of ``night_date``) and advance by
+       the wrapped hour angle. The RA drift from J2000-to-epoch
+       precession is sub-arcsecond per year, i.e., a few seconds of
+       wall-clock drift over a 25-year epoch — well below the 1-minute
+       display resolution, so ICRS RA is fine here.
+
+    2. Evaluate altitude through astropy's AltAz transform at that
+       transit time, **in apparent coordinates**. Doing this keeps the
+       transit-altitude number consistent with the sampled ``alt_deg``
+       array used for hours-visible / endpoint-peak — both reflect
+       ICRS → precession → nutation → aberration → topocentric AltAz.
+       Using the raw formula ``90° − |lat − dec|`` on the catalog
+       (J2000) declination would disagree with the sampled path by up
+       to the precession shift (roughly 0.1° at dec ≈ +69° for a
+       26-year epoch), producing "max alt 55° / transit alt 54°" type
+       inconsistencies between the two columns.
+
+    Returned altitude can be negative (object transits below the
+    horizon, i.e., never visible). Callers decide how to display that.
+    """
+    ras_deg = np.asarray(coords.ra.deg)
+    tzinfo = ZoneInfo(tz)
+    # Reference point: local noon of the night's date (i.e., the day
+    # whose evening begins the planning window). The transit we want
+    # falls within the following 24 sidereal hours.
+    noon_local = datetime(night_date.year, night_date.month, night_date.day, 12, 0, tzinfo=tzinfo)
+    t_ref = Time(noon_local.astimezone(UTC))
+    lst_deg = t_ref.sidereal_time("apparent", longitude=earth_loc.lon).hour * 15.0
+    # Hour angle at the reference: HA = LST − RA, wrapped to [−180, 180].
+    ha = (lst_deg - ras_deg + 180.0) % 360.0 - 180.0
+    # Upper transit when HA = 0. If HA < 0 the object is east of the
+    # meridian → transit is in the future. Convert to hours-from-ref,
+    # wrapped to one sidereal day so we always land inside the window.
+    sidereal_rate = 360.0 / _SIDEREAL_DAY_HOURS
+    hours_to_transit = (-ha / sidereal_rate) % _SIDEREAL_DAY_HOURS
+    transit_times_dt = [
+        (noon_local + timedelta(hours=float(h))).astimezone(UTC) for h in hours_to_transit
+    ]
+
+    # Evaluate altitude at each transit time *through the same frame
+    # stack the sampled altitudes use*. One vectorised transform: each
+    # coord is paired with its own obstime (both shape N), astropy
+    # broadcasts element-wise.
+    transit_times_astropy = Time(transit_times_dt)
+    altaz_frame = AltAz(obstime=transit_times_astropy, location=earth_loc)
+    alt_at_transit = np.asarray(coords.transform_to(altaz_frame).alt.deg)
+    return transit_times_dt, alt_at_transit
 
 
 def compute_visibility_snapshot(
@@ -323,7 +431,24 @@ def compute_visibility_snapshot(
 
     visible = alt_deg > horizon_alt
 
-    per_dso = _reduce_per_dso(dsos, times, alt_deg, az_deg, moon_sep, visible)
+    # Analytical transit (always populated; outside-of-dark-hours fine)
+    # — feeds the peak selection inside ``_reduce_per_dso``.
+    transit_times, alt_at_transit = _compute_upper_transits(
+        earth_loc, night_date, location.timezone, coords
+    )
+    per_dso = _reduce_per_dso(
+        dsos,
+        times,
+        alt_deg,
+        az_deg,
+        moon_sep,
+        visible,
+        transit_times=transit_times,
+        alt_at_transit=alt_at_transit,
+        dark_start_utc=dark.start_utc,
+        dark_end_utc=dark.end_utc,
+        lat_deg=float(earth_loc.lat.deg),
+    )
     return VisibilitySnapshot(
         location_id=location.id,
         night_date=night_date,

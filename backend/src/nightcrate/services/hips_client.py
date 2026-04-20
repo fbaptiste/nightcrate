@@ -9,9 +9,13 @@ Service reference: https://alasky.cds.unistra.fr/hips-image-services/hips2fits
 
 from __future__ import annotations
 
+import logging
+import time
 from urllib.parse import urlencode
 
 from nightcrate.services import http_client
+
+logger = logging.getLogger("nightcrate.hips_client")
 
 HIPS2FITS_BASE = "https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
 
@@ -58,18 +62,38 @@ async def fetch_hips_image(url: str) -> bytes:
     unavailable. JPEG starts with ``FF D8``; PNG starts with
     ``89 50 4E 47``. Anything else triggers a RuntimeError so the caller
     can fall back to the next HiPS in the chain.
+
+    Logs the full upstream URL + timing at DEBUG so pan/fetch problems
+    are traceable against CDS's own latency.
     """
-    response = await http_client.get(
-        url,
-        label="hips2fits",
-        follow_redirects=True,
-        timeout=_FETCH_TIMEOUT_S,
-    )
+    logger.debug("[hips] → GET %s", url)
+    t0 = time.perf_counter()
+    try:
+        response = await http_client.get(
+            url,
+            label="hips2fits",
+            follow_redirects=True,
+            timeout=_FETCH_TIMEOUT_S,
+        )
+    except Exception as exc:
+        dt_ms = (time.perf_counter() - t0) * 1000
+        logger.debug("[hips] ✗ %s after %.0f ms — %s", url, dt_ms, exc)
+        raise
+    dt_ms = (time.perf_counter() - t0) * 1000
     if response.status_code >= 400:
+        logger.debug("[hips] ← HTTP %d in %.0f ms (%s)", response.status_code, dt_ms, url)
         raise RuntimeError(f"hips2fits returned HTTP {response.status_code}")
     body = response.content
     if not body:
+        logger.debug("[hips] ← empty body in %.0f ms (%s)", dt_ms, url)
         raise RuntimeError("hips2fits returned empty body")
     if not (body.startswith(b"\xff\xd8") or body.startswith(b"\x89PNG")):
+        logger.debug(
+            "[hips] ← non-image (first 16: %r) in %.0f ms (%s)",
+            body[:16],
+            dt_ms,
+            url,
+        )
         raise RuntimeError(f"hips2fits returned non-image body (first 16 bytes: {body[:16]!r})")
+    logger.debug("[hips] ← %d bytes in %.0f ms (%s)", len(body), dt_ms, url)
     return body

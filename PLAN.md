@@ -2183,6 +2183,151 @@ hourly timeline. See `docs/target-planner.md` for architecture.
 
 ---
 
+## v0.17.0 — Target Planner Pass B (FOV Simulator + Rig-Framed Thumbnails)
+
+**Status:** Done
+**Branch:** `v0.17.0/target-planner-pass-b`
+
+Extends v0.16.0's planner with two user-facing pieces: a second
+thumbnail column showing each object framed in the selected rig's
+sensor, and an interactive FOV simulator in the detail panel with a
+drag-to-rotate overlay rectangle. See `docs/target-planner.md` for
+architecture.
+
+### Schema
+
+- [x] Migration 0018 rebuilds `thumbnail_cache` to widen the `variant`
+      CHECK (adds `rig_framed`, `fov_simulator`) and add nullable
+      `fov_major_deg_x1000` / `fov_minor_deg_x1000` descriptor columns.
+      Unique index wraps the FOV columns in `COALESCE(..,-1)` so
+      rig-dependent and rig-independent entries share a namespace.
+      Pass A rows are wiped on re-apply; files on disk are swept by the
+      app-startup orphan helper.
+
+### Backend services
+
+- [x] `services/thumbnails.py` reworked end-to-end: `ThumbnailKey` value
+      object + `make_key()` factory; `compute_angular_extent_deg()` unified
+      across the four variants; rig-dependent variants raise `ValueError`
+      on missing FOV; `sync_orphan_files()` added for the startup sweep
+      + wired into `main.py` lifespan.
+- [x] Pass A detail variant widened from 600×600 / 2.5× / 0.5° to
+      800×800 / 3.5× / 1.0° so the FOV simulator has room for the
+      rectangle at any rotation.
+
+### Backend API
+
+- [x] `GET /api/planner/thumbnails/{dso_id}` extended with
+      `fov_major_deg` + `fov_minor_deg` query params. Validates that
+      rig-dependent variants supply both (400 otherwise; 400 on
+      non-positive values).
+
+### Frontend
+
+- [x] `components/planner/FovSimulator.tsx` — wide-view DSS2 background
+      with a CSS-rotated orange sensor rectangle sized to the rig's
+      angular FOV scaled against the image's pixel extent. Drag,
+      numeric input, arrow keys (±5° / ±1° with Shift), R resets.
+      North-up east-left convention; "what does this mean?" tooltip
+      distinguishes sky rotation from real-capture rotation.
+- [x] `components/planner/ThumbnailCell.tsx` learns the new variants
+      + an `aspectRatio` prop that lets the "In my rig" column render
+      a sensor-shaped bounding box that crops the square source via
+      `object-fit: cover`.
+- [x] `pages/PlannerPage.tsx` adds the "In my rig" column immediately
+      after the Pass A thumbnail column when a rig is selected.
+- [x] `components/planner/PlannerDetailPanel.tsx` swaps the hero image
+      for the FOV simulator when a rig is selected; falls back to the
+      Pass A `detail` variant when no rig is active.
+- [x] `api/planner.ts:thumbnailUrl()` accepts an `opts` object with
+      `fovMajorDeg` / `fovMinorDeg`; `ThumbnailVariant` type exported.
+
+### Tests
+
+- [x] ~17 new backend tests in `test_planner_thumbnails.py` +
+      `test_planner_api.py`: angular extent (rig_framed + fov_simulator
+      incl. small/large object crossover), FOV rounding, cache key
+      separation at 0.01° vs sharing at 0.001°, orphan sweep, 400s
+      for missing / non-positive FOV params, rig-framed cache miss
+      enqueues a fetch. Full suite: 1611 passed / 3 skipped.
+
+### Docs
+
+- [x] `docs/target-planner.md` Pass B section (thumbnail variants,
+      cache key, orphan sweep, FOV simulator).
+- [x] `CLAUDE.md`, `DB_SCHEMA.md`, `DB_SCHEMA_DDL.sql`, `LLM_DB_SPECS.md`,
+      `nightcrate-current-state.md` all updated for v0.17.0.
+
+### Post-Pass-B refinements
+
+- [x] Planner detail panel: transit altitude now uses astropy's
+      apparent frame (fixes ≈0.02° J2000→apparent drift that made
+      max-altitude disagree with altitude-at-transit by 1° on
+      precession-drifted targets). Removed
+      `transit_during_astro_dark` — transit is sidereal geometry,
+      unrelated to astro-dark.
+- [x] Sky-position graph: magnetic snap-to-meridian on hover (cursor
+      locks to meridian line within 6 CSS px; tooltip annotates).
+- [x] FOV simulator — annotation alignment overhaul:
+      - `lib/dsoAnnotations.ts::projectRaDecToPixel` now uses gnomonic
+        (tangent-plane TAN) projection matching hips2fits instead of
+        the flat plate-carrée approximation. Fixes annotation drift
+        within the centre tile at high declinations (≈47 px on the
+        dec axis for Ursa Major targets).
+      - New `projectRaDecToTilePixel` picks the grid tile whose
+        tangent is nearest each annotation (four candidates around
+        floor/ceil of col/row), then projects onto *that* tile's
+        tangent. Annotations now align with the per-tile gnomonic
+        image in neighbour tiles, not just the centre.
+      - Shared `tileCenterAt` helper: `FovSimulator.computeTiles` and
+        the per-tile projection derive tile positions from the same
+        function, so their plate-carrée spacing can't drift apart.
+- [x] FOV simulator — first-image latency:
+      - Backend `get_thumbnail()` gains a `wait_timeout_s` kwarg; the
+        `/api/planner/thumbnails/{id}` endpoint exposes it as
+        `wait_ms` (capped at 10 s). On a miss the request holds open
+        awaiting the background fetch task under `asyncio.shield`
+        and returns the real image in the same round trip —
+        eliminates the "CDS latency + next-poll cadence" overhead
+        pollers pay. Frontend tiles long-poll with `waitMs=4000` on
+        the first attempt only; retries send `waitMs=0` so a slow
+        CDS can't stack 4 s connection holds.
+      - `ThumbnailCell` catches the cached `<img>` race via `imgRef`
+        + `useLayoutEffect([src])`: when the browser serves `src`
+        synchronously from HTTP cache, `onLoad` can fire before
+        React attaches its listener — the effect inspects
+        `img.complete` and replays the load path. Fixes stuck
+        spinners on revisit.
+      - Retry cadence replaced the hardcoded 2 s with a backoff
+        schedule (400 / 900 / 1500 / 2500 ms). Warm-backend revisits
+        land in <0.5 s.
+- [x] FOV simulator — 25-tile stampede fix: `<FovSimulator>` now
+      carries a `key={dsoId:fovMajor:fovMinor}` at the call site.
+      Without it, switching DSOs re-rendered the same instance with
+      the new `dsoId` while `gridN` was still 5 from the prior
+      target, so 25 neighbour tiles all fired CDS fetches before the
+      reset useEffect could run. Remounting makes `gridN=1`
+      synchronous with the prop change; only the centre tile makes
+      a network request up front. Removed the now-redundant state-
+      reset `useEffect`.
+- [x] FOV simulator — faint dashed tile-boundary grid inside the pan
+      group (opacity 0.14, stroke + dash counter-scale by zoom).
+      Signals the mosaic so per-tile projection seams read as an
+      intentional trade-off.
+- [x] `.gitignore` broadened from `bug*.png` to `/*.png` to cover
+      all ad-hoc testing screenshots at the repo root.
+
+### v0.17.0 Completion Criteria
+
+- [x] Migration 0018 applies cleanly, wipes the Pass A cache
+- [x] App-startup orphan sweep runs and clears stale on-disk JPEGs
+- [x] Full backend suite green (1630 passed, 3 skipped — +36 new
+      across initial Pass B + post-Pass-B refinements)
+- [x] Frontend build clean
+- [x] ruff / format / bandit clean (0 / 0 / 0)
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.

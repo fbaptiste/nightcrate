@@ -27,6 +27,10 @@ import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import Button from "@mui/material/Button";
+import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
+import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
+import { Link as RouterLink } from "react-router-dom";
 import { fetchLocations } from "@/api/locations";
 import { fetchRigs } from "@/api/rigs";
 import { fetchDsoFacets } from "@/api/dsos";
@@ -169,11 +173,35 @@ export default function PlannerPage() {
 
   const activeLocation = locationsQuery.data?.find((l) => l.id === locationId);
   const tz = activeLocation?.timezone ?? "UTC";
-  const locationName = activeLocation?.name ?? null;
   const data = targetsQuery.data;
+
+  // Block the UI behind the filter bar / grid when we can't reasonably
+  // show any targets yet. Both empty-states mirror the DSO Catalog page
+  // pattern — full-height centered panel + CTA button to the page
+  // that fixes the gap.
+  const hasLocations =
+    !locationsQuery.isLoading && (locationsQuery.data?.length ?? 0) > 0;
+  const catalogTotal = (facetsQuery.data?.type_groups ?? []).reduce(
+    (sum, g) => sum + g.count,
+    0,
+  );
+  const hasCatalog = !facetsQuery.isLoading && catalogTotal > 0;
+  const plannerEmptyState: "no-location" | "no-catalog" | null =
+    !locationsQuery.isLoading && !hasLocations
+      ? "no-location"
+      : !facetsQuery.isLoading && !hasCatalog
+        ? "no-catalog"
+        : null;
   const rigFov = data?.rig
     ? `${(data.rig.fov_major_deg * 60).toFixed(1)}' × ${(data.rig.fov_minor_deg * 60).toFixed(1)}'`
     : null;
+  // Sensor aspect ratio (major / minor) for the rig-framed column. The
+  // stored image is square 180×180 at the rig's major-axis FOV; we
+  // present it in a major:minor-shaped box and let object-fit crop.
+  const rigAspect =
+    data?.rig && data.rig.fov_minor_deg > 0
+      ? data.rig.fov_major_deg / data.rig.fov_minor_deg
+      : null;
 
   // Every data column uses flex + minWidth so the grid fills the viewport
   // and contracts gracefully as the window narrows. Only the thumbnail
@@ -186,6 +214,26 @@ export default function PlannerPage() {
       sortable: false,
       renderCell: (params) => <ThumbnailCell dsoId={params.row.dso_id} size={60} />,
     },
+    ...(data?.rig && rigAspect
+      ? [
+          {
+            field: "rig_framed",
+            headerName: "In my rig",
+            width: 96,
+            sortable: false,
+            renderCell: (params) => (
+              <ThumbnailCell
+                dsoId={params.row.dso_id}
+                size={80}
+                variant="rig_framed"
+                fovMajorDeg={data.rig!.fov_major_deg}
+                fovMinorDeg={data.rig!.fov_minor_deg}
+                aspectRatio={rigAspect}
+              />
+            ),
+          } as GridColDef<PlannerTargetItem>,
+        ]
+      : []),
     {
       field: "primary_designation",
       headerName: "Designation",
@@ -269,18 +317,11 @@ export default function PlannerPage() {
       flex: 1.0,
       minWidth: 120,
       sortable: false,
-      renderCell: (p) => {
-        const alt = p.row.altitude_at_transit_deg;
-        const t = p.row.transit_time_utc;
-        if (alt == null || t == null) {
-          return <Typography variant="body2" color="text.disabled">—</Typography>;
-        }
-        return (
-          <Typography variant="body2">
-            {(alt as number).toFixed(0)}° @ {formatLocalTime(t, tz)}
-          </Typography>
-        );
-      },
+      renderCell: (p) => (
+        <Typography variant="body2">
+          {p.row.altitude_at_transit_deg.toFixed(0)}° @ {formatLocalTime(p.row.transit_time_utc, tz)}
+        </Typography>
+      ),
     },
     {
       field: "min_moon_separation_deg",
@@ -336,6 +377,73 @@ export default function PlannerPage() {
         ) : null}
       </Stack>
 
+      {plannerEmptyState !== null ? (
+        plannerEmptyState === "no-location" ? (
+          <Paper
+            variant="outlined"
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              p: 4,
+              textAlign: "center",
+            }}
+          >
+            <PlaceOutlinedIcon sx={{ fontSize: 64, color: "text.secondary" }} />
+            <Typography variant="h6">No imaging location defined</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 520 }}>
+              The planner needs to know where you're observing from before it
+              can compute rise / set times and altitudes. Add your
+              backyard, remote site, or any other location and mark one as
+              the default.
+            </Typography>
+            <Button
+              component={RouterLink}
+              to="/locations"
+              variant="contained"
+              startIcon={<PlaceOutlinedIcon />}
+            >
+              Go to Locations
+            </Button>
+          </Paper>
+        ) : (
+          <Paper
+            variant="outlined"
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              p: 4,
+              textAlign: "center",
+            }}
+          >
+            <CloudDownloadOutlinedIcon sx={{ fontSize: 64, color: "text.secondary" }} />
+            <Typography variant="h6">No deep-sky object catalog loaded</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 520 }}>
+              NightCrate doesn't ship catalog data — the planner can't
+              suggest targets until OpenNGC (and optionally Sharpless,
+              Barnard, 50 MGC) is fetched from Admin → Catalogs.
+            </Typography>
+            <Button
+              component={RouterLink}
+              to="/admin"
+              variant="contained"
+              startIcon={<CloudDownloadOutlinedIcon />}
+            >
+              Go to Admin → Catalogs
+            </Button>
+          </Paper>
+        )
+      ) : (
+        <>
       {/* Filter bar */}
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: "column", md: "row" }} gap={2} flexWrap="wrap">
@@ -518,18 +626,30 @@ export default function PlannerPage() {
             "& .MuiDataGrid-cell:focus, & .MuiDataGrid-cell:focus-within": {
               outline: "none",
             },
+            // MUI X DataGrid v8 renders a small three-dot "overflow" button
+            // on cells whose content it believes is truncated. It fires
+            // on every thumbnail cell because the <img> has a fixed width
+            // the grid can't measure past. We wrap text with whiteSpace:
+            // normal, so the indicator has nothing to reveal and just adds
+            // noise — hide it.
+            "& .MuiDataGrid-cellOverflowIndicator, & .MuiDataGrid-cellOverflowIndicatorButton":
+              {
+                display: "none",
+              },
           }}
         />
       </Paper>
+        </>
+      )}
 
       <PlannerDetailPanel
         dsoId={detailId}
         target={data?.items.find((i) => i.dso_id === detailId) ?? null}
-        locationId={locationId}
-        locationName={locationName}
-        rigFov={data?.rig ? [data.rig.fov_major_deg, data.rig.fov_minor_deg] : null}
-        rigName={data?.rig?.name ?? null}
-        tz={tz}
+        selectedLocationId={locationId}
+        locations={locationsQuery.data ?? []}
+        selectedRigId={rigId}
+        rigs={rigsQuery.data ?? []}
+        onSelectDso={(id) => setDetailId(id)}
         onClose={() => setDetailId(null)}
       />
     </Box>
