@@ -997,7 +997,8 @@ export default function FovSimulator({
                 <>
                   <Stack direction="row" alignItems="center" gap={1} sx={{ mt: 0.5 }}>
                     <Typography variant="caption" color="text.secondary" sx={{ minWidth: 90 }}>
-                      Min: {thresholdArcmin.toFixed(1)}&prime;
+                      Min: {thresholdArcmin.toFixed(1)}
+                      {"\u2032"}
                     </Typography>
                     <Tooltip
                       title={
@@ -1027,7 +1028,8 @@ export default function FovSimulator({
                     </Tooltip>
                   </Stack>
                   <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                    up to {sliderMaxArcmin.toFixed(0)}&prime;
+                    up to {sliderMaxArcmin.toFixed(0)}
+                    {"\u2032"}
                   </Typography>
                 </>
               )}
