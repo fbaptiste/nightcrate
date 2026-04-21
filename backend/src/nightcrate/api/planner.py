@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from nightcrate.api.dso import _normalize_search_key
 from nightcrate.api.planner_models import (
     CacheClearResponse,
     DarkWindowOut,
@@ -260,6 +261,14 @@ async def list_targets(
     max_magnitude: float | None = None,
     min_size_arcmin: float | None = None,
     frames_well: bool = False,
+    q: str | None = Query(
+        None,
+        description=(
+            "Free-text search over designations + common names — same semantics "
+            "as the DSO catalog's ``q``. Matches a designation ``search_key`` "
+            "by prefix or a case-insensitive substring of ``common_name``."
+        ),
+    ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sort: Literal[
@@ -334,6 +343,28 @@ async def list_targets(
     async with get_db() as conn:
         metadata = await _load_dso_metadata(conn, visible_ids)
 
+        # Optional free-text search — same matching rules as the DSO
+        # catalog so a user's mental model carries across pages.
+        search_match_ids: set[int] | None = None
+        if q and q.strip():
+            search_key = _normalize_search_key(q)
+            cursor = await conn.execute(
+                """
+                SELECT DISTINCT d.id
+                FROM dso d
+                WHERE d.active = 1
+                  AND (
+                      d.id IN (
+                          SELECT dso_id FROM dso_designation
+                          WHERE search_key LIKE ?
+                      )
+                      OR LOWER(d.common_name) LIKE ?
+                  )
+                """,
+                (search_key + "%", f"%{q.lower()}%"),
+            )
+            search_match_ids = {int(r["id"]) for r in await cursor.fetchall()}
+
     type_group_filter: set[str] | None = None
     if type_group:
         type_group_filter = {g.strip() for g in type_group.split(",") if g.strip()}
@@ -342,6 +373,8 @@ async def list_targets(
     for dso_id in visible_ids:
         meta = metadata.get(dso_id)
         if meta is None:
+            continue
+        if search_match_ids is not None and dso_id not in search_match_ids:
             continue
         group = group_for_raw_type(meta["obj_type"])
         if type_group_filter is not None and group not in type_group_filter:

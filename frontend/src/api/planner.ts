@@ -71,6 +71,9 @@ export interface PlannerTargetsParams {
   max_magnitude?: number | null;
   min_size_arcmin?: number | null;
   frames_well?: boolean;
+  /** Free-text search. Same semantics as the DSO catalog's ``q`` —
+   *  designation prefix or common-name substring match. */
+  q?: string | null;
   limit?: number;
   offset?: number;
   sort?: string;
@@ -89,6 +92,7 @@ export function fetchPlannerTargets(
   if (params.max_magnitude != null) qs.set("max_magnitude", String(params.max_magnitude));
   if (params.min_size_arcmin != null) qs.set("min_size_arcmin", String(params.min_size_arcmin));
   if (params.frames_well) qs.set("frames_well", "true");
+  if (params.q) qs.set("q", params.q);
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);

@@ -95,36 +95,24 @@ export default function SkyTileComposite({
     setCenterReady(false);
   }, [layout]);
 
-  const centerCellIdx = useMemo(() => {
-    if (!layout || layout.cells.length === 0) return -1;
-    const cx = layout.view_center_pixel_x;
-    const cy = layout.view_center_pixel_y;
-    for (let i = 0; i < layout.cells.length; i++) {
-      const c = layout.cells[i];
-      if (
-        cx >= c.pixel_x &&
-        cx < c.pixel_x + layout.cell_width_px &&
-        cy >= c.pixel_y &&
-        cy < c.pixel_y + layout.cell_height_px
-      ) {
-        return i;
-      }
-    }
-    // Fallback: the cell whose centre is nearest the view centre —
-    // handles edge cases where the DSO sits exactly on a cell seam.
-    let best = 0;
-    let bestDistSq = Infinity;
-    for (let i = 0; i < layout.cells.length; i++) {
-      const c = layout.cells[i];
-      const cellCx = c.pixel_x + layout.cell_width_px / 2;
-      const cellCy = c.pixel_y + layout.cell_height_px / 2;
-      const d = (cellCx - cx) ** 2 + (cellCy - cy) ** 2;
-      if (d < bestDistSq) {
-        bestDistSq = d;
-        best = i;
-      }
-    }
-    return best;
+  // Sort cells by distance from the view centre. Combined with
+  // render-in-order + the backend's 4-slot CDS semaphore, this gives
+  // the user a radial "ripples outward" load pattern — centre first,
+  // nearest neighbours next, corners last — instead of the previous
+  // random-looking completion order.
+  const sortedCells = useMemo(() => {
+    if (!layout) return [];
+    const vcx = layout.view_center_pixel_x;
+    const vcy = layout.view_center_pixel_y;
+    return [...layout.cells].sort((a, b) => {
+      const ax = a.pixel_x + layout.cell_width_px / 2;
+      const ay = a.pixel_y + layout.cell_height_px / 2;
+      const bx = b.pixel_x + layout.cell_width_px / 2;
+      const by = b.pixel_y + layout.cell_height_px / 2;
+      const ad = (ax - vcx) ** 2 + (ay - vcy) ** 2;
+      const bd = (bx - vcx) ** 2 + (by - vcy) ** 2;
+      return ad - bd;
+    });
   }, [layout]);
 
   if (!layout) {
@@ -141,13 +129,14 @@ export default function SkyTileComposite({
         height: layout.composite_height_px,
       }}
     >
-      {layout.cells.map((cell, i) => {
-        const isCenter = i === centerCellIdx;
-        // Defer non-centre cells until the centre lands. The parent
-        // already sizes the pan group to ``composite_width_px ×
-        // composite_height_px``, so empty slots render as the
-        // container's black background — not visible because the
-        // pan-group transform keeps the viewport over the centre.
+      {sortedCells.map((cell, i) => {
+        const isCenter = i === 0; // sorted[0] is the nearest cell to the view centre
+        // Two-phase mount: the centre cell goes first alone so the
+        // backend's 4-slot CDS semaphore is fully dedicated to it on
+        // cold cache. Remaining cells mount after the centre reports
+        // ``onReady`` — rendered in distance order so the
+        // browser fires their requests roughly centre-outward, which
+        // the semaphore respects FIFO.
         if (!isCenter && !centerReady) return null;
         return (
           <Box

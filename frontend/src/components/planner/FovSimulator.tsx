@@ -212,20 +212,25 @@ export default function FovSimulator({
   // Zoom bounds.
   //   zoomFit — whole composite visible in the viewport (floor).
   //   zoomMax = 1 — one source pixel per CSS pixel (native resolution).
-  //   zoomDefault — shows ~2× the rig's major FOV (≈ the old single-tile
-  //     view the v0.17.0 simulator used to open with). Keeps the
-  //     target and sensor rectangle prominent rather than lost in a
-  //     fully zoomed-out grid.
+  //   zoomDefault — chosen so the rig rectangle's major axis fills
+  //     about 75% of the viewport: plenty of target prominence, still
+  //     enough surrounding sky to sanity-check framing.
   const zoomFit = layout
     ? size / Math.max(layout.composite_width_px, layout.composite_height_px)
     : 1;
   const zoomMax = 1;
+  const TARGET_RECT_FRACTION = 0.75;
   const zoomDefault = useMemo(() => {
     if (!layout) return 1;
     const pxPerDeg = layout.cell_width_px / layout.cell_size_deg;
-    const defaultViewSourcePx = 2 * fovMajorDeg * pxPerDeg;
-    if (defaultViewSourcePx <= 0) return zoomFit;
-    return Math.max(zoomFit, Math.min(zoomMax, size / defaultViewSourcePx));
+    const rectMajorSourcePx = fovMajorDeg * pxPerDeg;
+    if (rectMajorSourcePx <= 0) return zoomFit;
+    // rect_on_screen_px = rectMajorSourcePx × zoom; solve for zoom such
+    // that rect_on_screen_px = TARGET_RECT_FRACTION × size.
+    return Math.max(
+      zoomFit,
+      Math.min(zoomMax, (TARGET_RECT_FRACTION * size) / rectMajorSourcePx),
+    );
   }, [layout, fovMajorDeg, size, zoomFit]);
   const zoomEff = zoom ?? zoomDefault;
 
@@ -643,34 +648,15 @@ export default function FovSimulator({
               />
             )}
 
-            {showAnnotations && showCoords && layout && (
-              <DsoAnnotationOverlay
-                items={nearbyItems}
-                primary={{
-                  id: dsoId,
-                  primary_designation: primaryDesignation ?? "",
-                  ra_deg: centerRaDeg!,
-                  dec_deg: centerDecDeg!,
-                  maj_axis_arcmin: dsoMajAxisArcmin ?? null,
-                }}
-                tangentRaDeg={layout.tangent_ra_deg}
-                tangentDecDeg={layout.tangent_dec_deg}
-                cellSizeDeg={layout.cell_size_deg}
-                cellPxSize={layout.cell_width_px}
-                compositePxWidth={layout.composite_width_px}
-                compositePxHeight={layout.composite_height_px}
-                viewCenterPxX={layout.view_center_pixel_x}
-                viewCenterPxY={layout.view_center_pixel_y}
-                thresholdArcmin={thresholdArcmin}
-                zoom={zoomEff}
-                onAnnotationClick={(item, anchor) =>
-                  setPopover({ item, anchor })
-                }
-              />
-            )}
-
             {/* Rig rectangle — anchored at the composite's view centre,
-                offset by rectOffsetX/Y in source pixels. */}
+                offset by rectOffsetX/Y in source pixels. Painted
+                BEFORE annotations so annotation circles/labels land on
+                top. The annotation overlay's SVG root has
+                ``pointer-events: none``, so clicks on empty space
+                pass through to the rect beneath; only the
+                annotation's own ``<g>`` elements intercept clicks —
+                exactly the "click the object, not the pan" behaviour
+                users expect. */}
             {layout && (
               <Box
                 ref={rectRef}
@@ -743,6 +729,32 @@ export default function FovSimulator({
                   }}
                 />
               </Box>
+            )}
+
+            {showAnnotations && showCoords && layout && (
+              <DsoAnnotationOverlay
+                items={nearbyItems}
+                primary={{
+                  id: dsoId,
+                  primary_designation: primaryDesignation ?? "",
+                  ra_deg: centerRaDeg!,
+                  dec_deg: centerDecDeg!,
+                  maj_axis_arcmin: dsoMajAxisArcmin ?? null,
+                }}
+                tangentRaDeg={layout.tangent_ra_deg}
+                tangentDecDeg={layout.tangent_dec_deg}
+                cellSizeDeg={layout.cell_size_deg}
+                cellPxSize={layout.cell_width_px}
+                compositePxWidth={layout.composite_width_px}
+                compositePxHeight={layout.composite_height_px}
+                viewCenterPxX={layout.view_center_pixel_x}
+                viewCenterPxY={layout.view_center_pixel_y}
+                thresholdArcmin={thresholdArcmin}
+                zoom={zoomEff}
+                onAnnotationClick={(item, anchor) =>
+                  setPopover({ item, anchor })
+                }
+              />
             )}
           </Box>
 

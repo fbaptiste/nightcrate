@@ -19,17 +19,22 @@ import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
 import FormControlLabel from "@mui/material/FormControlLabel";
+import IconButton from "@mui/material/IconButton";
+import InputAdornment from "@mui/material/InputAdornment";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Paper from "@mui/material/Paper";
 import Select from "@mui/material/Select";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
+import CloseIcon from "@mui/icons-material/Close";
 import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
+import SearchIcon from "@mui/icons-material/Search";
 import { Link as RouterLink } from "react-router-dom";
 import { fetchLocations } from "@/api/locations";
 import { fetchRigs } from "@/api/rigs";
@@ -40,6 +45,7 @@ import {
 } from "@/api/planner";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
+import { useDebounce } from "@/lib/useDebounce";
 import { typeGroupStyle } from "@/lib/dsoTypeGroups";
 import { displayConstellation } from "@/lib/constellations";
 import ThumbnailCell from "@/components/planner/ThumbnailCell";
@@ -67,6 +73,7 @@ export default function PlannerPage() {
   const setLocationId = usePlannerStore((s) => s.setSelectedLocationId);
   const rigId = usePlannerStore((s) => s.selectedRigId);
   const setRigId = usePlannerStore((s) => s.setSelectedRigId);
+  const [searchQuery, setSearchQuery] = useState("");
   const [typeGroupFilter, setTypeGroupFilter] = useState<string[]>([]);
   const [minHours, setMinHours] = useState<number>(
     settings?.planner_min_visibility_hours ?? 2.0,
@@ -128,6 +135,7 @@ export default function PlannerPage() {
 
   const sortField = sortModel[0]?.field ?? "hours_visible";
   const sortDir = (sortModel[0]?.sort ?? "desc") as "asc" | "desc";
+  const debouncedSearch = useDebounce(searchQuery.trim(), 250);
 
   const targetsQuery = useQuery({
     queryKey: [
@@ -140,6 +148,7 @@ export default function PlannerPage() {
         maxMag,
         minSize,
         framesWell,
+        q: debouncedSearch || null,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sortField,
@@ -155,6 +164,7 @@ export default function PlannerPage() {
         max_magnitude: maxMag,
         min_size_arcmin: minSize,
         frames_well: framesWell,
+        q: debouncedSearch || null,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sort: sortField,
@@ -447,6 +457,31 @@ export default function PlannerPage() {
       {/* Filter bar */}
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: "column", md: "row" }} gap={2} flexWrap="wrap">
+          <TextField
+            size="small"
+            placeholder="Search (M42, NGC 1976, Orion Nebula…)"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPagination((p) => ({ ...p, page: 0 }));
+            }}
+            sx={{ minWidth: 280, flex: { xs: 1, md: "initial" } }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" />
+                </InputAdornment>
+              ),
+              endAdornment: searchQuery ? (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setSearchQuery("")}>
+                    <CloseIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ) : null,
+            }}
+          />
+
           <FormControl size="small" sx={{ minWidth: 220 }}>
             <InputLabel>Location</InputLabel>
             <Select
