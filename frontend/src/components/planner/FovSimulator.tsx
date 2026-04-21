@@ -514,19 +514,21 @@ export default function FovSimulator({
       setRotation((r) => normalizeAngle(r - step));
     } else if (e.key === "r" || e.key === "R") {
       e.preventDefault();
-      resetAll();
+      recenterView();
     } else if (e.key === "Escape") {
       (e.currentTarget as HTMLElement).blur();
     }
   }
 
-  function resetAll() {
-    setRotation(0);
+  function recenterView() {
+    // Re-centres the DSO and resets the rig rectangle to the frame
+    // centre. Leaves zoom + rotation alone — those have their own
+    // dedicated reset controls in the sidebar, and users often want
+    // to recentre an image without losing the zoom they've dialled in.
     setRectOffsetX(0);
     setRectOffsetY(0);
     setPanX(0);
     setPanY(0);
-    setZoom(zoomDefault);
   }
   function resetRotation() {
     setRotation(0);
@@ -774,8 +776,8 @@ export default function FovSimulator({
                   >
                     Object (J2000)
                   </Typography>
-                  <Tooltip title="Re-center the view on the object">
-                    <IconButton size="small" onClick={resetAll} aria-label="Reset view">
+                  <Tooltip title="Re-center the view on the object (keeps zoom + rotation)">
+                    <IconButton size="small" onClick={recenterView} aria-label="Re-center view">
                       <RestartAltIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -994,7 +996,10 @@ export default function FovSimulator({
                 Arrow keys rotate ±5° (Shift ±1°) — focus the image
               </Typography>
               <Typography component="li" variant="caption" color="text.secondary">
-                <b>R</b> resets everything
+                <b>R</b> re-centers the view (zoom + rotation untouched)
+              </Typography>
+              <Typography component="li" variant="caption" color="text.secondary">
+                <b>Scroll wheel</b> zooms toward the cursor
               </Typography>
             </Box>
           </Box>
