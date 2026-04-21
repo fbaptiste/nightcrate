@@ -18,7 +18,7 @@ import DialogContent from "@mui/material/DialogContent";
 import { useState } from "react";
 import { fetchDso } from "@/api/dsos";
 import DsoDistanceHelpDialog from "@/components/dso/DsoDistanceHelpDialog";
-import ThumbnailCell from "@/components/planner/ThumbnailCell";
+import SkyPreview from "@/components/dso/SkyPreview";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance, formatDistanceMethod } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
@@ -176,7 +176,12 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
               >
                 {data.ra_deg != null && data.dec_deg != null ? (
                   <>
-                    <ThumbnailCell dsoId={dsoId} size={340} variant="detail" fill />
+                    <SkyPreview
+                      raDeg={data.ra_deg}
+                      decDeg={data.dec_deg}
+                      majAxisArcmin={data.maj_axis_arcmin ?? null}
+                      size={340}
+                    />
                     <Tooltip title="View full image" placement="left">
                       <IconButton
                         size="small"
@@ -469,14 +474,12 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
         }}
       >
         <DialogContent sx={{ p: 0, position: "relative" }}>
-          {dsoId != null && (
+          {data != null && data.ra_deg != null && data.dec_deg != null && (
             <Box
               sx={{
-                // Natural-aspect container sized to the detail tile's
-                // 800 px source. ``object-fit: contain`` on the image
-                // itself means a future non-1:1 variant would letterbox
-                // inside these bounds instead of cropping — today the
-                // detail variant is 800×800 so the fit is incidental.
+                // Full-size preview container. Same auto-tier decision
+                // as the 340 px thumbnail, just rendered at a larger
+                // CSS size — cells resolve from the same cache.
                 width: { xs: "min(90vw, 800px)", sm: "min(85vh, 800px)" },
                 maxWidth: 800,
                 aspectRatio: "1 / 1",
@@ -484,12 +487,11 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                 bgcolor: "#000000",
               }}
             >
-              <ThumbnailCell
-                dsoId={dsoId}
+              <SkyPreview
+                raDeg={data.ra_deg}
+                decDeg={data.dec_deg}
+                majAxisArcmin={data.maj_axis_arcmin ?? null}
                 size={800}
-                variant="detail"
-                fill
-                fit="contain"
               />
             </Box>
           )}
