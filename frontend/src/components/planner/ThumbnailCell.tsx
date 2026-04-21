@@ -50,6 +50,12 @@ interface Props {
    *  background image. ``size`` is ignored for layout (but still used
    *  to compute the URL's variant parameters). */
   fill?: boolean;
+  /** ``object-fit`` for the underlying ``<img>``. Defaults to
+   *  ``cover`` — matches the list/planner use case where the tile
+   *  fills a sensor-shaped container. Full-size previews should use
+   *  ``contain`` so a non-1:1 source renders at its natural aspect
+   *  rather than being cropped. */
+  fit?: "cover" | "contain";
   /** Fires once when the cell has loaded a real image (naturalWidth
    *  > 1). Re-fires if the request shape changes and a new real image
    *  lands. Callers use this to stage downstream work — e.g., the FOV
@@ -90,6 +96,7 @@ export default function ThumbnailCell({
   centerDecDeg,
   aspectRatio,
   fill = false,
+  fit = "cover",
   onReady,
   waitMs,
 }: Props) {
@@ -249,7 +256,7 @@ export default function ThumbnailCell({
           display: "block",
           width: "100%",
           height: "100%",
-          objectFit: "cover",
+          objectFit: fit,
           borderRadius: fill ? 0 : 4,
           background: "rgba(0, 0, 0, 0.05)",
           userSelect: fill ? "none" : undefined,

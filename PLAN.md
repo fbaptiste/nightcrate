@@ -2328,6 +2328,145 @@ architecture.
 
 ---
 
+## v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)
+
+**Status:** In Progress
+**Branch:** `v0.18.0/target-planner-pass-c`
+
+Rearchitects the FOV-simulator tile pipeline from per-DSO TAN fetches
+to a DSO-agnostic **HEALPix-regional sky-tile cache** where every cell
+in a region shares one tangent plane and therefore tiles pixel-perfectly.
+Cells are keyed by `(hips_survey, healpix_nside, healpix_ipix, tier,
+cell_i, cell_j)` rather than by DSO id, so neighbouring targets share
+cache. The catalog detail preview reuses the same cells with an
+auto-tier zoom-to-fit per object. Full design lives in
+`/.claude/plans/lovely-hatching-swan.md`.
+
+### Scope summary
+
+Began life as v0.17.1 "minor revision" (layout polish on the DSO
+detail panel) but re-scoped to v0.18.0 once the tile-cache rearchitecture
+landed in the plan. The layout polish rides along; the headline feature
+is the new cell cache.
+
+### Catalog detail-panel polish (already in-branch)
+
+- [x] `DsoDetailPanel` responsive layout (3-tier): 2-column metadata
+      + right-hand image on lg+, 1-column metadata + right-hand image
+      on md, full-stack with inline image on xs/sm. Image sticky on
+      md+, inline on xs/sm.
+- [x] "View full image" button overlay on the preview opens a modal
+      showing the cached tile at 100% natural aspect
+      (`object-fit: contain`). Close via X / backdrop / ESC.
+- [x] No-coords fallback: DSOs with null RA/Dec show a "No image
+      available — object has no coordinates on record" placeholder
+      instead of a broken ThumbnailCell.
+- [x] Close-button fix: added `display: flex` + `flexDirection: column`
+      to the bottom Drawer's Paper so the body's `flex: 1 + overflowY:
+      auto` actually bounds the scroll area, keeping the header + close
+      button reachable on long entries.
+- [x] New `fit` prop on `ThumbnailCell` — defaults to `"cover"` for
+      list/grid use; the full-size preview passes `fit="contain"` so
+      future non-square variants letterbox instead of cropping.
+
+### Sky-tile cache architecture (to implement — see lovely-hatching-swan.md)
+
+- [ ] Add `astropy_healpix` (BSD-3-Clause) dep. Verify licence before
+      adding. `healpy` is GPL-2.0 and explicitly excluded.
+- [ ] Migration 0020 adds `sky_tile_cache` table alongside existing
+      `thumbnail_cache`. Keys: `(hips_survey, healpix_nside,
+      healpix_ipix, tier, cell_size_deg_x100, cell_width_px,
+      cell_height_px, cell_i, cell_j)` + unique index.
+- [ ] `services/sky_tiles.py` — HEALPix region math (NSIDE=8, 768
+      regions), cell-grid math, `cell_wcs_header()` via
+      `astropy.wcs.WCS.to_header()`, `fetch_cell()` hitting hips2fits
+      with the `wcs=<JSON>` parameter.
+- [ ] `services/sky_tile_cache.py` — SQL helpers, LRU eviction, orphan
+      file sweep on startup.
+- [ ] `hips_client.build_hips2fits_wcs_url(hips, wcs_dict, fmt)`
+      alongside the existing `build_hips2fits_url`.
+- [ ] `GET /api/planner/sky-tile` endpoint with optional `wait_ms`
+      long-poll (reuse the pattern from `/thumbnails/{id}`).
+- [ ] Three resolution tiers selected by rig major FOV:
+      `narrow` (≤1°, 0.5° cells @ 800×800), `med` (1–3°, 2° cells @
+      800×800), `wide` (>3°, 8° cells @ 1024×1024).
+
+### Frontend cell composition
+
+- [ ] `frontend/src/lib/skyTiles.ts` — `ipixForCoord`, `tangentForIpix`,
+      `cellsCoveringRect`. Must stay byte-identical with the backend
+      layout math; covered by a parity test.
+- [ ] `api/planner.ts:skyTileUrl(hips, nside, ipix, tier, cellI, cellJ,
+      { waitMs })`.
+- [ ] `FovSimulator` — replace `computeTiles` with `cellsCoveringRect`;
+      tile placement uses TAN-plane pixel coords, not plate-carrée
+      `cosDec` math. Each cell renders in `<ThumbnailCell>` with the
+      new sky-tile URL.
+- [ ] `dsoAnnotations.ts` — drop `projectRaDecToTilePixel` per-tile
+      candidate selector. Replace with `projectRaDecInRegion` using
+      the region's single tangent. Cross-region fallback for the
+      boundary case.
+- [ ] `DsoAnnotationOverlay` — per-region projection.
+- [ ] `FovSimulator` stops sending `centerRaDeg`/`centerDecDeg` for the
+      simulator variant; panning is viewport-only under the new scheme.
+
+### DSO catalog auto-tier preview
+
+- [ ] New `<SkyPreview dsoId>` component replaces
+      `<ThumbnailCell variant="detail">` in `DsoDetailPanel` + the
+      full-size modal.
+- [ ] `previewExtentForDsoSize(majArcmin)` centralises the tier/extent
+      decision (10′ / × 2 / × 1.3 / × 1.1 brackets; 30″ floor for
+      DSS2).
+- [ ] Cells rendered via `<img>` + `object-position` / `object-fit:
+      none` for sub-rect windowing; multi-cell composition when the
+      preview extent straddles a cell boundary.
+- [ ] Retire the legacy `detail` variant on `thumbnail_cache` once the
+      catalog page migrates.
+
+### Testing
+
+- [ ] WCS roundtrip: ~20 coords including pole-adjacent and RA=0;
+      `world_to_pixel(cell_centre)` matches expected pixel coords
+      within 1e-6.
+- [ ] Seam equality: two adjacent cells byte-identical in the shared
+      edge row/column at a known star field.
+- [ ] Cache reuse: two DSOs 2° apart in the same HEALPix region → the
+      second hits zero CDS requests for already-cached cells.
+- [ ] Integration walk against real CDS across three DSOs in one
+      region; cache hit rate climbs toward ~80% on the third visit.
+- [ ] High-dec visual sanity: M81 (Dec +69°) simulator seams + annotation
+      alignment.
+- [ ] Boundary target: DSO straddling a HEALPix edge; confirm
+      in-region seams are clean and cross-region seams degrade to
+      today's behaviour (no regression).
+
+### Legacy cleanup
+
+- [ ] `thumbnail_cache` keeps serving `list` / `rig_framed`. The
+      `fov_simulator` rows age out via LRU (no data migration).
+- [ ] `detail` variant retires after the catalog page switches to
+      `SkyPreview`.
+- [ ] `center_ra_deg_x1000` / `center_dec_deg_x1000` columns become
+      vestigial (simulator no longer writes them). Keep the columns
+      (other variants default NULL) but stop referencing them in the
+      simulator code path.
+
+### v0.18.0 Completion Criteria
+
+- [ ] Migration 0020 applies cleanly; sky-tile cache table populated
+      by fresh simulator opens
+- [ ] Full backend suite green with new tests (WCS roundtrip, seam
+      equality, cache reuse)
+- [ ] Frontend build clean
+- [ ] ruff / format / bandit clean (0 / 0 / 0)
+- [ ] Manual end-to-end sanity pass across narrow / med / wide rigs
+      and a high-dec target
+- [ ] At least one HEALPix-boundary target confirmed to degrade
+      gracefully
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.
