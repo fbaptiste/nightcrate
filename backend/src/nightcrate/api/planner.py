@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from nightcrate.api.dso import _normalize_search_key
+from nightcrate.api.dso import normalize_search_key
 from nightcrate.api.planner_models import (
     CacheClearResponse,
     DarkWindowOut,
@@ -253,7 +253,7 @@ def _tonight_date(location_tz: str) -> date:
 
 @router.get("/targets", response_model=PlannerTargetsResponse)
 async def list_targets(
-    location_id: int,
+    location_id: int | None = None,
     rig_id: int | None = None,
     date_: date | None = Query(None, alias="date"),
     type_group: str | None = None,
@@ -297,11 +297,28 @@ async def list_targets(
     ] = "hours_visible",
     sort_dir: Literal["asc", "desc"] = "desc",
 ) -> PlannerTargetsResponse:
+    # Tonight mode is location-dependent; Anytime is pure catalog
+    # browse and works without one (first-run users with no locations
+    # still get a usable Anytime page).
+    if restrict_tonight and location_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="location_id is required when restrict_tonight=true",
+        )
+
     settings = await get_settings()
 
+    location: PlannerLocation | None = None
+    location_summary: PlannerLocationSummary | None = None
     async with get_db() as conn:
-        location = await _load_planner_location(conn, location_id)
-        location_name, has_horizon = await _load_location_name_and_horizon_flag(conn, location_id)
+        if location_id is not None:
+            location = await _load_planner_location(conn, location_id)
+            location_name, has_horizon = await _load_location_name_and_horizon_flag(
+                conn, location_id
+            )
+            location_summary = PlannerLocationSummary(
+                id=location.id, name=location_name, has_custom_horizon=has_horizon
+            )
 
         rig_summary: PlannerRigSummary | None = None
         rig_fov: tuple[float, float] | None = None
@@ -309,7 +326,11 @@ async def list_targets(
             rig_summary, fov_major, fov_minor = await _load_rig_fov(conn, rig_id)
             rig_fov = (fov_major, fov_minor)
 
-        night_date = date_ if date_ is not None else _tonight_date(location.timezone)
+        # Anytime mode has no location, so fall back to UTC for the
+        # night-date anchor (only used for the response's ``date``
+        # field — no visibility computation consumes it).
+        tz_for_date = location.timezone if location is not None else "UTC"
+        night_date = date_ if date_ is not None else _tonight_date(tz_for_date)
         dsos = await _load_dso_coords(conn)
 
     # "Anytime" mode skips the visibility snapshot entirely — the
@@ -323,7 +344,7 @@ async def list_targets(
             dsos,
             flat_min_altitude_deg=float(settings.planner_min_altitude_deg),
         )
-        if restrict_tonight
+        if restrict_tonight and location is not None
         else None
     )
 
@@ -343,9 +364,7 @@ async def list_targets(
         # never reaches here).
         if not snapshot.per_dso or dark_window_out is None:
             return PlannerTargetsResponse(
-                location=PlannerLocationSummary(
-                    id=location.id, name=location_name, has_custom_horizon=has_horizon
-                ),
+                location=location_summary,
                 rig=rig_summary,
                 date=night_date.isoformat(),
                 dark_window=dark_window_out,
@@ -389,7 +408,7 @@ async def list_targets(
         # catalog so a user's mental model carries across pages.
         search_match_ids: set[int] | None = None
         if q and q.strip():
-            search_key = _normalize_search_key(q)
+            search_key = normalize_search_key(q)
             cursor = await conn.execute(
                 """
                 SELECT DISTINCT d.id
@@ -506,9 +525,7 @@ async def list_targets(
     page = items[offset : offset + limit]
 
     return PlannerTargetsResponse(
-        location=PlannerLocationSummary(
-            id=location.id, name=location_name, has_custom_horizon=has_horizon
-        ),
+        location=location_summary,
         rig=rig_summary,
         date=night_date.isoformat(),
         dark_window=dark_window_out,
@@ -581,20 +598,15 @@ async def target_sky_track(
 # ── Thumbnails ───────────────────────────────────────────────────────────────
 
 
-_RIG_DEPENDENT_VARIANTS = {"rig_framed", "fov_simulator"}
-
-
 @router.get("/thumbnails/{dso_id}")
 async def get_thumbnail(
     dso_id: int,
-    variant: Literal["list", "detail", "rig_framed", "fov_simulator"] = "list",
+    variant: Literal["list", "detail", "rig_framed"] = "list",
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
-    center_ra_deg: float | None = None,
-    center_dec_deg: float | None = None,
     wait_ms: int = Query(0, ge=0, le=10000),
 ) -> Response:
-    if variant in _RIG_DEPENDENT_VARIANTS:
+    if variant == "rig_framed":
         if fov_major_deg is None or fov_minor_deg is None:
             raise HTTPException(
                 status_code=400,
@@ -607,19 +619,6 @@ async def get_thumbnail(
                 status_code=400,
                 detail="fov_major_deg and fov_minor_deg must be positive",
             )
-
-    # Sky-centre override is only valid for the simulator variant — for
-    # any other caller it's almost certainly a bug, so 400 rather than
-    # silently ignoring.
-    if (center_ra_deg is not None or center_dec_deg is not None) and variant != "fov_simulator":
-        raise HTTPException(
-            status_code=400,
-            detail="center_ra_deg / center_dec_deg are only valid for variant=fov_simulator",
-        )
-    if center_ra_deg is not None and not (0.0 <= center_ra_deg < 360.0):
-        raise HTTPException(status_code=400, detail="center_ra_deg must be in [0, 360)")
-    if center_dec_deg is not None and not (-90.0 <= center_dec_deg <= 90.0):
-        raise HTTPException(status_code=400, detail="center_dec_deg must be in [-90, 90]")
 
     settings = await get_settings()
     max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
@@ -646,8 +645,6 @@ async def get_thumbnail(
             conn_factory=get_db,
             fov_major_deg=fov_major_deg,
             fov_minor_deg=fov_minor_deg,
-            center_ra_deg=center_ra_deg,
-            center_dec_deg=center_dec_deg,
             wait_timeout_s=wait_ms / 1000.0,
         )
 

@@ -25,8 +25,9 @@ interface Props {
    *  whatever CSS size this is. */
   width: number;
   height: number;
-  /** Long-poll window on the first request. Retries always send
-   *  ``waitMs=0`` to avoid stacking 4-second holds against slow CDS. */
+  /** Long-poll window (ms) on the first request. Retries always
+   *  send ``waitMs=0`` to avoid stacking connection holds against a
+   *  slow CDS. */
   waitMs?: number;
   /** Fires once when a real image lands. The composite uses this to
    *  coordinate "first paint" signals, if needed. */
@@ -57,6 +58,15 @@ export default function SkyTileCell({
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
 
+  function markPermanentFailure(): void {
+    setFailed(true);
+    // Fire ``onReady`` on permanent failure too so a composite that
+    // gates peripheral cells on the centre cell's first paint
+    // (``SkyTileComposite``) doesn't get wedged when the centre
+    // cell's CDS fetch fails — the rest of the grid still renders.
+    onReady?.();
+  }
+
   function handleImageResolved(img: HTMLImageElement): void {
     if (img.naturalWidth > 1 && img.naturalHeight > 1) {
       setLoading(false);
@@ -65,7 +75,7 @@ export default function SkyTileCell({
     }
     if (retryTimerRef.current != null) return;
     if (retryCountRef.current >= MAX_RETRIES) {
-      setFailed(true);
+      markPermanentFailure();
       return;
     }
     retryCountRef.current += 1;
@@ -144,7 +154,7 @@ export default function SkyTileCell({
       <img
         ref={imgRef}
         onLoad={(e) => handleImageResolved(e.currentTarget)}
-        onError={() => setFailed(true)}
+        onError={markPermanentFailure}
         src={src}
         width={width}
         height={height}

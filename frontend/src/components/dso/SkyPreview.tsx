@@ -139,7 +139,7 @@ export default function SkyPreview({
         >
           {layout.cells.map((cell, i) => {
             const isCenter = i === centerCellIdx;
-            // Two-phase mount: centre first so the backend's 4-slot
+            // Two-phase mount: centre first so the backend's 8-slot
             // semaphore focuses on the target, then the rest come in
             // after ``onReady``.
             if (!isCenter && !centerReady) return null;

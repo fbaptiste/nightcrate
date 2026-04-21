@@ -120,6 +120,35 @@ async def test_targets_endpoint_404s_missing_location(client: TestClient):
     assert response.status_code == 404
 
 
+async def test_targets_anytime_mode_works_without_location(client: TestClient, seed_db):
+    # Regression: a first-run user with no saved locations must still be
+    # able to browse the catalog via Anytime mode — the endpoint can't
+    # require ``location_id`` in that mode.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # Location metadata is null in Anytime without a location.
+    assert body["location"] is None
+    assert body["dark_window"] is None
+    # Visibility fields are null on every item.
+    assert body["total"] > 0
+    for item in body["items"]:
+        assert item["hours_visible"] is None
+        assert item["max_altitude_deg"] is None
+
+
+async def test_targets_tonight_mode_requires_location(client: TestClient):
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "true"},
+    )
+    assert response.status_code == 400
+
+
 async def test_sky_track_endpoint_returns_arrays(client: TestClient, seed_db):
     location_id = seed_db
     # Find M42's DSO id.
@@ -164,17 +193,6 @@ async def test_thumbnail_rig_framed_missing_fov_returns_400(client: TestClient, 
     )
     assert response.status_code == 400
     assert "fov_major_deg" in response.json()["detail"]
-
-
-async def test_thumbnail_fov_simulator_missing_fov_returns_400(client: TestClient, seed_db):
-    async with get_db() as conn:
-        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
-        m42 = (await cursor.fetchone())["id"]
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={"variant": "fov_simulator", "fov_major_deg": 0.37},
-    )
-    assert response.status_code == 400
 
 
 async def test_thumbnail_rig_framed_negative_fov_returns_400(client: TestClient, seed_db):
@@ -315,47 +333,6 @@ async def test_dsos_in_region_caps_limit(client: TestClient, seed_dsos_in_region
         },
     )
     assert response.status_code == 422
-
-
-async def test_thumbnail_sky_center_rejected_on_non_simulator_variant(client: TestClient, seed_db):
-    async with get_db() as conn:
-        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
-        m42 = (await cursor.fetchone())["id"]
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={"variant": "detail", "center_ra_deg": 100.0, "center_dec_deg": 10.0},
-    )
-    assert response.status_code == 400
-
-
-async def test_thumbnail_sky_center_rejected_on_invalid_range(client: TestClient, seed_db):
-    async with get_db() as conn:
-        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
-        m42 = (await cursor.fetchone())["id"]
-    # Dec out of range.
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={
-            "variant": "fov_simulator",
-            "fov_major_deg": 0.37,
-            "fov_minor_deg": 0.28,
-            "center_ra_deg": 50.0,
-            "center_dec_deg": 100.0,
-        },
-    )
-    assert response.status_code == 400
-    # RA out of range (negative).
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={
-            "variant": "fov_simulator",
-            "fov_major_deg": 0.37,
-            "fov_minor_deg": 0.28,
-            "center_ra_deg": -1.0,
-            "center_dec_deg": 10.0,
-        },
-    )
-    assert response.status_code == 400
 
 
 async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(

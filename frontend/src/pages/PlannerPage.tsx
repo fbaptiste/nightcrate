@@ -196,7 +196,11 @@ export default function PlannerPage() {
     // list.
     queryFn: () =>
       fetchPlannerTargets({
-        location_id: locationId!,
+        // Tonight mode gates the query on ``locationId != null``
+        // (see ``enabled`` below), so the non-null assertion is
+        // safe. Anytime mode sends ``null`` so the backend skips
+        // the location load entirely.
+        location_id: restrictTonight ? locationId! : null,
         rig_id: rigId,
         type_group: typeGroupFilter,
         type: typeFilter,
@@ -213,7 +217,8 @@ export default function PlannerPage() {
         sort: sortField,
         sort_dir: sortDir,
       }),
-    enabled: locationId != null,
+    // Tonight mode is location-dependent; Anytime runs without one.
+    enabled: !restrictTonight || locationId != null,
     placeholderData: (prev) => prev,
   });
 
@@ -256,9 +261,9 @@ export default function PlannerPage() {
   const data = targetsQuery.data;
 
   // Block the UI behind the filter bar / grid when we can't reasonably
-  // show any targets yet. Both empty-states mirror the DSO Catalog page
-  // pattern — full-height centered panel + CTA button to the page
-  // that fixes the gap.
+  // show any targets yet. The "no-location" CTA only fires in Tonight
+  // mode — Anytime is location-independent, so a first-run user with
+  // no locations can still browse the catalog.
   const hasLocations =
     !locationsQuery.isLoading && (locationsQuery.data?.length ?? 0) > 0;
   const catalogTotal = (facetsQuery.data?.type_groups ?? []).reduce(
@@ -267,7 +272,7 @@ export default function PlannerPage() {
   );
   const hasCatalog = !facetsQuery.isLoading && catalogTotal > 0;
   const plannerEmptyState: "no-location" | "no-catalog" | null =
-    !locationsQuery.isLoading && !hasLocations
+    restrictTonight && !locationsQuery.isLoading && !hasLocations
       ? "no-location"
       : !facetsQuery.isLoading && !hasCatalog
         ? "no-catalog"
@@ -492,7 +497,7 @@ export default function PlannerPage() {
           aria-label="Planner scope"
         >
           <ToggleButton value="tonight" sx={{ textTransform: "none", px: 2 }}>
-            Tonight from {locationName ?? "Home"}
+            {locationName ? `Tonight from ${locationName}` : "Tonight"}
           </ToggleButton>
           <ToggleButton value="anytime" sx={{ textTransform: "none", px: 2 }}>
             Browse the full catalog
@@ -827,13 +832,15 @@ export default function PlannerPage() {
       {/* Empty / error states — only relevant in Tonight mode; in
           Anytime there's no location/date, so the concept doesn't
           apply. */}
-      {restrictTonight && targetsQuery.data?.dark_window === null && (
-        <Alert severity="info">
-          It doesn't get astronomically dark tonight at{" "}
-          {targetsQuery.data.location.name} — summer twilight at high
-          latitude. Try another night or location.
-        </Alert>
-      )}
+      {restrictTonight &&
+        targetsQuery.data?.dark_window === null &&
+        targetsQuery.data.location && (
+          <Alert severity="info">
+            It doesn't get astronomically dark tonight at{" "}
+            {targetsQuery.data.location.name} — summer twilight at high
+            latitude. Try another night or location.
+          </Alert>
+        )}
 
       {/* Grid */}
       <Paper variant="outlined" sx={{ flex: 1, minHeight: 0 }}>

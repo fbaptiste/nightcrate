@@ -62,7 +62,7 @@ _LONG_TO_SHORT_PREFIX: dict[str, str] = {
 }
 
 
-def _normalize_search_key(query: str) -> str:
+def normalize_search_key(query: str) -> str:
     normalized = _SEARCH_STRIP_RE.sub("", query).lower()
     for long, short in _LONG_TO_SHORT_PREFIX.items():
         if normalized.startswith(long):
@@ -164,7 +164,7 @@ async def list_dsos(
         where_clauses.append("d.distance_pc IS NULL")
 
     if q:
-        search_key = _normalize_search_key(q)
+        search_key = normalize_search_key(q)
         # Match either a designation search_key exactly/prefix or a
         # case-insensitive substring of common_name.
         where_clauses.append(
@@ -227,7 +227,7 @@ async def lookup_dso(
     q: str = Query(..., description="Designation to resolve (e.g., 'M42', 'NGC 1976')"),
 ) -> DsoDetail | None:
     """Return the DSO whose search_key exactly matches *q*, or null."""
-    search_key = _normalize_search_key(q)
+    search_key = normalize_search_key(q)
     async with get_db() as conn:
         cursor = await conn.execute(
             """

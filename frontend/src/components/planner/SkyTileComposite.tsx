@@ -76,8 +76,10 @@ export default function SkyTileComposite({
 
   const layout = query.data;
 
-  // Fire the onLayout callback when new layout data arrives.
-  useMemo(() => {
+  // Fire the onLayout callback when new layout data arrives. Must be
+  // ``useEffect`` — React may drop or re-run ``useMemo`` factories
+  // (and does in StrictMode), so side effects can't live there.
+  useEffect(() => {
     if (layout) onLayout?.(layout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
@@ -85,7 +87,7 @@ export default function SkyTileComposite({
   // Stage the cell mount so the centre cell (containing the DSO's
   // view-centre pixel) loads first and the user sees the target
   // quickly. Non-centre cells mount only after the centre reports
-  // ``onReady``, so the 4-slot CDS semaphore isn't contended by
+  // ``onReady``, so the 8-slot CDS semaphore isn't contended by
   // surrounding cells while the centre is mid-flight. On warm cache
   // every cell is ready instantly and the two phases collapse into
   // one render frame.
@@ -96,7 +98,7 @@ export default function SkyTileComposite({
   }, [layout]);
 
   // Sort cells by distance from the view centre. Combined with
-  // render-in-order + the backend's 4-slot CDS semaphore, this gives
+  // render-in-order + the backend's 8-slot CDS semaphore, this gives
   // the user a radial "ripples outward" load pattern — centre first,
   // nearest neighbours next, corners last — instead of the previous
   // random-looking completion order.
@@ -132,7 +134,7 @@ export default function SkyTileComposite({
       {sortedCells.map((cell, i) => {
         const isCenter = i === 0; // sorted[0] is the nearest cell to the view centre
         // Two-phase mount: the centre cell goes first alone so the
-        // backend's 4-slot CDS semaphore is fully dedicated to it on
+        // backend's 8-slot CDS semaphore is fully dedicated to it on
         // cold cache. Remaining cells mount after the centre reports
         // ``onReady`` — rendered in distance order so the
         // browser fires their requests roughly centre-outward, which

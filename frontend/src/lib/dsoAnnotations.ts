@@ -7,32 +7,6 @@
 
 const DEG_TO_RAD = Math.PI / 180;
 
-/** Tangent point of the tile at grid position ``(col, row)`` around
- *  ``(centerRaDeg, centerDecDeg)``. Plate-carrée-style offsets —
- *  ``tileExtentDeg / cos(centerDec)`` in RA, ``tileExtentDeg`` in Dec.
- *  Returns unwrapped RA (callers wrap with ``[0, 360)`` if they pass
- *  it to an external API; the projection helpers handle RA wrap
- *  internally, so they don't need it). Dec is clamped to ``[-90, 90]``
- *  so tiles near the pole don't drift off the sphere.
- *
- *  Shared between the simulator's tile-grid renderer and the
- *  annotation overlay's per-tile projection so both agree on exactly
- *  where each tile sits — divergence breaks annotation alignment.
- */
-export function tileCenterAt(
-  centerRaDeg: number,
-  centerDecDeg: number,
-  col: number,
-  row: number,
-  tileExtentDeg: number,
-): { raDeg: number; decDeg: number } {
-  const cosCenterDec = Math.max(Math.cos(centerDecDeg * DEG_TO_RAD), 1e-6);
-  return {
-    raDeg: centerRaDeg + (-col * tileExtentDeg) / cosCenterDec,
-    decDeg: Math.max(-90, Math.min(90, centerDecDeg - row * tileExtentDeg)),
-  };
-}
-
 /** Gnomonic (tangent-plane, TAN) projection of a sky position onto the
  *  tangent plane at ``(tangentRaDeg, tangentDecDeg)``. Returns
  *  ``(xi, eta)`` in radians on that plane — east-positive for xi,
@@ -71,41 +45,6 @@ function gnomonicProject(
   const xi = (cosDec * Math.sin(dRa)) / safeCosC;
   const eta = (sinDec * cosDec0 - cosDec * sinDec0 * cosDRa) / safeCosC;
   return { xi, eta };
-}
-
-/** Pixel scale on the tangent plane for a given image extent. The
- *  image covers ``2·tan(extent/2)`` in tangent-plane radians across
- *  its diameter — slightly larger than the angular extent for wide
- *  fields. hips2fits uses the same convention. */
-function pxPerRadForExtent(extentDeg: number, sizePx: number): number {
-  const halfExtentOnPlane = Math.tan((extentDeg / 2) * DEG_TO_RAD);
-  return sizePx / 2 / halfExtentOnPlane;
-}
-
-/** Project a DSO's RA/Dec to image-local pixel coords, with the image
- *  center at (size/2, size/2).
- *
- *  Uses a single gnomonic tangent plane centered on
- *  ``(centerRaDeg, centerDecDeg)``. Appropriate for untiled images and
- *  for the center tile of the FOV simulator — annotations in neighbour
- *  tiles should use ``projectRaDecToTilePixel`` instead because each
- *  tile is rendered with its own tangent point.
- *
- *  Convention: north-up / east-left. Positive ΔRA (east of center)
- *  renders left of the image center (negative dx); positive ΔDec
- *  (north of center) renders above (negative dy).
- */
-export function projectRaDecToPixel(
-  raDeg: number,
-  decDeg: number,
-  centerRaDeg: number,
-  centerDecDeg: number,
-  sizePx: number,
-  extentDeg: number,
-): { dx: number; dy: number } {
-  const { xi, eta } = gnomonicProject(raDeg, decDeg, centerRaDeg, centerDecDeg);
-  const pxPerRad = pxPerRadForExtent(extentDeg, sizePx);
-  return { dx: -xi * pxPerRad, dy: -eta * pxPerRad };
 }
 
 /** Project a DSO's RA/Dec into a composite that shares a single
@@ -158,72 +97,6 @@ export function projectRaDecInRegion(
   };
 }
 
-
-/** Legacy projection kept for the v0.17.0 simulator path until that
- *  view migrates to the sky-tile composite. Picks the best of up to
- *  four candidate tiles around the float column/row. */
-export function projectRaDecToTilePixel(
-  raDeg: number,
-  decDeg: number,
-  centerRaDeg: number,
-  centerDecDeg: number,
-  tileExtentDeg: number,
-  halfGrid: number,
-  tilePx: number,
-): { cx: number; cy: number } {
-  let dRaDeg = raDeg - centerRaDeg;
-  if (dRaDeg > 180) dRaDeg -= 360;
-  if (dRaDeg < -180) dRaDeg += 360;
-  const dDecDeg = decDeg - centerDecDeg;
-  const cosCenterDec = Math.max(Math.cos(centerDecDeg * DEG_TO_RAD), 1e-6);
-  const colFloat = (-dRaDeg * cosCenterDec) / tileExtentDeg;
-  const rowFloat = -dDecDeg / tileExtentDeg;
-
-  const clamp = (v: number): number =>
-    Math.max(-halfGrid, Math.min(halfGrid, v));
-  const colCandidates = new Set<number>([
-    clamp(Math.floor(colFloat)),
-    clamp(Math.ceil(colFloat)),
-  ]);
-  const rowCandidates = new Set<number>([
-    clamp(Math.floor(rowFloat)),
-    clamp(Math.ceil(rowFloat)),
-  ]);
-
-  let best: { col: number; row: number; xi: number; eta: number } | null = null;
-  let bestDistSq = Infinity;
-  for (const col of colCandidates) {
-    for (const row of rowCandidates) {
-      const tile = tileCenterAt(
-        centerRaDeg,
-        centerDecDeg,
-        col,
-        row,
-        tileExtentDeg,
-      );
-      const { xi, eta } = gnomonicProject(
-        raDeg,
-        decDeg,
-        tile.raDeg,
-        tile.decDeg,
-      );
-      const distSq = xi * xi + eta * eta;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        best = { col, row, xi, eta };
-      }
-    }
-  }
-  const { col, row, xi, eta } = best!;
-
-  const pxPerRad = pxPerRadForExtent(tileExtentDeg, tilePx);
-  const tileCenterX = (col + halfGrid + 0.5) * tilePx;
-  const tileCenterY = (row + halfGrid + 0.5) * tilePx;
-  return {
-    cx: tileCenterX - xi * pxPerRad,
-    cy: tileCenterY - eta * pxPerRad,
-  };
-}
 
 /** Circle radius in pixels for an object of given angular diameter. */
 export function radiusPxForArcmin(

@@ -53,7 +53,9 @@ class PlannerTargetItem(BaseModel):
 
 
 class PlannerTargetsResponse(BaseModel):
-    location: PlannerLocationSummary
+    # ``None`` in Anytime mode when the caller didn't supply a location
+    # — catalog browsing is location-independent.
+    location: PlannerLocationSummary | None
     rig: PlannerRigSummary | None
     date: str
     dark_window: DarkWindowOut | None

@@ -52,7 +52,8 @@ export interface PlannerTargetItem {
 }
 
 export interface PlannerTargetsResponse {
-  location: PlannerLocationSummary;
+  // Null in Anytime mode when the caller omits ``location_id``.
+  location: PlannerLocationSummary | null;
   rig: PlannerRigSummary | null;
   date: string;
   dark_window: PlannerDarkWindow | null;
@@ -64,7 +65,9 @@ export interface PlannerTargetsResponse {
 }
 
 export interface PlannerTargetsParams {
-  location_id: number;
+  /** Required in Tonight mode; omit (``null``) in Anytime — the
+   *  backend then skips visibility + location metadata entirely. */
+  location_id: number | null;
   rig_id?: number | null;
   date?: string | null;
   type_group?: string[];
@@ -95,7 +98,7 @@ export function fetchPlannerTargets(
   params: PlannerTargetsParams,
 ): Promise<PlannerTargetsResponse> {
   const qs = new URLSearchParams();
-  qs.set("location_id", String(params.location_id));
+  if (params.location_id != null) qs.set("location_id", String(params.location_id));
   if (params.rig_id != null) qs.set("rig_id", String(params.rig_id));
   if (params.date) qs.set("date", params.date);
   if (params.type_group?.length) qs.set("type_group", params.type_group.join(","));
@@ -295,16 +298,12 @@ export const clearSkyTileCache = () =>
     method: "POST",
   });
 
-export type ThumbnailVariant = "list" | "detail" | "rig_framed" | "fov_simulator";
+export type ThumbnailVariant = "list" | "detail" | "rig_framed";
 
 export interface ThumbnailUrlOptions {
-  /** Required for ``rig_framed`` + ``fov_simulator``; ignored otherwise. */
+  /** Required for ``rig_framed``; ignored otherwise. */
   fovMajorDeg?: number;
   fovMinorDeg?: number;
-  /** Panned sky centre — only honoured for ``fov_simulator``. When
-   *  omitted the backend falls back to the DSO's native coordinates. */
-  centerRaDeg?: number;
-  centerDecDeg?: number;
   /** Cache-generation counter — appended as ``&_g=N``. Bumps on cache
    *  clear so stale browser-cached entries are never reused. Sourced
    *  from ``useThumbnailCacheStore``. */
@@ -313,9 +312,7 @@ export interface ThumbnailUrlOptions {
    *  holds the request open up to this long waiting for the CDS fetch
    *  to complete, then serves the real image in the same round trip.
    *  ``0`` (default) restores the old behaviour — immediate placeholder,
-   *  client polls with backoff. Worth setting for the simulator
-   *  (2–4 s) so the first visible image lands at CDS latency rather
-   *  than CDS + next-poll-cadence. Backend caps at 10 s. */
+   *  client polls with backoff. Backend caps at 10 s. */
   waitMs?: number;
 }
 
@@ -324,8 +321,8 @@ export interface ThumbnailUrlOptions {
  *  Image requests bypass the apiFetch wrapper, so we fold the current
  *  activity label into the query string directly (matches
  *  ``api/images.ts:imageUrl`` — required for the Activity Console).
- *  ``fovMajorDeg`` / ``fovMinorDeg`` are required for the rig-dependent
- *  variants; caller is trusted to pass them. */
+ *  ``fovMajorDeg`` / ``fovMinorDeg`` are required for ``rig_framed``;
+ *  caller is trusted to pass them. */
 export function thumbnailUrl(
   dsoId: number,
   variant: ThumbnailVariant = "list",
@@ -334,8 +331,6 @@ export function thumbnailUrl(
   const q = new URLSearchParams({ variant });
   if (opts.fovMajorDeg != null) q.set("fov_major_deg", opts.fovMajorDeg.toFixed(4));
   if (opts.fovMinorDeg != null) q.set("fov_minor_deg", opts.fovMinorDeg.toFixed(4));
-  if (opts.centerRaDeg != null) q.set("center_ra_deg", opts.centerRaDeg.toFixed(4));
-  if (opts.centerDecDeg != null) q.set("center_dec_deg", opts.centerDecDeg.toFixed(4));
   if (opts.generation != null) q.set("_g", String(opts.generation));
   if (opts.waitMs != null && opts.waitMs > 0) q.set("wait_ms", String(opts.waitMs));
   const activity = getActivity();

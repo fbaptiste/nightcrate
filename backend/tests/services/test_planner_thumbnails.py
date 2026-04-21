@@ -338,51 +338,6 @@ def test_compute_angular_extent_rig_framed_requires_fov():
         thumbnails.compute_angular_extent_deg("rig_framed", dso_maj_axis_arcmin=5.0)
 
 
-def test_compute_angular_extent_fov_simulator_rig_major_over_050():
-    # Tile extent = fov_major / 0.5 so the sensor rectangle fills 50%
-    # of the tile's max dimension. C11-like 0.37×0.28 rig: 0.37/0.5 =
-    # 0.74°. Object size is intentionally NOT a factor — the zoom
-    # stays tied to the rig only.
-    extent = thumbnails.compute_angular_extent_deg(
-        "fov_simulator",
-        dso_maj_axis_arcmin=5.0,
-        fov_major_deg=0.37,
-        fov_minor_deg=0.28,
-    )
-    assert extent == pytest.approx(0.74, abs=1e-3)
-
-
-def test_compute_angular_extent_fov_simulator_ignores_object_size():
-    # M42 at 65' with a tiny 0.1×0.08° rig. Object dominates
-    # visually but tile extent is locked to the rig: 0.1/0.5 = 0.2°.
-    extent = thumbnails.compute_angular_extent_deg(
-        "fov_simulator",
-        dso_maj_axis_arcmin=65.0,
-        fov_major_deg=0.1,
-        fov_minor_deg=0.08,
-    )
-    assert extent == pytest.approx(0.2, abs=1e-3)
-
-
-def test_compute_angular_extent_fov_simulator_uses_larger_axis():
-    # Portrait rigs (minor > major, rare but possible) should still
-    # pick the larger dimension. 0.45 / 0.5 = 0.9.
-    extent = thumbnails.compute_angular_extent_deg(
-        "fov_simulator",
-        dso_maj_axis_arcmin=5.0,
-        fov_major_deg=0.3,
-        fov_minor_deg=0.45,
-    )
-    assert extent == pytest.approx(0.9, abs=1e-3)
-
-
-def test_compute_angular_extent_fov_simulator_requires_both_fov_dims():
-    with pytest.raises(ValueError, match="fov_simulator"):
-        thumbnails.compute_angular_extent_deg(
-            "fov_simulator", dso_maj_axis_arcmin=5.0, fov_major_deg=0.37
-        )
-
-
 def test_make_key_rounds_fov_to_milli_degree():
     k1 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.3701, fov_minor_deg=0.2801)
     k2 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.3702, fov_minor_deg=0.2804)
@@ -408,44 +363,25 @@ def test_make_key_rig_independent_variants_ignore_fov_args():
 def test_make_key_rig_dependent_variants_require_fov():
     with pytest.raises(ValueError, match="rig_framed"):
         thumbnails.make_key(42, "rig_framed")
-    with pytest.raises(ValueError, match="fov_simulator"):
-        thumbnails.make_key(42, "fov_simulator", fov_major_deg=0.37)
 
 
-def test_make_key_sky_center_only_recorded_for_fov_simulator():
-    # Stray center coords on a non-simulator variant must be discarded
-    # so the list/detail caches don't fork on a bug elsewhere.
+def test_make_key_sky_center_args_are_discarded():
+    # ``center_ra_deg`` / ``center_dec_deg`` survived in the signature
+    # for backwards-compat after the panned fov_simulator retirement;
+    # they must NOT make it into the key for any current variant.
     k = thumbnails.make_key(42, "list", center_ra_deg=100.0, center_dec_deg=20.0)
     assert k.center_ra_deg_x1000 is None
     assert k.center_dec_deg_x1000 is None
-
-
-def test_make_key_sky_center_rounds_to_milli_degree():
     k = thumbnails.make_key(
         42,
-        "fov_simulator",
-        fov_major_deg=0.37,
-        fov_minor_deg=0.28,
-        center_ra_deg=202.4731,
-        center_dec_deg=47.1954,
-    )
-    assert k.center_ra_deg_x1000 == 202473
-    assert k.center_dec_deg_x1000 == 47195
-
-
-def test_make_key_sky_center_distinguishes_panned_from_native():
-    native = thumbnails.make_key(42, "fov_simulator", fov_major_deg=0.37, fov_minor_deg=0.28)
-    panned = thumbnails.make_key(
-        42,
-        "fov_simulator",
+        "rig_framed",
         fov_major_deg=0.37,
         fov_minor_deg=0.28,
         center_ra_deg=10.0,
         center_dec_deg=-5.0,
     )
-    assert native.center_ra_deg_x1000 is None
-    assert panned.center_ra_deg_x1000 == 10000
-    assert native != panned
+    assert k.center_ra_deg_x1000 is None
+    assert k.center_dec_deg_x1000 is None
 
 
 async def test_rig_framed_cache_miss_enqueues_fetch(fake_hips):
