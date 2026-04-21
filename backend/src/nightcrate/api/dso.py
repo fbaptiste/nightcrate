@@ -246,19 +246,87 @@ async def lookup_dso(
 
 
 @router.get("/facets", response_model=DsoFacetsResponse)
-async def list_facets() -> DsoFacetsResponse:
-    """Distinct obj_type codes, type groups, and constellations with counts."""
+async def list_facets(
+    q: str | None = Query(None, description="Free-text search — mirrors /api/dso's param"),
+    constellation: str | None = None,
+    has_distance: bool | None = None,
+    type: str | None = Query(None, description="Comma-separated raw obj_type codes"),
+    type_group: str | None = Query(None, description="Comma-separated type-group names"),
+) -> DsoFacetsResponse:
+    """Distinct obj_type codes, type groups, and constellations with
+    counts.
+
+    When any of the filter params are supplied, the returned counts
+    reflect **faceted-search** semantics: each chip's tally is "how
+    many DSOs would match if only that chip were selected from this
+    dimension, with all OTHER filter dimensions held constant". The
+    UI uses this so chip labels like "Galaxy (234)" change with the
+    user's current filter state instead of always showing full-
+    catalog totals.
+
+    Zero params = classic full-catalog counts (the v0.14.0 behaviour).
+    """
+    # Faceting by a dimension means: when counting for that dimension,
+    # apply every OTHER filter but not this one. We implement this by
+    # running three queries with slightly different WHERE clauses:
+    #   1. Base counts (all filters applied) → used for constellations
+    #   2. Without the type dimension → used for both raw types and
+    #      type groups (they share the same dimension semantically —
+    #      selecting a raw type implies its parent group).
+    base_sql_parts: list[str] = ["d.active = 1"]
+    base_params: list[object] = []
+
+    if constellation:
+        base_sql_parts.append("d.constellation = ?")
+        base_params.append(constellation)
+    if has_distance is True:
+        base_sql_parts.append("d.distance_pc IS NOT NULL")
+    elif has_distance is False:
+        base_sql_parts.append("d.distance_pc IS NULL")
+    if q and q.strip():
+        search_key = normalize_search_key(q)
+        base_sql_parts.append(
+            "(d.id IN (SELECT dso_id FROM dso_designation WHERE search_key LIKE ?) "
+            "OR LOWER(d.common_name) LIKE ?)"
+        )
+        base_params.append(search_key + "%")
+        base_params.append(f"%{q.lower()}%")
+
+    # Type-dimension filters — applied for the constellations query
+    # but NOT for the raw/group-types queries (those are the facets).
+    type_sql_parts = list(base_sql_parts)
+    type_params = list(base_params)
+    if type:
+        codes = [c.strip() for c in type.split(",") if c.strip()]
+        if codes:
+            placeholders = ",".join("?" for _ in codes)
+            type_sql_parts.append(f"d.obj_type IN ({placeholders})")
+            type_params.extend(codes)
+    if type_group:
+        groups = {g.strip() for g in type_group.split(",") if g.strip()}
+        if groups:
+            allowed_raw = [raw for g in TYPE_GROUPS if g.name in groups for raw in g.raw_types]
+            if allowed_raw:
+                placeholders = ",".join("?" for _ in allowed_raw)
+                type_sql_parts.append(f"d.obj_type IN ({placeholders})")
+                type_params.extend(allowed_raw)
+
     async with get_db() as conn:
+        # Raw / type-group counts: every filter applied EXCEPT type_*.
+        raw_where = " AND ".join(base_sql_parts)
         cursor = await conn.execute(
-            "SELECT obj_type, COUNT(*) AS n FROM dso WHERE active = 1 "
-            "GROUP BY obj_type ORDER BY obj_type"
+            f"SELECT obj_type, COUNT(*) AS n FROM dso d WHERE {raw_where} "  # noqa: S608  # nosec B608 — whitelisted clauses
+            "GROUP BY obj_type ORDER BY obj_type",
+            base_params,
         )
         raw_counts: dict[str, int] = {r["obj_type"]: r["n"] for r in await cursor.fetchall()}
 
+        # Constellations: every filter applied, including type.
+        const_where = " AND ".join([*type_sql_parts, "d.constellation IS NOT NULL"])
         cursor = await conn.execute(
-            "SELECT constellation, COUNT(*) AS n FROM dso "
-            "WHERE active = 1 AND constellation IS NOT NULL "
-            "GROUP BY constellation ORDER BY constellation"
+            f"SELECT constellation, COUNT(*) AS n FROM dso d WHERE {const_where} "  # noqa: S608  # nosec B608 — whitelisted clauses
+            "GROUP BY constellation ORDER BY constellation",
+            type_params,
         )
         constellations = [
             ConstellationFacet(code=r["constellation"], count=r["n"])

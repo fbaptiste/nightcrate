@@ -30,6 +30,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import { Link as RouterLink } from "react-router-dom";
 import { fetchDsoFacets, fetchDsos, type DsoListItem } from "@/api/dsos";
 import { useDebounce } from "@/lib/useDebounce";
+import GridLoadingOverlay from "@/components/common/GridLoadingOverlay";
 import PaginationActions from "@/components/common/PaginationActions";
 import DsoAttributionPanel from "@/components/dso/DsoAttributionPanel";
 import DsoDetailPanel from "@/components/dso/DsoDetailPanel";
@@ -86,10 +87,24 @@ export default function DsoCatalogPage() {
     placeholderData: (previous) => previous,
   });
 
+  // Facets are filter-aware: each chip's count reflects the current
+  // filter state with that chip's own dimension excluded. Query key
+  // includes every filter param so TanStack re-fetches when the user
+  // types in search / flips the has-distance box / clears filters.
+  const facetsParams = {
+    q: debouncedQuery || null,
+    constellation: constellation || null,
+    has_distance: hasDistance ? true : null,
+    type: typeFilter,
+    type_group: typeGroupFilter,
+  };
   const facetsQuery = useQuery({
-    queryKey: ["dso-facets"],
-    queryFn: fetchDsoFacets,
-    staleTime: 5 * 60_000,
+    queryKey: ["dso-facets", facetsParams],
+    queryFn: () => fetchDsoFacets(facetsParams),
+    staleTime: 60_000,
+    // Keep showing the previous counts while the refetch is in flight
+    // so chip labels don't flash to empty on every filter tick.
+    placeholderData: (previous) => previous,
   });
 
   const toggleType = (objType: string) => {
@@ -445,6 +460,7 @@ export default function DsoCatalogPage() {
             sortModel={sortModel}
             onSortModelChange={setSortModel}
             pageSizeOptions={[25, 50, 100]}
+            slots={{ loadingOverlay: GridLoadingOverlay }}
             slotProps={{
               basePagination: {
                 ActionsComponent: PaginationActions,

@@ -375,14 +375,24 @@ export default function PlannerDetailPanel({
           <Typography variant="subtitle2" fontWeight={600}>
             Sky position
           </Typography>
-          {skyTrackQuery.isLoading && (
+          {previewLocationId == null ? (
+            // Anytime mode (or any other state where the panel has
+            // no location). The sky-track computation needs a
+            // location; surface a friendly prompt rather than a
+            // spinner that never resolves.
+            <Box sx={{ p: 4, textAlign: "center" }}>
+              <Typography variant="body2" color="text.secondary">
+                Pick a location in the header above to see this
+                object's sky track.
+              </Typography>
+            </Box>
+          ) : skyTrackQuery.isLoading ? (
             <Box sx={{ p: 4, display: "flex", justifyContent: "center" }}>
               <CircularProgress size={24} />
             </Box>
-          )}
-          {skyTrackQuery.data && (
+          ) : skyTrackQuery.data ? (
             <SkyPositionGraph track={skyTrackQuery.data} tz={tz} />
-          )}
+          ) : null}
         </Box>
 
         {skyTrackQuery.data && (

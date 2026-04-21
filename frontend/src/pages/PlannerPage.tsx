@@ -49,6 +49,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { useDebounce } from "@/lib/useDebounce";
 import PaginationActions from "@/components/common/PaginationActions";
+import GridLoadingOverlay from "@/components/common/GridLoadingOverlay";
 import { typeGroupStyle } from "@/lib/dsoTypeGroups";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { displayConstellation } from "@/lib/constellations";
@@ -122,9 +123,14 @@ export default function PlannerPage() {
     queryFn: () => fetchRigs(true),
     staleTime: 5 * 60_000,
   });
+  // Only used for the Constellation dropdown + as a catalog-total
+  // fallback on chip labels before ``targetsQuery`` returns. The
+  // Planner's chip counts come from the ``type_group_counts`` /
+  // ``raw_type_counts`` fields on the ``/api/planner/targets``
+  // response, which already reflect the full filter state.
   const facetsQuery = useQuery({
     queryKey: ["dso-facets"],
-    queryFn: fetchDsoFacets,
+    queryFn: () => fetchDsoFacets(),
     staleTime: 5 * 60_000,
   });
 
@@ -716,7 +722,13 @@ export default function PlannerPage() {
           )}
         </Stack>
 
-        {/* Primary type-group chips */}
+        {/* Primary type-group chips. Counts reflect the current
+            filter state (faceted-search semantics): each chip's
+            number is "how many DSOs would match if this chip were
+            selected, with all OTHER filters held constant". While
+            the first ``targetsQuery`` response is still in flight
+            we fall back to the catalog-total facet counts so chips
+            always show something. */}
         <Box sx={{ mt: 2, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
           {[...(facetsQuery.data?.type_groups ?? [])]
             .filter((g) => g.count > 0)
@@ -724,10 +736,12 @@ export default function PlannerPage() {
             .map((g) => {
               const active = typeGroupFilter.includes(g.name);
               const style = typeGroupStyle(g.name);
+              const filteredCount =
+                data?.type_group_counts?.[g.name] ?? g.count;
               return (
                 <Chip
                   key={g.name}
-                  label={`${g.name} (${g.count.toLocaleString()})`}
+                  label={`${g.name} (${filteredCount.toLocaleString()})`}
                   size="small"
                   onClick={() => toggleTypeGroup(g.name)}
                   variant={active ? "filled" : "outlined"}
@@ -756,10 +770,12 @@ export default function PlannerPage() {
             <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
               {facetsQuery.data?.raw_types.map((t) => {
                 const active = typeFilter.includes(t.code);
+                const filteredCount =
+                  data?.raw_type_counts?.[t.code] ?? t.count;
                 return (
                   <Chip
                     key={t.code}
-                    label={`${displayDsoType(t.code)} (${t.count.toLocaleString()})`}
+                    label={`${displayDsoType(t.code)} (${filteredCount.toLocaleString()})`}
                     size="small"
                     onClick={() => toggleType(t.code)}
                     variant={active ? "filled" : "outlined"}
@@ -898,6 +914,7 @@ export default function PlannerPage() {
           }
           disableRowSelectionOnClick
           slots={{
+            loadingOverlay: GridLoadingOverlay,
             noRowsOverlay: () => (
               <Stack
                 alignItems="center"

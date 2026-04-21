@@ -1,5 +1,4 @@
 import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import FormControl from "@mui/material/FormControl";
@@ -10,53 +9,10 @@ import Select from "@mui/material/Select";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchCacheSize, clearCache } from "@/api/aberration";
-import { clearWeatherCache, fetchWeatherCacheStats } from "@/api/weather";
-import { useEffect } from "react";
-import { clearThumbnailCache, fetchThumbnailCacheStats } from "@/api/planner";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 
 export function SettingsPage() {
   const { settings, update } = useSettingsStore();
-  const queryClient = useQueryClient();
-  const cacheQuery = useQuery({
-    queryKey: ["aberration-cache-size"],
-    queryFn: fetchCacheSize,
-  });
-  const cacheMB = cacheQuery.data ? (cacheQuery.data.bytes / (1024 * 1024)).toFixed(2) : "…";
-
-  const weatherCacheQuery = useQuery({
-    queryKey: ["weather-cache-stats"],
-    queryFn: fetchWeatherCacheStats,
-  });
-  const weatherCacheKB = weatherCacheQuery.data
-    ? (weatherCacheQuery.data.bytes / 1024).toFixed(1)
-    : "…";
-  const weatherCacheRows = weatherCacheQuery.data?.rows ?? 0;
-
-  const thumbnailCacheQuery = useQuery({
-    queryKey: ["thumbnail-cache-stats"],
-    queryFn: fetchThumbnailCacheStats,
-  });
-  const thumbnailCacheMB = thumbnailCacheQuery.data
-    ? (thumbnailCacheQuery.data.total_bytes / (1024 * 1024)).toFixed(2)
-    : "…";
-  const thumbnailMaxMB = thumbnailCacheQuery.data
-    ? Math.round(thumbnailCacheQuery.data.max_bytes / (1024 * 1024))
-    : 20;
-  const thumbnailRows = thumbnailCacheQuery.data?.row_count ?? 0;
-  // Push the latest ``generation`` into the cache-buster store so
-  // every ``ThumbnailCell`` re-renders with a fresh ``&_g=N`` URL
-  // suffix after a clear — which defeats any stale 200 responses the
-  // browser's HTTP cache is still holding from before the clear.
-  const setGeneration = useThumbnailCacheStore((s) => s.setGeneration);
-  useEffect(() => {
-    if (thumbnailCacheQuery.data?.generation != null) {
-      setGeneration(thumbnailCacheQuery.data.generation);
-    }
-  }, [thumbnailCacheQuery.data?.generation, setGeneration]);
 
   if (!settings) {
     return <Typography sx={{ p: 3 }} color="text.secondary">Loading…</Typography>;
@@ -141,60 +97,12 @@ export function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Aberration Cache */}
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 2, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
-              Aberration Cache
-            </Typography>
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <Box>
-                <Typography variant="body1">Cache Size</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {cacheMB} MB used by cached star detection results
-                </Typography>
-              </Box>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={async () => {
-                  await clearCache();
-                  queryClient.invalidateQueries({ queryKey: ["aberration-cache-size"] });
-                }}
-              >
-                Clear All
-              </Button>
-            </Box>
-          </CardContent>
-        </Card>
-
         {/* Weather */}
         <Card variant="outlined">
           <CardContent>
             <Typography variant="body2" color="text.secondary" fontWeight={500} sx={{ mb: 2, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}>
               Weather
             </Typography>
-
-            <Box sx={{ mb: 3 }}>
-              <Typography variant="body1" gutterBottom>Weather forecast cache duration (hours)</Typography>
-              <TextField
-                type="number"
-                size="small"
-                value={settings.weather_cache_ttl_hours}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  const n = parseInt(val, 10);
-                  if (!isNaN(n) && n >= 1 && n <= 24) {
-                    update({ weather_cache_ttl_hours: n });
-                  }
-                }}
-                inputProps={{ min: 1, max: 24 }}
-                sx={{ width: 120 }}
-              />
-              <FormHelperText>
-                How long to reuse cached forecast data before fetching fresh data (1–24 hours).
-              </FormHelperText>
-            </Box>
 
             <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
               <Typography variant="body1">Include moon in quality score by default</Typography>
@@ -222,26 +130,6 @@ export function SettingsPage() {
               </FormControl>
             </Box>
 
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 3 }}>
-              <Box>
-                <Typography variant="body1">Forecast cache</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {weatherCacheRows} {weatherCacheRows === 1 ? "entry" : "entries"} · {weatherCacheKB} KB
-                  {" "}(weather, PWV, AOD for all locations)
-                </Typography>
-              </Box>
-              <Button
-                variant="outlined"
-                size="small"
-                disabled={weatherCacheRows === 0}
-                onClick={async () => {
-                  await clearWeatherCache();
-                  queryClient.invalidateQueries({ queryKey: ["weather-cache-stats"] });
-                }}
-              >
-                Clear All
-              </Button>
-            </Box>
           </CardContent>
         </Card>
 
@@ -315,46 +203,6 @@ export function SettingsPage() {
               />
             </Box>
 
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="body1" gutterBottom>Thumbnail cache (MB)</Typography>
-              <FormControl size="small" sx={{ minWidth: 120 }}>
-                <Select
-                  value={settings.thumbnail_cache_max_mb}
-                  onChange={(e) => update({ thumbnail_cache_max_mb: Number(e.target.value) })}
-                >
-                  {[50, 200, 500, 1000, 2000, 5000].map((mb) => (
-                    <MenuItem key={mb} value={mb}>{mb} MB</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormHelperText>
-                Shared budget for APP_DIR/thumbnails (per-DSO images) and
-                APP_DIR/sky_tiles (the v0.18.0 HEALPix-regional cache). LRU
-                eviction on overflow. A single HEALPix region at the narrow
-                tier fills to ~13 MB; 500 MB comfortably caches a typical
-                planning session across several constellations.
-              </FormHelperText>
-            </Box>
-
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <Box>
-                <Typography variant="body1">Cached thumbnails</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {thumbnailRows} {thumbnailRows === 1 ? "image" : "images"} · {thumbnailCacheMB} MB of {thumbnailMaxMB} MB
-                </Typography>
-              </Box>
-              <Button
-                variant="outlined"
-                size="small"
-                disabled={thumbnailRows === 0}
-                onClick={async () => {
-                  await clearThumbnailCache();
-                  queryClient.invalidateQueries({ queryKey: ["thumbnail-cache-stats"] });
-                }}
-              >
-                Clear All
-              </Button>
-            </Box>
           </CardContent>
         </Card>
       </Box>

@@ -112,6 +112,37 @@ async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_d
     assert "FAINT-1" not in designations
 
 
+async def test_targets_response_includes_filter_aware_facet_counts(client: TestClient, seed_db):
+    # The chip labels on the frontend read "Galaxy (N)" where N is the
+    # count under the current filters. Back-end must return those
+    # tallies alongside the filtered items.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # Both dictionaries exist and are non-empty for a seeded DB.
+    assert isinstance(body["type_group_counts"], dict)
+    assert isinstance(body["raw_type_counts"], dict)
+    assert sum(body["type_group_counts"].values()) > 0
+    # Selecting a specific group via ``type_group`` does NOT reduce
+    # that group's own facet count (faceted-search invariant: a
+    # chip's count reflects the state with its own dimension
+    # excluded).
+    first_group = next(iter(body["type_group_counts"].keys()))
+    filtered = client.get(
+        "/api/planner/targets",
+        params={
+            "restrict_tonight": "false",
+            "type_group": first_group,
+            "limit": 5,
+        },
+    ).json()
+    assert filtered["type_group_counts"][first_group] == body["type_group_counts"][first_group]
+
+
 async def test_targets_sort_by_size_descending(client: TestClient, seed_db):
     # ``sort=size`` maps to ``maj_axis_arcmin`` in the in-memory sort
     # helper. In Anytime mode (no visibility filter) the largest

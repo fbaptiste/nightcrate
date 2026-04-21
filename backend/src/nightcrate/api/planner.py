@@ -374,6 +374,8 @@ async def list_targets(
                 offset=0,
                 limit=limit,
                 items=[],
+                type_group_counts={},
+                raw_type_counts={},
             )
 
     # Filter thresholds — query params override the user's saved
@@ -435,6 +437,12 @@ async def list_targets(
         raw_type_filter = {t.strip() for t in type.split(",") if t.strip()}
 
     items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
+    # Faceted-search counts: per-chip-value tallies of DSOs that pass
+    # every filter EXCEPT the one the chip belongs to. Lets the
+    # frontend render "Galaxy (234)" labels that reflect the user's
+    # current constellation / mag / visibility constraints.
+    type_group_counts: dict[str, int] = {}
+    raw_type_counts: dict[str, int] = {}
     for dso_id in visible_ids:
         meta = metadata.get(dso_id)
         if meta is None:
@@ -442,10 +450,12 @@ async def list_targets(
         if search_match_ids is not None and dso_id not in search_match_ids:
             continue
         group = group_for_raw_type(meta["obj_type"])
-        if type_group_filter is not None and group not in type_group_filter:
-            continue
-        if raw_type_filter is not None and meta["obj_type"] not in raw_type_filter:
-            continue
+        raw = meta["obj_type"]
+
+        # Non-type-dimension filters. These are applied for BOTH the
+        # items list and the two facet tallies — the whole point of
+        # the facets is "show counts under the user's other
+        # constraints".
         if constellation and meta["constellation"] != constellation:
             continue
         if has_distance is True and meta["distance_pc"] is None:
@@ -476,6 +486,25 @@ async def list_targets(
                 continue
             if not (COVERAGE_FRAMES_WELL_MIN_PCT <= coverage <= COVERAGE_FRAMES_WELL_MAX_PCT):
                 continue
+
+        # At this point the DSO passes every non-type-dimension filter.
+        # - Contribute to ``type_group_counts`` only if it would pass
+        #   the raw-type filter (raw-type is a *different* dimension,
+        #   so it counts as an "other" filter from type-group's
+        #   perspective).
+        # - Contribute to ``raw_type_counts`` symmetrically.
+        passes_raw = raw_type_filter is None or raw in raw_type_filter
+        passes_group = type_group_filter is None or group in type_group_filter
+        if passes_raw:
+            type_group_counts[group] = type_group_counts.get(group, 0) + 1
+        if passes_group:
+            raw_type_counts[raw] = raw_type_counts.get(raw, 0) + 1
+
+        # Now apply the two type-dimension filters for the items list.
+        if type_group_filter is not None and group not in type_group_filter:
+            continue
+        if raw_type_filter is not None and raw not in raw_type_filter:
+            continue
 
         vis = snapshot.per_dso.get(dso_id) if snapshot is not None else None
         item = PlannerTargetItem(
@@ -541,6 +570,8 @@ async def list_targets(
         offset=offset,
         limit=limit,
         items=[item for item, _ in page],
+        type_group_counts=type_group_counts,
+        raw_type_counts=raw_type_counts,
     )
 
 

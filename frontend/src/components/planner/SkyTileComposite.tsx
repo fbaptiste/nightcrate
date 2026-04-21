@@ -45,6 +45,12 @@ interface Props {
    *  caller the composite's native pixel dimensions + view-centre
    *  offset so it can position / scale correctly. */
   onLayout?: (layout: SkyTileGridLayout) => void;
+  /** Rig sensor rectangle in angular degrees — centred on the view
+   *  centre on first paint. When supplied, cells that intersect the
+   *  rectangle are loaded first; cells outside it load after. Without
+   *  this, priority falls back to distance-from-view-centre only. */
+  rigMajorDeg?: number;
+  rigMinorDeg?: number;
 }
 
 export default function SkyTileComposite({
@@ -55,6 +61,8 @@ export default function SkyTileComposite({
   extentDeg,
   waitMs = 4000,
   onLayout,
+  rigMajorDeg,
+  rigMinorDeg,
 }: Props) {
   const query = useQuery({
     // Round the ra/dec key inputs so that tiny jitter on the input
@@ -97,16 +105,56 @@ export default function SkyTileComposite({
     setCenterReady(false);
   }, [layout]);
 
-  // Sort cells by distance from the view centre. Combined with
-  // render-in-order + the backend's 8-slot CDS semaphore, this gives
-  // the user a radial "ripples outward" load pattern — centre first,
-  // nearest neighbours next, corners last — instead of the previous
-  // random-looking completion order.
+  // Sort cells by a two-tier priority:
+  //   1. Cells that intersect the rig rectangle (if one was provided)
+  //      sort ahead of cells outside it, so on medium / wide rigs the
+  //      frame is covered before peripheral tiles start loading.
+  //   2. Within each tier, sort by distance from the view centre —
+  //      combined with render-in-order + the backend's 8-slot CDS
+  //      semaphore, this gives the user a radial "ripples outward"
+  //      load pattern instead of a random-looking completion order.
+  // Without rig dims the sort degrades to pure distance-from-centre.
   const sortedCells = useMemo(() => {
     if (!layout) return [];
     const vcx = layout.view_center_pixel_x;
     const vcy = layout.view_center_pixel_y;
+
+    // Compute the rig rectangle in composite source-pixel space,
+    // centred on the view-centre pixel. Axis-aligned — the simulator
+    // starts at rotation 0 and by the time the user rotates, all
+    // cells are long since mounted.
+    let rigBounds: { xMin: number; xMax: number; yMin: number; yMax: number } | null =
+      null;
+    if (rigMajorDeg != null && rigMinorDeg != null && rigMajorDeg > 0 && rigMinorDeg > 0) {
+      const pxPerDeg = layout.cell_width_px / layout.cell_size_deg;
+      const halfW = (rigMajorDeg * pxPerDeg) / 2;
+      const halfH = (rigMinorDeg * pxPerDeg) / 2;
+      rigBounds = {
+        xMin: vcx - halfW,
+        xMax: vcx + halfW,
+        yMin: vcy - halfH,
+        yMax: vcy + halfH,
+      };
+    }
+
+    const intersectsRig = (cell: typeof layout.cells[0]): boolean => {
+      if (!rigBounds) return false;
+      const xMin = cell.pixel_x;
+      const xMax = cell.pixel_x + layout.cell_width_px;
+      const yMin = cell.pixel_y;
+      const yMax = cell.pixel_y + layout.cell_height_px;
+      return (
+        xMax > rigBounds.xMin &&
+        xMin < rigBounds.xMax &&
+        yMax > rigBounds.yMin &&
+        yMin < rigBounds.yMax
+      );
+    };
+
     return [...layout.cells].sort((a, b) => {
+      const aRig = intersectsRig(a) ? 0 : 1;
+      const bRig = intersectsRig(b) ? 0 : 1;
+      if (aRig !== bRig) return aRig - bRig;
       const ax = a.pixel_x + layout.cell_width_px / 2;
       const ay = a.pixel_y + layout.cell_height_px / 2;
       const bx = b.pixel_x + layout.cell_width_px / 2;
@@ -115,7 +163,7 @@ export default function SkyTileComposite({
       const bd = (bx - vcx) ** 2 + (by - vcy) ** 2;
       return ad - bd;
     });
-  }, [layout]);
+  }, [layout, rigMajorDeg, rigMinorDeg]);
 
   if (!layout) {
     // Empty placeholder so the pan-group has a stable sizing anchor

@@ -42,6 +42,7 @@ import {
   type ReseedResult,
 } from "@/api/admin";
 import CatalogsAdminSection from "@/components/dso/CatalogsAdminSection";
+import CachesAdminSection from "@/components/admin/CachesAdminSection";
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return "unknown";
@@ -730,6 +731,8 @@ export function AdminPage() {
       </Paper>
 
       <CatalogsAdminSection />
+
+      <CachesAdminSection />
 
 
       <Snackbar

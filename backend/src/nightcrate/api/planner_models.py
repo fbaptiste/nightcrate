@@ -64,6 +64,17 @@ class PlannerTargetsResponse(BaseModel):
     offset: int
     limit: int
     items: list[PlannerTargetItem]
+    # Facet counts computed alongside the filtered items, so the
+    # frontend's type-group and raw-type chips can render labels like
+    # "Galaxy (234)" that reflect the current filter state instead of
+    # the full-catalog totals. Keys are group names (e.g. "Galaxy")
+    # and raw obj_type codes (e.g. "G"); values are the number of
+    # DSOs that would survive if only that chip's filter-dimension
+    # value were selected, with all OTHER filters held constant
+    # (faceted-search convention). Chips not present have zero
+    # matches under the current filter state.
+    type_group_counts: dict[str, int]
+    raw_type_counts: dict[str, int]
 
 
 class TwilightBandsOut(BaseModel):

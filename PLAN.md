@@ -2526,13 +2526,14 @@ ship.
       new facets-with-filters endpoint, or drop the parenthesised
       count in Tonight mode and only show it in Anytime.
 
-- [ ] **Revisit type-group vs raw-type chip overlap.** Main chips
-      show user-facing group names (e.g. `Galaxy`) derived via
-      `group_for_raw_type`; the Advanced section shows raw OpenNGC
-      codes (e.g. `G` → "Galaxy" via `displayDsoType`). The labels
-      collide ("Galaxy" appears in both), which reads as
-      redundancy. Either rename one side, hide raw codes whose
-      display form matches a group name, or merge the two controls.
+- [ ] **Revisit type-group vs raw-type chip overlap** (bundle with
+      the catalog-filter-redesign discussion below — not a separate
+      decision). Main chips show user-facing group names (e.g.
+      `Galaxy`) derived via `group_for_raw_type`; the Advanced
+      section shows raw OpenNGC codes (e.g. `G` → "Galaxy" via
+      `displayDsoType`). The labels collide ("Galaxy" appears in
+      both) and should be resolved as part of whatever shape the
+      filter controls take post-redesign.
 
 ### DSO Catalog
 
@@ -2587,6 +2588,18 @@ ship.
       GPU on/off, worker cores).
 
 ### Planner detail panel
+
+- [ ] **Discuss: date selector on the altitude chart.** The
+      Sky position graph currently always renders "tonight" —
+      there's no way for the user to preview a target's altitude
+      curve on, say, next Saturday. The planner's core workflow
+      assumes tonight, but the detail panel should let users pick
+      any date while leaving the parent grid unchanged. Scope
+      question: does the date picker live in the detail panel only
+      (matches the existing in-panel location picker's pattern), or
+      does it propagate up to the grid (changes the whole planner
+      view to that date)? Decide together with the altitude-chart
+      Anytime behaviour.
 
 - [ ] **Discuss: altitude chart (SkyPositionGraph) behaviour in
       Anytime mode.** The detail dialog's "Sky position" section

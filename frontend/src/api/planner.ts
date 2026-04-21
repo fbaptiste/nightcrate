@@ -62,6 +62,12 @@ export interface PlannerTargetsResponse {
   offset: number;
   limit: number;
   items: PlannerTargetItem[];
+  /** Per-chip tallies that reflect the current filter state
+   *  (faceted-search semantics). Frontend chip labels read
+   *  "Galaxy (N)" where N is the filtered count, not the catalog
+   *  total. */
+  type_group_counts: Record<string, number>;
+  raw_type_counts: Record<string, number>;
 }
 
 export interface PlannerTargetsParams {

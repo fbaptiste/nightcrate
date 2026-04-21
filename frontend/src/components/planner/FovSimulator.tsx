@@ -521,13 +521,42 @@ export default function FovSimulator({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    const step = e.shiftKey ? 1 : 5;
-    if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+    // Arrow keys pan the background mosaic (conventional — matches
+    // Stellarium / PixInsight / image-editor muscle memory).
+    // Shift+Arrow rotates the sensor rectangle ±5° per tap.
+    // Pan step: 40 px in the composite's source-pixel space per tap.
+    const PAN_STEP = 40;
+    const ROT_STEP = 5;
+    const { x: xLim, y: yLim } = currentPanLimit();
+
+    if (e.key === "ArrowLeft") {
       e.preventDefault();
-      setRotation((r) => normalizeAngle(r + step));
-    } else if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+      if (e.shiftKey) {
+        setRotation((r) => normalizeAngle(r - ROT_STEP));
+      } else {
+        setPanX((px) => clamp(px + PAN_STEP, -xLim, xLim));
+      }
+    } else if (e.key === "ArrowRight") {
       e.preventDefault();
-      setRotation((r) => normalizeAngle(r - step));
+      if (e.shiftKey) {
+        setRotation((r) => normalizeAngle(r + ROT_STEP));
+      } else {
+        setPanX((px) => clamp(px - PAN_STEP, -xLim, xLim));
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        setRotation((r) => normalizeAngle(r + ROT_STEP));
+      } else {
+        setPanY((py) => clamp(py + PAN_STEP, -yLim, yLim));
+      }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        setRotation((r) => normalizeAngle(r - ROT_STEP));
+      } else {
+        setPanY((py) => clamp(py - PAN_STEP, -yLim, yLim));
+      }
     } else if (e.key === "r" || e.key === "R") {
       e.preventDefault();
       recenterView();
@@ -656,6 +685,8 @@ export default function FovSimulator({
                 tier={tier}
                 extentDeg={extentDeg}
                 onLayout={setLayout}
+                rigMajorDeg={fovMajorDeg}
+                rigMinorDeg={fovMinorDeg}
               />
             )}
 
