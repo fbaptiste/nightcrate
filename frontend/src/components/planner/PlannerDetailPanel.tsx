@@ -318,12 +318,16 @@ export default function PlannerDetailPanel({
           />
           <Fact
             label="Hours visible"
-            value={target != null ? `${target.hours_visible.toFixed(1)} h` : "—"}
+            value={
+              target?.hours_visible != null
+                ? `${target.hours_visible.toFixed(1)} h`
+                : "—"
+            }
           />
           <Fact
             label="Max altitude"
             value={
-              target != null
+              target?.max_altitude_deg != null && target.peak_time_utc != null
                 ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocal(
                     target.peak_time_utc,
                     tz,
@@ -334,7 +338,8 @@ export default function PlannerDetailPanel({
           <Fact
             label="Meridian"
             value={
-              target
+              target?.altitude_at_transit_deg != null &&
+              target.transit_time_utc != null
                 ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocal(
                     target.transit_time_utc,
                     tz,

@@ -39,13 +39,14 @@ export interface PlannerTargetItem {
   min_axis_arcmin: number | null;
   mag_v: number | null;
   distance_pc: number | null;
-  hours_visible: number;
-  max_altitude_deg: number;
-  peak_time_utc: string;
-  /** Meridian crossing — always populated (computed analytically from
-   *  sidereal geometry). */
-  transit_time_utc: string;
-  altitude_at_transit_deg: number;
+  // Visibility fields are ``null`` in "anytime" mode
+  // (``restrict_tonight=false``) and for DSOs that don't clear the
+  // altitude floor during tonight's astro-dark window.
+  hours_visible: number | null;
+  max_altitude_deg: number | null;
+  peak_time_utc: string | null;
+  transit_time_utc: string | null;
+  altitude_at_transit_deg: number | null;
   min_moon_separation_deg: number | null;
   coverage_pct: number | null;
 }
@@ -74,6 +75,11 @@ export interface PlannerTargetsParams {
   /** Free-text search. Same semantics as the DSO catalog's ``q`` —
    *  designation prefix or common-name substring match. */
   q?: string | null;
+  /** ``true`` (default) filters to DSOs visible during tonight's
+   *  astro-dark window. ``false`` returns the full catalog with
+   *  ``null`` visibility fields — turns the planner into a catalog
+   *  browser. */
+  restrict_tonight?: boolean;
   limit?: number;
   offset?: number;
   sort?: string;
@@ -93,6 +99,7 @@ export function fetchPlannerTargets(
   if (params.min_size_arcmin != null) qs.set("min_size_arcmin", String(params.min_size_arcmin));
   if (params.frames_well) qs.set("frames_well", "true");
   if (params.q) qs.set("q", params.q);
+  if (params.restrict_tonight === false) qs.set("restrict_tonight", "false");
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);

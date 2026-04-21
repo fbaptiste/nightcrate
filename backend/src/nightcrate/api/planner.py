@@ -269,6 +269,16 @@ async def list_targets(
             "by prefix or a case-insensitive substring of ``common_name``."
         ),
     ),
+    restrict_tonight: bool = Query(
+        True,
+        description=(
+            "When ``True`` (default) the response is limited to DSOs visible "
+            "during tonight's astronomical-dark window from the selected "
+            "location. When ``False`` the planner acts like a catalog "
+            "browser: all active DSOs come back, no visibility computation "
+            "runs, and the visibility fields on each item are ``None``."
+        ),
+    ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sort: Literal[
@@ -295,40 +305,49 @@ async def list_targets(
         night_date = date_ if date_ is not None else _tonight_date(location.timezone)
         dsos = await _load_dso_coords(conn)
 
-    # The visibility snapshot does ~1 second of vectorized astropy work on
-    # cache miss. Off-load to a worker thread so we don't block the event
-    # loop — all other requests (including thumbnail polling) stall otherwise.
-    snapshot = await asyncio.to_thread(
-        default_cache.get_or_compute,
-        location,
-        night_date,
-        dsos,
-        flat_min_altitude_deg=float(settings.planner_min_altitude_deg),
+    # "Anytime" mode skips the visibility snapshot entirely — the
+    # handler acts as a paginated catalog browser with the same
+    # metadata + search filters the "tonight only" path uses.
+    snapshot = (
+        await asyncio.to_thread(
+            default_cache.get_or_compute,
+            location,
+            night_date,
+            dsos,
+            flat_min_altitude_deg=float(settings.planner_min_altitude_deg),
+        )
+        if restrict_tonight
+        else None
     )
 
     dark_window_out: DarkWindowOut | None = None
-    if snapshot.dark_window.start_utc and snapshot.dark_window.end_utc:
-        dark_window_out = DarkWindowOut(
-            start_utc=snapshot.dark_window.start_utc.isoformat(),
-            end_utc=snapshot.dark_window.end_utc.isoformat(),
-            hours=round(snapshot.dark_window.hours, 2),
-        )
+    moon_phase_pct_out = 0.0
+    if snapshot is not None:
+        moon_phase_pct_out = snapshot.moon_phase_pct
+        if snapshot.dark_window.start_utc and snapshot.dark_window.end_utc:
+            dark_window_out = DarkWindowOut(
+                start_utc=snapshot.dark_window.start_utc.isoformat(),
+                end_utc=snapshot.dark_window.end_utc.isoformat(),
+                hours=round(snapshot.dark_window.hours, 2),
+            )
 
-    # Early return when astro-dark doesn't occur tonight.
-    if not snapshot.per_dso or dark_window_out is None:
-        return PlannerTargetsResponse(
-            location=PlannerLocationSummary(
-                id=location.id, name=location_name, has_custom_horizon=has_horizon
-            ),
-            rig=rig_summary,
-            date=night_date.isoformat(),
-            dark_window=dark_window_out,
-            moon_phase_pct=snapshot.moon_phase_pct,
-            total=0,
-            offset=0,
-            limit=limit,
-            items=[],
-        )
+        # Early return when astro-dark doesn't occur tonight (only
+        # meaningful in "tonight only" mode — the "anytime" path
+        # never reaches here).
+        if not snapshot.per_dso or dark_window_out is None:
+            return PlannerTargetsResponse(
+                location=PlannerLocationSummary(
+                    id=location.id, name=location_name, has_custom_horizon=has_horizon
+                ),
+                rig=rig_summary,
+                date=night_date.isoformat(),
+                dark_window=dark_window_out,
+                moon_phase_pct=moon_phase_pct_out,
+                total=0,
+                offset=0,
+                limit=limit,
+                items=[],
+            )
 
     # Filter thresholds — query params override the user's saved defaults.
     min_hours_eff = min_hours if min_hours is not None else settings.planner_min_visibility_hours
@@ -337,9 +356,13 @@ async def list_targets(
         min_size_arcmin if min_size_arcmin is not None else settings.planner_min_size_arcmin
     )
 
-    visible_ids = [
-        vis.dso_id for vis in snapshot.per_dso.values() if vis.hours_visible >= min_hours_eff
-    ]
+    if snapshot is not None:
+        visible_ids = [
+            vis.dso_id for vis in snapshot.per_dso.values() if vis.hours_visible >= min_hours_eff
+        ]
+    else:
+        # Anytime mode — every active DSO with coordinates is a candidate.
+        visible_ids = [d.dso_id for d in dsos]
     async with get_db() as conn:
         metadata = await _load_dso_metadata(conn, visible_ids)
 
@@ -369,7 +392,7 @@ async def list_targets(
     if type_group:
         type_group_filter = {g.strip() for g in type_group.split(",") if g.strip()}
 
-    items: list[tuple[PlannerTargetItem, DsoVisibility]] = []
+    items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
     for dso_id in visible_ids:
         meta = metadata.get(dso_id)
         if meta is None:
@@ -404,7 +427,7 @@ async def list_targets(
             if not (COVERAGE_FRAMES_WELL_MIN_PCT <= coverage <= COVERAGE_FRAMES_WELL_MAX_PCT):
                 continue
 
-        vis = snapshot.per_dso[dso_id]
+        vis = snapshot.per_dso.get(dso_id) if snapshot is not None else None
         item = PlannerTargetItem(
             dso_id=dso_id,
             primary_designation=meta["primary_designation"],
@@ -418,30 +441,37 @@ async def list_targets(
             min_axis_arcmin=meta["min_axis_arcmin"],
             mag_v=mag_v,
             distance_pc=meta["distance_pc"],
-            hours_visible=vis.hours_visible,
-            max_altitude_deg=vis.max_altitude_deg,
-            peak_time_utc=vis.peak_time_utc.isoformat(),
-            transit_time_utc=vis.transit_time_utc.isoformat(),
-            altitude_at_transit_deg=vis.altitude_at_transit_deg,
-            min_moon_separation_deg=vis.min_moon_separation_deg,
+            hours_visible=vis.hours_visible if vis is not None else None,
+            max_altitude_deg=vis.max_altitude_deg if vis is not None else None,
+            peak_time_utc=vis.peak_time_utc.isoformat() if vis is not None else None,
+            transit_time_utc=vis.transit_time_utc.isoformat() if vis is not None else None,
+            altitude_at_transit_deg=(
+                vis.altitude_at_transit_deg if vis is not None else None
+            ),
+            min_moon_separation_deg=(
+                vis.min_moon_separation_deg if vis is not None else None
+            ),
             coverage_pct=coverage,
         )
         items.append((item, vis))
 
-    # Sort + paginate in memory.
+    # Sort + paginate in memory. NULL visibility fields (possible in
+    # "anytime" mode and for DSOs that don't clear the altitude floor
+    # tonight) sort to the end in both directions — "unknown" lives at
+    # the bottom regardless of ascending / descending intent.
     reverse = sort_dir == "desc"
+    null_sentinel = -1 if reverse else 1e9
 
-    def _sort_key(pair: tuple[PlannerTargetItem, DsoVisibility]):
+    def _sort_key(pair: tuple[PlannerTargetItem, DsoVisibility | None]):
         item, _vis = pair
         if sort == "hours_visible":
-            return item.hours_visible
+            return item.hours_visible if item.hours_visible is not None else null_sentinel
         if sort == "max_altitude":
-            return item.max_altitude_deg
+            return item.max_altitude_deg if item.max_altitude_deg is not None else null_sentinel
         if sort == "coverage_pct":
-            # Sort NULLs to the end regardless of direction.
-            return item.coverage_pct if item.coverage_pct is not None else (-1 if reverse else 1e9)
+            return item.coverage_pct if item.coverage_pct is not None else null_sentinel
         if sort == "mag_v":
-            return item.mag_v if item.mag_v is not None else (1e9 if reverse else -1)
+            return item.mag_v if item.mag_v is not None else null_sentinel
         return item.primary_designation
 
     items.sort(key=_sort_key, reverse=reverse)
@@ -456,7 +486,7 @@ async def list_targets(
         rig=rig_summary,
         date=night_date.isoformat(),
         dark_window=dark_window_out,
-        moon_phase_pct=snapshot.moon_phase_pct,
+        moon_phase_pct=moon_phase_pct_out,
         total=total,
         offset=offset,
         limit=limit,

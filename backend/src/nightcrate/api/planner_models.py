@@ -37,13 +37,17 @@ class PlannerTargetItem(BaseModel):
     min_axis_arcmin: float | None
     mag_v: float | None
     distance_pc: float | None
-    hours_visible: float
-    max_altitude_deg: float
-    peak_time_utc: str
-    # Meridian transit is always reported — sidereal geometry doesn't
-    # care about astro-dark.
-    transit_time_utc: str
-    altitude_at_transit_deg: float
+    # Visibility fields — populated when the planner is in
+    # "tonight only" mode. In the "anytime" mode (restrict_tonight=False)
+    # these are ``None`` because no visibility computation runs — the
+    # planner just surfaces the full catalog so users can search by
+    # name / type / magnitude without being gated on "is it up
+    # tonight?".
+    hours_visible: float | None
+    max_altitude_deg: float | None
+    peak_time_utc: str | None
+    transit_time_utc: str | None
+    altitude_at_transit_deg: float | None
     min_moon_separation_deg: float | None
     coverage_pct: float | None = None
 

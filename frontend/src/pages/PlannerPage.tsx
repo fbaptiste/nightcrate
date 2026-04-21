@@ -28,6 +28,8 @@ import Select from "@mui/material/Select";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
@@ -74,6 +76,7 @@ export default function PlannerPage() {
   const rigId = usePlannerStore((s) => s.selectedRigId);
   const setRigId = usePlannerStore((s) => s.setSelectedRigId);
   const [searchQuery, setSearchQuery] = useState("");
+  const [restrictTonight, setRestrictTonight] = useState<boolean>(true);
   const [typeGroupFilter, setTypeGroupFilter] = useState<string[]>([]);
   const [minHours, setMinHours] = useState<number>(
     settings?.planner_min_visibility_hours ?? 2.0,
@@ -149,6 +152,7 @@ export default function PlannerPage() {
         minSize,
         framesWell,
         q: debouncedSearch || null,
+        restrictTonight,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sortField,
@@ -165,6 +169,7 @@ export default function PlannerPage() {
         min_size_arcmin: minSize,
         frames_well: framesWell,
         q: debouncedSearch || null,
+        restrict_tonight: restrictTonight,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sort: sortField,
@@ -306,7 +311,7 @@ export default function PlannerPage() {
       flex: 0.4,
       minWidth: 60,
       type: "number",
-      valueFormatter: (v) => `${(v as number).toFixed(1)}h`,
+      valueFormatter: (v) => (v == null ? "—" : `${(v as number).toFixed(1)}h`),
     },
     {
       field: "max_altitude_deg",
@@ -314,12 +319,17 @@ export default function PlannerPage() {
       flex: 1.0,
       minWidth: 120,
       type: "number",
-      renderCell: (p) => (
-        <Typography variant="body2">
-          {(p.row.max_altitude_deg as number).toFixed(0)}° @{" "}
-          {formatLocalTime(p.row.peak_time_utc, tz)}
-        </Typography>
-      ),
+      renderCell: (p) => {
+        const alt = p.row.max_altitude_deg as number | null;
+        if (alt == null || p.row.peak_time_utc == null) {
+          return <Typography variant="body2" color="text.disabled">—</Typography>;
+        }
+        return (
+          <Typography variant="body2">
+            {alt.toFixed(0)}° @ {formatLocalTime(p.row.peak_time_utc, tz)}
+          </Typography>
+        );
+      },
     },
     {
       field: "transit",
@@ -327,11 +337,17 @@ export default function PlannerPage() {
       flex: 1.0,
       minWidth: 120,
       sortable: false,
-      renderCell: (p) => (
-        <Typography variant="body2">
-          {p.row.altitude_at_transit_deg.toFixed(0)}° @ {formatLocalTime(p.row.transit_time_utc, tz)}
-        </Typography>
-      ),
+      renderCell: (p) => {
+        const alt = p.row.altitude_at_transit_deg as number | null;
+        if (alt == null || p.row.transit_time_utc == null) {
+          return <Typography variant="body2" color="text.disabled">—</Typography>;
+        }
+        return (
+          <Typography variant="body2">
+            {alt.toFixed(0)}° @ {formatLocalTime(p.row.transit_time_utc, tz)}
+          </Typography>
+        );
+      },
     },
     {
       field: "min_moon_separation_deg",
@@ -481,6 +497,28 @@ export default function PlannerPage() {
               ) : null,
             }}
           />
+
+          {/* Tonight-only / Anytime — lets users browse the full catalog
+              from the planner without being gated on tonight's
+              visibility. Visibility columns show "—" in anytime mode. */}
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={restrictTonight ? "tonight" : "anytime"}
+            onChange={(_, v) => {
+              if (v === null) return; // can't deselect both
+              setRestrictTonight(v === "tonight");
+              setPagination((p) => ({ ...p, page: 0 }));
+            }}
+            aria-label="Target scope"
+          >
+            <ToggleButton value="tonight" sx={{ textTransform: "none" }}>
+              Tonight
+            </ToggleButton>
+            <ToggleButton value="anytime" sx={{ textTransform: "none" }}>
+              Anytime
+            </ToggleButton>
+          </ToggleButtonGroup>
 
           <FormControl size="small" sx={{ minWidth: 220 }}>
             <InputLabel>Location</InputLabel>
