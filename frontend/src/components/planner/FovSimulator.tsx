@@ -42,6 +42,8 @@ import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
@@ -169,6 +171,7 @@ export default function FovSimulator({
   const [isShiftHeld, setIsShiftHeld] = useState(false);
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [annotationSlider, setAnnotationSlider] = useState(0);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [popover, setPopover] = useState<
     { anchor: Element; item: NearbyDsoItem } | null
   >(null);
@@ -521,41 +524,63 @@ export default function FovSimulator({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    // Arrow keys pan the background mosaic (conventional — matches
-    // Stellarium / PixInsight / image-editor muscle memory).
-    // Shift+Arrow rotates the sensor rectangle ±5° per tap.
-    // Pan step: 40 px in the composite's source-pixel space per tap.
-    const PAN_STEP = 40;
+    // Arrow keys move the orange rig rectangle around the composite
+    // (consistent with the drag-rect mouse interaction — the rig is
+    // the thing users care about positioning, the sky is fixed).
+    // Shift+Arrow rotates the rig rectangle ±5°.
+    // Alt/Option+Arrow pans the background mosaic. Using Alt instead
+    // of Ctrl so the shortcut works on macOS too — ``ctrl+arrow``
+    // there is grabbed by Mission Control for Spaces switching
+    // before the browser ever sees it. Alt (Option on Mac) is the
+    // one modifier with no OS-level conflict across the three
+    // platforms we support.
+    // Rect step: 40 composite-source-pixels per tap.
+    const STEP = 40;
     const ROT_STEP = 5;
+    // Pan-mosaic modifier: accept Ctrl (Windows/Linux), Meta (⌘ on
+    // macOS), or Alt (Option, where the OS doesn't intercept it) —
+    // whichever the user's OS happens to forward as a keydown.
+    // Empirically on macOS the browser gets ⌘+Arrow but Option+Arrow
+    // is sometimes eaten by the system; accepting all three means
+    // the shortcut always works no matter the platform.
+    const panModifier = e.ctrlKey || e.metaKey || e.altKey;
     const { x: xLim, y: yLim } = currentPanLimit();
 
     if (e.key === "ArrowLeft") {
       e.preventDefault();
       if (e.shiftKey) {
         setRotation((r) => normalizeAngle(r - ROT_STEP));
+      } else if (panModifier) {
+        setPanX((px) => clamp(px + STEP, -xLim, xLim));
       } else {
-        setPanX((px) => clamp(px + PAN_STEP, -xLim, xLim));
+        setRectOffsetX((x) => x - STEP);
       }
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
       if (e.shiftKey) {
         setRotation((r) => normalizeAngle(r + ROT_STEP));
+      } else if (panModifier) {
+        setPanX((px) => clamp(px - STEP, -xLim, xLim));
       } else {
-        setPanX((px) => clamp(px - PAN_STEP, -xLim, xLim));
+        setRectOffsetX((x) => x + STEP);
       }
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       if (e.shiftKey) {
         setRotation((r) => normalizeAngle(r + ROT_STEP));
+      } else if (panModifier) {
+        setPanY((py) => clamp(py + STEP, -yLim, yLim));
       } else {
-        setPanY((py) => clamp(py + PAN_STEP, -yLim, yLim));
+        setRectOffsetY((y) => y - STEP);
       }
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       if (e.shiftKey) {
         setRotation((r) => normalizeAngle(r - ROT_STEP));
+      } else if (panModifier) {
+        setPanY((py) => clamp(py - STEP, -yLim, yLim));
       } else {
-        setPanY((py) => clamp(py - PAN_STEP, -yLim, yLim));
+        setRectOffsetY((y) => y + STEP);
       }
     } else if (e.key === "r" || e.key === "R") {
       e.preventDefault();
@@ -1029,33 +1054,63 @@ export default function FovSimulator({
           )}
 
           <Box>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ textTransform: "uppercase", letterSpacing: 0.5, fontSize: "0.65rem" }}
+            <Box
+              component="button"
+              type="button"
+              onClick={() => setHelpOpen((open) => !open)}
+              aria-expanded={helpOpen}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                background: "none",
+                border: 0,
+                p: 0,
+                cursor: "pointer",
+                color: "text.secondary",
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+                fontSize: "0.65rem",
+                fontFamily: "inherit",
+                fontWeight: 400,
+                "&:hover": { color: "text.primary" },
+              }}
             >
+              {helpOpen ? (
+                <ExpandLessIcon sx={{ fontSize: "0.9rem" }} />
+              ) : (
+                <ExpandMoreIcon sx={{ fontSize: "0.9rem" }} />
+              )}
               How to use
-            </Typography>
-            <Box component="ul" sx={{ pl: 2.5, mt: 0.5, mb: 0, "& li": { mb: 0.25 } }}>
-              <Typography component="li" variant="caption" color="text.secondary">
-                <b>Drag the image</b> to pan
-              </Typography>
-              <Typography component="li" variant="caption" color="text.secondary">
-                <b>Drag the rectangle</b> to move the frame
-              </Typography>
-              <Typography component="li" variant="caption" color="text.secondary">
-                <b>Shift + drag rectangle</b> to rotate
-              </Typography>
-              <Typography component="li" variant="caption" color="text.secondary">
-                Arrow keys rotate ±5° (Shift ±1°) — focus the image
-              </Typography>
-              <Typography component="li" variant="caption" color="text.secondary">
-                <b>R</b> re-centers the view (zoom + rotation untouched)
-              </Typography>
-              <Typography component="li" variant="caption" color="text.secondary">
-                <b>Scroll wheel</b> zooms toward the cursor
-              </Typography>
             </Box>
+            {helpOpen && (
+              <Box component="ul" sx={{ pl: 2.5, mt: 0.5, mb: 0, "& li": { mb: 0.25 } }}>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>Drag the image</b> to pan the background
+                </Typography>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>Drag the rectangle</b> to move the frame
+                </Typography>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>Shift + drag rectangle</b> to rotate
+                </Typography>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>Click the image, then arrow keys</b> — move the frame
+                </Typography>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>Shift + arrow</b> — rotate ±5°
+                </Typography>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>⌘ / Ctrl / Alt + arrow</b> — pan the background
+                </Typography>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>R</b> — re-center the view (zoom + rotation kept)
+                </Typography>
+                <Typography component="li" variant="caption" color="text.secondary">
+                  <b>Scroll wheel</b> — zoom toward the cursor
+                </Typography>
+              </Box>
+            )}
           </Box>
         </Box>
       </Stack>

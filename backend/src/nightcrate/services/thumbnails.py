@@ -96,6 +96,12 @@ class ThumbnailKey:
     fields use ``-1`` under COALESCE in the DB so a list/detail entry
     doesn't collide with a rig-framed one at the same dso_id.
 
+    ``ra_deg_x10000`` / ``dec_deg_x10000`` are required for building
+    the on-disk filename — the **filename is keyed on sky coordinates,
+    not on dso_id**, so the cache survives a database recreation.
+    Rehydrate reverses the mapping by matching coordinates against
+    the current ``dso`` table to find the now-current FK value.
+
     ``center_ra_deg_x1000`` / ``center_dec_deg_x1000`` are retained
     on the cache schema (migration 0019) but unused now that the
     old panned ``fov_simulator`` variant is gone; they're always
@@ -106,6 +112,8 @@ class ThumbnailKey:
     variant: Variant
     width: int
     height: int
+    ra_deg_x10000: int
+    dec_deg_x10000: int
     fov_major_deg_x1000: int | None = None
     fov_minor_deg_x1000: int | None = None
     center_ra_deg_x1000: int | None = None
@@ -169,16 +177,33 @@ def _to_x1000(value: float | None) -> int | None:
     return round(value * 1000)
 
 
+def _to_x10000(value: float) -> int:
+    """Round deg float → int × 10000. ~0.36 arcsec precision; plenty
+    for disambiguating DSO positions while still coarse enough that
+    small floating-point rounding differences between loads don't
+    produce different keys.
+    """
+    return round(value * 10000)
+
+
 def make_key(
     dso_id: int,
     variant: Variant,
     *,
+    ra_deg: float,
+    dec_deg: float,
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
     center_ra_deg: float | None = None,
     center_dec_deg: float | None = None,
 ) -> ThumbnailKey:
     """Build the cache key — rig-dependent variants require FOV params.
+
+    ``ra_deg`` / ``dec_deg`` are the DSO's sky coordinates. They're
+    required (no sensible default) because they drive the on-disk
+    filename; see ``_thumb_path`` and ``rehydrate_from_disk`` for the
+    path format and the round-trip back to a ``dso_id`` on a fresh
+    database.
 
     ``center_ra_deg`` / ``center_dec_deg`` are retained for API
     compatibility with the old panned ``fov_simulator`` code path and
@@ -198,6 +223,8 @@ def make_key(
         variant=variant,
         width=dim.width,
         height=dim.height,
+        ra_deg_x10000=_to_x10000(ra_deg),
+        dec_deg_x10000=_to_x10000(dec_deg),
         fov_major_deg_x1000=_to_x1000(fov_major_deg),
         fov_minor_deg_x1000=_to_x1000(fov_minor_deg),
     )
@@ -214,27 +241,45 @@ def thumb_dir() -> Path:
 
 
 def _thumb_path(key: ThumbnailKey) -> Path:
-    """Disk location for *key*. Suffix carries the rounded FOV on
-    rig-dependent variants (so two rigs don't clobber each other's
-    JPEGs).
+    """Disk location for *key*. Filename encodes RA/Dec × 10000
+    (not dso_id) so the file survives database recreation — dso_id
+    is a DB-specific label, (ra_deg, dec_deg) is the canonical DSO
+    identity across catalog reloads.
+
+    FOV suffix only appears on rig-dependent variants, preventing two
+    rigs from clobbering each other's JPEGs.
     """
-    base = f"{key.dso_id}_{key.variant}_{key.width}x{key.height}"
+    base = f"ra{key.ra_deg_x10000}_dec{key.dec_deg_x10000}_{key.variant}_{key.width}x{key.height}"
     if key.fov_major_deg_x1000 is not None and key.fov_minor_deg_x1000 is not None:
         base += f"_{key.fov_major_deg_x1000}_{key.fov_minor_deg_x1000}"
     return thumb_dir() / f"{base}.jpg"
 
 
 # File-name pattern — must parse any stem produced by ``_thumb_path``.
-# Groups: dso_id, variant, width, height, fov_major_x1000?, fov_minor_x1000?,
-# center_ra_x1000?, center_dec_x1000?
+# Groups: ra_x10000, dec_x10000, variant, width, height,
+# fov_major_x1000?, fov_minor_x1000?
+#
+# ``fov_simulator`` is kept in the variant alternation so the orphan
+# sweep still recognises + deletes its leftover on-disk JPEGs from the
+# v0.17.0-era filename scheme; rehydrate never re-indexes them.
 _THUMB_FILENAME_RE = re.compile(
-    r"^(?P<dso_id>\d+)_"
-    # ``fov_simulator`` retired in v0.18.0 but kept in the regex so
-    # orphan sweeps still parse + delete its leftover on-disk JPEGs.
+    r"^ra(?P<ra>\d+)_dec(?P<dec>-?\d+)_"
     r"(?P<variant>list|detail|rig_framed|fov_simulator)_"
     r"(?P<width>\d+)x(?P<height>\d+)"
     r"(?:_(?P<fmaj>-?\d+)_(?P<fmin>-?\d+))?"
-    r"(?:_c(?P<cra>-?\d+)_(?P<cdec>-?\d+))?"
+    r"\.jpg$"
+)
+
+# Legacy pre-v0.18.2 filename pattern: ``{dso_id}_{variant}_{w}x{h}...``.
+# Kept only so the orphan sweep can recognise and delete files from
+# the old scheme — they're incompatible with the v0.18.2 RA/Dec
+# rehydrate path and just take up disk space.
+_LEGACY_THUMB_FILENAME_RE = re.compile(
+    r"^\d+_"
+    r"(?:list|detail|rig_framed|fov_simulator)_"
+    r"\d+x\d+"
+    r"(?:_-?\d+_-?\d+)?"
+    r"(?:_c-?\d+_-?\d+)?"
     r"\.jpg$"
 )
 
@@ -506,6 +551,8 @@ async def get_thumbnail(
     key = make_key(
         dso_id,
         variant,
+        ra_deg=ra_deg,
+        dec_deg=dec_deg,
         fov_major_deg=fov_major_deg,
         fov_minor_deg=fov_minor_deg,
     )
@@ -632,12 +679,118 @@ async def clear_cache(conn: aiosqlite.Connection) -> int:
     return deleted
 
 
+async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
+    """Re-index on-disk thumbnail files that are missing from ``thumbnail_cache``.
+
+    Runs on app startup before the orphan sweep so a user who wipes
+    or switches the database doesn't lose their thumbnail cache —
+    the JPEGs live in ``APP_DIR/thumbnails`` independently of the
+    SQLite index. The filename encodes (RA × 10000, Dec × 10000)
+    rather than the dso_id it was written under, so we can resolve
+    each file to the **current** ``dso`` row by coordinate match —
+    dso_id isn't stable across fresh catalog loads, but sky
+    coordinates are.
+
+    Skipped paths:
+    - ``fov_simulator`` variant and pre-v0.18.1 ``{dso_id}_…`` filenames
+      (both parse to ``None`` under the RA/Dec regex) — left for the
+      orphan sweep.
+    - Files whose RA/Dec don't match any current DSO row (catalog
+      shrunk or entry removed).
+    - Files with unparseable names.
+
+    Returns the number of rows inserted.
+    """
+    d = APP_DIR / "thumbnails"
+    if not d.is_dir():
+        return 0
+
+    # Build an in-memory ``(ra_x10000, dec_x10000) → dso_id`` map from
+    # the current DSO table. Faster than a per-file SQL query when
+    # many files need rehydrating.
+    cursor = await conn.execute(
+        "SELECT id, ra_deg, dec_deg FROM dso "
+        "WHERE active = 1 AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL"
+    )
+    coord_to_id: dict[tuple[int, int], int] = {}
+    for row in await cursor.fetchall():
+        coord = (round(row["ra_deg"] * 10000), round(row["dec_deg"] * 10000))
+        # First write wins — two DSOs at byte-identical coords are a
+        # catalog-cleanup problem, not ours to solve here.
+        coord_to_id.setdefault(coord, int(row["id"]))
+
+    cursor = await conn.execute("SELECT file_path FROM thumbnail_cache")
+    known_files = {str(Path(row["file_path"]).resolve()) for row in await cursor.fetchall()}
+
+    inserted = 0
+    for entry in d.iterdir():
+        if not entry.is_file() or entry.suffix != ".jpg":
+            continue
+        if str(entry.resolve()) in known_files:
+            continue
+        match = _THUMB_FILENAME_RE.match(entry.name)
+        if match is None:
+            continue
+        variant = match.group("variant")
+        if variant == "fov_simulator":
+            continue
+        ra_x10000 = int(match.group("ra"))
+        dec_x10000 = int(match.group("dec"))
+        dso_id = coord_to_id.get((ra_x10000, dec_x10000))
+        if dso_id is None:
+            # No DSO at these coords in the current catalog. Orphan
+            # sweep will tidy up.
+            continue
+        try:
+            size_bytes = entry.stat().st_size
+        except OSError:
+            continue
+        if size_bytes < 100:
+            continue
+        width = int(match.group("width"))
+        height = int(match.group("height"))
+        fmaj = match.group("fmaj")
+        fmin = match.group("fmin")
+        try:
+            await conn.execute(
+                """
+                INSERT INTO thumbnail_cache (
+                    dso_id, variant, width, height,
+                    fov_major_deg_x1000, fov_minor_deg_x1000,
+                    file_path, source, bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'dss2_color', ?)
+                """,
+                (
+                    dso_id,
+                    variant,
+                    width,
+                    height,
+                    int(fmaj) if fmaj is not None else None,
+                    int(fmin) if fmin is not None else None,
+                    str(entry),
+                    size_bytes,
+                ),
+            )
+            inserted += 1
+        except aiosqlite.IntegrityError:
+            continue
+    if inserted:
+        await conn.commit()
+        logger.info(
+            "[thumb] rehydrated %d on-disk file(s) into the cache index",
+            inserted,
+        )
+    return inserted
+
+
 async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
     """Delete on-disk thumbnail files not referenced by ``thumbnail_cache``.
 
-    Called once on app startup (after migrations run) to clean up the
-    stale Pass A ``detail`` JPEGs left behind when migration 0018 wiped
-    the table. Also guards against manual tampering on subsequent boots.
+    Called on app startup AFTER ``rehydrate_from_disk``, so any file
+    that could be reattached to the index (matching DSO id + known
+    variant) has already been. Anything left is either from an
+    unknown DSO id (catalog was reshuffled), the retired
+    ``fov_simulator`` variant, or a corrupt file.
 
     Returns the count of files removed.
     """
@@ -652,7 +805,9 @@ async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
     for entry in d.iterdir():
         if not entry.is_file() or entry.suffix != ".jpg":
             continue
-        if not _THUMB_FILENAME_RE.match(entry.name):
+        if not (
+            _THUMB_FILENAME_RE.match(entry.name) or _LEGACY_THUMB_FILENAME_RE.match(entry.name)
+        ):
             continue
         if str(entry.resolve()) not in known:
             entry.unlink(missing_ok=True)

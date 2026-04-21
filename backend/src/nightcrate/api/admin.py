@@ -54,12 +54,20 @@ def _db_size(path: str) -> int | None:
 
 
 def _initialize_database(db_path: Path) -> None:
-    """Run migrations and the equipment seed loader on a database.
+    """Run migrations, the equipment seed loader, and the DSO catalog
+    loader on a database.
 
-    Intentionally does NOT invoke the DSO catalog loader — that data is
-    fetched on demand from GitHub via the admin UI after DB creation.
-    Running the loader here would just produce "missing file" noise.
+    The catalog loader is a no-op when the user's
+    ``APP_DIR/catalogs/`` tree is empty — no files, nothing to load,
+    no error. When catalog files DO exist locally (a common case
+    after the user creates a second database on a machine that
+    already fetched OpenNGC / Sharpless / Barnard / 50 MGC for a
+    prior database) the new DB gets populated automatically, no
+    manual "Reload from local cache" click required.
     """
+    from nightcrate.catalog_loader import load_catalogs
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+
     apply_migrations(db_path=db_path)
 
     csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
@@ -69,6 +77,7 @@ def _initialize_database(db_path: Path) -> None:
         sync_conn.execute("PRAGMA foreign_keys = ON")
         load_all(sync_conn, csv_root, "auto")
         sync_conn.commit()
+        load_catalogs(sync_conn, user_catalogs_root())
     finally:
         sync_conn.close()
 

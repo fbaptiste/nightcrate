@@ -22,7 +22,7 @@ import { type Rig } from "@/api/rigs";
 import { type Location } from "@/api/locations";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
-import ThumbnailCell from "./ThumbnailCell";
+import SkyPreview from "@/components/dso/SkyPreview";
 import SkyPositionGraph from "./SkyPositionGraph";
 import FovSimulator from "./FovSimulator";
 
@@ -259,19 +259,27 @@ export default function PlannerDetailPanel({
             onSelectDso={onSelectDso}
             size={560}
           />
-        ) : dsoId != null ? (
+        ) : dsoId != null && dso?.ra_deg != null && dso?.dec_deg != null ? (
+          // No rig selected — fall back to the same auto-tier
+          // ``SkyPreview`` the DSO Catalog detail uses. Zooms to fit
+          // the DSO's angular size (wider for small targets, tighter
+          // for bright nebulae) and shares the sky-tile cache with
+          // the rig-mode simulator.
           <Box
             sx={{
               mx: "auto",
               maxWidth: 560,
               aspectRatio: "1 / 1",
               width: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              bgcolor: "#000000",
+              position: "relative",
             }}
           >
-            <ThumbnailCell dsoId={dsoId} size={560} variant="detail" />
+            <SkyPreview
+              raDeg={dso.ra_deg}
+              decDeg={dso.dec_deg}
+              majAxisArcmin={dso.maj_axis_arcmin ?? null}
+            />
           </Box>
         ) : null}
 

@@ -2526,6 +2526,15 @@ ship.
       new facets-with-filters endpoint, or drop the parenthesised
       count in Tonight mode and only show it in Anytime.
 
+- [ ] **Planner "Clear filters" discoverability.** The button only
+      renders when `catalogFiltersActive` is true (at least one of:
+      search, constellation, has-distance, type-group chip, raw-type
+      chip). A user who just wants to reset their mag/size/min-hours
+      sliders won't see it. Decide together with the catalog-filter
+      redesign — options include always-rendering the button,
+      adding a slider-specific "Reset to defaults" button, or
+      rolling all of it under one Clear control.
+
 - [ ] **Revisit type-group vs raw-type chip overlap** (bundle with
       the catalog-filter-redesign discussion below — not a separate
       decision). Main chips show user-facing group names (e.g.
@@ -2573,6 +2582,28 @@ ship.
       appears in Aladin / Stellarium. Mitigations would need a
       survey picker (Pan-STARRS / DECaLS in their coverage area,
       DSS2 elsewhere) or per-tile median normalisation.
+
+### Cache resilience across database recreation
+
+- [ ] **Thumbnail cache: coordinate-keyed filenames.** v0.18.1
+      added a startup rehydration path for ``thumbnail_cache`` that
+      re-indexes on-disk JPEGs, but it's limited by the current
+      filename format ``{dso_id}_{variant}_{w}x{h}.jpg``. The
+      embedded ``dso_id`` isn't stable across fresh catalog loads
+      (OpenNGC rows get auto-assigned integers in insertion order,
+      and that order isn't guaranteed to match between databases),
+      so a user who creates a new DB loses the thumbnails both
+      pages rely on — the Planner's list thumbnails, the DSO
+      Catalog grid's row thumbnails, and the "In my rig" column —
+      even though the JPEGs are still on disk. Fix: encode
+      ``(ra_deg_x10000, dec_deg_x10000)`` in the filename instead
+      of / alongside ``dso_id``; rehydrate matches files to current
+      ``dso`` rows by angular coordinate (≤1 arcsec tolerance).
+      Migration note: current thumbnails would be orphaned once on
+      rollout; the new format is cross-DB resilient thereafter.
+      The sky-tile cache (FOV simulator backgrounds, DSO Catalog
+      detail-panel preview) already survives DB recreation because
+      its filenames encode HEALPix region identity, no DSO id.
 
 ### Admin / Settings restructure
 

@@ -62,7 +62,12 @@ async def _drain_in_flight():
 async def _seed_dso_rows():
     """thumbnail_cache has a FK to dso(id). Seed enough dummy DSO rows
     (and a source to satisfy ``source_catalog_id``) so the tests can
-    reference any dso_id in the range 1..999 freely."""
+    reference any dso_id in the range 1..999 freely.
+
+    Also assigns deterministic ra/dec coordinates (DSO id → ra_deg,
+    dec_deg mapping) so rehydrate tests can round-trip from filename
+    back to dso_id via the coord lookup.
+    """
     async with get_db() as conn:
         await conn.execute(
             """
@@ -74,17 +79,17 @@ async def _seed_dso_rows():
         cursor = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
         row = await cursor.fetchone()
         source_id = int(row["id"])
-        # A small bank of dummy DSOs — test IDs only need to fall in this
-        # range. INSERTs use explicit primary-key values so the tests can
-        # refer to them by literal id (42, 99, 55, …).
         for test_dso_id in (1, 2, 3, 42, 55, 66, 77, 99):
+            ra = float(test_dso_id)
+            dec = float(test_dso_id) - 45.0
             await conn.execute(
                 """
                 INSERT INTO dso (id, primary_designation, obj_type,
+                    ra_deg, dec_deg,
                     source_catalog_id, source_row_hash)
-                VALUES (?, ?, 'G', ?, 'h')
+                VALUES (?, ?, 'G', ?, ?, ?, 'h')
                 """,
-                (test_dso_id, f"TEST-{test_dso_id}", source_id),
+                (test_dso_id, f"TEST-{test_dso_id}", ra, dec, source_id),
             )
         await conn.commit()
     yield
@@ -338,43 +343,91 @@ def test_compute_angular_extent_rig_framed_requires_fov():
         thumbnails.compute_angular_extent_deg("rig_framed", dso_maj_axis_arcmin=5.0)
 
 
+_TEST_RA = 83.8221  # M 42
+_TEST_DEC = -5.3911
+
+
 def test_make_key_rounds_fov_to_milli_degree():
-    k1 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.3701, fov_minor_deg=0.2801)
-    k2 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.3702, fov_minor_deg=0.2804)
+    k1 = thumbnails.make_key(
+        42,
+        "rig_framed",
+        ra_deg=_TEST_RA,
+        dec_deg=_TEST_DEC,
+        fov_major_deg=0.3701,
+        fov_minor_deg=0.2801,
+    )
+    k2 = thumbnails.make_key(
+        42,
+        "rig_framed",
+        ra_deg=_TEST_RA,
+        dec_deg=_TEST_DEC,
+        fov_major_deg=0.3702,
+        fov_minor_deg=0.2804,
+    )
     # 0.3701 × 1000 = 370.1 → rounds to 370; 0.3702 → 370. Match.
     assert k1.fov_major_deg_x1000 == k2.fov_major_deg_x1000 == 370
     assert k1.fov_minor_deg_x1000 == k2.fov_minor_deg_x1000 == 280
 
 
 def test_make_key_distinguishes_rigs_at_0_01_degree_spacing():
-    k1 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.370, fov_minor_deg=0.280)
-    k2 = thumbnails.make_key(42, "rig_framed", fov_major_deg=0.380, fov_minor_deg=0.290)
+    k1 = thumbnails.make_key(
+        42,
+        "rig_framed",
+        ra_deg=_TEST_RA,
+        dec_deg=_TEST_DEC,
+        fov_major_deg=0.370,
+        fov_minor_deg=0.280,
+    )
+    k2 = thumbnails.make_key(
+        42,
+        "rig_framed",
+        ra_deg=_TEST_RA,
+        dec_deg=_TEST_DEC,
+        fov_major_deg=0.380,
+        fov_minor_deg=0.290,
+    )
     assert k1.fov_major_deg_x1000 != k2.fov_major_deg_x1000
 
 
 def test_make_key_rig_independent_variants_ignore_fov_args():
     # Even if a caller accidentally passes FOV values, list / detail keys
     # must stay rig-independent so the cache doesn't fork.
-    k = thumbnails.make_key(42, "list", fov_major_deg=0.37, fov_minor_deg=0.28)
+    k = thumbnails.make_key(
+        42,
+        "list",
+        ra_deg=_TEST_RA,
+        dec_deg=_TEST_DEC,
+        fov_major_deg=0.37,
+        fov_minor_deg=0.28,
+    )
     assert k.fov_major_deg_x1000 is None
     assert k.fov_minor_deg_x1000 is None
 
 
 def test_make_key_rig_dependent_variants_require_fov():
     with pytest.raises(ValueError, match="rig_framed"):
-        thumbnails.make_key(42, "rig_framed")
+        thumbnails.make_key(42, "rig_framed", ra_deg=_TEST_RA, dec_deg=_TEST_DEC)
 
 
 def test_make_key_sky_center_args_are_discarded():
     # ``center_ra_deg`` / ``center_dec_deg`` survived in the signature
     # for backwards-compat after the panned fov_simulator retirement;
     # they must NOT make it into the key for any current variant.
-    k = thumbnails.make_key(42, "list", center_ra_deg=100.0, center_dec_deg=20.0)
+    k = thumbnails.make_key(
+        42,
+        "list",
+        ra_deg=_TEST_RA,
+        dec_deg=_TEST_DEC,
+        center_ra_deg=100.0,
+        center_dec_deg=20.0,
+    )
     assert k.center_ra_deg_x1000 is None
     assert k.center_dec_deg_x1000 is None
     k = thumbnails.make_key(
         42,
         "rig_framed",
+        ra_deg=_TEST_RA,
+        dec_deg=_TEST_DEC,
         fov_major_deg=0.37,
         fov_minor_deg=0.28,
         center_ra_deg=10.0,
@@ -382,6 +435,21 @@ def test_make_key_sky_center_args_are_discarded():
     )
     assert k.center_ra_deg_x1000 is None
     assert k.center_dec_deg_x1000 is None
+
+
+def test_make_key_encodes_ra_dec_x10000():
+    # Sky coordinates feed the on-disk filename so the cache survives
+    # database recreation. Rounding to 4 decimals (~0.36 arcsec) gives
+    # plenty of precision without triggering rounding drift between
+    # catalog loads of the same OpenNGC release.
+    k = thumbnails.make_key(
+        42,
+        "list",
+        ra_deg=83.82213,
+        dec_deg=-5.39111,
+    )
+    assert k.ra_deg_x10000 == 838221  # 83.82213 → 838221.3 → 838221
+    assert k.dec_deg_x10000 == -53911  # -5.39111 → -53911.1 → -53911
 
 
 async def test_rig_framed_cache_miss_enqueues_fetch(fake_hips):
@@ -443,15 +511,77 @@ async def test_rig_framed_two_distinct_rigs_get_separate_rows(fake_hips):
         assert (await cursor.fetchone())["n"] == 2
 
 
+async def test_rehydrate_from_disk_rebuilds_thumbnail_index(tmp_path):
+    """Per-DSO thumbnails survive DB wipes: a JPEG on disk whose
+    filename encodes a known-to-the-current-DB (RA, Dec) should get
+    a ``thumbnail_cache`` row inserted on startup — resolving to the
+    dso_id the current DB assigned, regardless of what dso_id the
+    file was originally written under.
+
+    Seed DSOs (from the autouse fixture): id=42 at (42.0°, -3.0°),
+    id=55 at (55.0°, 10.0°). RA × 10000 / Dec × 10000 encoded in
+    the filename reverses back to those ids via coord match.
+    """
+    thumb_dir = tmp_path / "thumbnails"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    # DSO at (42.0°, -3.0°) → (420000, -30000). Matches seed id=42.
+    rehydratable = thumb_dir / "ra420000_dec-30000_list_180x180.jpg"
+    rehydratable.write_bytes(b"\xff\xd8" + b"x" * 2048)
+    # DSO at (55.0°, 10.0°) with FOV suffix → matches seed id=55.
+    rehydratable_rig = thumb_dir / "ra550000_dec100000_rig_framed_180x180_687_459.jpg"
+    rehydratable_rig.write_bytes(b"\xff\xd8" + b"x" * 2048)
+    # No DSO at these coords — skipped.
+    missing_coord = thumb_dir / "ra9999000_dec-890000_list_180x180.jpg"
+    missing_coord.write_bytes(b"\xff\xd8" + b"x" * 2048)
+    # Retired variant — skipped regardless.
+    retired = thumb_dir / "ra420000_dec-30000_fov_simulator_800x800_370_280.jpg"
+    retired.write_bytes(b"\xff\xd8" + b"x" * 2048)
+    # Legacy pre-v0.18.2 filename format (dso-keyed) — doesn't match
+    # the new regex, skipped.
+    legacy = thumb_dir / "42_list_180x180.jpg"
+    legacy.write_bytes(b"\xff\xd8" + b"x" * 2048)
+    # Truncated / too small — skip.
+    tiny = thumb_dir / "ra990000_dec540000_list_180x180.jpg"
+    tiny.write_bytes(b"\x00\x01")
+
+    async with get_db() as conn:
+        inserted = await thumbnails.rehydrate_from_disk(conn)
+        cursor = await conn.execute(
+            "SELECT dso_id, variant, fov_major_deg_x1000, bytes "
+            "FROM thumbnail_cache ORDER BY dso_id"
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+
+    assert inserted == 2
+    assert len(rows) == 2
+    assert rows[0]["dso_id"] == 42
+    assert rows[0]["variant"] == "list"
+    assert rows[0]["fov_major_deg_x1000"] is None
+    assert rows[0]["bytes"] == len(rehydratable.read_bytes())
+    assert rows[1]["dso_id"] == 55
+    assert rows[1]["variant"] == "rig_framed"
+    assert rows[1]["fov_major_deg_x1000"] == 687
+    # Skipped files remain on disk (rehydrate never deletes).
+    assert missing_coord.exists()
+    assert retired.exists()
+    assert legacy.exists()
+    assert tiny.exists()
+
+
 async def test_sync_orphan_files_deletes_untracked(tmp_path):
     thumb_dir = tmp_path / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
     # One tracked, one orphan, one non-matching filename (should be left alone).
-    tracked = thumb_dir / "1_list_180x180.jpg"
-    orphan = thumb_dir / "2_detail_800x800.jpg"
+    tracked = thumb_dir / "ra10000_dec-440000_list_180x180.jpg"
+    orphan = thumb_dir / "ra20000_dec-430000_detail_800x800.jpg"
+    # Legacy (pre-v0.18.2) dso-keyed filename — also orphan-sweepable
+    # so users migrating over don't accumulate cruft forever.
+    legacy_orphan = thumb_dir / "3_list_180x180.jpg"
     other = thumb_dir / "README.txt"
     tracked.write_bytes(b"x")
     orphan.write_bytes(b"x")
+    legacy_orphan.write_bytes(b"x")
     other.write_bytes(b"x")
 
     async with get_db() as conn:
@@ -464,27 +594,26 @@ async def test_sync_orphan_files_deletes_untracked(tmp_path):
 
         removed = await thumbnails.sync_orphan_files(conn)
 
-    assert removed == 1
+    assert removed == 2
     assert tracked.exists()
     assert not orphan.exists()
+    assert not legacy_orphan.exists()
     assert other.exists()  # non-thumbnail files untouched
 
 
-def test_filename_regex_matches_panned_fov_simulator():
-    # The panned fov_simulator filename has both the FOV pair and the
-    # sky-centre pair; the regex must accept either/both suffixes.
-    match = thumbnails._THUMB_FILENAME_RE.match(
-        "42_fov_simulator_800x800_370_280_c202473_47195.jpg"
-    )
+def test_filename_regex_matches_current_format():
+    match = thumbnails._THUMB_FILENAME_RE.match("ra838221_dec-53911_rig_framed_180x180_370_280.jpg")
     assert match is not None
-    assert match.group("variant") == "fov_simulator"
+    assert match.group("ra") == "838221"
+    assert match.group("dec") == "-53911"
+    assert match.group("variant") == "rig_framed"
     assert match.group("fmaj") == "370"
-    assert match.group("cra") == "202473"
-    assert match.group("cdec") == "47195"
+    assert match.group("fmin") == "280"
 
 
-def test_filename_regex_accepts_negative_dec():
-    # Southern declinations carry a leading minus sign.
-    match = thumbnails._THUMB_FILENAME_RE.match("7_fov_simulator_800x800_100_80_c50000_-15500.jpg")
-    assert match is not None
-    assert match.group("cdec") == "-15500"
+def test_filename_regex_rejects_legacy_dso_keyed_format():
+    # The new regex must NOT match pre-v0.18.2 filenames — they're
+    # handled separately by the legacy sweep-only regex, but must
+    # never feed into rehydrate (coordinates aren't recoverable).
+    assert thumbnails._THUMB_FILENAME_RE.match("42_list_180x180.jpg") is None
+    assert thumbnails._LEGACY_THUMB_FILENAME_RE.match("42_list_180x180.jpg") is not None
