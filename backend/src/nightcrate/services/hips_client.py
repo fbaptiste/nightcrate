@@ -9,8 +9,10 @@ Service reference: https://alasky.cds.unistra.fr/hips-image-services/hips2fits
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from collections.abc import Mapping
 from urllib.parse import urlencode
 
 from nightcrate.services import http_client
@@ -49,6 +51,36 @@ def build_hips2fits_url(
         "ra": f"{ra_deg:.6f}",
         "dec": f"{dec_deg:.6f}",
         "fov": f"{fov_deg:.6f}",
+        "format": fmt,
+    }
+    return f"{HIPS2FITS_BASE}?{urlencode(params)}"
+
+
+def build_hips2fits_wcs_url(
+    hips: str,
+    wcs_header: Mapping[str, int | float | str],
+    *,
+    fmt: str = "jpg",
+) -> str:
+    """Compose a ``hips2fits`` URL using a custom WCS header.
+
+    Used by the v0.18.0 sky-tile cache to render off-centre TAN tiles
+    on a shared tangent plane: every cell in a HEALPix region passes
+    the same ``CRVAL1/2`` and only differs in ``CRPIX1/2``, so adjacent
+    cells render pixel-perfectly aligned.
+
+    ``wcs_header`` must include ``NAXIS1`` / ``NAXIS2`` (hips2fits relies
+    on them to set output dimensions — ``astropy.wcs.WCS.to_header()``
+    omits them because they belong to the HDU, not the WCS). Build the
+    dict with ``services.sky_tiles.cell_wcs_dict``.
+
+    The ``wcs`` parameter is a JSON dict per the hips2fits spec
+    (verified at <https://alasky.cds.unistra.fr/hips-image-services/hips2fits>).
+    ``urlencode`` handles the percent-escaping.
+    """
+    params = {
+        "hips": hips,
+        "wcs": json.dumps(dict(wcs_header), separators=(",", ":")),
         "format": fmt,
     }
     return f"{HIPS2FITS_BASE}?{urlencode(params)}"
