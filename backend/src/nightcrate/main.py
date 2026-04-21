@@ -173,6 +173,19 @@ async def lifespan(app: FastAPI):
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("thumbnail orphan sweep failed", exc_info=True)
 
+        # Same sweep for the v0.18.0 sky-tile cache. Runs independently so
+        # either sweep failing doesn't block the other.
+        try:
+            from nightcrate.services.sky_tile_cache import (
+                sync_orphan_files as sync_sky_tile_orphans,
+            )
+
+            async with get_db() as conn:
+                conn.row_factory = aiosqlite.Row
+                await sync_sky_tile_orphans(conn)
+        except _MAINT_EXPECTED_ERRS:
+            startup_logger.warning("sky-tile orphan sweep failed", exc_info=True)
+
     yield
 
 

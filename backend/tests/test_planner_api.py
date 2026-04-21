@@ -386,3 +386,126 @@ async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(
     # Placeholder (202) on miss, or a hit (200) if the fetch completed
     # during the short test window.
     assert response.status_code in {200, 202}
+
+
+# ── Sky-tile endpoints (v0.18.0 / Pass C) ─────────────────────────────────────
+
+
+async def test_sky_tile_cache_stats_endpoint(client: TestClient):
+    response = client.get("/api/planner/sky-tile/cache/stats")
+    assert response.status_code == 200
+    data = response.json()
+    assert {"total_bytes", "row_count", "max_bytes", "generation"} <= data.keys()
+
+
+async def test_sky_tile_cache_clear_endpoint(client: TestClient):
+    response = client.post("/api/planner/sky-tile/cache/clear")
+    assert response.status_code == 200
+    assert "deleted_files" in response.json()
+
+
+async def test_sky_tile_rejects_unsupported_hips(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "hips": "CDS/P/SomeOtherSurvey",
+            "nside": 8,
+            "ipix": 0,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    assert response.status_code == 400
+    assert "Unsupported HiPS survey" in response.json()["detail"]
+
+
+async def test_sky_tile_rejects_ipix_over_region_count(client: TestClient):
+    # nside=8 has 12*64 = 768 regions (valid ipix range 0..767).
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 768,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    assert response.status_code == 400
+    assert "ipix" in response.json()["detail"]
+
+
+async def test_sky_tile_rejects_unknown_tier(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 0,
+            "tier": "mediumish",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    # Literal validation happens at the pydantic layer → 422.
+    assert response.status_code == 422
+
+
+async def test_sky_tile_miss_returns_placeholder(client: TestClient, monkeypatch):
+    """A cold cache returns the 1×1 PNG placeholder with status 202."""
+
+    async def _fake_get(url, *args, **kwargs):
+        # Never resolves (mimics a slow CDS); the client's wait_ms=0 means
+        # we should see the placeholder path without waiting.
+        import asyncio
+
+        await asyncio.sleep(60)
+
+        class R:
+            status_code = 200
+            content = b"\xff\xd8" + b"x" * 2048
+
+        return R()
+
+    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 100,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    assert response.status_code == 202
+    assert response.headers.get("cache-control", "").startswith("no-store")
+
+
+async def test_sky_tile_hit_returns_jpeg(client: TestClient, monkeypatch):
+    """A successful CDS response renders as a 200 with image/jpeg."""
+    fake_body = b"\xff\xd8" + b"x" * 2048
+
+    async def _fake_get(url, *args, **kwargs):
+        class R:
+            status_code = 200
+            content = fake_body
+
+        return R()
+
+    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    # wait_ms=2000 lets the long-poll finish the fetch in one round trip.
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 100,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+            "wait_ms": 2000,
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("content-type") == "image/jpeg"
+    assert response.content == fake_body

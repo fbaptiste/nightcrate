@@ -1,16 +1,21 @@
-"""Target Planner API (v0.16.0).
+"""Target Planner API (v0.16.0–v0.18.0).
 
 Routes for the "what's up tonight" planner page:
 
     GET  /api/planner/targets
     GET  /api/planner/targets/{dso_id}/sky-track
-    GET  /api/planner/thumbnails/{dso_id}
+    GET  /api/planner/thumbnails/{dso_id}      — DSO-keyed cache (Pass A/B)
     POST /api/planner/thumbnails/cache/clear
     GET  /api/planner/thumbnails/cache/stats
+    GET  /api/planner/sky-tile                 — sky-region cache (Pass C, v0.18.0)
+    POST /api/planner/sky-tile/cache/clear
+    GET  /api/planner/sky-tile/cache/stats
 
 Visibility + sky-track computations are delegated to
-``services/planner_*``. Thumbnail lifecycle (cache lookup, background
-fetch, LRU eviction) is in ``services/thumbnails``.
+``services/planner_*``. Thumbnail lifecycle is in
+``services/thumbnails``. The v0.18.0 DSO-agnostic sky-tile cache
+lives in ``services/sky_tile_cache`` and its math in
+``services/sky_tiles``.
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ from nightcrate.api.planner_models import (
 )
 from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
-from nightcrate.services import thumbnails
+from nightcrate.services import sky_tile_cache, thumbnails
 from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.planner_sky_track import compute_sky_track
 from nightcrate.services.planner_visibility import (
@@ -53,6 +58,8 @@ from nightcrate.services.rig_calculators import (
     compute_coverage_pct,
     compute_fov,
 )
+from nightcrate.services.sky_tile_cache import make_cell_key
+from nightcrate.services.sky_tiles import TIERS, Tier, tangent_for_ipix
 
 router = APIRouter(prefix="/api/planner", tags=["Target Planner"])
 
@@ -664,6 +671,125 @@ async def thumbnail_cache_stats() -> ThumbnailCacheStats:
     max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
     async with get_db() as conn:
         stats = await thumbnails.cache_stats(conn, max_bytes=max_bytes)
+    return ThumbnailCacheStats(
+        **stats,
+        generation=settings.thumbnail_cache_generation,
+    )
+
+
+# ── Sky-tile cache (v0.18.0 / Pass C) ────────────────────────────────────────
+
+
+# HiPS surveys the sky-tile endpoint will fetch from. Limiting to a
+# known allow-list keeps the cache URL space bounded and prevents
+# clients from pointing CDS at arbitrary survey paths.
+_ALLOWED_HIPS_SURVEYS = frozenset({"CDS/P/DSS2/color"})
+
+
+@router.get("/sky-tile")
+async def get_sky_tile(
+    hips: str = Query("CDS/P/DSS2/color", description="HiPS survey path."),
+    nside: int = Query(..., ge=1, le=4096),
+    ipix: int = Query(..., ge=0),
+    tier: Literal["narrow", "med", "wide"] = Query(...),
+    cell_i: int = Query(..., ge=-256, le=256),
+    cell_j: int = Query(..., ge=-256, le=256),
+    wait_ms: int = Query(0, ge=0, le=10000),
+) -> Response:
+    """Serve one HEALPix-regional TAN cell from the sky-tile cache.
+
+    Cells are keyed by sky region + tier + cell offset — no DSO. Two
+    DSOs whose 5×5 simulator views overlap in the same HEALPix region
+    share every cell in the overlap. On a cache miss the endpoint
+    schedules a background ``hips2fits`` fetch with a custom WCS
+    header (shared tangent point for every cell in the region) and,
+    with ``wait_ms > 0``, holds the request open under
+    ``asyncio.shield`` so the real image ships in the same round trip.
+
+    Returns 200 with the JPEG on a hit, 202 + 1×1 PNG placeholder on
+    miss (client polls), or 204 during the 1-hour failure backoff.
+    """
+    if hips not in _ALLOWED_HIPS_SURVEYS:
+        raise HTTPException(status_code=400, detail=f"Unsupported HiPS survey: {hips!r}")
+    # ipix upper bound is 12 * nside² (HEALPix definition).
+    if ipix >= 12 * nside * nside:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ipix={ipix} exceeds {12 * nside * nside - 1} for nside={nside}",
+        )
+    tier_name: Tier = tier  # Literal narrows to Tier.
+    tier_spec = TIERS[tier_name]
+
+    # Region tangent is a deterministic function of (nside, ipix).
+    # Compute once and hand to the cache service so cells within the
+    # region all share it.
+    region_ra, region_dec = tangent_for_ipix(ipix)
+
+    settings = await get_settings()
+    max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
+
+    key = make_cell_key(
+        hips_survey=hips,
+        healpix_nside=nside,
+        healpix_ipix=ipix,
+        tier=tier_spec,
+        cell_i=cell_i,
+        cell_j=cell_j,
+    )
+
+    async with get_db() as conn:
+        result = await sky_tile_cache.get_cell(
+            conn,
+            key=key,
+            region_ra_deg=region_ra,
+            region_dec_deg=region_dec,
+            max_cache_bytes=max_bytes,
+            conn_factory=get_db,
+            wait_timeout_s=wait_ms / 1000.0,
+        )
+
+    if result.status == "hit":
+        return Response(
+            content=result.body,
+            media_type=result.content_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    if result.status == "placeholder":
+        # Same no-store contract as the thumbnails endpoint: the client
+        # polls via a ``__v`` cache-buster, so a cached placeholder
+        # would defeat the retry loop.
+        return Response(
+            content=result.body,
+            media_type=result.content_type,
+            status_code=202,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+    return Response(
+        status_code=204,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.post("/sky-tile/cache/clear", response_model=CacheClearResponse)
+async def clear_sky_tile_cache() -> CacheClearResponse:
+    async with get_db() as conn:
+        deleted = await sky_tile_cache.clear_cache(conn)
+    settings = await get_settings()
+    settings.thumbnail_cache_generation += 1
+    await update_settings(settings)
+    return CacheClearResponse(deleted_files=deleted)
+
+
+@router.get("/sky-tile/cache/stats", response_model=ThumbnailCacheStats)
+async def sky_tile_cache_stats() -> ThumbnailCacheStats:
+    settings = await get_settings()
+    max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
+    async with get_db() as conn:
+        stats = await sky_tile_cache.cache_stats(conn, max_bytes=max_bytes)
     return ThumbnailCacheStats(
         **stats,
         generation=settings.thumbnail_cache_generation,
