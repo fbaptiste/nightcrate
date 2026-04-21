@@ -59,7 +59,12 @@ _PLACEHOLDER_PNG = bytes.fromhex(
 
 _FETCH_ERROR_BACKOFF = timedelta(hours=1)
 
-_MAX_CONCURRENT_FETCHES = 4
+# Matches the browser's conventional 6-per-origin limit (some modern
+# browsers default to 6–8 for HTTP/1.1) so the backend no longer
+# bottlenecks below what the frontend is already firing in parallel.
+# CDS can handle this from a single user; keep well under any
+# rate-limit threshold — don't bump this past ~10 without measuring.
+_MAX_CONCURRENT_FETCHES = 8
 _fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
 
 

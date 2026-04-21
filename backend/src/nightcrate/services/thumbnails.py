@@ -59,8 +59,11 @@ _PLACEHOLDER_PNG = bytes.fromhex(
 _FETCH_ERROR_BACKOFF = timedelta(hours=1)
 
 # Cap how many concurrent background fetches run against CDS so a
-# first-time user listing 100 rows doesn't hammer the service.
-_MAX_CONCURRENT_FETCHES = 4
+# first-time user listing 100 rows doesn't hammer the service. 8
+# matches the sky-tile cache's slot count + the browser's
+# per-origin connection limit — the backend stops being the
+# bottleneck below what the frontend already fires in parallel.
+_MAX_CONCURRENT_FETCHES = 8
 _fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
 
 
