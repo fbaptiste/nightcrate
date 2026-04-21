@@ -2517,6 +2517,141 @@ ship.
       Multi-select semantics: OR within the filter (a DSO is a match
       if it carries *any* of the selected catalog designations).
 
+- [ ] **Filter-aware type-group chip counts.** Today the type-group
+      (and raw-type) chips show full-catalog totals from
+      `/api/dso/facets` — meaningful in Anytime but misleading in
+      Tonight, where a "Galaxy Group (234)" chip can sit above a
+      grid with zero rows because mag / size / visibility filters
+      eliminate everything. Either compute filtered counts via a
+      new facets-with-filters endpoint, or drop the parenthesised
+      count in Tonight mode and only show it in Anytime.
+
+- [ ] **Revisit type-group vs raw-type chip overlap.** Main chips
+      show user-facing group names (e.g. `Galaxy`) derived via
+      `group_for_raw_type`; the Advanced section shows raw OpenNGC
+      codes (e.g. `G` → "Galaxy" via `displayDsoType`). The labels
+      collide ("Galaxy" appears in both), which reads as
+      redundancy. Either rename one side, hide raw codes whose
+      display form matches a group name, or merge the two controls.
+
+### DSO Catalog
+
+- [ ] **Full-image modal introduces scrollbars on large objects.**
+      M 42 (and likely other wide-extent DSOs) renders with a
+      horizontal scrollbar when opened via "View full image". The
+      modal's `SkyPreview` composite's natural size exceeds the
+      modal's viewport along the major axis. Fit the preview to the
+      modal's inner size (`object-fit: contain` on the composite, or
+      clamp composite dimensions to the modal bounds) so the image
+      always fits without scrolling.
+
+- [ ] **Survey of DSOs with no RA/Dec.** Rather more entries than
+      expected have null coordinates. Worth investigating — are
+      these canonical DSOs where OpenNGC itself is missing the
+      coords, or a parser bug? Either way the DSO Catalog page
+      should expose a "Has coordinates" filter and decide whether
+      to hide / gray / flag them.
+
+### FOV Simulator
+
+- [ ] **Auto-focus the simulator div on pointer down so keyboard
+      controls work.** ``FovSimulator`` has `tabIndex={0}` and an
+      `onKeyDown` handler, but a `<div>` doesn't pick up keyboard
+      focus on click — only on Tab. Users click the simulator to
+      interact with it and find arrow keys / R do nothing. Add
+      `ref.focus()` inside ``onPointerDown`` so interaction implicitly
+      focuses the control.
+
+- [ ] **Reconsider arrow-key controls.** Arrow keys currently step
+      rotation ±5° / Shift-arrow ±1°. Options: (a) drop keyboard
+      rotation entirely and rely on drag-to-rotate + numeric input,
+      or (b) add `Ctrl-arrow` for panning the viewport (the obvious
+      missing keyboard control, since rotation already has drag +
+      numeric input).
+
+- [ ] **Rig-frame-intersection tile load priority.** Currently cells
+      render in order of distance-from-view-centre, with the centre
+      cell gated behind its own `onReady`. When a rig is selected,
+      the priority should instead be "tiles that intersect the rig
+      rectangle first, then the rest centre-outward". The rig
+      rectangle can span multiple cells at medium/wide tiers; today
+      the user watches cells outside the frame light up before ones
+      the rig actually covers.
+
+### FOV Simulator background survey
+
+- [ ] **DSS2 plate-boundary seams are visible at wide extents.** The
+      mosaic stitches pixel-perfectly (verified on NGC 7000 —
+      astrometry is seamless), but intensity / colour deltas
+      between adjacent HEALPix cells are noticeable because DSS2
+      itself is a patchwork of independently calibrated
+      photographic plates. Not a NightCrate bug — same effect
+      appears in Aladin / Stellarium. Mitigations would need a
+      survey picker (Pan-STARRS / DECaLS in their coverage area,
+      DSS2 elsewhere) or per-tile median normalisation.
+
+### Planner sliders
+
+- [ ] **Debounce the Min-hours / Brighter-than / Min-size sliders.**
+      Today every intermediate value during a drag fires a new
+      ``/api/planner/targets`` fetch; the grid visibly flashes the
+      full list while the user drags the filter looser. Hold the
+      intermediate value in local state and only push to the query
+      state on ``onChangeCommitted``, or wrap the value in
+      ``useDebounce(…, 200ms)``. Pre-existing pattern (v0.16.0), not
+      a v0.18.0 regression.
+
+### Admin / Settings restructure
+
+- [ ] **Discuss: move cache management from Settings → Admin.** The
+      thumbnail cache + sky-tile cache controls (size budget slider,
+      current usage, clear button) currently live on the Settings
+      page. Fred's take: these are operational controls, not user
+      preferences — Admin feels like the right home, alongside the
+      DB-management and catalogs sections. Applies broadly: any
+      cache-management UI (aberration cache, weather cache, future
+      caches) probably belongs on Admin, not Settings. Settings
+      should reduce to pure preferences (theme, planner defaults,
+      GPU on/off, worker cores).
+
+### Planner detail panel
+
+- [ ] **Discuss: altitude chart (SkyPositionGraph) behaviour in
+      Anytime mode.** The detail dialog's "Sky position" section
+      runs off a location — in Anytime there may be no parent
+      location selected. Today the panel's own location dropdown
+      defaults to the parent's selection, so Anytime can leave the
+      graph in a spinner / empty state. Options to consider:
+      (a) hide the Sky position section in Anytime unless the user
+      explicitly picks a location in the panel's dropdown;
+      (b) keep the section but render a friendly prompt
+      ("Pick a location to see this object's sky track") instead of
+      the spinner; (c) require a location in the panel dropdown
+      unconditionally (auto-pick the default location even in
+      Anytime).
+
+### Planner grid
+
+- [ ] **Grid shows blank state during first fetch instead of a
+      spinner.** On Anytime's first open, the targets query kicks
+      off but the DataGrid renders an empty grid with no loading
+      indicator for several seconds. The DataGrid accepts a
+      ``loading`` prop (already wired to
+      ``targetsQuery.isLoading || targetsQuery.isFetching``) but
+      the default overlay is subtle. Either swap to a more visible
+      loading overlay (centered spinner + "Loading catalog…") or
+      ensure the existing one actually renders during the first
+      fetch — today the user sees nothing.
+
+- [ ] **Sortable Size column.** The Size column in the Planner is
+      marked `sortable: false` (the displayed `a × b` string is a
+      `valueGetter` composite). Add `"size"` to the backend's sort
+      Literal and map to `maj_axis_arcmin` in the in-memory
+      sort key — mirrors the pattern already used on the DSO
+      Catalog page (`SORT_COLUMNS["size"] = "maj_axis_arcmin"`).
+      Sort-by-size is valuable for planners ("what's biggest
+      tonight?").
+
 ### Planner grid pagination
 
 - [ ] **First / Prev / Page-N / Next / Last pagination controls** —
