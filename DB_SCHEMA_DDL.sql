@@ -1,4 +1,4 @@
--- NightCrate version: 0.17.0
+-- NightCrate version: 0.18.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1317,3 +1317,51 @@ CREATE INDEX IF NOT EXISTS idx_thumbnail_cache_dso
 CREATE INDEX IF NOT EXISTS idx_dso_distance_method
     ON dso(distance_method)
     WHERE distance_method IS NOT NULL;
+
+-- ─── v0.18.0 — Target Planner Pass C sky-tile cache (migration 0020) ─────────
+--
+-- DSO-agnostic cell cache for the FOV Simulator and DSO-catalog auto-
+-- zoom previews. Cells are keyed by sky region (HEALPix NSIDE=8, 768
+-- regions) + tier + cell offset — no FK to dso. Two DSOs whose
+-- composites overlap in the same region share every cell in the
+-- overlap. See ``services/sky_tiles.py`` for the tier → cell-size
+-- mapping.
+
+CREATE TABLE IF NOT EXISTS sky_tile_cache (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    hips_survey          TEXT    NOT NULL,
+    healpix_nside        INTEGER NOT NULL,
+    healpix_ipix         INTEGER NOT NULL,
+    tier                 TEXT    NOT NULL CHECK (tier IN ('narrow', 'med', 'wide')),
+    cell_size_deg_x100   INTEGER NOT NULL,
+    cell_width_px        INTEGER NOT NULL,
+    cell_height_px       INTEGER NOT NULL,
+    cell_i               INTEGER NOT NULL,
+    cell_j               INTEGER NOT NULL,
+    file_path            TEXT    NOT NULL UNIQUE,
+    source               TEXT    NOT NULL CHECK (source IN (
+        'dss2_color', 'dss2_red', 'dss2_blue', 'placeholder'
+    )),
+    bytes                INTEGER NOT NULL,
+    fetched_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_access_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    fetch_error          TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sky_tile_cache_unique
+    ON sky_tile_cache(
+        hips_survey,
+        healpix_nside,
+        healpix_ipix,
+        tier,
+        cell_size_deg_x100,
+        cell_width_px,
+        cell_height_px,
+        cell_i,
+        cell_j
+    );
+
+CREATE INDEX IF NOT EXISTS idx_sky_tile_cache_last_access
+    ON sky_tile_cache(last_access_at);
+CREATE INDEX IF NOT EXISTS idx_sky_tile_cache_region
+    ON sky_tile_cache(healpix_nside, healpix_ipix);

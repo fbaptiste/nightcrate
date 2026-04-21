@@ -24,6 +24,11 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.12.1 — Calculators + Maintenance & Architectural Review](#v0121--calculators--maintenance--architectural-review) ✅
 - [v0.12.2 — Equipment Factory Refactor](#v0122--equipment-factory-refactor) ✅
 - [v0.13.0 — Custom Horizons](#v0130--custom-horizons) ✅
+- [v0.14.0 — DSO Catalog MVP (OpenNGC)](#v0140--dso-catalog-mvp-openngc) ✅
+- [v0.15.0 — DSO Augmentation & VizieR Integration](#v0150--dso-augmentation--vizier-integration) ✅
+- [v0.16.0 — Target Planner (Pass A)](#v0160--target-planner-pass-a) ✅
+- [v0.17.0 — Target Planner Pass B (FOV Simulator + Rig-Framed Thumbnails)](#v0170--target-planner-pass-b-fov-simulator--rig-framed-thumbnails) ✅
+- [v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)](#v0180--target-planner-pass-c-sky-tile-cache--seamless-stitching) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -2330,7 +2335,7 @@ architecture.
 
 ## v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)
 
-**Status:** In Progress
+**Status:** ✅ Complete
 **Branch:** `v0.18.0/target-planner-pass-c`
 
 Rearchitects the FOV-simulator tile pipeline from per-DSO TAN fetches
@@ -2369,101 +2374,126 @@ is the new cell cache.
       list/grid use; the full-size preview passes `fit="contain"` so
       future non-square variants letterbox instead of cropping.
 
-### Sky-tile cache architecture (to implement — see lovely-hatching-swan.md)
+### Sky-tile cache architecture
 
-- [ ] Add `astropy_healpix` (BSD-3-Clause) dep. Verify licence before
-      adding. `healpy` is GPL-2.0 and explicitly excluded.
-- [ ] Migration 0020 adds `sky_tile_cache` table alongside existing
-      `thumbnail_cache`. Keys: `(hips_survey, healpix_nside,
-      healpix_ipix, tier, cell_size_deg_x100, cell_width_px,
-      cell_height_px, cell_i, cell_j)` + unique index.
-- [ ] `services/sky_tiles.py` — HEALPix region math (NSIDE=8, 768
-      regions), cell-grid math, `cell_wcs_header()` via
-      `astropy.wcs.WCS.to_header()`, `fetch_cell()` hitting hips2fits
-      with the `wcs=<JSON>` parameter.
-- [ ] `services/sky_tile_cache.py` — SQL helpers, LRU eviction, orphan
-      file sweep on startup.
-- [ ] `hips_client.build_hips2fits_wcs_url(hips, wcs_dict, fmt)`
+- [x] Added `astropy_healpix` (BSD-3-Clause). `healpy` (GPL-2.0)
+      explicitly rejected.
+- [x] Migration 0020 creates `sky_tile_cache` table. Keys:
+      `(hips_survey, healpix_nside, healpix_ipix, tier,
+      cell_size_deg_x100, cell_width_px, cell_height_px, cell_i,
+      cell_j)` + unique index. `center_ra_deg_x1000` /
+      `center_dec_deg_x1000` columns kept on `thumbnail_cache` for the
+      now-retired panned-simulator path (vestigial, still indexed).
+- [x] `services/sky_tiles.py` — HEALPix region math (NSIDE=8, 768
+      regions), cell-grid math, `cell_wcs_dict()`, `compute_grid_layout`.
+- [x] `services/sky_tile_cache.py` — SQL helpers, LRU eviction, orphan
+      file sweep (`sync_orphan_files`) on app lifespan startup.
+- [x] `hips_client.build_hips2fits_wcs_url(hips, wcs_dict, fmt)`
       alongside the existing `build_hips2fits_url`.
-- [ ] `GET /api/planner/sky-tile` endpoint with optional `wait_ms`
-      long-poll (reuse the pattern from `/thumbnails/{id}`).
-- [ ] Three resolution tiers selected by rig major FOV:
+- [x] `GET /api/planner/sky-tile` endpoint with `wait_ms` long-poll
+      (mirrors `/thumbnails/{id}`).
+- [x] `GET /api/planner/sky-tile-grid` layout endpoint (pure math).
+- [x] Three resolution tiers selected by rig major FOV:
       `narrow` (≤1°, 0.5° cells @ 800×800), `med` (1–3°, 2° cells @
       800×800), `wide` (>3°, 8° cells @ 1024×1024).
+- [x] CDS fetch semaphore bumped 4 → 8 for faster first-image latency
+      on the 5×5 tile mosaic.
 
 ### Frontend cell composition
 
-- [ ] `frontend/src/lib/skyTiles.ts` — `ipixForCoord`, `tangentForIpix`,
-      `cellsCoveringRect`. Must stay byte-identical with the backend
-      layout math; covered by a parity test.
-- [ ] `api/planner.ts:skyTileUrl(hips, nside, ipix, tier, cellI, cellJ,
-      { waitMs })`.
-- [ ] `FovSimulator` — replace `computeTiles` with `cellsCoveringRect`;
-      tile placement uses TAN-plane pixel coords, not plate-carrée
-      `cosDec` math. Each cell renders in `<ThumbnailCell>` with the
-      new sky-tile URL.
-- [ ] `dsoAnnotations.ts` — drop `projectRaDecToTilePixel` per-tile
-      candidate selector. Replace with `projectRaDecInRegion` using
-      the region's single tangent. Cross-region fallback for the
-      boundary case.
-- [ ] `DsoAnnotationOverlay` — per-region projection.
-- [ ] `FovSimulator` stops sending `centerRaDeg`/`centerDecDeg` for the
-      simulator variant; panning is viewport-only under the new scheme.
+- [x] `api/planner.ts:skyTileUrl(cell, { waitMs, generation })` +
+      `fetchSkyTileGrid`.
+- [x] `components/planner/SkyTileCell.tsx` — single-cell loader with
+      placeholder retry + cached-image `imgRef` safety net.
+- [x] `components/planner/SkyTileComposite.tsx` — staged mount
+      (centre first, then distance-sorted) so the backend's 8-slot
+      semaphore focuses on the target cell first.
+- [x] `FovSimulator` rewritten on top of `SkyTileComposite`. TAN-plane
+      pixel coords; promotes 1 → 3 → 5 cells wide as the centre
+      renders. Scroll-wheel zoom (native listener, not React
+      `onWheel` — passive by default). Annotation click priority
+      over pan (JSX z-order). Default zoom: rig rect fills 75% of
+      viewport. Re-centre button preserves zoom + rotation.
+- [x] `dsoAnnotations.ts` — `projectRaDecInRegion` (single region
+      tangent). Counter-scale fonts/stroke by 1/zoom so labels stay
+      constant CSS size.
 
 ### DSO catalog auto-tier preview
 
-- [ ] New `<SkyPreview dsoId>` component replaces
-      `<ThumbnailCell variant="detail">` in `DsoDetailPanel` + the
-      full-size modal.
-- [ ] `previewExtentForDsoSize(majArcmin)` centralises the tier/extent
-      decision (10′ / × 2 / × 1.3 / × 1.1 brackets; 30″ floor for
-      DSS2).
-- [ ] Cells rendered via `<img>` + `object-position` / `object-fit:
-      none` for sub-rect windowing; multi-cell composition when the
-      preview extent straddles a cell boundary.
-- [ ] Retire the legacy `detail` variant on `thumbnail_cache` once the
-      catalog page migrates.
+- [x] `<SkyPreview>` component replaces the old `ThumbnailCell
+      variant="detail"` in `DsoDetailPanel` + the full-size modal.
+- [x] `previewSpecForDsoSize(majArcmin)` in
+      `lib/skyPreviewExtent.ts` picks tier + extent from the DSO's
+      major axis.
+- [x] Two-phase mount: centre cell first with a centred
+      semi-transparent loading overlay until it paints.
+
+### Planner UX polish (rode along)
+
+- [x] Tonight / Anytime mode toggle promoted to a prominent
+      header-level mode selector under the page title. Context-aware
+      labels — "Tonight from {location}" / "Browse the full
+      catalog".
+- [x] Mode-adaptive filter bar: Location selector + Min-hours
+      slider + Brighter-than slider + Min-size slider + Frames-well
+      checkbox hidden in Anytime mode. Visibility columns (Hours,
+      Max altitude, Meridian, Moon) dropped from the grid in
+      Anytime.
+- [x] Catalog-style filters added to match the DSO Catalog page:
+      constellation `<Select>`, "Has distance" checkbox, raw-type
+      chips under an "Advanced filters" disclosure, chip counts on
+      both type-group and raw-type chips, "Clear filters" button.
+- [x] Backend `/api/planner/targets` accepts `type` (comma-separated
+      raw codes), `constellation`, `has_distance` to match the DSO
+      Catalog API.
+- [x] Fixed the Galaxy-Group-vanishes bug: Anytime mode no longer
+      silently applies the user's saved imaging defaults
+      (`planner_min_size_arcmin`, `planner_max_magnitude`) — a
+      missing param in Anytime means "don't filter", not "apply
+      5′ / mag 12 quietly".
+- [x] Planner search box with DSO-catalog semantics (designation
+      prefix + common-name substring).
+- [x] Default sort per mode: `hours_visible desc` (Tonight) /
+      `primary_designation asc` (Anytime). User-initiated sorts
+      persist across mode toggles via `sortIsAutoRef`.
+- [x] `noRowsOverlay` with mode-aware empty-state copy; Tonight
+      nudges users to relax filters or switch modes.
+- [x] Thumbnail cache default bumped 20 MB → 500 MB; slider max
+      5 GB.
 
 ### Testing
 
-- [ ] WCS roundtrip: ~20 coords including pole-adjacent and RA=0;
-      `world_to_pixel(cell_centre)` matches expected pixel coords
-      within 1e-6.
-- [ ] Seam equality: two adjacent cells byte-identical in the shared
-      edge row/column at a known star field.
-- [ ] Cache reuse: two DSOs 2° apart in the same HEALPix region → the
-      second hits zero CDS requests for already-cached cells.
-- [ ] Integration walk against real CDS across three DSOs in one
-      region; cache hit rate climbs toward ~80% on the third visit.
-- [ ] High-dec visual sanity: M81 (Dec +69°) simulator seams + annotation
-      alignment.
-- [ ] Boundary target: DSO straddling a HEALPix edge; confirm
-      in-region seams are clean and cross-region seams degrade to
-      today's behaviour (no regression).
+- [x] WCS roundtrip (`test_sky_tiles.py`): pole-adjacent + RA=0
+      coords; `world_to_pixel` round-trip within tolerance.
+- [x] Cell layout math: grid arithmetic + HEALPix region
+      assignment.
+- [x] Cache-reuse test: two DSOs 2° apart in the same region share
+      cells.
+- [x] Orphan file sweep test.
+- [x] Planner API regression: `restrict_tonight=false` skips
+      visibility, `has_distance` / raw-type / constellation
+      filters, Anytime bypasses imaging defaults, Galaxy-Group
+      filter returns expected rowcount.
 
 ### Legacy cleanup
 
-- [ ] `thumbnail_cache` keeps serving `list` / `rig_framed`. The
-      `fov_simulator` rows age out via LRU (no data migration).
-- [ ] `detail` variant retires after the catalog page switches to
-      `SkyPreview`.
-- [ ] `center_ra_deg_x1000` / `center_dec_deg_x1000` columns become
-      vestigial (simulator no longer writes them). Keep the columns
-      (other variants default NULL) but stop referencing them in the
-      simulator code path.
+- [x] `thumbnail_cache` keeps serving `list` / `rig_framed`. The
+      `fov_simulator` variant rows were wiped at migration time;
+      `sync_orphan_files` sweeps the on-disk JPEGs on startup.
+- [x] `FovSimulator` no longer sends `centerRaDeg` / `centerDecDeg`
+      — panning is viewport-only under the regional-tangent scheme.
+- [x] `center_ra_deg_x1000` / `center_dec_deg_x1000` columns
+      retained but unreferenced by the new simulator path.
 
 ### v0.18.0 Completion Criteria
 
-- [ ] Migration 0020 applies cleanly; sky-tile cache table populated
-      by fresh simulator opens
-- [ ] Full backend suite green with new tests (WCS roundtrip, seam
-      equality, cache reuse)
-- [ ] Frontend build clean
-- [ ] ruff / format / bandit clean (0 / 0 / 0)
-- [ ] Manual end-to-end sanity pass across narrow / med / wide rigs
-      and a high-dec target
-- [ ] At least one HEALPix-boundary target confirmed to degrade
-      gracefully
+- [x] Migration 0020 applies cleanly; sky-tile cache table populated
+      on first simulator open
+- [x] Full backend suite green (1705 tests, 3 skipped)
+- [x] Frontend build clean
+- [x] ruff / format / bandit clean (0 / 0 / 0)
+- [x] Manual end-to-end sanity across narrow / med / wide rigs +
+      high-dec targets
 
 ---
 

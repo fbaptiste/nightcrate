@@ -4,7 +4,7 @@
  * Location-driven "what's up tonight" list. Optional rig adds a FOV
  * coverage column and the "frames well" filter.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   DataGrid,
@@ -49,6 +49,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { useDebounce } from "@/lib/useDebounce";
 import { typeGroupStyle } from "@/lib/dsoTypeGroups";
+import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { displayConstellation } from "@/lib/constellations";
 import ThumbnailCell from "@/components/planner/ThumbnailCell";
 import PlannerDetailPanel from "@/components/planner/PlannerDetailPanel";
@@ -78,6 +79,10 @@ export default function PlannerPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [restrictTonight, setRestrictTonight] = useState<boolean>(true);
   const [typeGroupFilter, setTypeGroupFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [constellation, setConstellation] = useState<string>("");
+  const [hasDistance, setHasDistance] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [minHours, setMinHours] = useState<number>(
     settings?.planner_min_visibility_hours ?? 2.0,
   );
@@ -91,6 +96,11 @@ export default function PlannerPage() {
   const [sortModel, setSortModel] = useState<GridSortModel>([
     { field: "hours_visible", sort: "desc" },
   ]);
+  // Track whether the current sort is still "auto" (the mode's
+  // default) vs. user-chosen. On mode toggle we swap to the new
+  // mode's default only while the sort is still auto, so a user
+  // who explicitly sorted by e.g. magnitude keeps their choice.
+  const sortIsAutoRef = useRef(true);
   const [detailId, setDetailId] = useState<number | null>(null);
 
   const locationsQuery = useQuery({
@@ -126,6 +136,21 @@ export default function PlannerPage() {
     }
   }, [locationId, locationsQuery.data, setLocationId]);
 
+  // Reset sort to the mode's default on toggle, but only while the
+  // sort is still "auto". Tonight defaults to hours_visible desc —
+  // but that column doesn't exist in Anytime, so leaving it would
+  // send the server a sort key that maps to an all-NULL column and
+  // produces a meaningless order. Anytime defaults to designation
+  // asc (matches the DSO catalog page).
+  useEffect(() => {
+    if (!sortIsAutoRef.current) return;
+    setSortModel(
+      restrictTonight
+        ? [{ field: "hours_visible", sort: "desc" }]
+        : [{ field: "primary_designation", sort: "asc" }],
+    );
+  }, [restrictTonight]);
+
   // Rig: drop a stored id that no longer resolves (rig retired or
   // deleted). No auto-select — "No rig" is a valid state.
   useEffect(() => {
@@ -147,6 +172,9 @@ export default function PlannerPage() {
         locationId,
         rigId,
         typeGroupFilter,
+        typeFilter,
+        constellation,
+        hasDistance,
         minHours,
         maxMag,
         minSize,
@@ -159,15 +187,25 @@ export default function PlannerPage() {
         sortDir,
       },
     ],
+    // Imaging-focused filters (min_hours / max_magnitude /
+    // min_size_arcmin / frames_well) only make sense in "Tonight"
+    // mode — a user browsing the full catalog expects parity with
+    // the DSO catalog page, which has none of these. Sending the
+    // user's saved imaging defaults in Anytime would silently
+    // collapse e.g. Galaxy Groups (small + faint) to a near-empty
+    // list.
     queryFn: () =>
       fetchPlannerTargets({
         location_id: locationId!,
         rig_id: rigId,
         type_group: typeGroupFilter,
-        min_hours: minHours,
-        max_magnitude: maxMag,
-        min_size_arcmin: minSize,
-        frames_well: framesWell,
+        type: typeFilter,
+        constellation: constellation || null,
+        has_distance: hasDistance ? true : null,
+        min_hours: restrictTonight ? minHours : null,
+        max_magnitude: restrictTonight ? maxMag : null,
+        min_size_arcmin: restrictTonight ? minSize : null,
+        frames_well: restrictTonight ? framesWell : false,
         q: debouncedSearch || null,
         restrict_tonight: restrictTonight,
         limit: pagination.pageSize,
@@ -186,8 +224,35 @@ export default function PlannerPage() {
     setPagination((p) => ({ ...p, page: 0 }));
   };
 
+  const toggleType = (code: string) => {
+    setTypeFilter((cur) =>
+      cur.includes(code) ? cur.filter((t) => t !== code) : [...cur, code],
+    );
+    setPagination((p) => ({ ...p, page: 0 }));
+  };
+
+  const clearCatalogFilters = () => {
+    setSearchQuery("");
+    setTypeGroupFilter([]);
+    setTypeFilter([]);
+    setConstellation("");
+    setHasDistance(false);
+    setPagination((p) => ({ ...p, page: 0 }));
+  };
+
+  // Use the raw search input, not the debounced value, so the "Clear
+  // filters" button appears/disappears in sync with typing rather
+  // than lagging 250 ms behind.
+  const catalogFiltersActive =
+    searchQuery.length > 0 ||
+    typeGroupFilter.length > 0 ||
+    typeFilter.length > 0 ||
+    constellation.length > 0 ||
+    hasDistance;
+
   const activeLocation = locationsQuery.data?.find((l) => l.id === locationId);
   const tz = activeLocation?.timezone ?? "UTC";
+  const locationName = activeLocation?.name ?? null;
   const data = targetsQuery.data;
 
   // Block the UI behind the filter bar / grid when we can't reasonably
@@ -305,58 +370,76 @@ export default function PlannerPage() {
       type: "number",
       valueFormatter: (v) => (v == null ? "—" : (v as number).toFixed(1)),
     },
-    {
-      field: "hours_visible",
-      headerName: "Hours",
-      flex: 0.4,
-      minWidth: 60,
-      type: "number",
-      valueFormatter: (v) => (v == null ? "—" : `${(v as number).toFixed(1)}h`),
-    },
-    {
-      field: "max_altitude_deg",
-      headerName: "Max altitude",
-      flex: 1.0,
-      minWidth: 120,
-      type: "number",
-      renderCell: (p) => {
-        const alt = p.row.max_altitude_deg as number | null;
-        if (alt == null || p.row.peak_time_utc == null) {
-          return <Typography variant="body2" color="text.disabled">—</Typography>;
-        }
-        return (
-          <Typography variant="body2">
-            {alt.toFixed(0)}° @ {formatLocalTime(p.row.peak_time_utc, tz)}
-          </Typography>
-        );
-      },
-    },
-    {
-      field: "transit",
-      headerName: "Meridian",
-      flex: 1.0,
-      minWidth: 120,
-      sortable: false,
-      renderCell: (p) => {
-        const alt = p.row.altitude_at_transit_deg as number | null;
-        if (alt == null || p.row.transit_time_utc == null) {
-          return <Typography variant="body2" color="text.disabled">—</Typography>;
-        }
-        return (
-          <Typography variant="body2">
-            {alt.toFixed(0)}° @ {formatLocalTime(p.row.transit_time_utc, tz)}
-          </Typography>
-        );
-      },
-    },
-    {
-      field: "min_moon_separation_deg",
-      headerName: "Moon",
-      flex: 0.4,
-      minWidth: 60,
-      type: "number",
-      valueFormatter: (v) => (v == null ? "—" : `${(v as number).toFixed(0)}°`),
-    },
+    // Visibility columns only make sense in "Tonight" mode — in
+    // Anytime the API returns ``null`` for all of these and showing
+    // four columns of "—" is just noise.
+    ...(restrictTonight
+      ? ([
+          {
+            field: "hours_visible",
+            headerName: "Hours",
+            flex: 0.4,
+            minWidth: 60,
+            type: "number" as const,
+            valueFormatter: (v) =>
+              v == null ? "—" : `${(v as number).toFixed(1)}h`,
+          },
+          {
+            field: "max_altitude_deg",
+            headerName: "Max altitude",
+            flex: 1.0,
+            minWidth: 120,
+            type: "number" as const,
+            renderCell: (p) => {
+              const alt = p.row.max_altitude_deg as number | null;
+              if (alt == null || p.row.peak_time_utc == null) {
+                return (
+                  <Typography variant="body2" color="text.disabled">
+                    —
+                  </Typography>
+                );
+              }
+              return (
+                <Typography variant="body2">
+                  {alt.toFixed(0)}° @ {formatLocalTime(p.row.peak_time_utc, tz)}
+                </Typography>
+              );
+            },
+          },
+          {
+            field: "transit",
+            headerName: "Meridian",
+            flex: 1.0,
+            minWidth: 120,
+            sortable: false,
+            renderCell: (p) => {
+              const alt = p.row.altitude_at_transit_deg as number | null;
+              if (alt == null || p.row.transit_time_utc == null) {
+                return (
+                  <Typography variant="body2" color="text.disabled">
+                    —
+                  </Typography>
+                );
+              }
+              return (
+                <Typography variant="body2">
+                  {alt.toFixed(0)}° @{" "}
+                  {formatLocalTime(p.row.transit_time_utc, tz)}
+                </Typography>
+              );
+            },
+          },
+          {
+            field: "min_moon_separation_deg",
+            headerName: "Moon",
+            flex: 0.4,
+            minWidth: 60,
+            type: "number" as const,
+            valueFormatter: (v) =>
+              v == null ? "—" : `${(v as number).toFixed(0)}°`,
+          },
+        ] as GridColDef<PlannerTargetItem>[])
+      : []),
     ...(rigFov
       ? [
           {
@@ -389,12 +472,33 @@ export default function PlannerPage() {
         overflow: "hidden",
       }}
     >
-      {/* Header */}
+      {/* Header — title + prominent mode toggle. The mode chooses
+          which "lens" the rest of the page is in: Tonight pulls in
+          location / visibility / moon context; Anytime strips those
+          away for pure catalog browsing. */}
       <Stack direction="row" alignItems="center" gap={2} flexWrap="wrap">
         <Typography variant="h5" fontWeight={600}>
           Target Planner
         </Typography>
-        {data?.dark_window ? (
+        <ToggleButtonGroup
+          size="small"
+          exclusive
+          value={restrictTonight ? "tonight" : "anytime"}
+          onChange={(_, v) => {
+            if (v === null) return; // can't deselect both
+            setRestrictTonight(v === "tonight");
+            setPagination((p) => ({ ...p, page: 0 }));
+          }}
+          aria-label="Planner scope"
+        >
+          <ToggleButton value="tonight" sx={{ textTransform: "none", px: 2 }}>
+            Tonight from {locationName ?? "Home"}
+          </ToggleButton>
+          <ToggleButton value="anytime" sx={{ textTransform: "none", px: 2 }}>
+            Browse the full catalog
+          </ToggleButton>
+        </ToggleButtonGroup>
+        {restrictTonight && data?.dark_window ? (
           <Typography variant="body2" color="text.secondary">
             Astro dark: {formatLocalTime(data.dark_window.start_utc, tz)} –{" "}
             {formatLocalTime(data.dark_window.end_utc, tz)} · {data.dark_window.hours.toFixed(1)}{" "}
@@ -498,47 +602,27 @@ export default function PlannerPage() {
             }}
           />
 
-          {/* Tonight-only / Anytime — lets users browse the full catalog
-              from the planner without being gated on tonight's
-              visibility. Visibility columns show "—" in anytime mode. */}
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={restrictTonight ? "tonight" : "anytime"}
-            onChange={(_, v) => {
-              if (v === null) return; // can't deselect both
-              setRestrictTonight(v === "tonight");
-              setPagination((p) => ({ ...p, page: 0 }));
-            }}
-            aria-label="Target scope"
-          >
-            <ToggleButton value="tonight" sx={{ textTransform: "none" }}>
-              Tonight
-            </ToggleButton>
-            <ToggleButton value="anytime" sx={{ textTransform: "none" }}>
-              Anytime
-            </ToggleButton>
-          </ToggleButtonGroup>
-
-          <FormControl size="small" sx={{ minWidth: 220 }}>
-            <InputLabel>Location</InputLabel>
-            <Select
-              label="Location"
-              value={locationId ?? ""}
-              onChange={(e) => {
-                const v = String(e.target.value);
-                setLocationId(v === "" ? null : Number(v));
-                setPagination((p) => ({ ...p, page: 0 }));
-              }}
-            >
-              {locationsQuery.data?.map((l) => (
-                <MenuItem key={l.id} value={l.id}>
-                  {l.name}
-                  {l.is_default ? " (default)" : ""}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {restrictTonight && (
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel>Location</InputLabel>
+              <Select
+                label="Location"
+                value={locationId ?? ""}
+                onChange={(e) => {
+                  const v = String(e.target.value);
+                  setLocationId(v === "" ? null : Number(v));
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+              >
+                {locationsQuery.data?.map((l) => (
+                  <MenuItem key={l.id} value={l.id}>
+                    {l.name}
+                    {l.is_default ? " (default)" : ""}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
 
           <FormControl size="small" sx={{ minWidth: 220 }}>
             <InputLabel>Rig</InputLabel>
@@ -563,6 +647,52 @@ export default function PlannerPage() {
             </Select>
           </FormControl>
 
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel>Constellation</InputLabel>
+            <Select
+              label="Constellation"
+              value={constellation}
+              onChange={(e) => {
+                setConstellation(e.target.value);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+            >
+              <MenuItem value="">
+                <em>All</em>
+              </MenuItem>
+              {[...(facetsQuery.data?.constellations ?? [])]
+                .sort((a, b) =>
+                  displayConstellation(a.code).localeCompare(displayConstellation(b.code)),
+                )
+                .map((c) => (
+                  <MenuItem key={c.code} value={c.code}>
+                    {displayConstellation(c.code)} ({c.count.toLocaleString()})
+                  </MenuItem>
+                ))}
+            </Select>
+          </FormControl>
+
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={hasDistance}
+                onChange={(e) => {
+                  setHasDistance(e.target.checked);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+              />
+            }
+            label="Has distance"
+            sx={{ m: 0 }}
+          />
+
+          {catalogFiltersActive && (
+            <Button size="small" variant="text" onClick={clearCatalogFilters}>
+              Clear filters
+            </Button>
+          )}
+
           {rigFov && (
             <Typography variant="caption" color="text.secondary" alignSelf="center">
               FOV: {rigFov}
@@ -570,7 +700,7 @@ export default function PlannerPage() {
           )}
         </Stack>
 
-        {/* Type group chips */}
+        {/* Primary type-group chips */}
         <Box sx={{ mt: 2, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
           {[...(facetsQuery.data?.type_groups ?? [])]
             .filter((g) => g.count > 0)
@@ -581,7 +711,7 @@ export default function PlannerPage() {
               return (
                 <Chip
                   key={g.name}
-                  label={g.name}
+                  label={`${g.name} (${g.count.toLocaleString()})`}
                   size="small"
                   onClick={() => toggleTypeGroup(g.name)}
                   variant={active ? "filled" : "outlined"}
@@ -596,67 +726,108 @@ export default function PlannerPage() {
             })}
         </Box>
 
-        {/* Sliders */}
-        <Stack direction={{ xs: "column", md: "row" }} gap={3} sx={{ mt: 2, px: 1 }}>
-          <Box sx={{ flex: 1, minWidth: 200 }}>
-            <Typography variant="caption">Min hours visible: {minHours.toFixed(1)}h</Typography>
-            <Slider
-              size="small"
-              value={minHours}
-              min={0}
-              max={12}
-              step={0.5}
-              onChange={(_, v) => setMinHours(v as number)}
-              onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
-            />
-          </Box>
-          <Box sx={{ flex: 1, minWidth: 200 }}>
-            <Typography variant="caption">Brighter than mag {maxMag.toFixed(1)}</Typography>
-            <Slider
-              size="small"
-              value={maxMag}
-              min={5}
-              max={18}
-              step={0.5}
-              onChange={(_, v) => setMaxMag(v as number)}
-              onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
-            />
-          </Box>
-          <Box sx={{ flex: 1, minWidth: 200 }}>
-            <Typography variant="caption">Min size: {minSize.toFixed(0)}'</Typography>
-            <Slider
-              size="small"
-              value={minSize}
-              min={0}
-              max={60}
-              step={1}
-              onChange={(_, v) => setMinSize(v as number)}
-              onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
-            />
-          </Box>
-          {rigFov && (
-            <Tooltip title="Covers 15–90% of the frame">
-              <FormControlLabel
-                control={
-                  <Checkbox
+        {/* Advanced filters — raw OpenNGC type codes for power users */}
+        <Box sx={{ mt: 1.5 }}>
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => setAdvancedOpen((open) => !open)}
+            sx={{ textTransform: "none", fontSize: "0.75rem" }}
+          >
+            {advancedOpen ? "▾" : "▸"} Advanced filters
+          </Button>
+          {advancedOpen && (
+            <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+              {facetsQuery.data?.raw_types.map((t) => {
+                const active = typeFilter.includes(t.code);
+                return (
+                  <Chip
+                    key={t.code}
+                    label={`${displayDsoType(t.code)} (${t.count.toLocaleString()})`}
                     size="small"
-                    checked={framesWell}
-                    onChange={(e) => {
-                      setFramesWell(e.target.checked);
-                      setPagination((p) => ({ ...p, page: 0 }));
+                    onClick={() => toggleType(t.code)}
+                    variant={active ? "filled" : "outlined"}
+                    sx={{
+                      bgcolor: active ? dsoTypeColor(t.code) : undefined,
+                      color: active ? "#ffffff" : undefined,
+                      borderColor: dsoTypeColor(t.code),
+                      fontWeight: 500,
                     }}
                   />
-                }
-                label="Frames well"
-                sx={{ m: 0, alignSelf: "center" }}
-              />
-            </Tooltip>
+                );
+              })}
+            </Box>
           )}
-        </Stack>
+        </Box>
+
+        {/* Imaging-focused sliders — only meaningful in Tonight mode.
+            In Anytime the page behaves like a catalog browser, so
+            visibility hours / exposure-time-equivalent magnitude cuts
+            / frame size don't belong. */}
+        {restrictTonight && (
+          <Stack direction={{ xs: "column", md: "row" }} gap={3} sx={{ mt: 2, px: 1 }}>
+            <Box sx={{ flex: 1, minWidth: 200 }}>
+              <Typography variant="caption">Min hours visible: {minHours.toFixed(1)}h</Typography>
+              <Slider
+                size="small"
+                value={minHours}
+                min={0}
+                max={12}
+                step={0.5}
+                onChange={(_, v) => setMinHours(v as number)}
+                onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
+              />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 200 }}>
+              <Typography variant="caption">Brighter than mag {maxMag.toFixed(1)}</Typography>
+              <Slider
+                size="small"
+                value={maxMag}
+                min={5}
+                max={18}
+                step={0.5}
+                onChange={(_, v) => setMaxMag(v as number)}
+                onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
+              />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 200 }}>
+              <Typography variant="caption">Min size: {minSize.toFixed(0)}'</Typography>
+              <Slider
+                size="small"
+                value={minSize}
+                min={0}
+                max={60}
+                step={1}
+                onChange={(_, v) => setMinSize(v as number)}
+                onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
+              />
+            </Box>
+            {rigFov && (
+              <Tooltip title="Covers 15–90% of the frame">
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={framesWell}
+                      onChange={(e) => {
+                        setFramesWell(e.target.checked);
+                        setPagination((p) => ({ ...p, page: 0 }));
+                      }}
+                    />
+                  }
+                  label="Frames well"
+                  sx={{ m: 0, alignSelf: "center" }}
+                />
+              </Tooltip>
+            )}
+          </Stack>
+        )}
       </Paper>
 
-      {/* Empty / error states */}
-      {targetsQuery.data?.dark_window === null && (
+      {/* Empty / error states — only relevant in Tonight mode; in
+          Anytime there's no location/date, so the concept doesn't
+          apply. */}
+      {restrictTonight && targetsQuery.data?.dark_window === null && (
         <Alert severity="info">
           It doesn't get astronomically dark tonight at{" "}
           {targetsQuery.data.location.name} — summer twilight at high
@@ -677,13 +848,38 @@ export default function PlannerPage() {
           paginationModel={pagination}
           onPaginationModelChange={setPagination}
           sortModel={sortModel}
-          onSortModelChange={setSortModel}
+          onSortModelChange={(m) => {
+            sortIsAutoRef.current = false;
+            setSortModel(m);
+          }}
           pageSizeOptions={[25, 50, 100]}
           getRowHeight={() => "auto"}
           onRowClick={(params: GridRowParams<PlannerTargetItem>) =>
             setDetailId(params.row.dso_id)
           }
           disableRowSelectionOnClick
+          slots={{
+            noRowsOverlay: () => (
+              <Stack
+                alignItems="center"
+                justifyContent="center"
+                sx={{ height: "100%", px: 3, textAlign: "center" }}
+                gap={0.5}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  {restrictTonight
+                    ? "No targets match these filters tonight."
+                    : "No DSOs match these filters."}
+                </Typography>
+                {restrictTonight && (
+                  <Typography variant="caption" color="text.secondary">
+                    Try relaxing Min hours / Magnitude, or switch to
+                    &ldquo;Browse the full catalog&rdquo; mode.
+                  </Typography>
+                )}
+              </Stack>
+            ),
+          }}
           sx={{
             border: 0,
             "& .MuiDataGrid-row": { cursor: "pointer" },

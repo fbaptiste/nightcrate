@@ -257,6 +257,13 @@ async def list_targets(
     rig_id: int | None = None,
     date_: date | None = Query(None, alias="date"),
     type_group: str | None = None,
+    type: str | None = Query(
+        None, description="Comma-separated raw obj_type codes (power-user filter)"
+    ),
+    constellation: str | None = Query(None, description="3-letter IAU constellation code"),
+    has_distance: bool | None = Query(
+        None, description="If set, filter to DSOs with (true) or without (false) a distance value"
+    ),
     min_hours: float | None = None,
     max_magnitude: float | None = None,
     min_size_arcmin: float | None = None,
@@ -349,12 +356,24 @@ async def list_targets(
                 items=[],
             )
 
-    # Filter thresholds — query params override the user's saved defaults.
-    min_hours_eff = min_hours if min_hours is not None else settings.planner_min_visibility_hours
-    max_mag_eff = max_magnitude if max_magnitude is not None else settings.planner_max_magnitude
-    min_size_eff = (
-        min_size_arcmin if min_size_arcmin is not None else settings.planner_min_size_arcmin
-    )
+    # Filter thresholds — query params override the user's saved
+    # defaults in Tonight mode. In Anytime mode we intentionally do
+    # NOT fall back to the imaging-focused saved defaults: the user
+    # is browsing the full catalog and expects parity with the DSO
+    # catalog page. A missing param in Anytime means "don't filter",
+    # not "apply planner_min_size_arcmin=5 quietly".
+    if restrict_tonight:
+        min_hours_eff = (
+            min_hours if min_hours is not None else settings.planner_min_visibility_hours
+        )
+        max_mag_eff = max_magnitude if max_magnitude is not None else settings.planner_max_magnitude
+        min_size_eff = (
+            min_size_arcmin if min_size_arcmin is not None else settings.planner_min_size_arcmin
+        )
+    else:
+        min_hours_eff = min_hours if min_hours is not None else 0.0
+        max_mag_eff = max_magnitude if max_magnitude is not None else float("inf")
+        min_size_eff = min_size_arcmin if min_size_arcmin is not None else 0.0
 
     if snapshot is not None:
         visible_ids = [
@@ -391,6 +410,9 @@ async def list_targets(
     type_group_filter: set[str] | None = None
     if type_group:
         type_group_filter = {g.strip() for g in type_group.split(",") if g.strip()}
+    raw_type_filter: set[str] | None = None
+    if type:
+        raw_type_filter = {t.strip() for t in type.split(",") if t.strip()}
 
     items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
     for dso_id in visible_ids:
@@ -401,6 +423,14 @@ async def list_targets(
             continue
         group = group_for_raw_type(meta["obj_type"])
         if type_group_filter is not None and group not in type_group_filter:
+            continue
+        if raw_type_filter is not None and meta["obj_type"] not in raw_type_filter:
+            continue
+        if constellation and meta["constellation"] != constellation:
+            continue
+        if has_distance is True and meta["distance_pc"] is None:
+            continue
+        if has_distance is False and meta["distance_pc"] is not None:
             continue
 
         mag_v = meta["mag_v"]
@@ -445,12 +475,8 @@ async def list_targets(
             max_altitude_deg=vis.max_altitude_deg if vis is not None else None,
             peak_time_utc=vis.peak_time_utc.isoformat() if vis is not None else None,
             transit_time_utc=vis.transit_time_utc.isoformat() if vis is not None else None,
-            altitude_at_transit_deg=(
-                vis.altitude_at_transit_deg if vis is not None else None
-            ),
-            min_moon_separation_deg=(
-                vis.min_moon_separation_deg if vis is not None else None
-            ),
+            altitude_at_transit_deg=(vis.altitude_at_transit_deg if vis is not None else None),
+            min_moon_separation_deg=(vis.min_moon_separation_deg if vis is not None else None),
             coverage_pct=coverage,
         )
         items.append((item, vis))

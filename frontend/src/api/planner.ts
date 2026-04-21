@@ -68,6 +68,11 @@ export interface PlannerTargetsParams {
   rig_id?: number | null;
   date?: string | null;
   type_group?: string[];
+  /** Raw OpenNGC ``obj_type`` codes — power-user filter behind the
+   *  "Advanced filters" disclosure. */
+  type?: string[];
+  constellation?: string | null;
+  has_distance?: boolean | null;
   min_hours?: number | null;
   max_magnitude?: number | null;
   min_size_arcmin?: number | null;
@@ -94,6 +99,10 @@ export function fetchPlannerTargets(
   if (params.rig_id != null) qs.set("rig_id", String(params.rig_id));
   if (params.date) qs.set("date", params.date);
   if (params.type_group?.length) qs.set("type_group", params.type_group.join(","));
+  if (params.type?.length) qs.set("type", params.type.join(","));
+  if (params.constellation) qs.set("constellation", params.constellation);
+  if (params.has_distance === true) qs.set("has_distance", "true");
+  else if (params.has_distance === false) qs.set("has_distance", "false");
   if (params.min_hours != null) qs.set("min_hours", String(params.min_hours));
   if (params.max_magnitude != null) qs.set("max_magnitude", String(params.max_magnitude));
   if (params.min_size_arcmin != null) qs.set("min_size_arcmin", String(params.min_size_arcmin));
