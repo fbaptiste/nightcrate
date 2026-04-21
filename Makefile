@@ -21,17 +21,19 @@ help:
 
 .PHONY: help dev backend frontend install lint format test
 
-## Start backend and frontend together (Ctrl+C stops both)
+## Start backend and frontend together (Ctrl+C stops both).
+## Log level defaults to INFO; override with `make dev LOG=DEBUG`.
+LOG ?= INFO
 dev:
-	@(cd backend && NIGHTCRATE_LOG_LEVEL=DEBUG uv run uvicorn nightcrate.main:app --reload --port 8000) & \
+	@(cd backend && NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --port 8000) & \
 	(cd frontend && npm run dev) & \
 	trap '' INT TERM; \
 	wait; \
 	stty sane 2>/dev/null; true
 
-## Start backend only (port 8000)
+## Start backend only (port 8000). Override log level with `make backend LOG=DEBUG`.
 backend:
-	cd backend && NIGHTCRATE_LOG_LEVEL=DEBUG uv run uvicorn nightcrate.main:app --reload --port 8000
+	cd backend && NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --port 8000
 
 ## Start frontend only (port 5173)
 frontend:

@@ -322,13 +322,17 @@ export function SettingsPage() {
                   value={settings.thumbnail_cache_max_mb}
                   onChange={(e) => update({ thumbnail_cache_max_mb: Number(e.target.value) })}
                 >
-                  {[10, 20, 50, 100, 200].map((mb) => (
+                  {[50, 200, 500, 1000, 2000, 5000].map((mb) => (
                     <MenuItem key={mb} value={mb}>{mb} MB</MenuItem>
                   ))}
                 </Select>
               </FormControl>
               <FormHelperText>
-                Disk budget for DSS2 thumbnails under APP_DIR/thumbnails. LRU eviction on overflow.
+                Shared budget for APP_DIR/thumbnails (per-DSO images) and
+                APP_DIR/sky_tiles (the v0.18.0 HEALPix-regional cache). LRU
+                eviction on overflow. A single HEALPix region at the narrow
+                tier fills to ~13 MB; 500 MB comfortably caches a typical
+                planning session across several constellations.
               </FormHelperText>
             </Box>
 

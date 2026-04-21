@@ -1,16 +1,22 @@
-"""Target Planner API (v0.16.0).
+"""Target Planner API (v0.16.0–v0.18.0).
 
 Routes for the "what's up tonight" planner page:
 
     GET  /api/planner/targets
     GET  /api/planner/targets/{dso_id}/sky-track
-    GET  /api/planner/thumbnails/{dso_id}
+    GET  /api/planner/thumbnails/{dso_id}      — DSO-keyed cache (Pass A/B)
     POST /api/planner/thumbnails/cache/clear
     GET  /api/planner/thumbnails/cache/stats
+    GET  /api/planner/sky-tile-grid            — view layout (Pass C, v0.18.0)
+    GET  /api/planner/sky-tile                 — cell bytes (Pass C, v0.18.0)
+    POST /api/planner/sky-tile/cache/clear
+    GET  /api/planner/sky-tile/cache/stats
 
 Visibility + sky-track computations are delegated to
-``services/planner_*``. Thumbnail lifecycle (cache lookup, background
-fetch, LRU eviction) is in ``services/thumbnails``.
+``services/planner_*``. Thumbnail lifecycle is in
+``services/thumbnails``. The v0.18.0 DSO-agnostic sky-tile cache
+lives in ``services/sky_tile_cache`` and its math in
+``services/sky_tiles``.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from nightcrate.api.dso import normalize_search_key
 from nightcrate.api.planner_models import (
     CacheClearResponse,
     DarkWindowOut,
@@ -32,13 +39,15 @@ from nightcrate.api.planner_models import (
     PlannerRigSummary,
     PlannerTargetItem,
     PlannerTargetsResponse,
+    SkyTileCellLayout,
+    SkyTileGridLayout,
     SkyTrackResponse,
     ThumbnailCacheStats,
     TwilightBandsOut,
 )
 from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
-from nightcrate.services import thumbnails
+from nightcrate.services import sky_tile_cache, thumbnails
 from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.planner_sky_track import compute_sky_track
 from nightcrate.services.planner_visibility import (
@@ -52,6 +61,14 @@ from nightcrate.services.rig_calculators import (
     COVERAGE_FRAMES_WELL_MIN_PCT,
     compute_coverage_pct,
     compute_fov,
+)
+from nightcrate.services.sky_tile_cache import make_cell_key
+from nightcrate.services.sky_tiles import (
+    TIERS,
+    Tier,
+    compute_grid_layout,
+    tangent_for_ipix,
+    tier_for_fov,
 )
 
 router = APIRouter(prefix="/api/planner", tags=["Target Planner"])
@@ -236,14 +253,39 @@ def _tonight_date(location_tz: str) -> date:
 
 @router.get("/targets", response_model=PlannerTargetsResponse)
 async def list_targets(
-    location_id: int,
+    location_id: int | None = None,
     rig_id: int | None = None,
     date_: date | None = Query(None, alias="date"),
     type_group: str | None = None,
+    type: str | None = Query(
+        None, description="Comma-separated raw obj_type codes (power-user filter)"
+    ),
+    constellation: str | None = Query(None, description="3-letter IAU constellation code"),
+    has_distance: bool | None = Query(
+        None, description="If set, filter to DSOs with (true) or without (false) a distance value"
+    ),
     min_hours: float | None = None,
     max_magnitude: float | None = None,
     min_size_arcmin: float | None = None,
     frames_well: bool = False,
+    q: str | None = Query(
+        None,
+        description=(
+            "Free-text search over designations + common names — same semantics "
+            "as the DSO catalog's ``q``. Matches a designation ``search_key`` "
+            "by prefix or a case-insensitive substring of ``common_name``."
+        ),
+    ),
+    restrict_tonight: bool = Query(
+        True,
+        description=(
+            "When ``True`` (default) the response is limited to DSOs visible "
+            "during tonight's astronomical-dark window from the selected "
+            "location. When ``False`` the planner acts like a catalog "
+            "browser: all active DSOs come back, no visibility computation "
+            "runs, and the visibility fields on each item are ``None``."
+        ),
+    ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sort: Literal[
@@ -252,14 +294,32 @@ async def list_targets(
         "coverage_pct",
         "mag_v",
         "primary_designation",
+        "size",
     ] = "hours_visible",
     sort_dir: Literal["asc", "desc"] = "desc",
 ) -> PlannerTargetsResponse:
+    # Tonight mode is location-dependent; Anytime is pure catalog
+    # browse and works without one (first-run users with no locations
+    # still get a usable Anytime page).
+    if restrict_tonight and location_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="location_id is required when restrict_tonight=true",
+        )
+
     settings = await get_settings()
 
+    location: PlannerLocation | None = None
+    location_summary: PlannerLocationSummary | None = None
     async with get_db() as conn:
-        location = await _load_planner_location(conn, location_id)
-        location_name, has_horizon = await _load_location_name_and_horizon_flag(conn, location_id)
+        if location_id is not None:
+            location = await _load_planner_location(conn, location_id)
+            location_name, has_horizon = await _load_location_name_and_horizon_flag(
+                conn, location_id
+            )
+            location_summary = PlannerLocationSummary(
+                id=location.id, name=location_name, has_custom_horizon=has_horizon
+            )
 
         rig_summary: PlannerRigSummary | None = None
         rig_fov: tuple[float, float] | None = None
@@ -267,68 +327,130 @@ async def list_targets(
             rig_summary, fov_major, fov_minor = await _load_rig_fov(conn, rig_id)
             rig_fov = (fov_major, fov_minor)
 
-        night_date = date_ if date_ is not None else _tonight_date(location.timezone)
+        # Anytime mode has no location, so fall back to UTC for the
+        # night-date anchor (only used for the response's ``date``
+        # field — no visibility computation consumes it).
+        tz_for_date = location.timezone if location is not None else "UTC"
+        night_date = date_ if date_ is not None else _tonight_date(tz_for_date)
         dsos = await _load_dso_coords(conn)
 
-    # The visibility snapshot does ~1 second of vectorized astropy work on
-    # cache miss. Off-load to a worker thread so we don't block the event
-    # loop — all other requests (including thumbnail polling) stall otherwise.
-    snapshot = await asyncio.to_thread(
-        default_cache.get_or_compute,
-        location,
-        night_date,
-        dsos,
-        flat_min_altitude_deg=float(settings.planner_min_altitude_deg),
+    # "Anytime" mode skips the visibility snapshot entirely — the
+    # handler acts as a paginated catalog browser with the same
+    # metadata + search filters the "tonight only" path uses.
+    snapshot = (
+        await asyncio.to_thread(
+            default_cache.get_or_compute,
+            location,
+            night_date,
+            dsos,
+            flat_min_altitude_deg=float(settings.planner_min_altitude_deg),
+        )
+        if restrict_tonight and location is not None
+        else None
     )
 
     dark_window_out: DarkWindowOut | None = None
-    if snapshot.dark_window.start_utc and snapshot.dark_window.end_utc:
-        dark_window_out = DarkWindowOut(
-            start_utc=snapshot.dark_window.start_utc.isoformat(),
-            end_utc=snapshot.dark_window.end_utc.isoformat(),
-            hours=round(snapshot.dark_window.hours, 2),
+    moon_phase_pct_out = 0.0
+    if snapshot is not None:
+        moon_phase_pct_out = snapshot.moon_phase_pct
+        if snapshot.dark_window.start_utc and snapshot.dark_window.end_utc:
+            dark_window_out = DarkWindowOut(
+                start_utc=snapshot.dark_window.start_utc.isoformat(),
+                end_utc=snapshot.dark_window.end_utc.isoformat(),
+                hours=round(snapshot.dark_window.hours, 2),
+            )
+
+        # Early return when astro-dark doesn't occur tonight (only
+        # meaningful in "tonight only" mode — the "anytime" path
+        # never reaches here).
+        if not snapshot.per_dso or dark_window_out is None:
+            return PlannerTargetsResponse(
+                location=location_summary,
+                rig=rig_summary,
+                date=night_date.isoformat(),
+                dark_window=dark_window_out,
+                moon_phase_pct=moon_phase_pct_out,
+                total=0,
+                offset=0,
+                limit=limit,
+                items=[],
+            )
+
+    # Filter thresholds — query params override the user's saved
+    # defaults in Tonight mode. In Anytime mode we intentionally do
+    # NOT fall back to the imaging-focused saved defaults: the user
+    # is browsing the full catalog and expects parity with the DSO
+    # catalog page. A missing param in Anytime means "don't filter",
+    # not "apply planner_min_size_arcmin=5 quietly".
+    if restrict_tonight:
+        min_hours_eff = (
+            min_hours if min_hours is not None else settings.planner_min_visibility_hours
         )
-
-    # Early return when astro-dark doesn't occur tonight.
-    if not snapshot.per_dso or dark_window_out is None:
-        return PlannerTargetsResponse(
-            location=PlannerLocationSummary(
-                id=location.id, name=location_name, has_custom_horizon=has_horizon
-            ),
-            rig=rig_summary,
-            date=night_date.isoformat(),
-            dark_window=dark_window_out,
-            moon_phase_pct=snapshot.moon_phase_pct,
-            total=0,
-            offset=0,
-            limit=limit,
-            items=[],
+        max_mag_eff = max_magnitude if max_magnitude is not None else settings.planner_max_magnitude
+        min_size_eff = (
+            min_size_arcmin if min_size_arcmin is not None else settings.planner_min_size_arcmin
         )
+    else:
+        min_hours_eff = min_hours if min_hours is not None else 0.0
+        max_mag_eff = max_magnitude if max_magnitude is not None else float("inf")
+        min_size_eff = min_size_arcmin if min_size_arcmin is not None else 0.0
 
-    # Filter thresholds — query params override the user's saved defaults.
-    min_hours_eff = min_hours if min_hours is not None else settings.planner_min_visibility_hours
-    max_mag_eff = max_magnitude if max_magnitude is not None else settings.planner_max_magnitude
-    min_size_eff = (
-        min_size_arcmin if min_size_arcmin is not None else settings.planner_min_size_arcmin
-    )
-
-    visible_ids = [
-        vis.dso_id for vis in snapshot.per_dso.values() if vis.hours_visible >= min_hours_eff
-    ]
+    if snapshot is not None:
+        visible_ids = [
+            vis.dso_id for vis in snapshot.per_dso.values() if vis.hours_visible >= min_hours_eff
+        ]
+    else:
+        # Anytime mode — every active DSO with coordinates is a candidate.
+        visible_ids = [d.dso_id for d in dsos]
     async with get_db() as conn:
         metadata = await _load_dso_metadata(conn, visible_ids)
+
+        # Optional free-text search — same matching rules as the DSO
+        # catalog so a user's mental model carries across pages.
+        search_match_ids: set[int] | None = None
+        if q and q.strip():
+            search_key = normalize_search_key(q)
+            cursor = await conn.execute(
+                """
+                SELECT DISTINCT d.id
+                FROM dso d
+                WHERE d.active = 1
+                  AND (
+                      d.id IN (
+                          SELECT dso_id FROM dso_designation
+                          WHERE search_key LIKE ?
+                      )
+                      OR LOWER(d.common_name) LIKE ?
+                  )
+                """,
+                (search_key + "%", f"%{q.lower()}%"),
+            )
+            search_match_ids = {int(r["id"]) for r in await cursor.fetchall()}
 
     type_group_filter: set[str] | None = None
     if type_group:
         type_group_filter = {g.strip() for g in type_group.split(",") if g.strip()}
+    raw_type_filter: set[str] | None = None
+    if type:
+        raw_type_filter = {t.strip() for t in type.split(",") if t.strip()}
 
-    items: list[tuple[PlannerTargetItem, DsoVisibility]] = []
+    items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
     for dso_id in visible_ids:
         meta = metadata.get(dso_id)
         if meta is None:
             continue
+        if search_match_ids is not None and dso_id not in search_match_ids:
+            continue
         group = group_for_raw_type(meta["obj_type"])
         if type_group_filter is not None and group not in type_group_filter:
+            continue
+        if raw_type_filter is not None and meta["obj_type"] not in raw_type_filter:
+            continue
+        if constellation and meta["constellation"] != constellation:
+            continue
+        if has_distance is True and meta["distance_pc"] is None:
+            continue
+        if has_distance is False and meta["distance_pc"] is not None:
             continue
 
         mag_v = meta["mag_v"]
@@ -355,7 +477,7 @@ async def list_targets(
             if not (COVERAGE_FRAMES_WELL_MIN_PCT <= coverage <= COVERAGE_FRAMES_WELL_MAX_PCT):
                 continue
 
-        vis = snapshot.per_dso[dso_id]
+        vis = snapshot.per_dso.get(dso_id) if snapshot is not None else None
         item = PlannerTargetItem(
             dso_id=dso_id,
             primary_designation=meta["primary_designation"],
@@ -369,30 +491,39 @@ async def list_targets(
             min_axis_arcmin=meta["min_axis_arcmin"],
             mag_v=mag_v,
             distance_pc=meta["distance_pc"],
-            hours_visible=vis.hours_visible,
-            max_altitude_deg=vis.max_altitude_deg,
-            peak_time_utc=vis.peak_time_utc.isoformat(),
-            transit_time_utc=vis.transit_time_utc.isoformat(),
-            altitude_at_transit_deg=vis.altitude_at_transit_deg,
-            min_moon_separation_deg=vis.min_moon_separation_deg,
+            hours_visible=vis.hours_visible if vis is not None else None,
+            max_altitude_deg=vis.max_altitude_deg if vis is not None else None,
+            peak_time_utc=vis.peak_time_utc.isoformat() if vis is not None else None,
+            transit_time_utc=vis.transit_time_utc.isoformat() if vis is not None else None,
+            altitude_at_transit_deg=(vis.altitude_at_transit_deg if vis is not None else None),
+            min_moon_separation_deg=(vis.min_moon_separation_deg if vis is not None else None),
             coverage_pct=coverage,
         )
         items.append((item, vis))
 
-    # Sort + paginate in memory.
+    # Sort + paginate in memory. NULL visibility fields (possible in
+    # "anytime" mode and for DSOs that don't clear the altitude floor
+    # tonight) sort to the end in both directions — "unknown" lives at
+    # the bottom regardless of ascending / descending intent.
     reverse = sort_dir == "desc"
+    null_sentinel = -1 if reverse else 1e9
 
-    def _sort_key(pair: tuple[PlannerTargetItem, DsoVisibility]):
+    def _sort_key(pair: tuple[PlannerTargetItem, DsoVisibility | None]):
         item, _vis = pair
         if sort == "hours_visible":
-            return item.hours_visible
+            return item.hours_visible if item.hours_visible is not None else null_sentinel
         if sort == "max_altitude":
-            return item.max_altitude_deg
+            return item.max_altitude_deg if item.max_altitude_deg is not None else null_sentinel
         if sort == "coverage_pct":
-            # Sort NULLs to the end regardless of direction.
-            return item.coverage_pct if item.coverage_pct is not None else (-1 if reverse else 1e9)
+            return item.coverage_pct if item.coverage_pct is not None else null_sentinel
         if sort == "mag_v":
-            return item.mag_v if item.mag_v is not None else (1e9 if reverse else -1)
+            return item.mag_v if item.mag_v is not None else null_sentinel
+        if sort == "size":
+            # Sort by major axis only — the grid's displayed "a × b"
+            # string always shows the major axis first anyway, and
+            # mirroring the DSO-catalog pattern
+            # (``SORT_COLUMNS["size"] = "maj_axis_arcmin"``).
+            return item.maj_axis_arcmin if item.maj_axis_arcmin is not None else null_sentinel
         return item.primary_designation
 
     items.sort(key=_sort_key, reverse=reverse)
@@ -401,13 +532,11 @@ async def list_targets(
     page = items[offset : offset + limit]
 
     return PlannerTargetsResponse(
-        location=PlannerLocationSummary(
-            id=location.id, name=location_name, has_custom_horizon=has_horizon
-        ),
+        location=location_summary,
         rig=rig_summary,
         date=night_date.isoformat(),
         dark_window=dark_window_out,
-        moon_phase_pct=snapshot.moon_phase_pct,
+        moon_phase_pct=moon_phase_pct_out,
         total=total,
         offset=offset,
         limit=limit,
@@ -476,20 +605,15 @@ async def target_sky_track(
 # ── Thumbnails ───────────────────────────────────────────────────────────────
 
 
-_RIG_DEPENDENT_VARIANTS = {"rig_framed", "fov_simulator"}
-
-
 @router.get("/thumbnails/{dso_id}")
 async def get_thumbnail(
     dso_id: int,
-    variant: Literal["list", "detail", "rig_framed", "fov_simulator"] = "list",
+    variant: Literal["list", "detail", "rig_framed"] = "list",
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
-    center_ra_deg: float | None = None,
-    center_dec_deg: float | None = None,
     wait_ms: int = Query(0, ge=0, le=10000),
 ) -> Response:
-    if variant in _RIG_DEPENDENT_VARIANTS:
+    if variant == "rig_framed":
         if fov_major_deg is None or fov_minor_deg is None:
             raise HTTPException(
                 status_code=400,
@@ -502,19 +626,6 @@ async def get_thumbnail(
                 status_code=400,
                 detail="fov_major_deg and fov_minor_deg must be positive",
             )
-
-    # Sky-centre override is only valid for the simulator variant — for
-    # any other caller it's almost certainly a bug, so 400 rather than
-    # silently ignoring.
-    if (center_ra_deg is not None or center_dec_deg is not None) and variant != "fov_simulator":
-        raise HTTPException(
-            status_code=400,
-            detail="center_ra_deg / center_dec_deg are only valid for variant=fov_simulator",
-        )
-    if center_ra_deg is not None and not (0.0 <= center_ra_deg < 360.0):
-        raise HTTPException(status_code=400, detail="center_ra_deg must be in [0, 360)")
-    if center_dec_deg is not None and not (-90.0 <= center_dec_deg <= 90.0):
-        raise HTTPException(status_code=400, detail="center_dec_deg must be in [-90, 90]")
 
     settings = await get_settings()
     max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
@@ -541,8 +652,6 @@ async def get_thumbnail(
             conn_factory=get_db,
             fov_major_deg=fov_major_deg,
             fov_minor_deg=fov_minor_deg,
-            center_ra_deg=center_ra_deg,
-            center_dec_deg=center_dec_deg,
             wait_timeout_s=wait_ms / 1000.0,
         )
 
@@ -664,6 +773,191 @@ async def thumbnail_cache_stats() -> ThumbnailCacheStats:
     max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
     async with get_db() as conn:
         stats = await thumbnails.cache_stats(conn, max_bytes=max_bytes)
+    return ThumbnailCacheStats(
+        **stats,
+        generation=settings.thumbnail_cache_generation,
+    )
+
+
+# ── Sky-tile cache (v0.18.0 / Pass C) ────────────────────────────────────────
+
+
+# HiPS surveys the sky-tile endpoint will fetch from. Limiting to a
+# known allow-list keeps the cache URL space bounded and prevents
+# clients from pointing CDS at arbitrary survey paths.
+_ALLOWED_HIPS_SURVEYS = frozenset({"CDS/P/DSS2/color"})
+
+
+@router.get("/sky-tile-grid", response_model=SkyTileGridLayout)
+def get_sky_tile_grid(
+    ra_deg: float = Query(..., ge=0.0, lt=360.0),
+    dec_deg: float = Query(..., ge=-90.0, le=90.0),
+    tier: Literal["narrow", "med", "wide"] | None = Query(
+        None, description="Explicit tier. If omitted, derived from ``fov_major_deg``."
+    ),
+    fov_major_deg: float | None = Query(
+        None, gt=0.0, le=60.0, description="Rig major FOV; selects a tier if ``tier`` is absent."
+    ),
+    extent_deg: float = Query(..., gt=0.0, le=60.0),
+) -> SkyTileGridLayout:
+    """Compute the cell layout for a simulator or preview view.
+
+    Pure math — no CDS calls, no disk I/O. Runs in a few milliseconds.
+    The frontend uses the returned ``cells`` list (each with identity
+    + top-left composite pixel position) to request cell JPEGs via
+    ``/api/planner/sky-tile`` and stitch them into the viewport.
+
+    Caller must supply either ``tier`` directly, or ``fov_major_deg``
+    for the backend to derive the tier from.
+    """
+    if tier is None:
+        if fov_major_deg is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Supply either ``tier`` or ``fov_major_deg``.",
+            )
+        tier_spec = tier_for_fov(fov_major_deg)
+    else:
+        tier_spec = TIERS[tier]
+
+    layout = compute_grid_layout(
+        center_ra_deg=ra_deg,
+        center_dec_deg=dec_deg,
+        tier_name=tier_spec.name,
+        extent_deg=extent_deg,
+    )
+    return SkyTileGridLayout(
+        nside=layout.nside,
+        ipix=layout.ipix,
+        tangent_ra_deg=layout.tangent_ra_deg,
+        tangent_dec_deg=layout.tangent_dec_deg,
+        tier=layout.tier,
+        cell_size_deg=layout.cell_size_deg,
+        cell_width_px=layout.cell_width_px,
+        cell_height_px=layout.cell_height_px,
+        composite_width_px=layout.composite_width_px,
+        composite_height_px=layout.composite_height_px,
+        view_center_pixel_x=layout.view_center_pixel_x,
+        view_center_pixel_y=layout.view_center_pixel_y,
+        cells=[
+            SkyTileCellLayout(
+                nside=c.nside,
+                ipix=c.ipix,
+                tier=c.tier,
+                cell_i=c.cell_i,
+                cell_j=c.cell_j,
+                pixel_x=c.pixel_x,
+                pixel_y=c.pixel_y,
+            )
+            for c in layout.cells
+        ],
+    )
+
+
+@router.get("/sky-tile")
+async def get_sky_tile(
+    hips: str = Query("CDS/P/DSS2/color", description="HiPS survey path."),
+    nside: int = Query(..., ge=1, le=4096),
+    ipix: int = Query(..., ge=0),
+    tier: Literal["narrow", "med", "wide"] = Query(...),
+    cell_i: int = Query(..., ge=-256, le=256),
+    cell_j: int = Query(..., ge=-256, le=256),
+    wait_ms: int = Query(0, ge=0, le=10000),
+) -> Response:
+    """Serve one HEALPix-regional TAN cell from the sky-tile cache.
+
+    Cells are keyed by sky region + tier + cell offset — no DSO. Two
+    DSOs whose 5×5 simulator views overlap in the same HEALPix region
+    share every cell in the overlap. On a cache miss the endpoint
+    schedules a background ``hips2fits`` fetch with a custom WCS
+    header (shared tangent point for every cell in the region) and,
+    with ``wait_ms > 0``, holds the request open under
+    ``asyncio.shield`` so the real image ships in the same round trip.
+
+    Returns 200 with the JPEG on a hit, 202 + 1×1 PNG placeholder on
+    miss (client polls), or 204 during the 1-hour failure backoff.
+    """
+    if hips not in _ALLOWED_HIPS_SURVEYS:
+        raise HTTPException(status_code=400, detail=f"Unsupported HiPS survey: {hips!r}")
+    # ipix upper bound is 12 * nside² (HEALPix definition).
+    if ipix >= 12 * nside * nside:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ipix={ipix} exceeds {12 * nside * nside - 1} for nside={nside}",
+        )
+    tier_name: Tier = tier  # Literal narrows to Tier.
+    tier_spec = TIERS[tier_name]
+
+    # Region tangent is a deterministic function of (nside, ipix).
+    # Compute once and hand to the cache service so cells within the
+    # region all share it.
+    region_ra, region_dec = tangent_for_ipix(ipix)
+
+    settings = await get_settings()
+    max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
+
+    key = make_cell_key(
+        hips_survey=hips,
+        healpix_nside=nside,
+        healpix_ipix=ipix,
+        tier=tier_spec,
+        cell_i=cell_i,
+        cell_j=cell_j,
+    )
+
+    async with get_db() as conn:
+        result = await sky_tile_cache.get_cell(
+            conn,
+            key=key,
+            region_ra_deg=region_ra,
+            region_dec_deg=region_dec,
+            max_cache_bytes=max_bytes,
+            conn_factory=get_db,
+            wait_timeout_s=wait_ms / 1000.0,
+        )
+
+    if result.status == "hit":
+        return Response(
+            content=result.body,
+            media_type=result.content_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    if result.status == "placeholder":
+        # Same no-store contract as the thumbnails endpoint: the client
+        # polls via a ``__v`` cache-buster, so a cached placeholder
+        # would defeat the retry loop.
+        return Response(
+            content=result.body,
+            media_type=result.content_type,
+            status_code=202,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+    return Response(
+        status_code=204,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.post("/sky-tile/cache/clear", response_model=CacheClearResponse)
+async def clear_sky_tile_cache() -> CacheClearResponse:
+    async with get_db() as conn:
+        deleted = await sky_tile_cache.clear_cache(conn)
+    settings = await get_settings()
+    settings.thumbnail_cache_generation += 1
+    await update_settings(settings)
+    return CacheClearResponse(deleted_files=deleted)
+
+
+@router.get("/sky-tile/cache/stats", response_model=ThumbnailCacheStats)
+async def sky_tile_cache_stats() -> ThumbnailCacheStats:
+    settings = await get_settings()
+    max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
+    async with get_db() as conn:
+        stats = await sky_tile_cache.cache_stats(conn, max_bytes=max_bytes)
     return ThumbnailCacheStats(
         **stats,
         generation=settings.thumbnail_cache_generation,

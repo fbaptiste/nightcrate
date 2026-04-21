@@ -112,12 +112,57 @@ async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_d
     assert "FAINT-1" not in designations
 
 
+async def test_targets_sort_by_size_descending(client: TestClient, seed_db):
+    # ``sort=size`` maps to ``maj_axis_arcmin`` in the in-memory sort
+    # helper. In Anytime mode (no visibility filter) the largest
+    # object in the seed fixture must sort first on ``desc``.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "sort": "size", "sort_dir": "desc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    # First few rows must be the largest (descending major axis).
+    sizes = [i["maj_axis_arcmin"] for i in items[:5] if i["maj_axis_arcmin"] is not None]
+    assert sizes == sorted(sizes, reverse=True)
+
+
 async def test_targets_endpoint_404s_missing_location(client: TestClient):
     response = client.get(
         "/api/planner/targets",
         params={"location_id": 99999, "date": "2026-04-19"},
     )
     assert response.status_code == 404
+
+
+async def test_targets_anytime_mode_works_without_location(client: TestClient, seed_db):
+    # Regression: a first-run user with no saved locations must still be
+    # able to browse the catalog via Anytime mode — the endpoint can't
+    # require ``location_id`` in that mode.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # Location metadata is null in Anytime without a location.
+    assert body["location"] is None
+    assert body["dark_window"] is None
+    # Visibility fields are null on every item.
+    assert body["total"] > 0
+    for item in body["items"]:
+        assert item["hours_visible"] is None
+        assert item["max_altitude_deg"] is None
+
+
+async def test_targets_tonight_mode_requires_location(client: TestClient):
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "true"},
+    )
+    assert response.status_code == 400
 
 
 async def test_sky_track_endpoint_returns_arrays(client: TestClient, seed_db):
@@ -164,17 +209,6 @@ async def test_thumbnail_rig_framed_missing_fov_returns_400(client: TestClient, 
     )
     assert response.status_code == 400
     assert "fov_major_deg" in response.json()["detail"]
-
-
-async def test_thumbnail_fov_simulator_missing_fov_returns_400(client: TestClient, seed_db):
-    async with get_db() as conn:
-        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
-        m42 = (await cursor.fetchone())["id"]
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={"variant": "fov_simulator", "fov_major_deg": 0.37},
-    )
-    assert response.status_code == 400
 
 
 async def test_thumbnail_rig_framed_negative_fov_returns_400(client: TestClient, seed_db):
@@ -317,47 +351,6 @@ async def test_dsos_in_region_caps_limit(client: TestClient, seed_dsos_in_region
     assert response.status_code == 422
 
 
-async def test_thumbnail_sky_center_rejected_on_non_simulator_variant(client: TestClient, seed_db):
-    async with get_db() as conn:
-        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
-        m42 = (await cursor.fetchone())["id"]
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={"variant": "detail", "center_ra_deg": 100.0, "center_dec_deg": 10.0},
-    )
-    assert response.status_code == 400
-
-
-async def test_thumbnail_sky_center_rejected_on_invalid_range(client: TestClient, seed_db):
-    async with get_db() as conn:
-        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
-        m42 = (await cursor.fetchone())["id"]
-    # Dec out of range.
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={
-            "variant": "fov_simulator",
-            "fov_major_deg": 0.37,
-            "fov_minor_deg": 0.28,
-            "center_ra_deg": 50.0,
-            "center_dec_deg": 100.0,
-        },
-    )
-    assert response.status_code == 400
-    # RA out of range (negative).
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={
-            "variant": "fov_simulator",
-            "fov_major_deg": 0.37,
-            "fov_minor_deg": 0.28,
-            "center_ra_deg": -1.0,
-            "center_dec_deg": 10.0,
-        },
-    )
-    assert response.status_code == 400
-
-
 async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(
     client: TestClient, seed_db, monkeypatch
 ):
@@ -386,3 +379,182 @@ async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(
     # Placeholder (202) on miss, or a hit (200) if the fetch completed
     # during the short test window.
     assert response.status_code in {200, 202}
+
+
+# ── Sky-tile endpoints (v0.18.0 / Pass C) ─────────────────────────────────────
+
+
+async def test_sky_tile_cache_stats_endpoint(client: TestClient):
+    response = client.get("/api/planner/sky-tile/cache/stats")
+    assert response.status_code == 200
+    data = response.json()
+    assert {"total_bytes", "row_count", "max_bytes", "generation"} <= data.keys()
+
+
+async def test_sky_tile_cache_clear_endpoint(client: TestClient):
+    response = client.post("/api/planner/sky-tile/cache/clear")
+    assert response.status_code == 200
+    assert "deleted_files" in response.json()
+
+
+async def test_sky_tile_rejects_unsupported_hips(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "hips": "CDS/P/SomeOtherSurvey",
+            "nside": 8,
+            "ipix": 0,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    assert response.status_code == 400
+    assert "Unsupported HiPS survey" in response.json()["detail"]
+
+
+async def test_sky_tile_rejects_ipix_over_region_count(client: TestClient):
+    # nside=8 has 12*64 = 768 regions (valid ipix range 0..767).
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 768,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    assert response.status_code == 400
+    assert "ipix" in response.json()["detail"]
+
+
+async def test_sky_tile_rejects_unknown_tier(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 0,
+            "tier": "mediumish",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    # Literal validation happens at the pydantic layer → 422.
+    assert response.status_code == 422
+
+
+async def test_sky_tile_miss_returns_placeholder(client: TestClient, monkeypatch):
+    """A cold cache returns the 1×1 PNG placeholder with status 202."""
+
+    async def _fake_get(url, *args, **kwargs):
+        # Never resolves (mimics a slow CDS); the client's wait_ms=0 means
+        # we should see the placeholder path without waiting.
+        import asyncio
+
+        await asyncio.sleep(60)
+
+        class R:
+            status_code = 200
+            content = b"\xff\xd8" + b"x" * 2048
+
+        return R()
+
+    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 100,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+        },
+    )
+    assert response.status_code == 202
+    assert response.headers.get("cache-control", "").startswith("no-store")
+
+
+async def test_sky_tile_hit_returns_jpeg(client: TestClient, monkeypatch):
+    """A successful CDS response renders as a 200 with image/jpeg."""
+    fake_body = b"\xff\xd8" + b"x" * 2048
+
+    async def _fake_get(url, *args, **kwargs):
+        class R:
+            status_code = 200
+            content = fake_body
+
+        return R()
+
+    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    # wait_ms=2000 lets the long-poll finish the fetch in one round trip.
+    response = client.get(
+        "/api/planner/sky-tile",
+        params={
+            "nside": 8,
+            "ipix": 100,
+            "tier": "narrow",
+            "cell_i": 0,
+            "cell_j": 0,
+            "wait_ms": 2000,
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("content-type") == "image/jpeg"
+    assert response.content == fake_body
+
+
+# ── Sky-tile grid layout endpoint ─────────────────────────────────────────────
+
+
+async def test_sky_tile_grid_returns_cells(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "tier": "narrow", "extent_deg": 2.0},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tier"] == "narrow"
+    assert data["nside"] == 8
+    assert data["cell_width_px"] == 800
+    assert data["cell_height_px"] == 800
+    assert len(data["cells"]) >= 4
+    assert data["composite_width_px"] > 0
+    assert data["composite_height_px"] > 0
+    # view_center_pixel_* must fall inside the composite.
+    assert 0 <= data["view_center_pixel_x"] <= data["composite_width_px"]
+    assert 0 <= data["view_center_pixel_y"] <= data["composite_height_px"]
+
+
+async def test_sky_tile_grid_derives_tier_from_fov(client: TestClient):
+    """A 0.5° FOV must land in the ``narrow`` tier without an explicit ``tier`` query."""
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "fov_major_deg": 0.5, "extent_deg": 1.0},
+    )
+    assert response.status_code == 200
+    assert response.json()["tier"] == "narrow"
+
+
+async def test_sky_tile_grid_adjacent_cells_are_cell_sized_apart(client: TestClient):
+    """Endpoint preserves the core stitching invariant from the service layer."""
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "tier": "narrow", "extent_deg": 2.0},
+    )
+    data = response.json()
+    by_coord = {(c["cell_i"], c["cell_j"]): c for c in data["cells"]}
+    for (ci, cj), c in by_coord.items():
+        right = by_coord.get((ci + 1, cj))
+        if right is not None:
+            assert right["pixel_x"] - c["pixel_x"] == data["cell_width_px"]
+            assert right["pixel_y"] == c["pixel_y"]
+
+
+async def test_sky_tile_grid_requires_tier_or_fov(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "extent_deg": 2.0},
+    )
+    assert response.status_code == 400
+    assert "tier" in response.json()["detail"]

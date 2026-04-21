@@ -39,19 +39,21 @@ export interface PlannerTargetItem {
   min_axis_arcmin: number | null;
   mag_v: number | null;
   distance_pc: number | null;
-  hours_visible: number;
-  max_altitude_deg: number;
-  peak_time_utc: string;
-  /** Meridian crossing — always populated (computed analytically from
-   *  sidereal geometry). */
-  transit_time_utc: string;
-  altitude_at_transit_deg: number;
+  // Visibility fields are ``null`` in "anytime" mode
+  // (``restrict_tonight=false``) and for DSOs that don't clear the
+  // altitude floor during tonight's astro-dark window.
+  hours_visible: number | null;
+  max_altitude_deg: number | null;
+  peak_time_utc: string | null;
+  transit_time_utc: string | null;
+  altitude_at_transit_deg: number | null;
   min_moon_separation_deg: number | null;
   coverage_pct: number | null;
 }
 
 export interface PlannerTargetsResponse {
-  location: PlannerLocationSummary;
+  // Null in Anytime mode when the caller omits ``location_id``.
+  location: PlannerLocationSummary | null;
   rig: PlannerRigSummary | null;
   date: string;
   dark_window: PlannerDarkWindow | null;
@@ -63,14 +65,29 @@ export interface PlannerTargetsResponse {
 }
 
 export interface PlannerTargetsParams {
-  location_id: number;
+  /** Required in Tonight mode; omit (``null``) in Anytime — the
+   *  backend then skips visibility + location metadata entirely. */
+  location_id: number | null;
   rig_id?: number | null;
   date?: string | null;
   type_group?: string[];
+  /** Raw OpenNGC ``obj_type`` codes — power-user filter behind the
+   *  "Advanced filters" disclosure. */
+  type?: string[];
+  constellation?: string | null;
+  has_distance?: boolean | null;
   min_hours?: number | null;
   max_magnitude?: number | null;
   min_size_arcmin?: number | null;
   frames_well?: boolean;
+  /** Free-text search. Same semantics as the DSO catalog's ``q`` —
+   *  designation prefix or common-name substring match. */
+  q?: string | null;
+  /** ``true`` (default) filters to DSOs visible during tonight's
+   *  astro-dark window. ``false`` returns the full catalog with
+   *  ``null`` visibility fields — turns the planner into a catalog
+   *  browser. */
+  restrict_tonight?: boolean;
   limit?: number;
   offset?: number;
   sort?: string;
@@ -81,14 +98,20 @@ export function fetchPlannerTargets(
   params: PlannerTargetsParams,
 ): Promise<PlannerTargetsResponse> {
   const qs = new URLSearchParams();
-  qs.set("location_id", String(params.location_id));
+  if (params.location_id != null) qs.set("location_id", String(params.location_id));
   if (params.rig_id != null) qs.set("rig_id", String(params.rig_id));
   if (params.date) qs.set("date", params.date);
   if (params.type_group?.length) qs.set("type_group", params.type_group.join(","));
+  if (params.type?.length) qs.set("type", params.type.join(","));
+  if (params.constellation) qs.set("constellation", params.constellation);
+  if (params.has_distance === true) qs.set("has_distance", "true");
+  else if (params.has_distance === false) qs.set("has_distance", "false");
   if (params.min_hours != null) qs.set("min_hours", String(params.min_hours));
   if (params.max_magnitude != null) qs.set("max_magnitude", String(params.max_magnitude));
   if (params.min_size_arcmin != null) qs.set("min_size_arcmin", String(params.min_size_arcmin));
   if (params.frames_well) qs.set("frames_well", "true");
+  if (params.q) qs.set("q", params.q);
+  if (params.restrict_tonight === false) qs.set("restrict_tonight", "false");
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);
@@ -183,16 +206,104 @@ export const clearThumbnailCache = () =>
     method: "POST",
   });
 
-export type ThumbnailVariant = "list" | "detail" | "rig_framed" | "fov_simulator";
+
+// ─── Sky-tile cache (v0.18.0 / Pass C) ───────────────────────────────────────
+
+export type SkyTileTier = "narrow" | "med" | "wide";
+
+export interface SkyTileCellLayout {
+  nside: number;
+  ipix: number;
+  tier: SkyTileTier;
+  cell_i: number;
+  cell_j: number;
+  /** Top-left in east-left / north-up screen-coord source pixels. */
+  pixel_x: number;
+  pixel_y: number;
+}
+
+export interface SkyTileGridLayout {
+  nside: number;
+  ipix: number;
+  tangent_ra_deg: number;
+  tangent_dec_deg: number;
+  tier: SkyTileTier;
+  cell_size_deg: number;
+  cell_width_px: number;
+  cell_height_px: number;
+  composite_width_px: number;
+  composite_height_px: number;
+  view_center_pixel_x: number;
+  view_center_pixel_y: number;
+  cells: SkyTileCellLayout[];
+}
+
+export interface SkyTileGridParams {
+  raDeg: number;
+  decDeg: number;
+  tier?: SkyTileTier;
+  fovMajorDeg?: number;
+  extentDeg: number;
+}
+
+export function fetchSkyTileGrid(params: SkyTileGridParams): Promise<SkyTileGridLayout> {
+  const qs = new URLSearchParams({
+    ra_deg: params.raDeg.toFixed(6),
+    dec_deg: params.decDeg.toFixed(6),
+    extent_deg: params.extentDeg.toFixed(6),
+  });
+  if (params.tier) qs.set("tier", params.tier);
+  if (params.fovMajorDeg != null) qs.set("fov_major_deg", params.fovMajorDeg.toFixed(4));
+  return apiFetch<SkyTileGridLayout>(`/planner/sky-tile-grid?${qs.toString()}`);
+}
+
+export interface SkyTileCellUrlOptions {
+  /** Long-poll window in milliseconds. Only honoured on the first
+   *  attempt (retries should pass ``0`` to avoid stacked holds). */
+  waitMs?: number;
+  /** Cache-generation counter from ``useThumbnailCacheStore``. */
+  generation?: number;
+}
+
+/** Build the ``<img src>`` URL for one cell of the sky-tile cache.
+ *
+ *  Bypasses ``apiFetch`` (used directly as an image element's ``src``)
+ *  so the activity label is folded into the query string — matches the
+ *  pattern in ``thumbnailUrl``. */
+export function skyTileUrl(
+  cell: Pick<SkyTileCellLayout, "nside" | "ipix" | "tier" | "cell_i" | "cell_j">,
+  opts: SkyTileCellUrlOptions = {},
+  hips: string = "CDS/P/DSS2/color",
+): string {
+  const q = new URLSearchParams({
+    hips,
+    nside: String(cell.nside),
+    ipix: String(cell.ipix),
+    tier: cell.tier,
+    cell_i: String(cell.cell_i),
+    cell_j: String(cell.cell_j),
+  });
+  if (opts.generation != null) q.set("_g", String(opts.generation));
+  if (opts.waitMs != null && opts.waitMs > 0) q.set("wait_ms", String(opts.waitMs));
+  const activity = getActivity();
+  if (activity) q.set("_activity", activity);
+  return `/api/planner/sky-tile?${q.toString()}`;
+}
+
+export const fetchSkyTileCacheStats = () =>
+  apiFetch<ThumbnailCacheStats>("/planner/sky-tile/cache/stats");
+
+export const clearSkyTileCache = () =>
+  apiFetch<{ deleted_files: number }>("/planner/sky-tile/cache/clear", {
+    method: "POST",
+  });
+
+export type ThumbnailVariant = "list" | "detail" | "rig_framed";
 
 export interface ThumbnailUrlOptions {
-  /** Required for ``rig_framed`` + ``fov_simulator``; ignored otherwise. */
+  /** Required for ``rig_framed``; ignored otherwise. */
   fovMajorDeg?: number;
   fovMinorDeg?: number;
-  /** Panned sky centre — only honoured for ``fov_simulator``. When
-   *  omitted the backend falls back to the DSO's native coordinates. */
-  centerRaDeg?: number;
-  centerDecDeg?: number;
   /** Cache-generation counter — appended as ``&_g=N``. Bumps on cache
    *  clear so stale browser-cached entries are never reused. Sourced
    *  from ``useThumbnailCacheStore``. */
@@ -201,9 +312,7 @@ export interface ThumbnailUrlOptions {
    *  holds the request open up to this long waiting for the CDS fetch
    *  to complete, then serves the real image in the same round trip.
    *  ``0`` (default) restores the old behaviour — immediate placeholder,
-   *  client polls with backoff. Worth setting for the simulator
-   *  (2–4 s) so the first visible image lands at CDS latency rather
-   *  than CDS + next-poll-cadence. Backend caps at 10 s. */
+   *  client polls with backoff. Backend caps at 10 s. */
   waitMs?: number;
 }
 
@@ -212,8 +321,8 @@ export interface ThumbnailUrlOptions {
  *  Image requests bypass the apiFetch wrapper, so we fold the current
  *  activity label into the query string directly (matches
  *  ``api/images.ts:imageUrl`` — required for the Activity Console).
- *  ``fovMajorDeg`` / ``fovMinorDeg`` are required for the rig-dependent
- *  variants; caller is trusted to pass them. */
+ *  ``fovMajorDeg`` / ``fovMinorDeg`` are required for ``rig_framed``;
+ *  caller is trusted to pass them. */
 export function thumbnailUrl(
   dsoId: number,
   variant: ThumbnailVariant = "list",
@@ -222,8 +331,6 @@ export function thumbnailUrl(
   const q = new URLSearchParams({ variant });
   if (opts.fovMajorDeg != null) q.set("fov_major_deg", opts.fovMajorDeg.toFixed(4));
   if (opts.fovMinorDeg != null) q.set("fov_minor_deg", opts.fovMinorDeg.toFixed(4));
-  if (opts.centerRaDeg != null) q.set("center_ra_deg", opts.centerRaDeg.toFixed(4));
-  if (opts.centerDecDeg != null) q.set("center_dec_deg", opts.centerDecDeg.toFixed(4));
   if (opts.generation != null) q.set("_g", String(opts.generation));
   if (opts.waitMs != null && opts.waitMs > 0) q.set("wait_ms", String(opts.waitMs));
   const activity = getActivity();

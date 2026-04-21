@@ -1,5 +1,5 @@
 /**
- * Thumbnail cell for the planner's target list + simulator background.
+ * Thumbnail cell for the planner's target list + DSO-catalog detail.
  *
  * Detects the backend's 1x1-pixel placeholder via ``naturalWidth`` and
  * polls with an exponential-ish backoff (fast first retry, slower
@@ -7,13 +7,13 @@
  * lands. A 204 (permanent fetch-error backoff) fires the <img>
  * onError handler; we swap to a neutral icon in that case.
  *
- * Supports all four variants (``list``, ``detail``, ``rig_framed``,
- * ``fov_simulator``). Rig-dependent variants accept ``fovMajor/MinorDeg``
+ * Supports three variants (``list``, ``detail``, ``rig_framed``). The
+ * rig-dependent ``rig_framed`` variant accepts ``fovMajor/MinorDeg``
  * props that flow into the URL. An optional ``aspectRatio`` prop lets
  * the rig-framed cell present a non-square bounding box that crops the
  * square 180×180 source via ``object-fit: cover`` to match the rig's
  * sensor proportions. ``fill`` mode makes the cell absolutely fill its
- * parent (used by FovSimulator as the background image).
+ * parent.
  *
  * Also catches the "cached <img> race" — browsers can resolve the src
  * from HTTP cache synchronously between element creation and React
@@ -36,11 +36,6 @@ interface Props {
   variant?: ThumbnailVariant;
   fovMajorDeg?: number;
   fovMinorDeg?: number;
-  /** Panned sky-region centre — only used by ``fov_simulator``. When
-   *  both are set, the backend fetches DSS2 centred at (RA, Dec)
-   *  rather than at the DSO's own coords. */
-  centerRaDeg?: number;
-  centerDecDeg?: number;
   /** Optional width:height ratio; defaults to 1 (square). When > 0, the
    *  cell renders a bounding box of ``size`` × ``size/aspectRatio`` with
    *  ``object-fit: cover`` so the stored square image crops to match. */
@@ -50,18 +45,21 @@ interface Props {
    *  background image. ``size`` is ignored for layout (but still used
    *  to compute the URL's variant parameters). */
   fill?: boolean;
+  /** ``object-fit`` for the underlying ``<img>``. Defaults to
+   *  ``cover`` — matches the list/planner use case where the tile
+   *  fills a sensor-shaped container. Full-size previews should use
+   *  ``contain`` so a non-1:1 source renders at its natural aspect
+   *  rather than being cropped. */
+  fit?: "cover" | "contain";
   /** Fires once when the cell has loaded a real image (naturalWidth
    *  > 1). Re-fires if the request shape changes and a new real image
-   *  lands. Callers use this to stage downstream work — e.g., the FOV
-   *  simulator defers loading the tile ring until the centre tile is
-   *  ready, so the backend's 4-slot HiPS semaphore focuses on the
-   *  centre first. */
+   *  lands. */
   onReady?: () => void;
-  /** Long-poll window in milliseconds. When set (typical: 3000–4000
-   *  for simulator tiles), the backend holds the request open for up
-   *  to this long on a cache miss and returns the real image in the
-   *  same round trip — shaves the ``CDS latency + next-poll cadence``
-   *  overhead that pollers pay. Omit for list/detail thumbnails. */
+  /** Long-poll window in milliseconds. When set, the backend holds
+   *  the request open for up to this long on a cache miss and returns
+   *  the real image in the same round trip — shaves the ``CDS latency
+   *  + next-poll cadence`` overhead that pollers pay. Omit for
+   *  list/detail thumbnails. */
   waitMs?: number;
 }
 
@@ -86,10 +84,9 @@ export default function ThumbnailCell({
   variant = "list",
   fovMajorDeg,
   fovMinorDeg,
-  centerRaDeg,
-  centerDecDeg,
   aspectRatio,
   fill = false,
+  fit = "cover",
   onReady,
   waitMs,
 }: Props) {
@@ -150,16 +147,7 @@ export default function ThumbnailCell({
     setVersion(1);
     setFailed(false);
     setLoading(true);
-  }, [
-    dsoId,
-    variant,
-    fovMajorDeg,
-    fovMinorDeg,
-    centerRaDeg,
-    centerDecDeg,
-    generation,
-    waitMs,
-  ]);
+  }, [dsoId, variant, fovMajorDeg, fovMinorDeg, generation, waitMs]);
 
   // Cancel any pending retry when the cell unmounts (scroll past the
   // viewport, close the detail dialog, etc.) — otherwise 100 rows of
@@ -177,8 +165,6 @@ export default function ThumbnailCell({
   const src = `${thumbnailUrl(dsoId, variant, {
     fovMajorDeg,
     fovMinorDeg,
-    centerRaDeg,
-    centerDecDeg,
     generation,
     // Long-poll only on the very first attempt. Retries send
     // ``waitMs=0`` so a stuck CDS fetch can't stack up 4-second holds
@@ -249,7 +235,7 @@ export default function ThumbnailCell({
           display: "block",
           width: "100%",
           height: "100%",
-          objectFit: "cover",
+          objectFit: fit,
           borderRadius: fill ? 0 : 4,
           background: "rgba(0, 0, 0, 0.05)",
           userSelect: fill ? "none" : undefined,

@@ -1,34 +1,37 @@
 /**
- * FOV Simulator — 3×3 grid of DSS2 tiles around the object, with a
- * rotatable + movable sensor frame and sky-anchored DSO annotations.
+ * FOV Simulator — v0.18.0 / Pass C.
+ *
+ * A single composite of sky-tile cells (shared region tangent,
+ * pixel-perfect stitching) with the rig's sensor rectangle overlaid.
+ * Users pan / zoom / rotate the rectangle over the sky to plan
+ * framing.
  *
  * Layout:
- *   ┌─────┬─────┬─────┐
- *   │ NE  │  N  │ NW  │   (9 tiles, each the same angular extent)
- *   ├─────┼─────┼─────┤
- *   │  E  │center│  W │   ← viewport clips to one tile around centre
- *   ├─────┼─────┼─────┤
- *   │ SE  │  S  │ SW  │
- *   └─────┴─────┴─────┘
  *
- * The user can pan within the grid — pan offset clamped to ±1 tile
- * width, so they can slide neighbouring tiles into view without ever
- * hitting a refetch or a black edge. The centre tile loads first; the
- * 8 neighbours preload in the background and snap into place when
- * each one lands.
+ *   ┌──────── viewport (size × size CSS px) ────────┐
+ *   │                                                │
+ *   │    ┌─── pan group (composite source px) ────┐ │
+ *   │    │   SkyTileComposite                       │
+ *   │    │   DsoAnnotationOverlay                   │
+ *   │    │   Rig rectangle (sensor)                 │
+ *   │    └──────────────────────────────────────────┘ │
+ *   └────────────────────────────────────────────────┘
  *
- * Interactions:
- *   - Drag the image: pan the sky (bounded by the grid).
- *   - Drag the rectangle: move the sensor frame over the sky.
- *   - Shift + drag the rectangle: rotate (Position Angle, east of north).
- *   - Arrow keys: rotate ±5°, Shift ±1°.
- *   - R: reset everything.
- *   - Click an annotation label: popover with info + "Show details".
+ * The pan group is the composite's **native** source-pixel size
+ * (narrow tier: ~4000 px across, med: ~2000, wide: ~5000). A CSS
+ * transform ``translate(…) scale(zoom)`` positions it inside the
+ * viewport. ``zoom = 1`` shows one source pixel per CSS pixel (native
+ * resolution); ``zoom = viewport / max(composite)`` fits the whole
+ * composite in the viewport.
  *
- * Drag path bypasses React: pointermove writes ``el.style.transform``
- * directly against refs, and readout text nodes are updated via
- * textContent — no re-render per mouse frame. State catches up on
- * pointerup.
+ * The DSO's screen position is anchored on the composite's
+ * ``view_center_pixel_x/y`` — cell boundaries don't have to align with
+ * the DSO centre, so we pin the viewport centre on that pixel rather
+ * than on the composite centre.
+ *
+ * Drag performance: pointermove writes ``el.style.transform`` directly
+ * via refs; state catches up on pointerup. Mirrors the v0.17.0
+ * pattern so the UX stays responsive when the user drags fast.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -44,13 +47,14 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import { RIG_ORANGE } from "@/lib/rigColors";
 import { formatDec, formatRa } from "@/lib/dsoFormatters";
+import { arcminToSlider, sliderToArcmin } from "@/lib/dsoAnnotations";
 import {
-  arcminToSlider,
-  sliderToArcmin,
-  tileCenterAt,
-} from "@/lib/dsoAnnotations";
-import { fetchNearbyDsos, type NearbyDsoItem } from "@/api/planner";
-import ThumbnailCell from "./ThumbnailCell";
+  fetchNearbyDsos,
+  type NearbyDsoItem,
+  type SkyTileGridLayout,
+  type SkyTileTier,
+} from "@/api/planner";
+import SkyTileComposite from "./SkyTileComposite";
 import DsoAnnotationOverlay from "./DsoAnnotationOverlay";
 import DsoAnnotationPopover from "./DsoAnnotationPopover";
 
@@ -63,18 +67,26 @@ interface Props {
   centerDecDeg?: number | null;
   primaryDesignation?: string | null;
   onSelectDso?: (dsoId: number) => void;
-  /** CSS pixel size of the **viewport** (one tile's worth). The total
-   *  pan group that holds the 3×3 grid is 3× this in each dimension. */
+  /** CSS pixel size of the viewport (square). */
   size?: number;
 }
 
-// Mirror of backend ``compute_angular_extent_deg`` for the simulator
-// variant. Must stay in lockstep — the annotation / rectangle
-// projection math all flows from this.
-function tileExtentDeg(fovMajor: number, fovMinor: number): number {
-  // Sensor rectangle fills 50% of the tile's max dimension.
-  return Math.max(fovMajor, fovMinor) / 0.5;
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+function tierForFov(fov: number): SkyTileTier {
+  // Must stay in lockstep with the backend's ``tier_for_fov`` in
+  // ``services/sky_tiles.py``. Same thresholds, same fallback.
+  if (fov <= 1.0) return "narrow";
+  if (fov <= 3.0) return "med";
+  return "wide";
 }
+
+function cellSizeForTier(tier: SkyTileTier): number {
+  return tier === "narrow" ? 0.5 : tier === "med" ? 2.0 : 8.0;
+}
+
+// View side — 5 cells across, same ~25-cell budget regardless of tier.
+const VIEW_CELLS_ACROSS = 5;
 
 function normalizeAngle(deg: number): number {
   return ((deg % 360) + 360) % 360;
@@ -118,8 +130,6 @@ function offsetPxToSkyDelta(
   centreDecDeg: number,
 ): { dRaDeg: number; dDecDeg: number } {
   const cosDec = Math.max(Math.cos((centreDecDeg * Math.PI) / 180), 1e-6);
-  // +offsetX (screen right) = sky west of centre = -RA.
-  // +offsetY (screen down) = sky south of centre = -Dec.
   const dRaDeg = -offsetX / pxPerDeg / cosDec;
   const dDecDeg = -offsetY / pxPerDeg;
   return { dRaDeg, dDecDeg };
@@ -133,32 +143,7 @@ function formatDelta(deg: number, positive: string, negative: string): string {
   return `${absDeg.toFixed(2)}\u00B0 ${label}`;
 }
 
-// Build the list of tile centres for an N×N grid. ``half`` = (N−1)/2,
-// so a 3×3 grid gets (col, row) ∈ {−1, 0, +1}² and a 5×5 grid gets
-// {−2, … +2}². col is the screen column (−1 = left, +1 = right); row
-// is the screen row (−1 = top, +1 = bottom). Sky: east is left, north
-// is up, so col=−1 is higher RA (east) and row=−1 is higher Dec.
-function computeTiles(
-  objectRaDeg: number,
-  objectDecDeg: number,
-  tileExtent: number,
-  half: number,
-): Array<{ col: number; row: number; raDeg: number; decDeg: number }> {
-  const out: Array<{ col: number; row: number; raDeg: number; decDeg: number }> = [];
-  for (let row = -half; row <= half; row++) {
-    for (let col = -half; col <= half; col++) {
-      const { raDeg, decDeg } = tileCenterAt(
-        objectRaDeg,
-        objectDecDeg,
-        col,
-        row,
-        tileExtent,
-      );
-      out.push({ col, row, raDeg: wrapRa(raDeg), decDeg: clampDec(decDeg) });
-    }
-  }
-  return out;
-}
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function FovSimulator({
   dsoId,
@@ -176,13 +161,11 @@ export default function FovSimulator({
   const [rectOffsetY, setRectOffsetY] = useState(0);
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
-  const [zoom, setZoom] = useState(1);
-  // Load phases: 1 = centre tile only, 3 = 3×3 inner grid, 5 = 5×5
-  // with outer ring. Starting at 1 ensures the backend's 4-slot HiPS
-  // fetch semaphore is fully dedicated to the centre tile on first
-  // open — users see the image ~4× faster than if all 9 tiles raced
-  // for the queue. The ring fills in as soon as the centre lands.
-  const [gridN, setGridN] = useState<1 | 3 | 5>(1);
+  // ``null`` before the first layout arrives — we then default to
+  // fit-to-viewport. After that the user can zoom anywhere in
+  // [fit, 1].
+  const [zoom, setZoom] = useState<number | null>(null);
+  const [layout, setLayout] = useState<SkyTileGridLayout | null>(null);
   const [isShiftHeld, setIsShiftHeld] = useState(false);
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [annotationSlider, setAnnotationSlider] = useState(0);
@@ -202,16 +185,9 @@ export default function FovSimulator({
   const rectOffsetYRef = useRef(0);
   const panXRef = useRef(0);
   const panYRef = useRef(0);
-  // Mirrors of gridN + zoom so the window pointermove listener can
-  // read the current values without re-binding on every state change.
-  // Without these, the listener's closure would see the values from
-  // the render in which the listener was attached — and when the
-  // 5×5 outer-ring promotion fires ``setGridN(5)`` the listener would
-  // keep writing the OLD ``gridPx`` transform to the pan group, jumping
-  // the image under the user's cursor mid-drag.
-  const gridNRef = useRef<1 | 3 | 5>(1);
-  const zoomRef = useRef(1);
-  // Drag state — ``mode`` disambiguates pan (container) vs rect.
+  const zoomRef = useRef(0);
+  const layoutRef = useRef<SkyTileGridLayout | null>(null);
+
   const dragStateRef = useRef<
     | {
         pointerId: number;
@@ -222,69 +198,83 @@ export default function FovSimulator({
     | null
   >(null);
 
+  const tier = useMemo(() => tierForFov(fovMajorDeg), [fovMajorDeg]);
   const extentDeg = useMemo(
-    () => tileExtentDeg(fovMajorDeg, fovMinorDeg),
-    [fovMajorDeg, fovMinorDeg],
+    () => cellSizeForTier(tier) * VIEW_CELLS_ACROSS,
+    [tier],
   );
-  // pixels per sky-degree in the pan group's unscaled coordinate
-  // system. Tiles don't physically scale until the pan-group
-  // ``scale()`` transform applies.
-  const pxPerDeg = size / extentDeg;
-  const rectWidth = fovMajorDeg * pxPerDeg;
-  const rectHeight = fovMinorDeg * pxPerDeg;
 
-  // Grid geometry. ``half`` is how many tiles live on each side of
-  // the centre tile; ``gridPx`` is the pan-group's unscaled pixel
-  // size. Both update when the 5×5 ring finishes preloading.
-  const half = (gridN - 1) / 2;
-  const gridPx = size * gridN;
-  // Zoom bounds: zoom=1 shows one tile; zoom=1/gridN shows the full
-  // grid. Always keep the user inside that range.
-  const zoomMin = 1 / gridN;
-  // Max screen-pixel pan at the current zoom. At zoom = 1/gridN the
-  // scaled grid exactly fills the viewport so pan is 0.
-  const panLimit = Math.max(0, (gridPx * zoom - size) / 2);
+  // Derived from the layout (null until the first grid-layout response).
+  const sourcePxPerDeg = layout ? layout.cell_width_px / layout.cell_size_deg : 0;
+  const rectWidth = sourcePxPerDeg * fovMajorDeg;
+  const rectHeight = sourcePxPerDeg * fovMinorDeg;
 
-  const tiles = useMemo(() => {
-    if (centerRaDeg == null || centerDecDeg == null) return [];
-    return computeTiles(centerRaDeg, centerDecDeg, extentDeg, half);
-  }, [centerRaDeg, centerDecDeg, extentDeg, half]);
+  // Zoom bounds.
+  //   zoomFit — whole composite visible in the viewport (floor).
+  //   zoomMax = 1 — one source pixel per CSS pixel (native resolution).
+  //   zoomDefault — chosen so the rig rectangle's major axis fills
+  //     about 75% of the viewport: plenty of target prominence, still
+  //     enough surrounding sky to sanity-check framing.
+  const zoomFit = layout
+    ? size / Math.max(layout.composite_width_px, layout.composite_height_px)
+    : 1;
+  const zoomMax = 1;
+  const TARGET_RECT_FRACTION = 0.75;
+  const zoomDefault = useMemo(() => {
+    if (!layout) return 1;
+    const pxPerDeg = layout.cell_width_px / layout.cell_size_deg;
+    const rectMajorSourcePx = fovMajorDeg * pxPerDeg;
+    if (rectMajorSourcePx <= 0) return zoomFit;
+    // rect_on_screen_px = rectMajorSourcePx × zoom; solve for zoom such
+    // that rect_on_screen_px = TARGET_RECT_FRACTION × size.
+    return Math.max(
+      zoomFit,
+      Math.min(zoomMax, (TARGET_RECT_FRACTION * size) / rectMajorSourcePx),
+    );
+  }, [layout, fovMajorDeg, size, zoomFit]);
+  const zoomEff = zoom ?? zoomDefault;
 
-  // Build the pan-group transform from the *current* refs. Scale is
-  // applied first, then translate — so to pin the grid's centre to
-  // the viewport centre at any zoom we shift by
-  // ``size/2 − gridPx/2 × zoom``. Pan adds on top.
-  function gridTransformFromRefs(): string {
+  // Pan group transform — composites the scale + centre-on-view-center + pan.
+  function panGroupTransformFromRefs(): string {
+    const l = layoutRef.current;
+    if (!l) return "";
     const z = zoomRef.current;
-    const curGridPx = size * gridNRef.current;
-    const baseT = size * 0.5 - curGridPx * 0.5 * z;
-    return `translate(${baseT + panXRef.current}px, ${baseT + panYRef.current}px) scale(${z})`;
+    const cx = size / 2 - l.view_center_pixel_x * z;
+    const cy = size / 2 - l.view_center_pixel_y * z;
+    return `translate(${cx + panXRef.current}px, ${cy + panYRef.current}px) scale(${z})`;
   }
 
-  // The same transform derived from React props/state — used to seed
-  // the DOM at render time (before applyLive has run post-commit).
-  function gridTransformFromState(
+  function panGroupTransformFromState(
     panXv: number,
     panYv: number,
     zoomV: number,
-    gridNv: 1 | 3 | 5,
+    l: SkyTileGridLayout | null,
   ): string {
-    const curGridPx = size * gridNv;
-    const baseT = size * 0.5 - curGridPx * 0.5 * zoomV;
-    return `translate(${baseT + panXv}px, ${baseT + panYv}px) scale(${zoomV})`;
+    if (!l) return "";
+    const cx = size / 2 - l.view_center_pixel_x * zoomV;
+    const cy = size / 2 - l.view_center_pixel_y * zoomV;
+    return `translate(${cx + panXv}px, ${cy + panYv}px) scale(${zoomV})`;
   }
 
-  // Current clamp limit for pan, computed fresh from the refs.
-  function currentPanLimit(): number {
-    return Math.max(
+  function currentPanLimit(): { x: number; y: number } {
+    const l = layoutRef.current;
+    if (!l) return { x: 0, y: 0 };
+    const z = zoomRef.current;
+    // Bound pan so the DSO's pixel never leaves the viewport. Allow
+    // the composite edges to enter the viewport — useful when the DSO
+    // sits near the region edge and we want to peek at the opposite
+    // side.
+    const xLim = Math.max(
       0,
-      (size * gridNRef.current * zoomRef.current - size) / 2,
+      Math.max(l.view_center_pixel_x, l.composite_width_px - l.view_center_pixel_x) * z,
     );
+    const yLim = Math.max(
+      0,
+      Math.max(l.view_center_pixel_y, l.composite_height_px - l.view_center_pixel_y) * z,
+    );
+    return { x: xLim, y: yLim };
   }
 
-  // DOM-direct write helper: rect transform + pan transform + readouts.
-  // Reads all "live" values from refs so it never sees a stale value
-  // captured at window-listener-bind time.
   function applyLive() {
     const rect = rectRef.current;
     if (rect) {
@@ -296,15 +286,15 @@ export default function FovSimulator({
     }
     const pg = panGroupRef.current;
     if (pg) {
-      pg.style.transform = gridTransformFromRefs();
+      pg.style.transform = panGroupTransformFromRefs();
     }
     const rotEl = rotationDisplayRef.current;
     if (rotEl) rotEl.textContent = `${Math.round(rotationRef.current)}\u00B0`;
-    if (centerRaDeg != null && centerDecDeg != null) {
+    if (centerRaDeg != null && centerDecDeg != null && sourcePxPerDeg > 0) {
       const { dRaDeg, dDecDeg } = offsetPxToSkyDelta(
         rectOffsetXRef.current,
         rectOffsetYRef.current,
-        pxPerDeg,
+        sourcePxPerDeg,
         centerDecDeg,
       );
       const rectRa = wrapRa(centerRaDeg + dRaDeg);
@@ -314,22 +304,14 @@ export default function FovSimulator({
     }
   }
 
-  // useLayoutEffect (not useEffect) so ``applyLive`` writes the refs-
-  // driven transform BEFORE the browser paints. If the 5×5 grid
-  // promotion fires mid-drag, React commits a new inline transform on
-  // the pan group that corresponds to ``panX`` state (which is stale
-  // — state commits on pointerup). Without this synchronous catch-up,
-  // the user would see a single frame where the image snaps back to
-  // the object-centred view before pan resumes on the next
-  // pointermove. Running synchronously closes that window.
   useLayoutEffect(() => {
     rotationRef.current = rotation;
     rectOffsetXRef.current = rectOffsetX;
     rectOffsetYRef.current = rectOffsetY;
     panXRef.current = panX;
     panYRef.current = panY;
-    gridNRef.current = gridN;
-    zoomRef.current = zoom;
+    zoomRef.current = zoomEff;
+    layoutRef.current = layout;
     applyLive();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -338,33 +320,90 @@ export default function FovSimulator({
     rectOffsetY,
     panX,
     panY,
-    gridN,
-    zoom,
+    zoomEff,
+    layout,
     centerRaDeg,
     centerDecDeg,
-    pxPerDeg,
+    sourcePxPerDeg,
     size,
   ]);
 
-  // Stage 1 → Stage 3 happens on the centre tile's ``onReady``
-  // callback (see the tile render below), so there's no timer here.
-  // Stage 3 → Stage 5 promotion: once the inner 3×3 has had a beat
-  // to paint, mount the outer 16 tiles. By the time the user zooms
-  // out or pans far enough to see them, most are usually loaded.
+  // Re-clamp pan when the zoom or layout changes.
   useEffect(() => {
-    if (gridN !== 3) return;
-    if (centerRaDeg == null || centerDecDeg == null) return;
-    const timer = setTimeout(() => setGridN(5), 2000);
-    return () => clearTimeout(timer);
-  }, [gridN, centerRaDeg, centerDecDeg]);
+    const { x, y } = currentPanLimit();
+    setPanX((px) => clamp(px, -x, x));
+    setPanY((py) => clamp(py, -y, y));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomEff, layout]);
 
-  // Re-clamp pan when zoom or grid size changes (the limit shrinks
-  // or grows). Without this, shrinking the limit could leave pan in
-  // an out-of-bounds state.
+  // Scroll-wheel zoom. React's ``onWheel`` handlers are passive by
+  // default, so ``preventDefault()`` there doesn't stop page scroll.
+  // Attach a native ``wheel`` listener with ``{ passive: false }``
+  // instead. Zoom is cursor-anchored — the source pixel under the
+  // cursor stays under the cursor across the zoom change — for
+  // natural "zoom into what I'm looking at" behaviour.
   useEffect(() => {
-    setPanX((x) => clamp(x, -panLimit, panLimit));
-    setPanY((y) => clamp(y, -panLimit, panLimit));
-  }, [panLimit]);
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handler = (e: WheelEvent) => {
+      const l = layoutRef.current;
+      if (!l) return;
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      const zOld = zoomRef.current;
+      const vcx = l.view_center_pixel_x;
+      const vcy = l.view_center_pixel_y;
+      const panXOld = panXRef.current;
+      const panYOld = panYRef.current;
+
+      // Source pixel under the cursor pre-zoom.
+      const sourceX = (mx - size / 2 + vcx * zOld - panXOld) / zOld;
+      const sourceY = (my - size / 2 + vcy * zOld - panYOld) / zOld;
+
+      // Each wheel notch changes zoom by ~10%. ``deltaMode`` 1 = lines,
+      // 2 = pages — scale accordingly so line-mode mice (Firefox on
+      // Windows) feel similar to pixel-mode.
+      const lineScale = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1;
+      const scroll = e.deltaY * lineScale;
+      const factor = Math.exp(-scroll * 0.0015);
+      const zNew = Math.max(zoomFit, Math.min(zoomMax, zOld * factor));
+      if (zNew === zOld) return;
+
+      // Solve for the new pan that keeps ``sourceX / sourceY`` under
+      // the cursor after the zoom change.
+      let panXNew = mx - size / 2 + vcx * zNew - sourceX * zNew;
+      let panYNew = my - size / 2 + vcy * zNew - sourceY * zNew;
+      const limX = Math.max(
+        0,
+        Math.max(vcx, l.composite_width_px - vcx) * zNew,
+      );
+      const limY = Math.max(
+        0,
+        Math.max(vcy, l.composite_height_px - vcy) * zNew,
+      );
+      panXNew = clamp(panXNew, -limX, limX);
+      panYNew = clamp(panYNew, -limY, limY);
+
+      // Fast path via refs + applyLive so the pan/zoom updates on the
+      // same frame as the wheel event. State catches up for React.
+      zoomRef.current = zNew;
+      panXRef.current = panXNew;
+      panYRef.current = panYNew;
+      applyLive();
+
+      setZoom(zNew);
+      setPanX(panXNew);
+      setPanY(panYNew);
+    };
+
+    container.addEventListener("wheel", handler, { passive: false });
+    return () => container.removeEventListener("wheel", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size, zoomFit, zoomMax]);
 
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
@@ -402,22 +441,16 @@ export default function FovSimulator({
             rotationRef.current - (next - prev),
           );
         } else {
-          // Screen-space drag converted to pan-group-space — the pan
-          // group is scaled by ``zoom`` so a ``dx`` of 20 screen px
-          // is ``20 / zoom`` in the unscaled rect-offset coordinates.
-          // Reads zoom from the ref so the listener doesn't see stale
-          // values if the user changed zoom since it was bound.
-          const z = zoomRef.current;
+          // Drag in screen CSS px; rect offset is in composite source
+          // pixels, so divide by zoom.
+          const z = zoomRef.current || 1;
           rectOffsetXRef.current += dx / z;
           rectOffsetYRef.current += dy / z;
         }
       } else {
-        // Pan mode. ``currentPanLimit`` derives from the live refs,
-        // so a gridN / zoom change mid-drag immediately uses the new
-        // bounds — no stale clamp window stuck on the pre-change grid.
-        const lim = currentPanLimit();
-        panXRef.current = clamp(panXRef.current + dx, -lim, lim);
-        panYRef.current = clamp(panYRef.current + dy, -lim, lim);
+        const { x: xLim, y: yLim } = currentPanLimit();
+        panXRef.current = clamp(panXRef.current + dx, -xLim, xLim);
+        panYRef.current = clamp(panYRef.current + dy, -yLim, yLim);
       }
       drag.lastX = e.clientX;
       drag.lastY = e.clientY;
@@ -441,13 +474,8 @@ export default function FovSimulator({
       window.removeEventListener("pointerup", onEnd);
       window.removeEventListener("pointercancel", onEnd);
     };
-    // Re-bind on target/rig change so ``applyLive`` captures the new
-    // ``centerRaDeg`` / ``pxPerDeg`` / ``size`` closure. ``gridN`` and
-    // ``zoom`` intentionally stay *out* of the dep list — they're read
-    // via refs inside the handler, avoiding a listener teardown
-    // mid-drag when the 5×5 ring promotes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size, pxPerDeg, centerRaDeg, centerDecDeg]);
+  }, [size, sourcePxPerDeg, centerRaDeg, centerDecDeg]);
 
   function tryCapture(pointerId: number) {
     try {
@@ -457,10 +485,20 @@ export default function FovSimulator({
     }
   }
 
+  // A focusable ``<div>`` doesn't pick up keyboard focus on click —
+  // only on Tab. Pulling focus on every pointer-down means the user's
+  // first interaction (drag-to-rotate, pan, annotation click) also
+  // arms the keyboard controls (arrow keys, R) without a separate
+  // Tab-to-focus step.
+  function focusContainer(): void {
+    containerRef.current?.focus({ preventScroll: true });
+  }
+
   function handleRectPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     e.preventDefault();
-    e.stopPropagation(); // don't also start a pan
+    e.stopPropagation();
     tryCapture(e.pointerId);
+    focusContainer();
     dragStateRef.current = {
       pointerId: e.pointerId,
       mode: "rect",
@@ -473,6 +511,7 @@ export default function FovSimulator({
     if (centerRaDeg == null || centerDecDeg == null) return;
     e.preventDefault();
     tryCapture(e.pointerId);
+    focusContainer();
     dragStateRef.current = {
       pointerId: e.pointerId,
       mode: "pan",
@@ -491,19 +530,21 @@ export default function FovSimulator({
       setRotation((r) => normalizeAngle(r - step));
     } else if (e.key === "r" || e.key === "R") {
       e.preventDefault();
-      resetAll();
+      recenterView();
     } else if (e.key === "Escape") {
       (e.currentTarget as HTMLElement).blur();
     }
   }
 
-  function resetAll() {
-    setRotation(0);
+  function recenterView() {
+    // Re-centres the DSO and resets the rig rectangle to the frame
+    // centre. Leaves zoom + rotation alone — those have their own
+    // dedicated reset controls in the sidebar, and users often want
+    // to recentre an image without losing the zoom they've dialled in.
     setRectOffsetX(0);
     setRectOffsetY(0);
     setPanX(0);
     setPanY(0);
-    setZoom(1);
   }
   function resetRotation() {
     setRotation(0);
@@ -513,33 +554,32 @@ export default function FovSimulator({
   const showCoords = centerRaDeg != null && centerDecDeg != null;
 
   const initialRectSky = useMemo(() => {
-    if (!showCoords) return null;
+    if (!showCoords || sourcePxPerDeg === 0) return null;
     const { dRaDeg, dDecDeg } = offsetPxToSkyDelta(
       rectOffsetX,
       rectOffsetY,
-      pxPerDeg,
+      sourcePxPerDeg,
       centerDecDeg!,
     );
     return {
       raDeg: wrapRa(centerRaDeg! + dRaDeg),
       decDeg: clampDec(centerDecDeg! + dDecDeg),
     };
-  }, [showCoords, rectOffsetX, rectOffsetY, pxPerDeg, centerRaDeg, centerDecDeg]);
+  }, [showCoords, rectOffsetX, rectOffsetY, sourcePxPerDeg, centerRaDeg, centerDecDeg]);
 
-  const deltaEastDeg = showCoords ? -rectOffsetX / pxPerDeg : 0;
-  const deltaNorthDeg = showCoords ? -rectOffsetY / pxPerDeg : 0;
+  const deltaEastDeg = sourcePxPerDeg > 0 ? -rectOffsetX / sourcePxPerDeg : 0;
+  const deltaNorthDeg = sourcePxPerDeg > 0 ? -rectOffsetY / sourcePxPerDeg : 0;
 
-  // Annotations — region query keyed on DSO + tile extent. The region
-  // we fetch covers the full 5×5 grid up-front so the outer ring
-  // already has labels by the time tiles load.
-  const annotationExtentDeg = extentDeg * 5;
+  // Annotations — fetch a region around the DSO spanning the view.
+  // Same endpoint the v0.17.0 path uses; only the overlay's projection
+  // changes.
   const nearbyQuery = useQuery({
-    queryKey: ["nearby-dsos", dsoId, annotationExtentDeg.toFixed(4)],
+    queryKey: ["nearby-dsos", dsoId, extentDeg.toFixed(4)],
     queryFn: () =>
       fetchNearbyDsos({
         raCenterDeg: centerRaDeg!,
         decCenterDeg: centerDecDeg!,
-        extentDeg: annotationExtentDeg,
+        extentDeg,
         excludeId: dsoId,
       }),
     enabled: showCoords,
@@ -558,10 +598,8 @@ export default function FovSimulator({
     return Math.max(1, max);
   }, [nearbyItems, dsoMajAxisArcmin]);
   const thresholdArcmin = sliderToArcmin(annotationSlider, sliderMaxArcmin);
-  const anyHasSize = nearbyItems.some((i) => i.maj_axis_arcmin != null) ||
-    dsoMajAxisArcmin != null;
-
-  const panGroupSize = gridPx;
+  const anyHasSize =
+    nearbyItems.some((i) => i.maj_axis_arcmin != null) || dsoMajAxisArcmin != null;
 
   return (
     <>
@@ -570,7 +608,6 @@ export default function FovSimulator({
         gap={2}
         alignItems={{ md: "flex-start" }}
       >
-        {/* Viewport container — clips to one tile width. */}
         <Box
           ref={containerRef}
           tabIndex={0}
@@ -596,117 +633,116 @@ export default function FovSimulator({
             },
           }}
         >
-          {/* Pan group — holds the 3×3 tile grid + rectangle + annotations. */}
+          {/* Pan group — composite source-pixel dimensions, transformed
+              by pan/zoom to fit the viewport. */}
           <Box
             ref={panGroupRef}
             style={{
-              transform: gridTransformFromState(panX, panY, zoom, gridN),
+              transform: panGroupTransformFromState(panX, panY, zoomEff, layout),
               transformOrigin: "0 0",
             }}
             sx={{
               position: "absolute",
               top: 0,
               left: 0,
-              width: panGroupSize,
-              height: panGroupSize,
+              width: layout?.composite_width_px ?? 0,
+              height: layout?.composite_height_px ?? 0,
             }}
           >
-            {tiles.map((t) => {
-              const isCenter = t.col === 0 && t.row === 0;
-              return (
-                <Box
-                  key={`${t.col},${t.row}`}
-                  sx={{
-                    position: "absolute",
-                    left: (t.col + half) * size,
-                    top: (t.row + half) * size,
-                    width: size,
-                    height: size,
-                  }}
-                >
-                  <ThumbnailCell
-                    dsoId={dsoId}
-                    variant="fov_simulator"
-                    fovMajorDeg={fovMajorDeg}
-                    fovMinorDeg={fovMinorDeg}
-                    // Centre tile pins to the DSO's own coords (no
-                    // ``center_*`` params) so it shares the cache
-                    // entry with any pre-pan visit. Neighbours carry
-                    // explicit sky coords.
-                    centerRaDeg={isCenter ? undefined : t.raDeg}
-                    centerDecDeg={isCenter ? undefined : t.decDeg}
-                    // Long-poll the backend. A CDS gnomonic render
-                    // takes ~2.3 s on a fresh tile; with plain polling
-                    // we pay the poll-cadence penalty on top of that.
-                    // 4 s covers the typical fetch with margin; the
-                    // 10 s server cap is the hard ceiling.
-                    waitMs={4000}
-                    fill
-                    onReady={
-                      isCenter
-                        ? () => {
-                            // Promote to the 3×3 inner grid as soon
-                            // as the centre is visible. Ignored if
-                            // already past stage 1 (e.g., re-ready
-                            // on a silent refetch).
-                            setGridN((cur) => (cur === 1 ? 3 : cur));
-                          }
-                        : undefined
-                    }
-                  />
-                </Box>
-              );
-            })}
-
-            {/* Faint tile-boundary affordance — signals the image is a
-                mosaic so subtle seams read as intentional. Stroke
-                width + dash lengths counter-scale by zoom so they stay
-                ~1 CSS px at any zoom level (``vector-effect`` handles
-                this natively but Safari's support is uneven across
-                transform chains). */}
-            {gridN > 1 && (
-              <svg
-                width={gridPx}
-                height={gridPx}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  pointerEvents: "none",
-                }}
-              >
-                {Array.from({ length: gridN - 1 }, (_, i) => {
-                  const pos = (i + 1) * size;
-                  const strokeW = 1 / zoom;
-                  const dash = `${6 / zoom} ${4 / zoom}`;
-                  const lineProps = {
-                    stroke: "#ffffff",
-                    strokeOpacity: 0.14,
-                    strokeWidth: strokeW,
-                    strokeDasharray: dash,
-                  } as const;
-                  return (
-                    <g key={`grid-${i}`}>
-                      <line
-                        x1={pos}
-                        y1={0}
-                        x2={pos}
-                        y2={gridPx}
-                        {...lineProps}
-                      />
-                      <line
-                        x1={0}
-                        y1={pos}
-                        x2={gridPx}
-                        y2={pos}
-                        {...lineProps}
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
+            {showCoords && (
+              <SkyTileComposite
+                raDeg={centerRaDeg!}
+                decDeg={centerDecDeg!}
+                tier={tier}
+                extentDeg={extentDeg}
+                onLayout={setLayout}
+              />
             )}
 
-            {showAnnotations && showCoords && (
+            {/* Rig rectangle — anchored at the composite's view centre,
+                offset by rectOffsetX/Y in source pixels. Painted
+                BEFORE annotations so annotation circles/labels land on
+                top. The annotation overlay's SVG root has
+                ``pointer-events: none``, so clicks on empty space
+                pass through to the rect beneath; only the
+                annotation's own ``<g>`` elements intercept clicks —
+                exactly the "click the object, not the pan" behaviour
+                users expect. */}
+            {layout && (
+              <Box
+                ref={rectRef}
+                onPointerDown={handleRectPointerDown}
+                style={{
+                  transform: buildRectTransform(rectOffsetX, rectOffsetY, rotation),
+                  transformOrigin: "center center",
+                }}
+                sx={{
+                  position: "absolute",
+                  top: layout.view_center_pixel_y,
+                  left: layout.view_center_pixel_x,
+                  width: rectWidth,
+                  height: rectHeight,
+                  border: `2px solid ${RIG_ORANGE}`,
+                  boxSizing: "border-box",
+                  cursor: rectangleCursor,
+                  touchAction: "none",
+                  "&:active": {
+                    cursor: isShiftHeld ? ROTATE_CURSOR : "grabbing",
+                  },
+                }}
+              >
+                {(["tl", "tr", "bl", "br"] as const).map((corner) => {
+                  const style: React.CSSProperties = {
+                    position: "absolute",
+                    width: 8,
+                    height: 8,
+                    borderColor: RIG_ORANGE,
+                    borderStyle: "solid",
+                    borderWidth: 0,
+                    pointerEvents: "none",
+                  };
+                  if (corner === "tl") {
+                    style.top = -1;
+                    style.left = -1;
+                    style.borderTopWidth = 3;
+                    style.borderLeftWidth = 3;
+                  } else if (corner === "tr") {
+                    style.top = -1;
+                    style.right = -1;
+                    style.borderTopWidth = 3;
+                    style.borderRightWidth = 3;
+                  } else if (corner === "bl") {
+                    style.bottom = -1;
+                    style.left = -1;
+                    style.borderBottomWidth = 3;
+                    style.borderLeftWidth = 3;
+                  } else {
+                    style.bottom = -1;
+                    style.right = -1;
+                    style.borderBottomWidth = 3;
+                    style.borderRightWidth = 3;
+                  }
+                  return <div key={corner} style={style} />;
+                })}
+
+                <Box
+                  sx={{
+                    position: "absolute",
+                    top: "50%",
+                    left: "50%",
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    bgcolor: RIG_ORANGE,
+                    transform: "translate(-50%, -50%)",
+                    boxShadow: "0 0 3px rgba(0,0,0,0.7)",
+                    pointerEvents: "none",
+                  }}
+                />
+              </Box>
+            )}
+
+            {showAnnotations && showCoords && layout && (
               <DsoAnnotationOverlay
                 items={nearbyItems}
                 primary={{
@@ -716,95 +752,24 @@ export default function FovSimulator({
                   dec_deg: centerDecDeg!,
                   maj_axis_arcmin: dsoMajAxisArcmin ?? null,
                 }}
-                centerRaDeg={centerRaDeg!}
-                centerDecDeg={centerDecDeg!}
-                tileExtentDeg={extentDeg}
-                gridN={gridN}
-                sizePx={gridPx}
+                tangentRaDeg={layout.tangent_ra_deg}
+                tangentDecDeg={layout.tangent_dec_deg}
+                cellSizeDeg={layout.cell_size_deg}
+                cellPxSize={layout.cell_width_px}
+                compositePxWidth={layout.composite_width_px}
+                compositePxHeight={layout.composite_height_px}
+                viewCenterPxX={layout.view_center_pixel_x}
+                viewCenterPxY={layout.view_center_pixel_y}
                 thresholdArcmin={thresholdArcmin}
+                zoom={zoomEff}
                 onAnnotationClick={(item, anchor) =>
                   setPopover({ item, anchor })
                 }
               />
             )}
-
-            {/* Sensor rectangle — positioned at the centre of the pan
-                group (middle of the centre tile) + rectOffset. */}
-            <Box
-              ref={rectRef}
-              onPointerDown={handleRectPointerDown}
-              style={{
-                transform: buildRectTransform(rectOffsetX, rectOffsetY, rotation),
-                transformOrigin: "center center",
-              }}
-              sx={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                width: rectWidth,
-                height: rectHeight,
-                border: `2px solid ${RIG_ORANGE}`,
-                boxSizing: "border-box",
-                cursor: rectangleCursor,
-                touchAction: "none",
-                "&:active": {
-                  cursor: isShiftHeld ? ROTATE_CURSOR : "grabbing",
-                },
-              }}
-            >
-              {(["tl", "tr", "bl", "br"] as const).map((corner) => {
-                const style: React.CSSProperties = {
-                  position: "absolute",
-                  width: 8,
-                  height: 8,
-                  borderColor: RIG_ORANGE,
-                  borderStyle: "solid",
-                  borderWidth: 0,
-                  pointerEvents: "none",
-                };
-                if (corner === "tl") {
-                  style.top = -1;
-                  style.left = -1;
-                  style.borderTopWidth = 3;
-                  style.borderLeftWidth = 3;
-                } else if (corner === "tr") {
-                  style.top = -1;
-                  style.right = -1;
-                  style.borderTopWidth = 3;
-                  style.borderRightWidth = 3;
-                } else if (corner === "bl") {
-                  style.bottom = -1;
-                  style.left = -1;
-                  style.borderBottomWidth = 3;
-                  style.borderLeftWidth = 3;
-                } else {
-                  style.bottom = -1;
-                  style.right = -1;
-                  style.borderBottomWidth = 3;
-                  style.borderRightWidth = 3;
-                }
-                return <div key={corner} style={style} />;
-              })}
-
-              <Box
-                sx={{
-                  position: "absolute",
-                  top: "50%",
-                  left: "50%",
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  bgcolor: RIG_ORANGE,
-                  transform: "translate(-50%, -50%)",
-                  boxShadow: "0 0 3px rgba(0,0,0,0.7)",
-                  pointerEvents: "none",
-                }}
-              />
-            </Box>
           </Box>
 
-          {/* North indicator — fixed in the viewport, not inside the
-              pan group, so it always labels the screen's top. */}
+          {/* North indicator — fixed in the viewport. */}
           <Box
             sx={{
               position: "absolute",
@@ -834,8 +799,8 @@ export default function FovSimulator({
                   >
                     Object (J2000)
                   </Typography>
-                  <Tooltip title="Re-center the view on the object">
-                    <IconButton size="small" onClick={resetAll} aria-label="Reset view">
+                  <Tooltip title="Re-center the view on the object (keeps zoom + rotation)">
+                    <IconButton size="small" onClick={recenterView} aria-label="Re-center view">
                       <RestartAltIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -889,7 +854,7 @@ export default function FovSimulator({
             </>
           )}
 
-          {showCoords && (
+          {showCoords && layout && (
             <Box>
               <Stack direction="row" alignItems="center" gap={0.5}>
                 <Typography
@@ -900,33 +865,29 @@ export default function FovSimulator({
                   Zoom
                 </Typography>
                 <Tooltip title="Reset zoom">
-                  <IconButton size="small" onClick={() => setZoom(1)} aria-label="Reset zoom">
+                  <IconButton size="small" onClick={() => setZoom(zoomDefault)} aria-label="Reset zoom">
                     <RestartAltIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
               </Stack>
               <Stack direction="row" alignItems="center" gap={1} sx={{ mt: 0.5 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ minWidth: 56 }}>
-                  {(zoom * 100).toFixed(0)}%
+                  {((zoomEff / zoomDefault) * 100).toFixed(0)}%
                 </Typography>
                 <Slider
                   size="small"
-                  value={zoom}
-                  min={zoomMin}
-                  max={1}
-                  step={0.01}
+                  value={zoomEff}
+                  min={zoomFit}
+                  max={zoomMax}
+                  step={(zoomMax - zoomFit) / 100 || 0.01}
                   onChange={(_, v) => {
                     const next = Array.isArray(v) ? v[0] : v;
-                    setZoom(Math.max(zoomMin, Math.min(1, next)));
+                    setZoom(Math.max(zoomFit, Math.min(zoomMax, next)));
                   }}
                 />
               </Stack>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                {gridN === 1
-                  ? "loading centre tile…"
-                  : gridN === 3
-                    ? "3×3 grid — 5×5 ring preloading"
-                    : "5×5 grid · pan to explore"}
+                {tier} tier · {layout.cells.length} cells · region {layout.ipix}
               </Typography>
             </Box>
           )}
@@ -1046,7 +1007,7 @@ export default function FovSimulator({
             </Typography>
             <Box component="ul" sx={{ pl: 2.5, mt: 0.5, mb: 0, "& li": { mb: 0.25 } }}>
               <Typography component="li" variant="caption" color="text.secondary">
-                <b>Drag the image</b> to pan (bounded to ±1 tile)
+                <b>Drag the image</b> to pan
               </Typography>
               <Typography component="li" variant="caption" color="text.secondary">
                 <b>Drag the rectangle</b> to move the frame
@@ -1058,7 +1019,10 @@ export default function FovSimulator({
                 Arrow keys rotate ±5° (Shift ±1°) — focus the image
               </Typography>
               <Typography component="li" variant="caption" color="text.secondary">
-                <b>R</b> resets everything
+                <b>R</b> re-centers the view (zoom + rotation untouched)
+              </Typography>
+              <Typography component="li" variant="caption" color="text.secondary">
+                <b>Scroll wheel</b> zooms toward the cursor
               </Typography>
             </Box>
           </Box>

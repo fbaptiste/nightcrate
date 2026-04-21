@@ -7,32 +7,6 @@
 
 const DEG_TO_RAD = Math.PI / 180;
 
-/** Tangent point of the tile at grid position ``(col, row)`` around
- *  ``(centerRaDeg, centerDecDeg)``. Plate-carrée-style offsets —
- *  ``tileExtentDeg / cos(centerDec)`` in RA, ``tileExtentDeg`` in Dec.
- *  Returns unwrapped RA (callers wrap with ``[0, 360)`` if they pass
- *  it to an external API; the projection helpers handle RA wrap
- *  internally, so they don't need it). Dec is clamped to ``[-90, 90]``
- *  so tiles near the pole don't drift off the sphere.
- *
- *  Shared between the simulator's tile-grid renderer and the
- *  annotation overlay's per-tile projection so both agree on exactly
- *  where each tile sits — divergence breaks annotation alignment.
- */
-export function tileCenterAt(
-  centerRaDeg: number,
-  centerDecDeg: number,
-  col: number,
-  row: number,
-  tileExtentDeg: number,
-): { raDeg: number; decDeg: number } {
-  const cosCenterDec = Math.max(Math.cos(centerDecDeg * DEG_TO_RAD), 1e-6);
-  return {
-    raDeg: centerRaDeg + (-col * tileExtentDeg) / cosCenterDec,
-    decDeg: Math.max(-90, Math.min(90, centerDecDeg - row * tileExtentDeg)),
-  };
-}
-
 /** Gnomonic (tangent-plane, TAN) projection of a sky position onto the
  *  tangent plane at ``(tangentRaDeg, tangentDecDeg)``. Returns
  *  ``(xi, eta)`` in radians on that plane — east-positive for xi,
@@ -73,115 +47,56 @@ function gnomonicProject(
   return { xi, eta };
 }
 
-/** Pixel scale on the tangent plane for a given image extent. The
- *  image covers ``2·tan(extent/2)`` in tangent-plane radians across
- *  its diameter — slightly larger than the angular extent for wide
- *  fields. hips2fits uses the same convention. */
-function pxPerRadForExtent(extentDeg: number, sizePx: number): number {
-  const halfExtentOnPlane = Math.tan((extentDeg / 2) * DEG_TO_RAD);
-  return sizePx / 2 / halfExtentOnPlane;
-}
-
-/** Project a DSO's RA/Dec to image-local pixel coords, with the image
- *  center at (size/2, size/2).
+/** Project a DSO's RA/Dec into a composite that shares a single
+ *  gnomonic tangent — matches the v0.18.0 sky-tile architecture where
+ *  every cell in a HEALPix region renders on the region's shared
+ *  tangent plane.
  *
- *  Uses a single gnomonic tangent plane centered on
- *  ``(centerRaDeg, centerDecDeg)``. Appropriate for untiled images and
- *  for the center tile of the FOV simulator — annotations in neighbour
- *  tiles should use ``projectRaDecToTilePixel`` instead because each
- *  tile is rendered with its own tangent point.
- *
- *  Convention: north-up / east-left. Positive ΔRA (east of center)
- *  renders left of the image center (negative dx); positive ΔDec
- *  (north of center) renders above (negative dy).
+ *  Returns pixel coords in the composite's east-left / north-up
+ *  screen-coord system (the same system ``compute_grid_layout``
+ *  returns on the backend). ``composite_width_px`` /
+ *  ``composite_height_px`` and the ``view_center_*`` come from the
+ *  grid-layout response; together with ``cell_size_deg`` they define
+ *  the projection completely.
  */
-export function projectRaDecToPixel(
+export function projectRaDecInRegion(
   raDeg: number,
   decDeg: number,
-  centerRaDeg: number,
-  centerDecDeg: number,
-  sizePx: number,
-  extentDeg: number,
-): { dx: number; dy: number } {
-  const { xi, eta } = gnomonicProject(raDeg, decDeg, centerRaDeg, centerDecDeg);
-  const pxPerRad = pxPerRadForExtent(extentDeg, sizePx);
-  return { dx: -xi * pxPerRad, dy: -eta * pxPerRad };
-}
-
-/** Project a DSO's RA/Dec to overlay-local pixel coords for the FOV
- *  simulator's tiled sky image.
- *
- *  Each tile is rendered by hips2fits as an independent gnomonic
- *  projection around its own tangent point, so a single grid-wide
- *  projection can't describe the pixel layout — neighbour-tile
- *  annotations would drift off their galaxies at high declinations.
- *  This helper picks the tile whose tangent is nearest the annotation
- *  (considering up to four candidates around the float column/row, so
- *  objects in the small dec-curvature gap between tiles snap to their
- *  closest neighbour) and projects using *that* tile's tangent.
- */
-export function projectRaDecToTilePixel(
-  raDeg: number,
-  decDeg: number,
-  centerRaDeg: number,
-  centerDecDeg: number,
-  tileExtentDeg: number,
-  halfGrid: number,
-  tilePx: number,
+  tangentRaDeg: number,
+  tangentDecDeg: number,
+  cellSizeDeg: number,
+  cellPxSize: number,
+  compositeViewCenterPxX: number,
+  compositeViewCenterPxY: number,
+  primaryRaDeg: number,
+  primaryDecDeg: number,
 ): { cx: number; cy: number } {
-  let dRaDeg = raDeg - centerRaDeg;
-  if (dRaDeg > 180) dRaDeg -= 360;
-  if (dRaDeg < -180) dRaDeg += 360;
-  const dDecDeg = decDeg - centerDecDeg;
-  const cosCenterDec = Math.max(Math.cos(centerDecDeg * DEG_TO_RAD), 1e-6);
-  const colFloat = (-dRaDeg * cosCenterDec) / tileExtentDeg;
-  const rowFloat = -dDecDeg / tileExtentDeg;
-
-  const clamp = (v: number): number =>
-    Math.max(-halfGrid, Math.min(halfGrid, v));
-  const colCandidates = new Set<number>([
-    clamp(Math.floor(colFloat)),
-    clamp(Math.ceil(colFloat)),
-  ]);
-  const rowCandidates = new Set<number>([
-    clamp(Math.floor(rowFloat)),
-    clamp(Math.ceil(rowFloat)),
-  ]);
-
-  let best: { col: number; row: number; xi: number; eta: number } | null = null;
-  let bestDistSq = Infinity;
-  for (const col of colCandidates) {
-    for (const row of rowCandidates) {
-      const tile = tileCenterAt(
-        centerRaDeg,
-        centerDecDeg,
-        col,
-        row,
-        tileExtentDeg,
-      );
-      const { xi, eta } = gnomonicProject(
-        raDeg,
-        decDeg,
-        tile.raDeg,
-        tile.decDeg,
-      );
-      const distSq = xi * xi + eta * eta;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        best = { col, row, xi, eta };
-      }
-    }
-  }
-  const { col, row, xi, eta } = best!;
-
-  const pxPerRad = pxPerRadForExtent(tileExtentDeg, tilePx);
-  const tileCenterX = (col + halfGrid + 0.5) * tilePx;
-  const tileCenterY = (row + halfGrid + 0.5) * tilePx;
+  // Gnomonic project both the primary and the annotation onto the region
+  // tangent, then compute the screen-pixel delta from the primary.
+  const { xi: xiAnn, eta: etaAnn } = gnomonicProject(
+    raDeg,
+    decDeg,
+    tangentRaDeg,
+    tangentDecDeg,
+  );
+  const { xi: xiPri, eta: etaPri } = gnomonicProject(
+    primaryRaDeg,
+    primaryDecDeg,
+    tangentRaDeg,
+    tangentDecDeg,
+  );
+  // Pixel scale on the tangent plane.
+  const pxPerRad = cellPxSize / 2 / Math.tan((cellSizeDeg / 2) * DEG_TO_RAD);
+  // East-left / north-up conversion: +xi (east) → -dx (left),
+  // +eta (north) → -dy (up, i.e. decreasing screen Y).
+  const dx = -(xiAnn - xiPri) * pxPerRad;
+  const dy = -(etaAnn - etaPri) * pxPerRad;
   return {
-    cx: tileCenterX - xi * pxPerRad,
-    cy: tileCenterY - eta * pxPerRad,
+    cx: compositeViewCenterPxX + dx,
+    cy: compositeViewCenterPxY + dy,
   };
 }
+
 
 /** Circle radius in pixels for an object of given angular diameter. */
 export function radiusPxForArcmin(

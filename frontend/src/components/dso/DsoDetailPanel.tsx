@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
-import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
 import IconButton from "@mui/material/IconButton";
 import Link from "@mui/material/Link";
@@ -11,11 +10,15 @@ import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import CloseIcon from "@mui/icons-material/Close";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
+import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import StarIcon from "@mui/icons-material/Star";
+import Dialog from "@mui/material/Dialog";
+import DialogContent from "@mui/material/DialogContent";
 import { useState } from "react";
 import { fetchDso } from "@/api/dsos";
 import DsoDistanceHelpDialog from "@/components/dso/DsoDistanceHelpDialog";
-import ThumbnailCell from "@/components/planner/ThumbnailCell";
+import SkyPreview from "@/components/dso/SkyPreview";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance, formatDistanceMethod } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
@@ -65,6 +68,7 @@ function Field({ label, value }: { label: React.ReactNode; value: React.ReactNod
 
 export default function DsoDetailPanel({ dsoId, onClose }: Props) {
   const [distanceHelpOpen, setDistanceHelpOpen] = useState(false);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["dso", dsoId],
     queryFn: () => fetchDso(dsoId!),
@@ -76,9 +80,21 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
       anchor="bottom"
       open={dsoId != null}
       onClose={onClose}
-      PaperProps={{ sx: { height: "65vh", maxHeight: "65vh" } }}
+      PaperProps={{
+        sx: {
+          // Flex-column so the header stays fixed at the top and the
+          // body Box's ``flex: 1 + overflowY: auto`` actually bounds
+          // its scroll area to the remaining Paper height. Without
+          // this, long content pushes the header out of view and the
+          // close button becomes unreachable.
+          height: "65vh",
+          maxHeight: "65vh",
+          display: "flex",
+          flexDirection: "column",
+        },
+      }}
     >
-      <Box sx={{ display: "flex", alignItems: "center", px: 3, py: 2, borderBottom: 1, borderColor: "divider" }}>
+      <Box sx={{ display: "flex", alignItems: "center", px: 3, py: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
         <Box sx={{ flex: 1 }}>
           {data && (
             <>
@@ -123,29 +139,116 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
         {isLoading && <CircularProgress />}
         {data && (
           <Stack
-            direction={{ xs: "column", md: "row" }}
+            direction={{ xs: "column", md: "row-reverse" }}
             spacing={3}
             alignItems="flex-start"
           >
-            {/* DSS2 preview thumbnail — the "detail" variant is pre-sized
-                for this kind of use (wide extent, 800×800 source). */}
+            {/* DSS2 preview — sits top-right on desktop (row-reverse
+                puts the image column second in DOM but first visually
+                on the right) and above the metadata on mobile. Uses
+                the same ``detail`` variant + 800×800 source as the
+                Planner's detail hero, so the disk-cached tile is
+                shared between the two views even though this view
+                displays it at a smaller CSS size. The explicit
+                no-coords branch covers DSOs with NULL RA/Dec (no
+                DSS2 tile can exist without a sky position). */}
             {dsoId != null && (
               <Box
                 sx={{
-                  width: { xs: "100%", md: 280 },
-                  maxWidth: 320,
+                  width: { xs: "100%", md: 340 },
+                  maxWidth: { xs: 340, md: 340 },
+                  mx: { xs: "auto", md: 0 },
                   aspectRatio: "1 / 1",
                   flexShrink: 0,
                   borderRadius: 1,
                   overflow: "hidden",
                   border: 1,
                   borderColor: "divider",
+                  // Desktop: pin to top of the scrolling body so the
+                  // preview stays visible while the metadata column
+                  // scrolls past it. Mobile reverts to inline because
+                  // sticky is noisy when the image itself takes up
+                  // most of the narrow viewport.
+                  position: { xs: "relative", md: "sticky" },
+                  top: { xs: "auto", md: 0 },
+                  alignSelf: { md: "flex-start" },
                 }}
               >
-                <ThumbnailCell dsoId={dsoId} size={320} variant="detail" fill />
+                {data.ra_deg != null && data.dec_deg != null ? (
+                  <>
+                    <SkyPreview
+                      raDeg={data.ra_deg}
+                      decDeg={data.dec_deg}
+                      majAxisArcmin={data.maj_axis_arcmin ?? null}
+                      size={340}
+                    />
+                    <Tooltip title="View full image" placement="left">
+                      <IconButton
+                        size="small"
+                        onClick={() => setImagePreviewOpen(true)}
+                        sx={{
+                          position: "absolute",
+                          top: 6,
+                          right: 6,
+                          // Translucent pill that reads on any sky
+                          // backdrop without dominating the tile. A
+                          // darker hover adds the affordance cue.
+                          bgcolor: "rgba(0, 0, 0, 0.55)",
+                          color: "#ffffff",
+                          "&:hover": { bgcolor: "rgba(0, 0, 0, 0.75)" },
+                        }}
+                        aria-label="View full image"
+                      >
+                        <OpenInFullIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </>
+                ) : (
+                  <Stack
+                    direction="column"
+                    alignItems="center"
+                    justifyContent="center"
+                    gap={1}
+                    sx={{
+                      position: "absolute",
+                      inset: 0,
+                      bgcolor: "action.hover",
+                      color: "text.secondary",
+                    }}
+                  >
+                    <ImageOutlinedIcon sx={{ fontSize: 48 }} />
+                    <Typography variant="body2">
+                      No image available
+                    </Typography>
+                    <Typography variant="caption" color="text.disabled">
+                      Object has no coordinates on record
+                    </Typography>
+                  </Stack>
+                )}
               </Box>
             )}
-            <Stack spacing={3} sx={{ flex: 1, minWidth: 0 }}>
+            <Box
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                // Responsive metadata layout:
+                //   xs/sm: image inline + metadata single column (natural flow)
+                //   md:    image sticky top-right + single-column metadata
+                //   lg+:   image sticky top-right + two-column metadata
+                // CSS multi-column keeps section order stable and
+                // rebalances automatically as the viewport resizes.
+                columnCount: { xs: 1, lg: 2 },
+                columnGap: 3,
+                "& > *": {
+                  breakInside: "avoid",
+                  // ``mb`` replaces the previous Stack ``spacing={3}``
+                  // so sections stay separated without relying on
+                  // flex gap (which doesn't apply inside CSS columns).
+                  mb: 3,
+                },
+                "& > *:last-child": { mb: 0 },
+              }}
+            >
             <Box>
               <Typography variant="overline" color="text.secondary">
                 Coordinates
@@ -323,8 +426,13 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
               </Box>
             )}
 
-            <Divider />
-            <Box>
+            <Box
+              sx={{
+                pt: 2,
+                borderTop: 1,
+                borderColor: "divider",
+              }}
+            >
               <Typography variant="caption" color="text.secondary">
                 Source: {data.source.display_name}
                 {data.source.version ? ` · ${data.source.version}` : ""}
@@ -339,7 +447,7 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                 )}
               </Typography>
             </Box>
-            </Stack>
+            </Box>
           </Stack>
         )}
       </Box>
@@ -347,6 +455,63 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
         open={distanceHelpOpen}
         onClose={() => setDistanceHelpOpen(false)}
       />
+
+      {/* Full-size image preview. Reuses the same ``detail`` variant
+          the tile already fetched — the 800×800 JPEG is already on
+          disk, so opening this modal is instant on the second click. */}
+      <Dialog
+        open={imagePreviewOpen}
+        onClose={() => setImagePreviewOpen(false)}
+        maxWidth={false}
+        PaperProps={{
+          sx: {
+            // Sized to fit an 800×800 tile plus a thin border. Lets
+            // the dialog shrink on smaller viewports without
+            // upscaling the tile past its native resolution.
+            m: 2,
+            bgcolor: "background.paper",
+          },
+        }}
+      >
+        <DialogContent sx={{ p: 0, position: "relative" }}>
+          {data != null && data.ra_deg != null && data.dec_deg != null && (
+            <Box
+              sx={{
+                // Full-size preview container. Same auto-tier decision
+                // as the 340 px thumbnail, just rendered at a larger
+                // CSS size — cells resolve from the same cache.
+                width: { xs: "min(90vw, 800px)", sm: "min(85vh, 800px)" },
+                maxWidth: 800,
+                aspectRatio: "1 / 1",
+                position: "relative",
+                bgcolor: "#000000",
+              }}
+            >
+              <SkyPreview
+                raDeg={data.ra_deg}
+                decDeg={data.dec_deg}
+                majAxisArcmin={data.maj_axis_arcmin ?? null}
+                size={800}
+              />
+            </Box>
+          )}
+          <IconButton
+            size="small"
+            onClick={() => setImagePreviewOpen(false)}
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              bgcolor: "rgba(0, 0, 0, 0.55)",
+              color: "#ffffff",
+              "&:hover": { bgcolor: "rgba(0, 0, 0, 0.75)" },
+            }}
+            aria-label="Close preview"
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogContent>
+      </Dialog>
     </Drawer>
   );
 }

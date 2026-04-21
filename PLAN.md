@@ -24,6 +24,12 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.12.1 — Calculators + Maintenance & Architectural Review](#v0121--calculators--maintenance--architectural-review) ✅
 - [v0.12.2 — Equipment Factory Refactor](#v0122--equipment-factory-refactor) ✅
 - [v0.13.0 — Custom Horizons](#v0130--custom-horizons) ✅
+- [v0.14.0 — DSO Catalog MVP (OpenNGC)](#v0140--dso-catalog-mvp-openngc) ✅
+- [v0.15.0 — DSO Augmentation & VizieR Integration](#v0150--dso-augmentation--vizier-integration) ✅
+- [v0.16.0 — Target Planner (Pass A)](#v0160--target-planner-pass-a) ✅
+- [v0.17.0 — Target Planner Pass B (FOV Simulator + Rig-Framed Thumbnails)](#v0170--target-planner-pass-b-fov-simulator--rig-framed-thumbnails) ✅
+- [v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)](#v0180--target-planner-pass-c-sky-tile-cache--seamless-stitching) ✅
+- [v0.18.1 — Target Planner UX Polish (planned)](#v0181--target-planner-ux-polish-planned)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -2325,6 +2331,327 @@ architecture.
       across initial Pass B + post-Pass-B refinements)
 - [x] Frontend build clean
 - [x] ruff / format / bandit clean (0 / 0 / 0)
+
+---
+
+## v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)
+
+**Status:** ✅ Complete
+**Branch:** `v0.18.0/target-planner-pass-c`
+
+Rearchitects the FOV-simulator tile pipeline from per-DSO TAN fetches
+to a DSO-agnostic **HEALPix-regional sky-tile cache** where every cell
+in a region shares one tangent plane and therefore tiles pixel-perfectly.
+Cells are keyed by `(hips_survey, healpix_nside, healpix_ipix, tier,
+cell_i, cell_j)` rather than by DSO id, so neighbouring targets share
+cache. The catalog detail preview reuses the same cells with an
+auto-tier zoom-to-fit per object. Full design lives in
+`/.claude/plans/lovely-hatching-swan.md`.
+
+### Scope summary
+
+Began life as v0.17.1 "minor revision" (layout polish on the DSO
+detail panel) but re-scoped to v0.18.0 once the tile-cache rearchitecture
+landed in the plan. The layout polish rides along; the headline feature
+is the new cell cache.
+
+### Catalog detail-panel polish (already in-branch)
+
+- [x] `DsoDetailPanel` responsive layout (3-tier): 2-column metadata
+      + right-hand image on lg+, 1-column metadata + right-hand image
+      on md, full-stack with inline image on xs/sm. Image sticky on
+      md+, inline on xs/sm.
+- [x] "View full image" button overlay on the preview opens a modal
+      showing the cached tile at 100% natural aspect
+      (`object-fit: contain`). Close via X / backdrop / ESC.
+- [x] No-coords fallback: DSOs with null RA/Dec show a "No image
+      available — object has no coordinates on record" placeholder
+      instead of a broken ThumbnailCell.
+- [x] Close-button fix: added `display: flex` + `flexDirection: column`
+      to the bottom Drawer's Paper so the body's `flex: 1 + overflowY:
+      auto` actually bounds the scroll area, keeping the header + close
+      button reachable on long entries.
+- [x] New `fit` prop on `ThumbnailCell` — defaults to `"cover"` for
+      list/grid use; the full-size preview passes `fit="contain"` so
+      future non-square variants letterbox instead of cropping.
+
+### Sky-tile cache architecture
+
+- [x] Added `astropy_healpix` (BSD-3-Clause). `healpy` (GPL-2.0)
+      explicitly rejected.
+- [x] Migration 0020 creates `sky_tile_cache` table. Keys:
+      `(hips_survey, healpix_nside, healpix_ipix, tier,
+      cell_size_deg_x100, cell_width_px, cell_height_px, cell_i,
+      cell_j)` + unique index. `center_ra_deg_x1000` /
+      `center_dec_deg_x1000` columns kept on `thumbnail_cache` for the
+      now-retired panned-simulator path (vestigial, still indexed).
+- [x] `services/sky_tiles.py` — HEALPix region math (NSIDE=8, 768
+      regions), cell-grid math, `cell_wcs_dict()`, `compute_grid_layout`.
+- [x] `services/sky_tile_cache.py` — SQL helpers, LRU eviction, orphan
+      file sweep (`sync_orphan_files`) on app lifespan startup.
+- [x] `hips_client.build_hips2fits_wcs_url(hips, wcs_dict, fmt)`
+      alongside the existing `build_hips2fits_url`.
+- [x] `GET /api/planner/sky-tile` endpoint with `wait_ms` long-poll
+      (mirrors `/thumbnails/{id}`).
+- [x] `GET /api/planner/sky-tile-grid` layout endpoint (pure math).
+- [x] Three resolution tiers selected by rig major FOV:
+      `narrow` (≤1°, 0.5° cells @ 800×800), `med` (1–3°, 2° cells @
+      800×800), `wide` (>3°, 8° cells @ 1024×1024).
+- [x] CDS fetch semaphore bumped 4 → 8 for faster first-image latency
+      on the 5×5 tile mosaic.
+
+### Frontend cell composition
+
+- [x] `api/planner.ts:skyTileUrl(cell, { waitMs, generation })` +
+      `fetchSkyTileGrid`.
+- [x] `components/planner/SkyTileCell.tsx` — single-cell loader with
+      placeholder retry + cached-image `imgRef` safety net.
+- [x] `components/planner/SkyTileComposite.tsx` — staged mount
+      (centre first, then distance-sorted) so the backend's 8-slot
+      semaphore focuses on the target cell first.
+- [x] `FovSimulator` rewritten on top of `SkyTileComposite`. TAN-plane
+      pixel coords; promotes 1 → 3 → 5 cells wide as the centre
+      renders. Scroll-wheel zoom (native listener, not React
+      `onWheel` — passive by default). Annotation click priority
+      over pan (JSX z-order). Default zoom: rig rect fills 75% of
+      viewport. Re-centre button preserves zoom + rotation.
+- [x] `dsoAnnotations.ts` — `projectRaDecInRegion` (single region
+      tangent). Counter-scale fonts/stroke by 1/zoom so labels stay
+      constant CSS size.
+
+### DSO catalog auto-tier preview
+
+- [x] `<SkyPreview>` component replaces the old `ThumbnailCell
+      variant="detail"` in `DsoDetailPanel` + the full-size modal.
+- [x] `previewSpecForDsoSize(majArcmin)` in
+      `lib/skyPreviewExtent.ts` picks tier + extent from the DSO's
+      major axis.
+- [x] Two-phase mount: centre cell first with a centred
+      semi-transparent loading overlay until it paints.
+
+### Planner UX polish (rode along)
+
+- [x] Tonight / Anytime mode toggle promoted to a prominent
+      header-level mode selector under the page title. Context-aware
+      labels — "Tonight from {location}" / "Browse the full
+      catalog".
+- [x] Mode-adaptive filter bar: Location selector + Min-hours
+      slider + Brighter-than slider + Min-size slider + Frames-well
+      checkbox hidden in Anytime mode. Visibility columns (Hours,
+      Max altitude, Meridian, Moon) dropped from the grid in
+      Anytime.
+- [x] Catalog-style filters added to match the DSO Catalog page:
+      constellation `<Select>`, "Has distance" checkbox, raw-type
+      chips under an "Advanced filters" disclosure, chip counts on
+      both type-group and raw-type chips, "Clear filters" button.
+- [x] Backend `/api/planner/targets` accepts `type` (comma-separated
+      raw codes), `constellation`, `has_distance` to match the DSO
+      Catalog API.
+- [x] Fixed the Galaxy-Group-vanishes bug: Anytime mode no longer
+      silently applies the user's saved imaging defaults
+      (`planner_min_size_arcmin`, `planner_max_magnitude`) — a
+      missing param in Anytime means "don't filter", not "apply
+      5′ / mag 12 quietly".
+- [x] Planner search box with DSO-catalog semantics (designation
+      prefix + common-name substring).
+- [x] Default sort per mode: `hours_visible desc` (Tonight) /
+      `primary_designation asc` (Anytime). User-initiated sorts
+      persist across mode toggles via `sortIsAutoRef`.
+- [x] `noRowsOverlay` with mode-aware empty-state copy; Tonight
+      nudges users to relax filters or switch modes.
+- [x] Thumbnail cache default bumped 20 MB → 500 MB; slider max
+      5 GB.
+
+### Testing
+
+- [x] WCS roundtrip (`test_sky_tiles.py`): pole-adjacent + RA=0
+      coords; `world_to_pixel` round-trip within tolerance.
+- [x] Cell layout math: grid arithmetic + HEALPix region
+      assignment.
+- [x] Cache-reuse test: two DSOs 2° apart in the same region share
+      cells.
+- [x] Orphan file sweep test.
+- [x] Planner API regression: `restrict_tonight=false` skips
+      visibility, `has_distance` / raw-type / constellation
+      filters, Anytime bypasses imaging defaults, Galaxy-Group
+      filter returns expected rowcount.
+
+### Legacy cleanup
+
+- [x] `thumbnail_cache` keeps serving `list` / `rig_framed`. The
+      `fov_simulator` variant rows were wiped at migration time;
+      `sync_orphan_files` sweeps the on-disk JPEGs on startup.
+- [x] `FovSimulator` no longer sends `centerRaDeg` / `centerDecDeg`
+      — panning is viewport-only under the regional-tangent scheme.
+- [x] `center_ra_deg_x1000` / `center_dec_deg_x1000` columns
+      retained but unreferenced by the new simulator path.
+
+### v0.18.0 Completion Criteria
+
+- [x] Migration 0020 applies cleanly; sky-tile cache table populated
+      on first simulator open
+- [x] Full backend suite green (1705 tests, 3 skipped)
+- [x] Frontend build clean
+- [x] ruff / format / bandit clean (0 / 0 / 0)
+- [x] Manual end-to-end sanity across narrow / med / wide rigs +
+      high-dec targets
+
+---
+
+## v0.18.1 — Target Planner UX Polish (planned)
+
+**Status:** Planned
+**Branch:** TBD
+
+Collected UX polish items surfaced during v0.18.0 manual testing.
+None are bugs — small additive improvements deferred so v0.18.0 can
+ship.
+
+### Planner filter bar
+
+- [ ] **Catalog multi-select filter.** Drop-down (chips-style) to
+      filter the Planner results by designation catalog —
+      Messier, NGC, IC, Sharpless 2, Barnard, PGC, UGC, Caldwell, etc.
+      (the 29-catalog closed vocabulary from `dso_designation.catalog`).
+      The DSO Catalog page should grow the same control for parity.
+      Multi-select semantics: OR within the filter (a DSO is a match
+      if it carries *any* of the selected catalog designations).
+
+- [ ] **Filter-aware type-group chip counts.** Today the type-group
+      (and raw-type) chips show full-catalog totals from
+      `/api/dso/facets` — meaningful in Anytime but misleading in
+      Tonight, where a "Galaxy Group (234)" chip can sit above a
+      grid with zero rows because mag / size / visibility filters
+      eliminate everything. Either compute filtered counts via a
+      new facets-with-filters endpoint, or drop the parenthesised
+      count in Tonight mode and only show it in Anytime.
+
+- [ ] **Revisit type-group vs raw-type chip overlap.** Main chips
+      show user-facing group names (e.g. `Galaxy`) derived via
+      `group_for_raw_type`; the Advanced section shows raw OpenNGC
+      codes (e.g. `G` → "Galaxy" via `displayDsoType`). The labels
+      collide ("Galaxy" appears in both), which reads as
+      redundancy. Either rename one side, hide raw codes whose
+      display form matches a group name, or merge the two controls.
+
+### DSO Catalog
+
+- [ ] **Full-image modal introduces scrollbars on large objects.**
+      M 42 (and likely other wide-extent DSOs) renders with a
+      horizontal scrollbar when opened via "View full image". The
+      modal's `SkyPreview` composite's natural size exceeds the
+      modal's viewport along the major axis. Fit the preview to the
+      modal's inner size (`object-fit: contain` on the composite, or
+      clamp composite dimensions to the modal bounds) so the image
+      always fits without scrolling.
+
+- [ ] **Survey of DSOs with no RA/Dec.** Rather more entries than
+      expected have null coordinates. Worth investigating — are
+      these canonical DSOs where OpenNGC itself is missing the
+      coords, or a parser bug? Either way the DSO Catalog page
+      should expose a "Has coordinates" filter and decide whether
+      to hide / gray / flag them.
+
+### FOV Simulator
+
+- [ ] **Reconsider arrow-key controls.** Arrow keys currently step
+      rotation ±5° / Shift-arrow ±1°. Options: (a) drop keyboard
+      rotation entirely and rely on drag-to-rotate + numeric input,
+      or (b) add `Ctrl-arrow` for panning the viewport (the obvious
+      missing keyboard control, since rotation already has drag +
+      numeric input).
+
+- [ ] **Rig-frame-intersection tile load priority.** Currently cells
+      render in order of distance-from-view-centre, with the centre
+      cell gated behind its own `onReady`. When a rig is selected,
+      the priority should instead be "tiles that intersect the rig
+      rectangle first, then the rest centre-outward". The rig
+      rectangle can span multiple cells at medium/wide tiers; today
+      the user watches cells outside the frame light up before ones
+      the rig actually covers.
+
+### FOV Simulator background survey
+
+- [ ] **DSS2 plate-boundary seams are visible at wide extents.** The
+      mosaic stitches pixel-perfectly (verified on NGC 7000 —
+      astrometry is seamless), but intensity / colour deltas
+      between adjacent HEALPix cells are noticeable because DSS2
+      itself is a patchwork of independently calibrated
+      photographic plates. Not a NightCrate bug — same effect
+      appears in Aladin / Stellarium. Mitigations would need a
+      survey picker (Pan-STARRS / DECaLS in their coverage area,
+      DSS2 elsewhere) or per-tile median normalisation.
+
+### Admin / Catalogs UX
+
+- [ ] **Clarify OpenNGC "Re-download" vs "Reload local cache"
+      buttons + tooltips.** First-run users see two buttons whose
+      labels don't make it obvious what each does. Rename + tooltip:
+      "Re-download" → "Fetch latest from GitHub" (hits the network,
+      overwrites the cached files in `APP_DIR/catalogs/openngc/`),
+      "Reload local cache" → "Reload into database from cached
+      files" (no network — re-parses the local CSVs and refreshes
+      the `dso` / `dso_designation` tables from them).
+
+- [ ] **Add "Reload from local cache" buttons to Sharpless 2 /
+      Barnard / 50 MGC.** Today those sources only expose
+      "Re-fetch from source" buttons. Reloading from local cache
+      is meaningful in the same scenarios as OpenNGC — e.g. after
+      dropping the database but keeping the cached files in
+      `APP_DIR/catalogs/`. The backend loader already supports it;
+      the Admin UI just doesn't expose it for these sources. Apply
+      the rename pattern above to the new buttons from day one.
+
+### Admin / Settings restructure
+
+- [ ] **Discuss: move cache management from Settings → Admin.** The
+      thumbnail cache + sky-tile cache controls (size budget slider,
+      current usage, clear button) currently live on the Settings
+      page. Fred's take: these are operational controls, not user
+      preferences — Admin feels like the right home, alongside the
+      DB-management and catalogs sections. Applies broadly: any
+      cache-management UI (aberration cache, weather cache, future
+      caches) probably belongs on Admin, not Settings. Settings
+      should reduce to pure preferences (theme, planner defaults,
+      GPU on/off, worker cores).
+
+### Planner detail panel
+
+- [ ] **Discuss: altitude chart (SkyPositionGraph) behaviour in
+      Anytime mode.** The detail dialog's "Sky position" section
+      runs off a location — in Anytime there may be no parent
+      location selected. Today the panel's own location dropdown
+      defaults to the parent's selection, so Anytime can leave the
+      graph in a spinner / empty state. Options to consider:
+      (a) hide the Sky position section in Anytime unless the user
+      explicitly picks a location in the panel's dropdown;
+      (b) keep the section but render a friendly prompt
+      ("Pick a location to see this object's sky track") instead of
+      the spinner; (c) require a location in the panel dropdown
+      unconditionally (auto-pick the default location even in
+      Anytime).
+
+### Planner grid
+
+- [ ] **Grid shows blank state during first fetch instead of a
+      spinner.** On Anytime's first open, the targets query kicks
+      off but the DataGrid renders an empty grid with no loading
+      indicator for several seconds. The DataGrid accepts a
+      ``loading`` prop (already wired to
+      ``targetsQuery.isLoading || targetsQuery.isFetching``) but
+      the default overlay is subtle. Either swap to a more visible
+      loading overlay (centered spinner + "Loading catalog…") or
+      ensure the existing one actually renders during the first
+      fetch — today the user sees nothing.
+
+### Planner grid pagination
+
+- [ ] **First / Prev / Page-N / Next / Last pagination controls** —
+      same component the DSO Catalog page already uses
+      (`PaginationActions` in `pages/DsoCatalogPage.tsx`).
+      Extract into `components/common/PaginationActions.tsx` and
+      wire into both pages' DataGrid via `slotProps.basePagination.
+      ActionsComponent`.
 
 ---
 

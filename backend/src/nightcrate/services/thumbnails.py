@@ -6,15 +6,15 @@ enqueue a background fetch from CDS Aladin's ``hips2fits``; the frontend
 re-requests after a short delay and serves the cached image on the
 retry.
 
-Four variants share the cache (v0.17.0 / Pass B):
+Three variants share the cache:
 
-    ``list``          180×180, object-framed (Pass A)
-    ``detail``        800×800, object-framed, wide extent (Pass A, resized)
+    ``list``          180×180, object-framed
+    ``detail``        800×800, object-framed, wide extent
     ``rig_framed``    180×180, fetched at the rig's FOV major axis; the
                       browser crops to the rig's aspect via ``object-fit``
-    ``fov_simulator`` 800×800, wide view covering rig-diag × 1.5 or
-                      object × 2 (whichever's bigger). Backs the
-                      detail-panel rotatable overlay.
+
+(The old ``fov_simulator`` variant was retired in v0.18.0 — the
+simulator pulls from the DSO-agnostic ``sky_tile_cache`` now.)
 
 Failures record a ``fetch_error`` row so repeated client polls don't
 restart fetch storms against CDS. Errors expire after a 1-hour backoff.
@@ -42,11 +42,11 @@ from nightcrate.services.hips_client import (
 
 logger = logging.getLogger("nightcrate.thumbnails")
 
-Variant = Literal["list", "detail", "rig_framed", "fov_simulator"]
+Variant = Literal["list", "detail", "rig_framed"]
 
-# Rig-dependent variants require fov_major_deg + fov_minor_deg query
-# params; rig-independent ones reject those params as unused input.
-_RIG_DEPENDENT: frozenset[Variant] = frozenset({"rig_framed", "fov_simulator"})
+# ``rig_framed`` requires fov_major_deg + fov_minor_deg query params;
+# the other variants reject those params as unused input.
+_RIG_DEPENDENT: frozenset[Variant] = frozenset({"rig_framed"})
 
 # 1×1 transparent PNG — small, valid, renders cleanly as a placeholder
 # while the background fetch runs.
@@ -59,8 +59,11 @@ _PLACEHOLDER_PNG = bytes.fromhex(
 _FETCH_ERROR_BACKOFF = timedelta(hours=1)
 
 # Cap how many concurrent background fetches run against CDS so a
-# first-time user listing 100 rows doesn't hammer the service.
-_MAX_CONCURRENT_FETCHES = 4
+# first-time user listing 100 rows doesn't hammer the service. 8
+# matches the sky-tile cache's slot count + the browser's
+# per-origin connection limit — the backend stops being the
+# bottleneck below what the frontend already fires in parallel.
+_MAX_CONCURRENT_FETCHES = 8
 _fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
 
 
@@ -86,18 +89,17 @@ class ThumbnailResult:
 
 @dataclass(frozen=True, slots=True)
 class ThumbnailKey:
-    """Composite cache key — dso + variant + dimensions + rig FOV + sky center.
+    """Composite cache key — dso + variant + dimensions + rig FOV.
 
     FOV values are stored / compared as (deg × 1000) integers so two
-    rigs that round to the same 0.001° share a cache entry. NULL fields
-    use ``-1`` / ``-999999`` under COALESCE in the DB so a list/detail
-    entry doesn't collide with a rig-framed one at the same dso_id.
+    rigs that round to the same 0.001° share a cache entry. NULL
+    fields use ``-1`` under COALESCE in the DB so a list/detail entry
+    doesn't collide with a rig-framed one at the same dso_id.
 
-    ``center_ra_deg_x1000`` / ``center_dec_deg_x1000`` are only populated
-    for panned ``fov_simulator`` views — the user dragged the background
-    so the image no longer sits on the DSO's native RA/Dec. When both are
-    None, the image fetches / caches at the DSO's own coordinates (the
-    "initial view" case, unchanged from pre-pan behaviour).
+    ``center_ra_deg_x1000`` / ``center_dec_deg_x1000`` are retained
+    on the cache schema (migration 0019) but unused now that the
+    old panned ``fov_simulator`` variant is gone; they're always
+    ``None`` here.
     """
 
     dso_id: int
@@ -120,11 +122,8 @@ _in_flight: dict[ThumbnailKey, asyncio.Task] = {}
 
 _DIMENSIONS: dict[Variant, ThumbnailDimensions] = {
     "list": ThumbnailDimensions(180, 180),
-    # Pass B widens detail from 600×600 → 800×800 to accommodate the
-    # wider FOV-simulator extent.
     "detail": ThumbnailDimensions(800, 800),
     "rig_framed": ThumbnailDimensions(180, 180),
-    "fov_simulator": ThumbnailDimensions(800, 800),
 }
 
 
@@ -141,13 +140,15 @@ def compute_angular_extent_deg(
 ) -> float:
     """Angular extent (deg) to request from ``hips2fits`` for *variant*.
 
-    ``list`` and ``detail`` scale with the DSO's major axis; ``rig_framed``
-    matches the rig's major-axis FOV exactly; ``fov_simulator`` frames
-    the rig's diagonal × 1.5 (or the object × 2, whichever's larger).
-
-    Small / missing DSO sizes fall back to a minimum so the image is
-    always readable.
+    ``list`` and ``detail`` scale with the DSO's major axis;
+    ``rig_framed`` matches the rig's major-axis FOV exactly. Small /
+    missing DSO sizes fall back to a minimum so the image is always
+    readable.
     """
+    # ``fov_minor_deg`` is retained in the signature for API
+    # compatibility but unused now that the panned ``fov_simulator``
+    # variant is gone.
+    _ = fov_minor_deg
     if variant == "list":
         maj_deg = (dso_maj_axis_arcmin or 5.0) / 60.0
         return max(maj_deg * 1.5, 0.1)
@@ -158,18 +159,6 @@ def compute_angular_extent_deg(
         if fov_major_deg is None or fov_major_deg <= 0:
             raise ValueError("rig_framed variant requires a positive fov_major_deg")
         return fov_major_deg
-    if variant == "fov_simulator":
-        if fov_major_deg is None or fov_minor_deg is None:
-            raise ValueError("fov_simulator variant requires fov_major_deg + fov_minor_deg")
-        if fov_major_deg <= 0 or fov_minor_deg <= 0:
-            raise ValueError("fov_simulator FOV dimensions must be positive")
-        # Tile extent: the sensor rectangle fills 50% of the tile's max
-        # dimension. Computed against rig geometry only so the zoom is
-        # predictable regardless of which DSO is loaded. The frontend
-        # stitches these tiles into a grid around the object so panning
-        # stays local — ±1 tile initially (3×3) and ±2 tiles once the
-        # 5×5 outer ring preloads.
-        return max(fov_major_deg, fov_minor_deg) / 0.5
     raise ValueError(f"Unknown variant: {variant}")
 
 
@@ -191,11 +180,11 @@ def make_key(
 ) -> ThumbnailKey:
     """Build the cache key — rig-dependent variants require FOV params.
 
-    ``center_ra_deg`` / ``center_dec_deg`` are only meaningful for the
-    ``fov_simulator`` variant (panned views). They are silently
-    discarded for other variants so callers can't accidentally fork
-    their caches on unrelated fields.
+    ``center_ra_deg`` / ``center_dec_deg`` are retained for API
+    compatibility with the old panned ``fov_simulator`` code path and
+    are silently discarded — they never make it into the key now.
     """
+    _ = center_ra_deg, center_dec_deg  # retired v0.18.0
     if variant in _RIG_DEPENDENT and (fov_major_deg is None or fov_minor_deg is None):
         raise ValueError(f"variant {variant!r} requires fov_major_deg + fov_minor_deg")
     dim = dimensions_for(variant)
@@ -204,9 +193,6 @@ def make_key(
     if variant not in _RIG_DEPENDENT:
         fov_major_deg = None
         fov_minor_deg = None
-    if variant != "fov_simulator":
-        center_ra_deg = None
-        center_dec_deg = None
     return ThumbnailKey(
         dso_id=dso_id,
         variant=variant,
@@ -214,8 +200,6 @@ def make_key(
         height=dim.height,
         fov_major_deg_x1000=_to_x1000(fov_major_deg),
         fov_minor_deg_x1000=_to_x1000(fov_minor_deg),
-        center_ra_deg_x1000=_to_x1000(center_ra_deg),
-        center_dec_deg_x1000=_to_x1000(center_dec_deg),
     )
 
 
@@ -232,15 +216,11 @@ def thumb_dir() -> Path:
 def _thumb_path(key: ThumbnailKey) -> Path:
     """Disk location for *key*. Suffix carries the rounded FOV on
     rig-dependent variants (so two rigs don't clobber each other's
-    JPEGs) and the panned sky-region centre for fov_simulator views.
+    JPEGs).
     """
     base = f"{key.dso_id}_{key.variant}_{key.width}x{key.height}"
     if key.fov_major_deg_x1000 is not None and key.fov_minor_deg_x1000 is not None:
         base += f"_{key.fov_major_deg_x1000}_{key.fov_minor_deg_x1000}"
-    if key.center_ra_deg_x1000 is not None and key.center_dec_deg_x1000 is not None:
-        # ``c`` prefix + underscore-safe formatting. Negative Decs pick
-        # up a leading ``-`` which the regex below accounts for.
-        base += f"_c{key.center_ra_deg_x1000}_{key.center_dec_deg_x1000}"
     return thumb_dir() / f"{base}.jpg"
 
 
@@ -249,6 +229,8 @@ def _thumb_path(key: ThumbnailKey) -> Path:
 # center_ra_x1000?, center_dec_x1000?
 _THUMB_FILENAME_RE = re.compile(
     r"^(?P<dso_id>\d+)_"
+    # ``fov_simulator`` retired in v0.18.0 but kept in the regex so
+    # orphan sweeps still parse + delete its leftover on-disk JPEGs.
     r"(?P<variant>list|detail|rig_framed|fov_simulator)_"
     r"(?P<width>\d+)x(?P<height>\d+)"
     r"(?:_(?P<fmaj>-?\d+)_(?P<fmin>-?\d+))?"
@@ -502,8 +484,6 @@ async def get_thumbnail(
     conn_factory,
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
-    center_ra_deg: float | None = None,
-    center_dec_deg: float | None = None,
     wait_timeout_s: float = 0.0,
 ) -> ThumbnailResult:
     """Serve a thumbnail by variant, enqueuing a fetch on cache miss.
@@ -513,47 +493,30 @@ async def get_thumbnail(
     factory (typically ``nightcrate.db.session.get_db``) used by the
     background task to open its own connection after the response is
     sent. ``fov_major_deg`` / ``fov_minor_deg`` are required for the
-    rig-dependent variants (``rig_framed``, ``fov_simulator``) and
-    rejected with a ``ValueError`` when missing.
-
-    ``center_ra_deg`` / ``center_dec_deg`` are only honoured for the
-    ``fov_simulator`` variant and are the override used for panned
-    views. When either is None the simulator falls back to the DSO's
-    native coordinates (``ra_deg`` / ``dec_deg``) — the initial-view
-    case, which shares a cache entry with the pre-pan behaviour.
+    ``rig_framed`` variant and rejected with a ``ValueError`` when
+    missing.
 
     ``wait_timeout_s`` > 0 turns the endpoint into a long-poll: on a
     cache miss the request holds open, awaiting the background fetch
     task, and returns the real image in the same HTTP round trip. If
     the fetch doesn't complete within the window the call falls through
     to the placeholder path so the client can retry. Defaults to 0 for
-    backwards compatibility with pollers (list/detail variants don't
-    benefit from holding connections open — the simulator does).
+    backwards compatibility with pollers.
     """
     key = make_key(
         dso_id,
         variant,
         fov_major_deg=fov_major_deg,
         fov_minor_deg=fov_minor_deg,
-        center_ra_deg=center_ra_deg,
-        center_dec_deg=center_dec_deg,
     )
-    # Effective sky centre — panned views override the DSO's native
-    # coords; every other variant pins to the DSO.
-    effective_ra = (
-        center_ra_deg if variant == "fov_simulator" and center_ra_deg is not None else ra_deg
-    )
-    effective_dec = (
-        center_dec_deg if variant == "fov_simulator" and center_dec_deg is not None else dec_deg
-    )
+    effective_ra = ra_deg
+    effective_dec = dec_deg
     logger.debug(
-        "[thumb] req dso=%d variant=%s fov=(%s,%s) center=(%s,%s) -> sky=(%.5f,%.5f)",
+        "[thumb] req dso=%d variant=%s fov=(%s,%s) -> sky=(%.5f,%.5f)",
         dso_id,
         variant,
         f"{fov_major_deg:.4f}" if fov_major_deg is not None else "—",
         f"{fov_minor_deg:.4f}" if fov_minor_deg is not None else "—",
-        f"{center_ra_deg:.4f}" if center_ra_deg is not None else "—",
-        f"{center_dec_deg:.4f}" if center_dec_deg is not None else "—",
         effective_ra,
         effective_dec,
     )
