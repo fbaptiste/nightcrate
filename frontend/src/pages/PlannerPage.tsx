@@ -83,11 +83,19 @@ export default function PlannerPage() {
   const [constellation, setConstellation] = useState<string>("");
   const [hasDistance, setHasDistance] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Two-state pattern per slider — UI tracks the ``*Draft`` value
+  // during drag, and only the committed (``minHours`` / ``maxMag``
+  // / ``minSize``) value feeds the query key. Without this split,
+  // every intermediate drag tick re-fires ``/api/planner/targets``
+  // and the grid visibly flashes the relaxed-filter result set.
   const [minHours, setMinHours] = useState<number>(
     settings?.planner_min_visibility_hours ?? 2.0,
   );
+  const [minHoursDraft, setMinHoursDraft] = useState<number>(minHours);
   const [maxMag, setMaxMag] = useState<number>(settings?.planner_max_magnitude ?? 12.0);
+  const [maxMagDraft, setMaxMagDraft] = useState<number>(maxMag);
   const [minSize, setMinSize] = useState<number>(settings?.planner_min_size_arcmin ?? 5.0);
+  const [minSizeDraft, setMinSizeDraft] = useState<number>(minSize);
   const [framesWell, setFramesWell] = useState(false);
   const [pagination, setPagination] = useState<GridPaginationModel>({
     page: 0,
@@ -358,7 +366,9 @@ export default function PlannerPage() {
       headerName: "Size",
       flex: 0.6,
       minWidth: 85,
-      sortable: false,
+      // Backend maps ``sort=size`` → ``maj_axis_arcmin`` in its
+      // ``_sort_key`` helper (mirrors the DSO-catalog pattern).
+      sortable: true,
       valueGetter: (_v, row) => {
         if (row.maj_axis_arcmin == null) return "—";
         if (row.min_axis_arcmin != null && row.min_axis_arcmin !== row.maj_axis_arcmin) {
@@ -772,39 +782,54 @@ export default function PlannerPage() {
         {restrictTonight && (
           <Stack direction={{ xs: "column", md: "row" }} gap={3} sx={{ mt: 2, px: 1 }}>
             <Box sx={{ flex: 1, minWidth: 200 }}>
-              <Typography variant="caption">Min hours visible: {minHours.toFixed(1)}h</Typography>
+              <Typography variant="caption">
+                Min hours visible: {minHoursDraft.toFixed(1)}h
+              </Typography>
               <Slider
                 size="small"
-                value={minHours}
+                value={minHoursDraft}
                 min={0}
                 max={12}
                 step={0.5}
-                onChange={(_, v) => setMinHours(v as number)}
-                onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
+                onChange={(_, v) => setMinHoursDraft(v as number)}
+                onChangeCommitted={(_, v) => {
+                  setMinHours(v as number);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
               />
             </Box>
             <Box sx={{ flex: 1, minWidth: 200 }}>
-              <Typography variant="caption">Brighter than mag {maxMag.toFixed(1)}</Typography>
+              <Typography variant="caption">
+                Brighter than mag {maxMagDraft.toFixed(1)}
+              </Typography>
               <Slider
                 size="small"
-                value={maxMag}
+                value={maxMagDraft}
                 min={5}
                 max={18}
                 step={0.5}
-                onChange={(_, v) => setMaxMag(v as number)}
-                onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
+                onChange={(_, v) => setMaxMagDraft(v as number)}
+                onChangeCommitted={(_, v) => {
+                  setMaxMag(v as number);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
               />
             </Box>
             <Box sx={{ flex: 1, minWidth: 200 }}>
-              <Typography variant="caption">Min size: {minSize.toFixed(0)}'</Typography>
+              <Typography variant="caption">
+                Min size: {minSizeDraft.toFixed(0)}'
+              </Typography>
               <Slider
                 size="small"
-                value={minSize}
+                value={minSizeDraft}
                 min={0}
                 max={60}
                 step={1}
-                onChange={(_, v) => setMinSize(v as number)}
-                onChangeCommitted={() => setPagination((p) => ({ ...p, page: 0 }))}
+                onChange={(_, v) => setMinSizeDraft(v as number)}
+                onChangeCommitted={(_, v) => {
+                  setMinSize(v as number);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
               />
             </Box>
             {rigFov && (

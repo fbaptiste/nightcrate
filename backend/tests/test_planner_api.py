@@ -112,6 +112,22 @@ async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_d
     assert "FAINT-1" not in designations
 
 
+async def test_targets_sort_by_size_descending(client: TestClient, seed_db):
+    # ``sort=size`` maps to ``maj_axis_arcmin`` in the in-memory sort
+    # helper. In Anytime mode (no visibility filter) the largest
+    # object in the seed fixture must sort first on ``desc``.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "sort": "size", "sort_dir": "desc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    # First few rows must be the largest (descending major axis).
+    sizes = [i["maj_axis_arcmin"] for i in items[:5] if i["maj_axis_arcmin"] is not None]
+    assert sizes == sorted(sizes, reverse=True)
+
+
 async def test_targets_endpoint_404s_missing_location(client: TestClient):
     response = client.get(
         "/api/planner/targets",

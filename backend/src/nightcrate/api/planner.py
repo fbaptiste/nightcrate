@@ -294,6 +294,7 @@ async def list_targets(
         "coverage_pct",
         "mag_v",
         "primary_designation",
+        "size",
     ] = "hours_visible",
     sort_dir: Literal["asc", "desc"] = "desc",
 ) -> PlannerTargetsResponse:
@@ -517,6 +518,12 @@ async def list_targets(
             return item.coverage_pct if item.coverage_pct is not None else null_sentinel
         if sort == "mag_v":
             return item.mag_v if item.mag_v is not None else null_sentinel
+        if sort == "size":
+            # Sort by major axis only — the grid's displayed "a × b"
+            # string always shows the major axis first anyway, and
+            # mirroring the DSO-catalog pattern
+            # (``SORT_COLUMNS["size"] = "maj_axis_arcmin"``).
+            return item.maj_axis_arcmin if item.maj_axis_arcmin is not None else null_sentinel
         return item.primary_designation
 
     items.sort(key=_sort_key, reverse=reverse)

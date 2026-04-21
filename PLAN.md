@@ -2554,14 +2554,6 @@ ship.
 
 ### FOV Simulator
 
-- [ ] **Auto-focus the simulator div on pointer down so keyboard
-      controls work.** ``FovSimulator`` has `tabIndex={0}` and an
-      `onKeyDown` handler, but a `<div>` doesn't pick up keyboard
-      focus on click — only on Tab. Users click the simulator to
-      interact with it and find arrow keys / R do nothing. Add
-      `ref.focus()` inside ``onPointerDown`` so interaction implicitly
-      focuses the control.
-
 - [ ] **Reconsider arrow-key controls.** Arrow keys currently step
       rotation ±5° / Shift-arrow ±1°. Options: (a) drop keyboard
       rotation entirely and rely on drag-to-rotate + numeric input,
@@ -2590,16 +2582,25 @@ ship.
       survey picker (Pan-STARRS / DECaLS in their coverage area,
       DSS2 elsewhere) or per-tile median normalisation.
 
-### Planner sliders
+### Admin / Catalogs UX
 
-- [ ] **Debounce the Min-hours / Brighter-than / Min-size sliders.**
-      Today every intermediate value during a drag fires a new
-      ``/api/planner/targets`` fetch; the grid visibly flashes the
-      full list while the user drags the filter looser. Hold the
-      intermediate value in local state and only push to the query
-      state on ``onChangeCommitted``, or wrap the value in
-      ``useDebounce(…, 200ms)``. Pre-existing pattern (v0.16.0), not
-      a v0.18.0 regression.
+- [ ] **Clarify OpenNGC "Re-download" vs "Reload local cache"
+      buttons + tooltips.** First-run users see two buttons whose
+      labels don't make it obvious what each does. Rename + tooltip:
+      "Re-download" → "Fetch latest from GitHub" (hits the network,
+      overwrites the cached files in `APP_DIR/catalogs/openngc/`),
+      "Reload local cache" → "Reload into database from cached
+      files" (no network — re-parses the local CSVs and refreshes
+      the `dso` / `dso_designation` tables from them).
+
+- [ ] **Add "Reload from local cache" buttons to Sharpless 2 /
+      Barnard / 50 MGC.** Today those sources only expose
+      "Re-fetch from source" buttons. Reloading from local cache
+      is meaningful in the same scenarios as OpenNGC — e.g. after
+      dropping the database but keeping the cached files in
+      `APP_DIR/catalogs/`. The backend loader already supports it;
+      the Admin UI just doesn't expose it for these sources. Apply
+      the rename pattern above to the new buttons from day one.
 
 ### Admin / Settings restructure
 
@@ -2642,15 +2643,6 @@ ship.
       loading overlay (centered spinner + "Loading catalog…") or
       ensure the existing one actually renders during the first
       fetch — today the user sees nothing.
-
-- [ ] **Sortable Size column.** The Size column in the Planner is
-      marked `sortable: false` (the displayed `a × b` string is a
-      `valueGetter` composite). Add `"size"` to the backend's sort
-      Literal and map to `maj_axis_arcmin` in the in-memory
-      sort key — mirrors the pattern already used on the DSO
-      Catalog page (`SORT_COLUMNS["size"] = "maj_axis_arcmin"`).
-      Sort-by-size is valuable for planners ("what's biggest
-      tonight?").
 
 ### Planner grid pagination
 

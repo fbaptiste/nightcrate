@@ -485,10 +485,20 @@ export default function FovSimulator({
     }
   }
 
+  // A focusable ``<div>`` doesn't pick up keyboard focus on click —
+  // only on Tab. Pulling focus on every pointer-down means the user's
+  // first interaction (drag-to-rotate, pan, annotation click) also
+  // arms the keyboard controls (arrow keys, R) without a separate
+  // Tab-to-focus step.
+  function focusContainer(): void {
+    containerRef.current?.focus({ preventScroll: true });
+  }
+
   function handleRectPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     e.preventDefault();
     e.stopPropagation();
     tryCapture(e.pointerId);
+    focusContainer();
     dragStateRef.current = {
       pointerId: e.pointerId,
       mode: "rect",
@@ -501,6 +511,7 @@ export default function FovSimulator({
     if (centerRaDeg == null || centerDecDeg == null) return;
     e.preventDefault();
     tryCapture(e.pointerId);
+    focusContainer();
     dragStateRef.current = {
       pointerId: e.pointerId,
       mode: "pan",
