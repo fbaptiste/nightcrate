@@ -20,7 +20,7 @@
  * peripheral cells still loading show their own tiny spinners but the
  * target is already visible.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -34,8 +34,11 @@ interface Props {
   /** DSO's angular major axis (arcmin). Drives the auto-zoom
    *  decision. ``null`` falls back to a sensible default extent. */
   majAxisArcmin: number | null;
-  /** CSS pixel size of the viewport (square). */
-  size: number;
+  /** CSS pixel size of the viewport (square). When omitted, the
+   *  component measures its own container via ResizeObserver — the
+   *  caller's wrapper controls the outer bounds (e.g. a
+   *  ``min(90vw, 85vh, 800px)`` constraint in a modal). */
+  size?: number;
 }
 
 /** Identify the cell containing the composite's view-centre pixel —
@@ -76,9 +79,30 @@ export default function SkyPreview({
   raDeg,
   decDeg,
   majAxisArcmin,
-  size,
+  size: fixedSize,
 }: Props) {
   const { tier, extentDeg } = previewSpecForDsoSize(majAxisArcmin);
+
+  // Measured size when ``fixedSize`` is not supplied. Starts at the
+  // fixed value (if any) or a sensible default so the first render
+  // isn't 0×0; then a ResizeObserver syncs to the actual container
+  // dimensions. Using the smaller of the two measured dimensions
+  // keeps the preview square.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [measuredSize, setMeasuredSize] = useState<number>(fixedSize ?? 340);
+  useLayoutEffect(() => {
+    if (fixedSize != null) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      const next = Math.min(width, height);
+      if (next > 0) setMeasuredSize(next);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [fixedSize]);
+  const size = fixedSize ?? measuredSize;
 
   const query = useQuery({
     queryKey: [
@@ -117,10 +141,14 @@ export default function SkyPreview({
 
   return (
     <Box
+      ref={containerRef}
       sx={{
         position: "relative",
-        width: size,
-        height: size,
+        // Fixed-size callers (list cells) pin the box; fluid callers
+        // (the "View full image" modal) fill the parent container
+        // and let ResizeObserver drive the preview's transform math.
+        width: fixedSize ?? "100%",
+        height: fixedSize ?? "100%",
         overflow: "hidden",
         bgcolor: "#000000",
       }}

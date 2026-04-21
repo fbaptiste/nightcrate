@@ -477,12 +477,15 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
           {data != null && data.ra_deg != null && data.dec_deg != null && (
             <Box
               sx={{
-                // Full-size preview container. Same auto-tier decision
-                // as the 340 px thumbnail, just rendered at a larger
-                // CSS size — cells resolve from the same cache.
-                width: { xs: "min(90vw, 800px)", sm: "min(85vh, 800px)" },
-                maxWidth: 800,
-                aspectRatio: "1 / 1",
+                // Full-size preview container. Clamps to fit within
+                // both viewport axes (minus some breathing room for
+                // the dialog Paper's margin + close button) so the
+                // modal never produces horizontal or vertical
+                // scrollbars regardless of aspect ratio. SkyPreview
+                // measures the actual pixel size via ResizeObserver
+                // and drives its transform math from that.
+                width: "min(90vw, 85vh, 800px)",
+                height: "min(90vw, 85vh, 800px)",
                 position: "relative",
                 bgcolor: "#000000",
               }}
@@ -491,7 +494,6 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                 raDeg={data.ra_deg}
                 decDeg={data.dec_deg}
                 majAxisArcmin={data.maj_axis_arcmin ?? null}
-                size={800}
               />
             </Box>
           )}

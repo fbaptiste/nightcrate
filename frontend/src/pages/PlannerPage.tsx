@@ -48,6 +48,7 @@ import {
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { useDebounce } from "@/lib/useDebounce";
+import PaginationActions from "@/components/common/PaginationActions";
 import { typeGroupStyle } from "@/lib/dsoTypeGroups";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { displayConstellation } from "@/lib/constellations";
@@ -886,6 +887,12 @@ export default function PlannerPage() {
           }}
           pageSizeOptions={[25, 50, 100]}
           getRowHeight={() => "auto"}
+          slotProps={{
+            basePagination: {
+              ActionsComponent: PaginationActions,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } as any,
+          }}
           onRowClick={(params: GridRowParams<PlannerTargetItem>) =>
             setDetailId(params.row.dso_id)
           }

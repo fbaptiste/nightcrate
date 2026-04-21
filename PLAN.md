@@ -2536,15 +2536,6 @@ ship.
 
 ### DSO Catalog
 
-- [ ] **Full-image modal introduces scrollbars on large objects.**
-      M 42 (and likely other wide-extent DSOs) renders with a
-      horizontal scrollbar when opened via "View full image". The
-      modal's `SkyPreview` composite's natural size exceeds the
-      modal's viewport along the major axis. Fit the preview to the
-      modal's inner size (`object-fit: contain` on the composite, or
-      clamp composite dimensions to the modal bounds) so the image
-      always fits without scrolling.
-
 - [ ] **Survey of DSOs with no RA/Dec.** Rather more entries than
       expected have null coordinates. Worth investigating — are
       these canonical DSOs where OpenNGC itself is missing the
@@ -2581,26 +2572,6 @@ ship.
       appears in Aladin / Stellarium. Mitigations would need a
       survey picker (Pan-STARRS / DECaLS in their coverage area,
       DSS2 elsewhere) or per-tile median normalisation.
-
-### Admin / Catalogs UX
-
-- [ ] **Clarify OpenNGC "Re-download" vs "Reload local cache"
-      buttons + tooltips.** First-run users see two buttons whose
-      labels don't make it obvious what each does. Rename + tooltip:
-      "Re-download" → "Fetch latest from GitHub" (hits the network,
-      overwrites the cached files in `APP_DIR/catalogs/openngc/`),
-      "Reload local cache" → "Reload into database from cached
-      files" (no network — re-parses the local CSVs and refreshes
-      the `dso` / `dso_designation` tables from them).
-
-- [ ] **Add "Reload from local cache" buttons to Sharpless 2 /
-      Barnard / 50 MGC.** Today those sources only expose
-      "Re-fetch from source" buttons. Reloading from local cache
-      is meaningful in the same scenarios as OpenNGC — e.g. after
-      dropping the database but keeping the cached files in
-      `APP_DIR/catalogs/`. The backend loader already supports it;
-      the Admin UI just doesn't expose it for these sources. Apply
-      the rename pattern above to the new buttons from day one.
 
 ### Admin / Settings restructure
 
@@ -2643,15 +2614,6 @@ ship.
       loading overlay (centered spinner + "Loading catalog…") or
       ensure the existing one actually renders during the first
       fetch — today the user sees nothing.
-
-### Planner grid pagination
-
-- [ ] **First / Prev / Page-N / Next / Last pagination controls** —
-      same component the DSO Catalog page already uses
-      (`PaginationActions` in `pages/DsoCatalogPage.tsx`).
-      Extract into `components/common/PaginationActions.tsx` and
-      wire into both pages' DataGrid via `slotProps.basePagination.
-      ActionsComponent`.
 
 ---
 
