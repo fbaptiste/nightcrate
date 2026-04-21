@@ -331,6 +331,75 @@ export default function FovSimulator({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomEff, layout]);
 
+  // Scroll-wheel zoom. React's ``onWheel`` handlers are passive by
+  // default, so ``preventDefault()`` there doesn't stop page scroll.
+  // Attach a native ``wheel`` listener with ``{ passive: false }``
+  // instead. Zoom is cursor-anchored — the source pixel under the
+  // cursor stays under the cursor across the zoom change — for
+  // natural "zoom into what I'm looking at" behaviour.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handler = (e: WheelEvent) => {
+      const l = layoutRef.current;
+      if (!l) return;
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      const zOld = zoomRef.current;
+      const vcx = l.view_center_pixel_x;
+      const vcy = l.view_center_pixel_y;
+      const panXOld = panXRef.current;
+      const panYOld = panYRef.current;
+
+      // Source pixel under the cursor pre-zoom.
+      const sourceX = (mx - size / 2 + vcx * zOld - panXOld) / zOld;
+      const sourceY = (my - size / 2 + vcy * zOld - panYOld) / zOld;
+
+      // Each wheel notch changes zoom by ~10%. ``deltaMode`` 1 = lines,
+      // 2 = pages — scale accordingly so line-mode mice (Firefox on
+      // Windows) feel similar to pixel-mode.
+      const lineScale = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1;
+      const scroll = e.deltaY * lineScale;
+      const factor = Math.exp(-scroll * 0.0015);
+      const zNew = Math.max(zoomFit, Math.min(zoomMax, zOld * factor));
+      if (zNew === zOld) return;
+
+      // Solve for the new pan that keeps ``sourceX / sourceY`` under
+      // the cursor after the zoom change.
+      let panXNew = mx - size / 2 + vcx * zNew - sourceX * zNew;
+      let panYNew = my - size / 2 + vcy * zNew - sourceY * zNew;
+      const limX = Math.max(
+        0,
+        Math.max(vcx, l.composite_width_px - vcx) * zNew,
+      );
+      const limY = Math.max(
+        0,
+        Math.max(vcy, l.composite_height_px - vcy) * zNew,
+      );
+      panXNew = clamp(panXNew, -limX, limX);
+      panYNew = clamp(panYNew, -limY, limY);
+
+      // Fast path via refs + applyLive so the pan/zoom updates on the
+      // same frame as the wheel event. State catches up for React.
+      zoomRef.current = zNew;
+      panXRef.current = panXNew;
+      panYRef.current = panYNew;
+      applyLive();
+
+      setZoom(zNew);
+      setPanX(panXNew);
+      setPanY(panYNew);
+    };
+
+    container.addEventListener("wheel", handler, { passive: false });
+    return () => container.removeEventListener("wheel", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size, zoomFit, zoomMax]);
+
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
       if (e.key === "Shift") setIsShiftHeld(true);
