@@ -201,3 +201,173 @@ def cell_wcs_dict(
     out["NAXIS1"] = tier.cell_width_px
     out["NAXIS2"] = tier.cell_height_px
     return out
+
+
+# ─── Grid layout ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class CellLayout:
+    """One cell's identity + its top-left position in the composite image.
+
+    All pixel coordinates are in the composite's *source-pixel* system —
+    screen-aligned (X east-left, Y top-to-bottom) and measured in the
+    JPEG's native pixel units. The frontend applies CSS transforms to
+    fit the composite into whatever viewport size it wants.
+    """
+
+    nside: int
+    ipix: int
+    tier: Tier
+    cell_i: int
+    cell_j: int
+    pixel_x: int
+    pixel_y: int
+
+
+@dataclass(frozen=True, slots=True)
+class GridLayout:
+    """Layout response returned by the planner's sky-tile-grid endpoint.
+
+    ``view_center_pixel_x/y`` tells the frontend where the requested
+    ``(center_ra_deg, center_dec_deg)`` lands in the composite — it
+    won't be exactly at ``(composite/2, composite/2)`` because the
+    composite extends beyond the view to include whole cells at the
+    edges.
+    """
+
+    nside: int
+    ipix: int
+    tangent_ra_deg: float
+    tangent_dec_deg: float
+    tier: Tier
+    cell_size_deg: float
+    cell_width_px: int
+    cell_height_px: int
+    composite_width_px: int
+    composite_height_px: int
+    view_center_pixel_x: int
+    view_center_pixel_y: int
+    cells: list[CellLayout]
+
+
+def compute_grid_layout(
+    *,
+    center_ra_deg: float,
+    center_dec_deg: float,
+    tier_name: Tier,
+    extent_deg: float,
+) -> GridLayout:
+    """Compute the cell-grid layout for a simulator or preview view.
+
+    The view is centred on ``(center_ra_deg, center_dec_deg)`` and spans
+    ``extent_deg`` on a side. Every cell shares the DSO's home HEALPix
+    region tangent, so seams within the region are pixel-perfect.
+
+    Layout derivation:
+    * Project the centre onto the region's tangent plane via
+      ``cell_wcs(ci=0, cj=0)`` and ``wcs_world2pix`` — gives the DSO's
+      ``tpx_x / tpx_y`` (tangent-relative FITS pixel coords, Y-up).
+    * The view is a square in tangent-pixel space of ``extent_deg /
+      scale_deg_per_px`` on a side, centred on the DSO.
+    * Cell ``(ci, cj)``'s tangent-pixel centre is ``(ci·n1, -cj·n2)``
+      with ranges ``[(ci-0.5)·n1, (ci+0.5)·n1]`` × ``[(-cj-0.5)·n2,
+      (-cj+0.5)·n2]``. Any cell overlapping the view window is
+      included.
+    * Composite: bounding box of the selected cells. ``ci_min`` anchors
+      the composite's left edge (east); ``cj_min`` anchors the top
+      (north). East-left / north-up screen coordinates.
+    """
+    tier = TIERS[tier_name]
+    ipix = ipix_for_coord(center_ra_deg, center_dec_deg)
+    tangent_ra, tangent_dec = tangent_for_ipix(ipix)
+
+    n1 = tier.cell_width_px
+    n2 = tier.cell_height_px
+
+    # DSO in tangent-relative FITS pixel coords (Y-up).
+    w = cell_wcs(tangent_ra, tangent_dec, tier, 0, 0)
+    dso_pix = w.wcs_world2pix([[center_ra_deg, center_dec_deg]], 1)[0]
+    dso_tpx_x = float(dso_pix[0]) - (n1 + 1) / 2
+    dso_tpx_y = float(dso_pix[1]) - (n2 + 1) / 2
+
+    half_ext_px = (extent_deg / 2) / tier.scale_deg_per_px
+
+    view_x_min = dso_tpx_x - half_ext_px
+    view_x_max = dso_tpx_x + half_ext_px
+    view_y_min = dso_tpx_y - half_ext_px
+    view_y_max = dso_tpx_y + half_ext_px
+
+    # Iterate a conservative bounding range of ``(ci, cj)`` and keep
+    # anything that overlaps the view. The conservative range is cheap
+    # (at most ~(half_ext/cell_size+2)² candidates — tens, not thousands)
+    # and the overlap test is exact.
+    import math as _math
+
+    ci_lo = _math.floor(view_x_min / n1 - 0.5)
+    ci_hi = _math.ceil(view_x_max / n1 + 0.5)
+    cj_lo = _math.floor(-view_y_max / n2 - 0.5)
+    cj_hi = _math.ceil(-view_y_min / n2 + 0.5)
+
+    cells_in_view: list[tuple[int, int]] = []
+    for ci in range(ci_lo, ci_hi + 1):
+        for cj in range(cj_lo, cj_hi + 1):
+            cx = ci * n1
+            cy = -cj * n2
+            # Overlap: cell's [cx-n1/2, cx+n1/2] × [cy-n2/2, cy+n2/2]
+            # intersects the view window.
+            if (
+                cx + n1 / 2 >= view_x_min
+                and cx - n1 / 2 <= view_x_max
+                and cy + n2 / 2 >= view_y_min
+                and cy - n2 / 2 <= view_y_max
+            ):
+                cells_in_view.append((ci, cj))
+
+    if not cells_in_view:
+        # Pathological — extent smaller than a single pixel, or caller
+        # supplied garbage. Return a minimal one-cell layout so downstream
+        # code doesn't have to handle empty responses.
+        cells_in_view = [(0, 0)]
+
+    ci_min = min(ci for ci, _ in cells_in_view)
+    ci_max = max(ci for ci, _ in cells_in_view)
+    cj_min = min(cj for _, cj in cells_in_view)
+    cj_max = max(cj for _, cj in cells_in_view)
+
+    composite_width = (ci_max - ci_min + 1) * n1
+    composite_height = (cj_max - cj_min + 1) * n2
+
+    # DSO in composite screen coords (X east-left ≡ tpx_x direction,
+    # Y top-to-bottom inverts tpx_y).
+    view_center_x = int(round(dso_tpx_x - (ci_min - 0.5) * n1))
+    view_center_y = int(round((-cj_min + 0.5) * n2 - dso_tpx_y))
+
+    cells: list[CellLayout] = [
+        CellLayout(
+            nside=HEALPIX_NSIDE,
+            ipix=ipix,
+            tier=tier.name,
+            cell_i=ci,
+            cell_j=cj,
+            pixel_x=(ci - ci_min) * n1,
+            pixel_y=(cj - cj_min) * n2,
+        )
+        for ci, cj in cells_in_view
+    ]
+
+    return GridLayout(
+        nside=HEALPIX_NSIDE,
+        ipix=ipix,
+        tangent_ra_deg=tangent_ra,
+        tangent_dec_deg=tangent_dec,
+        tier=tier.name,
+        cell_size_deg=tier.cell_size_deg,
+        cell_width_px=n1,
+        cell_height_px=n2,
+        composite_width_px=composite_width,
+        composite_height_px=composite_height,
+        view_center_pixel_x=view_center_x,
+        view_center_pixel_y=view_center_y,
+        cells=cells,
+    )

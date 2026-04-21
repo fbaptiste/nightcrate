@@ -18,6 +18,7 @@ from nightcrate.services.sky_tiles import (
     TIERS,
     cell_wcs,
     cell_wcs_dict,
+    compute_grid_layout,
     ipix_for_coord,
     tangent_for_ipix,
     tier_for_fov,
@@ -278,3 +279,126 @@ def test_cell_wcs_dict_is_json_serialisable():
         assert parsed[key] == d[key]
     for key in ("CRVAL1", "CRVAL2", "CRPIX1", "CRPIX2", "CDELT1", "CDELT2"):
         assert float(parsed[key]) == pytest.approx(float(d[key]))
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Grid layout — used by the sky-tile-grid endpoint
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_grid_layout_has_at_least_one_cell():
+    layout = compute_grid_layout(
+        center_ra_deg=150.0,
+        center_dec_deg=40.0,
+        tier_name="narrow",
+        extent_deg=1.0,
+    )
+    assert len(layout.cells) >= 1
+    assert layout.tier == "narrow"
+    assert layout.cell_size_deg == TIERS["narrow"].cell_size_deg
+
+
+def test_grid_layout_cell_count_scales_with_extent():
+    a = compute_grid_layout(
+        center_ra_deg=150.0, center_dec_deg=40.0, tier_name="narrow", extent_deg=1.0
+    )
+    b = compute_grid_layout(
+        center_ra_deg=150.0, center_dec_deg=40.0, tier_name="narrow", extent_deg=3.0
+    )
+    assert len(b.cells) > len(a.cells)
+
+
+def test_grid_layout_adjacent_cells_are_cell_size_apart():
+    """Core invariant: neighbouring cells differ by exactly
+    ``cell_width_px`` / ``cell_height_px`` in their pixel_x / pixel_y.
+
+    If this fails, seams between cells show gaps or overlaps when
+    composited.
+    """
+    tier = TIERS["narrow"]
+    layout = compute_grid_layout(
+        center_ra_deg=150.0,
+        center_dec_deg=40.0,
+        tier_name="narrow",
+        extent_deg=2.0,
+    )
+    by_coord = {(c.cell_i, c.cell_j): c for c in layout.cells}
+    for (ci, cj), c in by_coord.items():
+        right = by_coord.get((ci + 1, cj))
+        if right is not None:
+            assert right.pixel_x - c.pixel_x == tier.cell_width_px
+            assert right.pixel_y == c.pixel_y
+        below = by_coord.get((ci, cj + 1))
+        if below is not None:
+            assert below.pixel_y - c.pixel_y == tier.cell_height_px
+            assert below.pixel_x == c.pixel_x
+
+
+def test_grid_layout_composite_exactly_bounds_cells():
+    layout = compute_grid_layout(
+        center_ra_deg=150.0,
+        center_dec_deg=40.0,
+        tier_name="narrow",
+        extent_deg=2.5,
+    )
+    max_right = max(c.pixel_x + layout.cell_width_px for c in layout.cells)
+    max_bottom = max(c.pixel_y + layout.cell_height_px for c in layout.cells)
+    min_left = min(c.pixel_x for c in layout.cells)
+    min_top = min(c.pixel_y for c in layout.cells)
+    assert min_left == 0
+    assert min_top == 0
+    assert layout.composite_width_px == max_right
+    assert layout.composite_height_px == max_bottom
+
+
+def test_grid_layout_view_center_is_inside_composite():
+    layout = compute_grid_layout(
+        center_ra_deg=150.0,
+        center_dec_deg=40.0,
+        tier_name="narrow",
+        extent_deg=1.0,
+    )
+    assert 0 <= layout.view_center_pixel_x <= layout.composite_width_px
+    assert 0 <= layout.view_center_pixel_y <= layout.composite_height_px
+
+
+@pytest.mark.parametrize(
+    "tier_name,extent",
+    [
+        ("narrow", 0.5),
+        ("narrow", 2.0),
+        ("med", 3.0),
+        ("med", 10.0),
+        ("wide", 20.0),
+    ],
+)
+def test_grid_layout_view_center_aligns_with_projected_coord(tier_name: str, extent: float):
+    """view_center_pixel_* must match astropy's projection of
+    (center_ra, center_dec) through any cell's WCS, after translating
+    the cell-local pixel to the composite's screen-coords frame.
+    End-to-end sign / Y-flip sanity check.
+    """
+    import math as _math
+
+    tier = TIERS[tier_name]
+    ra0, dec0 = 150.0, 40.0
+    layout = compute_grid_layout(
+        center_ra_deg=ra0, center_dec_deg=dec0, tier_name=tier_name, extent_deg=extent
+    )
+    cell = layout.cells[0]
+    w = cell_wcs(
+        layout.tangent_ra_deg,
+        layout.tangent_dec_deg,
+        tier,
+        cell.cell_i,
+        cell.cell_j,
+    )
+    px = w.wcs_world2pix([[ra0, dec0]], 1)[0]
+    # FITS 1-based pixel → 0-based screen X (east-left matches FITS X).
+    cell_local_screen_x = float(px[0]) - 0.5
+    # FITS Y-up → screen Y-down.
+    cell_local_screen_y = (tier.cell_height_px + 0.5) - float(px[1])
+    composite_x = cell.pixel_x + cell_local_screen_x
+    composite_y = cell.pixel_y + cell_local_screen_y
+    assert _math.isclose(composite_x, layout.view_center_pixel_x, abs_tol=1.0)
+    assert _math.isclose(composite_y, layout.view_center_pixel_y, abs_tol=1.0)

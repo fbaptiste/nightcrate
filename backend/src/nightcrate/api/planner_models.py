@@ -99,6 +99,47 @@ class CacheClearResponse(BaseModel):
     deleted_files: int
 
 
+# ─── v0.18.0 sky-tile grid layout ────────────────────────────────────────────
+
+
+class SkyTileCellLayout(BaseModel):
+    """One cell's identity + top-left position in the composite image."""
+
+    nside: int
+    ipix: int
+    tier: str
+    cell_i: int
+    cell_j: int
+    pixel_x: int
+    pixel_y: int
+
+
+class SkyTileGridLayout(BaseModel):
+    """Layout returned by ``GET /api/planner/sky-tile-grid``.
+
+    Gives the frontend everything it needs to compose the view: the
+    region + tangent (informational; cells carry the full cache key),
+    the source-pixel composite size, where the requested centre lands
+    inside the composite, and the list of cells with their top-left
+    source-pixel positions. ``pixel_x`` / ``pixel_y`` values align with
+    the screen's east-left / north-up convention.
+    """
+
+    nside: int
+    ipix: int
+    tangent_ra_deg: float
+    tangent_dec_deg: float
+    tier: str
+    cell_size_deg: float
+    cell_width_px: int
+    cell_height_px: int
+    composite_width_px: int
+    composite_height_px: int
+    view_center_pixel_x: int
+    view_center_pixel_y: int
+    cells: list[SkyTileCellLayout]
+
+
 class NearbyDsoItem(BaseModel):
     id: int
     primary_designation: str

@@ -509,3 +509,59 @@ async def test_sky_tile_hit_returns_jpeg(client: TestClient, monkeypatch):
     assert response.status_code == 200
     assert response.headers.get("content-type") == "image/jpeg"
     assert response.content == fake_body
+
+
+# ── Sky-tile grid layout endpoint ─────────────────────────────────────────────
+
+
+async def test_sky_tile_grid_returns_cells(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "tier": "narrow", "extent_deg": 2.0},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tier"] == "narrow"
+    assert data["nside"] == 8
+    assert data["cell_width_px"] == 800
+    assert data["cell_height_px"] == 800
+    assert len(data["cells"]) >= 4
+    assert data["composite_width_px"] > 0
+    assert data["composite_height_px"] > 0
+    # view_center_pixel_* must fall inside the composite.
+    assert 0 <= data["view_center_pixel_x"] <= data["composite_width_px"]
+    assert 0 <= data["view_center_pixel_y"] <= data["composite_height_px"]
+
+
+async def test_sky_tile_grid_derives_tier_from_fov(client: TestClient):
+    """A 0.5° FOV must land in the ``narrow`` tier without an explicit ``tier`` query."""
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "fov_major_deg": 0.5, "extent_deg": 1.0},
+    )
+    assert response.status_code == 200
+    assert response.json()["tier"] == "narrow"
+
+
+async def test_sky_tile_grid_adjacent_cells_are_cell_sized_apart(client: TestClient):
+    """Endpoint preserves the core stitching invariant from the service layer."""
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "tier": "narrow", "extent_deg": 2.0},
+    )
+    data = response.json()
+    by_coord = {(c["cell_i"], c["cell_j"]): c for c in data["cells"]}
+    for (ci, cj), c in by_coord.items():
+        right = by_coord.get((ci + 1, cj))
+        if right is not None:
+            assert right["pixel_x"] - c["pixel_x"] == data["cell_width_px"]
+            assert right["pixel_y"] == c["pixel_y"]
+
+
+async def test_sky_tile_grid_requires_tier_or_fov(client: TestClient):
+    response = client.get(
+        "/api/planner/sky-tile-grid",
+        params={"ra_deg": 150.0, "dec_deg": 40.0, "extent_deg": 2.0},
+    )
+    assert response.status_code == 400
+    assert "tier" in response.json()["detail"]

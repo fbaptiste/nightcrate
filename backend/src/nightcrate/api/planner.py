@@ -7,7 +7,8 @@ Routes for the "what's up tonight" planner page:
     GET  /api/planner/thumbnails/{dso_id}      — DSO-keyed cache (Pass A/B)
     POST /api/planner/thumbnails/cache/clear
     GET  /api/planner/thumbnails/cache/stats
-    GET  /api/planner/sky-tile                 — sky-region cache (Pass C, v0.18.0)
+    GET  /api/planner/sky-tile-grid            — view layout (Pass C, v0.18.0)
+    GET  /api/planner/sky-tile                 — cell bytes (Pass C, v0.18.0)
     POST /api/planner/sky-tile/cache/clear
     GET  /api/planner/sky-tile/cache/stats
 
@@ -37,6 +38,8 @@ from nightcrate.api.planner_models import (
     PlannerRigSummary,
     PlannerTargetItem,
     PlannerTargetsResponse,
+    SkyTileCellLayout,
+    SkyTileGridLayout,
     SkyTrackResponse,
     ThumbnailCacheStats,
     TwilightBandsOut,
@@ -59,7 +62,13 @@ from nightcrate.services.rig_calculators import (
     compute_fov,
 )
 from nightcrate.services.sky_tile_cache import make_cell_key
-from nightcrate.services.sky_tiles import TIERS, Tier, tangent_for_ipix
+from nightcrate.services.sky_tiles import (
+    TIERS,
+    Tier,
+    compute_grid_layout,
+    tangent_for_ipix,
+    tier_for_fov,
+)
 
 router = APIRouter(prefix="/api/planner", tags=["Target Planner"])
 
@@ -684,6 +693,72 @@ async def thumbnail_cache_stats() -> ThumbnailCacheStats:
 # known allow-list keeps the cache URL space bounded and prevents
 # clients from pointing CDS at arbitrary survey paths.
 _ALLOWED_HIPS_SURVEYS = frozenset({"CDS/P/DSS2/color"})
+
+
+@router.get("/sky-tile-grid", response_model=SkyTileGridLayout)
+def get_sky_tile_grid(
+    ra_deg: float = Query(..., ge=0.0, lt=360.0),
+    dec_deg: float = Query(..., ge=-90.0, le=90.0),
+    tier: Literal["narrow", "med", "wide"] | None = Query(
+        None, description="Explicit tier. If omitted, derived from ``fov_major_deg``."
+    ),
+    fov_major_deg: float | None = Query(
+        None, gt=0.0, le=60.0, description="Rig major FOV; selects a tier if ``tier`` is absent."
+    ),
+    extent_deg: float = Query(..., gt=0.0, le=60.0),
+) -> SkyTileGridLayout:
+    """Compute the cell layout for a simulator or preview view.
+
+    Pure math — no CDS calls, no disk I/O. Runs in a few milliseconds.
+    The frontend uses the returned ``cells`` list (each with identity
+    + top-left composite pixel position) to request cell JPEGs via
+    ``/api/planner/sky-tile`` and stitch them into the viewport.
+
+    Caller must supply either ``tier`` directly, or ``fov_major_deg``
+    for the backend to derive the tier from.
+    """
+    if tier is None:
+        if fov_major_deg is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Supply either ``tier`` or ``fov_major_deg``.",
+            )
+        tier_spec = tier_for_fov(fov_major_deg)
+    else:
+        tier_spec = TIERS[tier]
+
+    layout = compute_grid_layout(
+        center_ra_deg=ra_deg,
+        center_dec_deg=dec_deg,
+        tier_name=tier_spec.name,
+        extent_deg=extent_deg,
+    )
+    return SkyTileGridLayout(
+        nside=layout.nside,
+        ipix=layout.ipix,
+        tangent_ra_deg=layout.tangent_ra_deg,
+        tangent_dec_deg=layout.tangent_dec_deg,
+        tier=layout.tier,
+        cell_size_deg=layout.cell_size_deg,
+        cell_width_px=layout.cell_width_px,
+        cell_height_px=layout.cell_height_px,
+        composite_width_px=layout.composite_width_px,
+        composite_height_px=layout.composite_height_px,
+        view_center_pixel_x=layout.view_center_pixel_x,
+        view_center_pixel_y=layout.view_center_pixel_y,
+        cells=[
+            SkyTileCellLayout(
+                nside=c.nside,
+                ipix=c.ipix,
+                tier=c.tier,
+                cell_i=c.cell_i,
+                cell_j=c.cell_j,
+                pixel_x=c.pixel_x,
+                pixel_y=c.pixel_y,
+            )
+            for c in layout.cells
+        ],
+    )
 
 
 @router.get("/sky-tile")
