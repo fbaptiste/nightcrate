@@ -29,6 +29,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.16.0 — Target Planner (Pass A)](#v0160--target-planner-pass-a) ✅
 - [v0.17.0 — Target Planner Pass B (FOV Simulator + Rig-Framed Thumbnails)](#v0170--target-planner-pass-b-fov-simulator--rig-framed-thumbnails) ✅
 - [v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)](#v0180--target-planner-pass-c-sky-tile-cache--seamless-stitching) ✅
+- [v0.18.1 — Target Planner UX Polish (planned)](#v0181--target-planner-ux-polish-planned)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -2494,6 +2495,36 @@ is the new cell cache.
 - [x] ruff / format / bandit clean (0 / 0 / 0)
 - [x] Manual end-to-end sanity across narrow / med / wide rigs +
       high-dec targets
+
+---
+
+## v0.18.1 — Target Planner UX Polish (planned)
+
+**Status:** Planned
+**Branch:** TBD
+
+Collected UX polish items surfaced during v0.18.0 manual testing.
+None are bugs — small additive improvements deferred so v0.18.0 can
+ship.
+
+### Planner filter bar
+
+- [ ] **Catalog multi-select filter.** Drop-down (chips-style) to
+      filter the Planner results by designation catalog —
+      Messier, NGC, IC, Sharpless 2, Barnard, PGC, UGC, Caldwell, etc.
+      (the 29-catalog closed vocabulary from `dso_designation.catalog`).
+      The DSO Catalog page should grow the same control for parity.
+      Multi-select semantics: OR within the filter (a DSO is a match
+      if it carries *any* of the selected catalog designations).
+
+### Planner grid pagination
+
+- [ ] **First / Prev / Page-N / Next / Last pagination controls** —
+      same component the DSO Catalog page already uses
+      (`PaginationActions` in `pages/DsoCatalogPage.tsx`).
+      Extract into `components/common/PaginationActions.tsx` and
+      wire into both pages' DataGrid via `slotProps.basePagination.
+      ActionsComponent`.
 
 ---
 
