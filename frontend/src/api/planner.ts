@@ -183,6 +183,98 @@ export const clearThumbnailCache = () =>
     method: "POST",
   });
 
+
+// ─── Sky-tile cache (v0.18.0 / Pass C) ───────────────────────────────────────
+
+export type SkyTileTier = "narrow" | "med" | "wide";
+
+export interface SkyTileCellLayout {
+  nside: number;
+  ipix: number;
+  tier: SkyTileTier;
+  cell_i: number;
+  cell_j: number;
+  /** Top-left in east-left / north-up screen-coord source pixels. */
+  pixel_x: number;
+  pixel_y: number;
+}
+
+export interface SkyTileGridLayout {
+  nside: number;
+  ipix: number;
+  tangent_ra_deg: number;
+  tangent_dec_deg: number;
+  tier: SkyTileTier;
+  cell_size_deg: number;
+  cell_width_px: number;
+  cell_height_px: number;
+  composite_width_px: number;
+  composite_height_px: number;
+  view_center_pixel_x: number;
+  view_center_pixel_y: number;
+  cells: SkyTileCellLayout[];
+}
+
+export interface SkyTileGridParams {
+  raDeg: number;
+  decDeg: number;
+  tier?: SkyTileTier;
+  fovMajorDeg?: number;
+  extentDeg: number;
+}
+
+export function fetchSkyTileGrid(params: SkyTileGridParams): Promise<SkyTileGridLayout> {
+  const qs = new URLSearchParams({
+    ra_deg: params.raDeg.toFixed(6),
+    dec_deg: params.decDeg.toFixed(6),
+    extent_deg: params.extentDeg.toFixed(6),
+  });
+  if (params.tier) qs.set("tier", params.tier);
+  if (params.fovMajorDeg != null) qs.set("fov_major_deg", params.fovMajorDeg.toFixed(4));
+  return apiFetch<SkyTileGridLayout>(`/planner/sky-tile-grid?${qs.toString()}`);
+}
+
+export interface SkyTileCellUrlOptions {
+  /** Long-poll window in milliseconds. Only honoured on the first
+   *  attempt (retries should pass ``0`` to avoid stacked holds). */
+  waitMs?: number;
+  /** Cache-generation counter from ``useThumbnailCacheStore``. */
+  generation?: number;
+}
+
+/** Build the ``<img src>`` URL for one cell of the sky-tile cache.
+ *
+ *  Bypasses ``apiFetch`` (used directly as an image element's ``src``)
+ *  so the activity label is folded into the query string — matches the
+ *  pattern in ``thumbnailUrl``. */
+export function skyTileUrl(
+  cell: Pick<SkyTileCellLayout, "nside" | "ipix" | "tier" | "cell_i" | "cell_j">,
+  opts: SkyTileCellUrlOptions = {},
+  hips: string = "CDS/P/DSS2/color",
+): string {
+  const q = new URLSearchParams({
+    hips,
+    nside: String(cell.nside),
+    ipix: String(cell.ipix),
+    tier: cell.tier,
+    cell_i: String(cell.cell_i),
+    cell_j: String(cell.cell_j),
+  });
+  if (opts.generation != null) q.set("_g", String(opts.generation));
+  if (opts.waitMs != null && opts.waitMs > 0) q.set("wait_ms", String(opts.waitMs));
+  const activity = getActivity();
+  if (activity) q.set("_activity", activity);
+  return `/api/planner/sky-tile?${q.toString()}`;
+}
+
+export const fetchSkyTileCacheStats = () =>
+  apiFetch<ThumbnailCacheStats>("/planner/sky-tile/cache/stats");
+
+export const clearSkyTileCache = () =>
+  apiFetch<{ deleted_files: number }>("/planner/sky-tile/cache/clear", {
+    method: "POST",
+  });
+
 export type ThumbnailVariant = "list" | "detail" | "rig_framed" | "fov_simulator";
 
 export interface ThumbnailUrlOptions {

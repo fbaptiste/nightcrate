@@ -108,18 +108,60 @@ export function projectRaDecToPixel(
   return { dx: -xi * pxPerRad, dy: -eta * pxPerRad };
 }
 
-/** Project a DSO's RA/Dec to overlay-local pixel coords for the FOV
- *  simulator's tiled sky image.
+/** Project a DSO's RA/Dec into a composite that shares a single
+ *  gnomonic tangent — matches the v0.18.0 sky-tile architecture where
+ *  every cell in a HEALPix region renders on the region's shared
+ *  tangent plane.
  *
- *  Each tile is rendered by hips2fits as an independent gnomonic
- *  projection around its own tangent point, so a single grid-wide
- *  projection can't describe the pixel layout — neighbour-tile
- *  annotations would drift off their galaxies at high declinations.
- *  This helper picks the tile whose tangent is nearest the annotation
- *  (considering up to four candidates around the float column/row, so
- *  objects in the small dec-curvature gap between tiles snap to their
- *  closest neighbour) and projects using *that* tile's tangent.
+ *  Returns pixel coords in the composite's east-left / north-up
+ *  screen-coord system (the same system ``compute_grid_layout``
+ *  returns on the backend). ``composite_width_px`` /
+ *  ``composite_height_px`` and the ``view_center_*`` come from the
+ *  grid-layout response; together with ``cell_size_deg`` they define
+ *  the projection completely.
  */
+export function projectRaDecInRegion(
+  raDeg: number,
+  decDeg: number,
+  tangentRaDeg: number,
+  tangentDecDeg: number,
+  cellSizeDeg: number,
+  cellPxSize: number,
+  compositeViewCenterPxX: number,
+  compositeViewCenterPxY: number,
+  primaryRaDeg: number,
+  primaryDecDeg: number,
+): { cx: number; cy: number } {
+  // Gnomonic project both the primary and the annotation onto the region
+  // tangent, then compute the screen-pixel delta from the primary.
+  const { xi: xiAnn, eta: etaAnn } = gnomonicProject(
+    raDeg,
+    decDeg,
+    tangentRaDeg,
+    tangentDecDeg,
+  );
+  const { xi: xiPri, eta: etaPri } = gnomonicProject(
+    primaryRaDeg,
+    primaryDecDeg,
+    tangentRaDeg,
+    tangentDecDeg,
+  );
+  // Pixel scale on the tangent plane.
+  const pxPerRad = cellPxSize / 2 / Math.tan((cellSizeDeg / 2) * DEG_TO_RAD);
+  // East-left / north-up conversion: +xi (east) → -dx (left),
+  // +eta (north) → -dy (up, i.e. decreasing screen Y).
+  const dx = -(xiAnn - xiPri) * pxPerRad;
+  const dy = -(etaAnn - etaPri) * pxPerRad;
+  return {
+    cx: compositeViewCenterPxX + dx,
+    cy: compositeViewCenterPxY + dy,
+  };
+}
+
+
+/** Legacy projection kept for the v0.17.0 simulator path until that
+ *  view migrates to the sky-tile composite. Picks the best of up to
+ *  four candidate tiles around the float column/row. */
 export function projectRaDecToTilePixel(
   raDeg: number,
   decDeg: number,
