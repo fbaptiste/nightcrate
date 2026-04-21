@@ -17,7 +17,7 @@
  * corresponds to the requested ``(ra, dec)``. Callers use it to anchor
  * pan / centring.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -82,6 +82,51 @@ export default function SkyTileComposite({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
 
+  // Stage the cell mount so the centre cell (containing the DSO's
+  // view-centre pixel) loads first and the user sees the target
+  // quickly. Non-centre cells mount only after the centre reports
+  // ``onReady``, so the 4-slot CDS semaphore isn't contended by
+  // surrounding cells while the centre is mid-flight. On warm cache
+  // every cell is ready instantly and the two phases collapse into
+  // one render frame.
+  const [centerReady, setCenterReady] = useState(false);
+  useEffect(() => {
+    // Reset staging when the target / tier / extent changes.
+    setCenterReady(false);
+  }, [layout]);
+
+  const centerCellIdx = useMemo(() => {
+    if (!layout || layout.cells.length === 0) return -1;
+    const cx = layout.view_center_pixel_x;
+    const cy = layout.view_center_pixel_y;
+    for (let i = 0; i < layout.cells.length; i++) {
+      const c = layout.cells[i];
+      if (
+        cx >= c.pixel_x &&
+        cx < c.pixel_x + layout.cell_width_px &&
+        cy >= c.pixel_y &&
+        cy < c.pixel_y + layout.cell_height_px
+      ) {
+        return i;
+      }
+    }
+    // Fallback: the cell whose centre is nearest the view centre —
+    // handles edge cases where the DSO sits exactly on a cell seam.
+    let best = 0;
+    let bestDistSq = Infinity;
+    for (let i = 0; i < layout.cells.length; i++) {
+      const c = layout.cells[i];
+      const cellCx = c.pixel_x + layout.cell_width_px / 2;
+      const cellCy = c.pixel_y + layout.cell_height_px / 2;
+      const d = (cellCx - cx) ** 2 + (cellCy - cy) ** 2;
+      if (d < bestDistSq) {
+        bestDistSq = d;
+        best = i;
+      }
+    }
+    return best;
+  }, [layout]);
+
   if (!layout) {
     // Empty placeholder so the pan-group has a stable sizing anchor
     // while the layout request is in flight (~10 ms).
@@ -96,25 +141,35 @@ export default function SkyTileComposite({
         height: layout.composite_height_px,
       }}
     >
-      {layout.cells.map((cell) => (
-        <Box
-          key={`${cell.nside}_${cell.ipix}_${cell.tier}_${cell.cell_i}_${cell.cell_j}`}
-          sx={{
-            position: "absolute",
-            left: cell.pixel_x,
-            top: cell.pixel_y,
-            width: layout.cell_width_px,
-            height: layout.cell_height_px,
-          }}
-        >
-          <SkyTileCell
-            cell={cell}
-            width={layout.cell_width_px}
-            height={layout.cell_height_px}
-            waitMs={waitMs}
-          />
-        </Box>
-      ))}
+      {layout.cells.map((cell, i) => {
+        const isCenter = i === centerCellIdx;
+        // Defer non-centre cells until the centre lands. The parent
+        // already sizes the pan group to ``composite_width_px ×
+        // composite_height_px``, so empty slots render as the
+        // container's black background — not visible because the
+        // pan-group transform keeps the viewport over the centre.
+        if (!isCenter && !centerReady) return null;
+        return (
+          <Box
+            key={`${cell.nside}_${cell.ipix}_${cell.tier}_${cell.cell_i}_${cell.cell_j}`}
+            sx={{
+              position: "absolute",
+              left: cell.pixel_x,
+              top: cell.pixel_y,
+              width: layout.cell_width_px,
+              height: layout.cell_height_px,
+            }}
+          >
+            <SkyTileCell
+              cell={cell}
+              width={layout.cell_width_px}
+              height={layout.cell_height_px}
+              waitMs={waitMs}
+              onReady={isCenter ? () => setCenterReady(true) : undefined}
+            />
+          </Box>
+        );
+      })}
     </Box>
   );
 }

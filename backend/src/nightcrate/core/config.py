@@ -39,8 +39,14 @@ class Settings(BaseModel):
     planner_min_visibility_hours: float = 2.0
     planner_max_magnitude: float = 12.0
     planner_min_size_arcmin: float = 5.0
-    # Disk budget for the HiPS/DSS2 thumbnail LRU cache under APP_DIR/thumbnails/.
-    thumbnail_cache_max_mb: int = 20
+    # Disk budget for the HiPS/DSS2 caches. Covers both the per-DSO
+    # ``APP_DIR/thumbnails/`` (list/detail/rig_framed variants) and
+    # the v0.18.0 regional ``APP_DIR/sky_tiles/`` cache. 500 MB is the
+    # Pass C default — the regional cache caches whole HEALPix tiles
+    # shared across DSOs, so a larger budget makes the cache-reuse
+    # payoff actually compound. Users on tight disks can dial down in
+    # Settings; users browsing hundreds of targets can go up to 5 GB.
+    thumbnail_cache_max_mb: int = 500
     # Monotonic counter appended to thumbnail URLs as ``&_g=N`` so that
     # clearing the cache invalidates any copies the user's browser HTTP
     # cache holds. Incremented by the cache-clear endpoint.

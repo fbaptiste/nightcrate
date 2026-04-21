@@ -209,13 +209,25 @@ export default function FovSimulator({
   const rectWidth = sourcePxPerDeg * fovMajorDeg;
   const rectHeight = sourcePxPerDeg * fovMinorDeg;
 
-  // Zoom bounds. ``zoomFit`` shows the whole composite in the viewport.
-  // ``zoomMax = 1`` shows one source pixel per CSS pixel.
+  // Zoom bounds.
+  //   zoomFit — whole composite visible in the viewport (floor).
+  //   zoomMax = 1 — one source pixel per CSS pixel (native resolution).
+  //   zoomDefault — shows ~2× the rig's major FOV (≈ the old single-tile
+  //     view the v0.17.0 simulator used to open with). Keeps the
+  //     target and sensor rectangle prominent rather than lost in a
+  //     fully zoomed-out grid.
   const zoomFit = layout
     ? size / Math.max(layout.composite_width_px, layout.composite_height_px)
     : 1;
   const zoomMax = 1;
-  const zoomEff = zoom ?? zoomFit;
+  const zoomDefault = useMemo(() => {
+    if (!layout) return 1;
+    const pxPerDeg = layout.cell_width_px / layout.cell_size_deg;
+    const defaultViewSourcePx = 2 * fovMajorDeg * pxPerDeg;
+    if (defaultViewSourcePx <= 0) return zoomFit;
+    return Math.max(zoomFit, Math.min(zoomMax, size / defaultViewSourcePx));
+  }, [layout, fovMajorDeg, size, zoomFit]);
+  const zoomEff = zoom ?? zoomDefault;
 
   // Pan group transform — composites the scale + centre-on-view-center + pan.
   function panGroupTransformFromRefs(): string {
@@ -445,7 +457,7 @@ export default function FovSimulator({
     setRectOffsetY(0);
     setPanX(0);
     setPanY(0);
-    setZoom(zoomFit);
+    setZoom(zoomDefault);
   }
   function resetRotation() {
     setRotation(0);
@@ -579,6 +591,7 @@ export default function FovSimulator({
                 viewCenterPxX={layout.view_center_pixel_x}
                 viewCenterPxY={layout.view_center_pixel_y}
                 thresholdArcmin={thresholdArcmin}
+                zoom={zoomEff}
                 onAnnotationClick={(item, anchor) =>
                   setPopover({ item, anchor })
                 }
@@ -758,14 +771,14 @@ export default function FovSimulator({
                   Zoom
                 </Typography>
                 <Tooltip title="Reset zoom">
-                  <IconButton size="small" onClick={() => setZoom(zoomFit)} aria-label="Reset zoom">
+                  <IconButton size="small" onClick={() => setZoom(zoomDefault)} aria-label="Reset zoom">
                     <RestartAltIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
               </Stack>
               <Stack direction="row" alignItems="center" gap={1} sx={{ mt: 0.5 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ minWidth: 56 }}>
-                  {((zoomEff / zoomFit) * 100).toFixed(0)}%
+                  {((zoomEff / zoomDefault) * 100).toFixed(0)}%
                 </Typography>
                 <Slider
                   size="small"

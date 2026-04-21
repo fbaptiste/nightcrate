@@ -56,6 +56,12 @@ interface Props {
   /** Minimum angular major axis (arcmin) below which non-primary
    *  objects are hidden. ``0`` shows everything that has a size. */
   thresholdArcmin: number;
+  /** Current pan-group zoom. The overlay uses this to counter-scale
+   *  font + stroke sizes so labels stay at ~constant CSS size
+   *  regardless of zoom. Circle radii stay in source pixels (they
+   *  represent angular size, scaling with zoom is the correct
+   *  physical behaviour). */
+  zoom: number;
   onAnnotationClick?: (item: NearbyDsoItem, anchorEl: Element) => void;
 }
 
@@ -81,8 +87,23 @@ export default function DsoAnnotationOverlay({
   viewCenterPxX,
   viewCenterPxY,
   thresholdArcmin,
+  zoom,
   onAnnotationClick,
 }: Props) {
+  // Counter-scale labels / strokes so they read at a constant CSS
+  // size regardless of the pan-group's ``scale(zoom)``. Circle radii
+  // stay in source pixels so they grow with zoom and keep
+  // representing angular size correctly.
+  const safeZoom = zoom > 0 ? zoom : 1;
+  const fontPrimary = FONT_PRIMARY / safeZoom;
+  const fontCompanion = FONT_COMPANION / safeZoom;
+  const strokePrimary = STROKE_PRIMARY / safeZoom;
+  const strokeCompanion = STROKE_COMPANION / safeZoom;
+  const textStroke = TEXT_STROKE / safeZoom;
+  const labelGap = LABEL_GAP / safeZoom;
+  const labelEdgePad = LABEL_EDGE_PAD / safeZoom;
+  const minCircleRadius = MIN_CIRCLE_RADIUS / safeZoom;
+  const fallbackPointRadius = FALLBACK_POINT_RADIUS / safeZoom;
   const itemById = useMemo(() => {
     const m = new Map<number, NearbyDsoItem>();
     for (const it of items) m.set(it.id, it);
@@ -148,9 +169,9 @@ export default function DsoAnnotationOverlay({
           primary.dec_deg,
         );
         const labelOnly = isLabelOnly(a.majorArcmin, cellSizeDeg);
-        const strokeW = a.isPrimary ? STROKE_PRIMARY : STROKE_COMPANION;
+        const strokeW = a.isPrimary ? strokePrimary : strokeCompanion;
         const color = a.isPrimary ? RIG_ORANGE : RIG_BLUE;
-        const fontSize = a.isPrimary ? FONT_PRIMARY : FONT_COMPANION;
+        const fontSize = a.isPrimary ? fontPrimary : fontCompanion;
         const key = `${a.id}-${a.isPrimary ? "p" : "c"}`;
 
         const clickable = !a.isPrimary && onAnnotationClick != null;
@@ -167,12 +188,12 @@ export default function DsoAnnotationOverlay({
 
         if (labelOnly) {
           const clampedX = Math.max(
-            LABEL_EDGE_PAD,
-            Math.min(compositePxWidth - LABEL_EDGE_PAD, cx),
+            labelEdgePad,
+            Math.min(compositePxWidth - labelEdgePad, cx),
           );
           const clampedY = Math.max(
-            LABEL_EDGE_PAD,
-            Math.min(compositePxHeight - 8, cy),
+            labelEdgePad,
+            Math.min(compositePxHeight - 8 / safeZoom, cy),
           );
           return (
             <g key={key} {...interactiveProps}>
@@ -184,7 +205,7 @@ export default function DsoAnnotationOverlay({
                 fontWeight={a.isPrimary ? 700 : 500}
                 textAnchor="middle"
                 stroke="#000000"
-                strokeWidth={TEXT_STROKE}
+                strokeWidth={textStroke}
                 paintOrder="stroke"
               >
                 {a.designation}
@@ -196,10 +217,10 @@ export default function DsoAnnotationOverlay({
         const r =
           a.majorArcmin != null
             ? Math.max(
-                MIN_CIRCLE_RADIUS,
+                minCircleRadius,
                 radiusPxForArcmin(a.majorArcmin, cellPxSize, cellSizeDeg),
               )
-            : FALLBACK_POINT_RADIUS;
+            : fallbackPointRadius;
         return (
           <g key={key} {...interactiveProps}>
             <circle
@@ -212,13 +233,13 @@ export default function DsoAnnotationOverlay({
               opacity={0.85}
             />
             <text
-              x={cx + r + LABEL_GAP}
+              x={cx + r + labelGap}
               y={cy + fontSize * 0.35}
               fill={color}
               fontSize={fontSize}
               fontWeight={a.isPrimary ? 700 : 500}
               stroke="#000000"
-              strokeWidth={TEXT_STROKE}
+              strokeWidth={textStroke}
               paintOrder="stroke"
             >
               {a.designation}
