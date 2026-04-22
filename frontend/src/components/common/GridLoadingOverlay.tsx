@@ -27,15 +27,11 @@ export default function GridLoadingOverlay() {
         alignItems: "center",
         justifyContent: "center",
         gap: 1.5,
-        // Slightly translucent backdrop so fresh data showing through
-        // from a previous fetch (``placeholderData``) stays legible
-        // while the new fetch runs.
-        bgcolor: "rgba(255, 255, 255, 0.6)",
-        // Dark-theme variant — MUI's ``background.default`` tracks
-        // the active palette.
-        "html[data-theme='dark'] &, [data-mui-color-scheme='dark'] &": {
-          bgcolor: "rgba(0, 0, 0, 0.45)",
-        },
+        // Opaque backdrop — on a filter / sort change the old rows
+        // underneath would read as ghost artifacts if they showed
+        // through. ``background.paper`` keeps theme consistency
+        // across light / dark modes without a separate selector.
+        bgcolor: "background.paper",
         pointerEvents: "none",
         zIndex: 3,
       }}

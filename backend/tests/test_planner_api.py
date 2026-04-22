@@ -228,19 +228,56 @@ async def test_targets_filter_by_multiple_constellations(client: TestClient, see
 
 
 async def test_targets_sort_by_size_descending(client: TestClient, seed_db):
-    # ``sort=size`` maps to ``maj_axis_arcmin`` in the in-memory sort
-    # helper. In Anytime mode (no visibility filter) the largest
-    # object in the seed fixture must sort first on ``desc``.
+    # Multi-sort ``field:dir`` syntax. In Anytime mode (no visibility
+    # filter) the largest object in the seed fixture must sort first
+    # on ``desc``.
     _ = seed_db
     response = client.get(
         "/api/planner/targets",
-        params={"restrict_tonight": "false", "sort": "size", "sort_dir": "desc"},
+        params={"restrict_tonight": "false", "sort": "maj_axis_arcmin:desc"},
     )
     assert response.status_code == 200
     items = response.json()["items"]
     # First few rows must be the largest (descending major axis).
     sizes = [i["maj_axis_arcmin"] for i in items[:5] if i["maj_axis_arcmin"] is not None]
     assert sizes == sorted(sizes, reverse=True)
+
+
+async def test_targets_multi_sort(client: TestClient, seed_db):
+    # Two-key sort: major axis ascending, then magnitude ascending as
+    # the tie-breaker. Seed rows all have distinct sizes so the mag
+    # tie-break doesn't fire, but the response shape + ordering proves
+    # the multi-key parser + stable sort both work.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={
+            "restrict_tonight": "false",
+            "sort": "maj_axis_arcmin:asc,mag_v:asc",
+        },
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    sizes = [i["maj_axis_arcmin"] for i in items if i["maj_axis_arcmin"] is not None]
+    assert sizes == sorted(sizes)
+
+
+async def test_targets_sort_422_on_unknown_field(client: TestClient, seed_db):
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "sort": "bogus:asc"},
+    )
+    assert response.status_code == 422
+
+
+async def test_targets_sort_422_on_missing_direction(client: TestClient, seed_db):
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "sort": "mag_v"},
+    )
+    assert response.status_code == 422
 
 
 async def test_targets_endpoint_404s_missing_location(client: TestClient):

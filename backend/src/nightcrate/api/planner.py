@@ -80,6 +80,124 @@ from nightcrate.services.sky_tiles import (
 router = APIRouter(prefix="/api/planner", tags=["Target Planner"])
 
 
+# ── Sort fields catalog ─────────────────────────────────────────────────────
+#
+# Canonical list of fields the multi-sort accepts. Frontend's
+# ``lib/plannerSortFields.ts`` mirrors this registry; keep the two in
+# lockstep when adding a field. ``kind`` drives the sort behaviour:
+# "string" sorts case-insensitively, "number" compares numerically,
+# "now_status" uses a custom ordinal (up < rising < set).
+PLANNER_SORT_FIELDS: dict[str, str] = {
+    "primary_designation": "string",
+    "common_name": "string",
+    "constellation": "string",
+    "obj_type": "string",
+    "mag_v": "number",
+    "maj_axis_arcmin": "number",
+    "distance_pc": "number",
+    "hours_visible": "number",
+    "max_altitude_deg": "number",
+    "altitude_at_transit_deg": "number",
+    "transit_time_utc": "string",  # ISO strings sort chronologically
+    "min_moon_separation_deg": "number",
+    "coverage_pct": "number",
+    "now_status": "now_status",
+}
+
+_NOW_STATUS_ORDER = {"up": 0, "rising": 1, "set": 2}
+
+
+def _parse_sort(sort: str | None) -> list[tuple[str, str]]:
+    """Parse ``field:dir,field:dir,...`` into a list of pairs.
+
+    Returns an empty list when ``sort`` is ``None`` / empty. Raises
+    ``HTTPException(422)`` on unknown field or invalid direction so
+    callers get an actionable error instead of a silent no-op.
+    """
+    if not sort or not sort.strip():
+        return []
+    out: list[tuple[str, str]] = []
+    for entry in sort.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" not in entry:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Sort entry '{entry}' missing ':asc' or ':desc' direction.",
+            )
+        field, _, direction = entry.partition(":")
+        field = field.strip()
+        direction = direction.strip().lower()
+        if field not in PLANNER_SORT_FIELDS:
+            raise HTTPException(status_code=422, detail=f"Unknown sort field: '{field}'")
+        if direction not in ("asc", "desc"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Sort direction must be 'asc' or 'desc', got '{direction}' for '{field}'.",
+            )
+        out.append((field, direction))
+    return out
+
+
+def _sort_value(item: PlannerTargetItem, field: str):
+    """Pull a raw sortable value off a ``PlannerTargetItem``. ``None``
+    values pass through — null handling lives in the comparator so
+    direction never inverts "null sorts last". Empty or whitespace-
+    only strings are coerced to ``None`` so OpenNGC rows that have
+    ``common_name = ''`` (rather than NULL) still land in the
+    null-last bucket instead of sorting alphabetically first / last."""
+    value = getattr(item, field, None)
+    kind = PLANNER_SORT_FIELDS[field]
+    if value is None:
+        return None
+    if kind == "now_status":
+        return _NOW_STATUS_ORDER.get(value, 99)
+    if kind == "string":
+        stripped = value.strip()
+        if not stripped:
+            return None
+        return stripped.lower()
+    return value
+
+
+def _sort_items(
+    items: list[tuple[PlannerTargetItem, DsoVisibility | None]],
+    sort_entries: list[tuple[str, str]],
+) -> None:
+    """Stable multi-key sort in place. Applies the keys right-to-left
+    so the first entry is the primary key (Python's Timsort is stable,
+    so later passes preserve earlier tie-breaks). Nulls always sort
+    last, regardless of the key's direction."""
+    from functools import cmp_to_key
+
+    def make_cmp(field: str, direction: str):
+        asc = direction == "asc"
+
+        def cmp(
+            a: tuple[PlannerTargetItem, DsoVisibility | None],
+            b: tuple[PlannerTargetItem, DsoVisibility | None],
+        ) -> int:
+            va = _sort_value(a[0], field)
+            vb = _sort_value(b[0], field)
+            if va is None and vb is None:
+                return 0
+            if va is None:
+                return 1  # nulls always last
+            if vb is None:
+                return -1
+            if va < vb:
+                return -1 if asc else 1
+            if va > vb:
+                return 1 if asc else -1
+            return 0
+
+        return cmp_to_key(cmp)
+
+    for field, direction in reversed(sort_entries):
+        items.sort(key=make_cmp(field, direction))
+
+
 # ── DB helpers ───────────────────────────────────────────────────────────────
 
 
@@ -364,15 +482,17 @@ async def list_targets(
     ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    sort: Literal[
-        "hours_visible",
-        "max_altitude",
-        "coverage_pct",
-        "mag_v",
-        "primary_designation",
-        "size",
-    ] = "hours_visible",
-    sort_dir: Literal["asc", "desc"] = "desc",
+    sort: str | None = Query(
+        None,
+        description=(
+            "Comma-separated list of ``field:direction`` pairs (direction "
+            "is ``asc`` or ``desc``) evaluated in order. Example: "
+            "``hours_visible:desc,mag_v:asc``. Unknown fields return 422. "
+            "If omitted, Tonight mode defaults to ``hours_visible:desc``; "
+            "Anytime defaults to ``primary_designation:asc``. Available "
+            "fields: see ``PLANNER_SORT_FIELDS`` in the planner API."
+        ),
+    ),
 ) -> PlannerTargetsResponse:
     # Tonight mode is location-dependent; Anytime is pure catalog
     # browse and works without one (first-run users with no locations
@@ -671,32 +791,15 @@ async def list_targets(
         )
         items.append((item, vis))
 
-    # Sort + paginate in memory. NULL visibility fields (possible in
-    # "anytime" mode and for DSOs that don't clear the altitude floor
-    # tonight) sort to the end in both directions — "unknown" lives at
-    # the bottom regardless of ascending / descending intent.
-    reverse = sort_dir == "desc"
-    null_sentinel = -1 if reverse else 1e9
-
-    def _sort_key(pair: tuple[PlannerTargetItem, DsoVisibility | None]):
-        item, _vis = pair
-        if sort == "hours_visible":
-            return item.hours_visible if item.hours_visible is not None else null_sentinel
-        if sort == "max_altitude":
-            return item.max_altitude_deg if item.max_altitude_deg is not None else null_sentinel
-        if sort == "coverage_pct":
-            return item.coverage_pct if item.coverage_pct is not None else null_sentinel
-        if sort == "mag_v":
-            return item.mag_v if item.mag_v is not None else null_sentinel
-        if sort == "size":
-            # Sort by major axis only — the grid's displayed "a × b"
-            # string always shows the major axis first anyway, and
-            # mirroring the DSO-catalog pattern
-            # (``SORT_COLUMNS["size"] = "maj_axis_arcmin"``).
-            return item.maj_axis_arcmin if item.maj_axis_arcmin is not None else null_sentinel
-        return item.primary_designation
-
-    items.sort(key=_sort_key, reverse=reverse)
+    # Multi-sort in memory with mode-appropriate fallback. Null values
+    # always sort to the end regardless of per-key direction; that's
+    # enforced inside ``_sort_items``'s comparator.
+    sort_entries = _parse_sort(sort)
+    if not sort_entries:
+        sort_entries = (
+            [("hours_visible", "desc")] if restrict_tonight else [("primary_designation", "asc")]
+        )
+    _sort_items(items, sort_entries)
 
     total = len(items)
     page = items[offset : offset + limit]

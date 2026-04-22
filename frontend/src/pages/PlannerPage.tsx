@@ -4,18 +4,18 @@
  * Location-driven "what's up tonight" list. Optional rig adds a FOV
  * coverage column and the "frames well" filter.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   DataGrid,
   type GridColDef,
   type GridPaginationModel,
-  type GridSortModel,
   type GridRowParams,
 } from "@mui/x-data-grid";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
 import FormControl from "@mui/material/FormControl";
 import IconButton from "@mui/material/IconButton";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -44,6 +44,8 @@ import { fetchRigs } from "@/api/rigs";
 import { fetchDsoFacets } from "@/api/dsos";
 import { fetchHorizons, type Horizon } from "@/api/horizons";
 import ListSubheader from "@mui/material/ListSubheader";
+import PlannerSortPanel from "@/components/planner/PlannerSortPanel";
+import { serializeSort } from "@/lib/plannerSortFields";
 import {
   fetchPlannerTargets,
   type PlannerTargetItem,
@@ -87,6 +89,8 @@ export default function PlannerPage() {
   const setHorizonId = usePlannerStore((s) => s.setSelectedHorizonId);
   const rigId = usePlannerStore((s) => s.selectedRigId);
   const setRigId = usePlannerStore((s) => s.setSelectedRigId);
+  const sortBy = usePlannerStore((s) => s.sortBy);
+  const setSortBy = usePlannerStore((s) => s.setSortBy);
   const [searchQuery, setSearchQuery] = useState("");
   const [restrictTonight, setRestrictTonight] = useState<boolean>(true);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
@@ -121,14 +125,6 @@ export default function PlannerPage() {
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
   });
-  const [sortModel, setSortModel] = useState<GridSortModel>([
-    { field: "hours_visible", sort: "desc" },
-  ]);
-  // Track whether the current sort is still "auto" (the mode's
-  // default) vs. user-chosen. On mode toggle we swap to the new
-  // mode's default only while the sort is still auto, so a user
-  // who explicitly sorted by e.g. magnitude keeps their choice.
-  const sortIsAutoRef = useRef(true);
   const [detailId, setDetailId] = useState<number | null>(null);
 
   const locationsQuery = useQuery({
@@ -190,21 +186,6 @@ export default function PlannerPage() {
     setHorizonId(def.id);
   }, [horizonId, horizons, setHorizonId]);
 
-  // Reset sort to the mode's default on toggle, but only while the
-  // sort is still "auto". Tonight defaults to hours_visible desc —
-  // but that column doesn't exist in Anytime, so leaving it would
-  // send the server a sort key that maps to an all-NULL column and
-  // produces a meaningless order. Anytime defaults to designation
-  // asc (matches the DSO catalog page).
-  useEffect(() => {
-    if (!sortIsAutoRef.current) return;
-    setSortModel(
-      restrictTonight
-        ? [{ field: "hours_visible", sort: "desc" }]
-        : [{ field: "primary_designation", sort: "asc" }],
-    );
-  }, [restrictTonight]);
-
   // Rig: drop a stored id that no longer resolves (rig retired or
   // deleted). No auto-select — "No rig" is a valid state.
   useEffect(() => {
@@ -215,9 +196,14 @@ export default function PlannerPage() {
     }
   }, [rigId, rigsQuery.data, setRigId]);
 
-  const sortField = sortModel[0]?.field ?? "hours_visible";
-  const sortDir = (sortModel[0]?.sort ?? "desc") as "asc" | "desc";
+
+  // Serialize the active multi-sort for the backend. Entries that
+  // aren't applicable in the current mode / rig state are filtered
+  // out by ``serializeSort`` — the backend's own default kicks in
+  // when the resulting string is empty.
+  const sortParam = serializeSort(sortBy, restrictTonight, rigId != null);
   const debouncedSearch = useDebounce(searchQuery.trim(), 250);
+
 
   const targetsQuery = useQuery({
     queryKey: [
@@ -237,8 +223,7 @@ export default function PlannerPage() {
         restrictTonight,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
-        sortField,
-        sortDir,
+        sortParam,
       },
     ],
     // Imaging-focused filters (min_hours / max_magnitude /
@@ -273,8 +258,7 @@ export default function PlannerPage() {
         restrict_tonight: restrictTonight,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
-        sort: sortField,
-        sort_dir: sortDir,
+        sort: sortParam,
       }),
     // Tonight mode is location-dependent; Anytime runs without one.
     enabled: !restrictTonight || locationId != null,
@@ -983,6 +967,16 @@ export default function PlannerPage() {
             )}
           </Stack>
         )}
+
+        <PlannerSortPanel
+          sortBy={sortBy}
+          onSortChange={(next) => {
+            setSortBy(next);
+            setPagination((p) => ({ ...p, page: 0 }));
+          }}
+          restrictTonight={restrictTonight}
+          rigSelected={rigId != null}
+        />
       </Paper>
 
       {/* Empty / error states — only relevant in Tonight mode; in
@@ -999,17 +993,42 @@ export default function PlannerPage() {
         )}
 
       {/* Grid */}
-      <Paper variant="outlined" sx={{ flex: 1, minHeight: 0 }}>
+      <Paper variant="outlined" sx={{ flex: 1, minHeight: 0, position: "relative" }}>
+        {/* Custom fetch overlay. ``loading`` on the DataGrid is NOT
+            used because MUI X Community renders a linear-progress
+            bar inside the column-header row during re-fetches with
+            existing data — that bar peeks through as clipped text
+            and ignores ``slots.loadingOverlay``. Rolling our own
+            overlay on the Paper wrapper sidesteps it entirely. */}
+        {(targetsQuery.isLoading || targetsQuery.isFetching) && (
+          <Stack
+            alignItems="center"
+            justifyContent="center"
+            gap={1.5}
+            sx={{
+              position: "absolute",
+              inset: 0,
+              bgcolor: "background.paper",
+              zIndex: 2,
+              pointerEvents: "none",
+            }}
+          >
+            <CircularProgress size={32} thickness={4} />
+            <Typography variant="body2" color="text.secondary">
+              Loading…
+            </Typography>
+          </Stack>
+        )}
         <DataGrid
           rows={data?.items ?? []}
           getRowId={(row) => row.dso_id}
           columns={columns}
-          loading={targetsQuery.isLoading || targetsQuery.isFetching}
           paginationMode="server"
-          // Column-header sorting is disabled globally — a dedicated
-          // sort UI will replace it. The ``sortField`` / ``sortDir``
-          // query-param plumbing stays so that UI can drive it when
-          // it lands.
+          // Sort is entirely owned by the Sorting panel (server-side
+          // sort via the ``sort`` query param). The DataGrid has no
+          // sort responsibility — disable column-header sort entirely
+          // so there's no duplicate UI and no risk of MUI's internal
+          // sortModel reconciliation clobbering the panel's state.
           disableColumnSorting
           rowCount={data?.total ?? 0}
           paginationModel={pagination}

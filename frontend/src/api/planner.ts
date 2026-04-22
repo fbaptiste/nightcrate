@@ -123,8 +123,10 @@ export interface PlannerTargetsParams {
   restrict_tonight?: boolean;
   limit?: number;
   offset?: number;
-  sort?: string;
-  sort_dir?: "asc" | "desc";
+  /** Serialized multi-sort string in ``field:dir,field:dir`` form.
+   *  Build with ``serializeSort()`` from ``lib/plannerSortFields``.
+   *  ``null`` lets the backend apply its mode-appropriate default. */
+  sort?: string | null;
 }
 
 export function fetchPlannerTargets(
@@ -153,7 +155,6 @@ export function fetchPlannerTargets(
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);
-  if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
   return apiFetch<PlannerTargetsResponse>(`/planner/targets?${qs.toString()}`);
 }
 
