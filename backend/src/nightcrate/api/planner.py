@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -563,17 +563,21 @@ async def list_targets(
                 hours=round(snapshot.dark_window.hours, 2),
             )
         # Compute the phase name at the same reference instant the
-        # snapshot uses for phase percent — astro-dark midpoint, which
-        # is close enough to local midnight for naming purposes.
-        if location is not None:
+        # snapshot uses for phase percent — astro-dark start. Only
+        # emit when a dark window actually exists; in polar summer
+        # there's no meaningful observing anchor, so leave the field
+        # null (matches the response-model contract that
+        # ``moon_phase_name`` is populated only when there's a date
+        # / location anchor to attach it to).
+        if location is not None and snapshot.dark_window.start_utc is not None:
             from astropy.time import Time as _AstroTime
 
             from nightcrate.services.astronomy import compute_moon_phase_name
             from nightcrate.services.planner_visibility import _make_earth_location
 
-            ref_utc = snapshot.dark_window.start_utc or datetime.now(UTC)
             moon_phase_name_out = compute_moon_phase_name(
-                _AstroTime(ref_utc), _make_earth_location(location)
+                _AstroTime(snapshot.dark_window.start_utc),
+                _make_earth_location(location),
             )
 
         # Early return when astro-dark doesn't occur tonight (only
@@ -650,10 +654,18 @@ async def list_targets(
 
     # Per-DSO "currently up / rising / set" status — Tonight mode only,
     # and only when a location is present (location-less Anytime mode
-    # has no horizon to test against).
+    # has no horizon to test against). Narrow the input set by the
+    # user's free-text search when present — otherwise the vectorised
+    # astropy call runs over every visible DSO (potentially thousands)
+    # even though the response's ``items`` list will be a handful
+    # after the filter loop below. The common big-win narrowing is
+    # the search box; faceted-filter narrowing happens in the loop.
     now_status_by_dso: dict[int, str] = {}
     if restrict_tonight and location is not None and horizon is not None and snapshot is not None:
-        visible_coords = [d for d in dsos if d.dso_id in set(visible_ids)]
+        candidate_ids = set(visible_ids)
+        if search_match_ids is not None:
+            candidate_ids &= search_match_ids
+        visible_coords = [d for d in dsos if d.dso_id in candidate_ids]
         now_status_by_dso = await asyncio.to_thread(
             compute_now_status,
             location,

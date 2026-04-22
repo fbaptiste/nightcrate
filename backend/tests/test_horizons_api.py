@@ -285,6 +285,50 @@ async def test_import_creates_custom_horizon(client):
 
 
 @pytest.mark.anyio
+async def test_import_auto_promotes_to_default(client):
+    """Importing a horizon for a location that has no prior custom
+    horizon promotes the new row to default — otherwise the imported
+    file has no visible effect on the planner (the auto-seeded 0°
+    artificial stays active)."""
+    loc_id = await _make_location(client)
+    file_text = "0 10\n90 20\n180 5\n270 15\n"
+    files = {"file": ("backyard.hrz", file_text.encode("utf-8"), "text/plain")}
+    resp = await client.post(f"/api/locations/{loc_id}/horizons/import", files=files)
+    assert resp.status_code == 200
+    horizons = (await client.get(f"/api/locations/{loc_id}/horizons")).json()
+    default = next(h for h in horizons if h["is_default"])
+    assert default["type"] == "custom"
+    assert default["id"] == resp.json()["horizon"]["id"]
+
+
+@pytest.mark.anyio
+async def test_import_replacement_preserves_default_flag(client):
+    """When a location already has a custom horizon, re-importing
+    replaces its points without changing whatever default state the
+    user had chosen for it."""
+    loc_id = await _make_location(client)
+    # Create a custom horizon but DO NOT promote it (stays as
+    # non-default; the auto-seeded 0° artificial remains default).
+    await client.post(
+        f"/api/locations/{loc_id}/horizons",
+        json={"name": "Custom", "type": "custom", "points": SAMPLE_POINTS, "source": "drawn"},
+    )
+    # Confirm 0° artificial is still default.
+    horizons = (await client.get(f"/api/locations/{loc_id}/horizons")).json()
+    default_before = next(h for h in horizons if h["is_default"])
+    assert default_before["type"] == "artificial"
+
+    # Re-import the custom — must preserve the non-default flag.
+    file_text = "0 22\n180 7\n"
+    files = {"file": ("replaced.hrz", file_text.encode("utf-8"), "text/plain")}
+    resp = await client.post(f"/api/locations/{loc_id}/horizons/import", files=files)
+    assert resp.status_code == 200
+    horizons = (await client.get(f"/api/locations/{loc_id}/horizons")).json()
+    default_after = next(h for h in horizons if h["is_default"])
+    assert default_after["id"] == default_before["id"]  # same row still default
+
+
+@pytest.mark.anyio
 async def test_import_replaces_existing_custom(client):
     loc_id = await _make_location(client)
     # Seed a drawn custom horizon.

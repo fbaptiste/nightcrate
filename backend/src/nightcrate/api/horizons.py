@@ -392,10 +392,19 @@ async def import_horizon(location_id: int, file: UploadFile = File(...)) -> Hori
                 ),
             )
             horizon_id = cursor.lastrowid
-            inherit_default = False
+            # First-time import — promote the new custom horizon to
+            # default so the planner actually uses it. Without this
+            # the auto-seeded ``0° flat`` artificial default stays
+            # active and the user's NINA / Stellarium / Telescopius
+            # import has no visible effect on the planner.
+            promote_to_default = True
         else:
             horizon_id = int(existing["id"])
-            inherit_default = bool(existing["is_default"])
+            # Replacement import — preserve whatever the user had set
+            # as default. If the existing custom was default, the
+            # replaced row stays default (the UPDATE below just bumps
+            # updated_at); if it wasn't, respect that choice.
+            promote_to_default = False
             await conn.execute(
                 """
                 UPDATE location_horizon
@@ -408,10 +417,8 @@ async def import_horizon(location_id: int, file: UploadFile = File(...)) -> Hori
 
         await _write_points(conn, horizon_id, result.points)
 
-        if inherit_default:
-            # Nothing to do — row already is_default, the UPDATE above
-            # just bumped its updated_at.
-            pass
+        if promote_to_default:
+            await _promote_to_default(conn, location_id, horizon_id)
 
         await conn.commit()
         row = await _fetch_horizon_row(conn, location_id, horizon_id)

@@ -113,6 +113,35 @@ def test_parse_three_duplicate_azimuths_stack_offsets() -> None:
     assert len(result.warnings) == 2
 
 
+def test_parse_duplicate_near_360_stays_in_range() -> None:
+    """Near the 360° seam the naive +0.01° offset could push the
+    duplicate to ≥ 360°, violating the Pydantic ``Field(lt=360.0)``
+    validator and the ``azimuth_deg < 360`` CHECK. Wrap-mod keeps
+    the offset in [0, 360)."""
+    text = "0 0\n359.995 5\n359.995 10\n"
+    result = parse_horizon_text(text)
+    azimuths = [p[0] for p in result.points]
+    # All azimuths must lie in [0, 360).
+    assert all(0.0 <= az < 360.0 for az in azimuths)
+
+
+def test_parse_duplicate_does_not_collide_with_next_real_point() -> None:
+    """Three duplicates at 10.00 followed by a real point at 10.02
+    — naive stacking would produce 10.00, 10.01, 10.02 (collides
+    with the real 10.02 on the next iteration and gets dropped by
+    the composite PK). The cap keeps offsets below the next real
+    azimuth, preserving the real 10.02 point."""
+    text = "10.00 1\n10.00 2\n10.00 3\n10.02 9\n"
+    result = parse_horizon_text(text)
+    azimuths = [p[0] for p in result.points]
+    # All four points must survive and have distinct azimuths.
+    assert len(result.points) == 4
+    assert len(set(azimuths)) == 4
+    # The real 10.02 point must be present, with its original altitude.
+    altitudes_at_1002 = [p[1] for p in result.points if abs(p[0] - 10.02) < 1e-6]
+    assert altitudes_at_1002 == [9.0]
+
+
 def test_parse_fewer_than_two_points_rejected() -> None:
     with pytest.raises(HorizonParseError, match="at least 2"):
         parse_horizon_text("90 10\n")
