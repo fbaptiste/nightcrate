@@ -92,6 +92,27 @@ async def test_list_filter_by_constellation(client, dso_loaded):
 
 
 @pytest.mark.anyio
+async def test_list_filter_by_multiple_constellations_is_or_semantic(client, dso_loaded):
+    """``constellation=Per,Ori`` returns rows from either constellation."""
+    resp = await client.get("/api/dso?constellation=Per,Ori")
+    items = resp.json()["items"]
+    constellations = {i["constellation"] for i in items}
+    assert constellations == {"Per", "Ori"}
+
+
+@pytest.mark.anyio
+async def test_constellations_facet_does_not_collapse_after_selection(client, dso_loaded):
+    """Selecting one constellation must NOT empty the facet for the rest —
+    otherwise the multi-select picker would hide every remaining option
+    after the first click."""
+    unfiltered = (await client.get("/api/dso/facets")).json()
+    filtered = (await client.get("/api/dso/facets?constellation=Per")).json()
+    unfiltered_codes = {c["code"] for c in unfiltered["constellations"]}
+    filtered_codes = {c["code"] for c in filtered["constellations"]}
+    assert filtered_codes == unfiltered_codes
+
+
+@pytest.mark.anyio
 async def test_list_search_matches_messier_designation(client, dso_loaded):
     resp = await client.get("/api/dso?q=M42")
     items = resp.json()["items"]
@@ -275,6 +296,74 @@ async def test_facets_includes_type_groups_and_raw_types(client, dso_loaded):
     assert "raw_types" in body
     # Every type_groups entry carries a raw_types list.
     assert all("raw_types" in g for g in body["type_groups"])
+
+
+# ── v0.18.1 extensions: catalog filter + catalogs facet ─────────────────────
+
+
+@pytest.mark.anyio
+async def test_list_filter_by_single_catalog_messier(client, dso_loaded):
+    """catalog=messier returns only DSOs with a Messier designation."""
+    resp = await client.get("/api/dso?catalog=messier")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    designation_sets = [{d["catalog"] for d in i["designations"]} for i in items]
+    assert all("messier" in s for s in designation_sets)
+    # Mini NGC fixture has M42 (NGC1976), M31 (NGC224), M101 (NGC5457).
+    primary_names = {i["primary_designation"] for i in items}
+    assert {"M 42", "M 31", "M 101"} <= primary_names
+
+
+@pytest.mark.anyio
+async def test_list_filter_by_multiple_catalogs_is_or_semantic(client, dso_loaded):
+    """catalog=messier,barnard returns the union, not the intersection."""
+    messier_only = (await client.get("/api/dso?catalog=messier")).json()["items"]
+    # Use NGC (huge overlap) to prove union semantics: messier ⊂ union, and
+    # the union has rows messier alone doesn't (e.g. NGC 281 / Pacman, which
+    # carries an NGC designation but not a Messier one).
+    union = (await client.get("/api/dso?catalog=messier,ngc")).json()["items"]
+    assert len(union) > len(messier_only)
+    primary_names = {i["primary_designation"] for i in union}
+    assert "NGC 281" in primary_names
+
+
+@pytest.mark.anyio
+async def test_list_filter_by_unknown_catalog_returns_empty(client, dso_loaded):
+    """An unknown catalog code matches zero DSOs (no designations for it)."""
+    resp = await client.get("/api/dso?catalog=doesnotexist")
+    assert resp.json()["total"] == 0
+
+
+@pytest.mark.anyio
+async def test_facets_includes_catalog_counts(client, dso_loaded):
+    resp = await client.get("/api/dso/facets")
+    body = resp.json()
+    assert "catalogs" in body
+    catalog_counts = {c["code"]: c["count"] for c in body["catalogs"]}
+    # Every canonical NGC row in the fixture contributes an 'ngc' designation.
+    assert catalog_counts.get("ngc", 0) >= 8
+    # Messier subset is smaller than NGC.
+    assert 0 < catalog_counts.get("messier", 0) < catalog_counts["ngc"]
+
+
+@pytest.mark.anyio
+async def test_catalog_facet_excludes_own_dimension_filter(client, dso_loaded):
+    """When catalog filter is active, the catalogs facet still surfaces
+    the full distribution across catalogs — its own dimension is
+    excluded from its own facet query (classic faceted search)."""
+    unfiltered = (await client.get("/api/dso/facets")).json()
+    filtered = (await client.get("/api/dso/facets?catalog=messier")).json()
+    unfiltered_codes = {c["code"] for c in unfiltered["catalogs"]}
+    filtered_codes = {c["code"] for c in filtered["catalogs"]}
+    # Catalogs facet should not collapse to only messier.
+    assert filtered_codes == unfiltered_codes
+    # Other-dimension facets DO apply the catalog filter — raw type counts
+    # under catalog=messier should be lower than unfiltered.
+    unfiltered_raw = {t["code"]: t["count"] for t in unfiltered["raw_types"]}
+    filtered_raw = {t["code"]: t["count"] for t in filtered["raw_types"]}
+    # Galaxies: M31 + M101 both have messier designations, so count stays ≥ 2
+    # but cannot exceed the unfiltered total.
+    assert filtered_raw.get("G", 0) <= unfiltered_raw.get("G", 0)
 
 
 @pytest.mark.anyio

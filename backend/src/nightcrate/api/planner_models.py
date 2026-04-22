@@ -8,7 +8,17 @@ from pydantic import BaseModel
 class PlannerLocationSummary(BaseModel):
     id: int
     name: str
-    has_custom_horizon: bool
+
+
+class PlannerHorizonSummary(BaseModel):
+    """Echo of the horizon used to compute the snapshot — mirrors the
+    location + rig summaries so the UI header can render "{horizon name}
+    · {flat altitude}°" without a second fetch."""
+
+    id: int
+    name: str
+    type: str  # 'custom' | 'artificial'
+    flat_altitude_deg: float | None
 
 
 class PlannerRigSummary(BaseModel):
@@ -29,7 +39,6 @@ class PlannerTargetItem(BaseModel):
     primary_designation: str
     common_name: str | None
     obj_type: str
-    type_group: str | None
     ra_deg: float | None
     dec_deg: float | None
     constellation: str | None
@@ -50,20 +59,41 @@ class PlannerTargetItem(BaseModel):
     altitude_at_transit_deg: float | None
     min_moon_separation_deg: float | None
     coverage_pct: float | None = None
+    # "up" / "rising" / "set" relative to the request time. ``None``
+    # in Anytime mode (no location, no now-anchored question).
+    now_status: str | None = None
 
 
 class PlannerTargetsResponse(BaseModel):
     # ``None`` in Anytime mode when the caller didn't supply a location
     # — catalog browsing is location-independent.
     location: PlannerLocationSummary | None
+    # Echo of the effective horizon used for tonight-mode compute.
+    # ``None`` in Anytime mode (no location → no horizon either).
+    horizon: PlannerHorizonSummary | None = None
     rig: PlannerRigSummary | None
     date: str
     dark_window: DarkWindowOut | None
     moon_phase_pct: float
+    # One of the eight standard moon-phase names ("New Moon",
+    # "Waxing Crescent", "First Quarter", …). ``null`` in Anytime
+    # mode when no date / location anchor is available.
+    moon_phase_name: str | None
     total: int
     offset: int
     limit: int
     items: list[PlannerTargetItem]
+    # Facet counts computed alongside the filtered items so the
+    # frontend's pill filters can render labels like "Galaxy (234)"
+    # that reflect the current filter state instead of the full
+    # catalog total. Each dict is keyed by its dimension's value
+    # (raw obj_type codes, catalog codes, 3-letter constellation
+    # codes); values are the number of DSOs that would survive if
+    # only that dimension's value were selected, with all OTHER
+    # filters held constant (faceted-search convention).
+    raw_type_counts: dict[str, int]
+    catalog_counts: dict[str, int]
+    constellation_counts: dict[str, int]
 
 
 class TwilightBandsOut(BaseModel):
@@ -83,12 +113,35 @@ class SkyTrackResponse(BaseModel):
     object_altitude_deg: list[float]
     object_azimuth_deg: list[float]
     moon_altitude_deg: list[float]
+    moon_separation_deg: list[float]
     horizon_altitude_at_object_az: list[float]
     twilight: TwilightBandsOut
     moon_phase_pct: float
     peak_time_utc: str
     peak_altitude_deg: float
     transit_time_utc: str | None
+
+
+class AnnualHoursPoint(BaseModel):
+    """One night's bucket in the "best time of year" chart."""
+
+    # Evening date D — the night's hours span dusk D → dawn D+1.
+    date: str
+    hours: float
+
+
+class AnnualHoursResponse(BaseModel):
+    dso_id: int
+    year: int
+    horizon_id: int
+    horizon_type: str  # 'custom' | 'artificial'
+    horizon_name: str
+    # Flat altitude for artificial horizons; ``None`` for custom.
+    flat_altitude_deg: float | None
+    # Minimum moon–target separation (deg). ``0`` means the moon check
+    # is disabled entirely.
+    moon_sep_deg: float
+    points: list[AnnualHoursPoint]
 
 
 class ThumbnailCacheStats(BaseModel):
@@ -154,7 +207,6 @@ class NearbyDsoItem(BaseModel):
     maj_axis_arcmin: float | None
     min_axis_arcmin: float | None
     obj_type: str
-    type_group: str | None
 
 
 class NearbyDsosResponse(BaseModel):

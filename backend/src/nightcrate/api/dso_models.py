@@ -105,7 +105,13 @@ class ConstellationFacet(BaseModel):
     count: int
 
 
+class CatalogFacet(BaseModel):
+    code: str
+    count: int
+
+
 class DsoFacetsResponse(BaseModel):
     type_groups: list[TypeGroupFacet]
     raw_types: list[RawTypeFacet]
     constellations: list[ConstellationFacet]
+    catalogs: list[CatalogFacet]

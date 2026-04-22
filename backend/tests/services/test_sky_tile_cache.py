@@ -32,6 +32,7 @@ from nightcrate.services.sky_tile_cache import (
     clear_cache,
     get_cell,
     make_cell_key,
+    rehydrate_from_disk,
     sync_orphan_files,
 )
 from nightcrate.services.sky_tiles import TIERS
@@ -289,6 +290,43 @@ async def test_lru_eviction_enforces_max_bytes(fake_hips, tmp_path):
         cursor = await conn.execute("SELECT COUNT(*) AS n FROM sky_tile_cache")
         row = await cursor.fetchone()
     assert row["n"] == 1
+
+
+async def test_rehydrate_from_disk_rebuilds_cache_index(tmp_path):
+    """Tiles on disk survive a database wipe — ``rehydrate_from_disk``
+    re-parses filenames back into ``sky_tile_cache`` rows so the cache
+    is usable even when the SQLite index was just dropped and
+    recreated. Matches the real-world scenario where a user switches
+    databases or bootstraps a fresh one.
+    """
+    cell_dir = tmp_path / "sky_tiles"
+    cell_dir.mkdir()
+    jpeg = cell_dir / "CDS_P_DSS2_color_n8_p300_narrow_50_800x800_1_-2.jpg"
+    jpeg.write_bytes(b"\xff\xd8" + b"x" * 2048)  # plausible JPEG body
+    # Unrecognised slug → skipped (not all surveys are rehydratable).
+    unknown = cell_dir / "unknown_survey_n8_p300_narrow_50_800x800_0_0.jpg"
+    unknown.write_bytes(b"\xff\xd8" + b"x" * 2048)
+    # Too small → skipped (treated as truncated).
+    tiny = cell_dir / "CDS_P_DSS2_color_n8_p300_narrow_50_800x800_2_0.jpg"
+    tiny.write_bytes(b"\x00\x01\x02")
+
+    async with get_db() as conn:
+        inserted = await rehydrate_from_disk(conn)
+        cursor = await conn.execute(
+            "SELECT hips_survey, healpix_ipix, cell_i, cell_j, bytes FROM sky_tile_cache"
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+
+    assert inserted == 1
+    assert len(rows) == 1
+    assert rows[0]["hips_survey"] == "CDS/P/DSS2/color"
+    assert rows[0]["healpix_ipix"] == 300
+    assert rows[0]["cell_i"] == 1
+    assert rows[0]["cell_j"] == -2
+    assert rows[0]["bytes"] == len(jpeg.read_bytes())
+    # Unknown / tiny files are untouched — rehydrate doesn't delete.
+    assert unknown.exists()
+    assert tiny.exists()
 
 
 async def test_sync_orphan_files_removes_unreferenced_jpegs(tmp_path):

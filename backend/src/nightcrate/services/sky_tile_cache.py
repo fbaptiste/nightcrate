@@ -450,11 +450,103 @@ async def clear_cache(conn: aiosqlite.Connection) -> int:
     return deleted
 
 
+_REHYDRATE_FILENAME_RE = re.compile(
+    r"^(?P<slug>[A-Za-z0-9_]+?)_n(?P<nside>\d+)_p(?P<ipix>\d+)_"
+    r"(?P<tier>narrow|med|wide)_(?P<csize>\d+)_"
+    r"(?P<w>\d+)x(?P<h>\d+)_(?P<i>-?\d+)_(?P<j>-?\d+)\.jpg$"
+)
+
+# Slugs we accept for rehydration. One-way slug mapping
+# (``CDS/P/DSS2/color`` → ``CDS_P_DSS2_color``) loses path structure,
+# so rehydration is limited to surveys we know about.
+_SLUG_TO_HIPS: dict[str, str] = {
+    "CDS_P_DSS2_color": "CDS/P/DSS2/color",
+}
+
+
+async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
+    """Re-index on-disk tile files that are missing from the cache table.
+
+    Fires on app startup before the orphan sweep so a user who wipes
+    the database (e.g. via Admin → Database switch) doesn't lose their
+    tile cache — the JPEGs live in ``APP_DIR/sky_tiles`` independently
+    of the SQLite index. Each filename encodes the full ``CellKey``
+    plus cell dimensions, so we can rebuild the DB row without a CDS
+    round-trip. Fetch timestamps get reset to "now" since we don't
+    know when the file was originally written.
+
+    Returns the number of rows inserted.
+    """
+    d = APP_DIR / "sky_tiles"
+    if not d.is_dir():
+        return 0
+
+    cursor = await conn.execute("SELECT file_path FROM sky_tile_cache")
+    known = {str(Path(row["file_path"]).resolve()) for row in await cursor.fetchall()}
+
+    inserted = 0
+    for entry in d.iterdir():
+        if not entry.is_file() or entry.suffix != ".jpg":
+            continue
+        if str(entry.resolve()) in known:
+            continue
+        match = _REHYDRATE_FILENAME_RE.match(entry.name)
+        if match is None:
+            continue
+        hips = _SLUG_TO_HIPS.get(match.group("slug"))
+        if hips is None:
+            continue
+        try:
+            size_bytes = entry.stat().st_size
+        except OSError:
+            continue
+        if size_bytes < 100:
+            # Truncated / placeholder file — skip so we re-fetch fresh.
+            continue
+        try:
+            await conn.execute(
+                """
+                INSERT INTO sky_tile_cache (
+                    hips_survey, healpix_nside, healpix_ipix, tier,
+                    cell_size_deg_x100, cell_width_px, cell_height_px,
+                    cell_i, cell_j, file_path, source, bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dss2_color', ?)
+                """,
+                (
+                    hips,
+                    int(match.group("nside")),
+                    int(match.group("ipix")),
+                    match.group("tier"),
+                    int(match.group("csize")),
+                    int(match.group("w")),
+                    int(match.group("h")),
+                    int(match.group("i")),
+                    int(match.group("j")),
+                    str(entry),
+                    size_bytes,
+                ),
+            )
+            inserted += 1
+        except aiosqlite.IntegrityError:
+            # Race with a concurrent insert (shouldn't happen at
+            # startup, but belt-and-braces). Skip silently.
+            continue
+    if inserted:
+        await conn.commit()
+        logger.info(
+            "[sky_tiles] rehydrated %d on-disk file(s) into the cache index",
+            inserted,
+        )
+    return inserted
+
+
 async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
     """Delete on-disk files not referenced by any cache row.
 
-    Called on app startup to clean up files left behind by crashes
-    mid-write or by manual tampering.
+    Called on app startup AFTER ``rehydrate_from_disk``, so any file
+    that could be reattached to the index has already been. Anything
+    left is either corrupt, from an unrecognised hips survey, or has
+    been removed from the cache table explicitly.
     """
     d = APP_DIR / "sky_tiles"
     if not d.is_dir():

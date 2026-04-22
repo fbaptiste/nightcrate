@@ -1,4 +1,4 @@
--- NightCrate version: 0.18.0
+-- NightCrate version: 0.19.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1093,21 +1093,39 @@ LEFT JOIN computer comp ON comp.id = r.computer_id
 LEFT JOIN filter sf ON sf.id = r.single_filter_id;
 
 
--- ── Custom Horizons (migration 0014) ────────────────────────────────────────
--- One horizon per location. Points cascade-delete with the horizon, which
--- cascade-deletes with the parent location. A soft-deleted location keeps
--- its horizon rows inaccessible until restored (horizon CASCADE triggers
--- only on hard delete).
+-- ── Horizons (multi per location, migrations 0014 + 0021) ──────────────────
+-- Each location owns ≥1 horizon: at most one custom polyline ('custom' with
+-- points in location_horizon_point), plus any number of named artificial
+-- flat-altitude rows ('artificial' with flat_altitude_deg). Partial unique
+-- indexes enforce exactly-one-default per location AND at-most-one-custom
+-- per location. Migration 0021 reshaped the original 1:1 shape (created
+-- in 0014) to 1:N and backfilled a '0° flat' artificial default for every
+-- location that had no horizon. Points cascade-delete with the horizon.
 
 CREATE TABLE location_horizon (
-    id              INTEGER PRIMARY KEY,
-    location_id     INTEGER NOT NULL UNIQUE REFERENCES location(id) ON DELETE CASCADE,
-    source          TEXT NOT NULL CHECK (source IN ('imported', 'drawn')),
-    source_filename TEXT,
-    notes           TEXT,
-    created_at      TIMESTAMP NOT NULL DEFAULT (datetime('now')),
-    updated_at      TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+    id                  INTEGER PRIMARY KEY,
+    location_id         INTEGER NOT NULL REFERENCES location(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    type                TEXT NOT NULL CHECK (type IN ('custom', 'artificial')),
+    flat_altitude_deg   REAL,
+    source              TEXT CHECK (source IS NULL OR source IN ('imported', 'drawn')),
+    source_filename     TEXT,
+    notes               TEXT,
+    is_default          INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at          TIMESTAMP NOT NULL DEFAULT (datetime('now')),
+    updated_at          TIMESTAMP NOT NULL DEFAULT (datetime('now')),
+    CHECK (
+        (type = 'custom' AND flat_altitude_deg IS NULL) OR
+        (type = 'artificial' AND flat_altitude_deg >= -5 AND flat_altitude_deg <= 90 AND source IS NULL)
+    ),
+    UNIQUE (location_id, name)
 );
+
+CREATE UNIQUE INDEX idx_location_horizon_default
+    ON location_horizon (location_id) WHERE is_default = 1;
+
+CREATE UNIQUE INDEX idx_location_horizon_one_custom
+    ON location_horizon (location_id) WHERE type = 'custom';
 
 CREATE TABLE location_horizon_point (
     horizon_id      INTEGER NOT NULL REFERENCES location_horizon(id) ON DELETE CASCADE,

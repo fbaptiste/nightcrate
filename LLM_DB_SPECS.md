@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.18.0
+**NightCrate version:** 0.19.0
 
 ## Overview
 
@@ -305,7 +305,7 @@ Maps FITS FILTER header values to filters (e.g., "Ha", "H-alpha", "Halpha" → s
 The following tables are entirely user-created at runtime — they must **not** have seed CSVs:
 
 - `location` — user's observing sites. Created via the Locations page.
-- `location_horizon` and `location_horizon_point` — custom horizon profile per location (v0.13.0). Created via the Horizon Editor inside the Location editor, or imported from N.I.N.A. `.hrz`, Stellarium, Telescopius, APCC, or Theodolite iPhone CSV. One horizon per location, 2+ points.
+- `location_horizon` and `location_horizon_point` — multi-horizon per location (v0.19.0 reshape of the v0.13.0 1:1 schema). Each location owns ≥1 horizon: at most one `type='custom'` polyline (with ≥2 points in `location_horizon_point`) plus any number of named `type='artificial'` flat-altitude rows (`flat_altitude_deg` in `[-5, 90]`). Exactly one row per location is marked `is_default=1` (partial unique index). Custom imports from N.I.N.A. `.hrz`, Stellarium, Telescopius, APCC, or Theodolite iPhone CSV via the Horizon Editor. `POST /api/locations` auto-seeds a `0° flat` artificial default.
 - `rig`, `rig_filter_slot`, `rig_software` — user-composed imaging rigs.
 
 ## Loader-populated (not seed-loader) tables

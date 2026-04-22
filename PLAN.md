@@ -29,7 +29,8 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.16.0 — Target Planner (Pass A)](#v0160--target-planner-pass-a) ✅
 - [v0.17.0 — Target Planner Pass B (FOV Simulator + Rig-Framed Thumbnails)](#v0170--target-planner-pass-b-fov-simulator--rig-framed-thumbnails) ✅
 - [v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)](#v0180--target-planner-pass-c-sky-tile-cache--seamless-stitching) ✅
-- [v0.18.1 — Target Planner UX Polish (planned)](#v0181--target-planner-ux-polish-planned)
+- [v0.18.1 — Target Planner UX Polish](#v0181--target-planner-ux-polish) ✅
+- [v0.19.0 — Multi-Horizon + Planner Rewrite](#v0190--multi-horizon--planner-rewrite) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -2498,10 +2499,10 @@ is the new cell cache.
 
 ---
 
-## v0.18.1 — Target Planner UX Polish (planned)
+## v0.18.1 — Target Planner UX Polish
 
-**Status:** Planned
-**Branch:** TBD
+**Status:** Done
+**Branch:** `v0.18.1/planner-polish` (rolled forward into v0.19.0 branch)
 
 Collected UX polish items surfaced during v0.18.0 manual testing.
 None are bugs — small additive improvements deferred so v0.18.0 can
@@ -2526,24 +2527,25 @@ ship.
       new facets-with-filters endpoint, or drop the parenthesised
       count in Tonight mode and only show it in Anytime.
 
-- [ ] **Revisit type-group vs raw-type chip overlap.** Main chips
-      show user-facing group names (e.g. `Galaxy`) derived via
-      `group_for_raw_type`; the Advanced section shows raw OpenNGC
-      codes (e.g. `G` → "Galaxy" via `displayDsoType`). The labels
-      collide ("Galaxy" appears in both), which reads as
-      redundancy. Either rename one side, hide raw codes whose
-      display form matches a group name, or merge the two controls.
+- [ ] **Planner "Clear filters" discoverability.** The button only
+      renders when `catalogFiltersActive` is true (at least one of:
+      search, constellation, has-distance, type-group chip, raw-type
+      chip). A user who just wants to reset their mag/size/min-hours
+      sliders won't see it. Decide together with the catalog-filter
+      redesign — options include always-rendering the button,
+      adding a slider-specific "Reset to defaults" button, or
+      rolling all of it under one Clear control.
+
+- [ ] **Revisit type-group vs raw-type chip overlap** (bundle with
+      the catalog-filter-redesign discussion below — not a separate
+      decision). Main chips show user-facing group names (e.g.
+      `Galaxy`) derived via `group_for_raw_type`; the Advanced
+      section shows raw OpenNGC codes (e.g. `G` → "Galaxy" via
+      `displayDsoType`). The labels collide ("Galaxy" appears in
+      both) and should be resolved as part of whatever shape the
+      filter controls take post-redesign.
 
 ### DSO Catalog
-
-- [ ] **Full-image modal introduces scrollbars on large objects.**
-      M 42 (and likely other wide-extent DSOs) renders with a
-      horizontal scrollbar when opened via "View full image". The
-      modal's `SkyPreview` composite's natural size exceeds the
-      modal's viewport along the major axis. Fit the preview to the
-      modal's inner size (`object-fit: contain` on the composite, or
-      clamp composite dimensions to the modal bounds) so the image
-      always fits without scrolling.
 
 - [ ] **Survey of DSOs with no RA/Dec.** Rather more entries than
       expected have null coordinates. Worth investigating — are
@@ -2572,35 +2574,37 @@ ship.
 
 ### FOV Simulator background survey
 
-- [ ] **DSS2 plate-boundary seams are visible at wide extents.** The
-      mosaic stitches pixel-perfectly (verified on NGC 7000 —
-      astrometry is seamless), but intensity / colour deltas
-      between adjacent HEALPix cells are noticeable because DSS2
-      itself is a patchwork of independently calibrated
-      photographic plates. Not a NightCrate bug — same effect
-      appears in Aladin / Stellarium. Mitigations would need a
-      survey picker (Pan-STARRS / DECaLS in their coverage area,
-      DSS2 elsewhere) or per-tile median normalisation.
+- [x] **DSS2 plate-boundary seams are visible at wide extents.**
+      Decision: accept as a known DSS2 data characteristic — same
+      effect appears in Aladin / Stellarium. Mosaic stitches
+      pixel-perfectly (verified on NGC 7000); the deltas are plate-
+      to-plate exposure / development differences, not a NightCrate
+      stitching bug. A proper survey picker (Pan-STARRS / DECaLS
+      where available, DSS2 fallback) is a feature, not polish —
+      deferred to its own future version rather than landing inside
+      v0.18.1.
 
-### Admin / Catalogs UX
+### Cache resilience across database recreation
 
-- [ ] **Clarify OpenNGC "Re-download" vs "Reload local cache"
-      buttons + tooltips.** First-run users see two buttons whose
-      labels don't make it obvious what each does. Rename + tooltip:
-      "Re-download" → "Fetch latest from GitHub" (hits the network,
-      overwrites the cached files in `APP_DIR/catalogs/openngc/`),
-      "Reload local cache" → "Reload into database from cached
-      files" (no network — re-parses the local CSVs and refreshes
-      the `dso` / `dso_designation` tables from them).
-
-- [ ] **Add "Reload from local cache" buttons to Sharpless 2 /
-      Barnard / 50 MGC.** Today those sources only expose
-      "Re-fetch from source" buttons. Reloading from local cache
-      is meaningful in the same scenarios as OpenNGC — e.g. after
-      dropping the database but keeping the cached files in
-      `APP_DIR/catalogs/`. The backend loader already supports it;
-      the Admin UI just doesn't expose it for these sources. Apply
-      the rename pattern above to the new buttons from day one.
+- [ ] **Thumbnail cache: coordinate-keyed filenames.** v0.18.1
+      added a startup rehydration path for ``thumbnail_cache`` that
+      re-indexes on-disk JPEGs, but it's limited by the current
+      filename format ``{dso_id}_{variant}_{w}x{h}.jpg``. The
+      embedded ``dso_id`` isn't stable across fresh catalog loads
+      (OpenNGC rows get auto-assigned integers in insertion order,
+      and that order isn't guaranteed to match between databases),
+      so a user who creates a new DB loses the thumbnails both
+      pages rely on — the Planner's list thumbnails, the DSO
+      Catalog grid's row thumbnails, and the "In my rig" column —
+      even though the JPEGs are still on disk. Fix: encode
+      ``(ra_deg_x10000, dec_deg_x10000)`` in the filename instead
+      of / alongside ``dso_id``; rehydrate matches files to current
+      ``dso`` rows by angular coordinate (≤1 arcsec tolerance).
+      Migration note: current thumbnails would be orphaned once on
+      rollout; the new format is cross-DB resilient thereafter.
+      The sky-tile cache (FOV simulator backgrounds, DSO Catalog
+      detail-panel preview) already survives DB recreation because
+      its filenames encode HEALPix region identity, no DSO id.
 
 ### Admin / Settings restructure
 
@@ -2616,6 +2620,18 @@ ship.
       GPU on/off, worker cores).
 
 ### Planner detail panel
+
+- [ ] **Discuss: date selector on the altitude chart.** The
+      Sky position graph currently always renders "tonight" —
+      there's no way for the user to preview a target's altitude
+      curve on, say, next Saturday. The planner's core workflow
+      assumes tonight, but the detail panel should let users pick
+      any date while leaving the parent grid unchanged. Scope
+      question: does the date picker live in the detail panel only
+      (matches the existing in-panel location picker's pattern), or
+      does it propagate up to the grid (changes the whole planner
+      view to that date)? Decide together with the altitude-chart
+      Anytime behaviour.
 
 - [ ] **Discuss: altitude chart (SkyPositionGraph) behaviour in
       Anytime mode.** The detail dialog's "Sky position" section
@@ -2633,25 +2649,212 @@ ship.
 
 ### Planner grid
 
-- [ ] **Grid shows blank state during first fetch instead of a
-      spinner.** On Anytime's first open, the targets query kicks
-      off but the DataGrid renders an empty grid with no loading
-      indicator for several seconds. The DataGrid accepts a
-      ``loading`` prop (already wired to
-      ``targetsQuery.isLoading || targetsQuery.isFetching``) but
-      the default overlay is subtle. Either swap to a more visible
-      loading overlay (centered spinner + "Loading catalog…") or
-      ensure the existing one actually renders during the first
-      fetch — today the user sees nothing.
+- [x] **Grid shows blank state during first fetch instead of a
+      spinner.** Replaced with the custom opaque overlay on the
+      Paper wrapper — covers the card list (v0.19.0 replaced the
+      DataGrid with cards) during any `isLoading || isFetching`
+      state. Bypasses MUI X Community's `loading` prop, which
+      rendered a linear-progress bar inside the column-header row
+      that peeked through as clipped artifacts.
 
-### Planner grid pagination
+---
 
-- [ ] **First / Prev / Page-N / Next / Last pagination controls** —
-      same component the DSO Catalog page already uses
-      (`PaginationActions` in `pages/DsoCatalogPage.tsx`).
-      Extract into `components/common/PaginationActions.tsx` and
-      wire into both pages' DataGrid via `slotProps.basePagination.
-      ActionsComponent`.
+## v0.19.0 — Multi-Horizon + Planner Rewrite
+
+**Status:** Done
+**Branch:** `v0.18.1/planner-polish` (kept the v0.18.1 branch name but
+the scope outgrew polish — shipped as v0.19.0)
+
+Two large feature rewrites shipped together because they touched
+the same data-flow paths:
+
+1. Locations gained a first-class **Horizons** concept — one
+   optional custom polyline plus any number of named artificial
+   (flat-altitude) horizons per location, with one marked default.
+   Every compute path that used to branch on "does the location
+   have a horizon?" now takes a `PlannerHorizon` argument and the
+   30° fallback setting is gone.
+
+2. The planner page got a **multi-sort drag-drop panel** and its
+   DataGrid row layout was replaced with a **card-per-DSO list**.
+
+Along the way: RA/Dec added to each card, now-status bug fixed,
+Frames-Well turned into a dual-thumb coverage-range slider with
+user-configurable defaults, annual chart default moon separation
+made configurable, custom loading overlay replaces MUI's
+linear-progress artifact.
+
+### Multi-horizon per location
+
+- [x] **Migration 0021 `location_horizon_multi.sql`** — reshapes
+      `location_horizon` 1:1 → 1:N. One optional custom polyline
+      plus artificial flat-altitude rows, partial unique index on
+      `is_default` (exactly one per location), partial unique
+      index `(location_id) WHERE type='custom'` (max one custom),
+      CHECK-enforced `type ∈ {'custom', 'artificial'}` vocabulary.
+      Reshape pattern recreates `location_horizon_point` too — the
+      SQLite `ALTER TABLE RENAME` FK-rewrite trap (original FKs
+      follow the rename to the legacy table) made a DROP + recreate
+      necessary; `PRAGMA foreign_keys = OFF` + explicit index drop
+      handles it atomically.
+
+- [x] **Horizons CRUD API** — `GET/POST/PATCH/DELETE
+      /api/locations/{id}/horizons[/{hid}]`. Auto-promote on
+      default delete, 422 on last-horizon delete, 422 on demoting
+      a default without promoting another, 409 on duplicate name
+      or second custom. Artificial-horizon payloads are
+      name + altitude only; custom-horizon payloads carry points.
+
+- [x] **Auto-seed default** — `POST /api/locations` creates the
+      location and a `0° flat` artificial horizon marked default
+      in the same transaction. Migration backfills the same row
+      for pre-existing locations that had no horizon.
+
+- [x] **Locations Editor horizon section** — new
+      `LocationHorizonsSection` with immediate persistence (no
+      staged save); the existing custom-horizon editor dialog
+      commits on its "Keep changes" button. Default radio per row,
+      Add Artificial dialog, Edit/Delete icons, delete-confirm
+      dialog.
+
+- [x] **Planner compute path** — `services/planner_visibility.py`,
+      `planner_sky_track.py`, `planner_annual_hours.py`,
+      `planner_now_status.py` all take a `PlannerHorizon` argument.
+      `services/horizon.py:resolve_horizon_altitude` dispatches
+      artificial vs custom so the compute code has no branching
+      left. Visibility cache key includes `horizon_id` +
+      `horizon.updated_at`.
+
+- [x] **`planner_min_altitude_deg` setting deleted** — altitude
+      floor now lives per-horizon on the location.
+
+### Planner multi-sort panel
+
+- [x] **Backend multi-sort** — `GET /api/planner/targets` accepts
+      `sort=field:dir,field:dir,...` with stable Timsort per key.
+      Nulls and empty/whitespace strings always sort last
+      regardless of per-key direction (`_sort_value` coerces blank
+      strings to None). 14 sort fields registered in the
+      `PLANNER_SORT_FIELDS` catalog with matching definitions in
+      `frontend/lib/plannerSortFields.ts`.
+
+- [x] **`PlannerSortPanel`** — collapsible accordion below the
+      imaging sliders. "Sort by" area uses a `SortableContext`
+      with `useSortable` pills (drag to reorder within). Available
+      pills are plain `Chip`s with `onClick={addEntry}` — click
+      to add. Removal via X on sort-by pills. Direction toggle
+      (↑/↓) on each sort-by pill.
+
+- [x] **Persist `sortBy` in `plannerStore`** — version 3 bump on
+      the Zustand persist middleware flushes earlier broken-state
+      localStorage. Default seeds `[{primary_designation, asc}]`.
+
+- [x] **DataGrid sort disengaged** — `disableColumnSorting` on the
+      grid; the panel is the sole sort UI. Server-side sort via
+      the `sort` query param.
+
+### Planner card list
+
+- [x] **`PlannerTargetCard`** — one card per DSO, replaces the
+      DataGrid rows. DSS2 thumbnail (with now-status glyph
+      overlaid top-left), optional rig-framed thumbnail with
+      coverage %, then a three-row info block (name + type pill +
+      constellation; size / Mag V / distance / RA / Dec;
+      tonight-only hours + meridian + max-alt + moon-sep). Whole
+      card is a `CardActionArea` → opens detail panel.
+
+- [x] **DataGrid deleted** — entire columns array (~240 lines) +
+      `sortModel` / `onSortModelChange` / `onRowClick` / grid CSS
+      overrides gone. Replaced with a `Stack` of cards +
+      `TablePagination` (reusing the existing `PaginationActions`).
+
+- [x] **Custom loading overlay** — opaque `background.paper`
+      overlay on the Paper wrapper during
+      `isLoading || isFetching`. Bypasses MUI X's built-in
+      linear-progress bar that used to peek through as clipped
+      text inside the column-header row.
+
+### Planner detail panel polish
+
+- [x] **Third selector (Location · Horizon · Rig)** — renamed the
+      existing location + rig selectors to match the naming in
+      the detail panel; added Horizon between them. Changing
+      location resets the horizon to that location's default.
+
+- [x] **Best-time-of-year chart** — moon-separation replaced
+      the ToggleButton with a dropdown (`Ignore moon` / `Moon > N°`
+      with values 0/15/30/45/60/75/90). Default sourced from new
+      `planner_moon_sep_deg` user setting (default 0 = ignore
+      moon). Chart line uses `curveMonotoneX` — monotone-preserving
+      cosmetic rounding with no overshoot on horizon spikes.
+
+- [x] **Scale row** — when a rig is selected, the detail panel
+      shows a one-line caption with pixel size (μm), image scale
+      (arcsec/px), and FOV below the image.
+
+- [x] **Type + distance chips in header** — friendly
+      `displayDsoType` name (not raw NGC code) and distance shown
+      as `pc · ly` (both units).
+
+- [x] **FovSimulator rotation slider** — added inline with the
+      rotation-reset button.
+
+### Now-status fix
+
+- [x] **Daytime-before-tonight logic** — previously an afternoon
+      fetch would sample `now → dark_end`, so an object that had
+      set in the morning but would re-rise tonight read as "set".
+      Fix: decision tree now splits on `now` vs dark window —
+      post-dawn returns empty, daytime-before-tonight samples only
+      the dark-window interval (with "up" never firing),
+      in-astro-dark samples `now → dark_end` like before.
+      `compute_now_status` takes an explicit `astro_dark_start_utc`
+      parameter.
+
+### Frames-Well + settings
+
+- [x] **Frames Well dual-thumb slider** — replaced the boolean
+      toggle with a 0–200 % range slider. Backend: `frames_well`
+      boolean replaced with `coverage_min_pct` / `coverage_max_pct`
+      query params. Frontend: slider hides synchronously when
+      `rigId` goes null (gated on the local state, not the
+      response's `rig` summary which lagged one round-trip).
+
+- [x] **"Size in frame" label** — user-facing rename of "Frames
+      Well" in both the planner page and Settings.
+
+- [x] **New Settings** — `planner_moon_sep_deg` (default 0),
+      `planner_frames_well_min_pct` / `_max_pct` (defaults
+      15 / 90). Wired into `core/config.py` + `api/settings.ts`
+      + `SettingsPage.tsx` (Target Planner section).
+
+### Polish
+
+- [x] DSO-annotation popover: type moved to a pill next to the
+      designation; "Show details" → "Switch to object".
+- [x] Location dropdown "(default)" suffix removed on the planner
+      main page.
+- [x] Meridian + Max alt always render as two separate lines on
+      the card (collapse-when-equal removed — consistent vertical
+      rhythm reads better in the card list).
+- [x] Sort panel summary pills visible when the accordion is
+      collapsed; expand/collapse chevron indicator.
+
+### v0.19.0 Completion Criteria
+
+- [x] Full backend test suite green (1779 passed, 3 skipped).
+- [x] New tests: `test_planner_now_status.py` (6 tests covering
+      all three day/night decision branches), updated
+      `test_horizons_api.py` (24 tests for multi-horizon CRUD),
+      updated `test_planner_annual_hours.py` + `_sky_track.py` +
+      `_visibility.py` for the `PlannerHorizon` signature change.
+- [x] Backend lint / format / bandit clean (0 / 0 / 0).
+- [x] Frontend build clean.
+- [x] Manual end-to-end: multi-horizon flow (create + set
+      default + delete), planner sort panel (add / remove /
+      reorder / flip direction), card list (scroll + click-to-
+      open-detail + tonight/anytime toggle), now-status across
+      day / night / post-dawn.
 
 ---
 

@@ -19,10 +19,12 @@ export interface Settings {
   weather_moon_penalty: boolean;
   weather_units: WeatherUnits;
   calculators_clock_order: string[];
-  planner_min_altitude_deg: number;
   planner_min_visibility_hours: number;
   planner_max_magnitude: number;
   planner_min_size_arcmin: number;
+  planner_frames_well_min_pct: number;
+  planner_frames_well_max_pct: number;
+  planner_moon_sep_deg: number;
   thumbnail_cache_max_mb: number;
 }
 

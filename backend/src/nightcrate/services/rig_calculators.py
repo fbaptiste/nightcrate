@@ -688,11 +688,6 @@ def compute_rig_calculators(
 # FOV Coverage (Target Planner)
 # ---------------------------------------------------------------------------
 
-# "Frames well" bounds for the Target Planner. Below 15% the object looks
-# lost in the frame; above 90% it's cropped or tight.
-COVERAGE_FRAMES_WELL_MIN_PCT = 15.0
-COVERAGE_FRAMES_WELL_MAX_PCT = 90.0
-
 
 def compute_coverage_pct(
     fov_major_deg: float,
@@ -724,10 +719,3 @@ def compute_coverage_pct(
     major_fill = obj_maj_deg / fov_major_deg * 100.0
     minor_fill = obj_min_deg / fov_minor_deg * 100.0
     return round(max(major_fill, minor_fill), 1)
-
-
-def frames_well(coverage_pct: float | None) -> bool:
-    """True when a DSO's FOV coverage is in the comfortable composition band."""
-    if coverage_pct is None:
-        return False
-    return COVERAGE_FRAMES_WELL_MIN_PCT <= coverage_pct <= COVERAGE_FRAMES_WELL_MAX_PCT

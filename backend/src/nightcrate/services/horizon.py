@@ -162,15 +162,43 @@ def _offset_duplicates(
     """Points are sorted ascending by azimuth on entry. When two or more
     consecutive points share an azimuth, offset the duplicates by +0.01°
     each so the composite PK on ``(horizon_id, azimuth_deg)`` accepts them.
-    Matches N.I.N.A.'s convention for vertical obstructions."""
+    Matches N.I.N.A.'s convention for vertical obstructions.
+
+    Two edge cases the naive +0.01° rule fails on:
+    - **Near the 360° seam:** raw offset can push the point ≥ 360°,
+      violating the ``azimuth_deg ∈ [0, 360)`` CHECK / Pydantic
+      ``Field(lt=360.0)``. Wrap modulo 360 so the seam case stays in
+      range.
+    - **Collision with the next real point:** input ``[(10.00, _),
+      (10.00, _), (10.02, _)]`` under the naive rule becomes
+      ``[(10.00, _), (10.01, _), (10.02, _)]`` — which then collides
+      PK-wise with the genuine 10.02 point on the next iteration
+      (dropping it silently when SQLite rejects the duplicate). Cap
+      each offset so it never steps past the next real azimuth
+      minus a small guard.
+    """
     out: list[tuple[float, float]] = []
     warnings: list[str] = []
     last_az: float | None = None
     same_az_offset = 0
-    for az, alt in points:
+    n = len(points)
+    for i, (az, alt) in enumerate(points):
         if last_az is not None and abs(az - last_az) < 1e-9:
             same_az_offset += 1
-            new_az = az + 0.01 * same_az_offset
+            raw_offset = 0.01 * same_az_offset
+            # Cap so we don't leak into the next real azimuth.
+            next_real_az: float | None = None
+            for j in range(i + 1, n):
+                if abs(points[j][0] - az) > 1e-9:
+                    next_real_az = points[j][0]
+                    break
+            if next_real_az is not None:
+                # Guard: leave at least 1e-3° between the last offset
+                # and the next real point.
+                max_offset = next_real_az - az - 1e-3
+                if max_offset > 0 and raw_offset > max_offset:
+                    raw_offset = max_offset
+            new_az = (az + raw_offset) % 360.0
             warnings.append(
                 f"Duplicate azimuth {az:.2f} offset to {new_az:.2f} "
                 "to preserve vertical-obstruction point."
@@ -343,6 +371,29 @@ def interpolate_horizon_altitude(
 
     query = np.mod(np.asarray(azimuths_deg, dtype=np.float64), 360.0)
     return np.interp(query, az_wrapped, alt_wrapped)
+
+
+def resolve_horizon_altitude(
+    horizon_type: str,
+    flat_altitude_deg: float | None,
+    points: Sequence[tuple[float, float]],
+    azimuths_deg: np.ndarray,
+) -> np.ndarray:
+    """Return horizon altitude at each azimuth for either horizon type.
+
+    Artificial horizons return a constant ``flat_altitude_deg`` at every
+    azimuth; custom horizons interpolate the polyline. Callers that
+    already hold a ``PlannerHorizon`` value object should pass its
+    fields directly — keeps this function free of the planner import
+    cycle.
+    """
+    if horizon_type == "artificial":
+        if flat_altitude_deg is None:
+            raise ValueError("Artificial horizon requires flat_altitude_deg.")
+        return np.full_like(np.asarray(azimuths_deg, dtype=np.float64), float(flat_altitude_deg))
+    if horizon_type == "custom":
+        return interpolate_horizon_altitude(points, azimuths_deg)
+    raise ValueError(f"Unknown horizon type: {horizon_type!r}")
 
 
 # ── Filename sanitization ─────────────────────────────────────────────────────

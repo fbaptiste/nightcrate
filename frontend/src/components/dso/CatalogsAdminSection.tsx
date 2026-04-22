@@ -13,6 +13,8 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
 import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import {
   fetch50mgcFromGitHub,
@@ -23,13 +25,13 @@ import {
   fetchVizierCatalog,
   fetchVizierRemoteVersion,
   reloadCatalogs,
-  reloadNightcrateCatalogs,
   type CatalogSource,
   type VizierSourceShortId,
 } from "@/api/dsos";
 
 interface ActionButton {
   label: string;
+  tooltip: string;
   variant: "contained" | "outlined";
   run: () => Promise<unknown>;
   refreshRemoteVersion?: boolean;
@@ -81,15 +83,22 @@ function SourceRow(props: SourceRowProps) {
       </Box>
       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
         {actions.map((btn) => (
-          <Button
-            key={btn.label}
-            size="small"
-            variant={btn.variant}
-            disabled={busy}
-            onClick={() => onAction(btn)}
-          >
-            {busy ? <CircularProgress size={16} color="inherit" /> : btn.label}
-          </Button>
+          <Tooltip key={btn.label} title={btn.tooltip} placement="top">
+            <span>
+              <Button
+                size="small"
+                variant={btn.variant}
+                disabled={busy}
+                onClick={() => onAction(btn)}
+              >
+                {busy ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : (
+                  btn.label
+                )}
+              </Button>
+            </span>
+          </Tooltip>
         ))}
       </Box>
       {error && (
@@ -184,18 +193,19 @@ export default function CatalogsAdminSection() {
   const openngcAction: ActionButton = {
     label:
       openngcInstalled == null
-        ? "Load from GitHub"
+        ? "Fetch from GitHub"
         : openngcRemote.data?.has_update
-        ? "Update from GitHub"
-        : "Re-download",
+        ? "Fetch update from GitHub"
+        : "Re-fetch from GitHub",
+    tooltip:
+      openngcInstalled == null
+        ? "Download the latest OpenNGC release from github.com/mattiaverga/OpenNGC into the local cache, then parse it into the database."
+        : openngcRemote.data?.has_update
+        ? "Download the newer OpenNGC release from GitHub over your existing local cache, then parse it into the database."
+        : "Re-download the current OpenNGC release from GitHub, overwriting the local cache, then parse it into the database.",
     variant: "contained",
     run: fetchCatalogsFromGitHub,
     refreshRemoteVersion: true,
-  };
-  const openngcReload: ActionButton = {
-    label: "Reload local cache",
-    variant: "outlined",
-    run: reloadCatalogs,
   };
 
   const buildVizierRow = (
@@ -203,11 +213,15 @@ export default function CatalogsAdminSection() {
     shortId: VizierSourceShortId,
     remote: typeof sharplessRemote,
     displayName: string,
+    catalogLabel: string,
   ) => {
     const backendSrc = sourcesById.get(sourceId);
     const installed = remote.data?.installed_version;
     const fetchBtn: ActionButton = {
       label: installed == null ? "Fetch from VizieR" : "Re-fetch from VizieR",
+      tooltip: `${
+        installed == null ? "Download" : "Re-download"
+      } ${catalogLabel} over the network from vizier.cds.unistra.fr (with India + South Africa mirrors as fallback), replacing the local cache, then parse it into the database.`,
       variant: "contained",
       run: () => fetchVizierCatalog(shortId),
       refreshVizierId: shortId,
@@ -241,13 +255,57 @@ export default function CatalogsAdminSection() {
         Catalogs
       </Typography>
       <Paper sx={{ p: 2 }}>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          NightCrate does not ship deep-sky object data. Catalogs are fetched
-          on demand — OpenNGC from GitHub, Sharpless / Barnard / 50 MGC from
-          the VizieR service at CDS Strasbourg. NightCrate editorial
-          augmentation (common names, non-galaxy surface brightness, curated
-          distances) is bundled in-repo and reloadable without a network call.
-        </Typography>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          alignItems={{ sm: "center" }}
+          gap={2}
+          sx={{ mb: 2 }}
+        >
+          <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+            NightCrate does not ship deep-sky object data. Catalogs are fetched
+            on demand — OpenNGC from GitHub, Sharpless / Barnard / 50 MGC from
+            the VizieR service at CDS Strasbourg. NightCrate editorial
+            augmentation (common names, non-galaxy surface brightness, curated
+            distances) is bundled in-repo.
+          </Typography>
+          <Tooltip
+            title="Re-parse every catalog's cached local files into the database. Does NOT touch the network — useful after a schema change, or to restore rows if the database was wiped but the cached files under the app-data directory were kept. Covers OpenNGC, Sharpless, Barnard, 50 MGC, and the NightCrate augmentation in one pass."
+            placement="top"
+          >
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={busy["__all__"] ?? false}
+                onClick={() =>
+                  runAction("__all__", {
+                    label: "Reload all from local",
+                    tooltip: "",
+                    variant: "outlined",
+                    run: reloadCatalogs,
+                  })
+                }
+              >
+                {busy["__all__"] ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : (
+                  "Reload all from local cache"
+                )}
+              </Button>
+            </span>
+          </Tooltip>
+        </Stack>
+        {errors["__all__"] && (
+          <Alert
+            severity="warning"
+            onClose={() =>
+              setErrors((prev) => ({ ...prev, __all__: null }))
+            }
+            sx={{ mb: 2 }}
+          >
+            {errors["__all__"]} — try again in a moment.
+          </Alert>
+        )}
 
         {/* OpenNGC */}
         <SourceRow
@@ -265,17 +323,25 @@ export default function CatalogsAdminSection() {
           error={errors["openngc"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, openngc: null }))}
           busy={busy["openngc"] ?? false}
-          actions={
-            openngcInstalled == null
-              ? [openngcAction]
-              : [openngcAction, openngcReload]
-          }
+          actions={[openngcAction]}
           onAction={(btn) => runAction("openngc", btn)}
         />
 
         {/* VizieR sources. */}
-        {buildVizierRow("vizier_sharpless", "sharpless", sharplessRemote, "Sharpless 2 (VizieR VII/20)")}
-        {buildVizierRow("vizier_barnard", "barnard", barnardRemote, "Barnard (VizieR VII/220A)")}
+        {buildVizierRow(
+          "vizier_sharpless",
+          "sharpless",
+          sharplessRemote,
+          "Sharpless 2 (VizieR VII/20)",
+          "the Sharpless 2 HII-region catalog",
+        )}
+        {buildVizierRow(
+          "vizier_barnard",
+          "barnard",
+          barnardRemote,
+          "Barnard (VizieR VII/220A)",
+          "the Barnard dark-nebula catalog",
+        )}
 
         {/* 50 MGC — GitHub fetch (VizieR origin, GitHub mirror for reliability). */}
         <SourceRow
@@ -299,16 +365,20 @@ export default function CatalogsAdminSection() {
                 mgc50Remote.data?.installed_fetched_at == null
                   ? "Fetch from GitHub"
                   : "Re-fetch from GitHub",
+              tooltip: `${
+                mgc50Remote.data?.installed_fetched_at == null
+                  ? "Download"
+                  : "Re-download"
+              } the 50 Mpc Galaxy Catalog FITS file from github.com/davidohlson/50MGC (the authors' mirror of the VizieR original, used for reliability), replacing the local cache, then parse it into the database.`,
               variant: "contained",
               run: fetch50mgcFromGitHub,
             },
           ]}
           onAction={(btn) => runAction("github_50mgc", btn)}
         />
-        {/* Invalidate the 50 MGC remote-version query after fetch so
-            the install-timestamp chip refreshes. */}
 
-        {/* NightCrate bundled */}
+        {/* NightCrate bundled — no separate reload button; covered by
+            the "Reload all from local cache" action at the top. */}
         <SourceRow
           displayName="NightCrate editorial augmentation"
           version={sourcesById.has("nightcrate_augment") ? "Loaded" : "Not loaded"}
@@ -318,13 +388,7 @@ export default function CatalogsAdminSection() {
           error={errors["nightcrate"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, nightcrate: null }))}
           busy={busy["nightcrate"] ?? false}
-          actions={[
-            {
-              label: "Reload",
-              variant: "outlined",
-              run: reloadNightcrateCatalogs,
-            },
-          ]}
+          actions={[]}
           onAction={(btn) => runAction("nightcrate", btn)}
         />
       </Paper>

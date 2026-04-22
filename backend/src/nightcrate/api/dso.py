@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from nightcrate.api.dso_models import (
+    CatalogFacet,
     CatalogSource,
     ConstellationFacet,
     DsoDesignation,
@@ -118,9 +119,22 @@ async def list_dsos(
             "Resolves to the union of raw types for those groups."
         ),
     ),
-    constellation: str | None = Query(None, description="3-letter IAU constellation code"),
+    constellation: str | None = Query(
+        None,
+        description=(
+            "Comma-separated 3-letter IAU constellation codes (e.g., 'Ori,And'). "
+            "OR semantics — a DSO matches if its constellation is any of the listed codes."
+        ),
+    ),
     has_distance: bool | None = Query(
         None, description="If set, filter DSOs with/without a populated distance_pc"
+    ),
+    catalog: str | None = Query(
+        None,
+        description=(
+            "Comma-separated designation catalog codes (e.g., 'messier,ngc,barnard'). "
+            "OR semantics — a DSO matches if it carries any of the listed catalogs."
+        ),
     ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -155,13 +169,25 @@ async def list_dsos(
             where_clauses.append("1 = 0")
 
     if constellation:
-        where_clauses.append("d.constellation = ?")
-        params.append(constellation)
+        const_values = [c.strip() for c in constellation.split(",") if c.strip()]
+        if const_values:
+            placeholders = ",".join("?" * len(const_values))
+            where_clauses.append(f"d.constellation IN ({placeholders})")
+            params.extend(const_values)
 
     if has_distance is True:
         where_clauses.append("d.distance_pc IS NOT NULL")
     elif has_distance is False:
         where_clauses.append("d.distance_pc IS NULL")
+
+    if catalog:
+        catalog_codes = [c.strip() for c in catalog.split(",") if c.strip()]
+        if catalog_codes:
+            placeholders = ",".join("?" * len(catalog_codes))
+            where_clauses.append(
+                f"d.id IN (SELECT dso_id FROM dso_designation WHERE catalog IN ({placeholders}))"  # noqa: S608, E501  # nosec B608
+            )
+            params.extend(catalog_codes)
 
     if q:
         search_key = normalize_search_key(q)
@@ -246,24 +272,153 @@ async def lookup_dso(
 
 
 @router.get("/facets", response_model=DsoFacetsResponse)
-async def list_facets() -> DsoFacetsResponse:
-    """Distinct obj_type codes, type groups, and constellations with counts."""
+async def list_facets(
+    q: str | None = Query(None, description="Free-text search — mirrors /api/dso's param"),
+    constellation: str | None = None,
+    has_distance: bool | None = None,
+    type: str | None = Query(None, description="Comma-separated raw obj_type codes"),
+    type_group: str | None = Query(None, description="Comma-separated type-group names"),
+    catalog: str | None = Query(None, description="Comma-separated catalog codes"),
+) -> DsoFacetsResponse:
+    """Distinct obj_type codes, type groups, and constellations with
+    counts.
+
+    When any of the filter params are supplied, the returned counts
+    reflect **faceted-search** semantics: each chip's tally is "how
+    many DSOs would match if only that chip were selected from this
+    dimension, with all OTHER filter dimensions held constant". The
+    UI uses this so chip labels like "Galaxy (234)" change with the
+    user's current filter state instead of always showing full-
+    catalog totals.
+
+    Zero params = classic full-catalog counts (the v0.14.0 behaviour).
+    """
+    # Faceting by a dimension means: when counting for that dimension,
+    # apply every OTHER filter but not this one. We implement this by
+    # running three queries with slightly different WHERE clauses:
+    #   1. Base counts (all filters applied) → used for constellations
+    #   2. Without the type dimension → used for both raw types and
+    #      type groups (they share the same dimension semantically —
+    #      selecting a raw type implies its parent group).
+    # ``base_sql_parts`` is the shared filter set that is applied on every
+    # facet query (q + has_distance). Type, catalog, and constellation each
+    # live in their own clause so each facet can exclude its OWN dimension
+    # — that's what keeps the picker populated after the user makes a
+    # selection (e.g. once a constellation chip is added, the constellation
+    # picker must still show every other constellation's count).
+    base_sql_parts: list[str] = ["d.active = 1"]
+    base_params: list[object] = []
+
+    if has_distance is True:
+        base_sql_parts.append("d.distance_pc IS NOT NULL")
+    elif has_distance is False:
+        base_sql_parts.append("d.distance_pc IS NULL")
+    if q and q.strip():
+        search_key = normalize_search_key(q)
+        base_sql_parts.append(
+            "(d.id IN (SELECT dso_id FROM dso_designation WHERE search_key LIKE ?) "
+            "OR LOWER(d.common_name) LIKE ?)"
+        )
+        base_params.append(search_key + "%")
+        base_params.append(f"%{q.lower()}%")
+
+    # Per-dimension clause builders. Each returns ``("", [])`` when its
+    # corresponding query param is absent, otherwise a ready-to-splice
+    # SQL fragment + bound params.
+    def _type_clause() -> tuple[str, list[str]]:
+        codes: list[str] = []
+        if type:
+            codes.extend(c.strip() for c in type.split(",") if c.strip())
+        if type_group:
+            groups = {g.strip() for g in type_group.split(",") if g.strip()}
+            codes.extend(raw for g in TYPE_GROUPS if g.name in groups for raw in g.raw_types)
+        if not codes:
+            return "", []
+        placeholders = ",".join("?" for _ in codes)
+        return f"d.obj_type IN ({placeholders})", codes
+
+    def _catalog_clause() -> tuple[str, list[str]]:
+        if not catalog:
+            return "", []
+        codes = [c.strip() for c in catalog.split(",") if c.strip()]
+        if not codes:
+            return "", []
+        placeholders = ",".join("?" for _ in codes)
+        # Placeholders are a fixed string of ``?`` marks; codes bind via params.
+        return (
+            f"d.id IN (SELECT dso_id FROM dso_designation WHERE catalog IN ({placeholders}))",  # noqa: S608, E501  # nosec B608
+            codes,
+        )
+
+    def _constellation_clause() -> tuple[str, list[str]]:
+        if not constellation:
+            return "", []
+        values = [c.strip() for c in constellation.split(",") if c.strip()]
+        if not values:
+            return "", []
+        placeholders = ",".join("?" for _ in values)
+        return f"d.constellation IN ({placeholders})", values
+
+    type_clause, type_params_fragment = _type_clause()
+    cat_clause, cat_params_fragment = _catalog_clause()
+    const_clause, const_params_fragment = _constellation_clause()
+
+    def _compose(*clauses: tuple[str, list[str]]) -> tuple[str, list[object]]:
+        """Join base + the provided per-dim clauses into one WHERE string."""
+        parts = list(base_sql_parts)
+        p: list[object] = list(base_params)
+        for clause, bind in clauses:
+            if clause:
+                parts.append(clause)
+                p.extend(bind)
+        return " AND ".join(parts), p
+
     async with get_db() as conn:
+        # Raw / type-group facet: excludes the type dimension. Catalog and
+        # constellation ARE applied so selecting them narrows the type chips.
+        raw_where, raw_params = _compose(
+            (cat_clause, cat_params_fragment),
+            (const_clause, const_params_fragment),
+        )
         cursor = await conn.execute(
-            "SELECT obj_type, COUNT(*) AS n FROM dso WHERE active = 1 "
-            "GROUP BY obj_type ORDER BY obj_type"
+            f"SELECT obj_type, COUNT(*) AS n FROM dso d WHERE {raw_where} "  # noqa: S608  # nosec B608 — whitelisted clauses
+            "GROUP BY obj_type ORDER BY obj_type",
+            raw_params,
         )
         raw_counts: dict[str, int] = {r["obj_type"]: r["n"] for r in await cursor.fetchall()}
 
+        # Constellations facet: excludes the constellation dimension so the
+        # picker keeps showing every other constellation after a selection.
+        const_where, const_params = _compose(
+            (type_clause, type_params_fragment),
+            (cat_clause, cat_params_fragment),
+        )
+        const_where = f"{const_where} AND d.constellation IS NOT NULL"
         cursor = await conn.execute(
-            "SELECT constellation, COUNT(*) AS n FROM dso "
-            "WHERE active = 1 AND constellation IS NOT NULL "
-            "GROUP BY constellation ORDER BY constellation"
+            f"SELECT constellation, COUNT(*) AS n FROM dso d WHERE {const_where} "  # noqa: S608  # nosec B608 — whitelisted clauses
+            "GROUP BY constellation ORDER BY constellation",
+            const_params,
         )
         constellations = [
             ConstellationFacet(code=r["constellation"], count=r["n"])
             for r in await cursor.fetchall()
         ]
+
+        # Catalogs facet: excludes the catalog dimension. Joins
+        # dso_designation to surface the per-catalog count — a DSO with
+        # 4 designations contributes to 4 catalogs, so this is an
+        # "objects-per-catalog" tally, not distinct DSOs overall.
+        cat_where, cat_params = _compose(
+            (type_clause, type_params_fragment),
+            (const_clause, const_params_fragment),
+        )
+        cursor = await conn.execute(
+            f"SELECT dd.catalog, COUNT(DISTINCT d.id) AS n "  # noqa: S608  # nosec B608 — whitelisted clauses
+            f"FROM dso d JOIN dso_designation dd ON dd.dso_id = d.id "
+            f"WHERE {cat_where} GROUP BY dd.catalog ORDER BY dd.catalog",
+            cat_params,
+        )
+        catalogs = [CatalogFacet(code=r["catalog"], count=r["n"]) for r in await cursor.fetchall()]
 
     raw_types = [RawTypeFacet(code=code, count=count) for code, count in sorted(raw_counts.items())]
     type_groups = [
@@ -280,6 +435,7 @@ async def list_facets() -> DsoFacetsResponse:
         type_groups=type_groups,
         raw_types=raw_types,
         constellations=constellations,
+        catalogs=catalogs,
     )
 
 

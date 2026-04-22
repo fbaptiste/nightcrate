@@ -7,6 +7,11 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Global astropy IERS configuration lives in
+# ``nightcrate.services.planner_visibility`` (top of file). Importing
+# the planner API below loads that module, which sets
+# ``auto_download=False`` and ``auto_max_age=None`` before the first
+# astropy call.
 import aiosqlite
 import uvicorn
 from fastapi import FastAPI
@@ -161,30 +166,44 @@ async def lifespan(app: FastAPI):
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("weather cache purge failed", exc_info=True)
 
-        # Sweep orphan thumbnail files left by migration 0018 (or manual
-        # tampering). Non-fatal — a failed sweep just means a few stale
-        # .jpg files linger on disk.
+        # Thumbnail cache maintenance: rehydrate then sweep. Same
+        # pattern as the sky-tile cache below — JPEGs survive DB
+        # wipes, the filename encodes the cache key, so we can
+        # rebuild the index from disk on startup.
         try:
-            from nightcrate.services.thumbnails import sync_orphan_files
+            from nightcrate.services.thumbnails import (
+                rehydrate_from_disk as rehydrate_thumbnails,
+            )
+            from nightcrate.services.thumbnails import (
+                sync_orphan_files,
+            )
 
             async with get_db() as conn:
                 conn.row_factory = aiosqlite.Row
+                await rehydrate_thumbnails(conn)
                 await sync_orphan_files(conn)
         except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("thumbnail orphan sweep failed", exc_info=True)
+            startup_logger.warning("thumbnail cache maintenance failed", exc_info=True)
 
-        # Same sweep for the v0.18.0 sky-tile cache. Runs independently so
-        # either sweep failing doesn't block the other.
+        # Sky-tile cache maintenance: first rehydrate the DB index from
+        # existing on-disk files (so a user who wipes or switches the
+        # database doesn't lose their cache — the JPEGs are filesystem
+        # state, independent of SQLite), then sweep whatever's left that
+        # still isn't in the index.
         try:
+            from nightcrate.services.sky_tile_cache import (
+                rehydrate_from_disk as rehydrate_sky_tiles,
+            )
             from nightcrate.services.sky_tile_cache import (
                 sync_orphan_files as sync_sky_tile_orphans,
             )
 
             async with get_db() as conn:
                 conn.row_factory = aiosqlite.Row
+                await rehydrate_sky_tiles(conn)
                 await sync_sky_tile_orphans(conn)
         except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("sky-tile orphan sweep failed", exc_info=True)
+            startup_logger.warning("sky-tile cache maintenance failed", exc_info=True)
 
     yield
 

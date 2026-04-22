@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.18.0
+**NightCrate version:** 0.19.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -737,8 +737,8 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 | Table | Purpose |
 |-------|---------|
-| `location_horizon` | One horizon per location (`UNIQUE(location_id)`, `ON DELETE CASCADE`). `source` CHECK ∈ `{'imported','drawn'}`. Carries optional `source_filename` and `notes`. Created in migration 0014. |
-| `location_horizon_point` | `(azimuth_deg, altitude_deg)` points, composite PK on `(horizon_id, azimuth_deg)`. CHECK on `azimuth_deg ∈ [0, 360)` and `altitude_deg ∈ [-5, 90]`. Points cascade-delete with the horizon. Index on `(horizon_id, azimuth_deg)` for ordered fetch. |
+| `location_horizon` | **Multi-horizon per location (v0.19.0).** 1:N with `location` (no UNIQUE on location_id). Columns: `id`, `location_id` (FK CASCADE), `name`, `type` (`'custom'` or `'artificial'`, CHECK), `flat_altitude_deg` (NOT NULL when artificial, in `[-5, 90]`; NULL for custom), `source` (`'imported'|'drawn'|NULL`, only meaningful for custom), `source_filename`, `notes`, `is_default`, `created_at`, `updated_at`. Partial unique index `(location_id) WHERE is_default=1` enforces exactly-one-default per location. Partial unique index `(location_id) WHERE type='custom'` enforces at-most-one-custom. `UNIQUE(location_id, name)`. Reshaped in migration 0021 (`0014` created the original 1:1 table; `0021` drops + recreates it preserving data and seeds a `0° flat` artificial default for every location that had no horizon). |
+| `location_horizon_point` | `(azimuth_deg, altitude_deg)` points for **custom** horizons only. Composite PK on `(horizon_id, azimuth_deg)`. CHECK on `azimuth_deg ∈ [0, 360)` and `altitude_deg ∈ [-5, 90]`. Points cascade-delete with the horizon. Index on `(horizon_id, azimuth_deg)` for ordered fetch. Recreated by migration 0021 with an FK that points at the new `location_horizon` (the original FK was rewritten by SQLite's ALTER-RENAME to reference the legacy table and would have been invalidated). |
 
 ### v0.14.0 — DSO Catalog (3 tables)
 

@@ -44,30 +44,11 @@ import {
 } from "@/api/locations";
 import { EasterEggWand } from "@/components/EasterEggWand";
 import HorizonChart from "@/components/locations/HorizonChart";
-import HorizonEditor from "@/components/locations/HorizonEditor";
-import {
-  deleteHorizon,
-  downloadHorizonExport,
-  fetchHorizon,
-  parseHorizonFile,
-  saveHorizon,
-  type HorizonPoint,
-} from "@/api/horizons";
-import type { HorizonExportFormat } from "@/api/horizons";
+import LocationHorizonsSection from "@/components/locations/LocationHorizonsSection";
+import { fetchHorizons } from "@/api/horizons";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import type { WeatherUnits } from "@/api/settings";
 import { useSettingsStore } from "@/stores/settingsStore";
-
-/**
- * Staged horizon change for the Location editor. ``none`` means no
- * pending change, so the server state applies. ``set`` stages a new
- * point list. ``delete`` stages removal of the horizon. The outer
- * Location editor's Save commits whichever is set.
- */
-type StagedHorizon =
-  | { kind: "none" }
-  | { kind: "set"; points: HorizonPoint[] }
-  | { kind: "delete" };
 
 function formsDiffer(a: FormState, b: FormState): boolean {
   const keys = Object.keys(a) as (keyof FormState)[];
@@ -340,10 +321,6 @@ export default function LocationsPage() {
   // until `onEntered` fires guarantees it sees the final dialog width.
   const [dialogReady, setDialogReady] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
-  // Staged horizon for the currently-open Location editor. Edits in the
-  // Horizon Editor flow through this state; nothing is persisted until
-  // the user hits Save on the outer Location dialog.
-  const [stagedHorizon, setStagedHorizon] = useState<StagedHorizon>({ kind: "none" });
   // Snapshot of the form when the dialog opened, used for the Cancel
   // dirty check. Ref so it doesn't re-render.
   const originalFormRef = useRef<FormState>(emptyForm());
@@ -632,7 +609,6 @@ export default function LocationsPage() {
     originalFormRef.current = fresh;
     setErrors({});
     setGeoTzEditable(false);
-    setStagedHorizon({ kind: "none" });
     setDialogOpen(true);
   };
 
@@ -643,12 +619,10 @@ export default function LocationsPage() {
     originalFormRef.current = snapshot;
     setErrors({});
     setGeoTzEditable(false);
-    setStagedHorizon({ kind: "none" });
     setDialogOpen(true);
   };
 
   const hasUnsavedChanges = (): boolean => {
-    if (stagedHorizon.kind !== "none") return true;
     return formsDiffer(form, originalFormRef.current);
   };
 
@@ -731,24 +705,6 @@ export default function LocationsPage() {
         notes: form.notes.trim() || null,
       };
       if (editingLocation) {
-        // Persist any staged horizon change first — its validation is
-        // stricter (≥2 points). If it fails, we don't touch the location.
-        // Clear staged state + invalidate the query as soon as the horizon
-        // is committed, so that a subsequent location-update failure doesn't
-        // leave the user thinking their horizon is still pending (a Discard
-        // at that point would silently lose nothing it claims to).
-        if (stagedHorizon.kind === "set") {
-          await saveHorizon(editingLocation.id, {
-            source: "drawn",
-            points: stagedHorizon.points,
-          });
-          setStagedHorizon({ kind: "none" });
-          queryClient.invalidateQueries({ queryKey: ["horizon", editingLocation.id] });
-        } else if (stagedHorizon.kind === "delete") {
-          await deleteHorizon(editingLocation.id);
-          setStagedHorizon({ kind: "none" });
-          queryClient.invalidateQueries({ queryKey: ["horizon", editingLocation.id] });
-        }
         await updateLocation(editingLocation.id, payload);
         setSnack({ msg: "Location updated.", severity: "info" });
       } else {
@@ -1253,10 +1209,9 @@ export default function LocationsPage() {
             )}
 
             {editingLocation ? (
-              <LocationHorizonEditSection
-                location={editingLocation}
-                staged={stagedHorizon}
-                onStageChange={setStagedHorizon}
+              <LocationHorizonsSection
+                locationId={editingLocation.id}
+                locationName={editingLocation.name}
               />
             ) : (
               <Box
@@ -1270,7 +1225,8 @@ export default function LocationsPage() {
                 }}
               >
                 <Typography variant="body2" color="text.secondary">
-                  Save this location first, then reopen the editor to add a horizon.
+                  Save this location first, then reopen the editor to manage its
+                  horizons. A default 0° artificial horizon is created automatically.
                 </Typography>
               </Box>
             )}
@@ -1302,9 +1258,8 @@ export default function LocationsPage() {
         <DialogTitle>Discard unsaved changes?</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            You have unsaved changes to this location
-            {stagedHorizon.kind !== "none" ? ", including horizon changes" : ""}.
-            Close the editor and discard them?
+            You have unsaved changes to this location. Close the editor
+            and discard them?
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -1707,19 +1662,22 @@ function LocationDetail({
 
 
 /**
- * Read-only horizon view for the Locations detail panel. Renders just the
- * chart plus a Raw/Smoothed toggle. All editing lives in the Location
- * editor dialog via ``LocationHorizonEditSection``.
+ * Read-only horizon preview for the Locations list detail panel. Shows
+ * the location's default horizon — a chart for customs, a plain text
+ * line for artificials (there's nothing to draw at a constant
+ * altitude besides a flat line).
  */
 function LocationHorizonReadonly({ location }: { location: Location }) {
   const [showRaw, setShowRaw] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(720);
 
-  const { data: horizon } = useQuery({
-    queryKey: ["horizon", location.id],
-    queryFn: () => fetchHorizon(location.id),
+  const { data: horizons = [] } = useQuery({
+    queryKey: ["horizons", location.id],
+    queryFn: () => fetchHorizons(location.id),
   });
+
+  const defaultHorizon = horizons.find((h) => h.is_default) ?? null;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -1732,15 +1690,31 @@ function LocationHorizonReadonly({ location }: { location: Location }) {
     return () => ro.disconnect();
   }, []);
 
-  const hasHorizon = horizon !== null && horizon !== undefined && horizon.points.length >= 2;
+  const showsChart =
+    defaultHorizon !== null
+    && defaultHorizon.type === "custom"
+    && defaultHorizon.points.length >= 2;
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
         <Typography variant="subtitle1" sx={{ flex: 1 }}>
-          Horizon
+          Default horizon
+          {defaultHorizon && (
+            <Typography
+              component="span"
+              variant="body2"
+              color="text.secondary"
+              sx={{ ml: 1 }}
+            >
+              {defaultHorizon.name}
+              {defaultHorizon.type === "artificial" &&
+                defaultHorizon.flat_altitude_deg != null &&
+                ` (${defaultHorizon.flat_altitude_deg.toFixed(0)}°)`}
+            </Typography>
+          )}
         </Typography>
-        {hasHorizon && (
+        {showsChart && (
           <FormControlLabel
             control={
               <Switch
@@ -1760,9 +1734,9 @@ function LocationHorizonReadonly({ location }: { location: Location }) {
       </Box>
 
       <Box ref={containerRef} sx={{ width: "100%" }}>
-        {hasHorizon ? (
+        {showsChart && defaultHorizon ? (
           <HorizonChart
-            points={horizon.points}
+            points={defaultHorizon.points}
             mode="readonly"
             showRawPoints={showRaw}
             width={width}
@@ -1771,7 +1745,7 @@ function LocationHorizonReadonly({ location }: { location: Location }) {
         ) : (
           <Box
             sx={{
-              height: 140,
+              height: 80,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1783,7 +1757,9 @@ function LocationHorizonReadonly({ location }: { location: Location }) {
             }}
           >
             <Typography variant="body2">
-              No horizon defined. Edit this location to add one.
+              {defaultHorizon == null
+                ? "No horizons defined."
+                : `Flat floor at ${defaultHorizon.flat_altitude_deg?.toFixed(0) ?? "?"}°`}
             </Typography>
           </Box>
         )}
@@ -1792,179 +1768,3 @@ function LocationHorizonReadonly({ location }: { location: Location }) {
   );
 }
 
-
-/**
- * Editor-dialog horizon section: Create/Edit/Delete buttons + summary,
- * plus the full-screen editor launched on Edit. Shown only for
- * already-saved locations (horizons are keyed by location ID).
- */
-interface LocationHorizonEditSectionProps {
-  location: Location;
-  staged: StagedHorizon;
-  onStageChange: (next: StagedHorizon) => void;
-}
-
-function LocationHorizonEditSection({
-  location,
-  staged,
-  onStageChange,
-}: LocationHorizonEditSectionProps) {
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [snack, setSnack] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [chartWidth, setChartWidth] = useState(560);
-
-  const { data: horizon } = useQuery({
-    queryKey: ["horizon", location.id],
-    queryFn: () => fetchHorizon(location.id),
-  });
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w) setChartWidth(Math.max(320, Math.floor(w)));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // Effective horizon the user sees = staged if pending, else server.
-  // Same value seeds the Horizon Editor when opened.
-  const effectivePoints: HorizonPoint[] | null =
-    staged.kind === "set"
-      ? staged.points
-      : staged.kind === "delete"
-        ? null
-        : (horizon?.points ?? null);
-
-  const effectiveCount = effectivePoints?.length ?? 0;
-  const hasEffective = effectiveCount >= 2;
-
-  const handleKeepChanges = async (points: HorizonPoint[]) => {
-    onStageChange({ kind: "set", points });
-  };
-
-  const handleImport = async (file: File) => {
-    // Stateless parse — no DB write. The editor loads these points into
-    // its in-memory state; the user still has to click Keep changes
-    // and then the outer Location editor's Save to persist.
-    const result = await parseHorizonFile(file);
-    return { points: result.points, warnings: result.warnings };
-  };
-
-  const handleExport = (format: HorizonExportFormat) => {
-    downloadHorizonExport(location.id, format);
-  };
-
-  const handleDelete = () => onStageChange({ kind: "delete" });
-  const handleUndoDelete = () => onStageChange({ kind: "none" });
-
-  // Build a short summary line describing the effective state
-  let summary: string;
-  if (staged.kind === "delete") {
-    summary = "Pending deletion \u2014 Save to apply.";
-  } else if (staged.kind === "set") {
-    summary = `${staged.points.length} points \u00B7 pending unsaved changes`;
-  } else if (horizon && horizon.points.length >= 2) {
-    summary = `${horizon.points.length} points \u00B7 ${
-      horizon.source === "imported"
-        ? `imported from ${horizon.source_filename ?? "file"}`
-        : "drawn"
-    }`;
-  } else {
-    summary = "No horizon defined for this location.";
-  }
-
-  return (
-    <Box sx={{ mt: 1 }}>
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Horizon
-      </Typography>
-      <Box
-        sx={{
-          border: 1,
-          borderColor: "divider",
-          borderRadius: 1,
-          p: 1.5,
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.25,
-        }}
-      >
-        <Box ref={containerRef} sx={{ width: "100%" }}>
-          {hasEffective && effectivePoints ? (
-            <HorizonChart
-              points={effectivePoints}
-              mode="readonly"
-              width={chartWidth}
-              height={120}
-            />
-          ) : (
-            <Box
-              sx={{
-                height: 80,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "text.secondary",
-                border: 1,
-                borderColor: "divider",
-                borderStyle: "dashed",
-                borderRadius: 1,
-              }}
-            >
-              <Typography variant="body2">
-                {staged.kind === "delete"
-                  ? "Horizon will be deleted on Save"
-                  : "No horizon defined"}
-              </Typography>
-            </Box>
-          )}
-        </Box>
-        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
-          <Typography
-            variant="body2"
-            color={staged.kind !== "none" ? "warning.main" : "text.secondary"}
-            sx={{ flex: 1, minWidth: 180 }}
-          >
-            {summary}
-          </Typography>
-          {staged.kind === "delete" ? (
-            <Button size="small" onClick={handleUndoDelete}>
-              Undo delete
-            </Button>
-          ) : (
-            <>
-              <Button size="small" variant="outlined" onClick={() => setEditorOpen(true)}>
-                {hasEffective ? "Edit" : "Create"}
-              </Button>
-              {hasEffective && (
-                <Button size="small" color="warning" onClick={handleDelete}>
-                  Delete
-                </Button>
-              )}
-            </>
-          )}
-        </Stack>
-      </Box>
-      <HorizonEditor
-        open={editorOpen}
-        locationName={location.name}
-        initialPoints={effectivePoints}
-        onClose={() => setEditorOpen(false)}
-        onSave={handleKeepChanges}
-        onImport={handleImport}
-        onExport={handleExport}
-        exportsDisabled={staged.kind !== "none"}
-      />
-      <Snackbar
-        open={snack !== null}
-        autoHideDuration={2500}
-        onClose={() => setSnack(null)}
-        message={snack}
-      />
-    </Box>
-  );
-}

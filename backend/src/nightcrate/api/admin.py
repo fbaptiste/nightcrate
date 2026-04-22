@@ -54,12 +54,20 @@ def _db_size(path: str) -> int | None:
 
 
 def _initialize_database(db_path: Path) -> None:
-    """Run migrations and the equipment seed loader on a database.
+    """Run migrations, the equipment seed loader, and the DSO catalog
+    loader on a database.
 
-    Intentionally does NOT invoke the DSO catalog loader — that data is
-    fetched on demand from GitHub via the admin UI after DB creation.
-    Running the loader here would just produce "missing file" noise.
+    The catalog loader is a no-op when the user's
+    ``APP_DIR/catalogs/`` tree is empty — no files, nothing to load,
+    no error. When catalog files DO exist locally (a common case
+    after the user creates a second database on a machine that
+    already fetched OpenNGC / Sharpless / Barnard / 50 MGC for a
+    prior database) the new DB gets populated automatically, no
+    manual "Reload from local cache" click required.
     """
+    from nightcrate.catalog_loader import load_catalogs
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+
     apply_migrations(db_path=db_path)
 
     csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
@@ -69,6 +77,7 @@ def _initialize_database(db_path: Path) -> None:
         sync_conn.execute("PRAGMA foreign_keys = ON")
         load_all(sync_conn, csv_root, "auto")
         sync_conn.commit()
+        load_catalogs(sync_conn, user_catalogs_root())
     finally:
         sync_conn.close()
 
@@ -502,7 +511,11 @@ _VIZIER_FETCH_SPECS: dict[str, dict] = {
         "display_name": "Sharpless 2 (VII/20)",
         "citation": "Sharpless 1959 ApJS 4, 257. Retrieved via VizieR.",
         "column_filter": None,
-        "additional_params": {},
+        # VizieR precession pseudo-columns are only emitted on explicit
+        # -out.add; without this, `-out.all` returns only the original
+        # epoch columns (RA1900/DE1900 for Sharpless, RA1875/DE1875 for
+        # Barnard) and every row ingests with ra_deg/dec_deg = NULL.
+        "additional_params": {"-out.add": "_RAJ2000,_DEJ2000"},
     },
     "barnard": {
         "source_id": "vizier_barnard",
@@ -511,7 +524,7 @@ _VIZIER_FETCH_SPECS: dict[str, dict] = {
         "display_name": "Barnard dark nebulae (VII/220A)",
         "citation": "Barnard 1927 (VizieR VII/220A).",
         "column_filter": None,
-        "additional_params": {},
+        "additional_params": {"-out.add": "_RAJ2000,_DEJ2000"},
     },
     # 50 MGC moved to a dedicated GitHub fetch endpoint
     # (POST /api/admin/catalogs/50mgc/fetch) — see fetch_50mgc_from_github

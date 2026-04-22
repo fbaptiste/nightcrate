@@ -31,6 +31,16 @@ async def seed_db():
         )
         location_id = cursor.lastrowid
 
+        # Default horizon — mirrors the auto-seed the POST /api/locations
+        # endpoint does. Raw-SQL seeding has to own this itself.
+        await conn.execute(
+            """
+            INSERT INTO location_horizon (location_id, name, type, flat_altitude_deg, is_default)
+            VALUES (?, '0° flat', 'artificial', 0, 1)
+            """,
+            (location_id,),
+        )
+
         # DSO source + rows.
         await conn.execute(
             """
@@ -45,7 +55,7 @@ async def seed_db():
         # M42 — well-known bright HII region. Spring evening from Phoenix puts
         # it low in the west but probably above 30° for at least a short
         # astro-dark window.
-        await conn.execute(
+        cursor = await conn.execute(
             """
             INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg,
                 constellation, maj_axis_arcmin, min_axis_arcmin, mag_v,
@@ -54,8 +64,9 @@ async def seed_db():
             """,
             (source_id,),
         )
+        m42_id = cursor.lastrowid
         # A dim galaxy that should be filtered out by magnitude.
-        await conn.execute(
+        cursor = await conn.execute(
             """
             INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg,
                 constellation, maj_axis_arcmin, min_axis_arcmin, mag_v,
@@ -64,6 +75,39 @@ async def seed_db():
             """,
             (source_id,),
         )
+        faint_id = cursor.lastrowid
+        # NGC 281 — Pacman nebula in Cas. Carries an ngc designation but
+        # not a messier one; used by the catalog-OR filter test to
+        # prove the OR expands to rows that only carry one of the two
+        # selected catalogs.
+        cursor = await conn.execute(
+            """
+            INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg,
+                constellation, maj_axis_arcmin, min_axis_arcmin, mag_v,
+                source_catalog_id, source_row_hash)
+            VALUES ('NGC 281', 'HII', 13.0, 56.62, 'Cas', 35.0, 30.0, 7.4, ?, 'h3')
+            """,
+            (source_id,),
+        )
+        ngc281_id = cursor.lastrowid
+
+        # Designations — catalog-filter and catalog-facet tests depend
+        # on this table being populated.
+        for dso_id, catalog, identifier, display, key, is_primary in (
+            (m42_id, "ngc", "1976", "NGC 1976", "ngc1976", 0),
+            (m42_id, "messier", "42", "M 42", "m42", 1),
+            (faint_id, "ngc", "9999", "NGC 9999", "ngc9999", 1),
+            (ngc281_id, "ngc", "281", "NGC 281", "ngc281", 1),
+        ):
+            await conn.execute(
+                """
+                INSERT INTO dso_designation
+                    (dso_id, catalog, identifier, display_form, search_key, is_primary)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (dso_id, catalog, identifier, display, key, is_primary),
+            )
+
         await conn.commit()
 
     return location_id
@@ -86,13 +130,15 @@ async def test_targets_endpoint_returns_snapshot(client: TestClient, seed_db):
     assert response.status_code == 200
     data = response.json()
     assert data["location"]["name"] == "Phoenix"
-    assert data["location"]["has_custom_horizon"] is False
+    # Auto-seeded 0° artificial default horizon echoes back in the response.
+    assert data["horizon"]["type"] == "artificial"
+    assert data["horizon"]["flat_altitude_deg"] == 0.0
     assert data["rig"] is None
     assert data["dark_window"] is not None
     assert data["total"] >= 0
     # FAINT-1 (z=18) should be filterable out via max_magnitude.
     designations = {item["primary_designation"] for item in data["items"]}
-    assert designations.issubset({"M 42", "FAINT-1"})
+    assert designations.issubset({"M 42", "FAINT-1", "NGC 281"})
 
 
 async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_db):
@@ -112,20 +158,126 @@ async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_d
     assert "FAINT-1" not in designations
 
 
-async def test_targets_sort_by_size_descending(client: TestClient, seed_db):
-    # ``sort=size`` maps to ``maj_axis_arcmin`` in the in-memory sort
-    # helper. In Anytime mode (no visibility filter) the largest
-    # object in the seed fixture must sort first on ``desc``.
+async def test_targets_response_includes_filter_aware_facet_counts(client: TestClient, seed_db):
+    # The pill filters on the frontend read "Galaxy (N)" where N is the
+    # count under the current filters. Back-end returns one dict per
+    # filter dimension (raw type, catalog, constellation); each chip's
+    # count reflects the state with its own dimension held out.
     _ = seed_db
     response = client.get(
         "/api/planner/targets",
-        params={"restrict_tonight": "false", "sort": "size", "sort_dir": "desc"},
+        params={"restrict_tonight": "false", "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["raw_type_counts"], dict)
+    assert isinstance(body["catalog_counts"], dict)
+    assert isinstance(body["constellation_counts"], dict)
+    assert sum(body["raw_type_counts"].values()) > 0
+    assert sum(body["catalog_counts"].values()) > 0
+
+
+async def test_targets_raw_type_count_excludes_own_dimension(client: TestClient, seed_db):
+    # Faceted-search invariant: selecting one raw type doesn't collapse
+    # the raw-type facet — every other raw type remains pickable, and
+    # the selected type's own count remains unchanged.
+    _ = seed_db
+    # Re-fetch the baseline inside this test so the comparison below
+    # uses a body scoped to this request.
+    body = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "limit": 5},
+    ).json()
+    first_raw = next(iter(body["raw_type_counts"].keys()))
+    filtered = client.get(
+        "/api/planner/targets",
+        params={
+            "restrict_tonight": "false",
+            "type": first_raw,
+            "limit": 5,
+        },
+    ).json()
+    assert set(filtered["raw_type_counts"].keys()) == set(body["raw_type_counts"].keys())
+    assert filtered["raw_type_counts"][first_raw] == body["raw_type_counts"][first_raw]
+
+
+async def test_targets_filter_by_catalog_is_or(client: TestClient, seed_db):
+    # ``catalog=messier,ngc`` should return rows that carry EITHER
+    # designation (OR semantics), not their intersection.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "catalog": "messier,ngc", "limit": 100},
+    )
+    assert response.status_code == 200
+    designations = {item["primary_designation"] for item in response.json()["items"]}
+    # Mini fixture has M 42 (carries both messier and ngc) and NGC 281
+    # (carries ngc but not messier). The union must include NGC 281.
+    assert "NGC 281" in designations
+
+
+async def test_targets_filter_by_multiple_constellations(client: TestClient, seed_db):
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "constellation": "Per,Ori", "limit": 100},
+    )
+    assert response.status_code == 200
+    constellations = {i["constellation"] for i in response.json()["items"] if i["constellation"]}
+    assert constellations <= {"Per", "Ori"}
+
+
+async def test_targets_sort_by_size_descending(client: TestClient, seed_db):
+    # Multi-sort ``field:dir`` syntax. In Anytime mode (no visibility
+    # filter) the largest object in the seed fixture must sort first
+    # on ``desc``.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "sort": "maj_axis_arcmin:desc"},
     )
     assert response.status_code == 200
     items = response.json()["items"]
     # First few rows must be the largest (descending major axis).
     sizes = [i["maj_axis_arcmin"] for i in items[:5] if i["maj_axis_arcmin"] is not None]
     assert sizes == sorted(sizes, reverse=True)
+
+
+async def test_targets_multi_sort(client: TestClient, seed_db):
+    # Two-key sort: major axis ascending, then magnitude ascending as
+    # the tie-breaker. Seed rows all have distinct sizes so the mag
+    # tie-break doesn't fire, but the response shape + ordering proves
+    # the multi-key parser + stable sort both work.
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={
+            "restrict_tonight": "false",
+            "sort": "maj_axis_arcmin:asc,mag_v:asc",
+        },
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    sizes = [i["maj_axis_arcmin"] for i in items if i["maj_axis_arcmin"] is not None]
+    assert sizes == sorted(sizes)
+
+
+async def test_targets_sort_422_on_unknown_field(client: TestClient, seed_db):
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "sort": "bogus:asc"},
+    )
+    assert response.status_code == 422
+
+
+async def test_targets_sort_422_on_missing_direction(client: TestClient, seed_db):
+    _ = seed_db
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "sort": "mag_v"},
+    )
+    assert response.status_code == 422
 
 
 async def test_targets_endpoint_404s_missing_location(client: TestClient):
@@ -183,6 +335,60 @@ async def test_sky_track_endpoint_returns_arrays(client: TestClient, seed_db):
     assert len(data["moon_altitude_deg"]) == len(data["times_utc"])
     assert len(data["horizon_altitude_at_object_az"]) == len(data["times_utc"])
     assert data["twilight"]["sunset_utc"] is not None
+
+
+async def test_annual_hours_endpoint_returns_one_point_per_night(client: TestClient, seed_db):
+    location_id = seed_db
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+
+    response = client.get(
+        f"/api/planner/targets/{m42}/annual-hours",
+        params={
+            "location_id": location_id,
+            "year": 2026,
+            "moon_sep_deg": 0.0,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["dso_id"] == m42
+    assert data["year"] == 2026
+    # Default horizon is the auto-seeded 0° artificial.
+    assert data["horizon_type"] == "artificial"
+    assert data["flat_altitude_deg"] == 0.0
+    assert data["moon_sep_deg"] == 0.0
+    # 2026 is not a leap year.
+    assert len(data["points"]) == 365
+    assert data["points"][0]["date"] == "2026-01-01"
+    assert data["points"][-1]["date"] == "2026-12-31"
+    assert all(0.0 <= p["hours"] <= 14.0 for p in data["points"])
+
+
+async def test_annual_hours_unknown_horizon_returns_404(client: TestClient, seed_db):
+    location_id = seed_db
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+
+    response = client.get(
+        f"/api/planner/targets/{m42}/annual-hours",
+        params={
+            "location_id": location_id,
+            "horizon_id": 999999,
+        },
+    )
+    assert response.status_code == 404
+
+
+async def test_annual_hours_unknown_dso_returns_404(client: TestClient, seed_db):
+    location_id = seed_db
+    response = client.get(
+        "/api/planner/targets/999999/annual-hours",
+        params={"location_id": location_id},
+    )
+    assert response.status_code == 404
 
 
 async def test_thumbnail_cache_stats_endpoint(client: TestClient):
@@ -306,7 +512,9 @@ async def test_dsos_in_region_buffer_includes_just_outside_object(
     assert "BUFFERED-OBJ" in names
 
 
-async def test_dsos_in_region_response_includes_type_group(client: TestClient, seed_dsos_in_region):
+async def test_dsos_in_region_response_includes_raw_obj_type(
+    client: TestClient, seed_dsos_in_region
+):
     response = client.get(
         "/api/planner/dsos/in-region",
         params={
@@ -316,10 +524,11 @@ async def test_dsos_in_region_response_includes_type_group(client: TestClient, s
         },
     )
     assert response.status_code == 200
-    # All seeded objects are galaxies — type_group must be populated.
+    # Response surfaces the raw OpenNGC obj_type on each item — the
+    # frontend translates to a friendly label via ``displayDsoType``.
     for item in response.json()["items"]:
-        if item["obj_type"] == "G":
-            assert item["type_group"] == "Galaxy"
+        assert "obj_type" in item
+        assert "type_group" not in item
 
 
 async def test_dsos_in_region_rejects_out_of_range_params(client: TestClient):

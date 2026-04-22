@@ -10,7 +10,13 @@ import { apiFetch, getActivity } from "./client";
 export interface PlannerLocationSummary {
   id: number;
   name: string;
-  has_custom_horizon: boolean;
+}
+
+export interface PlannerHorizonSummary {
+  id: number;
+  name: string;
+  type: "artificial" | "custom";
+  flat_altitude_deg: number | null;
 }
 
 export interface PlannerRigSummary {
@@ -31,7 +37,6 @@ export interface PlannerTargetItem {
   primary_designation: string;
   common_name: string | null;
   obj_type: string;
-  type_group: string | null;
   ra_deg: number | null;
   dec_deg: number | null;
   constellation: string | null;
@@ -49,37 +54,65 @@ export interface PlannerTargetItem {
   altitude_at_transit_deg: number | null;
   min_moon_separation_deg: number | null;
   coverage_pct: number | null;
+  /** "up" / "rising" / "set" relative to when the request was served.
+   *  ``null`` in Anytime mode and when the location has no
+   *  coordinates. Static at fetch time — doesn't update as time
+   *  passes on a long-running page. */
+  now_status: "up" | "rising" | "set" | null;
 }
 
 export interface PlannerTargetsResponse {
   // Null in Anytime mode when the caller omits ``location_id``.
   location: PlannerLocationSummary | null;
+  /** Echo of the horizon used to compute the snapshot. Null in
+   *  Anytime mode (no location → no horizon either). */
+  horizon: PlannerHorizonSummary | null;
   rig: PlannerRigSummary | null;
   date: string;
   dark_window: PlannerDarkWindow | null;
   moon_phase_pct: number;
+  /** Standard phase name ("New Moon", "Waxing Crescent", …) or null
+   *  when no date/location anchor is available. Feeds the moon-phase
+   *  icon in the Tonight-mode header. */
+  moon_phase_name: string | null;
   total: number;
   offset: number;
   limit: number;
   items: PlannerTargetItem[];
+  /** Per-chip tallies that reflect the current filter state
+   *  (faceted-search semantics). One dict per filter dimension;
+   *  each chip's count reflects the state with its own dimension
+   *  held out, so users can keep adding chips to a pill filter
+   *  without the picker collapsing to the first selection. */
+  raw_type_counts: Record<string, number>;
+  catalog_counts: Record<string, number>;
+  constellation_counts: Record<string, number>;
 }
 
 export interface PlannerTargetsParams {
   /** Required in Tonight mode; omit (``null``) in Anytime — the
    *  backend then skips visibility + location metadata entirely. */
   location_id: number | null;
+  /** Horizon to compute visibility against. Defaults to the
+   *  location's default horizon server-side. Ignored in Anytime. */
+  horizon_id?: number | null;
   rig_id?: number | null;
   date?: string | null;
-  type_group?: string[];
-  /** Raw OpenNGC ``obj_type`` codes — power-user filter behind the
-   *  "Advanced filters" disclosure. */
+  /** Raw OpenNGC ``obj_type`` codes — multi-select OR. */
   type?: string[];
-  constellation?: string | null;
+  /** Designation catalog codes — multi-select OR. */
+  catalog?: string[];
+  /** 3-letter IAU constellation codes — multi-select OR. */
+  constellation?: string[];
   has_distance?: boolean | null;
   min_hours?: number | null;
   max_magnitude?: number | null;
   min_size_arcmin?: number | null;
-  frames_well?: boolean;
+  /** Lower/upper bounds for the FOV coverage range filter. Only
+   *  meaningful with a rig selected. Leave undefined to skip the
+   *  filter entirely. */
+  coverage_min_pct?: number | null;
+  coverage_max_pct?: number | null;
   /** Free-text search. Same semantics as the DSO catalog's ``q`` —
    *  designation prefix or common-name substring match. */
   q?: string | null;
@@ -90,8 +123,10 @@ export interface PlannerTargetsParams {
   restrict_tonight?: boolean;
   limit?: number;
   offset?: number;
-  sort?: string;
-  sort_dir?: "asc" | "desc";
+  /** Serialized multi-sort string in ``field:dir,field:dir`` form.
+   *  Build with ``serializeSort()`` from ``lib/plannerSortFields``.
+   *  ``null`` lets the backend apply its mode-appropriate default. */
+  sort?: string | null;
 }
 
 export function fetchPlannerTargets(
@@ -99,23 +134,27 @@ export function fetchPlannerTargets(
 ): Promise<PlannerTargetsResponse> {
   const qs = new URLSearchParams();
   if (params.location_id != null) qs.set("location_id", String(params.location_id));
+  if (params.horizon_id != null) qs.set("horizon_id", String(params.horizon_id));
   if (params.rig_id != null) qs.set("rig_id", String(params.rig_id));
   if (params.date) qs.set("date", params.date);
-  if (params.type_group?.length) qs.set("type_group", params.type_group.join(","));
   if (params.type?.length) qs.set("type", params.type.join(","));
-  if (params.constellation) qs.set("constellation", params.constellation);
+  if (params.catalog?.length) qs.set("catalog", params.catalog.join(","));
+  if (params.constellation?.length)
+    qs.set("constellation", params.constellation.join(","));
   if (params.has_distance === true) qs.set("has_distance", "true");
   else if (params.has_distance === false) qs.set("has_distance", "false");
   if (params.min_hours != null) qs.set("min_hours", String(params.min_hours));
   if (params.max_magnitude != null) qs.set("max_magnitude", String(params.max_magnitude));
   if (params.min_size_arcmin != null) qs.set("min_size_arcmin", String(params.min_size_arcmin));
-  if (params.frames_well) qs.set("frames_well", "true");
+  if (params.coverage_min_pct != null)
+    qs.set("coverage_min_pct", String(params.coverage_min_pct));
+  if (params.coverage_max_pct != null)
+    qs.set("coverage_max_pct", String(params.coverage_max_pct));
   if (params.q) qs.set("q", params.q);
   if (params.restrict_tonight === false) qs.set("restrict_tonight", "false");
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);
-  if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
   return apiFetch<PlannerTargetsResponse>(`/planner/targets?${qs.toString()}`);
 }
 
@@ -136,6 +175,7 @@ export interface SkyTrackResponse {
   object_altitude_deg: number[];
   object_azimuth_deg: number[];
   moon_altitude_deg: number[];
+  moon_separation_deg: number[];
   horizon_altitude_at_object_az: number[];
   twilight: TwilightBands;
   moon_phase_pct: number;
@@ -147,12 +187,57 @@ export interface SkyTrackResponse {
 export function fetchSkyTrack(
   dsoId: number,
   locationId: number,
+  horizonId?: number | null,
   date?: string,
 ): Promise<SkyTrackResponse> {
   const qs = new URLSearchParams({ location_id: String(locationId) });
+  if (horizonId != null) qs.set("horizon_id", String(horizonId));
   if (date) qs.set("date", date);
   return apiFetch<SkyTrackResponse>(
     `/planner/targets/${dsoId}/sky-track?${qs.toString()}`,
+  );
+}
+
+export interface AnnualHoursPoint {
+  /** Evening date ``YYYY-MM-DD`` — the night's hours span dusk D → dawn D+1. */
+  date: string;
+  hours: number;
+}
+
+export interface AnnualHoursResponse {
+  dso_id: number;
+  year: number;
+  horizon_id: number;
+  horizon_type: "artificial" | "custom";
+  horizon_name: string;
+  /** Flat altitude for artificial horizons; null for custom. */
+  flat_altitude_deg: number | null;
+  /** Minimum moon–target separation (deg). ``0`` disables the moon
+   *  check (the old "narrowband" / "ignore moon" behaviour). */
+  moon_sep_deg: number;
+  points: AnnualHoursPoint[];
+}
+
+export interface AnnualHoursParams {
+  year?: number;
+  /** Horizon to count hours against. Defaults to the location's
+   *  default horizon server-side. */
+  horizonId?: number | null;
+  /** Minimum moon–target separation (deg), ``0`` = ignore moon. */
+  moonSepDeg?: number;
+}
+
+export function fetchAnnualHours(
+  dsoId: number,
+  locationId: number,
+  params: AnnualHoursParams = {},
+): Promise<AnnualHoursResponse> {
+  const qs = new URLSearchParams({ location_id: String(locationId) });
+  if (params.year) qs.set("year", String(params.year));
+  if (params.horizonId != null) qs.set("horizon_id", String(params.horizonId));
+  if (typeof params.moonSepDeg === "number") qs.set("moon_sep_deg", String(params.moonSepDeg));
+  return apiFetch<AnnualHoursResponse>(
+    `/planner/targets/${dsoId}/annual-hours?${qs.toString()}`,
   );
 }
 
@@ -174,7 +259,6 @@ export interface NearbyDsoItem {
   maj_axis_arcmin: number | null;
   min_axis_arcmin: number | null;
   obj_type: string;
-  type_group: string | null;
 }
 
 export interface NearbyDsosResponse {
