@@ -11,7 +11,6 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import FormControl from "@mui/material/FormControl";
 import IconButton from "@mui/material/IconButton";
-import ListSubheader from "@mui/material/ListSubheader";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
@@ -35,6 +34,7 @@ import SkyPreview from "@/components/dso/SkyPreview";
 import BestTimeOfYearChart from "./BestTimeOfYearChart";
 import SkyPositionGraph from "./SkyPositionGraph";
 import FovSimulator from "./FovSimulator";
+import { renderHorizonMenuItems } from "./horizonMenuItems";
 
 interface Props {
   dsoId: number | null;
@@ -70,7 +70,11 @@ function coverageNarrative(pct: number): string {
   return `far larger than the frame (${pct.toFixed(0)}%) — mosaic needed`;
 }
 
-function formatLocal(iso: string | null, tz: string): string {
+/** Null-safe variant — renders ``—`` for null/invalid ISO strings.
+ *  Same shape as ``formatLocalTime`` in ``PlannerPage`` /
+ *  ``PlannerTargetCard``; keep the name in step across the three
+ *  files. */
+function formatLocalTime(iso: string | null, tz: string): string {
   if (!iso) return "—";
   try {
     return new Date(iso).toLocaleTimeString([], {
@@ -369,26 +373,7 @@ export default function PlannerDetailPanel({
                   onChange={(e) => setPreviewHorizonId(Number(e.target.value))}
                   sx={{ fontSize: "0.75rem" }}
                 >
-                  {horizons.some((h) => h.type === "custom") && [
-                    <ListSubheader key="custom-header">Custom</ListSubheader>,
-                    ...horizons
-                      .filter((h) => h.type === "custom")
-                      .map((h) => (
-                        <MenuItem key={h.id} value={h.id}>
-                          {h.name}
-                        </MenuItem>
-                      )),
-                  ]}
-                  {horizons.some((h) => h.type === "artificial") && [
-                    <ListSubheader key="artificial-header">Artificial</ListSubheader>,
-                    ...horizons
-                      .filter((h) => h.type === "artificial")
-                      .map((h) => (
-                        <MenuItem key={h.id} value={h.id}>
-                          {h.name}
-                        </MenuItem>
-                      )),
-                  ]}
+                  {renderHorizonMenuItems(horizons)}
                 </Select>
               </FormControl>
             </Stack>
@@ -538,7 +523,7 @@ export default function PlannerDetailPanel({
             }
             value={
               target?.max_altitude_deg != null && target.peak_time_utc != null
-                ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocal(
+                ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocalTime(
                     target.peak_time_utc,
                     tz,
                   )}`
@@ -550,7 +535,7 @@ export default function PlannerDetailPanel({
             value={
               target?.altitude_at_transit_deg != null &&
               target.transit_time_utc != null
-                ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocal(
+                ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocalTime(
                     target.transit_time_utc,
                     tz,
                   )}`
@@ -608,8 +593,8 @@ export default function PlannerDetailPanel({
         {skyTrackQuery.data && (
           <Stack direction="row" gap={3} sx={{ mt: 2 }} flexWrap="wrap">
             <Typography variant="caption" color="text.secondary">
-              Astro dark: {formatLocal(skyTrackQuery.data.twilight.astro_start_utc, tz)} –{" "}
-              {formatLocal(skyTrackQuery.data.twilight.astro_end_utc, tz)}
+              Astro dark: {formatLocalTime(skyTrackQuery.data.twilight.astro_start_utc, tz)} –{" "}
+              {formatLocalTime(skyTrackQuery.data.twilight.astro_end_utc, tz)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Moon phase: {Math.round(skyTrackQuery.data.moon_phase_pct)}%

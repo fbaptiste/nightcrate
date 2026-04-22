@@ -1,21 +1,18 @@
 /**
- * Target Planner (v0.16.0, Pass A).
+ * Target Planner.
  *
- * Location-driven "what's up tonight" list. Optional rig adds a FOV
- * coverage column and the "frames well" filter.
+ * Two modes: "Tonight from {location}" (location-aware, visibility +
+ * moon context) and "Browse the full catalog" (no location / no
+ * visibility, acts as a DSO catalog browser). Optional rig selection
+ * adds a rig-framed thumbnail on each card plus a coverage-range
+ * filter ("Size in frame"). Row click opens ``PlannerDetailPanel``.
  */
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  DataGrid,
-  type GridColDef,
-  type GridPaginationModel,
-  type GridRowParams,
-} from "@mui/x-data-grid";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
-import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import TablePagination from "@mui/material/TablePagination";
 import FormControl from "@mui/material/FormControl";
 import IconButton from "@mui/material/IconButton";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -31,9 +28,6 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
-import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
-import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
-import CircleIcon from "@mui/icons-material/Circle";
 import CloseIcon from "@mui/icons-material/Close";
 import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
@@ -43,26 +37,19 @@ import { fetchLocations } from "@/api/locations";
 import { fetchRigs } from "@/api/rigs";
 import { fetchDsoFacets } from "@/api/dsos";
 import { fetchHorizons, type Horizon } from "@/api/horizons";
-import ListSubheader from "@mui/material/ListSubheader";
 import PlannerSortPanel from "@/components/planner/PlannerSortPanel";
+import { renderHorizonMenuItems } from "@/components/planner/horizonMenuItems";
 import { serializeSort } from "@/lib/plannerSortFields";
-import {
-  fetchPlannerTargets,
-  type PlannerTargetItem,
-} from "@/api/planner";
+import { fetchPlannerTargets } from "@/api/planner";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { useDebounce } from "@/lib/useDebounce";
 import PaginationActions from "@/components/common/PaginationActions";
-import GridLoadingOverlay from "@/components/common/GridLoadingOverlay";
-import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
-import { displayConstellation } from "@/lib/constellations";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
 import CatalogFilter from "@/components/dso/CatalogFilter";
 import ConstellationFilter from "@/components/dso/ConstellationFilter";
 import TypeFilter from "@/components/dso/TypeFilter";
-import ThumbnailCell from "@/components/planner/ThumbnailCell";
+import PlannerTargetCard from "@/components/planner/PlannerTargetCard";
 import PlannerDetailPanel from "@/components/planner/PlannerDetailPanel";
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -121,7 +108,7 @@ export default function PlannerPage() {
   const [coverageRange, setCoverageRange] = useState<[number, number]>(framesWellDefault);
   const [coverageRangeDraft, setCoverageRangeDraft] =
     useState<[number, number]>(framesWellDefault);
-  const [pagination, setPagination] = useState<GridPaginationModel>({
+  const [pagination, setPagination] = useState<{ page: number; pageSize: number }>({
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
   });
@@ -307,264 +294,10 @@ export default function PlannerPage() {
   const rigFov = data?.rig
     ? `${(data.rig.fov_major_deg * 60).toFixed(1)}' × ${(data.rig.fov_minor_deg * 60).toFixed(1)}'`
     : null;
-  // Sensor aspect ratio (major / minor) for the rig-framed column. The
-  // stored image is square 180×180 at the rig's major-axis FOV; we
-  // present it in a major:minor-shaped box and let object-fit crop.
-  const rigAspect =
-    data?.rig && data.rig.fov_minor_deg > 0
-      ? data.rig.fov_major_deg / data.rig.fov_minor_deg
-      : null;
 
-  // Column layout rewritten for the compact planner redesign:
-  // - Designation + type-chip collapsed into one two-line cell.
-  // - Meridian + Max altitude collapsed; when the peak-during-dark
-  //   lands on the transit they render as a single "meridian / max
-  //   alt: VAL" line; otherwise each gets its own line.
-  // - Moon column drops the phase (phase lives in the header) and
-  //   shows only the minimum target–moon separation.
-  // - FOV coverage % is captioned under the "In my rig" thumb
-  //   instead of occupying its own column.
-  // - Grid column sorting is fully disabled; a dedicated sort UI
-  //   will replace it.
-  const columns: GridColDef<PlannerTargetItem>[] = [
-    {
-      field: "thumbnail",
-      headerName: "",
-      // Width bumped to 96 — the cell now carries the rise/set
-      // status glyph on the left (~18 px + gap) in addition to the
-      // 60 px thumbnail.
-      width: 96,
-      sortable: false,
-      renderCell: (p) => {
-        const status = p.row.now_status as "up" | "rising" | "set" | null;
-        const icon =
-          status === "up" ? (
-            <Tooltip title="Above horizon right now" arrow>
-              <CircleIcon sx={{ color: RIG_BLUE, fontSize: 14 }} />
-            </Tooltip>
-          ) : status === "rising" ? (
-            <Tooltip title="Not up yet — rises during tonight" arrow>
-              <ArrowUpwardIcon sx={{ color: RIG_ORANGE, fontSize: 18 }} />
-            </Tooltip>
-          ) : status === "set" ? (
-            <Tooltip title="Already set for tonight" arrow>
-              <ArrowDownwardIcon sx={{ color: "text.secondary", fontSize: 18 }} />
-            </Tooltip>
-          ) : null;
-        return (
-          <Stack direction="row" alignItems="center" gap={0.75}>
-            {/* Reserve the icon slot even when ``null`` so the
-                thumbnail sits at a consistent x position across
-                rows — matters in Anytime mode where every row has
-                a null status. */}
-            <Box sx={{ width: 18, display: "flex", justifyContent: "center" }}>
-              {icon}
-            </Box>
-            <ThumbnailCell dsoId={p.row.dso_id} size={60} />
-          </Stack>
-        );
-      },
-    },
-    ...(data?.rig && rigAspect
-      ? [
-          {
-            field: "rig_framed",
-            headerName: "In my rig",
-            width: 96,
-            sortable: false,
-            renderCell: (params) => {
-              const coverage = params.row.coverage_pct as number | null;
-              return (
-                <Stack alignItems="center" spacing={0.25}>
-                  <ThumbnailCell
-                    dsoId={params.row.dso_id}
-                    size={72}
-                    variant="rig_framed"
-                    fovMajorDeg={data.rig!.fov_major_deg}
-                    fovMinorDeg={data.rig!.fov_minor_deg}
-                    aspectRatio={rigAspect}
-                  />
-                  <Typography
-                    variant="caption"
-                    color={coverage == null ? "text.disabled" : "text.secondary"}
-                    sx={{ lineHeight: 1, fontWeight: 500 }}
-                  >
-                    {coverage == null ? "—" : `${coverage.toFixed(0)}%`}
-                  </Typography>
-                </Stack>
-              );
-            },
-          } as GridColDef<PlannerTargetItem>,
-        ]
-      : []),
-    {
-      field: "primary_designation",
-      // Merged Designation + Name + Type. Line 1: bold primary
-      // designation. Line 2 (optional): muted common name — hidden
-      // when the DSO has none. Line 3: small coloured type chip.
-      headerName: "Designation",
-      flex: 1.6,
-      minWidth: 180,
-      sortable: false,
-      renderCell: (p) => (
-        <Stack spacing={0.25}>
-          <Typography variant="body2" fontWeight={600}>
-            {p.value as string}
-          </Typography>
-          {p.row.common_name ? (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ lineHeight: 1.25 }}
-            >
-              {p.row.common_name}
-            </Typography>
-          ) : null}
-          <Chip
-            label={displayDsoType(p.row.obj_type)}
-            size="small"
-            sx={{
-              bgcolor: dsoTypeColor(p.row.obj_type),
-              color: "#ffffff",
-              fontWeight: 500,
-              width: "fit-content",
-              height: 18,
-              "& .MuiChip-label": { px: 0.75, fontSize: "0.7rem" },
-            }}
-          />
-        </Stack>
-      ),
-    },
-    {
-      field: "size",
-      headerName: "Size",
-      flex: 0.6,
-      minWidth: 85,
-      sortable: false,
-      valueGetter: (_v, row) => {
-        if (row.maj_axis_arcmin == null) return "—";
-        if (row.min_axis_arcmin != null && row.min_axis_arcmin !== row.maj_axis_arcmin) {
-          return `${row.maj_axis_arcmin.toFixed(1)}' × ${row.min_axis_arcmin.toFixed(1)}'`;
-        }
-        return `${row.maj_axis_arcmin.toFixed(1)}'`;
-      },
-    },
-    {
-      field: "mag_v",
-      headerName: "Mag V",
-      flex: 0.4,
-      minWidth: 60,
-      type: "number",
-      sortable: false,
-      valueFormatter: (v) => (v == null ? "—" : (v as number).toFixed(1)),
-    },
-    // Visibility columns only make sense in "Tonight" mode.
-    ...(restrictTonight
-      ? ([
-          {
-            field: "hours_visible",
-            headerName: "Hours",
-            flex: 0.4,
-            minWidth: 60,
-            type: "number" as const,
-            sortable: false,
-            valueFormatter: (v) =>
-              v == null ? "—" : `${(v as number).toFixed(1)}h`,
-          },
-          {
-            // Combined meridian / max-altitude cell. When the target
-            // transits during astro-dark, max altitude equals the
-            // transit altitude — so they render as a single compact
-            // line. Otherwise we show both, two lines.
-            field: "max_altitude_deg",
-            headerName: "Meridian / max alt",
-            flex: 1.2,
-            minWidth: 150,
-            sortable: false,
-            renderCell: (p) => {
-              const maxAlt = p.row.max_altitude_deg as number | null;
-              const peakT = p.row.peak_time_utc as string | null;
-              const transitAlt = p.row.altitude_at_transit_deg as number | null;
-              const transitT = p.row.transit_time_utc as string | null;
-              if (maxAlt == null || peakT == null) {
-                return (
-                  <Typography variant="body2" color="text.disabled">
-                    —
-                  </Typography>
-                );
-              }
-              // Collapse when the two agree (transit is inside the
-              // astro-dark window): 1° / 1-min tolerance absorbs
-              // rounding and sub-minute drift without hiding a real
-              // mismatch.
-              const matches =
-                transitAlt != null &&
-                transitT != null &&
-                Math.abs(transitAlt - maxAlt) < 0.75 &&
-                Math.abs(
-                  new Date(transitT).getTime() - new Date(peakT).getTime(),
-                ) <
-                  60 * 1000;
-              if (matches) {
-                return (
-                  <Typography variant="body2">
-                    <Box
-                      component="span"
-                      sx={{ color: "text.secondary", mr: 0.75 }}
-                    >
-                      meridian / max alt:
-                    </Box>
-                    {maxAlt.toFixed(0)}° @ {formatLocalTime(peakT, tz)}
-                  </Typography>
-                );
-              }
-              return (
-                <Stack spacing={0.15}>
-                  {transitAlt != null && transitT != null && (
-                    <Typography variant="body2">
-                      <Box
-                        component="span"
-                        sx={{ color: "text.secondary", mr: 0.75 }}
-                      >
-                        meridian:
-                      </Box>
-                      {transitAlt.toFixed(0)}° @ {formatLocalTime(transitT, tz)}
-                    </Typography>
-                  )}
-                  <Typography variant="body2">
-                    <Box
-                      component="span"
-                      sx={{ color: "text.secondary", mr: 0.75 }}
-                    >
-                      max alt:
-                    </Box>
-                    {maxAlt.toFixed(0)}° @ {formatLocalTime(peakT, tz)}
-                  </Typography>
-                </Stack>
-              );
-            },
-          },
-          {
-            field: "min_moon_separation_deg",
-            headerName: "Moon sep",
-            flex: 0.5,
-            minWidth: 70,
-            type: "number" as const,
-            sortable: false,
-            valueFormatter: (v) =>
-              v == null ? "—" : `${(v as number).toFixed(0)}°`,
-          },
-        ] as GridColDef<PlannerTargetItem>[])
-      : []),
-    {
-      field: "constellation",
-      headerName: "Const",
-      flex: 0.5,
-      minWidth: 70,
-      sortable: false,
-      valueFormatter: (v) => displayConstellation(v as string | null),
-    },
-  ];
+  const rigFovMajorDeg = data?.rig?.fov_major_deg ?? null;
+  const rigFovMinorDeg = data?.rig?.fov_minor_deg ?? null;
+
 
   return (
     <Box
@@ -752,26 +485,7 @@ export default function PlannerPage() {
                   setPagination((p) => ({ ...p, page: 0 }));
                 }}
               >
-                {horizons.some((h) => h.type === "custom") && [
-                  <ListSubheader key="custom-header">Custom</ListSubheader>,
-                  ...horizons
-                    .filter((h) => h.type === "custom")
-                    .map((h) => (
-                      <MenuItem key={h.id} value={h.id}>
-                        {h.name}
-                      </MenuItem>
-                    )),
-                ]}
-                {horizons.some((h) => h.type === "artificial") && [
-                  <ListSubheader key="artificial-header">Artificial</ListSubheader>,
-                  ...horizons
-                    .filter((h) => h.type === "artificial")
-                    .map((h) => (
-                      <MenuItem key={h.id} value={h.id}>
-                        {h.name}
-                      </MenuItem>
-                    )),
-                ]}
+                {renderHorizonMenuItems(horizons)}
               </Select>
             </FormControl>
           )}
@@ -992,14 +706,19 @@ export default function PlannerPage() {
           </Alert>
         )}
 
-      {/* Grid */}
-      <Paper variant="outlined" sx={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {/* Custom fetch overlay. ``loading`` on the DataGrid is NOT
-            used because MUI X Community renders a linear-progress
-            bar inside the column-header row during re-fetches with
-            existing data — that bar peeks through as clipped text
-            and ignores ``slots.loadingOverlay``. Rolling our own
-            overlay on the Paper wrapper sidesteps it entirely. */}
+      {/* Card list — one card per DSO, server-side paginated. The
+          MUI X DataGrid that lived here was replaced with a simple
+          stack of cards: the grid no longer owned sort (panel does)
+          or row-click semantics (``CardActionArea`` on each card
+          does), and the column layout wasted horizontal space for
+          the data density we actually want. */}
+      <Paper
+        variant="outlined"
+        sx={{ flex: 1, minHeight: 0, position: "relative", overflow: "auto" }}
+      >
+        {/* Opaque loading overlay on the Paper — covers the card
+            stack during sort / filter refetches so prior rows don't
+            bleed through. */}
         {(targetsQuery.isLoading || targetsQuery.isFetching) && (
           <Stack
             alignItems="center"
@@ -1019,82 +738,62 @@ export default function PlannerPage() {
             </Typography>
           </Stack>
         )}
-        <DataGrid
-          rows={data?.items ?? []}
-          getRowId={(row) => row.dso_id}
-          columns={columns}
-          paginationMode="server"
-          // Sort is entirely owned by the Sorting panel (server-side
-          // sort via the ``sort`` query param). The DataGrid has no
-          // sort responsibility — disable column-header sort entirely
-          // so there's no duplicate UI and no risk of MUI's internal
-          // sortModel reconciliation clobbering the panel's state.
-          disableColumnSorting
-          rowCount={data?.total ?? 0}
-          paginationModel={pagination}
-          onPaginationModelChange={setPagination}
-          pageSizeOptions={[25, 50, 100]}
-          getRowHeight={() => "auto"}
-          slotProps={{
-            basePagination: {
-              ActionsComponent: PaginationActions,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            } as any,
-          }}
-          onRowClick={(params: GridRowParams<PlannerTargetItem>) =>
-            setDetailId(params.row.dso_id)
-          }
-          disableRowSelectionOnClick
-          slots={{
-            loadingOverlay: GridLoadingOverlay,
-            noRowsOverlay: () => (
-              <Stack
-                alignItems="center"
-                justifyContent="center"
-                sx={{ height: "100%", px: 3, textAlign: "center" }}
-                gap={0.5}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  {restrictTonight
-                    ? "No targets match these filters tonight."
-                    : "No DSOs match these filters."}
+
+        {data?.items && data.items.length > 0 ? (
+          <Box sx={{ p: 1.5 }}>
+            <Stack gap={1.25}>
+              {data.items.map((item) => (
+                <PlannerTargetCard
+                  key={item.dso_id}
+                  item={item}
+                  rigFovMajorDeg={rigFovMajorDeg}
+                  rigFovMinorDeg={rigFovMinorDeg}
+                  tz={tz}
+                  restrictTonight={restrictTonight}
+                  onClick={setDetailId}
+                />
+              ))}
+            </Stack>
+            <TablePagination
+              component="div"
+              count={data.total}
+              page={pagination.page}
+              onPageChange={(_, newPage) =>
+                setPagination((p) => ({ ...p, page: newPage }))
+              }
+              rowsPerPage={pagination.pageSize}
+              onRowsPerPageChange={(e) =>
+                setPagination({ page: 0, pageSize: parseInt(e.target.value, 10) })
+              }
+              rowsPerPageOptions={[25, 50, 100]}
+              labelRowsPerPage="Cards per page:"
+              ActionsComponent={PaginationActions}
+              sx={{ mt: 1, borderTop: 1, borderColor: "divider" }}
+            />
+          </Box>
+        ) : (
+          !targetsQuery.isLoading &&
+          !targetsQuery.isFetching && (
+            <Stack
+              alignItems="center"
+              justifyContent="center"
+              sx={{ height: "100%", px: 3, py: 6, textAlign: "center" }}
+              gap={0.5}
+            >
+              <Typography variant="body2" color="text.secondary">
+                {restrictTonight
+                  ? "No targets match these filters tonight."
+                  : "No DSOs match these filters."}
+              </Typography>
+              {restrictTonight && (
+                <Typography variant="caption" color="text.secondary">
+                  Try relaxing Min hours / Magnitude, or switch to
+                  &ldquo;Browse the full catalog&rdquo; mode.
                 </Typography>
-                {restrictTonight && (
-                  <Typography variant="caption" color="text.secondary">
-                    Try relaxing Min hours / Magnitude, or switch to
-                    &ldquo;Browse the full catalog&rdquo; mode.
-                  </Typography>
-                )}
-              </Stack>
-            ),
-          }}
-          sx={{
-            border: 0,
-            "& .MuiDataGrid-row": { cursor: "pointer" },
-            // Cells wrap text over multiple lines rather than truncating
-            // with ellipses when the column gets narrow. Paired with
-            // getRowHeight="auto" so the row grows to fit.
-            "& .MuiDataGrid-cell": {
-              whiteSpace: "normal",
-              lineHeight: 1.35,
-              alignItems: "center",
-              py: 1,
-            },
-            "& .MuiDataGrid-cell:focus, & .MuiDataGrid-cell:focus-within": {
-              outline: "none",
-            },
-            // MUI X DataGrid v8 renders a small three-dot "overflow" button
-            // on cells whose content it believes is truncated. It fires
-            // on every thumbnail cell because the <img> has a fixed width
-            // the grid can't measure past. We wrap text with whiteSpace:
-            // normal, so the indicator has nothing to reveal and just adds
-            // noise — hide it.
-            "& .MuiDataGrid-cellOverflowIndicator, & .MuiDataGrid-cellOverflowIndicatorButton":
-              {
-                display: "none",
-              },
-          }}
-        />
+              )}
+            </Stack>
+          )
+        )}
       </Paper>
         </>
       )}

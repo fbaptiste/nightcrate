@@ -1,20 +1,29 @@
 """Per-DSO "currently up / rising later / already set" status snapshot.
 
 Run at request time, once per planner-targets fetch. For each DSO
-with coordinates, tells the UI whether — at the moment the request
-was served — the target is:
+with coordinates, tells the UI whether, with respect to tonight's
+astronomical-dark session, the target is:
 
-- ``up``: above the local horizon (the location's custom horizon
-  polyline if defined, otherwise 0° geometric horizon).
-- ``rising``: below the horizon right now, but scheduled to rise
-  above it before astronomical dawn (or the end of the current
-  astro-dark window, whichever lands first).
-- ``set``: below the horizon now and won't come above during the
-  remaining astro-dark window tonight.
+- ``up``: above the local horizon right now, AND the current instant
+  is inside tonight's astro-dark window. Only fires when the user
+  would actually be able to observe.
+- ``rising``: not currently observable (either below horizon during
+  the dark window, or we're still in daytime before tonight starts)
+  but will clear the horizon at some point inside tonight's dark
+  window.
+- ``set``: will not clear the horizon at any point during tonight.
 
-Cheap. One vectorised astropy AltAz pass over a coarse time grid
-(15-minute sampling from ``now`` to ``astro_dark_end`` + current
-instant, clamped to reasonable bounds) for all DSOs at once.
+"Tonight" follows the snapshot's dark window (``night_date`` anchored
+via ``_tonight_date`` — which rolls back 12 hours so "tonight" means
+the upcoming session between local noon and midnight, and the
+current session between midnight and noon). Between astronomical
+dawn and local noon we're sitting on yesterday's snapshot; in that
+window we return no status (empty dict) — the session is over, so
+the up / rising / set concept doesn't apply.
+
+Cheap. One vectorised astropy AltAz pass over a 15-minute grid
+across the *dark-window* portion of tonight (not ``now`` → dark-end,
+which would include daytime samples during an afternoon fetch).
 """
 
 from __future__ import annotations
@@ -39,8 +48,8 @@ from nightcrate.services.planner_visibility import (
 NowStatus = Literal["up", "rising", "set"]
 
 # Coarse sampling for the forward look-ahead. 15 min is plenty — the
-# question is just "does the object clear the horizon in the next few
-# hours?", not a precision rise-time.
+# question is just "does the object clear the horizon tonight?",
+# not a precision rise-time.
 _FORWARD_STEP_MINUTES = 15
 
 
@@ -50,51 +59,73 @@ def compute_now_status(
     dsos: Sequence[DsoCoord],
     *,
     now_utc: datetime | None = None,
+    astro_dark_start_utc: datetime | None = None,
     astro_dark_end_utc: datetime | None = None,
 ) -> dict[int, NowStatus]:
-    """Return per-DSO {id: status}.
+    """Return per-DSO ``{id: status}`` scoped to tonight's astro-dark.
 
-    ``now_utc`` defaults to the current wall-clock UTC instant.
-    ``astro_dark_end_utc`` is the latest UTC time considered "still
-    tonight" for the rising-later check; if ``None``, falls back to
-    ``now_utc + 12 h`` so objects that rise within the next half-day
-    qualify (handles daytime fetches well).
+    ``astro_dark_start_utc`` / ``astro_dark_end_utc`` bound tonight's
+    session; both are taken from the planner's visibility snapshot.
+    Missing either (polar summer with no astro-dark at all) returns
+    an empty dict, same shape as "no status to report".
 
-    Horizon test: altitude is compared against the horizon altitude at
-    the object's current azimuth (flat for artificial horizons,
-    interpolated polyline for custom ones).
+    Status decision tree:
+
+    - ``now > dark_end`` — tonight's session ended; return empty.
+    - ``now < dark_start`` — daytime before tonight. Sample the
+      dark-window interval. "Up" never fires (user can't see the
+      object during daytime); "rising" if ever above horizon in the
+      window, "set" otherwise.
+    - ``dark_start ≤ now ≤ dark_end`` — inside astro-dark. Sample
+      ``now`` → ``dark_end``. "Up" when above horizon on the first
+      sample; "rising" if below now but above later; "set" otherwise.
+
+    Sampling the *dark-window* portion (rather than ``now`` → end)
+    is the key fix: an afternoon fetch used to report "set" for
+    objects that had already dropped below horizon by midday but
+    would re-rise during the upcoming night. Clamping the window
+    start to ``dark_start_utc`` during daytime drops those spurious
+    samples.
     """
     if not dsos:
         return {}
-
     if now_utc is None:
         now_utc = datetime.now(UTC)
-    if astro_dark_end_utc is None or astro_dark_end_utc <= now_utc:
-        from datetime import timedelta
+    if astro_dark_start_utc is None or astro_dark_end_utc is None:
+        return {}
 
-        astro_dark_end_utc = now_utc + timedelta(hours=12)
+    # Post-dawn: tonight's session is over. The snapshot we're looking
+    # at is yesterday's; showing up/rising/set against it would be
+    # stale. Return empty — the frontend renders no glyph.
+    if now_utc > astro_dark_end_utc:
+        return {}
+
+    # Daytime before tonight: clamp the sample window to tonight's
+    # dark interval and suppress the "up" state entirely. Inside
+    # astro-dark: sample from now → dark-end and let "up" fire on
+    # the first sample.
+    if now_utc < astro_dark_start_utc:
+        sample_start = astro_dark_start_utc
+        evaluate_up_now = False
+    else:
+        sample_start = now_utc
+        evaluate_up_now = True
 
     earth_loc = _make_earth_location(location)
 
-    # Forward-look time grid: sample at ``now`` + 15-min increments up
-    # to astro_dark_end. "Up" is decided by the FIRST sample; the
-    # remaining samples inform "rising later". 15-min step keeps the
-    # astropy call cheap even over an 8-hour horizon.
-    horizon_secs = max(0.0, (astro_dark_end_utc - now_utc).total_seconds())
-    n_forward = max(1, int(horizon_secs // (_FORWARD_STEP_MINUTES * 60)) + 1)
+    total_sec = max(0.0, (astro_dark_end_utc - sample_start).total_seconds())
+    n_forward = max(1, int(total_sec // (_FORWARD_STEP_MINUTES * 60)) + 1)
     step = TimeDelta(_FORWARD_STEP_MINUTES * 60, format="sec")
 
-    t0 = Time(now_utc)
+    t0 = Time(sample_start)
     times = t0 + step * np.arange(n_forward)
     altaz_frame = AltAz(obstime=times, location=earth_loc)
 
     # Build SkyCoords for every DSO as a single Column-vector →
-    # `transform_to` then produces a (N_dsos, N_times) altitude array.
+    # ``transform_to`` then produces a (N_dsos, N_times) altitude array.
     ra_arr = np.asarray([d.ra_deg for d in dsos]) * u.deg
     dec_arr = np.asarray([d.dec_deg for d in dsos]) * u.deg
     coords = SkyCoord(ra=ra_arr[:, None], dec=dec_arr[:, None], frame="icrs")
-    # Broadcast: shape (N_dsos, 1) coords × shape (N_times,) frame →
-    # (N_dsos, N_times) result.
     altaz = coords.transform_to(altaz_frame)
     alt = np.asarray(altaz.alt.deg)  # (N_dsos, N_times)
     az = np.asarray(altaz.az.deg)
@@ -105,8 +136,15 @@ def compute_now_status(
     ).reshape(az.shape)
 
     above = alt > horizon_alt  # (N_dsos, N_times) bool
-    up_now = above[:, 0]
-    rising_later = above[:, 1:].any(axis=1) if n_forward > 1 else np.zeros_like(up_now)
+
+    if evaluate_up_now:
+        up_now = above[:, 0]
+        rising_later = above[:, 1:].any(axis=1) if n_forward > 1 else np.zeros_like(up_now)
+    else:
+        # Daytime — "up" cannot fire. Any above-horizon sample during
+        # the dark window makes the target "rising".
+        up_now = np.zeros(len(dsos), dtype=bool)
+        rising_later = above.any(axis=1)
 
     result: dict[int, NowStatus] = {}
     for i, d in enumerate(dsos):

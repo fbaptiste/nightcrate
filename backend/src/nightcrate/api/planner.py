@@ -659,6 +659,7 @@ async def list_targets(
             location,
             horizon,
             visible_coords,
+            astro_dark_start_utc=snapshot.dark_window.start_utc,
             astro_dark_end_utc=snapshot.dark_window.end_utc,
         )
 
