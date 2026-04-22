@@ -2573,15 +2573,15 @@ ship.
 
 ### FOV Simulator background survey
 
-- [ ] **DSS2 plate-boundary seams are visible at wide extents.** The
-      mosaic stitches pixel-perfectly (verified on NGC 7000 —
-      astrometry is seamless), but intensity / colour deltas
-      between adjacent HEALPix cells are noticeable because DSS2
-      itself is a patchwork of independently calibrated
-      photographic plates. Not a NightCrate bug — same effect
-      appears in Aladin / Stellarium. Mitigations would need a
-      survey picker (Pan-STARRS / DECaLS in their coverage area,
-      DSS2 elsewhere) or per-tile median normalisation.
+- [x] **DSS2 plate-boundary seams are visible at wide extents.**
+      Decision: accept as a known DSS2 data characteristic — same
+      effect appears in Aladin / Stellarium. Mosaic stitches
+      pixel-perfectly (verified on NGC 7000); the deltas are plate-
+      to-plate exposure / development differences, not a NightCrate
+      stitching bug. A proper survey picker (Pan-STARRS / DECaLS
+      where available, DSS2 fallback) is a feature, not polish —
+      deferred to its own future version rather than landing inside
+      v0.18.1.
 
 ### Cache resilience across database recreation
 

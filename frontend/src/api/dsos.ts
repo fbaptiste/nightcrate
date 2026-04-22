@@ -88,18 +88,26 @@ export interface ConstellationFacet {
   count: number;
 }
 
+export interface CatalogFacet {
+  code: string;
+  count: number;
+}
+
 export interface DsoFacets {
   type_groups: TypeGroupFacet[];
   raw_types: RawTypeFacet[];
   constellations: ConstellationFacet[];
+  catalogs: CatalogFacet[];
 }
 
 export interface DsoListParams {
   q?: string | null;
   type?: string[];
   type_group?: string[];
-  constellation?: string | null;
+  /** Constellation codes — comma-joined by the caller. Multi-select OR semantics. */
+  constellation?: string[];
   has_distance?: boolean | null;
+  catalog?: string[];
   limit?: number;
   offset?: number;
   sort?: string;
@@ -111,8 +119,9 @@ export function fetchDsos(params: DsoListParams): Promise<DsoListResponse> {
   if (params.q) qs.set("q", params.q);
   if (params.type?.length) qs.set("type", params.type.join(","));
   if (params.type_group?.length) qs.set("type_group", params.type_group.join(","));
-  if (params.constellation) qs.set("constellation", params.constellation);
+  if (params.constellation?.length) qs.set("constellation", params.constellation.join(","));
   if (params.has_distance != null) qs.set("has_distance", String(params.has_distance));
+  if (params.catalog?.length) qs.set("catalog", params.catalog.join(","));
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);
@@ -128,12 +137,15 @@ export const lookupDso = (q: string) =>
 
 export interface DsoFacetsParams {
   q?: string | null;
-  constellation?: string | null;
+  /** Constellation codes — comma-joined by the caller. Multi-select OR semantics. */
+  constellation?: string[];
   has_distance?: boolean | null;
   /** Raw ``obj_type`` codes — comma-joined by the caller. */
   type?: string[];
   /** Type-group names — comma-joined by the caller. */
   type_group?: string[];
+  /** Designation catalog codes — comma-joined by the caller. */
+  catalog?: string[];
 }
 
 /** Fetch facet counts. When any filter param is set, counts are
@@ -143,11 +155,12 @@ export interface DsoFacetsParams {
 export function fetchDsoFacets(params: DsoFacetsParams = {}): Promise<DsoFacets> {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
-  if (params.constellation) qs.set("constellation", params.constellation);
+  if (params.constellation?.length) qs.set("constellation", params.constellation.join(","));
   if (params.has_distance === true) qs.set("has_distance", "true");
   else if (params.has_distance === false) qs.set("has_distance", "false");
   if (params.type?.length) qs.set("type", params.type.join(","));
   if (params.type_group?.length) qs.set("type_group", params.type_group.join(","));
+  if (params.catalog?.length) qs.set("catalog", params.catalog.join(","));
   const query = qs.toString();
   return apiFetch<DsoFacets>(query ? `/dso/facets?${query}` : "/dso/facets");
 }

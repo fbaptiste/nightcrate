@@ -240,6 +240,22 @@ def _moon_phase_info(time: Time, location: EarthLocation) -> MoonInfo:
     )
 
 
+def compute_moon_phase_name(time: Time, location: EarthLocation) -> str:
+    """Return one of the 8 standard moon-phase names at ``time``.
+
+    Delegates to ERFA / astropy ephemeris — same path used by
+    ``_moon_phase_info``. Exposed publicly so callers (e.g. the
+    planner) can get the phase name without pulling in the full
+    ``MoonInfo`` object.
+    """
+    sun = get_body("sun", time, location)
+    moon = get_body("moon", time, location)
+    sun_ecl = sun.geocentricmeanecliptic
+    moon_ecl = moon.geocentricmeanecliptic
+    delta_lon = float((moon_ecl.lon - sun_ecl.lon).deg) % 360
+    return _phase_name_from_delta_lon(delta_lon)
+
+
 def _phase_name_from_delta_lon(delta_lon: float) -> str:
     """Map ecliptic longitude difference to one of 8 standard phase names."""
     if delta_lon < 22.5:

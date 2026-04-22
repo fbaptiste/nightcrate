@@ -58,16 +58,48 @@ interface HoverInfo {
   objAlt: number;
   objAz: number;
   moonAlt: number;
+  moonSep: number;
   aboveHorizon: boolean;
-  snappedToMeridian: boolean;
+  /** ``null`` when hover isn't magnetically snapped to a landmark;
+   *  otherwise a lowercase short label ("meridian", "astro dark",
+   *  "nautical dark", "civil dark") for the tooltip annotation. */
+  snapLabel: string | null;
 }
 
-// Magnetic-snap radius around the meridian line, in CSS pixels. Wide
-// enough to be easy to land on without a precise mouse, narrow enough
-// that it feels intentional rather than sticky.
-const MERIDIAN_SNAP_PX = 6;
+// Magnetic-snap radius around the meridian + twilight boundary lines,
+// in CSS pixels. Wide enough to be easy to land on without a precise
+// mouse, narrow enough that it feels intentional rather than sticky.
+const SNAP_PX = 6;
 
-export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
+// Twilight markers live in a stacked label area above the chart grid.
+// ``tier 0`` is the topmost label row (farthest from the chart); the
+// corresponding vertical line is the longest. Higher tier numbers
+// sit closer to the chart with shorter lines. Astro boundaries get
+// tier 0, nautical tier 1, civil tier 2, sunset/sunrise tier 3 —
+// matches the weather app's Darkness-bar labelling.
+const TWILIGHT_TIER_HEIGHT = 14;
+const TWILIGHT_MAX_TIER = 3;
+const TWILIGHT_LABEL_BAR_GAP = 8;
+const TWILIGHT_LABELS_TOTAL_HEIGHT =
+  (TWILIGHT_MAX_TIER + 1) * TWILIGHT_TIER_HEIGHT + TWILIGHT_LABEL_BAR_GAP;
+
+interface TwilightMarker {
+  key: string;
+  label: string; // short label for tooltip + legend
+  utc: string | null;
+  side: "left" | "right";
+  tier: number; // 0 (astro, topmost) .. 2 (civil, closest to chart)
+}
+
+export default function SkyPositionGraph({
+  track,
+  tz,
+  // Default bumped from 260 → 324 to reserve a 64 px label strip
+  // above the chart grid for the four tiers of boundary markers
+  // (astro / nautical / civil dark + sunset/sunrise). The chart
+  // data area itself stays its historic 222 px tall.
+  height = 324,
+}: Props) {
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(600);
@@ -78,7 +110,10 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 600;
-      setWidth(Math.max(400, Math.floor(w)));
+      // Minimum bumped from 400 → 540 because the twilight-label
+      // strip eats 220 px of horizontal margin on each side combined.
+      // Below ~540 px the chart data area becomes uselessly narrow.
+      setWidth(Math.max(540, Math.floor(w)));
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -88,7 +123,20 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
   const blockedFill = blockedSkyFill(theme.palette.mode);
 
   const layout = useMemo(() => {
-    const MARGIN = { top: 10, right: 20, bottom: 28, left: 44 };
+    // Chart-internal margin. ``top`` reserves the tiered label strip
+    // above the grid (+ the historic 10 px breathing room). ``left``
+    // / ``right`` are generous enough to fit the twilight marker
+    // labels — the earliest (Sunset) and latest (Sunrise) markers
+    // sit only a few minutes inside the chart window, so their
+    // labels extend well past the chart data area on each side
+    // (~90 px for "Sunset 07:01 PM" at 10 px sans-serif). 110 px
+    // on each side leaves ~25 px of slack for longer strings.
+    const MARGIN = {
+      top: 10 + TWILIGHT_LABELS_TOTAL_HEIGHT,
+      right: 110,
+      bottom: 28,
+      left: 110,
+    };
     const times = track.times_utc.map((t) => new Date(t));
     const tmin = times[0] ?? new Date();
     const tmax = times[times.length - 1] ?? new Date();
@@ -160,44 +208,74 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
     );
   }
 
+  // Twilight markers — the six boundaries that separate the twilight
+  // bands already shaded behind the chart. Tier 0 (astro) is drawn
+  // with the longest line + topmost label; tier 2 (civil) is closest
+  // to the chart. Side ("left" / "right") only governs label anchor
+  // position relative to the line.
+  const twilightMarkers = useMemo<TwilightMarker[]>(() => {
+    const tw = track.twilight;
+    return [
+      { key: "sunset", label: "Sunset", utc: tw.sunset_utc, side: "left", tier: 3 },
+      { key: "civil_end", label: "Civil dark", utc: tw.civil_end_utc, side: "left", tier: 2 },
+      { key: "nautical_end", label: "Nautical dark", utc: tw.nautical_end_utc, side: "left", tier: 1 },
+      { key: "astro_start", label: "Astro dark", utc: tw.astro_start_utc, side: "left", tier: 0 },
+      { key: "astro_end", label: "Astro dark", utc: tw.astro_end_utc, side: "right", tier: 0 },
+      { key: "nautical_start", label: "Nautical dark", utc: tw.nautical_start_utc, side: "right", tier: 1 },
+      { key: "civil_start", label: "Civil dark", utc: tw.civil_start_utc, side: "right", tier: 2 },
+      { key: "sunrise", label: "Sunrise", utc: tw.sunrise_utc, side: "right", tier: 3 },
+    ];
+  }, [track.twilight]);
+
   function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
     const mx = e.clientX - rect.left;
 
-    // Magnetic snap: when the cursor is close to the meridian line,
-    // lock onto the analytical transit instant exactly. Matters for
-    // two reasons — (1) readout shows the precise transit time /
-    // altitude rather than a 5-minute sampled neighbour, and (2)
-    // gives the user a "positive stop" that feels deliberate.
+    // Magnetic snap — meridian + each twilight boundary. Pick the
+    // landmark closest to the cursor within SNAP_PX; gives the user
+    // a "positive stop" at each darkness-band edge instead of having
+    // to land on it by pixel-perfect mouse movement.
     let snapTime: Date | null = null;
     let snapX = mx;
-    if (track.transit_time_utc) {
-      const meridianT = new Date(track.transit_time_utc);
-      const meridianX = layout.x(meridianT);
-      if (
-        meridianX >= layout.MARGIN.left &&
-        meridianX <= width - layout.MARGIN.right &&
-        Math.abs(mx - meridianX) <= MERIDIAN_SNAP_PX
-      ) {
-        snapTime = meridianT;
-        snapX = meridianX;
+    let snapLabel: string | null = null;
+    let bestDist = SNAP_PX + 0.5;
+
+    function tryCandidate(iso: string | null, label: string) {
+      if (!iso) return;
+      const t = new Date(iso);
+      const cx = layout.x(t);
+      if (cx < layout.MARGIN.left || cx > width - layout.MARGIN.right) return;
+      const d = Math.abs(mx - cx);
+      if (d < bestDist) {
+        snapTime = t;
+        snapX = cx;
+        snapLabel = label;
+        bestDist = d;
       }
+    }
+
+    tryCandidate(track.transit_time_utc, "meridian");
+    for (const m of twilightMarkers) {
+      tryCandidate(m.utc, m.label.toLowerCase());
     }
 
     const t = snapTime ?? layout.x.invert(mx);
     const idx = d3.bisector((d: Date) => d).left(layout.times, t);
     const clamped = Math.max(0, Math.min(layout.times.length - 1, idx));
-    // When snapped, use the sky-track's analytical peak altitude
-    // (equal to the altitude at transit since peak=transit when
-    // transit lies inside the charted window) rather than a
-    // 5-minute-sampled neighbour. Azimuth + moon stay sampled — the
-    // chart doesn't expose sub-minute analytical values for those.
-    const objAlt = snapTime ? track.peak_altitude_deg : track.object_altitude_deg[clamped];
+    // When snapped to the meridian, prefer the analytical transit
+    // altitude (sub-minute precise) over the bisected 5-min sample.
+    // For twilight snaps we don't have a corresponding analytical
+    // altitude, so fall back to the nearest sample — error is <5 min.
+    const objAlt =
+      snapLabel === "meridian"
+        ? track.peak_altitude_deg
+        : track.object_altitude_deg[clamped];
     const horizon = track.horizon_altitude_at_object_az[clamped];
     const localTime = (snapTime ?? layout.times[clamped]).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
       timeZone: tz,
     });
     setHover({
@@ -206,8 +284,9 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
       objAlt,
       objAz: track.object_azimuth_deg[clamped],
       moonAlt: track.moon_altitude_deg[clamped],
+      moonSep: track.moon_separation_deg[clamped],
       aboveHorizon: objAlt > horizon,
-      snappedToMeridian: snapTime != null,
+      snapLabel,
     });
   }
 
@@ -230,6 +309,18 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
         {bandRect(track.twilight.astro_end_utc, track.twilight.nautical_start_utc, tw.nautical)}
         {bandRect(track.twilight.nautical_start_utc, track.twilight.civil_start_utc, tw.nautical)}
         {bandRect(track.twilight.civil_start_utc, track.twilight.sunrise_utc, tw.civil)}
+
+        {/* Y-axis title — rotated so it sits flush against the tick labels. */}
+        <text
+          x={-((height - layout.MARGIN.top - layout.MARGIN.bottom) / 2 + layout.MARGIN.top)}
+          y={layout.MARGIN.left - 44}
+          textAnchor="middle"
+          transform="rotate(-90)"
+          fontSize={11}
+          fill={theme.palette.text.secondary}
+        >
+          Altitude (°)
+        </text>
 
         {/* Y-axis grid + labels */}
         {[0, 30, 60, 90].map((alt) => (
@@ -271,7 +362,12 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
               fontSize={11}
               fill={theme.palette.text.secondary}
             >
-              {t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: tz })}
+              {t.toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+                timeZone: tz,
+              })}
             </text>
           </g>
         ))}
@@ -326,6 +422,55 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
           );
         })()}
 
+        {/* Twilight-boundary markers — tiered dashed verticals with
+            labels, mirroring the weather app's Darkness-bar
+            convention. Astro (tier 0) is topmost + longest line;
+            civil (tier 2) is closest to the chart. */}
+        {twilightMarkers.map((m) => {
+          if (!m.utc) return null;
+          const mx = layout.x(new Date(m.utc));
+          if (mx < layout.MARGIN.left || mx > width - layout.MARGIN.right) {
+            return null;
+          }
+          // Line top sits at this tier's row in the label area.
+          const labelsBarTop = layout.MARGIN.top - TWILIGHT_LABELS_TOTAL_HEIGHT;
+          const lineTop = labelsBarTop + m.tier * TWILIGHT_TIER_HEIGHT;
+          // Label baseline: 3 px above the tier's lower edge.
+          const labelY = labelsBarTop + (m.tier + 1) * TWILIGHT_TIER_HEIGHT - 3;
+          const labelX = m.side === "left" ? mx - 4 : mx + 4;
+          const textAnchor = m.side === "left" ? "end" : "start";
+          const timeLocal = new Date(m.utc).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+            timeZone: tz,
+          });
+          return (
+            <g key={m.key}>
+              <line
+                x1={mx}
+                x2={mx}
+                y1={lineTop}
+                y2={height - layout.MARGIN.bottom}
+                stroke={theme.palette.text.secondary}
+                strokeWidth={1}
+                strokeDasharray="2,3"
+                opacity={0.5}
+              />
+              <text
+                x={labelX}
+                y={labelY}
+                textAnchor={textAnchor}
+                fontSize={10}
+                fontFamily="inherit"
+              >
+                <tspan fill={theme.palette.text.secondary}>{m.label} </tspan>
+                <tspan fill={theme.palette.text.primary}>{timeLocal}</tspan>
+              </text>
+            </g>
+          );
+        })}
+
         {/* Meridian crossing — vertical dashed line with label. Drawn only
             when transit falls inside the display window. */}
         {track.transit_time_utc &&
@@ -339,17 +484,18 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
                   x2={tx}
                   y1={layout.MARGIN.top}
                   y2={height - layout.MARGIN.bottom}
-                  stroke={theme.palette.text.secondary}
+                  stroke={COLOR_OBJECT}
                   strokeWidth={1}
                   strokeDasharray="3,3"
-                  opacity={0.7}
+                  opacity={0.65}
                 />
                 <text
                   x={tx}
-                  y={layout.MARGIN.top - 2}
+                  y={layout.MARGIN.top - 5}
                   textAnchor="middle"
                   fontSize={10}
-                  fill={theme.palette.text.secondary}
+                  fill={COLOR_OBJECT}
+                  opacity={0.9}
                 >
                   meridian
                 </text>
@@ -391,19 +537,21 @@ export default function SkyPositionGraph({ track, tz, height = 260 }: Props) {
         >
           <Typography variant="caption" fontWeight={600}>
             {hover.timeLocal}
-            {hover.snappedToMeridian && (
+            {hover.snapLabel && (
               <Box
                 component="span"
                 sx={{ ml: 0.75, color: "text.secondary", fontWeight: 400 }}
               >
-                (meridian)
+                ({hover.snapLabel})
               </Box>
             )}
           </Typography>
           <div>
             Object: {hover.objAlt.toFixed(1)}° alt, {hover.objAz.toFixed(0)}° az
           </div>
-          <div>Moon: {hover.moonAlt.toFixed(1)}° alt</div>
+          <div>
+            Moon: {hover.moonAlt.toFixed(1)}° alt, {hover.moonSep.toFixed(0)}° sep
+          </div>
           <div style={{ color: hover.aboveHorizon ? COLOR_OBJECT : undefined }}>
             {hover.aboveHorizon ? "Visible" : "Below horizon"}
           </div>

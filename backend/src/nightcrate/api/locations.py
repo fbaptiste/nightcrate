@@ -366,6 +366,19 @@ async def create_location(body: LocationCreate):
         new_id = cursor.lastrowid
         if make_default:
             await _ensure_single_default(conn, new_id)
+
+        # Auto-seed a 0° artificial horizon as this location's default.
+        # Every location is guaranteed to have ≥1 horizon so the planner
+        # never has to branch on "location lacks a horizon".
+        await conn.execute(
+            """
+            INSERT INTO location_horizon (
+                location_id, name, type, flat_altitude_deg, is_default
+            ) VALUES (?, '0° flat', 'artificial', 0, 1)
+            """,
+            (new_id,),
+        )
+
         await conn.commit()
 
         row = await conn.execute("SELECT * FROM location WHERE id = ?", (new_id,))

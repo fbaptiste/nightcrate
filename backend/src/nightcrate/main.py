@@ -7,6 +7,11 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Global astropy IERS configuration lives in
+# ``nightcrate.services.planner_visibility`` (top of file). Importing
+# the planner API below loads that module, which sets
+# ``auto_download=False`` and ``auto_max_age=None`` before the first
+# astropy call.
 import aiosqlite
 import uvicorn
 from fastapi import FastAPI

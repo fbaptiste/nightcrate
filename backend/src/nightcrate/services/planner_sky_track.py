@@ -21,8 +21,9 @@ from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
 
 from nightcrate.services.astronomy import compute_illumination_pct
-from nightcrate.services.horizon import interpolate_horizon_altitude
+from nightcrate.services.horizon import resolve_horizon_altitude
 from nightcrate.services.planner_visibility import (
+    PlannerHorizon,
     PlannerLocation,
     _make_earth_location,
 )
@@ -68,6 +69,7 @@ class SkyTrack:
     object_altitude_deg: list[float]
     object_azimuth_deg: list[float]
     moon_altitude_deg: list[float]
+    moon_separation_deg: list[float]
     horizon_altitude_at_object_az: list[float]
     twilight: TwilightBands
     moon_phase_pct: float
@@ -193,10 +195,9 @@ def _twilight_bands(
 
 def compute_sky_track(
     location: PlannerLocation,
+    horizon: PlannerHorizon,
     night_date: date,
     dso: SkyCoord | tuple[int, float, float],
-    *,
-    flat_min_altitude_deg: float,
 ) -> SkyTrack:
     """Compute a high-resolution sky track for one DSO.
 
@@ -230,11 +231,11 @@ def compute_sky_track(
     moon = get_body("moon", times, earth_loc)
     moon_altaz = moon.transform_to(altaz_frame)
     moon_alt = np.asarray(moon_altaz.alt.deg)
+    moon_sep = np.asarray(coord.separation(moon).deg)
 
-    if location.horizon_points:
-        horizon_alt = interpolate_horizon_altitude(location.horizon_points, obj_az)
-    else:
-        horizon_alt = np.full_like(obj_alt, flat_min_altitude_deg)
+    horizon_alt = resolve_horizon_altitude(
+        horizon.type, horizon.flat_altitude_deg, horizon.points, obj_az
+    )
 
     tz = ZoneInfo(location.timezone)
     midnight_local = datetime(
@@ -292,6 +293,7 @@ def compute_sky_track(
         object_altitude_deg=[round(float(v), 2) for v in obj_alt],
         object_azimuth_deg=[round(float(v), 2) for v in obj_az],
         moon_altitude_deg=[round(float(v), 2) for v in moon_alt],
+        moon_separation_deg=[round(float(v), 2) for v in moon_sep],
         horizon_altitude_at_object_az=[round(float(v), 2) for v in horizon_alt],
         twilight=bands,
         moon_phase_pct=moon_phase,

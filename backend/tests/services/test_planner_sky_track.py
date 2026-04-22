@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 
 from nightcrate.services.planner_sky_track import compute_sky_track
-from nightcrate.services.planner_visibility import PlannerLocation
+from nightcrate.services.planner_visibility import PlannerHorizon, PlannerLocation
 
 PHOENIX = PlannerLocation(
     id=1,
@@ -18,12 +18,27 @@ PHOENIX = PlannerLocation(
     updated_at="2026-04-01T00:00:00",
 )
 
+
+def _artificial(flat_alt: float, horizon_id: int = 1) -> PlannerHorizon:
+    return PlannerHorizon(
+        id=horizon_id,
+        location_id=PHOENIX.id,
+        name=f"{flat_alt:g}° flat",
+        type="artificial",
+        flat_altitude_deg=flat_alt,
+        points=(),
+        updated_at="2026-04-01T00:00:00",
+    )
+
+
+FLAT_30 = _artificial(30.0)
+
 M42 = (1, 83.8221, -5.3911)
 
 
 @pytest.fixture(scope="module")
 def track():
-    return compute_sky_track(PHOENIX, date(2026, 4, 19), M42, flat_min_altitude_deg=30.0)
+    return compute_sky_track(PHOENIX, FLAT_30, date(2026, 4, 19), M42)
 
 
 def test_has_roughly_180_samples(track):
@@ -42,8 +57,8 @@ def test_all_parallel_arrays_same_length(track):
     assert len(track.horizon_altitude_at_object_az) == n
 
 
-def test_horizon_flat_when_no_custom_horizon(track):
-    # All values should be exactly the passed-in flat min.
+def test_horizon_flat_when_artificial(track):
+    # All values should be exactly the artificial horizon's altitude.
     assert set(track.horizon_altitude_at_object_az) == {30.0}
 
 
@@ -62,16 +77,19 @@ def test_moon_phase_populated(track):
 
 
 def test_custom_horizon_flows_through_to_track():
-    from dataclasses import replace
-
-    blocked = replace(
-        PHOENIX,
-        horizon_points=tuple(
-            (float(az), 40.0 if 90.0 <= az <= 270.0 else 10.0) for az in range(0, 360, 10)
-        ),
-        horizon_updated_at="2026-04-01T00:00:00",
+    horizon_points = tuple(
+        (float(az), 40.0 if 90.0 <= az <= 270.0 else 10.0) for az in range(0, 360, 10)
     )
-    t = compute_sky_track(blocked, date(2026, 4, 19), M42, flat_min_altitude_deg=30.0)
+    custom = PlannerHorizon(
+        id=2,
+        location_id=PHOENIX.id,
+        name="Custom horizon",
+        type="custom",
+        flat_altitude_deg=None,
+        points=horizon_points,
+        updated_at="2026-04-01T00:00:00",
+    )
+    t = compute_sky_track(PHOENIX, custom, date(2026, 4, 19), M42)
     # Horizon altitude now varies per-sample (south ~40°, north ~10°).
-    values = set(round(v, 0) for v in t.horizon_altitude_at_object_az)
+    values = {round(v, 0) for v in t.horizon_altitude_at_object_az}
     assert len(values) > 1

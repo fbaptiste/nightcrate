@@ -15,10 +15,8 @@ import {
 } from "@mui/x-data-grid";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
-import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
-import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import InputAdornment from "@mui/material/InputAdornment";
 import InputLabel from "@mui/material/InputLabel";
@@ -33,6 +31,9 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
+import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
+import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
+import CircleIcon from "@mui/icons-material/Circle";
 import CloseIcon from "@mui/icons-material/Close";
 import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
@@ -41,6 +42,8 @@ import { Link as RouterLink } from "react-router-dom";
 import { fetchLocations } from "@/api/locations";
 import { fetchRigs } from "@/api/rigs";
 import { fetchDsoFacets } from "@/api/dsos";
+import { fetchHorizons, type Horizon } from "@/api/horizons";
+import ListSubheader from "@mui/material/ListSubheader";
 import {
   fetchPlannerTargets,
   type PlannerTargetItem,
@@ -50,9 +53,13 @@ import { usePlannerStore } from "@/stores/plannerStore";
 import { useDebounce } from "@/lib/useDebounce";
 import PaginationActions from "@/components/common/PaginationActions";
 import GridLoadingOverlay from "@/components/common/GridLoadingOverlay";
-import { typeGroupStyle } from "@/lib/dsoTypeGroups";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { displayConstellation } from "@/lib/constellations";
+import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
+import CatalogFilter from "@/components/dso/CatalogFilter";
+import ConstellationFilter from "@/components/dso/ConstellationFilter";
+import TypeFilter from "@/components/dso/TypeFilter";
 import ThumbnailCell from "@/components/planner/ThumbnailCell";
 import PlannerDetailPanel from "@/components/planner/PlannerDetailPanel";
 
@@ -76,15 +83,15 @@ export default function PlannerPage() {
   const settings = useSettingsStore((s) => s.settings);
   const locationId = usePlannerStore((s) => s.selectedLocationId);
   const setLocationId = usePlannerStore((s) => s.setSelectedLocationId);
+  const horizonId = usePlannerStore((s) => s.selectedHorizonId);
+  const setHorizonId = usePlannerStore((s) => s.setSelectedHorizonId);
   const rigId = usePlannerStore((s) => s.selectedRigId);
   const setRigId = usePlannerStore((s) => s.setSelectedRigId);
   const [searchQuery, setSearchQuery] = useState("");
   const [restrictTonight, setRestrictTonight] = useState<boolean>(true);
-  const [typeGroupFilter, setTypeGroupFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
-  const [constellation, setConstellation] = useState<string>("");
-  const [hasDistance, setHasDistance] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [catalogFilter, setCatalogFilter] = useState<string[]>([]);
+  const [constellationFilter, setConstellationFilter] = useState<string[]>([]);
   // Two-state pattern per slider — UI tracks the ``*Draft`` value
   // during drag, and only the committed (``minHours`` / ``maxMag``
   // / ``minSize``) value feeds the query key. Without this split,
@@ -98,7 +105,18 @@ export default function PlannerPage() {
   const [maxMagDraft, setMaxMagDraft] = useState<number>(maxMag);
   const [minSize, setMinSize] = useState<number>(settings?.planner_min_size_arcmin ?? 5.0);
   const [minSizeDraft, setMinSizeDraft] = useState<number>(minSize);
-  const [framesWell, setFramesWell] = useState(false);
+  // Frames-Well is a dual-thumb coverage range slider. Defaults come
+  // from user settings (``planner_frames_well_min_pct`` /
+  // ``planner_frames_well_max_pct``); setting the range to 0–200
+  // turns filtering off. Two-state commit mirrors the other sliders
+  // so dragging doesn't re-fire the query on every tick.
+  const framesWellDefault: [number, number] = [
+    settings?.planner_frames_well_min_pct ?? 15,
+    settings?.planner_frames_well_max_pct ?? 90,
+  ];
+  const [coverageRange, setCoverageRange] = useState<[number, number]>(framesWellDefault);
+  const [coverageRangeDraft, setCoverageRangeDraft] =
+    useState<[number, number]>(framesWellDefault);
   const [pagination, setPagination] = useState<GridPaginationModel>({
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
@@ -123,11 +141,21 @@ export default function PlannerPage() {
     queryFn: () => fetchRigs(true),
     staleTime: 5 * 60_000,
   });
-  // Only used for the Constellation dropdown + as a catalog-total
-  // fallback on chip labels before ``targetsQuery`` returns. The
-  // Planner's chip counts come from the ``type_group_counts`` /
-  // ``raw_type_counts`` fields on the ``/api/planner/targets``
-  // response, which already reflect the full filter state.
+  // Horizons for the selected location. The grid's visibility
+  // computation runs against this horizon; the horizon selector
+  // resets to the location's default whenever location changes.
+  const horizonsQuery = useQuery({
+    queryKey: ["horizons", locationId],
+    queryFn: () => fetchHorizons(locationId as number),
+    enabled: locationId != null,
+    staleTime: 5 * 60_000,
+  });
+  const horizons: Horizon[] = horizonsQuery.data ?? [];
+  // Used to populate the pill filter option lists (full-catalog sets of
+  // raw types / catalogs / constellations) and to detect "no catalog
+  // loaded" state. Per-option COUNTS in the pickers come from
+  // ``/api/planner/targets`` (filter-aware) — the facets here are
+  // option-source only.
   const facetsQuery = useQuery({
     queryKey: ["dso-facets"],
     queryFn: () => fetchDsoFacets(),
@@ -143,13 +171,24 @@ export default function PlannerPage() {
     if (locationId != null && !locs.some((l) => l.id === locationId)) {
       const def = locs.find((l) => l.is_default) ?? locs[0];
       setLocationId(def.id);
+      setHorizonId(null);
       return;
     }
     if (locationId == null) {
       const def = locs.find((l) => l.is_default) ?? locs[0];
       setLocationId(def.id);
     }
-  }, [locationId, locationsQuery.data, setLocationId]);
+  }, [locationId, locationsQuery.data, setLocationId, setHorizonId]);
+
+  // Horizon: snap to the location's default whenever the stored id
+  // doesn't resolve against the current horizon list (stale store,
+  // location changed, horizon deleted).
+  useEffect(() => {
+    if (horizons.length === 0) return;
+    if (horizonId != null && horizons.some((h) => h.id === horizonId)) return;
+    const def = horizons.find((h) => h.is_default) ?? horizons[0];
+    setHorizonId(def.id);
+  }, [horizonId, horizons, setHorizonId]);
 
   // Reset sort to the mode's default on toggle, but only while the
   // sort is still "auto". Tonight defaults to hours_visible desc —
@@ -185,15 +224,15 @@ export default function PlannerPage() {
       "planner-targets",
       {
         locationId,
+        horizonId,
         rigId,
-        typeGroupFilter,
         typeFilter,
-        constellation,
-        hasDistance,
+        catalogFilter,
+        constellationFilter,
         minHours,
         maxMag,
         minSize,
-        framesWell,
+        coverageRange,
         q: debouncedSearch || null,
         restrictTonight,
         limit: pagination.pageSize,
@@ -216,15 +255,20 @@ export default function PlannerPage() {
         // safe. Anytime mode sends ``null`` so the backend skips
         // the location load entirely.
         location_id: restrictTonight ? locationId! : null,
+        horizon_id: restrictTonight ? horizonId : null,
         rig_id: rigId,
-        type_group: typeGroupFilter,
         type: typeFilter,
-        constellation: constellation || null,
-        has_distance: hasDistance ? true : null,
+        catalog: catalogFilter,
+        constellation: constellationFilter,
         min_hours: restrictTonight ? minHours : null,
         max_magnitude: restrictTonight ? maxMag : null,
         min_size_arcmin: restrictTonight ? minSize : null,
-        frames_well: restrictTonight ? framesWell : false,
+        // Only forward the coverage bounds when the range has been
+        // narrowed. 0-200 = full range = no filter.
+        coverage_min_pct:
+          restrictTonight && coverageRange[0] > 0 ? coverageRange[0] : null,
+        coverage_max_pct:
+          restrictTonight && coverageRange[1] < 200 ? coverageRange[1] : null,
         q: debouncedSearch || null,
         restrict_tonight: restrictTonight,
         limit: pagination.pageSize,
@@ -237,26 +281,11 @@ export default function PlannerPage() {
     placeholderData: (prev) => prev,
   });
 
-  const toggleTypeGroup = (name: string) => {
-    setTypeGroupFilter((cur) =>
-      cur.includes(name) ? cur.filter((g) => g !== name) : [...cur, name],
-    );
-    setPagination((p) => ({ ...p, page: 0 }));
-  };
-
-  const toggleType = (code: string) => {
-    setTypeFilter((cur) =>
-      cur.includes(code) ? cur.filter((t) => t !== code) : [...cur, code],
-    );
-    setPagination((p) => ({ ...p, page: 0 }));
-  };
-
   const clearCatalogFilters = () => {
     setSearchQuery("");
-    setTypeGroupFilter([]);
     setTypeFilter([]);
-    setConstellation("");
-    setHasDistance(false);
+    setCatalogFilter([]);
+    setConstellationFilter([]);
     setPagination((p) => ({ ...p, page: 0 }));
   };
 
@@ -265,10 +294,9 @@ export default function PlannerPage() {
   // than lagging 250 ms behind.
   const catalogFiltersActive =
     searchQuery.length > 0 ||
-    typeGroupFilter.length > 0 ||
     typeFilter.length > 0 ||
-    constellation.length > 0 ||
-    hasDistance;
+    catalogFilter.length > 0 ||
+    constellationFilter.length > 0;
 
   const activeLocation = locationsQuery.data?.find((l) => l.id === locationId);
   const tz = activeLocation?.timezone ?? "UTC";
@@ -281,8 +309,8 @@ export default function PlannerPage() {
   // no locations can still browse the catalog.
   const hasLocations =
     !locationsQuery.isLoading && (locationsQuery.data?.length ?? 0) > 0;
-  const catalogTotal = (facetsQuery.data?.type_groups ?? []).reduce(
-    (sum, g) => sum + g.count,
+  const catalogTotal = (facetsQuery.data?.raw_types ?? []).reduce(
+    (sum, t) => sum + t.count,
     0,
   );
   const hasCatalog = !facetsQuery.isLoading && catalogTotal > 0;
@@ -303,16 +331,55 @@ export default function PlannerPage() {
       ? data.rig.fov_major_deg / data.rig.fov_minor_deg
       : null;
 
-  // Every data column uses flex + minWidth so the grid fills the viewport
-  // and contracts gracefully as the window narrows. Only the thumbnail
-  // cell has a hard width (image-sized, nothing to gain by flexing it).
+  // Column layout rewritten for the compact planner redesign:
+  // - Designation + type-chip collapsed into one two-line cell.
+  // - Meridian + Max altitude collapsed; when the peak-during-dark
+  //   lands on the transit they render as a single "meridian / max
+  //   alt: VAL" line; otherwise each gets its own line.
+  // - Moon column drops the phase (phase lives in the header) and
+  //   shows only the minimum target–moon separation.
+  // - FOV coverage % is captioned under the "In my rig" thumb
+  //   instead of occupying its own column.
+  // - Grid column sorting is fully disabled; a dedicated sort UI
+  //   will replace it.
   const columns: GridColDef<PlannerTargetItem>[] = [
     {
       field: "thumbnail",
       headerName: "",
-      width: 76,
+      // Width bumped to 96 — the cell now carries the rise/set
+      // status glyph on the left (~18 px + gap) in addition to the
+      // 60 px thumbnail.
+      width: 96,
       sortable: false,
-      renderCell: (params) => <ThumbnailCell dsoId={params.row.dso_id} size={60} />,
+      renderCell: (p) => {
+        const status = p.row.now_status as "up" | "rising" | "set" | null;
+        const icon =
+          status === "up" ? (
+            <Tooltip title="Above horizon right now" arrow>
+              <CircleIcon sx={{ color: RIG_BLUE, fontSize: 14 }} />
+            </Tooltip>
+          ) : status === "rising" ? (
+            <Tooltip title="Not up yet — rises during tonight" arrow>
+              <ArrowUpwardIcon sx={{ color: RIG_ORANGE, fontSize: 18 }} />
+            </Tooltip>
+          ) : status === "set" ? (
+            <Tooltip title="Already set for tonight" arrow>
+              <ArrowDownwardIcon sx={{ color: "text.secondary", fontSize: 18 }} />
+            </Tooltip>
+          ) : null;
+        return (
+          <Stack direction="row" alignItems="center" gap={0.75}>
+            {/* Reserve the icon slot even when ``null`` so the
+                thumbnail sits at a consistent x position across
+                rows — matters in Anytime mode where every row has
+                a null status. */}
+            <Box sx={{ width: 18, display: "flex", justifyContent: "center" }}>
+              {icon}
+            </Box>
+            <ThumbnailCell dsoId={p.row.dso_id} size={60} />
+          </Stack>
+        );
+      },
     },
     ...(data?.rig && rigAspect
       ? [
@@ -321,61 +388,75 @@ export default function PlannerPage() {
             headerName: "In my rig",
             width: 96,
             sortable: false,
-            renderCell: (params) => (
-              <ThumbnailCell
-                dsoId={params.row.dso_id}
-                size={80}
-                variant="rig_framed"
-                fovMajorDeg={data.rig!.fov_major_deg}
-                fovMinorDeg={data.rig!.fov_minor_deg}
-                aspectRatio={rigAspect}
-              />
-            ),
+            renderCell: (params) => {
+              const coverage = params.row.coverage_pct as number | null;
+              return (
+                <Stack alignItems="center" spacing={0.25}>
+                  <ThumbnailCell
+                    dsoId={params.row.dso_id}
+                    size={72}
+                    variant="rig_framed"
+                    fovMajorDeg={data.rig!.fov_major_deg}
+                    fovMinorDeg={data.rig!.fov_minor_deg}
+                    aspectRatio={rigAspect}
+                  />
+                  <Typography
+                    variant="caption"
+                    color={coverage == null ? "text.disabled" : "text.secondary"}
+                    sx={{ lineHeight: 1, fontWeight: 500 }}
+                  >
+                    {coverage == null ? "—" : `${coverage.toFixed(0)}%`}
+                  </Typography>
+                </Stack>
+              );
+            },
           } as GridColDef<PlannerTargetItem>,
         ]
       : []),
     {
       field: "primary_designation",
+      // Merged Designation + Name + Type. Line 1: bold primary
+      // designation. Line 2 (optional): muted common name — hidden
+      // when the DSO has none. Line 3: small coloured type chip.
       headerName: "Designation",
-      flex: 0.7,
-      minWidth: 90,
+      flex: 1.6,
+      minWidth: 180,
+      sortable: false,
       renderCell: (p) => (
-        <Typography variant="body2" fontWeight={600}>
-          {p.value}
-        </Typography>
-      ),
-    },
-    {
-      field: "common_name",
-      headerName: "Name",
-      flex: 1.4,
-      minWidth: 140,
-      valueFormatter: (v) => v ?? "—",
-    },
-    {
-      field: "type_group",
-      headerName: "Type",
-      flex: 0.9,
-      minWidth: 120,
-      renderCell: (p) => {
-        const style = typeGroupStyle(p.value as string);
-        return (
+        <Stack spacing={0.25}>
+          <Typography variant="body2" fontWeight={600}>
+            {p.value as string}
+          </Typography>
+          {p.row.common_name ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ lineHeight: 1.25 }}
+            >
+              {p.row.common_name}
+            </Typography>
+          ) : null}
           <Chip
-            label={p.value ?? p.row.obj_type}
+            label={displayDsoType(p.row.obj_type)}
             size="small"
-            sx={{ bgcolor: style.bg, color: "#ffffff", fontWeight: 500 }}
+            sx={{
+              bgcolor: dsoTypeColor(p.row.obj_type),
+              color: "#ffffff",
+              fontWeight: 500,
+              width: "fit-content",
+              height: 18,
+              "& .MuiChip-label": { px: 0.75, fontSize: "0.7rem" },
+            }}
           />
-        );
-      },
+        </Stack>
+      ),
     },
     {
       field: "size",
       headerName: "Size",
       flex: 0.6,
       minWidth: 85,
-      // Backend maps ``sort=size`` → ``maj_axis_arcmin`` in its
-      // ``_sort_key`` helper (mirrors the DSO-catalog pattern).
-      sortable: true,
+      sortable: false,
       valueGetter: (_v, row) => {
         if (row.maj_axis_arcmin == null) return "—";
         if (row.min_axis_arcmin != null && row.min_axis_arcmin !== row.maj_axis_arcmin) {
@@ -390,11 +471,10 @@ export default function PlannerPage() {
       flex: 0.4,
       minWidth: 60,
       type: "number",
+      sortable: false,
       valueFormatter: (v) => (v == null ? "—" : (v as number).toFixed(1)),
     },
-    // Visibility columns only make sense in "Tonight" mode — in
-    // Anytime the API returns ``null`` for all of these and showing
-    // four columns of "—" is just noise.
+    // Visibility columns only make sense in "Tonight" mode.
     ...(restrictTonight
       ? ([
           {
@@ -403,82 +483,101 @@ export default function PlannerPage() {
             flex: 0.4,
             minWidth: 60,
             type: "number" as const,
+            sortable: false,
             valueFormatter: (v) =>
               v == null ? "—" : `${(v as number).toFixed(1)}h`,
           },
           {
+            // Combined meridian / max-altitude cell. When the target
+            // transits during astro-dark, max altitude equals the
+            // transit altitude — so they render as a single compact
+            // line. Otherwise we show both, two lines.
             field: "max_altitude_deg",
-            headerName: "Max altitude",
-            flex: 1.0,
-            minWidth: 120,
-            type: "number" as const,
-            renderCell: (p) => {
-              const alt = p.row.max_altitude_deg as number | null;
-              if (alt == null || p.row.peak_time_utc == null) {
-                return (
-                  <Typography variant="body2" color="text.disabled">
-                    —
-                  </Typography>
-                );
-              }
-              return (
-                <Typography variant="body2">
-                  {alt.toFixed(0)}° @ {formatLocalTime(p.row.peak_time_utc, tz)}
-                </Typography>
-              );
-            },
-          },
-          {
-            field: "transit",
-            headerName: "Meridian",
-            flex: 1.0,
-            minWidth: 120,
+            headerName: "Meridian / max alt",
+            flex: 1.2,
+            minWidth: 150,
             sortable: false,
             renderCell: (p) => {
-              const alt = p.row.altitude_at_transit_deg as number | null;
-              if (alt == null || p.row.transit_time_utc == null) {
+              const maxAlt = p.row.max_altitude_deg as number | null;
+              const peakT = p.row.peak_time_utc as string | null;
+              const transitAlt = p.row.altitude_at_transit_deg as number | null;
+              const transitT = p.row.transit_time_utc as string | null;
+              if (maxAlt == null || peakT == null) {
                 return (
                   <Typography variant="body2" color="text.disabled">
                     —
                   </Typography>
                 );
               }
+              // Collapse when the two agree (transit is inside the
+              // astro-dark window): 1° / 1-min tolerance absorbs
+              // rounding and sub-minute drift without hiding a real
+              // mismatch.
+              const matches =
+                transitAlt != null &&
+                transitT != null &&
+                Math.abs(transitAlt - maxAlt) < 0.75 &&
+                Math.abs(
+                  new Date(transitT).getTime() - new Date(peakT).getTime(),
+                ) <
+                  60 * 1000;
+              if (matches) {
+                return (
+                  <Typography variant="body2">
+                    <Box
+                      component="span"
+                      sx={{ color: "text.secondary", mr: 0.75 }}
+                    >
+                      meridian / max alt:
+                    </Box>
+                    {maxAlt.toFixed(0)}° @ {formatLocalTime(peakT, tz)}
+                  </Typography>
+                );
+              }
               return (
-                <Typography variant="body2">
-                  {alt.toFixed(0)}° @{" "}
-                  {formatLocalTime(p.row.transit_time_utc, tz)}
-                </Typography>
+                <Stack spacing={0.15}>
+                  {transitAlt != null && transitT != null && (
+                    <Typography variant="body2">
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 0.75 }}
+                      >
+                        meridian:
+                      </Box>
+                      {transitAlt.toFixed(0)}° @ {formatLocalTime(transitT, tz)}
+                    </Typography>
+                  )}
+                  <Typography variant="body2">
+                    <Box
+                      component="span"
+                      sx={{ color: "text.secondary", mr: 0.75 }}
+                    >
+                      max alt:
+                    </Box>
+                    {maxAlt.toFixed(0)}° @ {formatLocalTime(peakT, tz)}
+                  </Typography>
+                </Stack>
               );
             },
           },
           {
             field: "min_moon_separation_deg",
-            headerName: "Moon",
-            flex: 0.4,
-            minWidth: 60,
+            headerName: "Moon sep",
+            flex: 0.5,
+            minWidth: 70,
             type: "number" as const,
+            sortable: false,
             valueFormatter: (v) =>
               v == null ? "—" : `${(v as number).toFixed(0)}°`,
           },
         ] as GridColDef<PlannerTargetItem>[])
-      : []),
-    ...(rigFov
-      ? [
-          {
-            field: "coverage_pct",
-            headerName: "FOV",
-            flex: 0.5,
-            minWidth: 75,
-            type: "number" as const,
-            valueFormatter: (v) => (v == null ? "—" : `${(v as number).toFixed(0)}%`),
-          } as GridColDef<PlannerTargetItem>,
-        ]
       : []),
     {
       field: "constellation",
       headerName: "Const",
       flex: 0.5,
       minWidth: 70,
+      sortable: false,
       valueFormatter: (v) => displayConstellation(v as string | null),
     },
   ];
@@ -521,11 +620,21 @@ export default function PlannerPage() {
           </ToggleButton>
         </ToggleButtonGroup>
         {restrictTonight && data?.dark_window ? (
-          <Typography variant="body2" color="text.secondary">
-            Astro dark: {formatLocalTime(data.dark_window.start_utc, tz)} –{" "}
-            {formatLocalTime(data.dark_window.end_utc, tz)} · {data.dark_window.hours.toFixed(1)}{" "}
-            hours · Moon {Math.round(data.moon_phase_pct)}%
-          </Typography>
+          <Stack direction="row" alignItems="center" gap={0.5}>
+            <Typography variant="body2" color="text.secondary">
+              Astro dark: {formatLocalTime(data.dark_window.start_utc, tz)} –{" "}
+              {formatLocalTime(data.dark_window.end_utc, tz)} ·{" "}
+              {data.dark_window.hours.toFixed(1)} hours ·
+            </Typography>
+            <MoonPhaseIcon
+              phaseName={data.moon_phase_name ?? "Full Moon"}
+              illuminationPct={data.moon_phase_pct}
+              sx={{ fontSize: 18, color: "text.secondary" }}
+            />
+            <Typography variant="body2" color="text.secondary">
+              {Math.round(data.moon_phase_pct)}%
+            </Typography>
+          </Stack>
         ) : null}
       </Stack>
 
@@ -633,15 +742,52 @@ export default function PlannerPage() {
                 onChange={(e) => {
                   const v = String(e.target.value);
                   setLocationId(v === "" ? null : Number(v));
+                  // Drop the horizon override so the new location's
+                  // default takes over via the effect above.
+                  setHorizonId(null);
                   setPagination((p) => ({ ...p, page: 0 }));
                 }}
               >
                 {locationsQuery.data?.map((l) => (
                   <MenuItem key={l.id} value={l.id}>
                     {l.name}
-                    {l.is_default ? " (default)" : ""}
                   </MenuItem>
                 ))}
+              </Select>
+            </FormControl>
+          )}
+
+          {restrictTonight && locationId != null && horizons.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Horizon</InputLabel>
+              <Select
+                label="Horizon"
+                value={horizonId ?? ""}
+                onChange={(e) => {
+                  setHorizonId(Number(e.target.value));
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+              >
+                {horizons.some((h) => h.type === "custom") && [
+                  <ListSubheader key="custom-header">Custom</ListSubheader>,
+                  ...horizons
+                    .filter((h) => h.type === "custom")
+                    .map((h) => (
+                      <MenuItem key={h.id} value={h.id}>
+                        {h.name}
+                      </MenuItem>
+                    )),
+                ]}
+                {horizons.some((h) => h.type === "artificial") && [
+                  <ListSubheader key="artificial-header">Artificial</ListSubheader>,
+                  ...horizons
+                    .filter((h) => h.type === "artificial")
+                    .map((h) => (
+                      <MenuItem key={h.id} value={h.id}>
+                        {h.name}
+                      </MenuItem>
+                    )),
+                ]}
               </Select>
             </FormControl>
           )}
@@ -654,7 +800,11 @@ export default function PlannerPage() {
               onChange={(e) => {
                 const v = String(e.target.value);
                 setRigId(v === "" ? null : Number(v));
-                setFramesWell(false);
+                // Reset the coverage-range filter to the user's
+                // configured default when the rig changes — old
+                // bounds won't mean much for a new FOV.
+                setCoverageRange(framesWellDefault);
+                setCoverageRangeDraft(framesWellDefault);
                 setPagination((p) => ({ ...p, page: 0 }));
               }}
             >
@@ -669,46 +819,6 @@ export default function PlannerPage() {
             </Select>
           </FormControl>
 
-          <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel>Constellation</InputLabel>
-            <Select
-              label="Constellation"
-              value={constellation}
-              onChange={(e) => {
-                setConstellation(e.target.value);
-                setPagination((p) => ({ ...p, page: 0 }));
-              }}
-            >
-              <MenuItem value="">
-                <em>All</em>
-              </MenuItem>
-              {[...(facetsQuery.data?.constellations ?? [])]
-                .sort((a, b) =>
-                  displayConstellation(a.code).localeCompare(displayConstellation(b.code)),
-                )
-                .map((c) => (
-                  <MenuItem key={c.code} value={c.code}>
-                    {displayConstellation(c.code)} ({c.count.toLocaleString()})
-                  </MenuItem>
-                ))}
-            </Select>
-          </FormControl>
-
-          <FormControlLabel
-            control={
-              <Checkbox
-                size="small"
-                checked={hasDistance}
-                onChange={(e) => {
-                  setHasDistance(e.target.checked);
-                  setPagination((p) => ({ ...p, page: 0 }));
-                }}
-              />
-            }
-            label="Has distance"
-            sx={{ m: 0 }}
-          />
-
           {catalogFiltersActive && (
             <Button size="small" variant="text" onClick={clearCatalogFilters}>
               Clear filters
@@ -722,83 +832,69 @@ export default function PlannerPage() {
           )}
         </Stack>
 
-        {/* Primary type-group chips. Counts reflect the current
-            filter state (faceted-search semantics): each chip's
-            number is "how many DSOs would match if this chip were
-            selected, with all OTHER filters held constant". While
-            the first ``targetsQuery`` response is still in flight
-            we fall back to the catalog-total facet counts so chips
-            always show something. */}
-        <Box sx={{ mt: 2, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
-          {[...(facetsQuery.data?.type_groups ?? [])]
-            .filter((g) => g.count > 0)
-            .sort((a, b) => a.display_order - b.display_order)
-            .map((g) => {
-              const active = typeGroupFilter.includes(g.name);
-              const style = typeGroupStyle(g.name);
-              const filteredCount =
-                data?.type_group_counts?.[g.name] ?? g.count;
-              return (
-                <Chip
-                  key={g.name}
-                  label={`${g.name} (${filteredCount.toLocaleString()})`}
-                  size="small"
-                  onClick={() => toggleTypeGroup(g.name)}
-                  variant={active ? "filled" : "outlined"}
-                  sx={{
-                    bgcolor: active ? style.bg : undefined,
-                    color: active ? "#ffffff" : undefined,
-                    borderColor: style.bg,
-                    fontWeight: 500,
-                  }}
-                />
-              );
-            })}
-        </Box>
-
-        {/* Advanced filters — raw OpenNGC type codes for power users */}
-        <Box sx={{ mt: 1.5 }}>
-          <Button
-            size="small"
-            variant="text"
-            onClick={() => setAdvancedOpen((open) => !open)}
-            sx={{ textTransform: "none", fontSize: "0.75rem" }}
-          >
-            {advancedOpen ? "▾" : "▸"} Advanced filters
-          </Button>
-          {advancedOpen && (
-            <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
-              {facetsQuery.data?.raw_types.map((t) => {
-                const active = typeFilter.includes(t.code);
-                const filteredCount =
-                  data?.raw_type_counts?.[t.code] ?? t.count;
-                return (
-                  <Chip
-                    key={t.code}
-                    label={`${displayDsoType(t.code)} (${filteredCount.toLocaleString()})`}
-                    size="small"
-                    onClick={() => toggleType(t.code)}
-                    variant={active ? "filled" : "outlined"}
-                    sx={{
-                      bgcolor: active ? dsoTypeColor(t.code) : undefined,
-                      color: active ? "#ffffff" : undefined,
-                      borderColor: dsoTypeColor(t.code),
-                      fontWeight: 500,
-                    }}
-                  />
-                );
-              })}
-            </Box>
-          )}
-        </Box>
+        {/* Pill filter row — Catalog / Object type / Constellation, same
+            pattern as the DSO Catalog page. Each is a multi-select OR
+            filter. Per-option counts come from the planner's filter-
+            aware facet dicts when present; the full option list
+            (including zero-count entries for the current filter
+            state) comes from ``/api/dso/facets``. Option counts reflect
+            the current state with the chip's own dimension held out, so
+            users can keep adding selections without the picker
+            collapsing to the first choice. */}
+        <Stack direction={{ xs: "column", md: "row" }} gap={2} sx={{ mt: 2, flexWrap: "wrap" }}>
+          <Box sx={{ width: { xs: "100%", md: 320 } }}>
+            <CatalogFilter
+              value={catalogFilter}
+              onChange={(codes) => {
+                setCatalogFilter(codes);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+              options={(facetsQuery.data?.catalogs ?? []).map((c) => ({
+                code: c.code,
+                count: data?.catalog_counts?.[c.code] ?? c.count,
+              }))}
+            />
+          </Box>
+          <Box sx={{ width: { xs: "100%", md: 320 } }}>
+            <TypeFilter
+              value={typeFilter}
+              onChange={(codes) => {
+                setTypeFilter(codes);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+              options={(facetsQuery.data?.raw_types ?? []).map((t) => ({
+                code: t.code,
+                count: data?.raw_type_counts?.[t.code] ?? t.count,
+              }))}
+            />
+          </Box>
+          <Box sx={{ width: { xs: "100%", md: 320 } }}>
+            <ConstellationFilter
+              value={constellationFilter}
+              onChange={(codes) => {
+                setConstellationFilter(codes);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+              options={(facetsQuery.data?.constellations ?? []).map((c) => ({
+                code: c.code,
+                count: data?.constellation_counts?.[c.code] ?? c.count,
+              }))}
+            />
+          </Box>
+        </Stack>
 
         {/* Imaging-focused sliders — only meaningful in Tonight mode.
             In Anytime the page behaves like a catalog browser, so
             visibility hours / exposure-time-equivalent magnitude cuts
             / frame size don't belong. */}
         {restrictTonight && (
-          <Stack direction={{ xs: "column", md: "row" }} gap={3} sx={{ mt: 2, px: 1 }}>
-            <Box sx={{ flex: 1, minWidth: 200 }}>
+          <Stack
+            direction="row"
+            gap={3}
+            flexWrap="wrap"
+            sx={{ mt: 2, px: 1 }}
+          >
+            <Box sx={{ width: 160 }}>
               <Typography variant="caption">
                 Min hours visible: {minHoursDraft.toFixed(1)}h
               </Typography>
@@ -815,7 +911,7 @@ export default function PlannerPage() {
                 }}
               />
             </Box>
-            <Box sx={{ flex: 1, minWidth: 200 }}>
+            <Box sx={{ width: 160 }}>
               <Typography variant="caption">
                 Brighter than mag {maxMagDraft.toFixed(1)}
               </Typography>
@@ -832,7 +928,7 @@ export default function PlannerPage() {
                 }}
               />
             </Box>
-            <Box sx={{ flex: 1, minWidth: 200 }}>
+            <Box sx={{ width: 160 }}>
               <Typography variant="caption">
                 Min size: {minSizeDraft.toFixed(0)}'
               </Typography>
@@ -849,23 +945,41 @@ export default function PlannerPage() {
                 }}
               />
             </Box>
-            {rigFov && (
-              <Tooltip title="Covers 15–90% of the frame">
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={framesWell}
-                      onChange={(e) => {
-                        setFramesWell(e.target.checked);
-                        setPagination((p) => ({ ...p, page: 0 }));
-                      }}
-                    />
+            {/* Gate on the local ``rigId`` (synchronous dropdown state),
+                not ``rigFov`` which is derived from the last query
+                response — using the response would leave the slider
+                visible for one round-trip after the user deselects
+                the rig. */}
+            {rigId != null && (
+              <Box sx={{ width: 180 }}>
+                <Tooltip
+                  title={
+                    "Percentage of the rig's FOV filled by the DSO's angular size. " +
+                    "Drag either thumb to narrow or widen the band; 0–200% = no filter."
                   }
-                  label="Frames well"
-                  sx={{ m: 0, alignSelf: "center" }}
+                  placement="top"
+                  arrow
+                >
+                  <Typography variant="caption" sx={{ cursor: "help" }}>
+                    Size in frame: {coverageRangeDraft[0]}% – {coverageRangeDraft[1]}%
+                  </Typography>
+                </Tooltip>
+                <Slider
+                  size="small"
+                  value={coverageRangeDraft}
+                  min={0}
+                  max={200}
+                  step={5}
+                  disableSwap
+                  onChange={(_, v) =>
+                    setCoverageRangeDraft(v as [number, number])
+                  }
+                  onChangeCommitted={(_, v) => {
+                    setCoverageRange(v as [number, number]);
+                    setPagination((p) => ({ ...p, page: 0 }));
+                  }}
                 />
-              </Tooltip>
+              </Box>
             )}
           </Stack>
         )}
@@ -892,15 +1006,14 @@ export default function PlannerPage() {
           columns={columns}
           loading={targetsQuery.isLoading || targetsQuery.isFetching}
           paginationMode="server"
-          sortingMode="server"
+          // Column-header sorting is disabled globally — a dedicated
+          // sort UI will replace it. The ``sortField`` / ``sortDir``
+          // query-param plumbing stays so that UI can drive it when
+          // it lands.
+          disableColumnSorting
           rowCount={data?.total ?? 0}
           paginationModel={pagination}
           onPaginationModelChange={setPagination}
-          sortModel={sortModel}
-          onSortModelChange={(m) => {
-            sortIsAutoRef.current = false;
-            setSortModel(m);
-          }}
           pageSizeOptions={[25, 50, 100]}
           getRowHeight={() => "auto"}
           slotProps={{
@@ -972,6 +1085,7 @@ export default function PlannerPage() {
         target={data?.items.find((i) => i.dso_id === detailId) ?? null}
         selectedLocationId={locationId}
         locations={locationsQuery.data ?? []}
+        selectedHorizonId={horizonId}
         selectedRigId={rigId}
         rigs={rigsQuery.data ?? []}
         onSelectDso={(id) => setDetailId(id)}

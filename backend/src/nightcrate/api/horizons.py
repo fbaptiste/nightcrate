@@ -1,9 +1,14 @@
-"""Custom horizon API — one horizon per location, import / edit / export.
+"""Horizons API — multiple horizons per location (v0.19.0).
 
-Mounted at ``/api/locations/{location_id}/horizon``. The location must
-exist and be active for every endpoint except the three export endpoints,
-which allow soft-deleted locations so users can recover exports from a
-deactivated site.
+Each location has ≥1 horizon: at most one ``type='custom'`` polyline
+shape, plus zero-to-many ``type='artificial'`` flat-altitude horizons.
+Exactly one row per location is ``is_default=1`` (enforced by a partial
+unique index); the planner's default-for-location selection uses it.
+
+Mounted at ``/api/locations/{location_id}/horizons``. The location
+must exist and be active for every endpoint except the three export
+endpoints, which allow soft-deleted locations so users can recover
+exports from a deactivated site.
 """
 
 from __future__ import annotations
@@ -16,11 +21,12 @@ from fastapi.responses import Response
 
 from nightcrate.api._common import integrity_guard
 from nightcrate.api.horizon_models import (
+    HorizonCreate,
     HorizonImportResponse,
     HorizonParseResponse,
     HorizonPointModel,
-    HorizonPut,
     HorizonResponse,
+    HorizonUpdate,
 )
 from nightcrate.db.session import get_db
 from nightcrate.services.horizon import (
@@ -35,13 +41,13 @@ from nightcrate.services.horizon import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/locations/{location_id}/horizon", tags=["Horizons"])
+router = APIRouter(prefix="/api/locations/{location_id}/horizons", tags=["Horizons"])
 parse_router = APIRouter(prefix="/api/horizons", tags=["Horizons"])
 
 
 async def _parse_upload_file(file: UploadFile) -> HorizonParseResult:
     """Read an UploadFile as UTF-8 text and parse it. Translates UTF-8 and
-    parser failures into HTTP 400s. Shared by ``POST /horizon/import`` and
+    parser failures into HTTP 400s. Shared by ``POST /horizons/import`` and
     ``POST /horizons/parse``."""
     try:
         raw = await file.read()
@@ -70,11 +76,16 @@ async def _fetch_location(conn, location_id: int, *, allow_inactive: bool) -> di
     return dict(row)
 
 
-async def _fetch_horizon_row(conn, location_id: int) -> dict | None:
+async def _fetch_horizon_row(conn, location_id: int, horizon_id: int) -> dict:
     row = await (
-        await conn.execute("SELECT * FROM location_horizon WHERE location_id = ?", (location_id,))
+        await conn.execute(
+            "SELECT * FROM location_horizon WHERE id = ? AND location_id = ?",
+            (horizon_id, location_id),
+        )
     ).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Horizon not found: {horizon_id}")
+    return dict(row)
 
 
 async def _fetch_points(conn, horizon_id: int) -> list[HorizonPointModel]:
@@ -92,129 +103,334 @@ async def _fetch_points(conn, horizon_id: int) -> list[HorizonPointModel]:
 
 
 async def _build_response(conn, horizon_row: dict) -> HorizonResponse:
-    points = await _fetch_points(conn, horizon_row["id"])
+    points = await _fetch_points(conn, horizon_row["id"]) if horizon_row["type"] == "custom" else []
     return HorizonResponse(
+        id=horizon_row["id"],
         location_id=horizon_row["location_id"],
+        name=horizon_row["name"],
+        type=horizon_row["type"],
+        flat_altitude_deg=horizon_row["flat_altitude_deg"],
         source=horizon_row["source"],
         source_filename=horizon_row["source_filename"],
         notes=horizon_row["notes"],
         points=points,
+        is_default=bool(horizon_row["is_default"]),
         created_at=horizon_row["created_at"],
         updated_at=horizon_row["updated_at"],
     )
 
 
-async def _replace_horizon(
-    conn,
-    location_id: int,
-    source: Literal["imported", "drawn"],
-    points: list[tuple[float, float]],
-    source_filename: str | None = None,
-    notes: str | None = None,
-) -> dict:
-    """Upsert the horizon row and replace all points atomically."""
-    existing = await _fetch_horizon_row(conn, location_id)
-    if existing is None:
-        # Concurrent PUTs could both see no existing row and race on the
-        # UNIQUE(location_id) constraint; the loser becomes a 409.
-        with integrity_guard(conflict_detail="Location already has a horizon (concurrent save)."):
-            cursor = await conn.execute(
-                "INSERT INTO location_horizon (location_id, source, source_filename, notes) "
-                "VALUES (?, ?, ?, ?)",
-                (location_id, source, source_filename, notes),
-            )
-        horizon_id = cursor.lastrowid
-    else:
-        horizon_id = existing["id"]
-        await conn.execute(
-            "UPDATE location_horizon "
-            "SET source = ?, source_filename = ?, notes = ?, updated_at = datetime('now') "
-            "WHERE id = ?",
-            (source, source_filename, notes, horizon_id),
-        )
-        await conn.execute("DELETE FROM location_horizon_point WHERE horizon_id = ?", (horizon_id,))
+async def _promote_to_default(conn, location_id: int, horizon_id: int) -> None:
+    """Clear the old default and set ``horizon_id`` as the new default.
+
+    Two-step so the partial unique index (exactly one default per
+    location) never sees two candidates at once.
+    """
+    await conn.execute(
+        "UPDATE location_horizon SET is_default = 0 WHERE location_id = ? AND id != ?",
+        (location_id, horizon_id),
+    )
+    await conn.execute(
+        "UPDATE location_horizon SET is_default = 1, updated_at = datetime('now') WHERE id = ?",
+        (horizon_id,),
+    )
+
+
+async def _write_points(conn, horizon_id: int, points: list[tuple[float, float]]) -> None:
+    await conn.execute("DELETE FROM location_horizon_point WHERE horizon_id = ?", (horizon_id,))
     if points:
         await conn.executemany(
             "INSERT INTO location_horizon_point (horizon_id, azimuth_deg, altitude_deg) "
             "VALUES (?, ?, ?)",
             [(horizon_id, az, alt) for az, alt in points],
         )
-    await conn.commit()
-    row = await _fetch_horizon_row(conn, location_id)
-    if row is None:
-        # Unreachable: we just upserted this row. Guard narrows the type.
-        raise RuntimeError("horizon row missing immediately after upsert")
-    return row
+
+
+async def _count_horizons(conn, location_id: int) -> int:
+    row = await (
+        await conn.execute(
+            "SELECT COUNT(*) AS cnt FROM location_horizon WHERE location_id = ?",
+            (location_id,),
+        )
+    ).fetchone()
+    return int(row["cnt"])
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
-@router.get("", response_model=HorizonResponse)
-async def get_horizon(location_id: int) -> HorizonResponse:
+@router.get("", response_model=list[HorizonResponse])
+async def list_horizons(location_id: int) -> list[HorizonResponse]:
+    """List all horizons for a location.
+
+    Ordering: default first, then custom before artificial (so the
+    "drawn" shape — if any — always surfaces above the flat ladder),
+    then by ascending flat altitude for artificial horizons and by
+    name for customs.
+    """
     async with get_db() as conn:
         await _fetch_location(conn, location_id, allow_inactive=False)
-        horizon = await _fetch_horizon_row(conn, location_id)
-        if horizon is None:
-            raise HTTPException(status_code=404, detail="No horizon defined for this location.")
-        return await _build_response(conn, horizon)
+        rows = await (
+            await conn.execute(
+                """
+                SELECT * FROM location_horizon
+                WHERE location_id = ?
+                ORDER BY is_default DESC,
+                         CASE type WHEN 'custom' THEN 0 ELSE 1 END,
+                         flat_altitude_deg ASC,
+                         name ASC
+                """,
+                (location_id,),
+            )
+        ).fetchall()
+        return [await _build_response(conn, dict(r)) for r in rows]
 
 
-@router.put("", response_model=HorizonResponse)
-async def put_horizon(location_id: int, body: HorizonPut) -> HorizonResponse:
+@router.get("/{horizon_id}", response_model=HorizonResponse)
+async def get_horizon(location_id: int, horizon_id: int) -> HorizonResponse:
     async with get_db() as conn:
         await _fetch_location(conn, location_id, allow_inactive=False)
-        points = [(p.azimuth_deg, p.altitude_deg) for p in body.points]
-        horizon = await _replace_horizon(
-            conn,
-            location_id,
-            source="drawn",
-            points=points,
-            source_filename=None,
-            notes=body.notes,
-        )
-        return await _build_response(conn, horizon)
+        row = await _fetch_horizon_row(conn, location_id, horizon_id)
+        return await _build_response(conn, row)
 
 
-@router.delete("", status_code=204)
-async def delete_horizon(location_id: int) -> Response:
+@router.post("", response_model=HorizonResponse, status_code=201)
+async def create_horizon(location_id: int, body: HorizonCreate) -> HorizonResponse:
     async with get_db() as conn:
         await _fetch_location(conn, location_id, allow_inactive=False)
-        existing = await _fetch_horizon_row(conn, location_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="No horizon defined for this location.")
-        # ON DELETE CASCADE on the FK takes care of the points.
-        await conn.execute("DELETE FROM location_horizon WHERE id = ?", (existing["id"],))
+        source = body.source if body.type == "custom" else None
+        source_filename = body.source_filename if body.type == "custom" else None
+
+        with integrity_guard(
+            conflict_detail=(
+                "Location already has a horizon by that name, or already "
+                "has a custom horizon (only one allowed per location)."
+            )
+        ):
+            cursor = await conn.execute(
+                """
+                INSERT INTO location_horizon (
+                    location_id, name, type, flat_altitude_deg,
+                    source, source_filename, notes, is_default
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    location_id,
+                    body.name.strip(),
+                    body.type,
+                    body.flat_altitude_deg if body.type == "artificial" else None,
+                    source,
+                    source_filename,
+                    body.notes,
+                    # is_default always 0 at insert; `_promote_to_default`
+                    # then handles the "one default per location" index.
+                ),
+            )
+        new_id = cursor.lastrowid
+
+        if body.type == "custom" and body.points:
+            await _write_points(
+                conn, new_id, [(p.azimuth_deg, p.altitude_deg) for p in body.points]
+            )
+
+        if body.is_default:
+            await _promote_to_default(conn, location_id, new_id)
+
+        await conn.commit()
+        row = await _fetch_horizon_row(conn, location_id, new_id)
+        return await _build_response(conn, row)
+
+
+@router.patch("/{horizon_id}", response_model=HorizonResponse)
+async def update_horizon(location_id: int, horizon_id: int, body: HorizonUpdate) -> HorizonResponse:
+    async with get_db() as conn:
+        await _fetch_location(conn, location_id, allow_inactive=False)
+        existing = await _fetch_horizon_row(conn, location_id, horizon_id)
+
+        updates = body.model_dump(exclude_unset=True)
+        # ``points`` and ``is_default`` have dedicated handling below.
+        points = updates.pop("points", None)
+        make_default = updates.pop("is_default", None)
+
+        # Type-specific validation — CHECK constraint also enforces this,
+        # but a 422 with an actionable message is friendlier than the
+        # generic integrity-guard 409.
+        if existing["type"] == "artificial" and "flat_altitude_deg" in updates:
+            if updates["flat_altitude_deg"] is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Artificial horizon requires a flat_altitude_deg value.",
+                )
+        if existing["type"] == "custom" and "flat_altitude_deg" in updates:
+            raise HTTPException(
+                status_code=422,
+                detail="Custom horizons do not use flat_altitude_deg.",
+            )
+        if existing["type"] == "artificial" and points is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Artificial horizons do not take points.",
+            )
+
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            set_clause += ", updated_at = datetime('now')"
+            values = [*updates.values(), horizon_id]
+            with integrity_guard(conflict_detail="Horizon name already in use for this location."):
+                await conn.execute(
+                    f"UPDATE location_horizon SET {set_clause} WHERE id = ?",  # noqa: S608  # nosec B608
+                    values,
+                )
+
+        if existing["type"] == "custom" and points is not None:
+            await _write_points(
+                conn, horizon_id, [(p["azimuth_deg"], p["altitude_deg"]) for p in points]
+            )
+            # Writing new points bumps updated_at so cached snapshots
+            # keyed on it invalidate.
+            await conn.execute(
+                "UPDATE location_horizon SET updated_at = datetime('now') WHERE id = ?",
+                (horizon_id,),
+            )
+
+        if make_default:
+            await _promote_to_default(conn, location_id, horizon_id)
+        elif make_default is False and existing["is_default"]:
+            # Demoting the current default isn't allowed — every location
+            # must have exactly one default. Clients should promote the
+            # replacement instead; that path atomically demotes the old.
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Promote another horizon to default first; "
+                    "a location must have exactly one default."
+                ),
+            )
+
+        await conn.commit()
+        row = await _fetch_horizon_row(conn, location_id, horizon_id)
+        return await _build_response(conn, row)
+
+
+@router.delete("/{horizon_id}", status_code=204)
+async def delete_horizon(location_id: int, horizon_id: int) -> Response:
+    """Delete one horizon.
+
+    Refuses to delete the last remaining horizon on a location (422) —
+    every location must have ≥1 horizon for the planner to operate.
+    If the deleted row was the default, promotes the first remaining
+    row in the list ordering (default/custom-first/alt-ascending).
+    """
+    async with get_db() as conn:
+        await _fetch_location(conn, location_id, allow_inactive=False)
+        existing = await _fetch_horizon_row(conn, location_id, horizon_id)
+        total = await _count_horizons(conn, location_id)
+        if total <= 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot delete the last horizon. Every location must have at least one.",
+            )
+
+        await conn.execute("DELETE FROM location_horizon WHERE id = ?", (horizon_id,))
+
+        if existing["is_default"]:
+            # Promote a replacement — pick whichever row list_horizons
+            # would put first (custom over artificial, lowest altitude
+            # first on ties, name alphabetically last).
+            next_row = await (
+                await conn.execute(
+                    """
+                    SELECT id FROM location_horizon
+                    WHERE location_id = ?
+                    ORDER BY CASE type WHEN 'custom' THEN 0 ELSE 1 END,
+                             flat_altitude_deg ASC,
+                             name ASC
+                    LIMIT 1
+                    """,
+                    (location_id,),
+                )
+            ).fetchone()
+            if next_row is not None:
+                await _promote_to_default(conn, location_id, int(next_row["id"]))
+
         await conn.commit()
     return Response(status_code=204)
 
 
 @router.post("/import", response_model=HorizonImportResponse)
 async def import_horizon(location_id: int, file: UploadFile = File(...)) -> HorizonImportResponse:
+    """Import a horizon file as a new custom horizon.
+
+    If the location already has a custom horizon, it gets replaced —
+    one custom per location is the enforced invariant. The imported
+    row inherits the existing custom's default flag so switching
+    providers doesn't silently demote the user's selection.
+    """
     async with get_db() as conn:
         await _fetch_location(conn, location_id, allow_inactive=False)
         result = await _parse_upload_file(file)
-        horizon = await _replace_horizon(
-            conn,
-            location_id,
-            source="imported",
-            points=result.points,
-            source_filename=result.source_filename,
-        )
-        response = await _build_response(conn, horizon)
+
+        existing = await (
+            await conn.execute(
+                "SELECT id, is_default, name FROM location_horizon "
+                "WHERE location_id = ? AND type = 'custom'",
+                (location_id,),
+            )
+        ).fetchone()
+
+        if existing is None:
+            cursor = await conn.execute(
+                """
+                INSERT INTO location_horizon (
+                    location_id, name, type, source, source_filename, is_default
+                ) VALUES (?, ?, 'custom', 'imported', ?, 0)
+                """,
+                (
+                    location_id,
+                    "Custom horizon",
+                    result.source_filename,
+                ),
+            )
+            horizon_id = cursor.lastrowid
+            inherit_default = False
+        else:
+            horizon_id = int(existing["id"])
+            inherit_default = bool(existing["is_default"])
+            await conn.execute(
+                """
+                UPDATE location_horizon
+                SET source = 'imported', source_filename = ?,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (result.source_filename, horizon_id),
+            )
+
+        await _write_points(conn, horizon_id, result.points)
+
+        if inherit_default:
+            # Nothing to do — row already is_default, the UPDATE above
+            # just bumped its updated_at.
+            pass
+
+        await conn.commit()
+        row = await _fetch_horizon_row(conn, location_id, horizon_id)
+        response = await _build_response(conn, row)
         return HorizonImportResponse(horizon=response, warnings=result.warnings)
 
 
 # ── Exports ──────────────────────────────────────────────────────────────────
 
 
-async def _require_horizon_for_export(
-    conn, location_id: int
+async def _require_custom_horizon_for_export(
+    conn, location_id: int, horizon_id: int
 ) -> tuple[dict, list[tuple[float, float]]]:
     loc = await _fetch_location(conn, location_id, allow_inactive=True)
-    horizon_row = await _fetch_horizon_row(conn, location_id)
-    if horizon_row is None:
-        raise HTTPException(status_code=404, detail="No horizon defined for this location.")
+    horizon_row = await _fetch_horizon_row(conn, location_id, horizon_id)
+    if horizon_row["type"] != "custom":
+        raise HTTPException(
+            status_code=422, detail="Artificial horizons cannot be exported as files."
+        )
     rows = await (
         await conn.execute(
             "SELECT azimuth_deg, altitude_deg FROM location_horizon_point "
@@ -228,10 +444,10 @@ async def _require_horizon_for_export(
     return loc, points
 
 
-@router.get("/export/nina.hrz")
-async def export_nina(location_id: int) -> Response:
+@router.get("/{horizon_id}/export/nina.hrz")
+async def export_nina(location_id: int, horizon_id: int) -> Response:
     async with get_db() as conn:
-        loc, points = await _require_horizon_for_export(conn, location_id)
+        loc, points = await _require_custom_horizon_for_export(conn, location_id, horizon_id)
         text = export_nina_hrz(loc["name"], points)
         slug = sanitize_filename(loc["name"])
         return Response(
@@ -241,10 +457,10 @@ async def export_nina(location_id: int) -> Response:
         )
 
 
-@router.get("/export/stellarium.zip")
-async def export_stellarium(location_id: int) -> Response:
+@router.get("/{horizon_id}/export/stellarium.zip")
+async def export_stellarium(location_id: int, horizon_id: int) -> Response:
     async with get_db() as conn:
-        loc, points = await _require_horizon_for_export(conn, location_id)
+        loc, points = await _require_custom_horizon_for_export(conn, location_id, horizon_id)
         payload = export_stellarium_zip(
             loc["name"],
             points,
@@ -260,10 +476,10 @@ async def export_stellarium(location_id: int) -> Response:
         )
 
 
-@router.get("/export/csv")
-async def export_csv_endpoint(location_id: int) -> Response:
+@router.get("/{horizon_id}/export/csv")
+async def export_csv_endpoint(location_id: int, horizon_id: int) -> Response:
     async with get_db() as conn:
-        loc, points = await _require_horizon_for_export(conn, location_id)
+        loc, points = await _require_custom_horizon_for_export(conn, location_id, horizon_id)
         text = export_csv(points)
         slug = sanitize_filename(loc["name"])
         return Response(
@@ -273,17 +489,22 @@ async def export_csv_endpoint(location_id: int) -> Response:
         )
 
 
-# ── Stateless parse (staged-save flow) ───────────────────────────────────────
+# ── Stateless parse (staged-save flow kept for backwards-compat) ─────────────
 
 
 @parse_router.post("/parse", response_model=HorizonParseResponse)
 async def parse_horizon(file: UploadFile = File(...)) -> HorizonParseResponse:
     """Parse a horizon file and return points + warnings without touching
-    the database. Powers the Location editor's staged-save flow: imported
-    points land in staged state and persist only on the outer Save."""
+    the database. Used by the custom-horizon editor when the user is
+    iterating on an imported polyline before committing it."""
     result = await _parse_upload_file(file)
     return HorizonParseResponse(
         points=[HorizonPointModel(azimuth_deg=az, altitude_deg=alt) for az, alt in result.points],
         warnings=result.warnings,
         source_filename=result.source_filename,
     )
+
+
+# ``Literal`` used only inside model validators; keep the import alive
+# so `from nightcrate.api.horizons import *` re-exports don't break.
+_ = Literal

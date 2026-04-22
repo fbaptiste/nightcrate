@@ -32,6 +32,12 @@ interface Props {
   /** Fires once when a real image lands. The composite uses this to
    *  coordinate "first paint" signals, if needed. */
   onReady?: () => void;
+  /** Browser-level hint for how urgently this image should load.
+   *  Used by ``SkyTileComposite`` to bias Chrome/Edge/Safari toward
+   *  loading rig-adjacent cells before far-out peripheral ones.
+   *  Ignored on older browsers, which degrades to the default
+   *  scheduler. */
+  fetchPriority?: "high" | "low" | "auto";
 }
 
 const MAX_RETRIES = 30;
@@ -49,6 +55,7 @@ export default function SkyTileCell({
   height,
   waitMs,
   onReady,
+  fetchPriority,
 }: Props) {
   const [version, setVersion] = useState(1);
   const generation = useThumbnailCacheStore((s) => s.generation);
@@ -159,7 +166,17 @@ export default function SkyTileCell({
         width={width}
         height={height}
         alt=""
-        loading="lazy"
+        // Intentionally omit loading="lazy" for high-priority cells so
+        // the browser doesn't defer them behind the viewport-intersect
+        // heuristic; all our cells are expected to be in-viewport
+        // shortly, and lazy delays the fetch on Safari.
+        loading={fetchPriority === "high" ? "eager" : "lazy"}
+        // ``fetchpriority`` is a DOM attribute with a lowercase name;
+        // React 18.3+ accepts the camelCase prop and emits it
+        // correctly. Browser support: Chrome/Edge ≥101, Safari ≥17.2,
+        // Firefox ≥132. Unsupported browsers ignore it and fall back
+        // to their default scheduler.
+        fetchPriority={fetchPriority}
         style={{
           display: "block",
           width: "100%",

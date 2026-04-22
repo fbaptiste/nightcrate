@@ -971,15 +971,29 @@ export default function FovSimulator({
                 "framing plans transfer directly."
               }
             >
-              <Typography
-                variant="body2"
-                sx={{ mt: 0.25, fontFamily: "monospace", cursor: "help", width: "fit-content" }}
-              >
-                <Box component="span" ref={rotationDisplayRef}>
-                  {Math.round(rotation)}
+              <Stack direction="row" alignItems="center" gap={1} sx={{ mt: 0.5, width: "100%" }}>
+                <Typography
+                  variant="body2"
+                  sx={{ fontFamily: "monospace", cursor: "help", minWidth: 48 }}
+                >
+                  <Box component="span" ref={rotationDisplayRef}>
+                    {Math.round(rotation)}
                   {"\u00B0"}
-                </Box>
-              </Typography>
+                  </Box>
+                </Typography>
+                <Slider
+                  size="small"
+                  value={rotation}
+                  min={0}
+                  max={360}
+                  step={1}
+                  onChange={(_, v) => {
+                    const next = Array.isArray(v) ? v[0] : v;
+                    setRotation(normalizeAngle(next));
+                  }}
+                  aria-label="Rotation"
+                />
+              </Stack>
             </Tooltip>
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
               position angle (east of north)

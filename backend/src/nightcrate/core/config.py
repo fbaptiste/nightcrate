@@ -32,13 +32,25 @@ class Settings(BaseModel):
     # means "use the component's default order"; unknown ids are filtered on
     # the client so new clocks added later don't break stored arrays.
     calculators_clock_order: list[str] = []
-    # Target Planner thresholds. Used both as the flat-horizon floor for
-    # locations without a custom horizon and as the initial slider values
-    # on the planner page.
-    planner_min_altitude_deg: int = 30
+    # Target Planner filter defaults — initial slider values on the
+    # planner page. The altitude floor now lives on each location as a
+    # horizon (see ``location_horizon``), so there's no global flat
+    # default setting anymore.
     planner_min_visibility_hours: float = 2.0
     planner_max_magnitude: float = 12.0
     planner_min_size_arcmin: float = 5.0
+    # Initial bounds for the Frames-Well coverage-range slider (and
+    # the default band the slider resets to when the rig changes).
+    # 0-200 = no filter; 15-90 matches the old fixed "frames well"
+    # bounds from the checkbox era.
+    planner_frames_well_min_pct: float = 15.0
+    planner_frames_well_max_pct: float = 90.0
+    # Default moon-separation value for the "Best time of year" chart
+    # in the planner detail panel. ``0`` ignores the moon entirely
+    # (every hour above horizon during astro dark counts); larger
+    # values filter out nights where the moon lands within that angle
+    # of the target.
+    planner_moon_sep_deg: int = 0
     # Disk budget for the HiPS/DSS2 caches. Covers both the per-DSO
     # ``APP_DIR/thumbnails/`` (list/detail/rig_framed variants) and
     # the v0.18.0 regional ``APP_DIR/sky_tiles/`` cache. 500 MB is the

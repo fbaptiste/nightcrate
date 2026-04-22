@@ -6,6 +6,8 @@ import FormHelperText from "@mui/material/FormHelperText";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
+import Slider from "@mui/material/Slider";
+import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
@@ -141,24 +143,6 @@ export function SettingsPage() {
             </Typography>
 
             <Box sx={{ mb: 2 }}>
-              <Typography variant="body1" gutterBottom>Minimum altitude (flat horizon fallback)</Typography>
-              <TextField
-                type="number"
-                size="small"
-                value={settings.planner_min_altitude_deg}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10);
-                  if (!isNaN(n) && n >= 0 && n <= 60) update({ planner_min_altitude_deg: n });
-                }}
-                inputProps={{ min: 0, max: 60 }}
-                sx={{ width: 120 }}
-              />
-              <FormHelperText>
-                Minimum altitude for "visible" when the location has no custom horizon (0–60°).
-              </FormHelperText>
-            </Box>
-
-            <Box sx={{ mb: 2 }}>
               <Typography variant="body1" gutterBottom>Default minimum hours visible</Typography>
               <TextField
                 type="number"
@@ -201,6 +185,60 @@ export function SettingsPage() {
                 inputProps={{ min: 0, max: 60, step: 1 }}
                 sx={{ width: 120 }}
               />
+            </Box>
+
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="body1" gutterBottom>
+                Default Size in Frame range: {settings.planner_frames_well_min_pct}% – {settings.planner_frames_well_max_pct}%
+              </Typography>
+              <Slider
+                size="small"
+                value={[
+                  settings.planner_frames_well_min_pct,
+                  settings.planner_frames_well_max_pct,
+                ]}
+                min={0}
+                max={200}
+                step={5}
+                disableSwap
+                onChange={(_, v) => {
+                  const [lo, hi] = v as [number, number];
+                  update({
+                    planner_frames_well_min_pct: lo,
+                    planner_frames_well_max_pct: hi,
+                  });
+                }}
+                sx={{ maxWidth: 360 }}
+              />
+              <FormHelperText>
+                Initial Size in Frame band on the planner (0–200% = no filter).
+              </FormHelperText>
+            </Box>
+
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="body1" gutterBottom>
+                Default moon separation (Best time of year chart)
+              </Typography>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <FormControl size="small" sx={{ minWidth: 160 }}>
+                  <Select
+                    value={settings.planner_moon_sep_deg}
+                    onChange={(e) =>
+                      update({ planner_moon_sep_deg: Number(e.target.value) })
+                    }
+                  >
+                    <MenuItem value={0}>Ignore moon</MenuItem>
+                    {[15, 30, 45, 60, 75, 90].map((deg) => (
+                      <MenuItem key={deg} value={deg}>
+                        Moon &gt; {deg}&deg;
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Stack>
+              <FormHelperText>
+                Initial moon-separation filter when the Best time of year chart opens.
+              </FormHelperText>
             </Box>
 
           </CardContent>

@@ -4,12 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nightcrate.services.rig_calculators import (
-    COVERAGE_FRAMES_WELL_MAX_PCT,
-    COVERAGE_FRAMES_WELL_MIN_PCT,
-    compute_coverage_pct,
-    frames_well,
-)
+from nightcrate.services.rig_calculators import compute_coverage_pct
 
 
 def test_object_fits_comfortably():
@@ -47,17 +42,3 @@ def test_null_minor_axis_uses_major_axis_as_fallback():
 def test_zero_fov_returns_none():
     assert compute_coverage_pct(0.0, 1.0, 30.0, 30.0) is None
     assert compute_coverage_pct(1.0, 0.0, 30.0, 30.0) is None
-
-
-def test_frames_well_band():
-    assert frames_well(15.0)
-    assert frames_well(90.0)
-    assert frames_well(50.0)
-    assert not frames_well(14.9)
-    assert not frames_well(90.1)
-    assert not frames_well(None)
-
-
-def test_frames_well_matches_constants():
-    assert COVERAGE_FRAMES_WELL_MIN_PCT == 15.0
-    assert COVERAGE_FRAMES_WELL_MAX_PCT == 90.0

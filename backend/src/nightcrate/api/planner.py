@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-from datetime import date, datetime, timedelta
+import os
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -31,10 +32,15 @@ from fastapi import APIRouter, HTTPException, Query, Response
 
 from nightcrate.api.dso import normalize_search_key
 from nightcrate.api.planner_models import (
+    AnnualHoursPoint as AnnualHoursPointOut,
+)
+from nightcrate.api.planner_models import (
+    AnnualHoursResponse,
     CacheClearResponse,
     DarkWindowOut,
     NearbyDsoItem,
     NearbyDsosResponse,
+    PlannerHorizonSummary,
     PlannerLocationSummary,
     PlannerRigSummary,
     PlannerTargetItem,
@@ -48,17 +54,17 @@ from nightcrate.api.planner_models import (
 from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import sky_tile_cache, thumbnails
-from nightcrate.services.dso_type_groups import group_for_raw_type
+from nightcrate.services.planner_annual_hours import compute_annual_hours
+from nightcrate.services.planner_now_status import compute_now_status
 from nightcrate.services.planner_sky_track import compute_sky_track
 from nightcrate.services.planner_visibility import (
     DsoCoord,
     DsoVisibility,
+    PlannerHorizon,
     PlannerLocation,
     default_cache,
 )
 from nightcrate.services.rig_calculators import (
-    COVERAGE_FRAMES_WELL_MAX_PCT,
-    COVERAGE_FRAMES_WELL_MIN_PCT,
     compute_coverage_pct,
     compute_fov,
 )
@@ -78,7 +84,7 @@ router = APIRouter(prefix="/api/planner", tags=["Target Planner"])
 
 
 async def _load_planner_location(conn, location_id: int) -> PlannerLocation:
-    """Fetch a location + its horizon and bundle into a ``PlannerLocation``.
+    """Fetch a location and bundle into a ``PlannerLocation``.
 
     Raises 404 if the location doesn't exist or is soft-deleted, 400 if
     it lacks coordinates (the planner can't geocode).
@@ -100,29 +106,6 @@ async def _load_planner_location(conn, location_id: int) -> PlannerLocation:
             detail="Location lacks coordinates; add latitude/longitude to plan targets here.",
         )
 
-    # Optional custom horizon.
-    cursor = await conn.execute(
-        "SELECT id, updated_at FROM location_horizon WHERE location_id = ?", (location_id,)
-    )
-    horizon_row = await cursor.fetchone()
-    horizon_points: tuple[tuple[float, float], ...] = ()
-    horizon_updated_at: str | None = None
-    if horizon_row is not None:
-        horizon_updated_at = horizon_row["updated_at"]
-        cursor = await conn.execute(
-            """
-            SELECT azimuth_deg, altitude_deg
-            FROM location_horizon_point
-            WHERE horizon_id = ?
-            ORDER BY azimuth_deg ASC
-            """,
-            (horizon_row["id"],),
-        )
-        point_rows = await cursor.fetchall()
-        horizon_points = tuple(
-            (float(r["azimuth_deg"]), float(r["altitude_deg"])) for r in point_rows
-        )
-
     return PlannerLocation(
         id=int(row["id"]),
         latitude_deg=float(row["latitude"]),
@@ -130,20 +113,74 @@ async def _load_planner_location(conn, location_id: int) -> PlannerLocation:
         elevation_m=float(row["elevation_m"]) if row["elevation_m"] is not None else None,
         timezone=row["timezone"],
         updated_at=row["updated_at"],
-        horizon_points=horizon_points,
-        horizon_updated_at=horizon_updated_at,
     )
 
 
-async def _load_location_name_and_horizon_flag(conn, location_id: int) -> tuple[str, bool]:
+async def _load_planner_horizon(conn, location_id: int, horizon_id: int | None) -> PlannerHorizon:
+    """Resolve a horizon for planner compute.
+
+    ``horizon_id=None`` → location's default. When ``horizon_id`` is
+    supplied but doesn't belong to ``location_id`` or has been deleted,
+    returns 404. Points are loaded eagerly for custom horizons so the
+    returned value object is self-contained (safe to pass across
+    process-pool boundaries).
+    """
+    if horizon_id is not None:
+        cursor = await conn.execute(
+            "SELECT * FROM location_horizon WHERE id = ? AND location_id = ?",
+            (horizon_id, location_id),
+        )
+    else:
+        cursor = await conn.execute(
+            "SELECT * FROM location_horizon WHERE location_id = ? AND is_default = 1",
+            (location_id,),
+        )
+    row = await cursor.fetchone()
+    if row is None:
+        # Fallback: no row with is_default=1 shouldn't happen (the
+        # migration seeds one; create-location also does) but guard
+        # anyway so a corrupted DB surfaces a 500-ish 422 rather than
+        # a mysterious crash inside the compute.
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Horizon not found for location {location_id}"
+                if horizon_id is not None
+                else f"Location {location_id} has no default horizon."
+            ),
+        )
+
+    points: tuple[tuple[float, float], ...] = ()
+    if row["type"] == "custom":
+        cursor = await conn.execute(
+            """
+            SELECT azimuth_deg, altitude_deg
+            FROM location_horizon_point
+            WHERE horizon_id = ?
+            ORDER BY azimuth_deg ASC
+            """,
+            (row["id"],),
+        )
+        point_rows = await cursor.fetchall()
+        points = tuple((float(r["azimuth_deg"]), float(r["altitude_deg"])) for r in point_rows)
+
+    return PlannerHorizon(
+        id=int(row["id"]),
+        location_id=int(row["location_id"]),
+        name=str(row["name"]),
+        type=str(row["type"]),
+        flat_altitude_deg=float(row["flat_altitude_deg"])
+        if row["flat_altitude_deg"] is not None
+        else None,
+        points=points,
+        updated_at=str(row["updated_at"]),
+    )
+
+
+async def _load_location_name(conn, location_id: int) -> str:
     cursor = await conn.execute("SELECT name FROM location WHERE id = ?", (location_id,))
     row = await cursor.fetchone()
-    name = row["name"] if row else ""
-    cursor = await conn.execute(
-        "SELECT 1 FROM location_horizon WHERE location_id = ? LIMIT 1", (location_id,)
-    )
-    has_horizon = (await cursor.fetchone()) is not None
-    return name, has_horizon
+    return row["name"] if row else ""
 
 
 async def _load_rig_fov(conn, rig_id: int) -> tuple[PlannerRigSummary, float, float]:
@@ -254,20 +291,59 @@ def _tonight_date(location_tz: str) -> date:
 @router.get("/targets", response_model=PlannerTargetsResponse)
 async def list_targets(
     location_id: int | None = None,
+    horizon_id: int | None = Query(
+        None,
+        description=(
+            "Horizon to evaluate visibility against. Defaults to the "
+            "location's ``is_default=1`` horizon. Ignored in Anytime "
+            "mode (``restrict_tonight=false``)."
+        ),
+    ),
     rig_id: int | None = None,
     date_: date | None = Query(None, alias="date"),
-    type_group: str | None = None,
     type: str | None = Query(
-        None, description="Comma-separated raw obj_type codes (power-user filter)"
+        None,
+        description=(
+            "Comma-separated raw obj_type codes (e.g., 'G,HII,PN'). "
+            "OR semantics — a DSO matches if its obj_type is any of the listed codes."
+        ),
     ),
-    constellation: str | None = Query(None, description="3-letter IAU constellation code"),
+    constellation: str | None = Query(
+        None,
+        description=(
+            "Comma-separated 3-letter IAU constellation codes (e.g., 'Ori,And'). "
+            "OR semantics — a DSO matches if its constellation is any of the listed codes."
+        ),
+    ),
+    catalog: str | None = Query(
+        None,
+        description=(
+            "Comma-separated designation catalog codes (e.g., 'messier,ngc,barnard'). "
+            "OR semantics — a DSO matches if it carries any of the listed catalogs."
+        ),
+    ),
     has_distance: bool | None = Query(
         None, description="If set, filter to DSOs with (true) or without (false) a distance value"
     ),
     min_hours: float | None = None,
     max_magnitude: float | None = None,
     min_size_arcmin: float | None = None,
-    frames_well: bool = False,
+    coverage_min_pct: float | None = Query(
+        None,
+        ge=0.0,
+        le=200.0,
+        description=(
+            "Minimum FOV coverage percentage (inclusive). Requires a "
+            "rig to be selected. Paired with ``coverage_max_pct`` to "
+            "drive the Frames-Well range filter."
+        ),
+    ),
+    coverage_max_pct: float | None = Query(
+        None,
+        ge=0.0,
+        le=200.0,
+        description=("Maximum FOV coverage percentage (inclusive). Requires a rig to be selected."),
+    ),
     q: str | None = Query(
         None,
         description=(
@@ -310,16 +386,22 @@ async def list_targets(
     settings = await get_settings()
 
     location: PlannerLocation | None = None
+    horizon: PlannerHorizon | None = None
     location_summary: PlannerLocationSummary | None = None
+    horizon_summary: PlannerHorizonSummary | None = None
     async with get_db() as conn:
         if location_id is not None:
             location = await _load_planner_location(conn, location_id)
-            location_name, has_horizon = await _load_location_name_and_horizon_flag(
-                conn, location_id
-            )
-            location_summary = PlannerLocationSummary(
-                id=location.id, name=location_name, has_custom_horizon=has_horizon
-            )
+            location_name = await _load_location_name(conn, location_id)
+            location_summary = PlannerLocationSummary(id=location.id, name=location_name)
+            if restrict_tonight:
+                horizon = await _load_planner_horizon(conn, location_id, horizon_id)
+                horizon_summary = PlannerHorizonSummary(
+                    id=horizon.id,
+                    name=horizon.name,
+                    type=horizon.type,
+                    flat_altitude_deg=horizon.flat_altitude_deg,
+                )
 
         rig_summary: PlannerRigSummary | None = None
         rig_fov: tuple[float, float] | None = None
@@ -341,16 +423,17 @@ async def list_targets(
         await asyncio.to_thread(
             default_cache.get_or_compute,
             location,
+            horizon,
             night_date,
             dsos,
-            flat_min_altitude_deg=float(settings.planner_min_altitude_deg),
         )
-        if restrict_tonight and location is not None
+        if restrict_tonight and location is not None and horizon is not None
         else None
     )
 
     dark_window_out: DarkWindowOut | None = None
     moon_phase_pct_out = 0.0
+    moon_phase_name_out: str | None = None
     if snapshot is not None:
         moon_phase_pct_out = snapshot.moon_phase_pct
         if snapshot.dark_window.start_utc and snapshot.dark_window.end_utc:
@@ -359,6 +442,19 @@ async def list_targets(
                 end_utc=snapshot.dark_window.end_utc.isoformat(),
                 hours=round(snapshot.dark_window.hours, 2),
             )
+        # Compute the phase name at the same reference instant the
+        # snapshot uses for phase percent — astro-dark midpoint, which
+        # is close enough to local midnight for naming purposes.
+        if location is not None:
+            from astropy.time import Time as _AstroTime
+
+            from nightcrate.services.astronomy import compute_moon_phase_name
+            from nightcrate.services.planner_visibility import _make_earth_location
+
+            ref_utc = snapshot.dark_window.start_utc or datetime.now(UTC)
+            moon_phase_name_out = compute_moon_phase_name(
+                _AstroTime(ref_utc), _make_earth_location(location)
+            )
 
         # Early return when astro-dark doesn't occur tonight (only
         # meaningful in "tonight only" mode — the "anytime" path
@@ -366,16 +462,19 @@ async def list_targets(
         if not snapshot.per_dso or dark_window_out is None:
             return PlannerTargetsResponse(
                 location=location_summary,
+                horizon=horizon_summary,
                 rig=rig_summary,
                 date=night_date.isoformat(),
                 dark_window=dark_window_out,
                 moon_phase_pct=moon_phase_pct_out,
+                moon_phase_name=moon_phase_name_out,
                 total=0,
                 offset=0,
                 limit=limit,
                 items=[],
-                type_group_counts={},
                 raw_type_counts={},
+                catalog_counts={},
+                constellation_counts={},
             )
 
     # Filter thresholds — query params override the user's saved
@@ -429,35 +528,62 @@ async def list_targets(
             )
             search_match_ids = {int(r["id"]) for r in await cursor.fetchall()}
 
-    type_group_filter: set[str] | None = None
-    if type_group:
-        type_group_filter = {g.strip() for g in type_group.split(",") if g.strip()}
+    # Per-DSO "currently up / rising / set" status — Tonight mode only,
+    # and only when a location is present (location-less Anytime mode
+    # has no horizon to test against).
+    now_status_by_dso: dict[int, str] = {}
+    if restrict_tonight and location is not None and horizon is not None and snapshot is not None:
+        visible_coords = [d for d in dsos if d.dso_id in set(visible_ids)]
+        now_status_by_dso = await asyncio.to_thread(
+            compute_now_status,
+            location,
+            horizon,
+            visible_coords,
+            astro_dark_end_utc=snapshot.dark_window.end_utc,
+        )
+
     raw_type_filter: set[str] | None = None
     if type:
         raw_type_filter = {t.strip() for t in type.split(",") if t.strip()}
+    constellation_filter: set[str] | None = None
+    if constellation:
+        constellation_filter = {c.strip() for c in constellation.split(",") if c.strip()}
+    catalog_filter: set[str] | None = None
+    if catalog:
+        catalog_filter = {c.strip() for c in catalog.split(",") if c.strip()}
+
+    # Catalog filter + per-DSO catalog tallies need a DSO→{catalogs}
+    # lookup. Single query, all visible ids at once.
+    dso_catalogs: dict[int, set[str]] = {dso_id: set() for dso_id in visible_ids}
+    if visible_ids:
+        async with get_db() as conn:
+            placeholders = ",".join("?" * len(visible_ids))
+            cursor = await conn.execute(
+                f"SELECT dso_id, catalog FROM dso_designation WHERE dso_id IN ({placeholders})",  # noqa: S608, E501  # nosec B608
+                visible_ids,
+            )
+            for r in await cursor.fetchall():
+                dso_catalogs[int(r["dso_id"])].add(r["catalog"])
 
     items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
     # Faceted-search counts: per-chip-value tallies of DSOs that pass
     # every filter EXCEPT the one the chip belongs to. Lets the
     # frontend render "Galaxy (234)" labels that reflect the user's
     # current constellation / mag / visibility constraints.
-    type_group_counts: dict[str, int] = {}
     raw_type_counts: dict[str, int] = {}
+    catalog_counts: dict[str, int] = {}
+    constellation_counts: dict[str, int] = {}
     for dso_id in visible_ids:
         meta = metadata.get(dso_id)
         if meta is None:
             continue
         if search_match_ids is not None and dso_id not in search_match_ids:
             continue
-        group = group_for_raw_type(meta["obj_type"])
         raw = meta["obj_type"]
+        row_constellation = meta["constellation"]
+        row_catalogs = dso_catalogs.get(dso_id, set())
 
-        # Non-type-dimension filters. These are applied for BOTH the
-        # items list and the two facet tallies — the whole point of
-        # the facets is "show counts under the user's other
-        # constraints".
-        if constellation and meta["constellation"] != constellation:
-            continue
+        # Always-applied filters — not facet dimensions themselves.
         if has_distance is True and meta["distance_pc"] is None:
             continue
         if has_distance is False and meta["distance_pc"] is not None:
@@ -481,29 +607,44 @@ async def list_targets(
             if rig_fov is not None
             else None
         )
-        if frames_well and rig_fov is not None:
+        # Frames-Well range filter — applied when the user has dialled
+        # in a narrower band than the full 0–200 % range. A rig is
+        # required to compute coverage; without a rig, the range
+        # filter silently no-ops. ``None`` coverage (DSO has no size)
+        # always fails the range filter when either bound is active.
+        range_active = (coverage_min_pct is not None and coverage_min_pct > 0.0) or (
+            coverage_max_pct is not None and coverage_max_pct < 200.0
+        )
+        if range_active and rig_fov is not None:
             if coverage is None:
                 continue
-            if not (COVERAGE_FRAMES_WELL_MIN_PCT <= coverage <= COVERAGE_FRAMES_WELL_MAX_PCT):
+            if coverage_min_pct is not None and coverage < coverage_min_pct:
+                continue
+            if coverage_max_pct is not None and coverage > coverage_max_pct:
                 continue
 
-        # At this point the DSO passes every non-type-dimension filter.
-        # - Contribute to ``type_group_counts`` only if it would pass
-        #   the raw-type filter (raw-type is a *different* dimension,
-        #   so it counts as an "other" filter from type-group's
-        #   perspective).
-        # - Contribute to ``raw_type_counts`` symmetrically.
+        # At this point the DSO passes every non-facet-dimension filter.
+        # Each facet count is incremented only when the DSO passes the
+        # OTHER two facet dimensions — classic faceted-search semantics.
         passes_raw = raw_type_filter is None or raw in raw_type_filter
-        passes_group = type_group_filter is None or group in type_group_filter
-        if passes_raw:
-            type_group_counts[group] = type_group_counts.get(group, 0) + 1
-        if passes_group:
-            raw_type_counts[raw] = raw_type_counts.get(raw, 0) + 1
+        passes_const = constellation_filter is None or (
+            row_constellation is not None and row_constellation in constellation_filter
+        )
+        passes_catalog = catalog_filter is None or bool(row_catalogs & catalog_filter)
 
-        # Now apply the two type-dimension filters for the items list.
-        if type_group_filter is not None and group not in type_group_filter:
-            continue
-        if raw_type_filter is not None and raw not in raw_type_filter:
+        if passes_const and passes_catalog:
+            raw_type_counts[raw] = raw_type_counts.get(raw, 0) + 1
+        if passes_raw and passes_catalog and row_constellation is not None:
+            constellation_counts[row_constellation] = (
+                constellation_counts.get(row_constellation, 0) + 1
+            )
+        if passes_raw and passes_const:
+            # Each of the DSO's catalogs contributes one to its own tally.
+            for c in row_catalogs:
+                catalog_counts[c] = catalog_counts.get(c, 0) + 1
+
+        # Now apply the three facet-dimension filters for the items list.
+        if not (passes_raw and passes_const and passes_catalog):
             continue
 
         vis = snapshot.per_dso.get(dso_id) if snapshot is not None else None
@@ -512,10 +653,9 @@ async def list_targets(
             primary_designation=meta["primary_designation"],
             common_name=meta["common_name"],
             obj_type=meta["obj_type"],
-            type_group=group,
             ra_deg=meta["ra_deg"],
             dec_deg=meta["dec_deg"],
-            constellation=meta["constellation"],
+            constellation=row_constellation,
             maj_axis_arcmin=maj_axis,
             min_axis_arcmin=meta["min_axis_arcmin"],
             mag_v=mag_v,
@@ -527,6 +667,7 @@ async def list_targets(
             altitude_at_transit_deg=(vis.altitude_at_transit_deg if vis is not None else None),
             min_moon_separation_deg=(vis.min_moon_separation_deg if vis is not None else None),
             coverage_pct=coverage,
+            now_status=now_status_by_dso.get(dso_id),
         )
         items.append((item, vis))
 
@@ -562,16 +703,19 @@ async def list_targets(
 
     return PlannerTargetsResponse(
         location=location_summary,
+        horizon=horizon_summary,
         rig=rig_summary,
         date=night_date.isoformat(),
         dark_window=dark_window_out,
         moon_phase_pct=moon_phase_pct_out,
+        moon_phase_name=moon_phase_name_out,
         total=total,
         offset=offset,
         limit=limit,
         items=[item for item, _ in page],
-        type_group_counts=type_group_counts,
         raw_type_counts=raw_type_counts,
+        catalog_counts=catalog_counts,
+        constellation_counts=constellation_counts,
     )
 
 
@@ -582,12 +726,18 @@ async def list_targets(
 async def target_sky_track(
     dso_id: int,
     location_id: int,
+    horizon_id: int | None = Query(
+        None,
+        description=(
+            "Horizon to draw the reference line against. Defaults to the "
+            "location's default horizon."
+        ),
+    ),
     date_: date | None = Query(None, alias="date"),
 ) -> SkyTrackResponse:
-    settings = await get_settings()
-
     async with get_db() as conn:
         location = await _load_planner_location(conn, location_id)
+        horizon = await _load_planner_horizon(conn, location_id, horizon_id)
         cursor = await conn.execute(
             "SELECT ra_deg, dec_deg FROM dso WHERE id = ? AND active = 1", (dso_id,)
         )
@@ -601,9 +751,9 @@ async def target_sky_track(
     track = await asyncio.to_thread(
         compute_sky_track,
         location,
+        horizon,
         night_date,
         (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
-        flat_min_altitude_deg=float(settings.planner_min_altitude_deg),
     )
 
     bands = track.twilight
@@ -613,6 +763,7 @@ async def target_sky_track(
         object_altitude_deg=track.object_altitude_deg,
         object_azimuth_deg=track.object_azimuth_deg,
         moon_altitude_deg=track.moon_altitude_deg,
+        moon_separation_deg=track.moon_separation_deg,
         horizon_altitude_at_object_az=track.horizon_altitude_at_object_az,
         twilight=TwilightBandsOut(
             sunset_utc=bands.sunset_utc.isoformat() if bands.sunset_utc else None,
@@ -630,6 +781,92 @@ async def target_sky_track(
         peak_time_utc=track.peak_time_utc.isoformat(),
         peak_altitude_deg=track.peak_altitude_deg,
         transit_time_utc=track.transit_time_utc.isoformat() if track.transit_time_utc else None,
+    )
+
+
+# ── Annual hours above threshold (best-time-of-year chart) ───────────────────
+
+
+@router.get(
+    "/targets/{dso_id}/annual-hours",
+    response_model=AnnualHoursResponse,
+)
+async def target_annual_hours(
+    dso_id: int,
+    location_id: int,
+    horizon_id: int | None = Query(
+        None,
+        description=(
+            "Horizon to count hours against. Defaults to the location's "
+            "default horizon. Artificial horizons use their flat altitude "
+            "value; custom horizons use the stored polyline."
+        ),
+    ),
+    year: int | None = Query(
+        None,
+        description=(
+            "Calendar year to plot. Defaults to the current year in the "
+            "location's geographic timezone."
+        ),
+    ),
+    moon_sep_deg: float = Query(
+        60.0,
+        ge=0.0,
+        le=180.0,
+        description=(
+            "Minimum moon–target separation (deg). A sample counts only "
+            "when the moon is below horizon OR separation > this value. "
+            "``0`` disables the moon check entirely (old ``narrowband`` "
+            "behaviour) and skips the moon astropy transform."
+        ),
+    ),
+) -> AnnualHoursResponse:
+    async with get_db() as conn:
+        location = await _load_planner_location(conn, location_id)
+        horizon = await _load_planner_horizon(conn, location_id, horizon_id)
+        cursor = await conn.execute(
+            "SELECT ra_deg, dec_deg FROM dso WHERE id = ? AND active = 1", (dso_id,)
+        )
+        row = await cursor.fetchone()
+
+    if row is None or row["ra_deg"] is None or row["dec_deg"] is None:
+        raise HTTPException(status_code=404, detail=f"DSO {dso_id} not found / no coords")
+
+    if year is None:
+        # Use the current year in the location's timezone — otherwise
+        # users abroad can see the "wrong" year during the UTC wrap.
+        year = datetime.now(ZoneInfo(location.timezone)).year
+
+    # Fan the year out across worker processes. ``max_worker_cores``
+    # is user-configurable (``None`` → ``cpu_count - 1``). Cap at the
+    # number of calendar months so chunk granularity stays sane even
+    # on many-core machines where astropy imports would otherwise
+    # dominate the per-chunk cost.
+    settings = await get_settings()
+    configured_workers = settings.max_worker_cores
+    if configured_workers is None:
+        configured_workers = max(1, (os.cpu_count() or 2) - 1)
+    max_workers = max(1, min(int(configured_workers), 12))
+
+    track = await asyncio.to_thread(
+        compute_annual_hours,
+        location,
+        horizon,
+        year,
+        (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
+        moon_sep_deg=moon_sep_deg,
+        max_workers=max_workers,
+    )
+
+    return AnnualHoursResponse(
+        dso_id=track.dso_id,
+        year=track.year,
+        horizon_id=track.horizon_id,
+        horizon_type=track.horizon_type,
+        horizon_name=track.horizon_name,
+        flat_altitude_deg=track.flat_altitude_deg,
+        moon_sep_deg=track.moon_sep_deg,
+        points=[AnnualHoursPointOut(date=p.date.isoformat(), hours=p.hours) for p in track.points],
     )
 
 
@@ -777,7 +1014,6 @@ async def dsos_in_region(
             if r["min_axis_arcmin"] is not None
             else None,
             obj_type=str(r["obj_type"]),
-            type_group=group_for_raw_type(str(r["obj_type"])),
         )
         for r in rows
     ]

@@ -21,13 +21,27 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import astropy.units as u
-import numpy as np
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
-from astropy.time import Time, TimeDelta
+# Global astropy IERS configuration. Disabling auto-download avoids
+# the noisy first-use attempt to fetch Bulletin-A from CDS on dark-site
+# observatory boxes with no internet; setting auto_max_age=None makes
+# astropy tolerate the bundled predictive table even when its
+# predictions are older than 30 days (the ≲ 0.5-arc-sec Earth-orientation
+# error is deep in our precision noise). These lines must run before
+# any astropy sidereal-time / AltAz call — since this module is imported
+# by every other planner module that touches astropy, configuring here
+# catches both the FastAPI app path and the pytest path.
+from astropy.utils import iers as _astropy_iers
 
-from nightcrate.services.astronomy import compute_illumination_pct
-from nightcrate.services.horizon import interpolate_horizon_altitude
+_astropy_iers.conf.auto_download = False
+_astropy_iers.conf.auto_max_age = None
+
+import astropy.units as u  # noqa: E402
+import numpy as np  # noqa: E402
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body  # noqa: E402
+from astropy.time import Time, TimeDelta  # noqa: E402
+
+from nightcrate.services.astronomy import compute_illumination_pct  # noqa: E402
+from nightcrate.services.horizon import resolve_horizon_altitude  # noqa: E402
 
 # 5-minute sampling for the planner visibility snapshot. Precision on
 # hours-visible is ±2.5 min, which is plenty for planning.
@@ -45,11 +59,14 @@ _ASTRO_DARK_DEG = -18.0
 
 @dataclass(frozen=True, slots=True)
 class PlannerLocation:
-    """Minimal value object decoupled from the Pydantic Location model.
+    """Minimal location value object decoupled from the Pydantic Location
+    model.
 
-    ``updated_at`` fields (location + horizon) flow into the visibility
-    cache key so an edit to either invalidates the cached snapshot
-    automatically.
+    Horizon is now a separate ``PlannerHorizon`` passed alongside —
+    every location has ≥1 horizon and the caller picks which one
+    (default-for-location or user override). ``updated_at`` flows into
+    the visibility cache key so a coordinate or timezone change
+    invalidates the cached snapshot automatically.
     """
 
     id: int
@@ -58,9 +75,25 @@ class PlannerLocation:
     elevation_m: float | None
     timezone: str
     updated_at: str
-    # None or empty list → flat-horizon fallback at ``min_altitude_deg``.
-    horizon_points: tuple[tuple[float, float], ...] = ()
-    horizon_updated_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlannerHorizon:
+    """One of a location's horizons — either a polyline (``type='custom'``)
+    or a constant altitude (``type='artificial'``).
+
+    ``updated_at`` flows into the visibility + annual-hours cache keys
+    so any edit to the horizon invalidates derived results.
+    """
+
+    id: int
+    location_id: int
+    name: str
+    type: str  # 'custom' | 'artificial'
+    flat_altitude_deg: float | None
+    # Polyline ordered ascending by azimuth; empty for artificial horizons.
+    points: tuple[tuple[float, float], ...]
+    updated_at: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,16 +407,11 @@ def _compute_upper_transits(
 
 def compute_visibility_snapshot(
     location: PlannerLocation,
+    horizon: PlannerHorizon,
     night_date: date,
     dsos: Sequence[DsoCoord],
-    *,
-    flat_min_altitude_deg: float,
 ) -> VisibilitySnapshot:
-    """Compute the visibility snapshot for one night at one location.
-
-    ``flat_min_altitude_deg`` is used as the horizon when the location
-    has no custom horizon.
-    """
+    """Compute the visibility snapshot for one night at one location + horizon."""
     earth_loc = _make_earth_location(location)
     dark = _astro_dark_window(location, night_date, earth_loc)
 
@@ -422,12 +450,12 @@ def compute_visibility_snapshot(
     sep = coords[:, None].separation(moon_coord[None, :]).deg
     moon_sep = np.asarray(sep)
 
-    # Horizon profile per-(DSO, time): interpolate along azimuth when a
-    # custom horizon exists; otherwise a scalar flat minimum.
-    if location.horizon_points:
-        horizon_alt = interpolate_horizon_altitude(location.horizon_points, az_deg)
-    else:
-        horizon_alt = np.full_like(alt_deg, flat_min_altitude_deg)
+    # Horizon profile per-(DSO, time): a flat altitude for artificial
+    # horizons, polyline interpolation for custom ones. Both return the
+    # same (N, T) shape as ``alt_deg`` via ``resolve_horizon_altitude``.
+    horizon_alt = resolve_horizon_altitude(
+        horizon.type, horizon.flat_altitude_deg, horizon.points, az_deg
+    )
 
     visible = alt_deg > horizon_alt
 
@@ -465,9 +493,11 @@ def compute_visibility_snapshot(
 class VisibilityCache:
     """In-process LRU cache for visibility snapshots.
 
-    Key includes both ``updated_at`` fields (location + horizon) so an
-    edit to either invalidates the cached snapshot automatically. Size
-    is bounded at ``max_entries`` with the oldest dropped on insert.
+    Key includes both ``updated_at`` fields (location + horizon) and
+    the horizon id so an edit to either invalidates the cached
+    snapshot automatically AND swapping horizons in the planner
+    recomputes rather than serving stale numbers. Size is bounded at
+    ``max_entries`` with the oldest dropped on insert.
     """
 
     max_entries: int = 4
@@ -479,27 +509,26 @@ class VisibilityCache:
     def _key(
         self,
         location: PlannerLocation,
+        horizon: PlannerHorizon,
         night_date: date,
-        flat_min_altitude_deg: float,
     ) -> tuple[Any, ...]:
         return (
             location.id,
             night_date.isoformat(),
             location.updated_at,
-            location.horizon_updated_at,
-            round(flat_min_altitude_deg, 2),
+            horizon.id,
+            horizon.updated_at,
         )
 
     def get_or_compute(
         self,
         location: PlannerLocation,
+        horizon: PlannerHorizon,
         night_date: date,
         dsos: Sequence[DsoCoord],
-        *,
-        flat_min_altitude_deg: float,
     ) -> VisibilitySnapshot:
         now = datetime.now(UTC)
-        key = self._key(location, night_date, flat_min_altitude_deg)
+        key = self._key(location, horizon, night_date)
         entry = self._entries.get(key)
         if entry is not None:
             fetched_at, snapshot = entry
@@ -508,9 +537,7 @@ class VisibilityCache:
                 self._entries[key] = (fetched_at, snapshot)
                 return snapshot
 
-        snapshot = compute_visibility_snapshot(
-            location, night_date, dsos, flat_min_altitude_deg=flat_min_altitude_deg
-        )
+        snapshot = compute_visibility_snapshot(location, horizon, night_date, dsos)
         self._entries[key] = (now, snapshot)
         # Drop oldest entries while over budget.
         while len(self._entries) > self.max_entries:

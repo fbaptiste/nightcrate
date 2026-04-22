@@ -511,7 +511,11 @@ _VIZIER_FETCH_SPECS: dict[str, dict] = {
         "display_name": "Sharpless 2 (VII/20)",
         "citation": "Sharpless 1959 ApJS 4, 257. Retrieved via VizieR.",
         "column_filter": None,
-        "additional_params": {},
+        # VizieR precession pseudo-columns are only emitted on explicit
+        # -out.add; without this, `-out.all` returns only the original
+        # epoch columns (RA1900/DE1900 for Sharpless, RA1875/DE1875 for
+        # Barnard) and every row ingests with ra_deg/dec_deg = NULL.
+        "additional_params": {"-out.add": "_RAJ2000,_DEJ2000"},
     },
     "barnard": {
         "source_id": "vizier_barnard",
@@ -520,7 +524,7 @@ _VIZIER_FETCH_SPECS: dict[str, dict] = {
         "display_name": "Barnard dark nebulae (VII/220A)",
         "citation": "Barnard 1927 (VizieR VII/220A).",
         "column_filter": None,
-        "additional_params": {},
+        "additional_params": {"-out.add": "_RAJ2000,_DEJ2000"},
     },
     # 50 MGC moved to a dedicated GitHub fetch endpoint
     # (POST /api/admin/catalogs/50mgc/fetch) — see fetch_50mgc_from_github

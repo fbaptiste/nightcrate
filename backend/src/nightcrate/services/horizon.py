@@ -345,6 +345,29 @@ def interpolate_horizon_altitude(
     return np.interp(query, az_wrapped, alt_wrapped)
 
 
+def resolve_horizon_altitude(
+    horizon_type: str,
+    flat_altitude_deg: float | None,
+    points: Sequence[tuple[float, float]],
+    azimuths_deg: np.ndarray,
+) -> np.ndarray:
+    """Return horizon altitude at each azimuth for either horizon type.
+
+    Artificial horizons return a constant ``flat_altitude_deg`` at every
+    azimuth; custom horizons interpolate the polyline. Callers that
+    already hold a ``PlannerHorizon`` value object should pass its
+    fields directly — keeps this function free of the planner import
+    cycle.
+    """
+    if horizon_type == "artificial":
+        if flat_altitude_deg is None:
+            raise ValueError("Artificial horizon requires flat_altitude_deg.")
+        return np.full_like(np.asarray(azimuths_deg, dtype=np.float64), float(flat_altitude_deg))
+    if horizon_type == "custom":
+        return interpolate_horizon_altitude(points, azimuths_deg)
+    raise ValueError(f"Unknown horizon type: {horizon_type!r}")
+
+
 # ── Filename sanitization ─────────────────────────────────────────────────────
 
 

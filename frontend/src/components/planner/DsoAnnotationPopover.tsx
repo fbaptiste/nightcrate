@@ -11,12 +11,14 @@
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import Popover from "@mui/material/Popover";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { fetchDso, type DsoDetail } from "@/api/dsos";
+import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 
 interface Props {
   anchorEl: Element | null;
@@ -81,42 +83,42 @@ export default function DsoAnnotationPopover({
       transformOrigin={{ vertical: "top", horizontal: "center" }}
       disableRestoreFocus
     >
-      <Box sx={{ p: 1.5, minWidth: 220, maxWidth: 280 }}>
-        {commonName && (
-          <Typography variant="subtitle2" fontWeight={600} sx={{ lineHeight: 1.2 }}>
-            {commonName}
-          </Typography>
-        )}
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: "block", textTransform: "uppercase", letterSpacing: 0.4, mt: commonName ? 0.5 : 0 }}
-        >
-          Catalog
-        </Typography>
-        <Stack direction="row" gap={0.5} flexWrap="wrap" sx={{ mt: 0.25 }}>
+      <Box sx={{ p: 1.5, minWidth: 220, maxWidth: 300 }}>
+        {/* Catalog designation(s) with the object-type pill inline —
+            same visual language as the detail panel header. */}
+        <Stack direction="row" gap={0.75} alignItems="center" flexWrap="wrap">
           {designations.map((d) => (
             <Typography
               key={d}
               variant="body2"
-              sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
+              sx={{ fontFamily: "monospace", fontSize: "0.85rem", fontWeight: 600 }}
             >
               {d}
             </Typography>
           ))}
+          {objType && (
+            <Chip
+              label={displayDsoType(objType)}
+              size="small"
+              sx={{
+                bgcolor: dsoTypeColor(objType),
+                color: "#ffffff",
+                fontWeight: 500,
+                height: 20,
+                fontSize: "0.7rem",
+              }}
+            />
+          )}
         </Stack>
 
-        {objType && (
-          <>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ display: "block", textTransform: "uppercase", letterSpacing: 0.4, mt: 1 }}
-            >
-              Type
-            </Typography>
-            <Typography variant="body2">{objType}</Typography>
-          </>
+        {commonName && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.5, lineHeight: 1.3 }}
+          >
+            {commonName}
+          </Typography>
         )}
 
         {detailQuery.isLoading && (
@@ -135,7 +137,7 @@ export default function DsoAnnotationPopover({
             onClose();
           }}
         >
-          Show details
+          Switch to object
         </Button>
       </Box>
     </Popover>
