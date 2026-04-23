@@ -3038,6 +3038,45 @@ button. Option B restores the full staged flow.
 - [x] CLAUDE.md guardrail + memory note added so the horizon
       staging contract doesn't get regressed again.
 
+### Post-review polish
+
+- [x] **Atomic horizon-replace endpoint** —
+      `PUT /api/locations/{id}/horizons` takes the full desired
+      horizon set and applies creates / updates / deletes in one
+      SQL transaction. Replaces the retired client-side
+      `_applyStagedHorizonsToExisting` helper which (a) couldn't
+      offer true atomicity against mid-save network failures and
+      (b) tripped `idx_location_horizon_one_custom` (409) on the
+      "replace-custom" pattern (delete old custom + add new one).
+      Frontend uses `replaceLocationHorizons` from `api/horizons.ts`.
+      7 new tests covering atomic apply + custom-swap + validation.
+- [x] **Parallel pytest** — `pytest-xdist` dev-dep + `make
+      test-fast` target. Full suite 392s → 215s on a 10-core Mac
+      with identical pass count.
+- [x] **DSO catalog + Planner detail — Wikipedia as a link, not a
+      chip.** Theme-primary color + underline-on-hover + trailing
+      `OpenInNewIcon` (14 px). The chip form was
+      indistinguishable from non-clickable designation chips.
+- [x] **Planner detail header reorganisation.** Three lines:
+      (name + constellation) · (common name) · (type pill + alt
+      catalog chips). Distance moved out of the header entirely
+      into the fact grid below the image. Removed the
+      "fits comfortably at X%" narrative — the simulator already
+      shows framing.
+- [x] **Planner detail fact grid — three explicit rows.** Row 1
+      Distance / Size / FOV coverage; Row 2 Hours / Max alt /
+      Meridian / Moon sep; Row 3 Mag V / Mag B.
+- [x] **SkyPositionGraph "now" indicator.** Teal vertical line,
+      triangle anchor on the 90° grid, minute-aligned auto-tick
+      (no mouse interaction needed). Magnetic snap integration.
+      Meridian moved to its own tier (tier 4) so a
+      meridian-near-sunset no longer collides.
+- [x] **SkyPositionGraph hourly ticks** via `d3.timeHour.range`
+      (was every-other-hour from the `.ticks(6)` auto-round).
+- [x] **Best-time-of-year chart January label** — fixes a skipped
+      `d3.timeMonths` boundary when the data range starts
+      mid-month.
+
 ---
 
 ## FITS Equipment Resolver Spec
