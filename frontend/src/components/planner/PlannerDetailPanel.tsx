@@ -289,29 +289,48 @@ export default function PlannerDetailPanel({
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle sx={{ display: "flex", alignItems: "flex-start", gap: 2, py: 1.25 }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" gap={1.5} alignItems="baseline" flexWrap="wrap">
+          {/* Title row: primary designation + constellation + distance
+              chip. Distance uses ``ml: auto`` to right-align inside the
+              flex row so the user's eye catches "how far away" on the
+              same line as the name — the two facts most users check
+              first when picking a target. */}
+          <Stack direction="row" gap={1.5} alignItems="center" flexWrap="wrap">
             <Typography variant="h6">{dso?.primary_designation ?? "…"}</Typography>
             {dso?.constellation && (
               <Typography variant="body2" color="text.secondary">
                 {displayConstellation(dso.constellation)}
               </Typography>
             )}
+            {distance && (
+              <Chip
+                label={`${distance.primary} · ${distance.secondary}`}
+                size="small"
+                variant="outlined"
+                sx={{ ml: "auto" }}
+              />
+            )}
           </Stack>
+
           {dso?.common_name && (
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
               {dso.common_name}
             </Typography>
           )}
-          {/* Type + distance chips — the two facts most users want at a
-              glance. Type uses the friendly ``displayDsoType`` form
-              (e.g. "Emission Nebula" not "EmN"); distance shows both
-              parsecs and light-years so beginners have an intuitive
-              second unit. Placed right under the common-name (or
-              designation when no common name) so the header reads
-              name-first, facts-second. */}
-          {(dso?.obj_type || distance) && (
-            <Stack direction="row" gap={0.75} flexWrap="wrap" sx={{ mt: 0.75 }}>
-              {dso?.obj_type && (
+
+          {/* Type pill + alternate catalog designations — one line
+              describing "what kind of object, and what else it's
+              called". Primary designation is already the title, so
+              only alternates are listed here (no redundant M 42 chip
+              when "M 42" is the heading). */}
+          {dso && (dso.obj_type || dso.designations.length > 0) && (
+            <Stack
+              direction="row"
+              flexWrap="wrap"
+              gap={0.75}
+              alignItems="center"
+              sx={{ mt: 0.75 }}
+            >
+              {dso.obj_type && (
                 <Chip
                   label={displayDsoType(dso.obj_type)}
                   size="small"
@@ -322,31 +341,16 @@ export default function PlannerDetailPanel({
                   }}
                 />
               )}
-              {distance && (
-                <Chip
-                  label={`${distance.primary} · ${distance.secondary}`}
-                  size="small"
-                  variant="outlined"
-                />
-              )}
-            </Stack>
-          )}
-          {/* Designation pills — primary filled, alternates outlined.
-              Kept pure-chip so the visual language is "identifiers"
-              across the row; interactive external references render
-              as a separate link-styled line below so the user can
-              tell what's clickable without relying on a hover state. */}
-          {dso && dso.designations.length > 0 && (
-            <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.75 }}>
-              {dso.designations.map((d) => (
-                <Chip
-                  key={`${d.catalog}-${d.identifier}`}
-                  label={d.display_form}
-                  size="small"
-                  variant={d.is_primary ? "filled" : "outlined"}
-                  color={d.is_primary ? "primary" : "default"}
-                />
-              ))}
+              {dso.designations
+                .filter((d) => !d.is_primary)
+                .map((d) => (
+                  <Chip
+                    key={`${d.catalog}-${d.identifier}`}
+                    label={d.display_form}
+                    size="small"
+                    variant="outlined"
+                  />
+                ))}
             </Stack>
           )}
 
