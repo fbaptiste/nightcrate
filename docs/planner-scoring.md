@@ -16,8 +16,8 @@ single question:
 > **"How good a target is this for tonight's session, given my
 > equipment and what I plan to capture?"**
 
-It's computed for every target in tonight's candidate set (location
-+ date + horizon), and refreshes on every change to the session's
+It's computed for every target in tonight's candidate set (location,
+date, horizon), and refreshes on every change to the session's
 inputs (rig, filter intent, scoring settings). It is **opinionated
 by default, and fully overridable** — every weight, threshold, and
 sensitivity is a user setting with a defensible default rooted in
@@ -41,10 +41,10 @@ Stage 1: Hard gates.
   Pass → Stage 2.
 
 Stage 2: Four quality dimensions, each 0–1.
-  - Observability  — altitude-weighted hours during astro-dark
+  - Observability   — altitude-weighted hours during astro-dark
   - Meridian timing — peak altitude vs midnight of astro-dark
-  - Moon impact    — phase × proximity × filter sensitivity
-  - Frame fit      — Gaussian on FOV coverage %
+  - Moon impact     — phase × proximity × filter sensitivity
+  - Frame fit       — Gaussian on FOV coverage %
 
 Stage 3: Weighted geometric mean → 0–100 → quality chip.
 ```
@@ -73,15 +73,27 @@ weighted by altitude. Time at 80° counts more than time at 35°
 because the atmosphere is thinner, seeing is better, light
 pollution is lower, and extinction is milder.
 
-**How it's calculated:** For each time sample where the target is
+**How it's calculated.** For each time sample where the target is
 above both the custom horizon AND the scoring minimum altitude
 (default 30°), we compute the airmass and map it to a 0–1 quality
 via
 
-    quality(t) = max(0, 1 − (airmass(t) − 1) / (max_airmass − 1))
+$$
+q(t) \;=\; \max\!\left(0,\; 1 - \frac{X(t) - 1}{X_{\max} - 1}\right)
+$$
 
-where `max_airmass = 1 / sin(min_altitude_deg)`. The dimension
-score is the mean of `quality(t)` across the usable samples.
+where the airmass $X(t) = 1 / \sin(\mathrm{alt}(t))$ and the
+airmass cap is anchored to the minimum-altitude threshold:
+
+$$
+X_{\max} \;=\; \frac{1}{\sin(\mathrm{alt}_{\min})}
+$$
+
+The dimension score is the mean of $q(t)$ across the usable samples:
+
+$$
+S_{\mathrm{obs}} \;=\; \frac{1}{|\mathcal{T}_{\mathrm{usable}}|} \sum_{t \in \mathcal{T}_{\mathrm{usable}}} q(t)
+$$
 
 | Altitude | Airmass | Quality |
 |---|---|---|
@@ -97,54 +109,97 @@ the middle of astro-dark. The astrophotographer's intuition is
 *"best images come from when the target is highest in the sky, and
 ideally it's highest right when the sky is darkest."*
 
-**How it's calculated:**
+**How it's calculated.** Let $t_{\mathrm{peak}}$ be the time of
+peak altitude (the meridian transit when it falls inside astro-dark,
+otherwise the higher-altitude dark-window endpoint), $t_{\mathrm{mid}}$
+the midpoint of the dark window, and $T_{\mathrm{dark}}$ the dark-
+window duration. Then
 
-    delta_hours = |t_peak − dark_midpoint|
-    score = max(0, 1 − delta_hours / (dark_hours / 2))
+$$
+\Delta \;=\; \lvert t_{\mathrm{peak}} - t_{\mathrm{mid}} \rvert
+$$
+
+$$
+S_{\mathrm{mer}} \;=\; \max\!\left(0,\; 1 - \frac{\Delta}{T_{\mathrm{dark}} / 2}\right)
+$$
 
 A target that transits at dark midnight scores 1.0. A target that
 transits at dark start or dark end scores 0. A target that transits
 1 h after midpoint of a 6-h dark window scores 0.67.
 
-### 3.3 Moon impact — phase × proximity × filter sensitivity
+### 3.3 Moon impact — phase, proximity, filter sensitivity
 
 **What it measures:** how much tonight's moon will degrade the
 target under the user's selected filters.
 
 **Filter intent** is a multi-select on the planner page: `Ha`,
 `SII`, `OIII`, `L`, `R`, `G`, `B`. A dual-band filter is represented
-by selecting multiple lines (L-eXtreme = Ha + OIII).
+by selecting multiple lines (L-eXtreme is modeled as Ha together
+with OIII).
 
-**The limiting-filter rule:** when multiple filters are selected,
-the **most moon-sensitive** one bounds the whole session. A session
-capturing L+R+G+B+Ha is functionally a broadband session with
-bonus Ha — the broadband channels dominate the moon problem. It
-would be wrong to average down the broadband penalty by including
-Ha.
+**The limiting-filter rule.** When multiple filters are selected,
+the *most moon-sensitive* one bounds the whole session. A session
+capturing L, R, G, B, and Ha together is functionally a broadband
+session with bonus Ha — the broadband channels dominate the moon
+problem. It would be wrong to average down the broadband penalty
+by including Ha.
 
-**Per-timestep impact:**
+**Per-timestep impact.** With the limiting filter's sensitivity $s$
+and minimum separation threshold $\sigma_{\min}$, the moon's
+illuminated fraction $\phi \in [0, 1]$, its altitude
+$\alpha_{\mathrm{moon}}(t)$, and the target–moon separation
+$\sigma(t)$:
 
-    per_sample_impact = sensitivity × phase × sqrt(sin(moon_altitude))
-                          × (1 − proximity)
-    proximity = min(1, separation / min_separation)
+$$
+p(t) \;=\; \min\!\left(1,\; \frac{\sigma(t)}{\sigma_{\min}}\right)
+$$
 
-Aggregated over the target's observation window:
+$$
+I(t) \;=\; s \cdot \phi \cdot \sqrt{\sin(\alpha_{\mathrm{moon}}(t))} \cdot \bigl(1 - p(t)\bigr)
+$$
 
-    moon_overlap = fraction of obs window with moon above horizon
-    moon_score = 1 − mean_impact × moon_overlap
+The square root on the altitude factor is intentional: it gives a
+gentler curve than a linear $\sin$ and reflects that even a low
+moon contributes meaningfully to skyglow via Rayleigh scattering,
+not just direct illumination.
 
-**Cluster softening:** open clusters (`OCl`), globular clusters
-(`GCl`), and stellar associations (`*Ass`) experience a softer moon
-impact (default multiplier 0.5) because they tolerate moonlit
-broadband imaging much better than faint extended emission targets.
-This is well-established community wisdom: globulars and bright
-open clusters are the canonical "shoot during full moon" targets.
+**Aggregation across the observation window.** Let
+$\mathcal{T}_{\mathrm{obs}}$ be the samples where the target is
+visible and $\mathcal{T}_{\uparrow}$ the subset where the moon is
+also above the horizon. The fraction of the obs window with the
+moon up is
 
-**No filter intent declared → `moon_score = 1.0`.** Without knowing
-what the user is capturing, the planner can't reasonably score moon
-impact; the dimension drops out of differentiation. Same when the
-moon is below the horizon for the entire observation window, or
-when it's new moon.
+$$
+f_{\uparrow} \;=\; \frac{\lvert \mathcal{T}_{\uparrow} \rvert}{\lvert \mathcal{T}_{\mathrm{obs}} \rvert}
+$$
+
+and the mean impact (over moon-up samples only) is
+
+$$
+\overline{I} \;=\; \frac{1}{\lvert \mathcal{T}_{\uparrow} \rvert} \sum_{t \in \mathcal{T}_{\uparrow}} I(t)
+$$
+
+The dimension score, with the cluster modifier $\kappa \in [0, 1]$
+applied when applicable, is
+
+$$
+S_{\mathrm{moon}} \;=\; 1 \;-\; \kappa \cdot \overline{I} \cdot f_{\uparrow}
+$$
+
+**Cluster softening.** Open clusters (`OCl`), globular clusters
+(`GCl`), and stellar associations (`*Ass`) tolerate moonlit
+broadband imaging much better than faint extended emission
+targets. For those object types, $\kappa$ defaults to 0.5 (the
+`scoring_cluster_moon_modifier` setting); for all others, $\kappa = 1$.
+This reflects well-established community wisdom: globulars and
+bright open clusters are the canonical "shoot during full moon"
+targets.
+
+**No filter intent declared implies $S_{\mathrm{moon}} = 1$.**
+Without knowing what the user is capturing, the planner can't
+reasonably score moon impact; the dimension drops out of
+differentiation. The same fallback applies when the moon is below
+the horizon for the entire observation window, or at new moon.
 
 ### 3.4 Frame fit — Gaussian on FOV coverage
 
@@ -152,12 +207,15 @@ when it's new moon.
 of view in the selected rig. Reuses the planner's existing
 `coverage_pct` calculation.
 
-**How it's calculated:** a Gaussian centered on the user's
-preferred coverage percentage:
+**How it's calculated.** A Gaussian centered on the user's
+preferred coverage percentage. With coverage $c$, ideal target
+coverage $c_{\mathrm{ideal}}$, and spread $\sigma$:
 
-    score = exp(-((coverage_pct − ideal) / spread)²)
+$$
+S_{\mathrm{fit}} \;=\; \exp\!\left(-\left(\frac{c - c_{\mathrm{ideal}}}{\sigma}\right)^{2}\right)
+$$
 
-Default (ideal=55%, spread=35):
+Default ($c_{\mathrm{ideal}} = 55\%$, $\sigma = 35$):
 
 | Coverage | Score |
 |---|---|
@@ -171,10 +229,10 @@ Default (ideal=55%, spread=35):
 
 **The two tuning knobs reshape this curve:**
 
-- Bigger `ideal` → rewards larger targets (mosaic enthusiast at 130%)
-- Smaller `ideal` → rewards smaller targets (galaxy hunter at 15%)
-- Smaller `spread` → more demanding (tight-crop framer)
-- Larger `spread` → more forgiving (wide-context shooter)
+- Bigger `ideal` rewards larger targets (mosaic enthusiast at 130%).
+- Smaller `ideal` rewards smaller targets (galaxy hunter at 15%).
+- Smaller `spread` is more demanding (tight-crop framer).
+- Larger `spread` is more forgiving (wide-context shooter).
 
 **When no rig is selected**, the frame-fit dimension drops out and
 the other three dimensions combine with their weights renormalized.
@@ -183,13 +241,22 @@ the other three dimensions combine with their weights renormalized.
 
 ## 4. Combination — weighted geometric mean
 
-    raw = (s₁^w₁ × s₂^w₂ × s₃^w₃ × s₄^w₄)^(1 / (w₁ + w₂ + w₃ + w₄))
-    score_pct = round(raw × 100)
+With dimension scores $s_{i} \in [0, 1]$ and non-negative weights
+$w_{i}$:
+
+$$
+S \;=\; \left(\prod_{i} s_{i}^{\,w_{i}}\right)^{1 / \sum_{i} w_{i}}
+$$
+
+$$
+\mathrm{score}_{\mathrm{pct}} \;=\; \mathrm{round}(100 \cdot S)
+$$
 
 Weights with value 0 remove a dimension entirely. Dropped
 dimensions (frame-fit when no rig; moon when no filter intent)
 don't appear in the formula at all; the remaining dimensions'
-weights renormalize.
+weights renormalize automatically because $\sum_{i} w_{i}$ in the
+denominator is computed over the active dimensions only.
 
 ---
 
@@ -250,14 +317,14 @@ a slider / input. Defaults reflect community consensus and physics.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `scoring_cluster_moon_modifier` | 0.5 | Cluster impact multiplier (OCl / GCl / *Ass) |
-| `scoring_observability_min_altitude_deg` | 30° | Usable-altitude + airmass-cap anchor |
+| `scoring_cluster_moon_modifier` | 0.5 | Cluster impact multiplier (OCl / GCl / \*Ass) |
+| `scoring_observability_min_altitude_deg` | 30° | Usable-altitude plus airmass-cap anchor |
 | `scoring_frame_fit_ideal_coverage_pct` | 55% | Coverage that scores 1.0 |
 | `scoring_frame_fit_spread` | 35 | Width of the Gaussian |
 | `scoring_threshold_excellent` | 80 | Chip boundary |
 | `scoring_threshold_good` | 60 | Chip boundary |
 | `scoring_threshold_fair` | 40 | Chip boundary |
-| `scoring_gate_min_obs_hours` | 1.0 h | Below → unscored |
+| `scoring_gate_min_obs_hours` | 1.0 h | Below this is unscored |
 | `scoring_gate_max_coverage_pct` | `None` (off) | Coverage cap; off by default |
 
 ---
@@ -271,9 +338,11 @@ All three use the default weights (2, 1, 1.5, 1) unless noted.
 - Location: Phoenix, AZ
 - Astro-dark window: 18:54 → 05:48 (~11 h)
 - Moon: 5%, sets at 19:30
+- Telescope: Askar V at 600 mm
+- Camera: ZWO ASI 2600MM Pro (APS-C mono, 23.5 × 15.7 mm)
 - Rig FOV: ~127′ × 85′
 - M42 angular size: 85′ × 60′ → **coverage 100%**
-- Filter intent: **Ha + SII + OIII** (SHO session)
+- Filter intent: **Ha, SII, OIII** (SHO session)
 
 **Per-dimension scores:**
 
@@ -291,7 +360,9 @@ would see this score jump dramatically.
 
 ### Example 2 — Same M42, same night, but in a C11
 
-Only change: rig = C11, FOV ~26′ × 17′, coverage = **500%**.
+Only change: rig = Celestron C11 at native focal length (2800 mm,
+f/10), same ZWO ASI 2600MM Pro camera. Rig FOV ≈ 29′ × 19′; M42's
+85′ major axis gives **coverage ~ 500%**.
 
 - Frame fit ≈ 0 (far past the right tail of the Gaussian)
 - Other dimensions unchanged
@@ -307,6 +378,8 @@ project, not a single-frame target." A user with
 - Location: Phoenix, AZ
 - Astro-dark window: 21:34 → 04:32 (~7 h)
 - Moon: 100%, up all night, mean separation 95°
+- Telescope: Askar V at 400 mm (with reducer)
+- Camera: ZWO ASI 2600MM Pro (APS-C mono, 23.5 × 15.7 mm)
 - Rig FOV: ~191′ × 127′
 - NGC 7000 size: 120′ × 100′ → **coverage 94%**
 - Filter intent: **Ha only** (broadband would be hopeless)
@@ -316,17 +389,18 @@ project, not a single-frame target." A user with
 - Observability ≈ 0.85 — solid altitudes
 - Meridian timing ≈ 0.50 — transit 23:18, dark midpoint 01:03
   (1.75 h before)
-- Moon impact ≈ 1.00 — Ha's low sensitivity + 95° separation wipe
-  the penalty
+- Moon impact ≈ 1.00 — Ha's low sensitivity and 95° separation
+  together wipe the penalty
 - Frame fit ≈ 0.29 — 94% is past the sweet spot
 
 **Combined:** ~66 → **Good**
 
-**Reading:** even under a full moon, Ha-only + far-from-moon produces
-a near-perfect moon score. The score is dragged down by meridian
-timing (transit before dark midpoint) and frame fit. A user who
-added OIII to the filter intent would see this collapse because OIII
-would become the limiting filter and the moon penalty would spike.
+**Reading:** even under a full moon, Ha-only with far-from-moon
+target produces a near-perfect moon score. The score is dragged
+down by meridian timing (transit before dark midpoint) and frame
+fit. A user who added OIII to the filter intent would see this
+collapse because OIII would become the limiting filter and the
+moon penalty would spike.
 
 ---
 
@@ -350,7 +424,7 @@ Lower `scoring_moon_sensitivity_oiii` (e.g., from 0.70 to 0.40).
 Set `scoring_weight_meridian = 0`.
 
 **Composition matters more to me than anything else.**
-Raise `scoring_weight_frame_fit` (e.g., 3.0) AND narrow
+Raise `scoring_weight_frame_fit` (e.g., 3.0) and narrow
 `scoring_frame_fit_spread` (e.g., 20) to punish any deviation from
 ideal.
 
@@ -371,15 +445,15 @@ Fred is red-green color blind, which rules out the usual
 red-for-bad / green-for-good convention. The score chip palette
 uses **blue-for-good, orange-for-poor, neutral gray for middle**:
 
-- **Excellent:** saturated blue (#1976d2)
-- **Good:** lighter blue (#64b5f6)
-- **Fair:** neutral gray (#9e9e9e)
-- **Poor:** muted orange (#ed6c02)
+- **Excellent:** saturated blue (`#1976d2`)
+- **Good:** lighter blue (`#64b5f6`)
+- **Fair:** neutral gray (`#9e9e9e`)
+- **Poor:** muted orange (`#ed6c02`)
 
 This mirrors the rig-calculator guide-suitability palette
 (`ratingColor` in `lib/rigColors.ts`) so the application feels
-consistent, and every color is distinguishable even with deuteranopia
-or protanopia.
+consistent, and every color is distinguishable even with
+deuteranopia or protanopia.
 
 ---
 
