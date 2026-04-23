@@ -166,6 +166,28 @@ class DsoVisibility:
 
 
 @dataclass(frozen=True, slots=True)
+class VisibilityTimeSeries:
+    """Per-timestep arrays retained from the reduction pass.
+
+    Row ``i`` corresponds to ``dsos[i]``; ``dso_id_to_index`` surfaces
+    the mapping. Retained so the v0.21.0 scoring service can evaluate
+    per-timestep observability and moon dimensions without recomputing
+    any astropy transforms. Kept separate from ``DsoVisibility`` so the
+    tall (N_dsos × N_times × float64) arrays don't balloon the per-DSO
+    lookup path.
+    """
+
+    dso_id_to_index: dict[int, int]
+    times_utc: tuple[datetime, ...]
+    altitude_deg: np.ndarray  # (N, T)
+    # (N, T) — True where alt > horizon-at-az; lets scoring compose
+    # "alt > horizon AND alt > min-altitude" without re-interpolating.
+    visible_mask: np.ndarray
+    moon_altitude_deg: np.ndarray  # (T,) — shared across DSOs
+    moon_separation_deg: np.ndarray  # (N, T)
+
+
+@dataclass(frozen=True, slots=True)
 class VisibilitySnapshot:
     """Container returned by ``compute_visibility_snapshot``."""
 
@@ -174,6 +196,16 @@ class VisibilitySnapshot:
     dark_window: DarkWindow
     moon_phase_pct: float
     per_dso: dict[int, DsoVisibility] = field(default_factory=dict)
+    # ``None`` when astro-dark does not occur or no DSOs were passed.
+    time_series: VisibilityTimeSeries | None = None
+
+    @property
+    def dark_mid_utc(self) -> datetime | None:
+        """Midpoint of the astro-dark window; ``None`` on polar-summer nights."""
+        if self.dark_window.start_utc is None or self.dark_window.end_utc is None:
+            return None
+        delta = self.dark_window.end_utc - self.dark_window.start_utc
+        return self.dark_window.start_utc + delta / 2
 
 
 # ── Sun-altitude helpers ─────────────────────────────────────────────────────
@@ -449,6 +481,10 @@ def compute_visibility_snapshot(
     # coords[:, None] against moon_coord[None, :] yields (N, T).
     sep = coords[:, None].separation(moon_coord[None, :]).deg
     moon_sep = np.asarray(sep)
+    # Moon altitude (T,) — reuse the same AltAz frame the DSOs were
+    # transformed through so moon-up vs moon-down matches the sampling
+    # grid exactly. Needed by the scoring service's moon dimension.
+    moon_alt = np.asarray(moon_coord.transform_to(altaz_frame).alt.deg)
 
     # Horizon profile per-(DSO, time): a flat altitude for artificial
     # horizons, polyline interpolation for custom ones. Both return the
@@ -477,12 +513,21 @@ def compute_visibility_snapshot(
         dark_end_utc=dark.end_utc,
         lat_deg=float(earth_loc.lat.deg),
     )
+    time_series = VisibilityTimeSeries(
+        dso_id_to_index={d.dso_id: i for i, d in enumerate(dsos)},
+        times_utc=tuple(t.to_datetime(timezone=UTC) for t in times),
+        altitude_deg=alt_deg,
+        visible_mask=visible,
+        moon_altitude_deg=moon_alt,
+        moon_separation_deg=moon_sep,
+    )
     return VisibilitySnapshot(
         location_id=location.id,
         night_date=night_date,
         dark_window=dark,
         moon_phase_pct=moon_phase,
         per_dso=per_dso,
+        time_series=time_series,
     )
 
 

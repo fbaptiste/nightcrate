@@ -50,6 +50,9 @@ export const PLANNER_SORT_FIELDS: PlannerSortField[] = [
   },
   { field: "coverage_pct", label: "Coverage %", rigOnly: true },
   { field: "now_status", label: "Now status", tonightOnly: true },
+  // v0.21.0 — 0-100 quality score; gated targets (null score) sort
+  // last regardless of direction per the planner's nulls-last policy.
+  { field: "score_pct", label: "Score", tonightOnly: true },
 ];
 
 const BY_FIELD: Record<string, PlannerSortField> = Object.fromEntries(

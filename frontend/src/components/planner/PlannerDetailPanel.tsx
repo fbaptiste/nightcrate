@@ -26,14 +26,17 @@ import {
 } from "@/api/planner";
 import { fetchDso } from "@/api/dsos";
 import { fetchHorizons, type Horizon } from "@/api/horizons";
+import { fetchSingleTargetScore } from "@/api/planner";
 import { type Rig } from "@/api/rigs";
 import { type Location } from "@/api/locations";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { usePlannerStore } from "@/stores/plannerStore";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import SkyPreview from "@/components/dso/SkyPreview";
 import BestTimeOfYearChart from "./BestTimeOfYearChart";
+import { ScoreBreakdownSection } from "./ScoreBreakdownSection";
 import SkyPositionGraph from "./SkyPositionGraph";
 import FovSimulator from "./FovSimulator";
 import { renderHorizonMenuItems } from "./horizonMenuItems";
@@ -203,6 +206,32 @@ export default function PlannerDetailPanel({
         previewLocationId as number,
         effectiveHorizon?.id ?? null,
       ),
+    enabled:
+      dsoId != null && previewLocationId != null && effectiveHorizon != null,
+  });
+
+  // Panel-local scoring. The list-fetch score on ``target`` is frozen
+  // on the page's rig / horizon / location — when any of those are
+  // overridden in the panel, that score goes stale. This query
+  // recomputes against the preview state so the breakdown section
+  // always reflects what the user is currently previewing.
+  const filterIntent = usePlannerStore((s) => s.filterIntent);
+  const previewScoreQuery = useQuery({
+    queryKey: [
+      "target-score",
+      dsoId,
+      previewLocationId,
+      effectiveHorizon?.id ?? null,
+      previewRigId,
+      filterIntent,
+    ],
+    queryFn: () =>
+      fetchSingleTargetScore(dsoId as number, {
+        locationId: previewLocationId as number,
+        horizonId: effectiveHorizon?.id ?? null,
+        rigId: previewRigId,
+        filterIntent,
+      }),
     enabled:
       dsoId != null && previewLocationId != null && effectiveHorizon != null,
   });
@@ -754,6 +783,26 @@ export default function PlannerDetailPanel({
               )}
             </Box>
           </Box>
+        )}
+
+        {/* Score breakdown — v0.21.0. When the panel previews against
+            a different rig / horizon / location than the list page,
+            ``previewScoreQuery`` returns a fresh score spliced in
+            here. Falls back to the frozen list-fetch score while the
+            preview query is in flight. */}
+        {target && (
+          <ScoreBreakdownSection
+            item={
+              previewScoreQuery.data
+                ? {
+                    ...target,
+                    score_pct: previewScoreQuery.data.score_pct,
+                    quality_label: previewScoreQuery.data.quality_label,
+                    score_breakdown: previewScoreQuery.data.score_breakdown,
+                  }
+                : target
+            }
+          />
         )}
       </DialogContent>
     </Dialog>
