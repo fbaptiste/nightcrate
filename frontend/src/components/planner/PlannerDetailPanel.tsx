@@ -11,12 +11,14 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import FormControl from "@mui/material/FormControl";
 import IconButton from "@mui/material/IconButton";
+import Link from "@mui/material/Link";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import {
   fetchAnnualHours,
   fetchSkyTrack,
@@ -329,16 +331,12 @@ export default function PlannerDetailPanel({
               )}
             </Stack>
           )}
-          {/* Designation pills + Wikipedia chip in the header — same
-              visual treatment as the DSO catalog's detail panel.
-              Primary designation gets filled-primary styling so it reads
-              as the canonical identifier; alternates are outlined.
-              The Wikipedia chip (when present) sits inline with the
-              designations so users see all external-reference chips in
-              one row without hunting. Clicking the Wikipedia chip opens
-              the article in a new tab; ``stopPropagation`` on the chip
-              keeps the click from bubbling up to any ancestor handler. */}
-          {dso && (dso.designations.length > 0 || dso.external_refs.length > 0) && (
+          {/* Designation pills — primary filled, alternates outlined.
+              Kept pure-chip so the visual language is "identifiers"
+              across the row; interactive external references render
+              as a separate link-styled line below so the user can
+              tell what's clickable without relying on a hover state. */}
+          {dso && dso.designations.length > 0 && (
             <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.75 }}>
               {dso.designations.map((d) => (
                 <Chip
@@ -349,27 +347,52 @@ export default function PlannerDetailPanel({
                   color={d.is_primary ? "primary" : "default"}
                 />
               ))}
-              {dso.external_refs
-                .filter((ref) => ref.provider === "wikipedia")
-                .map((ref) => (
-                  <Chip
-                    key={`wikipedia-${ref.identifier}`}
-                    component="a"
-                    clickable
-                    href={ref.url ?? undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    label={`Wikipedia · ${ref.label ?? ref.identifier}`}
-                    size="small"
-                    variant="outlined"
-                    aria-label={`Open Wikipedia article: ${
-                      ref.label ?? ref.identifier
-                    } (opens in new tab)`}
-                  />
-                ))}
             </Stack>
           )}
+
+          {/* Wikipedia link(s) — theme primary colour + underline +
+              open-in-new icon. Deliberately NOT a chip: when sitting
+              next to non-clickable designation chips, chip styling
+              made the external link look indistinguishable from the
+              cross-references. The link shape makes the "opens in a
+              new tab" affordance explicit. ``stopPropagation`` keeps
+              clicks from bubbling to any future ancestor handler. */}
+          {dso &&
+            dso.external_refs.some((ref) => ref.provider === "wikipedia") && (
+              <Stack
+                direction="row"
+                gap={1.5}
+                flexWrap="wrap"
+                alignItems="center"
+                sx={{ mt: 0.75 }}
+              >
+                {dso.external_refs
+                  .filter((ref) => ref.provider === "wikipedia")
+                  .map((ref) => (
+                    <Link
+                      key={`wikipedia-${ref.identifier}`}
+                      href={ref.url ?? undefined}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      underline="hover"
+                      aria-label={`Open Wikipedia article: ${
+                        ref.label ?? ref.identifier
+                      } (opens in new tab)`}
+                      sx={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        fontSize: "0.85rem",
+                        fontWeight: 500,
+                      }}
+                    >
+                      Wikipedia: {ref.label ?? ref.identifier}
+                      <OpenInNewIcon sx={{ fontSize: 14 }} />
+                    </Link>
+                  ))}
+              </Stack>
+            )}
         </Box>
         <Stack
           direction="column"
