@@ -81,36 +81,49 @@ function DimensionRow({ dim }: { dim: DimensionBreakdown }) {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="baseline" sx={{ mb: 0.25 }}>
-        <Typography variant="body2" fontWeight={500}>
-          {dim.label}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          weight {dim.weight.toFixed(1)} · contribution {contributionPct}%
-        </Typography>
-      </Stack>
-      <Stack direction="row" spacing={1} alignItems="center">
-        <Box sx={{ flexGrow: 1 }}>
-          <LinearProgress
-            variant="determinate"
-            value={scorePct}
-            sx={{
-              height: 6,
-              borderRadius: 3,
-              backgroundColor: theme.palette.action.hover,
-              "& .MuiLinearProgress-bar": {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
-          />
-        </Box>
-        <Typography
-          variant="caption"
-          sx={{ minWidth: 32, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+      {/* The label row + bar row share this container's width so the
+          weight/contribution caption's right edge (via the label row's
+          ``space-between``) lines up with the ``NN%`` readout to the
+          right of the bar. Full-width bars read as progress indicators,
+          which is misleading for a dimensional-score gauge — constraining
+          to ~1/3 of the panel keeps the viz compact. */}
+      <Box sx={{ width: "33%", maxWidth: 320, minWidth: 160 }}>
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="baseline"
+          sx={{ mb: 0.25 }}
         >
-          {scorePct}%
-        </Typography>
-      </Stack>
+          <Typography variant="body2" fontWeight={500}>
+            {dim.label}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            weight {dim.weight.toFixed(1)} · contribution {contributionPct}%
+          </Typography>
+        </Stack>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Box sx={{ flexGrow: 1 }}>
+            <LinearProgress
+              variant="determinate"
+              value={scorePct}
+              sx={{
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: theme.palette.action.hover,
+                "& .MuiLinearProgress-bar": {
+                  backgroundColor: theme.palette.primary.main,
+                },
+              }}
+            />
+          </Box>
+          <Typography
+            variant="caption"
+            sx={{ minWidth: 32, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+          >
+            {scorePct}%
+          </Typography>
+        </Stack>
+      </Box>
       {dim.inputs.length > 0 && (
         <Stack spacing={0.25} sx={{ mt: 0.5, pl: 0.5 }}>
           {dim.inputs.map((line, i) => (

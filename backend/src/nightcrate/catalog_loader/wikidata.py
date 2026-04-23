@@ -36,7 +36,14 @@ WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 # Bumping this string invalidates any stored TSV with the prior value and
 # forces a re-fetch on next admin Reload. Increment when the query below
 # changes shape in a way that affects the parser contract.
-QUERY_VERSION = "v1"
+# v2 (v0.21.1): added SIMBAD (P3083). NED column was also added here but
+#   dropped in v3 — Wikidata doesn't index NED IDs (P2528 is earthquake
+#   magnitude, not NED) and the spec's property claim was wrong.
+# v3 (v0.21.1): drops ?ned_id. NED links are now synthesised entirely
+#   from the DSO's primary designation via NED's tolerant byname
+#   resolver, gated by the extragalactic-obj_type filter in the
+#   loader.
+QUERY_VERSION = "v3"
 
 # Smallest plausible TSV. Anything shorter indicates an error page
 # masquerading as a success.
@@ -108,6 +115,7 @@ _SPARQL_QUERY = """
 SELECT DISTINCT ?item ?itemLabel
        ?ngc_id ?pgc_id ?ugc_id
        ?msg ?ic ?cal ?sh2 ?bar
+       ?simbad_id
        ?enwiki_title
 WHERE {
   # At least one recognised catalog identifier must be present.
@@ -140,6 +148,12 @@ WHERE {
   OPTIONAL { ?item p:P528 ?c1 . ?c1 ps:P528 ?cal . ?c1 pq:P972 wd:Q14536 . }
   OPTIONAL { ?item p:P528 ?s1 . ?s1 ps:P528 ?sh2 . ?s1 pq:P972 wd:Q66381095 . }
   OPTIONAL { ?item p:P528 ?b1 . ?b1 ps:P528 ?bar . ?b1 pq:P972 wd:Q3247327 . }
+
+  # Reference-database cross-IDs (v0.21.1 — SIMBAD only). Wikidata
+  # indexes SIMBAD IDs under P3083; it has no reliable NED equivalent,
+  # so NED chips are synthesised client-side from the DSO's primary
+  # designation in the loader instead.
+  OPTIONAL { ?item wdt:P3083 ?simbad_id . }
 
   # English Wikipedia sitelink (optional — many entities lack an article).
   # The enwiki URL is built client-side from ?enwiki_title (spaces →

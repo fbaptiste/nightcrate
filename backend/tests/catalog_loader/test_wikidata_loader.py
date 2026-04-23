@@ -58,32 +58,67 @@ def _refs_for(cur: sqlite3.Cursor, designation: str) -> list[sqlite3.Row]:
     return cur.fetchall()
 
 
-def test_wikidata_loader_inserts_wikidata_and_wikipedia_rows(db, catalogs_root):
+def test_wikidata_loader_inserts_wikidata_wikipedia_and_simbad_for_galactic(db, catalogs_root):
+    """M42 is an emission nebula (galactic). Wikidata provides P3083
+    (SIMBAD) but no P2528 (NED) in the fixture, and the extragalactic
+    filter would block NED anyway — so we expect three providers:
+    wikidata, wikipedia, simbad. SIMBAD identifier is stored raw
+    (``NAME ORI NEB``); the URL is ``+``-encoded."""
     load_catalogs(db, catalogs_root)
     cur = db.cursor()
     refs = _refs_for(cur, "M 42")
     providers = [r["provider"] for r in refs]
-    assert providers == ["wikidata", "wikipedia"]
+    assert providers == ["simbad", "wikidata", "wikipedia"]
+
     wikidata = next(r for r in refs if r["provider"] == "wikidata")
     assert wikidata["identifier"] == "Q13903"
     assert wikidata["url"] == "https://www.wikidata.org/wiki/Q13903"
     assert wikidata["label"] == "Orion Nebula"
+
     wikipedia = next(r for r in refs if r["provider"] == "wikipedia")
     assert wikipedia["language"] == "en"
     assert wikipedia["identifier"] == "Orion_Nebula"
     assert wikipedia["url"] == "https://en.wikipedia.org/wiki/Orion_Nebula"
     assert wikipedia["label"] == "Orion Nebula"
 
+    simbad = next(r for r in refs if r["provider"] == "simbad")
+    assert simbad["language"] is None
+    assert simbad["identifier"] == "NAME ORI NEB"
+    assert simbad["url"] == "https://simbad.u-strasbg.fr/simbad/sim-id?Ident=NAME+ORI+NEB"
+    assert simbad["label"] == "M 42"
+
+
+def test_wikidata_loader_inserts_ned_for_extragalactic(db, catalogs_root):
+    """M31 is a galaxy. Wikidata has P3083 (SIMBAD) but no reliable NED
+    property, so NED is synthesised from M31's primary designation via
+    NED's tolerant byname resolver. Four providers total: wikidata,
+    wikipedia, simbad, ned."""
+    load_catalogs(db, catalogs_root)
+    cur = db.cursor()
+    refs = _refs_for(cur, "M 31")
+    providers = [r["provider"] for r in refs]
+    assert providers == ["ned", "simbad", "wikidata", "wikipedia"]
+
+    ned = next(r for r in refs if r["provider"] == "ned")
+    # NED identifier = DSO's primary designation.
+    assert ned["identifier"] == "M 31"
+    assert ned["url"] == "https://ned.ipac.caltech.edu/byname?objname=M+31"
+    assert ned["label"] == "M 31"
+
+    simbad = next(r for r in refs if r["provider"] == "simbad")
+    assert simbad["identifier"] == "M 31"
+    assert simbad["url"] == "https://simbad.u-strasbg.fr/simbad/sim-id?Ident=M+31"
+
 
 def test_wikidata_loader_matches_via_multiple_designations(db, catalogs_root):
     """Andromeda's Wikidata entity lists NGC, M, PGC, UGC — all pointing at
     the same DSO. The loader must recognise the single-DSO outcome and
-    insert exactly one Wikidata row + one Wikipedia row."""
+    insert exactly one row per provider (wikidata, wikipedia, simbad, ned)."""
     load_catalogs(db, catalogs_root)
     cur = db.cursor()
     refs = _refs_for(cur, "M 31")
-    assert len(refs) == 2
-    assert {r["provider"] for r in refs} == {"wikidata", "wikipedia"}
+    assert len(refs) == 4
+    assert {r["provider"] for r in refs} == {"wikidata", "wikipedia", "simbad", "ned"}
 
 
 def test_wikidata_loader_skips_unmatched_entities(db, catalogs_root):
@@ -94,15 +129,27 @@ def test_wikidata_loader_skips_unmatched_entities(db, catalogs_root):
     assert cur.fetchone()["n"] == 0
 
 
-def test_wikidata_loader_inserts_wikidata_without_wikipedia_when_no_enwiki(db, catalogs_root):
-    """Q888888 matches NGC 7293 but has no enwiki sitelink — only the
-    wikidata row is inserted."""
+def test_wikidata_loader_simbad_fallback_from_designation_when_no_p3083(db, catalogs_root):
+    """Q888888 matches NGC 7293 via its NGC ID but has no P3083 in the
+    fixture. SIMBAD fallback kicks in (Q3 decision): identifier +
+    URL synthesised from the DSO's primary designation. No enwiki
+    sitelink for this entity → no wikipedia row.
+    """
     load_catalogs(db, catalogs_root)
     cur = db.cursor()
     refs = _refs_for(cur, "NGC 7293")
-    assert len(refs) == 1
-    assert refs[0]["provider"] == "wikidata"
-    assert refs[0]["identifier"] == "Q888888"
+    providers = [r["provider"] for r in refs]
+    assert providers == ["simbad", "wikidata"]
+
+    simbad = next(r for r in refs if r["provider"] == "simbad")
+    # Fallback path: identifier is the DSO's primary designation, URL
+    # is built from it (+-encoded).
+    assert simbad["identifier"] == "NGC 7293"
+    assert simbad["url"] == "https://simbad.u-strasbg.fr/simbad/sim-id?Ident=NGC+7293"
+    assert simbad["label"] == "NGC 7293"
+
+    wikidata = next(r for r in refs if r["provider"] == "wikidata")
+    assert wikidata["identifier"] == "Q888888"
 
 
 def test_wikidata_loader_idempotent(db, catalogs_root):
@@ -190,6 +237,23 @@ def test_wikidata_registry_entry_present_even_when_file_absent(tmp_path):
     assert "nightcrate_external_refs" in ids
 
 
+def test_wikidata_loader_skips_ned_for_non_galaxy(db, catalogs_root):
+    """NED rows are inserted only for extragalactic DSOs (obj_type in
+    GALAXY_TYPES). M42 is an emission nebula, not a galaxy — no NED
+    row, regardless of Wikidata coverage."""
+    load_catalogs(db, catalogs_root)
+    cur = db.cursor()
+    cur.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM dso_external_ref er
+        JOIN dso d ON d.id = er.dso_id
+        WHERE d.primary_designation = 'M 42' AND er.provider = 'ned'
+        """
+    )
+    assert cur.fetchone()["n"] == 0
+
+
 def test_wikidata_loader_dedupes_on_nullable_language(tmp_path, db):
     """Regression: two Wikidata entities (different QIDs) both cross-
     referenced to the same DSO must collapse to ONE wikidata row per DSO.
@@ -213,13 +277,14 @@ def test_wikidata_loader_dedupes_on_nullable_language(tmp_path, db):
     wd_dir.mkdir(parents=True)
     # Two separate Wikidata entities both pointing at NGC 1976 (M42).
     header = (
-        "?item\t?itemLabel\t?ngc_id\t?pgc_id\t?ugc_id\t?msg\t?ic\t?cal\t?sh2\t?bar\t?enwiki_title\n"
+        "?item\t?itemLabel\t?ngc_id\t?pgc_id\t?ugc_id\t?msg\t?ic\t?cal\t?sh2\t?bar"
+        "\t?simbad_id\t?enwiki_title\n"
     )
     rows = (
         '<http://www.wikidata.org/entity/Q111>\t"Primary Orion"@en\t"1976"'
-        "\t\t\t\t\t\t\t\t\n"
+        "\t\t\t\t\t\t\t\t\t\n"
         '<http://www.wikidata.org/entity/Q222>\t"Duplicate Orion"@en\t"1976"'
-        "\t\t\t\t\t\t\t\t\n"
+        "\t\t\t\t\t\t\t\t\t\n"
     )
     (wd_dir / "dso_external_refs.tsv").write_text(header + rows, encoding="utf-8")
 

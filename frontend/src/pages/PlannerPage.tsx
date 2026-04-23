@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
+import Collapse from "@mui/material/Collapse";
 import TablePagination from "@mui/material/TablePagination";
 import FormControl from "@mui/material/FormControl";
 import IconButton from "@mui/material/IconButton";
@@ -30,8 +31,11 @@ import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import CloseIcon from "@mui/icons-material/Close";
 import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
 import SearchIcon from "@mui/icons-material/Search";
+import TuneIcon from "@mui/icons-material/Tune";
 import { Link as RouterLink } from "react-router-dom";
 import { fetchLocations } from "@/api/locations";
 import { fetchRigs } from "@/api/rigs";
@@ -83,6 +87,10 @@ export default function PlannerPage() {
   const setFilterIntent = usePlannerStore((s) => s.setFilterIntent);
   const [searchQuery, setSearchQuery] = useState("");
   const [restrictTonight, setRestrictTonight] = useState<boolean>(true);
+  // Collapsible filter bar — session-only (no persist). Defaults open;
+  // collapsing gives the card list more vertical room once the user has
+  // dialled in their filters.
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(true);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [catalogFilter, setCatalogFilter] = useState<string[]>([]);
   const [constellationFilter, setConstellationFilter] = useState<string[]>([]);
@@ -430,8 +438,41 @@ export default function PlannerPage() {
         )
       ) : (
         <>
-      {/* Filter bar */}
+      {/* Filter bar — collapsible. The header row below always renders
+          (with the toggle chevron); the pill / slider / sort content is
+          wrapped in a ``Collapse`` so the card list can breathe once
+          the user has dialled in their filters. Session-only state; a
+          reload opens the bar back up. */}
       <Paper variant="outlined" sx={{ p: 2 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          gap={1}
+          sx={{ mb: filtersOpen ? 2 : 0 }}
+        >
+          <Stack direction="row" alignItems="center" gap={1}>
+            <TuneIcon fontSize="small" sx={{ color: "text.secondary" }} />
+            <Typography variant="subtitle2" fontWeight={600}>
+              Filters, sort, rig
+            </Typography>
+          </Stack>
+          <Tooltip
+            title={filtersOpen ? "Collapse controls" : "Expand controls"}
+            placement="top"
+            arrow
+          >
+            <IconButton
+              size="small"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-expanded={filtersOpen}
+              aria-label={filtersOpen ? "Collapse filters" : "Expand filters"}
+            >
+              {filtersOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Tooltip>
+        </Stack>
+        <Collapse in={filtersOpen} unmountOnExit>
         <Stack direction={{ xs: "column", md: "row" }} gap={2} flexWrap="wrap">
           <TextField
             size="small"
@@ -709,6 +750,7 @@ export default function PlannerPage() {
           restrictTonight={restrictTonight}
           rigSelected={rigId != null}
         />
+        </Collapse>
       </Paper>
 
       {/* Empty / error states — only relevant in Tonight mode; in

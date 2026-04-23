@@ -787,7 +787,8 @@ async def test_wikidata_remote_version_reports_not_loaded(client):
     assert data["can_check_remote"] is False
     assert data["has_update"] is True
     assert data["installed_fetched_at"] is None
-    assert data["current_query_version"] == "v1"
+    # v3 (v0.21.1): SIMBAD in SPARQL, NED synthesised from primary_designation.
+    assert data["current_query_version"] == "v3"
 
 
 @pytest.mark.anyio

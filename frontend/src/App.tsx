@@ -47,15 +47,22 @@ const router = createBrowserRouter([
 function AppContent() {
   const load = useSettingsStore((s) => s.load);
   const setGeneration = useThumbnailCacheStore((s) => s.setGeneration);
-  const { data: health, isLoading } = useQuery({
+  // Retry forever with exponential backoff capped at 3 s. In ``make
+  // dev`` the frontend comes up before the backend (backend boots in
+  // ~5 s while Vite is ready in <200 ms); without this the 3-default-
+  // retries burn through during the first second and the page
+  // permanently renders the SetupWizard because ``health`` is
+  // ``undefined``. Gating the wizard on ``isSuccess`` below means the
+  // wizard only shows when the backend has explicitly told us the
+  // DB isn't configured.
+  const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
+    retry: Infinity,
+    retryDelay: (attempt) => Math.min(250 * 2 ** attempt, 3000),
   });
+  const health = healthQuery.data;
 
-  // Thumbnail cache generation: hydrate once on startup so every
-  // ThumbnailCell's URL carries the current ``&_g=N`` suffix from the
-  // first render. The Settings page keeps the store in sync after a
-  // manual clear.
   const { data: thumbnailStats } = useQuery({
     queryKey: ["thumbnail-cache-stats"],
     queryFn: fetchThumbnailCacheStats,
@@ -74,7 +81,7 @@ function AppContent() {
     }
   }, [health?.db_configured, load]);
 
-  if (isLoading) return null;
+  if (!healthQuery.isSuccess) return null;
   if (!health?.db_configured) return <SetupWizard />;
 
   return <RouterProvider router={router} />;

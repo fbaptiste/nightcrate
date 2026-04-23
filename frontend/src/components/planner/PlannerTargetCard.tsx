@@ -23,12 +23,14 @@ import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import CardActionArea from "@mui/material/CardActionArea";
 import Chip from "@mui/material/Chip";
+import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import CircleIcon from "@mui/icons-material/Circle";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import type { PlannerTargetItem } from "@/api/planner";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
@@ -126,6 +128,9 @@ export default function PlannerTargetCard({
   const transitT = item.transit_time_utc;
   const meridianBlock = renderMeridianBlock({ maxAlt, peakT, transitAlt, transitT, tz });
 
+  const hasScore =
+    restrictTonight && (item.score_pct !== null || item.score_breakdown !== null);
+
   return (
     <Card variant="outlined" sx={{ borderRadius: 2 }}>
       <CardActionArea
@@ -179,17 +184,10 @@ export default function PlannerTargetCard({
 
           {/* Info block. */}
           <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
-            {/* Line 1 — score chip (Tonight mode only) + name + type
-                pill + constellation. */}
+            {/* Line 1 — name + type pill + constellation. Score chip
+                moved to the card's upper-right corner so the
+                designation stays the visual anchor of this line. */}
             <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
-              {(item.score_pct !== null || item.score_breakdown !== null) && (
-                <ScoreChip
-                  scorePct={item.score_pct}
-                  qualityLabel={item.quality_label}
-                  gateFailures={item.score_breakdown?.gate_failures}
-                  size="small"
-                />
-              )}
               <Typography variant="body1" fontWeight={600}>
                 {item.primary_designation}
               </Typography>
@@ -289,26 +287,45 @@ export default function PlannerTargetCard({
               </Stack>
             )}
 
-            {/* Line 4 — Wikipedia chip. Only rendered when a ref exists
-                (populated server-side from ``dso_external_ref``). Stops
-                CardActionArea clicks from reaching the <a> chip so the
-                user can click through without opening the detail panel. */}
-            {item.wikipedia_url && item.wikipedia_label && (
-              <Box sx={{ mt: 0.25 }}>
-                <Chip
-                  component="a"
-                  clickable
-                  href={item.wikipedia_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  label={`Wikipedia · ${item.wikipedia_label}`}
-                  size="small"
-                  variant="outlined"
-                  aria-label={`Open Wikipedia article: ${item.wikipedia_label} (opens in new tab)`}
-                  sx={{ height: 22, fontSize: "0.72rem" }}
-                />
-              </Box>
+            {/* Line 4 — score chip first, Wikipedia link right after
+                with a 20 px gap. Extra ``mt`` over the previous line
+                gives the score room to breathe. */}
+            {(hasScore || (item.wikipedia_url && item.wikipedia_label)) && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap="20px"
+                sx={{ mt: 1 }}
+              >
+                {hasScore && (
+                  <ScoreChip
+                    scorePct={item.score_pct}
+                    qualityLabel={item.quality_label}
+                    gateFailures={item.score_breakdown?.gate_failures}
+                    size="small"
+                  />
+                )}
+                {item.wikipedia_url && item.wikipedia_label && (
+                  <Link
+                    href={item.wikipedia_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    underline="hover"
+                    aria-label={`Open Wikipedia article: ${item.wikipedia_label} (opens in new tab)`}
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                      fontSize: "0.78rem",
+                      fontWeight: 500,
+                    }}
+                  >
+                    Wikipedia: {item.wikipedia_label}
+                    <OpenInNewIcon sx={{ fontSize: 13 }} />
+                  </Link>
+                )}
+              </Stack>
             )}
           </Stack>
         </Stack>

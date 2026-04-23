@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from nightcrate.services.planner_scoring import DimensionKey
+
 
 class PlannerLocationSummary(BaseModel):
     id: int
@@ -44,7 +46,7 @@ class PlannerDesignation(BaseModel):
 class DimensionBreakdownOut(BaseModel):
     """One dimension's per-target contribution to the score."""
 
-    key: str  # "observability" | "meridian" | "moon" | "frame_fit"
+    key: DimensionKey
     label: str
     score: float  # 0-1
     weight: float

@@ -27,11 +27,13 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Iterable
+from urllib.parse import quote_plus
 
 from nightcrate.catalog_loader._common import (
     check_source_state,
     upsert_catalog_source,
 )
+from nightcrate.catalog_loader.augment_loader import GALAXY_TYPES
 from nightcrate.catalog_loader.hash import file_sha256
 from nightcrate.catalog_loader.loader import SourceResult
 from nightcrate.catalog_loader.registry import CatalogSource
@@ -42,6 +44,37 @@ from nightcrate.catalog_loader.wikidata_tsv import (
 )
 
 logger = logging.getLogger("nightcrate.catalog_loader.wikidata")
+
+
+# SIMBAD accepts spaces as ``+`` in the Ident= query param and is
+# tolerant of many alias forms (M 42, NGC 1976, Sh 2-281, etc.) —
+# constructing from the primary designation works in practice when
+# Wikidata has no P3083 for the DSO (v0.21.1 Q3 decision).
+_SIMBAD_URL_TEMPLATE = "https://simbad.u-strasbg.fr/simbad/sim-id?Ident={ident}"
+_NED_URL_TEMPLATE = "https://ned.ipac.caltech.edu/byname?objname={ident}"
+
+
+def _build_simbad_url(identifier: str) -> str:
+    return _SIMBAD_URL_TEMPLATE.format(ident=quote_plus(identifier))
+
+
+def _build_ned_url(identifier: str) -> str:
+    return _NED_URL_TEMPLATE.format(ident=quote_plus(identifier))
+
+
+def _is_extragalactic(obj_type: str | None) -> bool:
+    """NED is extragalactic-only; galactic objects are skipped even when
+    Wikidata has a P2528 for them (data is thin; wrong-object risk).
+    Reuses the ``GALAXY_TYPES`` constant from ``augment_loader``."""
+    return obj_type is not None and obj_type in GALAXY_TYPES
+
+
+def _load_dso_metadata(cur: sqlite3.Cursor) -> dict[int, tuple[str, str]]:
+    """Return ``{dso_id: (primary_designation, obj_type)}`` for all active
+    DSOs. Pre-fetched once so the per-match upsert loop doesn't re-hit
+    the DB for every ref insert."""
+    cur.execute("SELECT id, primary_designation, obj_type FROM dso WHERE active = 1")
+    return {int(row[0]): (str(row[1]), str(row[2])) for row in cur.fetchall()}
 
 
 def _resolve_dso_ids(cur: sqlite3.Cursor, search_keys: list[str]) -> set[int]:
@@ -109,6 +142,7 @@ def _process_record(
     cur: sqlite3.Cursor,
     record: WikidataRecord,
     source_catalog_id: int,
+    dso_meta: dict[int, tuple[str, str]],
     stats: _Stats,
 ) -> None:
     search_keys = build_search_keys(record)
@@ -149,6 +183,10 @@ def _process_record(
     stats.matched += 1
 
     for dso_id in sorted(dso_ids):
+        # Both ``_resolve_dso_ids`` and ``dso_meta`` filter to active=1,
+        # so every id in ``dso_ids`` is guaranteed present in ``dso_meta``.
+        primary_designation, obj_type = dso_meta[dso_id]
+
         _upsert_external_ref(
             cur,
             dso_id=dso_id,
@@ -174,6 +212,45 @@ def _process_record(
             )
             stats.wikipedia_refs += 1
 
+        # SIMBAD: always, via P3083 when present or primary-designation
+        # fallback. SIMBAD's name resolver is tolerant enough that
+        # broad coverage beats the occasional imperfect match (Q3 for
+        # v0.21.1).
+        simbad_identifier = record.simbad_id or primary_designation
+        _upsert_external_ref(
+            cur,
+            dso_id=dso_id,
+            provider="simbad",
+            language=None,
+            identifier=simbad_identifier,
+            url=_build_simbad_url(simbad_identifier),
+            label=primary_designation,
+            source_catalog_id=source_catalog_id,
+        )
+        stats.simbad_refs += 1
+
+        # NED: extragalactic-only, synthesised from primary_designation.
+        # Wikidata doesn't index NED IDs (P2528 is earthquake magnitude,
+        # not NED — the spec's property claim was wrong and Wikidata
+        # has no reliable equivalent), so the v0.21.1 approach became
+        # "use NED's tolerant byname resolver with the DSO's primary
+        # designation, gated by the galaxy-type filter." Safer than
+        # the Wikidata-only path originally proposed: galaxy DSOs have
+        # unambiguous primary designations (NGC X / PGC X / UGC X /
+        # IC X), all of which NED's resolver handles correctly.
+        if _is_extragalactic(obj_type):
+            _upsert_external_ref(
+                cur,
+                dso_id=dso_id,
+                provider="ned",
+                language=None,
+                identifier=primary_designation,
+                url=_build_ned_url(primary_designation),
+                label=primary_designation,
+                source_catalog_id=source_catalog_id,
+            )
+            stats.ned_refs += 1
+
 
 class _Stats:
     __slots__ = (
@@ -183,6 +260,8 @@ class _Stats:
         "multi_match",
         "wikidata_refs",
         "wikipedia_refs",
+        "simbad_refs",
+        "ned_refs",
     )
 
     def __init__(self) -> None:
@@ -192,6 +271,8 @@ class _Stats:
         self.multi_match = 0
         self.wikidata_refs = 0
         self.wikipedia_refs = 0
+        self.simbad_refs = 0
+        self.ned_refs = 0
 
 
 def load_wikidata(
@@ -244,12 +325,18 @@ def load_wikidata(
 
         source_catalog_id = upsert_catalog_source(cur, source, file_hash, 0)
 
+        # Pre-fetch (primary_designation, obj_type) for every active DSO
+        # so the per-match insert loop has both fields handy — SIMBAD
+        # needs ``primary_designation`` as a fallback identifier + row
+        # label; NED needs ``obj_type`` for the extragalactic gate.
+        dso_meta = _load_dso_metadata(cur)
+
         records: Iterable[WikidataRecord] = parse_wikidata_tsv(source.file_path)
         for record in records:
             stats.parsed += 1
-            _process_record(cur, record, source_catalog_id, stats)
+            _process_record(cur, record, source_catalog_id, dso_meta, stats)
 
-        total_refs = stats.wikidata_refs + stats.wikipedia_refs
+        total_refs = stats.wikidata_refs + stats.wikipedia_refs + stats.simbad_refs + stats.ned_refs
         cur.execute(
             "UPDATE dso_catalog_source SET row_count = ? WHERE id = ?",
             (total_refs, source_catalog_id),
@@ -264,7 +351,7 @@ def load_wikidata(
         result.designation_count = stats.parsed
         logger.info(
             "[wikidata] %s: parsed=%d matched=%d unmatched=%d multi_match=%d "
-            "wikidata=%d wikipedia=%d",
+            "wikidata=%d wikipedia=%d simbad=%d ned=%d",
             source.source_id,
             stats.parsed,
             stats.matched,
@@ -272,6 +359,8 @@ def load_wikidata(
             stats.multi_match,
             stats.wikidata_refs,
             stats.wikipedia_refs,
+            stats.simbad_refs,
+            stats.ned_refs,
         )
     except Exception as exc:  # noqa: BLE001 — transaction rollback guard
         conn.rollback()

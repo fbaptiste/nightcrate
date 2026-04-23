@@ -49,7 +49,13 @@ WIKIDATA_CITATION = (
     "Retrieved via the Wikidata Query Service (query.wikidata.org). "
     "Data licensed under CC0 1.0 Universal (Public Domain Dedication). "
     "Wikipedia article links are provided via Wikidata sitelinks; "
-    "article content is not bundled (CC BY-SA 4.0 applies to the linked content)."
+    "article content is not bundled (CC BY-SA 4.0 applies to the linked content). "
+    "SIMBAD cross-reference links are provided courtesy of the Centre "
+    "de Données astronomiques de Strasbourg (CDS), Université de "
+    "Strasbourg / CNRS. NED cross-reference links are provided by the "
+    "NASA/IPAC Extragalactic Database (NED), operated by the Jet "
+    "Propulsion Laboratory, California Institute of Technology, under "
+    "contract with NASA."
 )
 
 

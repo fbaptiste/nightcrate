@@ -11,14 +11,12 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import FormControl from "@mui/material/FormControl";
 import IconButton from "@mui/material/IconButton";
-import Link from "@mui/material/Link";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import {
   fetchAnnualHours,
   fetchSkyTrack,
@@ -34,6 +32,7 @@ import { usePlannerStore } from "@/stores/plannerStore";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
+import { DsoExternalRefs } from "@/components/dso/DsoExternalRefs";
 import SkyPreview from "@/components/dso/SkyPreview";
 import BestTimeOfYearChart from "./BestTimeOfYearChart";
 import { ScoreBreakdownSection } from "./ScoreBreakdownSection";
@@ -363,49 +362,13 @@ export default function PlannerDetailPanel({
             </Stack>
           )}
 
-          {/* Wikipedia link(s) — theme primary colour + underline +
-              open-in-new icon. Deliberately NOT a chip: when sitting
-              next to non-clickable designation chips, chip styling
-              made the external link look indistinguishable from the
-              cross-references. The link shape makes the "opens in a
-              new tab" affordance explicit. ``stopPropagation`` keeps
-              clicks from bubbling to any future ancestor handler. */}
-          {dso &&
-            dso.external_refs.some((ref) => ref.provider === "wikipedia") && (
-              <Stack
-                direction="row"
-                gap={1.5}
-                flexWrap="wrap"
-                alignItems="center"
-                sx={{ mt: 0.75 }}
-              >
-                {dso.external_refs
-                  .filter((ref) => ref.provider === "wikipedia")
-                  .map((ref) => (
-                    <Link
-                      key={`wikipedia-${ref.identifier}`}
-                      href={ref.url ?? undefined}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      underline="hover"
-                      aria-label={`Open Wikipedia article: ${
-                        ref.label ?? ref.identifier
-                      } (opens in new tab)`}
-                      sx={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 0.5,
-                        fontSize: "0.85rem",
-                        fontWeight: 500,
-                      }}
-                    >
-                      Wikipedia: {ref.label ?? ref.identifier}
-                      <OpenInNewIcon sx={{ fontSize: 14 }} />
-                    </Link>
-                  ))}
-              </Stack>
-            )}
+          {/* External refs (Wikipedia / SIMBAD / NED). Wikidata is
+              filtered out inside ``DsoExternalRefs``. */}
+          {dso && (
+            <Box sx={{ mt: 0.75 }}>
+              <DsoExternalRefs refs={dso.external_refs} title="" />
+            </Box>
+          )}
         </Box>
         <Stack
           direction="column"

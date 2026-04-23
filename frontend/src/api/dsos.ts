@@ -7,7 +7,7 @@ export interface DsoDesignation {
   is_primary: boolean;
 }
 
-export type ExternalRefProvider = "wikidata" | "wikipedia";
+export type ExternalRefProvider = "wikidata" | "wikipedia" | "simbad" | "ned";
 
 export interface ExternalRef {
   provider: ExternalRefProvider;

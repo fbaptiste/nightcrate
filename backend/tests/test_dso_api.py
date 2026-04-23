@@ -406,21 +406,26 @@ async def dso_loaded_with_wikidata(tmp_path):
 
 @pytest.mark.anyio
 async def test_detail_includes_external_refs_with_wikipedia_first(client, dso_loaded_with_wikidata):
-    """M42 has both a Wikidata and a Wikipedia ref — Wikipedia must appear
-    before Wikidata in the ordered list."""
+    """M42 (emission nebula, not extragalactic) gets three refs in the
+    order wikipedia → simbad → wikidata. NED is skipped by the
+    extragalactic filter (v0.21.1)."""
     search = (await client.get("/api/dso?q=M42")).json()
     m42 = next(i for i in search["items"] if i["primary_designation"] == "M 42")
     detail = (await client.get(f"/api/dso/{m42['id']}")).json()
     refs = detail["external_refs"]
-    assert len(refs) == 2
-    assert refs[0]["provider"] == "wikipedia"
+    assert [r["provider"] for r in refs] == ["wikipedia", "simbad", "wikidata"]
+
     assert refs[0]["language"] == "en"
     assert refs[0]["identifier"] == "Orion_Nebula"
     assert refs[0]["url"] == "https://en.wikipedia.org/wiki/Orion_Nebula"
     assert refs[0]["label"] == "Orion Nebula"
-    assert refs[1]["provider"] == "wikidata"
+
     assert refs[1]["language"] is None
-    assert refs[1]["identifier"] == "Q13903"
+    assert refs[1]["identifier"] == "NAME ORI NEB"
+    assert refs[1]["url"].startswith("https://simbad.u-strasbg.fr/simbad/sim-id?Ident=")
+
+    assert refs[2]["language"] is None
+    assert refs[2]["identifier"] == "Q13903"
 
 
 @pytest.mark.anyio
@@ -439,7 +444,7 @@ async def test_lookup_endpoint_includes_external_refs(client, dso_loaded_with_wi
     assert detail is not None
     assert "external_refs" in detail
     providers = [r["provider"] for r in detail["external_refs"]]
-    assert providers == ["wikipedia", "wikidata"]
+    assert providers == ["wikipedia", "simbad", "wikidata"]
 
 
 @pytest.mark.anyio

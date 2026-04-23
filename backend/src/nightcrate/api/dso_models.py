@@ -15,9 +15,15 @@ class DsoDesignation(BaseModel):
 
 
 class ExternalRef(BaseModel):
-    """Link from a DSO to an external knowledge-base entry (Wikipedia, Wikidata)."""
+    """Link from a DSO to an external knowledge-base or reference entry.
 
-    provider: Literal["wikidata", "wikipedia"]
+    Wikidata + Wikipedia arrived in v0.20.0; SIMBAD + NED in v0.21.1.
+    Wikidata is language-agnostic and stays client-hidden (structured
+    data, not a human-readable page). SIMBAD and NED are also
+    language-agnostic reference databases.
+    """
+
+    provider: Literal["wikidata", "wikipedia", "simbad", "ned"]
     language: str | None = None
     identifier: str
     url: str | None = None

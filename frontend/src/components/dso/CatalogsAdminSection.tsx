@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
@@ -47,6 +48,14 @@ interface SourceRowProps {
   license: string | null;
   /** Subtitle shown under the display name — e.g., the upstream host. */
   subtitle?: string;
+  /** When truthy, an inline "Update available" chip renders next to the
+   *  display name so users notice without hunting for a bumped version
+   *  string. Sources that don't have a remote-version semantic (e.g.,
+   *  in-repo bundled augment / external-refs CSV) simply never set
+   *  this. ``tooltip`` lets the caller explain WHY an update is offered
+   *  (new data upstream, query_version bump, first-run download, …). */
+  updateAvailable?: boolean;
+  updateTooltip?: string;
   /** Blocking message shown inline when the row's fetch fails. */
   error: string | null;
   onDismissError: () => void;
@@ -57,8 +66,20 @@ interface SourceRowProps {
 }
 
 function SourceRow(props: SourceRowProps) {
-  const { displayName, version, rowCount, license, subtitle, actions, busy, error, onDismissError, onAction } =
-    props;
+  const {
+    displayName,
+    version,
+    rowCount,
+    license,
+    subtitle,
+    updateAvailable,
+    updateTooltip,
+    actions,
+    busy,
+    error,
+    onDismissError,
+    onAction,
+  } = props;
   return (
     <Box
       sx={{
@@ -73,9 +94,30 @@ function SourceRow(props: SourceRowProps) {
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="body2" fontWeight={600}>
-          {displayName}
-        </Typography>
+        <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
+          <Typography variant="body2" fontWeight={600}>
+            {displayName}
+          </Typography>
+          {updateAvailable && (
+            <Tooltip
+              title={updateTooltip ?? "A newer version is available upstream."}
+              placement="top"
+              arrow
+            >
+              <Chip
+                label="Update available"
+                size="small"
+                color="primary"
+                variant="outlined"
+                sx={{
+                  height: 20,
+                  fontWeight: 500,
+                  "& .MuiChip-label": { px: 0.85, fontSize: "0.7rem" },
+                }}
+              />
+            </Tooltip>
+          )}
+        </Stack>
         <Typography variant="caption" color="text.secondary">
           {version ?? "Not loaded"}
           {rowCount != null && ` · ${rowCount.toLocaleString()} rows`}
@@ -253,6 +295,12 @@ export default function CatalogsAdminSection() {
         rowCount={backendSrc?.row_count ?? null}
         license={backendSrc?.license ?? "CDS public"}
         subtitle={remote.data?.catalog_id}
+        updateAvailable={remote.data?.has_update ?? false}
+        updateTooltip={
+          installed == null
+            ? `${catalogLabel} hasn't been fetched yet — click Fetch to download from VizieR.`
+            : undefined
+        }
         error={errors[sourceId] ?? null}
         onDismissError={() => setErrors((prev) => ({ ...prev, [sourceId]: null }))}
         busy={busy[sourceId] ?? false}
@@ -333,6 +381,12 @@ export default function CatalogsAdminSection() {
               ? `Latest on GitHub: ${openngcRemote.data.latest_tag}`
               : undefined
           }
+          updateAvailable={openngcRemote.data?.has_update ?? false}
+          updateTooltip={
+            openngcInstalled == null
+              ? "OpenNGC hasn't been fetched yet — the GitHub release is available to download."
+              : `OpenNGC release ${openngcRemote.data?.latest_tag ?? ""} is newer than your installed ${openngcInstalled}. Click Fetch to update.`
+          }
           error={errors["openngc"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, openngc: null }))}
           busy={busy["openngc"] ?? false}
@@ -369,6 +423,8 @@ export default function CatalogsAdminSection() {
           rowCount={sourcesById.get("github_50mgc")?.row_count ?? null}
           license={sourcesById.get("github_50mgc")?.license ?? "CDS public"}
           subtitle="github.com/davidohlson/50MGC"
+          updateAvailable={mgc50Remote.data?.has_update ?? false}
+          updateTooltip="50 MGC hasn't been fetched yet — click Fetch to download from GitHub."
           error={errors["github_50mgc"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, github_50mgc: null }))}
           busy={busy["github_50mgc"] ?? false}
@@ -390,7 +446,8 @@ export default function CatalogsAdminSection() {
           onAction={(btn) => runAction("github_50mgc", btn)}
         />
 
-        {/* Wikidata — SPARQL fetch for DSO external references (v0.20.0). */}
+        {/* Wikidata — SPARQL fetch for DSO external references (v0.20.0,
+            extended in v0.21.1 with SIMBAD + NED columns). */}
         <SourceRow
           displayName="Wikidata (external references)"
           version={
@@ -403,6 +460,15 @@ export default function CatalogsAdminSection() {
           rowCount={sourcesById.get("wikidata_external_refs")?.row_count ?? null}
           license={sourcesById.get("wikidata_external_refs")?.license ?? "CC0-1.0"}
           subtitle="query.wikidata.org/sparql"
+          updateAvailable={wikidataRemote.data?.has_update ?? false}
+          updateTooltip={
+            wikidataRemote.data?.installed_fetched_at == null
+              ? "Wikidata hasn't been fetched yet — click Fetch to run the SPARQL query."
+              : wikidataRemote.data?.installed_query_version !==
+                wikidataRemote.data?.current_query_version
+              ? `The SPARQL query has been extended since your last fetch (installed ${wikidataRemote.data?.installed_query_version ?? "?"} → current ${wikidataRemote.data?.current_query_version ?? "?"}). Fetching will pull the new columns (v0.21.1: SIMBAD + NED identifiers).`
+              : "A fresh fetch will pull any new Wikidata entities added upstream since your last run."
+          }
           error={errors["wikidata_external_refs"] ?? null}
           onDismissError={() =>
             setErrors((prev) => ({ ...prev, wikidata_external_refs: null }))

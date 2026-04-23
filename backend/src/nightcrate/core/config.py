@@ -32,6 +32,13 @@ class Settings(BaseModel):
     # means "use the component's default order"; unknown ids are filtered on
     # the client so new clocks added later don't break stored arrays.
     calculators_clock_order: list[str] = []
+    # User-chosen display order for the left-nav (drag-to-reorder). Values
+    # are nav route paths (e.g., "/image-viewer", "/planner"). Home ("/")
+    # is pinned at the top and is never stored here. Empty list → use the
+    # default order from ``AppShell``. Same forward-compat contract as
+    # ``calculators_clock_order``: unknown routes are filtered on the
+    # client, missing-from-list routes are appended at the end.
+    nav_order: list[str] = []
     # Target Planner filter defaults — initial slider values on the
     # planner page. The altitude floor now lives on each location as a
     # horizon (see ``location_horizon``), so there's no global flat

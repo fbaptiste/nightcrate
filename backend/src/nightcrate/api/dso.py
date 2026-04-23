@@ -72,11 +72,18 @@ def normalize_search_key(query: str) -> str:
     return normalized
 
 
-# Display ordering for external refs: wikipedia first (user-facing), then
-# wikidata (structured-data link). Future providers append alphabetically
-# after these two. Both backend serialization and the frontend rely on
-# this ordering to stay consistent — update in one place.
-_EXTERNAL_REF_PROVIDER_ORDER: tuple[str, ...] = ("wikipedia", "wikidata")
+# Display ordering for external refs (v0.21.1): wikipedia first (editorial,
+# user-facing), then simbad (CDS full-sky reference), then ned (NASA/IPAC
+# extragalactic reference), then wikidata (structured-data link, hidden on
+# the client). Frontend filters wikidata out at render time but it stays in
+# the tuple for stable server-side sort. Update here when adding a new
+# provider — the frontend's PROVIDER_LABEL map and allowlist mirror this.
+_EXTERNAL_REF_PROVIDER_ORDER: tuple[str, ...] = (
+    "wikipedia",
+    "simbad",
+    "ned",
+    "wikidata",
+)
 
 
 def _external_ref_sort_key(provider: str) -> tuple[int, str]:

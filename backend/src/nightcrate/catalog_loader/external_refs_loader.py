@@ -29,7 +29,7 @@ from nightcrate.catalog_loader.registry import CatalogSource
 
 logger = logging.getLogger("nightcrate.catalog_loader.external_refs")
 
-_VALID_PROVIDERS: frozenset[str] = frozenset({"wikidata", "wikipedia"})
+_VALID_PROVIDERS: frozenset[str] = frozenset({"wikidata", "wikipedia", "simbad", "ned"})
 _LANGUAGE_AWARE_PROVIDERS: frozenset[str] = frozenset({"wikipedia"})
 
 

@@ -29,6 +29,10 @@ from pathlib import Path
 logger = logging.getLogger("nightcrate.catalog_loader.wikidata_tsv")
 
 # Columns emitted by :func:`wikidata.sparql_query` — must stay in sync.
+# v3 (v0.21.1) adds simbad_id. The ``ned_id`` column was also in v2 but
+# dropped in v3 because Wikidata has no reliable NED property; NED rows
+# are synthesised from primary_designation in the loader instead. The
+# parser is tolerant of extra columns so v2 TSVs still load cleanly.
 _EXPECTED_COLUMNS: tuple[str, ...] = (
     "item",
     "itemLabel",
@@ -40,6 +44,7 @@ _EXPECTED_COLUMNS: tuple[str, ...] = (
     "cal",
     "sh2",
     "bar",
+    "simbad_id",
     "enwiki_title",
 )
 
@@ -68,6 +73,12 @@ class WikidataRecord:
     # Values are bare catalog identifiers (e.g., "1976" for NGC 1976,
     # "42" for Messier 42). Empty dict if no catalog IDs matched.
     catalog_ids: dict[str, str]
+    # SIMBAD (P3083) identifier — None when the Wikidata entity has
+    # no cross-reference. Stored as-is from Wikidata (whitespace-
+    # trimmed); the loader decides whether to URL-encode. NED is
+    # handled entirely by the loader via primary-designation fallback
+    # (Wikidata has no reliable NED property).
+    simbad_id: str | None
     enwiki_title: str | None
     enwiki_url: str | None
 
@@ -204,6 +215,7 @@ class _AggregatedRecord:
     qid: str
     label: str | None = None
     catalog_ids: dict[str, str] | None = None
+    simbad_id: str | None = None
     enwiki_title: str | None = None
 
     def merge_row(self, row: dict[str, str]) -> None:
@@ -225,6 +237,13 @@ class _AggregatedRecord:
             if identifier is not None:
                 self.catalog_ids.setdefault(catalog, identifier)
 
+        # SIMBAD: first non-null wins. Trim whitespace since Wikidata
+        # occasionally has stray spaces around the ID.
+        if self.simbad_id is None:
+            simbad = _unquote_literal(row.get("simbad_id", ""))
+            if simbad:
+                self.simbad_id = simbad.strip() or None
+
         # Wikipedia title: first non-null wins. (An entity has at most one
         # enwiki sitelink, so this is really a "pick whichever row carries
         # it" merge.)
@@ -245,6 +264,7 @@ class _AggregatedRecord:
             qid_url=f"https://www.wikidata.org/wiki/{self.qid}",
             label=self.label,
             catalog_ids=dict(self.catalog_ids or {}),
+            simbad_id=self.simbad_id,
             enwiki_title=enwiki_title,
             enwiki_url=enwiki_url,
         )

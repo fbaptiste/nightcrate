@@ -1,4 +1,4 @@
--- NightCrate version: 0.21.0
+-- NightCrate version: 0.21.1
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1385,20 +1385,26 @@ CREATE INDEX IF NOT EXISTS idx_sky_tile_cache_region
     ON sky_tile_cache(healpix_nside, healpix_ipix);
 
 
--- ── DSO external refs (migration 0022) ────────────────────────────────────
--- Associates Wikidata QIDs + Wikipedia article URLs (and future
--- NED/SIMBAD/Astrobin providers) with canonical DSO rows. Populated by
--- two loaders — `catalog_loader/wikidata_loader.py` (bulk SPARQL fetch)
--- and `catalog_loader/external_refs_loader.py` (editorial CSV overrides).
--- One row per (dso_id, provider, language); `language` is NULL for
--- language-agnostic providers (wikidata) and required for wikipedia.
+-- ── DSO external refs (migrations 0022 + 0023) ────────────────────────────
+-- Associates Wikidata QIDs, Wikipedia article URLs, SIMBAD cross-
+-- references, and NED galaxy-DB links with canonical DSO rows. Populated
+-- by two loaders — `catalog_loader/wikidata_loader.py` (bulk SPARQL fetch
+-- + synthesised SIMBAD/NED URLs) and `catalog_loader/external_refs_loader.py`
+-- (editorial CSV overrides). One row per (dso_id, provider, language);
+-- `language` is NULL for language-agnostic providers (wikidata / simbad
+-- / ned) and required for wikipedia.
 --
--- Migration 0022 also widens `dso_catalog_source.category` CHECK to
--- include `'wikidata'`.
+-- Migration 0022 introduces the table with provider CHECK = {wikidata,
+-- wikipedia} and also widens `dso_catalog_source.category` to include
+-- `'wikidata'`.
+-- Migration 0023 widens the provider CHECK to {wikidata, wikipedia,
+-- simbad, ned} via the SQLite table-rewrite pattern (PRAGMA
+-- legacy_alter_table = ON) so existing rows survive and indexes +
+-- trigger + partial unique index get recreated on the new table.
 CREATE TABLE dso_external_ref (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     dso_id            INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
-    provider          TEXT NOT NULL CHECK (provider IN ('wikidata', 'wikipedia')),
+    provider          TEXT NOT NULL CHECK (provider IN ('wikidata', 'wikipedia', 'simbad', 'ned')),
     language          TEXT,
     identifier        TEXT NOT NULL,
     url               TEXT,

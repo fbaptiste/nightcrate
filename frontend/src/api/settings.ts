@@ -19,6 +19,7 @@ export interface Settings {
   weather_moon_penalty: boolean;
   weather_units: WeatherUnits;
   calculators_clock_order: string[];
+  nav_order: string[];
   planner_min_visibility_hours: number;
   planner_max_magnitude: number;
   planner_min_size_arcmin: number;

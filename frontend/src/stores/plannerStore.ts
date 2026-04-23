@@ -49,13 +49,20 @@ export const usePlannerStore = create<PlannerState>()(
     {
       name: "nightcrate-planner",
       storage: createJSONStorage(() => localStorage),
-      // Bumped when the persisted shape changed incompatibly. Raising
-      // the version throws away any state persisted under a lower
-      // version (Zustand's default migrate behaviour). v4 adds the
-      // scoring-era ``filterIntent`` field — older state wouldn't
-      // have it, so migrate rather than silently lose state on old
-      // clients.
+      // Bumped when the persisted shape changed incompatibly. v4 adds
+      // ``filterIntent``; older state has every other field so we
+      // carry those forward and default filterIntent to []. Without
+      // an explicit migrate, Zustand discards the entire v3 payload
+      // on mismatch — which would wipe the user's saved
+      // location/horizon/rig/sortBy for no reason.
       version: 4,
+      migrate: (persisted, fromVersion) => {
+        const prev = (persisted ?? {}) as Partial<PlannerState>;
+        if (fromVersion < 4) {
+          return { ...prev, filterIntent: [] };
+        }
+        return prev;
+      },
     },
   ),
 );

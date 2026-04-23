@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.21.0
+**NightCrate version:** 0.21.1
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -755,11 +755,11 @@ Omitted from diagrams for readability. Every seedable table carries:
 |-------|---------|
 | `sky_tile_cache` (migration 0020) | DSO-agnostic tile cache for the FOV Simulator and DSO-catalog auto-zoom previews. Cells are keyed by `(hips_survey, healpix_nside, healpix_ipix, tier, cell_size_deg_x100, cell_width_px, cell_height_px, cell_i, cell_j)` — no FK to `dso`. NSIDE=8 partitions the sphere into 768 equal-area HEALPix regions; every cell in a region shares the region's tangent plane and tiles pixel-perfectly at shared edges. `tier` CHECK ∈ `{'narrow','med','wide'}` selects one of three resolution steps from the rig's major FOV. `source` CHECK ∈ `{'dss2_color','dss2_red','dss2_blue','placeholder'}`. Stores `file_path`, `bytes`, `fetched_at`, `last_access_at`, and a nullable `fetch_error` (same 1-hour backoff semantics as `thumbnail_cache`). Unique index spans the full key; additional indexes on `last_access_at` (LRU) and `(healpix_nside, healpix_ipix)` (region lookups). Two DSOs whose composites overlap inside a region share every cell in the overlap — the defining performance win over the DSO-keyed `thumbnail_cache`. |
 
-### v0.20.0 — DSO External References (1 table)
+### v0.20.0 — DSO External References (1 table; v0.21.1 widens provider CHECK)
 
 | Table | Purpose |
 |-------|---------|
-| `dso_external_ref` (migration 0022) | Associates Wikidata QIDs and Wikipedia article URLs with canonical DSOs (structurally provider-agnostic; NED / SIMBAD / Astrobin join later via a CHECK widen). Columns: `dso_id` (FK CASCADE), `provider` (CHECK ∈ `{'wikidata','wikipedia'}`), nullable `language` (required for wikipedia, forbidden for wikidata — enforced in loader code), `identifier` (QID for wikidata; article slug for wikipedia), `url`, `label`, optional `source_catalog_id` (which loader produced the row), `created_at`, `updated_at` (with trigger). `UNIQUE(dso_id, provider, language)` — one Wikidata QID per DSO, one Wikipedia article per DSO per language. Partial unique index `(provider, language, identifier) WHERE provider != 'wikipedia'` keeps QIDs globally unique while allowing multi-object Wikipedia articles (Stephan's Quintet) to span multiple DSOs. Populated by `catalog_loader/wikidata_loader.py` (bulk SPARQL fetch) and `catalog_loader/external_refs_loader.py` (editorial CSV overrides — precedence "later wins"). |
+| `dso_external_ref` (migrations 0022 + 0023) | Associates Wikidata QIDs, Wikipedia article URLs, SIMBAD cross-references, and NED galaxy-DB links with canonical DSOs. Columns: `dso_id` (FK CASCADE), `provider` (CHECK ∈ `{'wikidata','wikipedia','simbad','ned'}` after migration 0023), nullable `language` (required for wikipedia, forbidden for the three language-agnostic providers — enforced in loader code), `identifier` (QID / article slug / SIMBAD ID / primary designation), `url`, `label`, optional `source_catalog_id`, `created_at`, `updated_at` (with trigger). `UNIQUE(dso_id, provider, language)` enforces one row per DSO per provider per language; a partial unique index `(dso_id, provider) WHERE language IS NULL` covers the language-agnostic case (SQLite treats NULLs as distinct in the main unique index). No global uniqueness on `(provider, language, identifier)` — a single resource may legitimately span multiple DSOs (Stephan's Quintet article = 5 galaxies; Crab Nebula Wikidata QID = NGC 1952 + Sh2-244). Populated by `catalog_loader/wikidata_loader.py` (bulk SPARQL fetch — Wikipedia + Wikidata + SIMBAD from P3083; NED synthesised from primary_designation gated by `GALAXY_TYPES`) and `catalog_loader/external_refs_loader.py` (editorial CSV overrides — precedence "later wins"). |
 
 ### Future Tables
 

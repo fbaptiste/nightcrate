@@ -182,7 +182,11 @@ def test_external_refs_invalid_provider_aborts(db, tmp_path):
     sources = {s.source_id: s for s in get_sources(root)}
     csv_path = sources["nightcrate_external_refs"].file_path
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_csv(csv_path, ["M42,ned,,q,https://ned.ipac.caltech.edu/?id=q,Q,"])
+    # ``astrobin`` is an illustrative future provider not in
+    # ``_VALID_PROVIDERS``. Previously this test used ``ned`` for the
+    # same purpose; v0.21.1 added ned to the valid set, so we picked a
+    # still-invalid placeholder.
+    _write_csv(csv_path, ["M42,astrobin,,q,https://astrobin.com/?id=q,Q,"])
 
     # First load base catalogs to seed DSOs.
     load_catalogs(db, root)
@@ -234,6 +238,84 @@ def test_external_refs_upsert_requires_both_identifier_and_url(db, tmp_path):
     load_catalogs(db, root)
     result = load_external_refs(db, sources["nightcrate_external_refs"], force=True)
     assert result.status == "failed"
+
+
+def test_external_refs_simbad_upsert_overrides_wikidata_row(db, tmp_path):
+    """CSV row with provider=simbad overrides the automated Wikidata-
+    sourced SIMBAD link (same upsert contract as wikipedia / wikidata)."""
+    root = _base_catalogs(tmp_path)
+    # Load Wikidata first so the automated SIMBAD row for M42 lands.
+    wd_dir = root / "wikidata"
+    wd_dir.mkdir(parents=True)
+    shutil.copy(MINI_WIKIDATA / "mini_wikidata.tsv", wd_dir / "dso_external_refs.tsv")
+    sources = {s.source_id: s for s in get_sources(root)}
+    csv_path = sources["nightcrate_external_refs"].file_path
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_csv(
+        csv_path,
+        [
+            "M42,simbad,,NAME M 42 CORRECTED,"
+            "https://simbad.u-strasbg.fr/simbad/sim-id?Ident=NAME+M+42+CORRECTED,"
+            "M 42 editorial,",
+        ],
+    )
+
+    load_catalogs(db, root)
+    cur = db.cursor()
+    refs = _refs_for(cur, "M 42", provider="simbad")
+    assert len(refs) == 1
+    assert refs[0]["identifier"] == "NAME M 42 CORRECTED"
+    assert refs[0]["label"] == "M 42 editorial"
+
+
+def test_external_refs_ned_upsert_and_suppression(db, tmp_path):
+    """CSV can upsert a NED row (M31 in the fixture already has one via
+    Wikidata — override works) and suppress a NED row entirely."""
+    root = _base_catalogs(tmp_path)
+    wd_dir = root / "wikidata"
+    wd_dir.mkdir(parents=True)
+    shutil.copy(MINI_WIKIDATA / "mini_wikidata.tsv", wd_dir / "dso_external_refs.tsv")
+    sources = {s.source_id: s for s in get_sources(root)}
+    csv_path = sources["nightcrate_external_refs"].file_path
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_csv(
+        csv_path,
+        [
+            # Upsert — override the NED identifier.
+            "M31,ned,,M 31 edited,https://ned.ipac.caltech.edu/byname?objname=M+31+edited,M 31,",
+        ],
+    )
+    load_catalogs(db, root)
+    cur = db.cursor()
+    refs = _refs_for(cur, "M 31", provider="ned")
+    assert len(refs) == 1
+    assert refs[0]["identifier"] == "M 31 edited"
+
+    # Now suppress the NED row via an empty-identifier + empty-url CSV row.
+    _write_csv(csv_path, ["M31,ned,,,,,"])
+    load_catalogs(db, root, force=True)
+    refs = _refs_for(cur, "M 31", provider="ned")
+    assert len(refs) == 0
+
+
+def test_external_refs_simbad_forbids_language(db, tmp_path):
+    """SIMBAD + NED are language-agnostic providers (like wikidata) —
+    setting language on them is an error."""
+    root = _base_catalogs(tmp_path)
+    sources = {s.source_id: s for s in get_sources(root)}
+    csv_path = sources["nightcrate_external_refs"].file_path
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_csv(
+        csv_path,
+        [
+            "M42,simbad,en,NAME M 42,"
+            "https://simbad.u-strasbg.fr/simbad/sim-id?Ident=NAME+M+42,M 42,",
+        ],
+    )
+    load_catalogs(db, root)
+    result = load_external_refs(db, sources["nightcrate_external_refs"], force=True)
+    assert result.status == "failed"
+    assert "language" in (result.error or "")
 
 
 def test_external_refs_unknown_designation_is_warning_not_error(db, tmp_path):

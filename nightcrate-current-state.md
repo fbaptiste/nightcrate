@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.21.0
+**NightCrate version:** 0.21.1
 
 **Last updated:** 2026-04-23
 
@@ -195,7 +195,7 @@ VizieR fetches (Sharpless, Barnard) rotate through three CDS mirrors (Strasbourg
 - **Schema:** migrations `0015.dso_catalog.sql` + `0016.dso_augmentation.sql` (adds `distance_pc`, `distance_method` with CHECK vocabulary `{'50mgc', 'curated', 'redshift'}`, `common_name_augmented`, `surface_brightness_augmented` on `dso`).
 - **Data:** not in repo; downloaded to `APP_DIR/catalogs/{openngc,vizier,github/50mgc,wikidata}/`. NightCrate editorial CSVs bundled at `backend/src/nightcrate/data/catalogs/nightcrate/` (`dso_augment.csv`, `sharpless_crossref.csv`, `barnard_crossref.csv`, `dso_external_refs.csv`).
 
-**v0.20.0 — external references (Wikidata + Wikipedia):** new provider-agnostic `dso_external_ref` child table populated by two loaders. Wikidata SPARQL fetch pulls catalog-cross-referenced entities (NGC / Messier / Sharpless / Barnard / PGC / UGC via P528/P972 + P3208/P4095/P6340 shortcuts) + their English Wikipedia sitelinks; matching runs in-DB against `dso_designation.search_key`. Editorial CSV override (`dso_external_refs.csv`, ships empty) runs last and always wins — supports both upsert and suppression rows. Wikipedia chips surface on both the DSO catalog detail panel and the planner detail panel via a shared `DsoExternalRefs.tsx` component; Wikidata QIDs are stored silently in the DB for future cross-service enrichment. Admin endpoints: `GET /api/admin/catalogs/wikidata/remote-version`, `POST /api/admin/catalogs/wikidata/fetch`. Wikidata data CC0, Wikipedia content not bundled (links only). Migration 0022 creates the table and widens `dso_catalog_source.category` CHECK to include `'wikidata'` (uses `PRAGMA legacy_alter_table=ON` to preserve `dso.source_catalog_id`'s FK across the rename-rebuild).
+**v0.20.0 — external references (Wikidata + Wikipedia); v0.21.1 — SIMBAD + NED extension:** provider-agnostic `dso_external_ref` child table populated by two loaders. Wikidata SPARQL fetch pulls catalog-cross-referenced entities (NGC / Messier / Sharpless / Barnard / PGC / UGC via P528/P972 + P3208/P4095/P6340 shortcuts) + their English Wikipedia sitelinks + SIMBAD IDs (P3083); matching runs in-DB against `dso_designation.search_key`. Editorial CSV override (`dso_external_refs.csv`, ships empty) runs last and always wins — supports upsert and suppression rows across all four providers. **Chips on the detail panels:** Wikipedia (always when present) + SIMBAD (always, fallback from primary_designation when Wikidata has no P3083) + NED (extragalactic-only, always synthesised from primary_designation via NED's tolerant `byname` resolver — Wikidata's P2528 turned out to be earthquake magnitude, not NED). Wikidata QIDs are stored silently, filtered at render time. Admin endpoints: `GET /api/admin/catalogs/wikidata/remote-version` (now reports `installed_query_version` vs `current_query_version` so the admin UI's "Update available" chip flags SPARQL-shape changes), `POST /api/admin/catalogs/wikidata/fetch`. Schema: migration 0022 creates the table with `{wikidata, wikipedia}` CHECK; migration 0023 widens to `{wikidata, wikipedia, simbad, ned}` via the SQLite table-rewrite pattern.
 
 ### Image viewer
 

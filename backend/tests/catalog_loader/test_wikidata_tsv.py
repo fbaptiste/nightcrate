@@ -17,7 +17,8 @@ FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "catalogs" / "wikidata
 
 
 _HEADER = (
-    "?item\t?itemLabel\t?ngc_id\t?pgc_id\t?ugc_id\t?msg\t?ic\t?cal\t?sh2\t?bar\t?enwiki_title\n"
+    "?item\t?itemLabel\t?ngc_id\t?pgc_id\t?ugc_id\t?msg\t?ic\t?cal\t?sh2\t?bar"
+    "\t?simbad_id\t?enwiki_title\n"
 )
 
 
@@ -33,17 +34,33 @@ def _row(
     cal: str = "",
     sh2: str = "",
     bar: str = "",
+    simbad_id: str = "",
     enwiki_title: str = "",
 ) -> str:
     return (
-        "\t".join([item, label, ngc_id, pgc_id, ugc_id, msg, ic, cal, sh2, bar, enwiki_title])
+        "\t".join(
+            [
+                item,
+                label,
+                ngc_id,
+                pgc_id,
+                ugc_id,
+                msg,
+                ic,
+                cal,
+                sh2,
+                bar,
+                simbad_id,
+                enwiki_title,
+            ]
+        )
         + "\n"
     )
 
 
 def test_parse_canonical_mini_fixture():
     records = list(parse_wikidata_tsv(FIXTURE_DIR / "mini_wikidata.tsv"))
-    # 4 distinct entities, aggregated from 9 TSV rows (SPARQL UNION emits
+    # 4 distinct entities, aggregated from 8 TSV rows (SPARQL UNION emits
     # one row per matching sub-pattern).
     assert len(records) == 4
 
@@ -55,6 +72,8 @@ def test_parse_canonical_mini_fixture():
     assert orion.catalog_ids == {"ngc": "1976", "sharpless2": "281"}
     assert orion.enwiki_title == "Orion Nebula"
     assert orion.enwiki_url == "https://en.wikipedia.org/wiki/Orion_Nebula"
+    # Orion has a SIMBAD ID on Wikidata.
+    assert orion.simbad_id == "NAME ORI NEB"
 
     andromeda = by_qid["Q2469"]
     assert andromeda.catalog_ids["ngc"] == "224"
@@ -62,12 +81,14 @@ def test_parse_canonical_mini_fixture():
     assert andromeda.catalog_ids["ugc"] == "454"
     assert andromeda.catalog_ids["messier"] == "31"
     assert andromeda.enwiki_url == "https://en.wikipedia.org/wiki/Andromeda_Galaxy"
+    assert andromeda.simbad_id == "M 31"
 
-    # Entity with ngc_id only and no enwiki sitelink.
+    # Entity with ngc_id only, no enwiki sitelink, no SIMBAD.
     helix = by_qid["Q888888"]
     assert helix.catalog_ids == {"ngc": "7293"}
     assert helix.enwiki_title is None
     assert helix.enwiki_url is None
+    assert helix.simbad_id is None
 
 
 def test_build_search_keys_produces_dso_designation_form():
@@ -169,3 +190,32 @@ def test_parse_drops_row_with_bad_qid():
         ngc_id='"1"',
     )
     assert list(parse_wikidata_tsv_text(text)) == []
+
+
+def test_parse_simbad_identifier_kept_verbatim():
+    """SIMBAD IDs keep their Wikidata canonical form (including spaces
+    and punctuation) — SIMBAD's name resolver accepts them directly."""
+    text = _HEADER + _row(
+        item="<http://www.wikidata.org/entity/Q2469>",
+        label='"Andromeda Galaxy"@en',
+        ngc_id='"224"',
+        simbad_id='"M 31"',
+    )
+    records = list(parse_wikidata_tsv_text(text))
+    assert len(records) == 1
+    assert records[0].simbad_id == "M 31"
+
+
+def test_parse_strips_whitespace_around_simbad():
+    """Wikidata occasionally has stray whitespace around scalar IDs;
+    the parser trims both ends."""
+    text = _HEADER + _row(ngc_id='"224"', simbad_id='"  M 31  "')
+    records = list(parse_wikidata_tsv_text(text))
+    assert records[0].simbad_id == "M 31"
+
+
+def test_parse_missing_simbad_yields_none():
+    """Empty cells → simbad_id = None (not empty string)."""
+    text = _HEADER + _row(ngc_id='"7293"')
+    records = list(parse_wikidata_tsv_text(text))
+    assert records[0].simbad_id is None

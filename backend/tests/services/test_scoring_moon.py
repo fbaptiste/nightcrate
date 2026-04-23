@@ -97,7 +97,13 @@ def test_moon_full_at_target_low_score():
 
 
 def test_moon_ha_tolerates_full_moon():
-    """Full moon, Ha intent (sensitivity 0.15) → relatively high."""
+    """Full moon, Ha intent (sensitivity 0.15) → relatively high.
+
+    Per-sample impact = 0.15 × 1.0 × sqrt(sin(45°)) × (1 − 5/60)
+                      = 0.15 × 1.0 × 0.8409 × 0.9167
+                      ≈ 0.1156
+    overlap = 1.0, cluster modifier = 1.0 → score = 1 − 0.1156 ≈ 0.8844.
+    """
     n = 120
     _, moon = _run_moon(
         filter_intent=["Ha"],
@@ -106,9 +112,7 @@ def test_moon_ha_tolerates_full_moon():
         moon_separation_deg=np.full(n, 5.0),
     )
     assert moon is not None
-    # Ha sensitivity 0.15 × phase 1 × ~0.84 × ~1 ≈ 0.126 impact × 1 overlap
-    # = 0.874 score. Should definitely clear 0.8.
-    assert moon.score > 0.8
+    assert moon.score == pytest.approx(0.8844, abs=0.001)
 
 
 def test_moon_limiting_filter_rule_ha_plus_oiii():

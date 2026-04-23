@@ -33,6 +33,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.19.0 — Multi-Horizon + Planner Rewrite](#v0190--multi-horizon--planner-rewrite) ✅
 - [v0.20.0 — DSO External References (Wikidata + Wikipedia)](#v0200--dso-external-references-wikidata--wikipedia) ✅
 - [v0.21.0 — Target Planner Scoring Algorithm](#v0210--target-planner-scoring-algorithm) ✅
+- [v0.21.1 — Scoring Polish + Planner UX + External Refs Extension](#v0211--scoring-polish--planner-ux--external-refs-extension) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -3249,6 +3250,202 @@ brightness modifier, in-app doc surfacing, Anytime-mode scoring.
       `_make_dimension_row` helper extracted, IIFE in detail panel
       replaced with inline ternary, misleading JSDoc on
       `fetchSingleTargetScore` corrected.
+
+---
+
+## v0.21.1 — Scoring Polish + Planner UX + External Refs Extension
+
+**Status:** Done
+**Branch:** `v0.21.1/scoring-polish`
+
+Started as a narrow polish pass (PR #26 code-review findings + a
+startup-race fix that v0.21.0 testing exposed) and grew to absorb
+every small UX request that landed during manual testing: nav drag-
+reorder, planner card layout, score-breakdown bar sizing, a
+collapsible planner filter bar, an "Update available" indicator on
+the admin Catalogs panel, and a SIMBAD + NED extension to the
+external-refs infrastructure introduced in v0.20.0.
+
+### Code-review findings fixed
+
+- [x] **`test_observability_circumpolar_high_altitude` pinned** —
+      replaced `obs.score > 0.9` with
+      `pytest.approx(0.9647, abs=0.001)`. Constant 75° altitude
+      makes the expected quality deterministic via `sin(75°) =
+      0.96593`, `airmass = 1.03528`, `max_airmass = 2.0`, quality
+      `= 1 - 0.03528 / 1 = 0.96472` everywhere.
+- [x] **`test_observability_linear_rise` pinned** — replaced
+      `0.45 < obs.score < 0.58` with
+      `pytest.approx(0.5330, abs=0.001)` after computing the
+      numeric mean from the 120-sample linear sweep.
+- [x] **`test_moon_ha_tolerates_full_moon` pinned** — replaced
+      `moon.score > 0.8` with `pytest.approx(0.8844, abs=0.001)`
+      after recomputing the full Ha-impact aggregate (0.15 × 1.0
+      × √sin(45°) × (1 − 5/60) ≈ 0.1156 impact × 1.0 overlap
+      → 1 − 0.1156 ≈ 0.8844).
+- [x] **`plannerStore.ts` migrate function added** — v3 → v4
+      bump now explicitly carries forward `selectedLocationId`,
+      `selectedHorizonId`, `selectedRigId`, and `sortBy`, and
+      defaults the new `filterIntent` to `[]`. Without an explicit
+      `migrate`, Zustand's default behaviour is to discard all v3
+      state on mismatch — which would wipe the user's saved rig /
+      location / horizon / sort preferences on the v0.21.0 → v0.21.1
+      upgrade.
+- [x] **`DimensionBreakdownOut.key` typed as `DimensionKey`
+      Literal** — replaced the loose `key: str` + enumerating
+      comment with the already-defined `Literal["observability",
+      "meridian", "moon", "frame_fit"]` imported from
+      `planner_scoring.py`. The Pydantic response now enforces the
+      allowed values at the API boundary AND publishes the enum in
+      the OpenAPI schema.
+- [x] **`api/planner.py` module docstring updated** — version
+      range bumped to `v0.16.0–v0.21.0`, the route inventory now
+      includes the new `GET /api/planner/targets/{dso_id}/score`
+      endpoint + the pre-existing
+      `/targets/{dso_id}/annual-hours` and `/dsos/in-region`
+      entries that the previous docstring also missed.
+
+### New fix — startup health-check race
+
+- [x] **`App.tsx` no longer treats "backend unreachable" the same
+      as "db_configured=false".** Adds
+      `retry: Infinity` + exponential-backoff `retryDelay` capped
+      at 3 s on the `useQuery(["health"])` call, and gates the
+      `SetupWizard` render on `healthQuery.isSuccess` instead of
+      `data === undefined`. Under `make dev`, Vite is ready in
+      <200 ms but uvicorn takes ~5 s to boot (catalog loader
+      integrity checks + astropy imports + redshift backfill);
+      before this fix, the frontend burned through TanStack
+      Query's default 3 retries during the first second and then
+      permanently rendered the SetupWizard until the user
+      manually hard-reloaded the tab. Race was pre-existing but
+      v0.21.0's slightly-expanded startup path (scoring settings
+      loaded via `get_settings()` on first health response)
+      happened to make it noticeable.
+
+### Nav drag-to-reorder
+
+- [x] **`AppShell` splits nav into a pinned Home row + a drag-
+      reorderable stack** (11 remaining items). Uses `@dnd-kit` with
+      a `PointerSensor` distance-activation constraint (8 px) so
+      clicks still navigate via `NavLink` while a pointer move ≥ 8 px
+      starts a drag.
+- [x] **Subtle `DragIndicatorIcon` in a 20-px leading slot** on every
+      reorderable row (opacity 0.25 at rest, 0.6 on hover). Home
+      renders an empty slot of the same width so its nav icon stays
+      horizontally aligned with the draggable rows.
+- [x] **`settings.nav_order: list[str]`** added to the Pydantic model
+      (no migration — KV settings absorb new fields). Same forward-
+      compat contract as `calculators_clock_order`: unknown routes
+      filtered, missing-from-list routes appended at the end.
+- [x] **Not surfaced on the Settings page** per user request — the
+      reorder UI is the left-nav itself, no separate control needed.
+
+### Planner card layout polish
+
+- [x] **Score chip + Wikipedia link inline on Line 4** with a 20 px
+      gap. Score chip moved from the card's upper-right corner (too
+      crowded next to the thumbnails) and from Line 1 (was pulling
+      attention off the primary designation).
+- [x] **Wikipedia chip → Link + `OpenInNewIcon`** on the card (same
+      pattern already in use on the detail panel). `stopPropagation`
+      on the link click keeps the CardActionArea's detail-panel open
+      from firing when the user clicks through to Wikipedia.
+
+### Score breakdown visualisation
+
+- [x] **Dimension bars capped at `width: 33%`** (min 160 px, max
+      320 px) in `ScoreBreakdownSection`. Full-width bars read as
+      progress indicators, which is misleading for a dimensional
+      score gauge.
+- [x] **Label row's `space-between` right edge aligns with the
+      `NN%` readout** — both share a single container width, so
+      "weight / contribution" caption right-aligns with the bar's
+      percent column.
+
+### Collapsible planner filter panel
+
+- [x] **Filter / sort / rig Paper gets a chevron toggle** at the top
+      (`TuneIcon` + "Filters, sort, rig" label on the left, expand /
+      collapse chevron on the right). Body wrapped in `Collapse` with
+      `unmountOnExit` so hidden controls don't consume layout.
+- [x] **Session-only state** via a `useState<boolean>` — no
+      localStorage, no server round-trip; a tab reload reopens the
+      bar. Default open so first-run users see the full UI.
+
+### External references extension (SIMBAD + NED)
+
+- [x] **Migration 0023 `dso_external_refs_simbad_ned.sql`** — widens
+      the `dso_external_ref.provider` CHECK from
+      `('wikidata', 'wikipedia')` to
+      `('wikidata', 'wikipedia', 'simbad', 'ned')` via the SQLite
+      table-rewrite pattern (`PRAGMA legacy_alter_table = ON` so
+      child FKs don't follow the parent rename). Indexes + trigger +
+      partial `WHERE language IS NULL` unique index recreated on the
+      new table.
+- [x] **Wikidata SPARQL + parser + loader extended** — `P3083`
+      (SIMBAD) is pulled as an additional `OPTIONAL` clause.
+      `QUERY_VERSION` bumped to `v3`. `WikidataRecord.simbad_id` +
+      whitespace-trimming parser logic land; loader pre-fetches
+      `{dso_id: (primary_designation, obj_type)}` once per load to
+      drive the per-match SIMBAD + NED inserts.
+- [x] **SIMBAD chips — broad coverage.** Inserted for every matched
+      DSO using P3083 when Wikidata has it, else fallback to
+      primary_designation (SIMBAD's name resolver is tolerant). URL
+      builder uses `urllib.parse.quote_plus`.
+- [x] **NED chips — extragalactic-only.** The spec claimed Wikidata
+      P2528 was NED — it's actually the Richter earthquake-magnitude
+      scale. Wikidata has no reliable NED property at all. Fixed by
+      synthesising NED URLs from primary_designation via NED's
+      tolerant `byname` resolver, gated by
+      `GALAXY_TYPES = {G, GPair, GTrpl, GGroup}`. Same fallback shape
+      as SIMBAD, filter narrows it to galaxies.
+- [x] **CSV override handles both new providers** —
+      `_VALID_PROVIDERS` extended; CSV rows with `provider=simbad`
+      or `provider=ned` upsert / suppress the same way
+      `wikidata` / `wikipedia` do. `_LANGUAGE_AWARE_PROVIDERS` stays
+      `{wikipedia}` only — both new providers require `language=NULL`.
+- [x] **Attribution** — `WIKIDATA_CITATION` extended with CDS /
+      Université de Strasbourg (SIMBAD) and NASA/IPAC/Caltech (NED)
+      credits; surfaces automatically in Admin → Catalogs via the
+      existing data-driven panel.
+- [x] **API + types** — `ExternalRef.provider` Literal widened;
+      `_EXTERNAL_REF_PROVIDER_ORDER = ("wikipedia", "simbad", "ned",
+      "wikidata")`. Wikidata stays in the tuple for stable server-
+      side sort but is filtered out at render time per the
+      user decision.
+- [x] **Frontend `DsoExternalRefs` generalised** — renders any
+      provider in `{wikipedia, simbad, ned}` via a small
+      `PROVIDER_LABEL` map. Wikidata filter stays (not surfaced).
+      `PlannerDetailPanel` replaces its inline duplicated Wikipedia
+      block with the shared component.
+
+### Admin Catalogs — Update-available indicator
+
+- [x] **`SourceRow` gains `updateAvailable` + `updateTooltip`
+      props** — when truthy, renders a small primary-outlined
+      "Update available" chip next to the row's display name. Every
+      downloadable catalog wires the flag through:
+        - **OpenNGC** — tag-name diff (e.g., v2.0.3 → v2.0.4).
+        - **VizieR (Sharpless / Barnard) + 50 MGC** — first-run
+          "hasn't been fetched yet."
+        - **Wikidata** — first-run OR `installed_query_version !=
+          current_query_version` (v3 flagged the SIMBAD + NED
+          extension for users still on v1/v2 TSVs).
+- [x] **Backend unchanged** — every `/remote-version` endpoint
+      already reported `has_update`; only the UI plumbing was
+      missing.
+
+### v0.21.1 Completion Criteria
+
+- [x] Every deferred PR #26 code-review finding addressed (2
+      ≥80 + 4 sub-80).
+- [x] Backend lint / format / bandit clean.
+- [x] Frontend `tsc --noEmit` + `npm run build` clean.
+- [x] Full backend suite green (1862 passed / 3 skipped), no
+      coverage regression on `services/planner_scoring.py` (still
+      ≥ 96%).
+- [x] Version headers bumped across the four tracked docs.
 
 ---
 

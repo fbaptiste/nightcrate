@@ -1,9 +1,9 @@
-?item	?itemLabel	?ngc_id	?pgc_id	?ugc_id	?msg	?ic	?cal	?sh2	?bar	?enwiki_title
-<http://www.wikidata.org/entity/Q13903>	"Orion Nebula"@en	"1976"								"Orion Nebula"@en
-<http://www.wikidata.org/entity/Q13903>	"Orion Nebula"@en							"SH 2-281"		"Orion Nebula"@en
-<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en	"224"								"Andromeda Galaxy"@en
-<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en		"2557"							"Andromeda Galaxy"@en
-<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en			"454"						"Andromeda Galaxy"@en
-<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en				"M 31"					"Andromeda Galaxy"@en
-<http://www.wikidata.org/entity/Q999999>	"Unknown DSO"@en	"99999"								"Unknown"@en
-<http://www.wikidata.org/entity/Q888888>	"Helix (no wiki)"@en	"7293"								
+?item	?itemLabel	?ngc_id	?pgc_id	?ugc_id	?msg	?ic	?cal	?sh2	?bar	?simbad_id	?enwiki_title
+<http://www.wikidata.org/entity/Q13903>	"Orion Nebula"@en	"1976"								"NAME ORI NEB"	"Orion Nebula"@en
+<http://www.wikidata.org/entity/Q13903>	"Orion Nebula"@en							"SH 2-281"		"NAME ORI NEB"	"Orion Nebula"@en
+<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en	"224"								"M 31"	"Andromeda Galaxy"@en
+<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en		"2557"							"M 31"	"Andromeda Galaxy"@en
+<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en			"454"						"M 31"	"Andromeda Galaxy"@en
+<http://www.wikidata.org/entity/Q2469>	"Andromeda Galaxy"@en				"M 31"					"M 31"	"Andromeda Galaxy"@en
+<http://www.wikidata.org/entity/Q999999>	"Unknown DSO"@en	"99999"									"Unknown"@en
+<http://www.wikidata.org/entity/Q888888>	"Helix (no wiki)"@en	"7293"									
