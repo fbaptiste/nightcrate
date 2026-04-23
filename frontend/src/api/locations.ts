@@ -41,6 +41,29 @@ export interface LocationCreate {
   typical_seeing_high_arcsec?: number | null;
   is_default?: boolean;
   notes?: string | null;
+  /** Optional: when provided (non-empty) the server creates the
+   *  location + all listed horizons in one transaction and skips the
+   *  usual 0° default auto-seed. Exactly one entry must be
+   *  ``is_default=true``; at most one may be ``type='custom'``. When
+   *  omitted, legacy auto-seed behavior applies. Used by the Location
+   *  editor dialog's staged-save flow for new locations. */
+  horizons?: LocationCreateHorizonSeed[];
+}
+
+export interface LocationCreateHorizonPoint {
+  azimuth_deg: number;
+  altitude_deg: number;
+}
+
+export interface LocationCreateHorizonSeed {
+  name: string;
+  type: "artificial" | "custom";
+  flat_altitude_deg?: number | null;
+  points?: LocationCreateHorizonPoint[];
+  source?: "drawn" | "imported" | null;
+  source_filename?: string | null;
+  notes?: string | null;
+  is_default: boolean;
 }
 
 export const fetchLocations = () => apiFetch<Location[]>("/locations");

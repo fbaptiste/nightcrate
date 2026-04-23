@@ -517,8 +517,10 @@ def _dispatch_source(
     from nightcrate.catalog_loader import (
         augment_loader,
         barnard_loader,
+        external_refs_loader,
         mgc50_augmenter,
         sharpless_loader,
+        wikidata_loader,
     )
 
     if source.parser == "openngc":
@@ -533,6 +535,10 @@ def _dispatch_source(
         return mgc50_augmenter.augment_from_mgc50(conn, source, force=force)
     if source.parser == "augment":
         return augment_loader.load_augment(conn, source, force=force)
+    if source.parser == "wikidata_external_refs":
+        return wikidata_loader.load_wikidata(conn, source, force=force)
+    if source.parser == "external_refs":
+        return external_refs_loader.load_external_refs(conn, source, force=force)
     if source.parser in {"sharpless_crossref", "barnard_crossref"}:
         # These files are side-inputs consumed by other loaders (Sharpless
         # reads sharpless_crossref.csv directly during its own load). The
@@ -609,6 +615,12 @@ def load_catalogs(
         "nightcrate_barnard_crossref",
         "nightcrate_augment",
         "github_50mgc",
+        # Wikidata runs last among bulk sources so every DSO (including
+        # Sharpless/Barnard standalones) exists before designation-based
+        # matching. The editorial override CSV runs strictly after Wikidata
+        # so CSV rows always win.
+        "wikidata_external_refs",
+        "nightcrate_external_refs",
     )
     by_id = {s.source_id: s for s in sources}
     ordered = [by_id[sid] for sid in load_order if sid in by_id]

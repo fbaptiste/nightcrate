@@ -31,6 +31,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.18.0 — Target Planner Pass C (Sky-Tile Cache + Seamless Stitching)](#v0180--target-planner-pass-c-sky-tile-cache--seamless-stitching) ✅
 - [v0.18.1 — Target Planner UX Polish](#v0181--target-planner-ux-polish) ✅
 - [v0.19.0 — Multi-Horizon + Planner Rewrite](#v0190--multi-horizon--planner-rewrite) ✅
+- [v0.20.0 — DSO External References (Wikidata + Wikipedia)](#v0200--dso-external-references-wikidata--wikipedia) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -2855,6 +2856,226 @@ linear-progress artifact.
       reorder / flip direction), card list (scroll + click-to-
       open-detail + tonight/anytime toggle), now-status across
       day / night / post-dawn.
+
+---
+
+## v0.20.0 — DSO External References (Wikidata + Wikipedia)
+
+**Status:** Done
+**Branch:** `v0.20.0/dso-external-refs`
+
+Adds a general-purpose `dso_external_ref` child table and populates
+it from two sources: a Wikidata SPARQL fetch (bulk auto-matches) and
+an editorial CSV override (bundled empty, ready for per-row fixes).
+Wikipedia-article chips land on both the DSO catalog detail panel
+and the planner detail panel. Wikidata QIDs are captured silently for
+future features (cross-service enrichment, NED/SIMBAD lookups).
+
+### Schema + loaders
+
+- [x] **Migration 0022 `dso_external_refs.sql`** — new
+      `dso_external_ref` table with `provider` CHECK enum
+      `{wikidata, wikipedia}`, `UNIQUE (dso_id, provider, language)`,
+      partial unique index `WHERE provider != 'wikipedia'` (Stephan's
+      Quintet exception), `updated_at` trigger. Widens
+      `dso_catalog_source.category` CHECK to include `'wikidata'`
+      via the SQLite table-rewrite pattern. Uses
+      `PRAGMA legacy_alter_table = ON` so the FK on
+      `dso.source_catalog_id` doesn't get rewritten to follow the
+      parent rename to the legacy table.
+
+- [x] **SPARQL query (rewritten)** — the spec's per-catalog property
+      IDs were mostly wrong (P774 = FIPS 55-3, P2024 = German cattle
+      breed ID, P2581 = BabelNet ID, P3622 = Bandy player ID,
+      P2295 = net profit). Replaced with the canonical Wikidata
+      pattern: `P528` (catalog code) + `P972` (catalog) qualifier,
+      filtered to the Q-items verified against live data (Q14530
+      Messier, Q14534 NGC, Q190553 IC, Q14536 Caldwell, Q66381095
+      Sharpless 2, Q3247327 Barnard, Q1479861 PGC, Q615925 UGC). Plus
+      three direct-ID shortcuts (P3208 NGC, P4095 PGC, P6340 UGC) as
+      a recall safety net. ~58k astronomical entities hit the query;
+      only catalog-ID matches ingest.
+
+- [x] **`catalog_loader/wikidata.py`** — SPARQL fetcher. GET to
+      `query.wikidata.org/sparql` with UA
+      `NightCrate/{version} (https://github.com/fbaptiste/nightcrate)`
+      (UA is required by Wikidata's policy). TSV response lands
+      atomically in `APP_DIR/catalogs/wikidata/`. `query_version` in
+      `version.json` invalidates stored TSVs when the query changes.
+
+- [x] **`catalog_loader/wikidata_tsv.py`** — parser. Strips SPARQL
+      URI wrappers, un-quotes literals, strips catalog prefixes
+      (`"NGC "`, `"M "`, `"SH 2-"`, etc.) and leading zeros. Direct
+      -ID shortcuts take precedence over the P528 canonical form
+      (they need no prefix stripping).
+
+- [x] **`catalog_loader/wikidata_loader.py`** — matcher +
+      inserter. Resolves Wikidata records to DSOs via
+      `dso_designation.search_key`. Single match → upsert. Zero
+      matches → skip silently (DEBUG log). **Multi-match → splay
+      the refs across every matching DSO** (OpenNGC has per-catalog
+      splits: NGC 1316 + PGC 12769 are the same galaxy, Crab Nebula
+      has both NGC 1952 and Sh2-244 rows, Trifid has NGC 6514 + B 85,
+      etc. — Wikidata unifies them under one entity; we duplicate
+      the refs so the user sees the chip on whichever DSO they land
+      on). Upserts both a `wikidata` row and (if enwiki sitelink
+      present) a `wikipedia` row per matched DSO.
+
+- [x] **`catalog_loader/external_refs_loader.py`** — editorial
+      CSV override, mirroring `augment_loader.py`. Upsert rows
+      overwrite Wikidata-sourced refs; suppression rows (empty
+      identifier + url) delete. Strict validation: invalid
+      provider / missing language for wikipedia / present language
+      for wikidata → abort load with row number in the error.
+
+- [x] **Registry + load order** — Wikidata runs last among remote
+      sources (after Sharpless, Barnard, 50 MGC) so every DSO
+      exists before matching. CSV override runs immediately after
+      Wikidata — "later wins" precedence for overrides.
+
+### API + admin
+
+- [x] **`GET /api/dso/{id}` + `/lookup`** — response now includes
+      `external_refs: list[ExternalRef]`. Ordering: `wikipedia`
+      first, `wikidata` second. Empty array when no refs exist.
+      List responses remain unchanged (detail-only per spec).
+
+- [x] **Admin endpoints** —
+      `GET /api/admin/catalogs/wikidata/remote-version` (sentinel
+      response with `can_check_remote=false` because Wikidata has no
+      remote version), `POST /api/admin/catalogs/wikidata/fetch`
+      (runs the fetch + reload). Editorial CSV reloads via the
+      existing `POST /api/admin/catalogs/nightcrate/reload`.
+
+### Frontend
+
+- [x] **Shared `DsoExternalRefs` component** — renders Wikipedia
+      chips only (Wikidata QIDs stored but hidden). Returns null
+      on empty array. Chips are `<a>` elements opening in new
+      tabs with `rel="noopener noreferrer"` + aria-labels.
+
+- [x] **Integration** — mounted after the Designations section in
+      `DsoDetailPanel.tsx` (catalog page) and between the
+      FOV-coverage block and Sky position in
+      `PlannerDetailPanel.tsx`. The planner panel already
+      re-fetches `GET /api/dso/{id}`, so it automatically picks
+      up the new field.
+
+- [x] **Admin → Catalogs rows** — two new rows: Wikidata (with
+      `Fetch from Wikidata` button) and NightCrate external refs
+      (bundled; reloaded via the existing top-of-panel
+      "Reload all from local cache" action).
+
+- [x] **Attribution** — automatic. Wikidata's `attribution` text
+      (set in registry.py) covers both the CC0 source license and
+      the Wikipedia note ("article content is not bundled; links
+      load directly from wikipedia.org").
+
+### Vendored
+
+- [x] `data/catalogs/nightcrate/dso_external_refs.csv` — empty body
+      with column header + explanatory comments.
+- [x] `data/catalogs/nightcrate/LICENSE-CC0.txt` — full CC0 1.0
+      dedication text (Wikidata's license; carried for
+      transparency even though CC0 imposes no requirements).
+
+### Horizon staging restoration (Option B)
+
+v0.19.0's LocationHorizonsSection rewrite accidentally dropped the
+v0.13.0 staged-save semantic — horizon edits persisted immediately
+instead of being committed with the outer Location editor's Save
+button. Option B restores the full staged flow.
+
+- [x] **Backend atomic-create** — `LocationCreate.horizons:
+      list[HorizonCreate] | None` optional field on `POST /api/
+      locations`. When a non-empty list is supplied, the endpoint
+      creates the location + all horizons in a single transaction
+      and skips the `0° flat` auto-seed. 422 on empty list,
+      duplicate-default, multiple-custom, duplicate-name.
+      8 new validation tests.
+- [x] **Frontend staged-state model** —
+      `components/locations/horizonStaging.ts`. Defines
+      `StagedHorizon` (state tag: `unchanged` / `new` / `modified`
+      / `deleted`), lifecycle helpers, and the save-dispatch plan
+      builder for existing-location diff.
+- [x] **LocationHorizonsSection rewrite** — operates purely on the
+      staged state + onChange prop passed by the parent. No network
+      calls. Per-row `state` chips (new/modified/deleted) so the
+      user sees exactly what'll commit.
+- [x] **LocationsPage orchestration** — stagedHorizons state
+      lifted; `openCreate` seeds a 0° default; `openEdit` fetches
+      server horizons and populates the staged list;
+      `hasUnsavedChanges` extends to include horizon diffs (matches
+      v0.13.0); `handleSave` dispatches atomic-create for new
+      locations and an ordered diff-apply
+      (creates → updates → promote-default → deletes) for existing
+      ones.
+
+### v0.20.0 Completion Criteria
+
+- [x] Full backend test suite green (1790 passed / 3 skipped).
+      37 new tests:
+      `test_wikidata_tsv.py` (10), `test_wikidata_loader.py` (9 —
+      incl. NULL-language dedup regression + multi-match duplication),
+      `test_external_refs_loader.py` (10),
+      `test_locations_api.py` +8 (atomic create + validation),
+      `test_dso_api.py` +4 (external_refs field presence,
+      ordering, list-response omission, lookup shape),
+      `test_admin_api.py` +3 (Wikidata remote-version sentinel,
+      fetch-requires-db, network-failure 502).
+- [x] Backend lint / format / bandit clean.
+- [x] Frontend build clean.
+- [x] SPARQL query verified against live Wikidata (M42, M31,
+      Andromeda, Horsehead all resolved correctly).
+- [x] Multi-match design (Option 2): Wikidata entities that cross-
+      reference multiple NightCrate DSOs (Crab = NGC 1952 + Sh2-244,
+      California Nebula = NGC 1499 + Sh2-220, etc.) splay the ref
+      onto every matching DSO so the chip surfaces regardless of
+      which DSO page the user lands on.
+- [x] Horizon staging restoration (Option B): Location editor
+      dialog owns horizon state end-to-end; Save commits atomically,
+      Cancel discards; per-row new/modified/deleted chips visible.
+- [x] CLAUDE.md guardrail + memory note added so the horizon
+      staging contract doesn't get regressed again.
+
+### Post-review polish
+
+- [x] **Atomic horizon-replace endpoint** —
+      `PUT /api/locations/{id}/horizons` takes the full desired
+      horizon set and applies creates / updates / deletes in one
+      SQL transaction. Replaces the retired client-side
+      `_applyStagedHorizonsToExisting` helper which (a) couldn't
+      offer true atomicity against mid-save network failures and
+      (b) tripped `idx_location_horizon_one_custom` (409) on the
+      "replace-custom" pattern (delete old custom + add new one).
+      Frontend uses `replaceLocationHorizons` from `api/horizons.ts`.
+      7 new tests covering atomic apply + custom-swap + validation.
+- [x] **Parallel pytest** — `pytest-xdist` dev-dep + `make
+      test-fast` target. Full suite 392s → 215s on a 10-core Mac
+      with identical pass count.
+- [x] **DSO catalog + Planner detail — Wikipedia as a link, not a
+      chip.** Theme-primary color + underline-on-hover + trailing
+      `OpenInNewIcon` (14 px). The chip form was
+      indistinguishable from non-clickable designation chips.
+- [x] **Planner detail header reorganisation.** Three lines:
+      (name + constellation) · (common name) · (type pill + alt
+      catalog chips). Distance moved out of the header entirely
+      into the fact grid below the image. Removed the
+      "fits comfortably at X%" narrative — the simulator already
+      shows framing.
+- [x] **Planner detail fact grid — three explicit rows.** Row 1
+      Distance / Size / FOV coverage; Row 2 Hours / Max alt /
+      Meridian / Moon sep; Row 3 Mag V / Mag B.
+- [x] **SkyPositionGraph "now" indicator.** Teal vertical line,
+      triangle anchor on the 90° grid, minute-aligned auto-tick
+      (no mouse interaction needed). Magnetic snap integration.
+      Meridian moved to its own tier (tier 4) so a
+      meridian-near-sunset no longer collides.
+- [x] **SkyPositionGraph hourly ticks** via `d3.timeHour.range`
+      (was every-other-hour from the `.ticks(6)` auto-round).
+- [x] **Best-time-of-year chart January label** — fixes a skipped
+      `d3.timeMonths` boundary when the data range starts
+      mid-month.
 
 ---
 

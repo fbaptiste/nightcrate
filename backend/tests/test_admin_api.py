@@ -634,7 +634,7 @@ async def test_remote_version_reports_installed_and_latest(client, tmp_path, mon
     """With a version.json present locally + GitHub reachable, returns both
     tags and flags has_update correctly."""
     # Point user_catalogs_root at the tmp_path.
-    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
     openngc_dir = tmp_path / "catalogs" / "openngc"
     openngc_dir.mkdir(parents=True)
     (openngc_dir / "version.json").write_text('{"version": "v20231203"}', encoding="utf-8")
@@ -660,7 +660,7 @@ async def test_remote_version_reports_installed_and_latest(client, tmp_path, mon
 
 @pytest.mark.anyio
 async def test_remote_version_no_installation(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
 
     from nightcrate.catalog_loader import remote
 
@@ -678,7 +678,7 @@ async def test_remote_version_no_installation(client, tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_remote_version_returns_502_on_github_failure(client, tmp_path, monkeypatch):
-    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
 
     async def fake_fetch():
         raise RuntimeError("GitHub unreachable")
@@ -718,7 +718,7 @@ async def test_fetch_from_github_happy_path(client, tmp_path, monkeypatch):
 
     # Point user_catalogs_root at tmp_path and simulate the download by
     # copying mini fixtures into the expected layout.
-    monkeypatch.setattr("nightcrate.catalog_loader.registry.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
     openngc_dir = tmp_path / "catalogs" / "openngc"
     openngc_dir.mkdir(parents=True)
 
@@ -769,3 +769,53 @@ async def test_fetch_from_github_network_failure_returns_502(client, tmp_path, m
     resp = await client.post("/api/admin/catalogs/fetch-from-github")
     assert resp.status_code == 502
     assert "Failed to download" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Wikidata endpoints (v0.20.0)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_wikidata_remote_version_reports_not_loaded(client):
+    """Before any fetch, ``remote-version`` reports no installed version
+    and ``has_update`` is True so the UI shows "Fetch latest"."""
+    resp = await client.get("/api/admin/catalogs/wikidata/remote-version")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_id"] == "wikidata_external_refs"
+    assert data["can_check_remote"] is False
+    assert data["has_update"] is True
+    assert data["installed_fetched_at"] is None
+    assert data["current_query_version"] == "v1"
+
+
+@pytest.mark.anyio
+async def test_wikidata_fetch_requires_db_configured(client):
+    """Fetching without a configured DB returns 400 — matches the 50mgc path."""
+    resp = await client.post("/api/admin/catalogs/wikidata/fetch")
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_wikidata_fetch_network_failure_returns_502(client, tmp_path, monkeypatch):
+    """When the SPARQL fetcher raises, the endpoint surfaces a 502 with
+    a clear "Failed to fetch Wikidata SPARQL" detail."""
+    db_path = str(tmp_path / "wikidata_test_db.db")
+    setup_resp = await client.post(
+        "/api/admin/database/setup",
+        json={"path": db_path, "name": "Wikidata Test"},
+    )
+    assert setup_resp.status_code == 200
+
+    async def fake_fetch(*args, **kwargs):
+        raise RuntimeError("Wikidata unreachable")
+
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.wikidata.fetch_wikidata_external_refs",
+        fake_fetch,
+    )
+
+    resp = await client.post("/api/admin/catalogs/wikidata/fetch")
+    assert resp.status_code == 502
+    assert "Failed to fetch Wikidata SPARQL" in resp.json()["detail"]

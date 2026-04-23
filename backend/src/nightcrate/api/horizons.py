@@ -27,6 +27,7 @@ from nightcrate.api.horizon_models import (
     HorizonPointModel,
     HorizonResponse,
     HorizonUpdate,
+    LocationHorizonsReplace,
 )
 from nightcrate.db.session import get_db
 from nightcrate.services.horizon import (
@@ -170,6 +171,194 @@ async def list_horizons(location_id: int) -> list[HorizonResponse]:
     """
     async with get_db() as conn:
         await _fetch_location(conn, location_id, allow_inactive=False)
+        rows = await (
+            await conn.execute(
+                """
+                SELECT * FROM location_horizon
+                WHERE location_id = ?
+                ORDER BY is_default DESC,
+                         CASE type WHEN 'custom' THEN 0 ELSE 1 END,
+                         flat_altitude_deg ASC,
+                         name ASC
+                """,
+                (location_id,),
+            )
+        ).fetchall()
+        return [await _build_response(conn, dict(r)) for r in rows]
+
+
+@router.put("", response_model=list[HorizonResponse])
+async def replace_horizons(
+    location_id: int, body: LocationHorizonsReplace
+) -> list[HorizonResponse]:
+    """Atomically replace this location's full horizon set.
+
+    Takes the complete desired state; the server computes the diff
+    against the current rows and applies creates / updates / deletes
+    in one SQL transaction. Used by the Location editor's staged-save
+    flow so partial-network-failure mid-save can't corrupt the dirty-
+    state invariant (every change either fully lands or none of it
+    does).
+
+    Body invariants (Pydantic-validated at 422):
+      * ``horizons`` non-empty
+      * exactly one ``is_default=true``
+      * at most one ``type='custom'``
+      * unique names within the payload
+      * unique ids within the payload (no id repeats)
+
+    Additional server-side checks (422):
+      * every ``id`` belongs to this location
+      * no id duplicates across payload vs current-server state after
+        applying creates/updates (guaranteed by the Pydantic "unique
+        ids" rule + the fact that new rows don't have ids)
+
+    The server enforces the "exactly one default" partial unique index
+    by demoting every row to ``is_default=0`` first and promoting the
+    chosen default last in the same transaction. The at-most-one-
+    custom partial unique is protected by validating ≤1 custom in the
+    payload and applying deletes before inserts so a replace-custom
+    pattern (delete old + create new) doesn't momentarily have two
+    custom rows.
+    """
+    async with get_db() as conn:
+        await _fetch_location(conn, location_id, allow_inactive=False)
+
+        # Snapshot the current server state so we can compute the diff.
+        current_rows = await (
+            await conn.execute(
+                "SELECT id FROM location_horizon WHERE location_id = ?",
+                (location_id,),
+            )
+        ).fetchall()
+        current_ids: set[int] = {int(r["id"]) for r in current_rows}
+
+        # Validate every supplied id belongs to this location.
+        payload_existing_ids = {h.id for h in body.horizons if h.id is not None}
+        stray = payload_existing_ids - current_ids
+        if stray:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"horizons: id(s) {sorted(stray)} do not belong to location {location_id}"),
+            )
+
+        # Diff: server rows missing from the payload → DELETE.
+        to_delete = current_ids - payload_existing_ids
+
+        try:
+            # 1. Demote every current default. Prevents the partial unique
+            #    index from firing when a new row is later inserted with
+            #    is_default=1 while an old default is still in place.
+            await conn.execute(
+                "UPDATE location_horizon SET is_default = 0 "
+                "WHERE location_id = ? AND is_default = 1",
+                (location_id,),
+            )
+
+            # 2. Deletes first. Handling this before inserts means a
+            #    "replace custom" pattern (delete old custom + insert new
+            #    custom in one PUT) doesn't momentarily violate the
+            #    idx_location_horizon_one_custom partial unique index.
+            #    Points cascade via FK ON DELETE CASCADE.
+            for hid in to_delete:
+                await conn.execute("DELETE FROM location_horizon WHERE id = ?", (hid,))
+
+            # 3. Updates on existing rows.
+            id_to_new_horizon: dict[int, int] = {}
+            for h in body.horizons:
+                if h.id is None:
+                    continue
+                source = h.source if h.type == "custom" else None
+                source_filename = h.source_filename if h.type == "custom" else None
+                with integrity_guard(conflict_detail="Horizon name conflict on replace."):
+                    await conn.execute(
+                        """
+                        UPDATE location_horizon SET
+                            name = ?, type = ?, flat_altitude_deg = ?,
+                            source = ?, source_filename = ?, notes = ?,
+                            is_default = 0,
+                            updated_at = datetime('now')
+                        WHERE id = ?
+                        """,
+                        (
+                            h.name.strip(),
+                            h.type,
+                            h.flat_altitude_deg,
+                            source,
+                            source_filename,
+                            h.notes,
+                            h.id,
+                        ),
+                    )
+                if h.type == "custom":
+                    await _write_points(
+                        conn, h.id, [(p.azimuth_deg, p.altitude_deg) for p in h.points or []]
+                    )
+
+            # 4. Inserts for new rows (no id in payload).
+            for h in body.horizons:
+                if h.id is not None:
+                    continue
+                source = h.source if h.type == "custom" else None
+                source_filename = h.source_filename if h.type == "custom" else None
+                with integrity_guard(
+                    conflict_detail=(
+                        "Horizon name conflict, or duplicate custom horizon in replace set."
+                    )
+                ):
+                    cursor = await conn.execute(
+                        """
+                        INSERT INTO location_horizon (
+                            location_id, name, type, flat_altitude_deg,
+                            source, source_filename, notes, is_default
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                        """,
+                        (
+                            location_id,
+                            h.name.strip(),
+                            h.type,
+                            h.flat_altitude_deg,
+                            source,
+                            source_filename,
+                            h.notes,
+                        ),
+                    )
+                new_id = cursor.lastrowid
+                if new_id is None:
+                    raise RuntimeError("horizon INSERT returned no row id")
+                # Remember the mapping if the caller wants this new row
+                # to be the default — we'll promote it below by position.
+                idx = body.horizons.index(h)
+                id_to_new_horizon[idx] = new_id
+                if h.type == "custom" and h.points:
+                    await _write_points(
+                        conn, new_id, [(p.azimuth_deg, p.altitude_deg) for p in h.points]
+                    )
+
+            # 5. Promote the single default. Exactly one of the payload
+            #    rows has is_default=true (Pydantic validator ensures);
+            #    look it up and PATCH is_default=1 — previous default
+            #    already demoted in step 1.
+            default_idx = next(i for i, h in enumerate(body.horizons) if h.is_default)
+            default_row = body.horizons[default_idx]
+            resolved_default_id = (
+                default_row.id if default_row.id is not None else id_to_new_horizon[default_idx]
+            )
+            await conn.execute(
+                "UPDATE location_horizon SET is_default = 1, updated_at = datetime('now') "
+                "WHERE id = ?",
+                (resolved_default_id,),
+            )
+
+            await conn.commit()
+        except HTTPException:
+            await conn.rollback()
+            raise
+        except Exception:
+            await conn.rollback()
+            raise
+
+        # Return the fresh server state.
         rows = await (
             await conn.execute(
                 """

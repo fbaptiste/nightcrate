@@ -11,6 +11,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from timezonefinder import TimezoneFinder
 
 from nightcrate.api._common import bool_fields, integrity_guard, row_to_dict
+from nightcrate.api.horizon_models import HorizonCreate
 from nightcrate.db.session import get_db
 from nightcrate.services.coordinate_format import format_latitude, format_longitude
 from nightcrate.services.http_client import get as http_get
@@ -136,13 +137,45 @@ class _LocationBase(BaseModel):
 
 
 class LocationCreate(_LocationBase):
-    """Required: name, latitude, longitude, timezone. Everything else optional."""
+    """Required: name, latitude, longitude, timezone. Everything else optional.
+
+    ``horizons`` is optional — when provided (non-empty), the server
+    creates the location + all these horizons in a single transaction
+    AND skips the usual ``0° flat`` default auto-seed. Exactly one
+    entry must carry ``is_default=true`` and at most one may be
+    ``type='custom'`` (same product invariants as the per-horizon
+    endpoints). When ``horizons`` is absent or ``None`` the legacy
+    auto-seed behavior applies. An empty list is rejected (422) so the
+    "every location has ≥1 horizon" invariant is never violated.
+    """
 
     name: str
     latitude: float
     longitude: float
     timezone: str
     is_default: bool = False
+    horizons: list[HorizonCreate] | None = None
+
+    @model_validator(mode="after")
+    def _validate_horizons(self) -> LocationCreate:
+        if self.horizons is None:
+            return self
+        if not self.horizons:
+            raise ValueError(
+                "horizons: provide at least one horizon or omit the field to auto-seed a 0° default"
+            )
+        default_count = sum(1 for h in self.horizons if h.is_default)
+        if default_count != 1:
+            raise ValueError(
+                f"horizons: exactly one entry must have is_default=true (got {default_count})"
+            )
+        custom_count = sum(1 for h in self.horizons if h.type == "custom")
+        if custom_count > 1:
+            raise ValueError("horizons: at most one 'custom' horizon per location")
+        names = [h.name for h in self.horizons]
+        if len(names) != len(set(names)):
+            raise ValueError("horizons: names must be unique within the list")
+        return self
 
 
 class LocationUpdate(_LocationBase):
@@ -367,17 +400,52 @@ async def create_location(body: LocationCreate):
         if make_default:
             await _ensure_single_default(conn, new_id)
 
-        # Auto-seed a 0° artificial horizon as this location's default.
-        # Every location is guaranteed to have ≥1 horizon so the planner
-        # never has to branch on "location lacks a horizon".
-        await conn.execute(
-            """
-            INSERT INTO location_horizon (
-                location_id, name, type, flat_altitude_deg, is_default
-            ) VALUES (?, '0° flat', 'artificial', 0, 1)
-            """,
-            (new_id,),
-        )
+        if body.horizons is None:
+            # Legacy behaviour — auto-seed a 0° artificial horizon as
+            # this location's default. Every location is guaranteed to
+            # have ≥1 horizon so the planner never has to branch on
+            # "location lacks a horizon".
+            await conn.execute(
+                """
+                INSERT INTO location_horizon (
+                    location_id, name, type, flat_altitude_deg, is_default
+                ) VALUES (?, '0° flat', 'artificial', 0, 1)
+                """,
+                (new_id,),
+            )
+        else:
+            # Atomic create — user supplied a pre-validated horizon list
+            # (exactly-one-default, ≤1 custom, unique names). Apply each
+            # in the same transaction so the invariant holds at commit.
+            # Points for custom horizons are inserted via executemany.
+            for seed in body.horizons:
+                source = seed.source if seed.type == "custom" else None
+                source_filename = seed.source_filename if seed.type == "custom" else None
+                cursor_h = await conn.execute(
+                    """
+                    INSERT INTO location_horizon (
+                        location_id, name, type, flat_altitude_deg,
+                        source, source_filename, notes, is_default
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_id,
+                        seed.name.strip(),
+                        seed.type,
+                        seed.flat_altitude_deg,
+                        source,
+                        source_filename,
+                        seed.notes,
+                        1 if seed.is_default else 0,
+                    ),
+                )
+                horizon_id = cursor_h.lastrowid
+                if seed.type == "custom" and seed.points:
+                    await conn.executemany(
+                        "INSERT INTO location_horizon_point "
+                        "(horizon_id, azimuth_deg, altitude_deg) VALUES (?, ?, ?)",
+                        [(horizon_id, p.azimuth_deg, p.altitude_deg) for p in seed.points],
+                    )
 
         await conn.commit()
 

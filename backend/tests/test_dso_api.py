@@ -375,3 +375,76 @@ async def test_detail_includes_distance_and_augmentation_flags(client, dso_loade
     assert detail["distance_pc"] == pytest.approx(412.0, abs=1e-3)
     assert detail["distance_method"] == "curated"
     assert detail["common_name_augmented"] is True
+
+
+# ── External references ──────────────────────────────────────────────────────
+
+
+MINI_WIKIDATA = Path(__file__).parent / "fixtures" / "catalogs" / "wikidata"
+
+
+@pytest.fixture
+async def dso_loaded_with_wikidata(tmp_path):
+    """Stage OpenNGC + Wikidata TSV + reload so detail responses carry
+    external_refs."""
+    openngc_dir = tmp_path / "catalogs" / "openngc"
+    openngc_dir.mkdir(parents=True)
+    shutil.copy(FIXTURE_DIR / "mini_NGC.csv", openngc_dir / "NGC.csv")
+    shutil.copy(FIXTURE_DIR / "mini_addendum.csv", openngc_dir / "addendum.csv")
+    shutil.copy(FIXTURE_DIR / "version.json", openngc_dir / "version.json")
+    wd_dir = tmp_path / "catalogs" / "wikidata"
+    wd_dir.mkdir(parents=True)
+    shutil.copy(MINI_WIKIDATA / "mini_wikidata.tsv", wd_dir / "dso_external_refs.tsv")
+
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    load_catalogs(conn, tmp_path / "catalogs")
+    conn.close()
+
+
+@pytest.mark.anyio
+async def test_detail_includes_external_refs_with_wikipedia_first(client, dso_loaded_with_wikidata):
+    """M42 has both a Wikidata and a Wikipedia ref — Wikipedia must appear
+    before Wikidata in the ordered list."""
+    search = (await client.get("/api/dso?q=M42")).json()
+    m42 = next(i for i in search["items"] if i["primary_designation"] == "M 42")
+    detail = (await client.get(f"/api/dso/{m42['id']}")).json()
+    refs = detail["external_refs"]
+    assert len(refs) == 2
+    assert refs[0]["provider"] == "wikipedia"
+    assert refs[0]["language"] == "en"
+    assert refs[0]["identifier"] == "Orion_Nebula"
+    assert refs[0]["url"] == "https://en.wikipedia.org/wiki/Orion_Nebula"
+    assert refs[0]["label"] == "Orion Nebula"
+    assert refs[1]["provider"] == "wikidata"
+    assert refs[1]["language"] is None
+    assert refs[1]["identifier"] == "Q13903"
+
+
+@pytest.mark.anyio
+async def test_detail_returns_empty_external_refs_for_unmatched_dso(client, dso_loaded):
+    """When no Wikidata data is loaded, every DSO detail carries an empty array."""
+    search = (await client.get("/api/dso?q=M42")).json()
+    m42 = next(i for i in search["items"] if i["primary_designation"] == "M 42")
+    detail = (await client.get(f"/api/dso/{m42['id']}")).json()
+    assert detail["external_refs"] == []
+
+
+@pytest.mark.anyio
+async def test_lookup_endpoint_includes_external_refs(client, dso_loaded_with_wikidata):
+    """The /lookup endpoint shares _fetch_detail — verify the shape is identical."""
+    detail = (await client.get("/api/dso/lookup?q=M42")).json()
+    assert detail is not None
+    assert "external_refs" in detail
+    providers = [r["provider"] for r in detail["external_refs"]]
+    assert providers == ["wikipedia", "wikidata"]
+
+
+@pytest.mark.anyio
+async def test_list_response_does_not_include_external_refs(client, dso_loaded_with_wikidata):
+    """External refs are detail-only; list payloads stay compact."""
+    response = (await client.get("/api/dso?q=M42")).json()
+    item = response["items"][0]
+    assert "external_refs" not in item

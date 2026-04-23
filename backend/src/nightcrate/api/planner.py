@@ -40,6 +40,7 @@ from nightcrate.api.planner_models import (
     DarkWindowOut,
     NearbyDsoItem,
     NearbyDsosResponse,
+    PlannerDesignation,
     PlannerHorizonSummary,
     PlannerLocationSummary,
     PlannerRigSummary,
@@ -816,6 +817,70 @@ async def list_targets(
 
     total = len(items)
     page = items[offset : offset + limit]
+
+    # Batch-load the Wikipedia ref (the one user-facing chip the card
+    # renders) + the full designations list for the ≤``limit`` items on
+    # this page — run AFTER pagination so the queries are bounded
+    # regardless of total catalog size. Wikidata QIDs stay detail-only
+    # per the product spec. Multi-match DSOs may have multiple wikipedia
+    # rows per dso_id (Stephan's Quintet generalised); the ORDER BY +
+    # first-wins loop picks a deterministic one.
+    page_dso_ids = [item.dso_id for item, _ in page]
+    if page_dso_ids:
+        placeholders = ",".join("?" * len(page_dso_ids))
+        async with get_db() as conn:
+            # Planner card shows an English-language Wikipedia chip. The
+            # ``language = 'en'`` filter is explicit defence against a
+            # future CSV override that stages a non-``en`` row earlier
+            # in insertion order and would otherwise win the
+            # ``setdefault`` tiebreak below.
+            wikipedia_rows = await conn.execute(
+                f"""
+                SELECT dso_id, url, label
+                FROM dso_external_ref
+                WHERE provider = 'wikipedia'
+                  AND language = 'en'
+                  AND dso_id IN ({placeholders})
+                ORDER BY dso_id, id
+                """,  # noqa: S608  # nosec B608 — placeholders built only from ``?``
+                page_dso_ids,
+            )
+            fetched_wiki = await wikipedia_rows.fetchall()
+
+            designation_rows = await conn.execute(
+                f"""
+                SELECT dso_id, catalog, identifier, display_form, is_primary
+                FROM dso_designation
+                WHERE dso_id IN ({placeholders})
+                ORDER BY dso_id, is_primary DESC, catalog, identifier
+                """,  # noqa: S608  # nosec B608 — placeholders built only from ``?``
+                page_dso_ids,
+            )
+            fetched_designations = await designation_rows.fetchall()
+
+        wikipedia_by_dso: dict[int, tuple[str | None, str | None]] = {}
+        for row in fetched_wiki:
+            dso_id_key = int(row["dso_id"])
+            wikipedia_by_dso.setdefault(dso_id_key, (row["url"], row["label"]))
+
+        designations_by_dso: dict[int, list[PlannerDesignation]] = {}
+        for row in fetched_designations:
+            dso_id_key = int(row["dso_id"])
+            designations_by_dso.setdefault(dso_id_key, []).append(
+                PlannerDesignation(
+                    catalog=row["catalog"],
+                    identifier=row["identifier"],
+                    display_form=row["display_form"],
+                    is_primary=bool(row["is_primary"]),
+                )
+            )
+
+        for item, _vis in page:
+            if item.dso_id in wikipedia_by_dso:
+                url, label = wikipedia_by_dso[item.dso_id]
+                item.wikipedia_url = url
+                item.wikipedia_label = label
+            item.designations = designations_by_dso.get(item.dso_id, [])
 
     return PlannerTargetsResponse(
         location=location_summary,

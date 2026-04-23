@@ -34,6 +34,13 @@ class DarkWindowOut(BaseModel):
     hours: float
 
 
+class PlannerDesignation(BaseModel):
+    catalog: str
+    identifier: str
+    display_form: str
+    is_primary: bool
+
+
 class PlannerTargetItem(BaseModel):
     dso_id: int
     primary_designation: str
@@ -46,6 +53,11 @@ class PlannerTargetItem(BaseModel):
     min_axis_arcmin: float | None
     mag_v: float | None
     distance_pc: float | None
+    # Full catalog cross-references surfaced on the planner card. The
+    # primary is already in ``primary_designation`` but carried here
+    # too so the frontend doesn't have to reason about the gap. Sorted
+    # primary-first, then alphabetically by ``display_form``.
+    designations: list[PlannerDesignation] = []
     # Visibility fields — populated when the planner is in
     # "tonight only" mode. In the "anytime" mode (restrict_tonight=False)
     # these are ``None`` because no visibility computation runs — the
@@ -62,6 +74,12 @@ class PlannerTargetItem(BaseModel):
     # "up" / "rising" / "set" relative to the request time. ``None``
     # in Anytime mode (no location, no now-anchored question).
     now_status: str | None = None
+    # Wikipedia article surfaced from ``dso_external_ref`` for chip
+    # rendering on the planner card. Full external-ref list (incl.
+    # Wikidata QID) stays on the DSO-detail endpoint — this is the
+    # minimal list-payload carve-out for the one chip the card shows.
+    wikipedia_url: str | None = None
+    wikipedia_label: str | None = None
 
 
 class PlannerTargetsResponse(BaseModel):

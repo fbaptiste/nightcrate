@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
-from nightcrate.core.app_config import APP_DIR
+from nightcrate.core import app_config
 
 _VERSION_JSON_ERRS: tuple[type[BaseException], ...] = (
     json.JSONDecodeError,
@@ -42,11 +42,21 @@ CDS_CITATION = (
     "CDS, Strasbourg, France (DOI: 10.26093/cds/vizier)."
 )
 
+WIKIDATA_SOURCE_URL = "https://query.wikidata.org/sparql"
+WIKIDATA_LICENSE = "CC0-1.0"
+WIKIDATA_CITATION = (
+    "Wikidata contributors. Wikidata: the free knowledge base. "
+    "Retrieved via the Wikidata Query Service (query.wikidata.org). "
+    "Data licensed under CC0 1.0 Universal (Public Domain Dedication). "
+    "Wikipedia article links are provided via Wikidata sitelinks; "
+    "article content is not bundled (CC BY-SA 4.0 applies to the linked content)."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CatalogSource:
     source_id: str
-    category: str  # 'openngc' | 'vizier' | 'nightcrate'
+    category: str  # 'openngc' | 'vizier' | 'nightcrate' | 'wikidata'
     display_name: str
     file_path: Path
     version: str | None
@@ -55,7 +65,8 @@ class CatalogSource:
     attribution: str
     # Parser strategy identifier — dispatches to the right loader in
     # loader.py. One of: 'openngc', 'sharpless', 'barnard', 'mgc50',
-    # 'augment', 'sharpless_crossref', 'barnard_crossref'.
+    # 'augment', 'sharpless_crossref', 'barnard_crossref',
+    # 'wikidata_external_refs', 'external_refs'.
     parser: str
 
 
@@ -241,6 +252,45 @@ def _nightcrate_sources() -> list[CatalogSource]:
             ),
             parser="barnard_crossref",
         ),
+        CatalogSource(
+            source_id="nightcrate_external_refs",
+            category="nightcrate",
+            display_name="NightCrate external refs (editorial overrides)",
+            file_path=nightcrate_dir / "dso_external_refs.csv",
+            version=None,
+            source_url=None,
+            license="MIT",
+            attribution=(
+                "NightCrate editorial overrides for DSO external references "
+                "(Wikipedia/Wikidata). MIT licensed."
+            ),
+            parser="external_refs",
+        ),
+    ]
+
+
+def _wikidata_sources(catalogs_root: Path) -> list[CatalogSource]:
+    """Wikidata SPARQL-fetched external-refs source.
+
+    Category is ``'wikidata'`` (distinct from ``'vizier'`` — this is
+    a SPARQL-sourced knowledge graph, not a VizieR astronomical catalog).
+    """
+    from nightcrate.catalog_loader import wikidata
+
+    wikidata_dir = catalogs_root / "wikidata"
+    info = wikidata.read_installed_version(catalogs_root)
+    return [
+        CatalogSource(
+            source_id="wikidata_external_refs",
+            category="wikidata",
+            display_name="Wikidata (external references)",
+            file_path=wikidata_dir / "dso_external_refs.tsv",
+            version=info.get("fetched_at"),
+            source_url=WIKIDATA_SOURCE_URL,
+            license=WIKIDATA_LICENSE,
+            attribution=WIKIDATA_CITATION,
+            parser="wikidata_external_refs",
+        ),
     ]
 
 
@@ -250,10 +300,18 @@ def get_sources(catalogs_root: Path) -> list[CatalogSource]:
         *_openngc_sources(catalogs_root),
         *_vizier_sources(catalogs_root),
         *_github_sources(catalogs_root),
+        *_wikidata_sources(catalogs_root),
         *_nightcrate_sources(),
     ]
 
 
 def user_catalogs_root() -> Path:
-    """User-writable catalogs directory under the OS app-data folder."""
-    return APP_DIR / "catalogs"
+    """User-writable catalogs directory under the OS app-data folder.
+
+    Resolves ``APP_DIR`` dynamically from ``nightcrate.core.app_config``
+    on every call so test fixtures that monkey-patch
+    ``app_config.APP_DIR`` take effect immediately — even if this module
+    was imported before the patch ran (the import-by-name pattern would
+    otherwise freeze the reference to the real OS path at import time).
+    """
+    return app_config.APP_DIR / "catalogs"

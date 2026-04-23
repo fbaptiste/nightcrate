@@ -11,12 +11,14 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import FormControl from "@mui/material/FormControl";
 import IconButton from "@mui/material/IconButton";
+import Link from "@mui/material/Link";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import {
   fetchAnnualHours,
   fetchSkyTrack,
@@ -59,15 +61,6 @@ interface Props {
    *  dialog stays open; rig / location selections persist. */
   onSelectDso?: (dsoId: number) => void;
   onClose: () => void;
-}
-
-function coverageNarrative(pct: number): string {
-  if (pct < 5) return `fills only ~${pct.toFixed(0)}% of the frame — lost in the field`;
-  if (pct < 15) return `covers ${pct.toFixed(0)}% of the frame — tight crop recommended`;
-  if (pct < 50) return `fits comfortably at ${pct.toFixed(0)}%`;
-  if (pct <= 90) return `fills the frame nicely at ${pct.toFixed(0)}%`;
-  if (pct < 150) return `covers ${pct.toFixed(0)}% of the frame — will be cropped`;
-  return `far larger than the frame (${pct.toFixed(0)}%) — mosaic needed`;
 }
 
 /** Null-safe variant — renders ``—`` for null/invalid ISO strings.
@@ -270,7 +263,6 @@ export default function PlannerDetailPanel({
         return [Math.max(w, h), Math.min(w, h)];
       })()
     : null;
-  const rigName = previewRig?.name ?? null;
 
   const coveragePct =
     rigFov && dso?.maj_axis_arcmin
@@ -287,6 +279,9 @@ export default function PlannerDetailPanel({
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle sx={{ display: "flex", alignItems: "flex-start", gap: 2, py: 1.25 }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
+          {/* Title row: primary designation + constellation. Distance
+              moved to the fact grid below so the header stays focused
+              on identifiers (name + cross-refs + type). */}
           <Stack direction="row" gap={1.5} alignItems="baseline" flexWrap="wrap">
             <Typography variant="h6">{dso?.primary_designation ?? "…"}</Typography>
             {dso?.constellation && (
@@ -295,21 +290,27 @@ export default function PlannerDetailPanel({
               </Typography>
             )}
           </Stack>
+
           {dso?.common_name && (
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
               {dso.common_name}
             </Typography>
           )}
-          {/* Type + distance chips — the two facts most users want at a
-              glance. Type uses the friendly ``displayDsoType`` form
-              (e.g. "Emission Nebula" not "EmN"); distance shows both
-              parsecs and light-years so beginners have an intuitive
-              second unit. Placed right under the common-name (or
-              designation when no common name) so the header reads
-              name-first, facts-second. */}
-          {(dso?.obj_type || distance) && (
-            <Stack direction="row" gap={0.75} flexWrap="wrap" sx={{ mt: 0.75 }}>
-              {dso?.obj_type && (
+
+          {/* Type pill + alternate catalog designations — one line
+              describing "what kind of object, and what else it's
+              called". Primary designation is already the title, so
+              only alternates are listed here (no redundant M 42 chip
+              when "M 42" is the heading). */}
+          {dso && (dso.obj_type || dso.designations.length > 0) && (
+            <Stack
+              direction="row"
+              flexWrap="wrap"
+              gap={0.75}
+              alignItems="center"
+              sx={{ mt: 0.75 }}
+            >
+              {dso.obj_type && (
                 <Chip
                   label={displayDsoType(dso.obj_type)}
                   size="small"
@@ -320,15 +321,62 @@ export default function PlannerDetailPanel({
                   }}
                 />
               )}
-              {distance && (
-                <Chip
-                  label={`${distance.primary} · ${distance.secondary}`}
-                  size="small"
-                  variant="outlined"
-                />
-              )}
+              {dso.designations
+                .filter((d) => !d.is_primary)
+                .map((d) => (
+                  <Chip
+                    key={`${d.catalog}-${d.identifier}`}
+                    label={d.display_form}
+                    size="small"
+                    variant="outlined"
+                  />
+                ))}
             </Stack>
           )}
+
+          {/* Wikipedia link(s) — theme primary colour + underline +
+              open-in-new icon. Deliberately NOT a chip: when sitting
+              next to non-clickable designation chips, chip styling
+              made the external link look indistinguishable from the
+              cross-references. The link shape makes the "opens in a
+              new tab" affordance explicit. ``stopPropagation`` keeps
+              clicks from bubbling to any future ancestor handler. */}
+          {dso &&
+            dso.external_refs.some((ref) => ref.provider === "wikipedia") && (
+              <Stack
+                direction="row"
+                gap={1.5}
+                flexWrap="wrap"
+                alignItems="center"
+                sx={{ mt: 0.75 }}
+              >
+                {dso.external_refs
+                  .filter((ref) => ref.provider === "wikipedia")
+                  .map((ref) => (
+                    <Link
+                      key={`wikipedia-${ref.identifier}`}
+                      href={ref.url ?? undefined}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      underline="hover"
+                      aria-label={`Open Wikipedia article: ${
+                        ref.label ?? ref.identifier
+                      } (opens in new tab)`}
+                      sx={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        fontSize: "0.85rem",
+                        fontWeight: 500,
+                      }}
+                    >
+                      Wikipedia: {ref.label ?? ref.identifier}
+                      <OpenInNewIcon sx={{ fontSize: 14 }} />
+                    </Link>
+                  ))}
+              </Stack>
+            )}
         </Box>
         <Stack
           direction="column"
@@ -477,94 +525,111 @@ export default function PlannerDetailPanel({
           </Typography>
         )}
 
-        {/* Compact fact grid — one line per fact; auto-fit packs as many
-            columns as the dialog width allows. */}
-        <Box
-          sx={{
-            mt: 1.5,
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            columnGap: 2,
-            rowGap: 0.25,
-          }}
-        >
-          <Fact
-            label="Mag V"
-            value={dso?.mag_v != null ? dso.mag_v.toFixed(1) : "—"}
-          />
-          <Fact
-            label="Mag B"
-            value={dso?.mag_b != null ? dso.mag_b.toFixed(1) : "—"}
-          />
-          <Fact
-            label="Size"
-            value={
-              dso?.maj_axis_arcmin
-                ? `${dso.maj_axis_arcmin.toFixed(1)}' × ${(
-                    dso.min_axis_arcmin ?? dso.maj_axis_arcmin
-                  ).toFixed(1)}'`
-                : "—"
-            }
-          />
-          <Fact
-            label="Hours visible"
-            value={
-              target?.hours_visible != null
-                ? `${target.hours_visible.toFixed(1)} h`
-                : "—"
-            }
-          />
-          <Fact
-            label="Max alt. in dark"
-            help={
-              "Highest altitude the target reaches during astronomical darkness (sun below −18°). " +
-              "If the target transits during twilight or daylight, the true transit altitude may be " +
-              "higher — see the Meridian row for that."
-            }
-            value={
-              target?.max_altitude_deg != null && target.peak_time_utc != null
-                ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocalTime(
-                    target.peak_time_utc,
-                    tz,
-                  )}`
-                : "—"
-            }
-          />
-          <Fact
-            label="Meridian"
-            value={
-              target?.altitude_at_transit_deg != null &&
-              target.transit_time_utc != null
-                ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocalTime(
-                    target.transit_time_utc,
-                    tz,
-                  )}`
-                : "—"
-            }
-          />
-          <Fact
-            label="Moon separation"
-            value={
-              target?.min_moon_separation_deg != null
-                ? `${target.min_moon_separation_deg.toFixed(0)}°`
-                : "—"
-            }
-          />
-          {rigFov && (
+        {/* Designation pills + Wikipedia chip now live in the header
+            next to the type/distance chips (search this file for
+            ``dso.designations.map``). */}
+
+        {/* Fact grid — three explicit rows with semantic grouping:
+              Row 1: physical/imaging-framing facts (distance, size,
+                     FOV coverage when a rig is selected).
+              Row 2: tonight-visibility facts (hours, max altitude,
+                     meridian transit, moon separation).
+              Row 3: photometry (Mag V, Mag B). Low priority, on its
+                     own line so it doesn't crowd the more-often-
+                     consulted rows above.
+
+            Flex + wrap handles narrow screens; each row's items pack
+            left-aligned with a consistent gap. The FOV coverage cell
+            is rendered unconditionally so row 1 keeps three columns
+            whether or not a rig is selected (shows "—" when absent).
+            The "This object fits comfortably…" narrative that used
+            to live here was removed — users can see the framing in
+            the simulator above; the sentence duplicated that signal. */}
+        <Stack spacing={0.75} sx={{ mt: 1.5 }}>
+          <Stack direction="row" gap={3} flexWrap="wrap">
+            <Fact
+              label="Distance"
+              value={distance ? `${distance.primary} · ${distance.secondary}` : "—"}
+            />
+            <Fact
+              label="Size"
+              value={
+                dso?.maj_axis_arcmin
+                  ? `${dso.maj_axis_arcmin.toFixed(1)}' × ${(
+                      dso.min_axis_arcmin ?? dso.maj_axis_arcmin
+                    ).toFixed(1)}'`
+                  : "—"
+              }
+            />
             <Fact
               label="FOV coverage"
               value={
-                coveragePct != null ? `${coveragePct.toFixed(0)}%` : "—"
+                rigFov && coveragePct != null
+                  ? `${coveragePct.toFixed(0)}%`
+                  : "—"
               }
             />
-          )}
-        </Box>
+          </Stack>
+          <Stack direction="row" gap={3} flexWrap="wrap">
+            <Fact
+              label="Hours visible"
+              value={
+                target?.hours_visible != null
+                  ? `${target.hours_visible.toFixed(1)} h`
+                  : "—"
+              }
+            />
+            <Fact
+              label="Max alt. in dark"
+              help={
+                "Highest altitude the target reaches during astronomical darkness (sun below −18°). " +
+                "If the target transits during twilight or daylight, the true transit altitude may be " +
+                "higher — see the Meridian row for that."
+              }
+              value={
+                target?.max_altitude_deg != null && target.peak_time_utc != null
+                  ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocalTime(
+                      target.peak_time_utc,
+                      tz,
+                    )}`
+                  : "—"
+              }
+            />
+            <Fact
+              label="Meridian"
+              value={
+                target?.altitude_at_transit_deg != null &&
+                target.transit_time_utc != null
+                  ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocalTime(
+                      target.transit_time_utc,
+                      tz,
+                    )}`
+                  : "—"
+              }
+            />
+            <Fact
+              label="Moon separation"
+              value={
+                target?.min_moon_separation_deg != null
+                  ? `${target.min_moon_separation_deg.toFixed(0)}°`
+                  : "—"
+              }
+            />
+          </Stack>
+          <Stack direction="row" gap={3} flexWrap="wrap">
+            <Fact
+              label="Mag V"
+              value={dso?.mag_v != null ? dso.mag_v.toFixed(1) : "—"}
+            />
+            <Fact
+              label="Mag B"
+              value={dso?.mag_b != null ? dso.mag_b.toFixed(1) : "—"}
+            />
+          </Stack>
+        </Stack>
 
-        {coveragePct != null && rigName && (
-          <Typography variant="body2" sx={{ mt: 1.5 }}>
-            This object {coverageNarrative(coveragePct)} in your <strong>{rigName}</strong> rig.
-          </Typography>
-        )}
+        {/* External-reference chip now lives in the header next to the
+            designation pills. */}
 
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" fontWeight={600}>

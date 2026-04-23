@@ -424,3 +424,153 @@ async def test_geo_timezone_endpoint_ocean(client):
     assert resp.status_code == 200
     # Ocean coords may return Etc/GMT+X — just verify it's non-null
     assert resp.json()["geo_timezone"] is not None
+
+
+# ── Atomic create with horizons (v0.20.0 Option B) ──────────────────────────
+
+
+@pytest.mark.anyio
+async def test_create_location_auto_seeds_default_horizon_when_horizons_absent(client):
+    """Legacy behavior — omit ``horizons`` → backend auto-seeds a 0° flat default."""
+    loc = _make_location(name="NoSeed", latitude=33.0, longitude=-111.0, timezone="America/Phoenix")
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 201
+    loc_id = resp.json()["id"]
+
+    hz = (await client.get(f"/api/locations/{loc_id}/horizons")).json()
+    assert len(hz) == 1
+    assert hz[0]["type"] == "artificial"
+    assert hz[0]["flat_altitude_deg"] == 0.0
+    assert hz[0]["is_default"] is True
+
+
+@pytest.mark.anyio
+async def test_create_location_with_horizons_skips_auto_seed(client):
+    """When ``horizons`` is provided, the server uses them verbatim and does
+    NOT also add a 0° auto-seed."""
+    loc = _make_location(
+        name="WithHorizons",
+        latitude=33.0,
+        longitude=-111.0,
+        timezone="America/Phoenix",
+    )
+    loc["horizons"] = [
+        {"name": "15° flat", "type": "artificial", "flat_altitude_deg": 15.0, "is_default": True},
+        {"name": "30° flat", "type": "artificial", "flat_altitude_deg": 30.0, "is_default": False},
+    ]
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 201
+    loc_id = resp.json()["id"]
+
+    hz = (await client.get(f"/api/locations/{loc_id}/horizons")).json()
+    assert len(hz) == 2
+    names = sorted(h["name"] for h in hz)
+    assert names == ["15° flat", "30° flat"]
+    # No 0° auto-seed.
+    assert not any(h["flat_altitude_deg"] == 0.0 for h in hz)
+    # Exactly one default, on the 15° horizon.
+    defaults = [h for h in hz if h["is_default"]]
+    assert len(defaults) == 1
+    assert defaults[0]["name"] == "15° flat"
+
+
+@pytest.mark.anyio
+async def test_create_location_with_custom_horizon_atomic(client):
+    """Custom horizon seeds with points are inserted in the same
+    transaction as the location."""
+    loc = _make_location(
+        name="Custom",
+        latitude=33.0,
+        longitude=-111.0,
+        timezone="America/Phoenix",
+    )
+    loc["horizons"] = [
+        {
+            "name": "My rooftop",
+            "type": "custom",
+            "points": [
+                {"azimuth_deg": 0, "altitude_deg": 5},
+                {"azimuth_deg": 90, "altitude_deg": 10},
+                {"azimuth_deg": 180, "altitude_deg": 8},
+                {"azimuth_deg": 270, "altitude_deg": 12},
+            ],
+            "source": "drawn",
+            "is_default": True,
+        }
+    ]
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 201
+    loc_id = resp.json()["id"]
+
+    hz = (await client.get(f"/api/locations/{loc_id}/horizons")).json()
+    assert len(hz) == 1
+    assert hz[0]["type"] == "custom"
+    assert hz[0]["is_default"] is True
+    assert len(hz[0]["points"]) == 4
+
+
+@pytest.mark.anyio
+async def test_create_location_rejects_empty_horizons_list(client):
+    """Empty list is 422 — the "≥1 horizon per location" invariant would
+    be violated. Either omit the field (to get auto-seed) or provide ≥1."""
+    loc = _make_location(
+        name="EmptyList", latitude=33.0, longitude=-111.0, timezone="America/Phoenix"
+    )
+    loc["horizons"] = []
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_create_location_rejects_multiple_defaults(client):
+    loc = _make_location(
+        name="TwoDefaults", latitude=33.0, longitude=-111.0, timezone="America/Phoenix"
+    )
+    loc["horizons"] = [
+        {"name": "a", "type": "artificial", "flat_altitude_deg": 10.0, "is_default": True},
+        {"name": "b", "type": "artificial", "flat_altitude_deg": 20.0, "is_default": True},
+    ]
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_create_location_rejects_no_default(client):
+    loc = _make_location(
+        name="NoDefault", latitude=33.0, longitude=-111.0, timezone="America/Phoenix"
+    )
+    loc["horizons"] = [
+        {"name": "a", "type": "artificial", "flat_altitude_deg": 10.0, "is_default": False},
+    ]
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_create_location_rejects_two_customs(client):
+    loc = _make_location(
+        name="TwoCustoms", latitude=33.0, longitude=-111.0, timezone="America/Phoenix"
+    )
+    points = [
+        {"azimuth_deg": 0, "altitude_deg": 5},
+        {"azimuth_deg": 180, "altitude_deg": 8},
+    ]
+    loc["horizons"] = [
+        {"name": "first", "type": "custom", "points": points, "is_default": True},
+        {"name": "second", "type": "custom", "points": points, "is_default": False},
+    ]
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_create_location_rejects_duplicate_horizon_names(client):
+    loc = _make_location(
+        name="DupNames", latitude=33.0, longitude=-111.0, timezone="America/Phoenix"
+    )
+    loc["horizons"] = [
+        {"name": "a", "type": "artificial", "flat_altitude_deg": 10.0, "is_default": True},
+        {"name": "a", "type": "artificial", "flat_altitude_deg": 20.0, "is_default": False},
+    ]
+    resp = await client.post("/api/locations", json=loc)
+    assert resp.status_code == 422

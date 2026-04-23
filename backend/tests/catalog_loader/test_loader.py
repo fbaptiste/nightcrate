@@ -82,10 +82,11 @@ def test_end_to_end_load_mini_fixture(db: sqlite3.Connection, catalogs_root: Pat
     # mini_NGC: 11 rows - 1 NonEx - 1 Dup = 9 canonical. mini_addendum: 3 - 1 Dup = 2.
     assert counts["dso"] == 9 + 2
     # Sources that actually run a loader register a catalog_source row:
-    # 2 (OpenNGC) + 1 (nightcrate_augment) = 3. The crossref stubs register
-    # no row (they're side-inputs / placeholders), and VizieR sources stay
+    # 2 (OpenNGC) + 1 (nightcrate_augment) + 1 (nightcrate_external_refs,
+    # vendored empty CSV) = 4. The crossref stubs register no row (they're
+    # side-inputs / placeholders), and VizieR + wikidata sources stay
     # "missing" in tests.
-    assert counts["dso_catalog_source"] == 3
+    assert counts["dso_catalog_source"] == 4
     assert counts["dso_designation"] >= counts["dso"]
 
 

@@ -15,18 +15,24 @@
  * keeps only preferences; cache operations live here next to the
  * database + catalog controls.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
 import FormControl from "@mui/material/FormControl";
 import FormHelperText from "@mui/material/FormHelperText";
 import MenuItem from "@mui/material/MenuItem";
 import Paper from "@mui/material/Paper";
 import Select from "@mui/material/Select";
+import Snackbar from "@mui/material/Snackbar";
+import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { clearCache, fetchCacheSize } from "@/api/aberration";
+import { reindexImageCaches } from "@/api/admin";
 import { clearThumbnailCache, fetchThumbnailCacheStats } from "@/api/planner";
 import { clearWeatherCache, fetchWeatherCacheStats } from "@/api/weather";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -35,6 +41,10 @@ import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 export default function CachesAdminSection() {
   const { settings, update } = useSettingsStore();
   const queryClient = useQueryClient();
+  const [reindexBusy, setReindexBusy] = useState(false);
+  const [reindexMessage, setReindexMessage] = useState<
+    { severity: "success" | "error"; text: string } | null
+  >(null);
 
   const aberrationQuery = useQuery({
     queryKey: ["aberration-cache-size"],
@@ -135,19 +145,80 @@ export default function CachesAdminSection() {
               </Select>
               <FormHelperText>Budget</FormHelperText>
             </FormControl>
-            <Button
-              variant="outlined"
-              size="small"
-              disabled={thumbnailRows === 0}
-              onClick={async () => {
-                await clearThumbnailCache();
-                queryClient.invalidateQueries({
-                  queryKey: ["thumbnail-cache-stats"],
-                });
-              }}
-            >
-              Clear All
-            </Button>
+            <Stack spacing={0.75} sx={{ alignItems: "stretch", minWidth: 160 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={thumbnailRows === 0}
+                onClick={async () => {
+                  await clearThumbnailCache();
+                  queryClient.invalidateQueries({
+                    queryKey: ["thumbnail-cache-stats"],
+                  });
+                }}
+              >
+                Clear All
+              </Button>
+              <Tooltip
+                title="Re-scan APP_DIR/thumbnails and APP_DIR/sky_tiles for cached JPEGs and rebuild the DB index from them. Use after recreating the database — the files on disk are keyed on stable sky coordinates (not DB ids) and survive DB wipes, but the DB index needs to be rebuilt before the app can find them. Takes a few seconds."
+                placement="top"
+              >
+                <span>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    fullWidth
+                    disabled={reindexBusy}
+                    onClick={async () => {
+                      setReindexBusy(true);
+                      setReindexMessage(null);
+                      try {
+                        const result = await reindexImageCaches();
+                        // Report the TOTAL in the index after rehydrate
+                        // (what the user intuitively wants to know —
+                        // "how many tiles do I have cached?"). Surfacing
+                        // only the rehydrated delta was confusing when
+                        // everything was already in sync and the number
+                        // was 0.
+                        const deltaNote =
+                          result.thumbnails_rehydrated || result.sky_tiles_rehydrated
+                            ? ` (added ${result.thumbnails_rehydrated + result.sky_tiles_rehydrated} from disk)`
+                            : "";
+                        const orphanNote =
+                          result.thumbnails_orphans_removed || result.sky_tiles_orphans_removed
+                            ? ` (swept ${result.thumbnails_orphans_removed + result.sky_tiles_orphans_removed} orphan files)`
+                            : "";
+                        setReindexMessage({
+                          severity: "success",
+                          text:
+                            `${result.thumbnails_indexed} thumbnails and ` +
+                            `${result.sky_tiles_indexed} sky tiles indexed` +
+                            `${deltaNote}${orphanNote}.`,
+                        });
+                        queryClient.invalidateQueries({
+                          queryKey: ["thumbnail-cache-stats"],
+                        });
+                      } catch (err) {
+                        setReindexMessage({
+                          severity: "error",
+                          text:
+                            err instanceof Error
+                              ? err.message
+                              : "Re-index failed",
+                        });
+                      } finally {
+                        setReindexBusy(false);
+                      }
+                    }}
+                  >
+                    {reindexBusy ? (
+                      <CircularProgress size={14} sx={{ mr: 1 }} />
+                    ) : null}
+                    Re-index from disk
+                  </Button>
+                </span>
+              </Tooltip>
+            </Stack>
           </Box>
         </Box>
 
@@ -229,6 +300,23 @@ export default function CachesAdminSection() {
           </Button>
         </Box>
       </Paper>
+
+      <Snackbar
+        open={reindexMessage !== null}
+        autoHideDuration={6000}
+        onClose={() => setReindexMessage(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        {reindexMessage ? (
+          <Alert
+            severity={reindexMessage.severity}
+            variant="filled"
+            onClose={() => setReindexMessage(null)}
+          >
+            {reindexMessage.text}
+          </Alert>
+        ) : undefined}
+      </Snackbar>
     </>
   );
 }

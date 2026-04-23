@@ -17,6 +17,7 @@ import Dialog from "@mui/material/Dialog";
 import DialogContent from "@mui/material/DialogContent";
 import { useState } from "react";
 import { fetchDso } from "@/api/dsos";
+import { DsoExternalRefs } from "@/components/dso/DsoExternalRefs";
 import DsoDistanceHelpDialog from "@/components/dso/DsoDistanceHelpDialog";
 import SkyPreview from "@/components/dso/SkyPreview";
 import { displayConstellation } from "@/lib/constellations";
@@ -370,6 +371,9 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                 ))}
               </Stack>
             </Box>
+
+            <DsoExternalRefs refs={data.external_refs} />
+
 
             {(data.hubble_type || data.redshift != null || data.radial_velocity != null ||
               data.pm_ra != null || data.pm_dec != null) && (

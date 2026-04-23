@@ -7,6 +7,16 @@ export interface DsoDesignation {
   is_primary: boolean;
 }
 
+export type ExternalRefProvider = "wikidata" | "wikipedia";
+
+export interface ExternalRef {
+  provider: ExternalRefProvider;
+  language: string | null;
+  identifier: string;
+  url: string | null;
+  label: string | null;
+}
+
 export type DistanceMethod = "50mgc" | "curated" | "redshift";
 
 export interface DsoListItem {
@@ -68,6 +78,7 @@ export interface DsoDetail extends Omit<DsoListItem, "designations"> {
   openngc_notes: string | null;
   raw_other_id: string | null;
   designations: DsoDesignation[];
+  external_refs: ExternalRef[];
   source: CatalogSource;
 }
 
@@ -266,5 +277,35 @@ export const fetch50mgcRemoteVersion = () =>
 
 export const fetch50mgcFromGitHub = () =>
   apiFetch<Mgc50FetchResponse>("/admin/catalogs/50mgc/fetch", {
+    method: "POST",
+  });
+
+// ── Wikidata external refs (SPARQL) — v0.20.0 ──────────────────────────────
+
+export interface WikidataRemoteVersion {
+  source_id: string;
+  display_name: string;
+  endpoint_url: string;
+  installed_fetched_at: string | null;
+  installed_sha256: string | null;
+  installed_query_version: string | null;
+  current_query_version: string;
+  can_check_remote: boolean;
+  has_update: boolean;
+}
+
+export interface WikidataFetchResponse extends ReloadCatalogsResponse {
+  source_id: string;
+  fetched_at: string;
+  size_bytes: number;
+  sha256: string;
+  query_version: string;
+}
+
+export const fetchWikidataRemoteVersion = () =>
+  apiFetch<WikidataRemoteVersion>("/admin/catalogs/wikidata/remote-version");
+
+export const fetchWikidataExternalRefs = () =>
+  apiFetch<WikidataFetchResponse>("/admin/catalogs/wikidata/fetch", {
     method: "POST",
   });

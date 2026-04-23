@@ -13,7 +13,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import type { SkyTrackResponse } from "@/api/planner";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {
   track: SkyTrackResponse;
@@ -26,6 +26,10 @@ interface Props {
 // the colorblind-safe blue/orange/teal trio.
 const COLOR_OBJECT = RIG_BLUE;
 const COLOR_MOON = RIG_ORANGE;
+// "Now" indicator colour — distinct from object/moon so the vertical
+// line and its triangular anchor read as "this is happening now" at
+// a glance. Teal is already in the colorblind-safe rig palette.
+const COLOR_NOW = RIG_TEAL;
 
 function blockedSkyFill(mode: "light" | "dark") {
   // Filled area below the horizon (sky that the horizon profile blocks).
@@ -71,15 +75,28 @@ interface HoverInfo {
 // mouse, narrow enough that it feels intentional rather than sticky.
 const SNAP_PX = 6;
 
-// Twilight markers live in a stacked label area above the chart grid.
-// ``tier 0`` is the topmost label row (farthest from the chart); the
-// corresponding vertical line is the longest. Higher tier numbers
-// sit closer to the chart with shorter lines. Astro boundaries get
-// tier 0, nautical tier 1, civil tier 2, sunset/sunrise tier 3 —
-// matches the weather app's Darkness-bar labelling.
+// Twilight + meridian + now markers live in a stacked label area above
+// the chart grid. ``tier 0`` is the topmost label row (farthest from
+// the chart); the corresponding vertical line is the longest. Higher
+// tier numbers sit closer to the chart with shorter lines.
+//
+// Tier 0: Astro dark boundaries    (longest line, farthest label)
+// Tier 1: Nautical dark boundaries
+// Tier 2: Civil dark boundaries
+// Tier 3: Sunset / sunrise
+// Tier 4: Meridian transit          (own tier — not shared with
+//                                    sunset/sunrise because a meridian
+//                                    near sunset would overlap text)
+// Tier 5: Now                       (closest to chart, shortest line)
 const TWILIGHT_TIER_HEIGHT = 14;
-const TWILIGHT_MAX_TIER = 3;
-const TWILIGHT_LABEL_BAR_GAP = 8;
+const TWILIGHT_MAX_TIER = 5;
+const MERIDIAN_TIER = 4;
+const NOW_TIER = 5;
+// Gap between the lowest tier's label baseline and the chart grid.
+// Kept tight so the "now" line's label reads as pinned to the chart
+// top instead of floating above it. Any more breathing room separates
+// the eye from the freshest data.
+const TWILIGHT_LABEL_BAR_GAP = 2;
 const TWILIGHT_LABELS_TOTAL_HEIGHT =
   (TWILIGHT_MAX_TIER + 1) * TWILIGHT_TIER_HEIGHT + TWILIGHT_LABEL_BAR_GAP;
 
@@ -94,16 +111,25 @@ interface TwilightMarker {
 export default function SkyPositionGraph({
   track,
   tz,
-  // Default bumped from 260 → 324 to reserve a 64 px label strip
-  // above the chart grid for the four tiers of boundary markers
-  // (astro / nautical / civil dark + sunset/sunrise). The chart
-  // data area itself stays its historic 222 px tall.
-  height = 324,
+  // Default bumped 260 → 324 → 338 → 352 → 346 over successive tier
+  // additions + a final compaction of the label-strip-to-chart gap.
+  // The 86 px label strip above the chart grid reserves six tiers:
+  // astro / nautical / civil dark + sunset / sunrise, then meridian
+  // on its own row so a meridian-near-sunset doesn't collide with
+  // the sunset label, then now closest to the chart. Chart data area
+  // stays its historic 222 px tall.
+  height = 346,
 }: Props) {
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(600);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  // Bare counter used only to trigger a re-render when the minute
+  // rolls over — lets the "now" marker advance on its own instead of
+  // getting frozen at whatever wall-clock time the panel was first
+  // opened at. The actual time displayed still comes from
+  // ``new Date()`` inside the render.
+  const [, setMinuteTick] = useState(0);
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -117,6 +143,24 @@ export default function SkyPositionGraph({
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    // Wake up at the next minute boundary, then tick every 60s so the
+    // minute stays flush with real time (a fixed 60s setInterval would
+    // drift relative to the wall clock). HH:MM precision is enough —
+    // no need for per-second updates, which would cause needless SVG
+    // churn on every tooltip movement.
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    const msUntilNextMinute = 60_000 - (Date.now() % 60_000);
+    const timeoutId = setTimeout(() => {
+      setMinuteTick((t) => t + 1);
+      intervalId = setInterval(() => setMinuteTick((t) => t + 1), 60_000);
+    }, msUntilNextMinute);
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId !== undefined) clearInterval(intervalId);
+    };
   }, []);
 
   const tw = twilightFill(theme.palette.mode);
@@ -256,6 +300,14 @@ export default function SkyPositionGraph({
     }
 
     tryCandidate(track.transit_time_utc, "meridian");
+    // Snap to the "now" line when the cursor is near it — completes
+    // the set of landmarks the user can land on precisely.
+    const now = new Date();
+    const tmin = layout.times[0];
+    const tmax = layout.times[layout.times.length - 1];
+    if (tmin && tmax && now >= tmin && now <= tmax) {
+      tryCandidate(now.toISOString(), "now");
+    }
     for (const m of twilightMarkers) {
       tryCandidate(m.utc, m.label.toLowerCase());
     }
@@ -290,7 +342,11 @@ export default function SkyPositionGraph({
     });
   }
 
-  const ticks = layout.x.ticks(6);
+  // Every hour, not every-other-hour. ``d3.timeHour.range`` returns
+  // every hour boundary inside ``[tmin, tmax)`` — one tick per
+  // clock-aligned hour across the chart's visible window.
+  const [tmin, tmax] = layout.x.domain() as [Date, Date];
+  const ticks = d3.timeHour.range(tmin, tmax);
 
   return (
     <Box ref={wrapperRef} sx={{ position: "relative", width: "100%" }}>
@@ -471,18 +527,31 @@ export default function SkyPositionGraph({
           );
         })}
 
-        {/* Meridian crossing — vertical dashed line with label. Drawn only
-            when transit falls inside the display window. */}
+        {/* Meridian crossing — vertical dashed line with label on
+            its own tier (one above "now", below sunset/sunrise).
+            Earlier shared tier 3 with sunset/sunrise, but a meridian
+            close to sunset made the labels overlap. Drawn only when
+            transit falls inside the display window. */}
         {track.transit_time_utc &&
           (() => {
             const tx = layout.x(new Date(track.transit_time_utc));
             if (tx < layout.MARGIN.left || tx > width - layout.MARGIN.right) return null;
+            const labelsBarTop = layout.MARGIN.top - TWILIGHT_LABELS_TOTAL_HEIGHT;
+            const lineTop = labelsBarTop + MERIDIAN_TIER * TWILIGHT_TIER_HEIGHT;
+            const labelY =
+              labelsBarTop + (MERIDIAN_TIER + 1) * TWILIGHT_TIER_HEIGHT - 3;
+            const timeLocal = new Date(track.transit_time_utc).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+              timeZone: tz,
+            });
             return (
               <g>
                 <line
                   x1={tx}
                   x2={tx}
-                  y1={layout.MARGIN.top}
+                  y1={lineTop}
                   y2={height - layout.MARGIN.bottom}
                   stroke={COLOR_OBJECT}
                   strokeWidth={1}
@@ -491,17 +560,83 @@ export default function SkyPositionGraph({
                 />
                 <text
                   x={tx}
-                  y={layout.MARGIN.top - 5}
+                  y={labelY}
                   textAnchor="middle"
                   fontSize={10}
-                  fill={COLOR_OBJECT}
-                  opacity={0.9}
+                  fontFamily="inherit"
                 >
-                  meridian
+                  <tspan fill={COLOR_OBJECT}>meridian </tspan>
+                  <tspan fill={theme.palette.text.primary}>{timeLocal}</tspan>
                 </text>
               </g>
             );
           })()}
+
+        {/* "Now" indicator — vertical line + filled-triangle "stop" at
+            the top + time label on tier 4 (closest to the chart). Drawn
+            only when the current wall-clock time falls inside the
+            chart's time window. The triangle acts as a positive visual
+            anchor so the line's top is unambiguous even at low
+            opacities. The line uses a teal colour distinct from object
+            (blue) and moon (orange) so it reads as "this is right now"
+            at a glance. Wrapped in an IIFE so the intermediate ``now``
+            variable doesn't leak into the outer scope. */}
+        {(() => {
+          const now = new Date();
+          const tmin = layout.times[0];
+          const tmax = layout.times[layout.times.length - 1];
+          if (!tmin || !tmax || now < tmin || now > tmax) return null;
+          const nx = layout.x(now);
+          if (nx < layout.MARGIN.left || nx > width - layout.MARGIN.right) {
+            return null;
+          }
+          const labelsBarTop = layout.MARGIN.top - TWILIGHT_LABELS_TOTAL_HEIGHT;
+          const labelY =
+            labelsBarTop + (NOW_TIER + 1) * TWILIGHT_TIER_HEIGHT - 3;
+          const nowLocal = now.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+            timeZone: tz,
+          });
+          // Line runs only inside the chart data area — from the top
+          // grid edge (90° line) down to the bottom axis. Triangle
+          // sits flush at the top of the chart with its flat base on
+          // the 90° line and its apex pointing down into the chart,
+          // so the "positive stop" reads as an arrowhead capping the
+          // top of the line. Triangle overlaps the line's top
+          // pixels; drawn after the line so the filled triangle
+          // covers cleanly.
+          const triSize = 5;
+          const chartTop = layout.MARGIN.top;
+          return (
+            <g>
+              <line
+                x1={nx}
+                x2={nx}
+                y1={chartTop}
+                y2={height - layout.MARGIN.bottom}
+                stroke={COLOR_NOW}
+                strokeWidth={1.25}
+              />
+              <polygon
+                points={`${nx - triSize},${chartTop} ${nx + triSize},${chartTop} ${nx},${chartTop + triSize * 1.3}`}
+                fill={COLOR_NOW}
+              />
+              <text
+                x={nx}
+                y={labelY}
+                textAnchor="middle"
+                fontSize={10}
+                fontWeight={600}
+                fontFamily="inherit"
+                fill={COLOR_NOW}
+              >
+                now {nowLocal}
+              </text>
+            </g>
+          );
+        })()}
 
         {/* Hover marker */}
         {hover && (

@@ -206,12 +206,32 @@ export default function PlannerTargetCard({
               )}
             </Stack>
 
-            {/* Line 2 — physical properties (always shown). */}
+            {/* Alternate designations — ``·``-separated line in muted
+                caption color. Primary is already in the bold title so
+                we only show the alternates. Hidden when there are none. */}
+            {item.designations && item.designations.some((d) => !d.is_primary) && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: -0.25, lineHeight: 1.3 }}
+              >
+                {item.designations
+                  .filter((d) => !d.is_primary)
+                  .map((d) => d.display_form)
+                  .join(" · ")}
+              </Typography>
+            )}
+
+            {/* Line 2 — physical properties (always shown). NOTE: no
+                container ``color: text.secondary`` here — that'd inherit
+                onto both the Fact label AND the Fact value, defeating
+                the label-muted / value-default pattern used on Line 3.
+                Keep label-colour in the Fact component only. */}
             <Stack
               direction="row"
               gap={2}
               flexWrap="wrap"
-              sx={{ color: "text.secondary", fontSize: "0.8rem" }}
+              sx={{ fontSize: "0.8rem" }}
             >
               <Fact label="Size" value={sizeText} />
               <Fact
@@ -257,6 +277,28 @@ export default function PlannerTargetCard({
                   }
                 />
               </Stack>
+            )}
+
+            {/* Line 4 — Wikipedia chip. Only rendered when a ref exists
+                (populated server-side from ``dso_external_ref``). Stops
+                CardActionArea clicks from reaching the <a> chip so the
+                user can click through without opening the detail panel. */}
+            {item.wikipedia_url && item.wikipedia_label && (
+              <Box sx={{ mt: 0.25 }}>
+                <Chip
+                  component="a"
+                  clickable
+                  href={item.wikipedia_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  label={`Wikipedia · ${item.wikipedia_label}`}
+                  size="small"
+                  variant="outlined"
+                  aria-label={`Open Wikipedia article: ${item.wikipedia_label} (opens in new tab)`}
+                  sx={{ height: 22, fontSize: "0.72rem" }}
+                />
+              </Box>
             )}
           </Stack>
         </Stack>
