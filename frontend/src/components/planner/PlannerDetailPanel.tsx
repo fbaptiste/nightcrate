@@ -329,6 +329,47 @@ export default function PlannerDetailPanel({
               )}
             </Stack>
           )}
+          {/* Designation pills + Wikipedia chip in the header — same
+              visual treatment as the DSO catalog's detail panel.
+              Primary designation gets filled-primary styling so it reads
+              as the canonical identifier; alternates are outlined.
+              The Wikipedia chip (when present) sits inline with the
+              designations so users see all external-reference chips in
+              one row without hunting. Clicking the Wikipedia chip opens
+              the article in a new tab; ``stopPropagation`` on the chip
+              keeps the click from bubbling up to any ancestor handler. */}
+          {dso && (dso.designations.length > 0 || dso.external_refs.length > 0) && (
+            <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.75 }}>
+              {dso.designations.map((d) => (
+                <Chip
+                  key={`${d.catalog}-${d.identifier}`}
+                  label={d.display_form}
+                  size="small"
+                  variant={d.is_primary ? "filled" : "outlined"}
+                  color={d.is_primary ? "primary" : "default"}
+                />
+              ))}
+              {dso.external_refs
+                .filter((ref) => ref.provider === "wikipedia")
+                .map((ref) => (
+                  <Chip
+                    key={`wikipedia-${ref.identifier}`}
+                    component="a"
+                    clickable
+                    href={ref.url ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    label={`Wikipedia · ${ref.label ?? ref.identifier}`}
+                    size="small"
+                    variant="outlined"
+                    aria-label={`Open Wikipedia article: ${
+                      ref.label ?? ref.identifier
+                    } (opens in new tab)`}
+                  />
+                ))}
+            </Stack>
+          )}
         </Box>
         <Stack
           direction="column"
@@ -477,6 +518,10 @@ export default function PlannerDetailPanel({
           </Typography>
         )}
 
+        {/* Designation pills + Wikipedia chip now live in the header
+            next to the type/distance chips (search this file for
+            ``dso.designations.map``). */}
+
         {/* Compact fact grid — one line per fact; auto-fit packs as many
             columns as the dialog width allows. */}
         <Box
@@ -565,6 +610,9 @@ export default function PlannerDetailPanel({
             This object {coverageNarrative(coveragePct)} in your <strong>{rigName}</strong> rig.
           </Typography>
         )}
+
+        {/* External-reference chip now lives in the header next to the
+            designation pills. */}
 
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" fontWeight={600}>

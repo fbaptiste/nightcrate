@@ -24,6 +24,8 @@ import {
   fetchRemoteVersion,
   fetchVizierCatalog,
   fetchVizierRemoteVersion,
+  fetchWikidataExternalRefs,
+  fetchWikidataRemoteVersion,
   reloadCatalogs,
   type CatalogSource,
   type VizierSourceShortId,
@@ -152,6 +154,12 @@ export default function CatalogsAdminSection() {
     staleTime: Infinity,
     retry: false,
   });
+  const wikidataRemote = useQuery({
+    queryKey: ["catalog-remote-version", "wikidata"],
+    queryFn: fetchWikidataRemoteVersion,
+    staleTime: Infinity,
+    retry: false,
+  });
   const sourcesById = new Map<string, CatalogSource>();
   (sourcesQuery.data ?? []).forEach((s) => sourcesById.set(s.source_id, s));
 
@@ -160,6 +168,11 @@ export default function CatalogsAdminSection() {
       queryClient.invalidateQueries({ queryKey: ["dsos"] }),
       queryClient.invalidateQueries({ queryKey: ["dso-facets"] }),
       queryClient.invalidateQueries({ queryKey: ["catalog-sources"] }),
+      // Blanket-invalidate the remote-version prefix so every source's
+      // "Fetched <date>" label refreshes after any fetch. Per-source
+      // ``refreshRemoteVersion`` / ``refreshVizierId`` flags below are
+      // redundant with this, kept only for historical symmetry.
+      queryClient.invalidateQueries({ queryKey: ["catalog-remote-version"] }),
     ]);
   };
 
@@ -377,6 +390,42 @@ export default function CatalogsAdminSection() {
           onAction={(btn) => runAction("github_50mgc", btn)}
         />
 
+        {/* Wikidata — SPARQL fetch for DSO external references (v0.20.0). */}
+        <SourceRow
+          displayName="Wikidata (external references)"
+          version={
+            wikidataRemote.data?.installed_fetched_at
+              ? `Fetched ${wikidataRemote.data.installed_fetched_at.slice(0, 10)}`
+              : wikidataRemote.isError
+              ? "Status unknown"
+              : null
+          }
+          rowCount={sourcesById.get("wikidata_external_refs")?.row_count ?? null}
+          license={sourcesById.get("wikidata_external_refs")?.license ?? "CC0-1.0"}
+          subtitle="query.wikidata.org/sparql"
+          error={errors["wikidata_external_refs"] ?? null}
+          onDismissError={() =>
+            setErrors((prev) => ({ ...prev, wikidata_external_refs: null }))
+          }
+          busy={busy["wikidata_external_refs"] ?? false}
+          actions={[
+            {
+              label:
+                wikidataRemote.data?.installed_fetched_at == null
+                  ? "Fetch from Wikidata"
+                  : "Re-fetch from Wikidata",
+              tooltip: `${
+                wikidataRemote.data?.installed_fetched_at == null
+                  ? "Run"
+                  : "Re-run"
+              } the SPARQL query against query.wikidata.org to pull Wikipedia article links for every DSO with a matching catalog identifier (NGC / Messier / Sharpless 2 / Barnard / PGC / UGC). Takes ~30–60 s on first run. Wikidata data is CC0 (public domain); Wikipedia article content stays on wikipedia.org — only URLs are stored.`,
+              variant: "contained",
+              run: fetchWikidataExternalRefs,
+            },
+          ]}
+          onAction={(btn) => runAction("wikidata_external_refs", btn)}
+        />
+
         {/* NightCrate bundled — no separate reload button; covered by
             the "Reload all from local cache" action at the top. */}
         <SourceRow
@@ -390,6 +439,25 @@ export default function CatalogsAdminSection() {
           busy={busy["nightcrate"] ?? false}
           actions={[]}
           onAction={(btn) => runAction("nightcrate", btn)}
+        />
+
+        {/* NightCrate external-refs override CSV (v0.20.0) — editorial
+            overrides for Wikidata/Wikipedia matches. */}
+        <SourceRow
+          displayName="NightCrate external refs (editorial overrides)"
+          version={
+            sourcesById.has("nightcrate_external_refs") ? "Loaded" : "Not loaded"
+          }
+          rowCount={sourcesById.get("nightcrate_external_refs")?.row_count ?? null}
+          license="MIT"
+          subtitle="Bundled in-repo — overrides Wikidata"
+          error={errors["nightcrate_external_refs"] ?? null}
+          onDismissError={() =>
+            setErrors((prev) => ({ ...prev, nightcrate_external_refs: null }))
+          }
+          busy={busy["nightcrate_external_refs"] ?? false}
+          actions={[]}
+          onAction={(btn) => runAction("nightcrate_external_refs", btn)}
         />
       </Paper>
     </>

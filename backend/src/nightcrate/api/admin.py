@@ -82,6 +82,82 @@ def _initialize_database(db_path: Path) -> None:
         sync_conn.close()
 
 
+# Same tuple-constant pattern used in main.py's lifespan hook — sidesteps
+# the py314 ruff-format bug on multi-exception ``except`` clauses.
+_REHYDRATE_ERRS: tuple[type[BaseException], ...] = (OSError, RuntimeError)
+
+
+async def _rehydrate_caches_for_active_db() -> dict[str, int]:
+    """Re-index on-disk thumbnail + sky-tile files into the active DB.
+
+    Thumbnail and sky-tile JPEGs on disk are keyed on stable sky-
+    coordinate / HEALPix-region identity (not on the SQLite AUTO
+    INCREMENT ``dso_id``), so a DB wipe or hot-swap leaves the files
+    intact — we just need to rebuild the DB index from them. The
+    FastAPI lifespan startup hook does this on process boot; this
+    helper does it on admin DB-activate AND on explicit user-driven
+    reindex requests so a hot-swapped DB gets the same treatment
+    without restarting the backend.
+
+    Returns per-cache counts: ``rehydrated`` (rows newly inserted this
+    run), ``orphans_removed`` (on-disk files swept), and ``indexed``
+    (total rows in the cache index after rehydrate — what the UI
+    surfaces as the user-facing "X tiles indexed" count).
+    """
+    import aiosqlite
+
+    from nightcrate.db.session import get_db
+
+    thumbs_rehydrated = thumbs_orphans = thumbs_total = 0
+    try:
+        from nightcrate.services.thumbnails import (
+            rehydrate_from_disk as rehydrate_thumbnails,
+        )
+        from nightcrate.services.thumbnails import (
+            sync_orphan_files as sync_thumbnail_orphans,
+        )
+
+        async with get_db() as conn:
+            conn.row_factory = aiosqlite.Row
+            thumbs_rehydrated = await rehydrate_thumbnails(conn)
+            thumbs_orphans = await sync_thumbnail_orphans(conn)
+            cur = await conn.execute("SELECT COUNT(*) AS n FROM thumbnail_cache")
+            row = await cur.fetchone()
+            thumbs_total = int(row["n"]) if row else 0
+    except _REHYDRATE_ERRS:
+        # Non-fatal — first tile request would just go out to CDS instead
+        # of reusing the on-disk cache.
+        pass
+
+    tiles_rehydrated = tiles_orphans = tiles_total = 0
+    try:
+        from nightcrate.services.sky_tile_cache import (
+            rehydrate_from_disk as rehydrate_sky_tiles,
+        )
+        from nightcrate.services.sky_tile_cache import (
+            sync_orphan_files as sync_sky_tile_orphans,
+        )
+
+        async with get_db() as conn:
+            conn.row_factory = aiosqlite.Row
+            tiles_rehydrated = await rehydrate_sky_tiles(conn)
+            tiles_orphans = await sync_sky_tile_orphans(conn)
+            cur = await conn.execute("SELECT COUNT(*) AS n FROM sky_tile_cache")
+            row = await cur.fetchone()
+            tiles_total = int(row["n"]) if row else 0
+    except _REHYDRATE_ERRS:
+        pass
+
+    return {
+        "thumbnails_rehydrated": thumbs_rehydrated,
+        "thumbnails_orphans_removed": thumbs_orphans,
+        "thumbnails_indexed": thumbs_total,
+        "sky_tiles_rehydrated": tiles_rehydrated,
+        "sky_tiles_orphans_removed": tiles_orphans,
+        "sky_tiles_indexed": tiles_total,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -205,6 +281,11 @@ async def activate_database(req: ActivateDatabaseRequest) -> dict:
     # Hot-swap the runtime database path
     set_db_path(db_path)
 
+    # Re-index the on-disk thumbnail + sky-tile caches into the newly-
+    # active DB so the user doesn't pay a CDS re-fetch cost for tiles
+    # they already have on disk.
+    await _rehydrate_caches_for_active_db()
+
     entry = config.databases[req.path]
     size = _db_size(req.path)
     return {
@@ -243,6 +324,11 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
 
     # Hot-swap the runtime database path
     set_db_path(db_path)
+
+    # Re-index the on-disk thumbnail + sky-tile caches into the newly-
+    # active DB so the user doesn't pay a CDS re-fetch cost for tiles
+    # they already have on disk.
+    await _rehydrate_caches_for_active_db()
 
     return {
         "path": req.path,
@@ -681,3 +767,99 @@ async def mgc50_fetch() -> dict:
         "sha256": result.sha256,
         **_summary_to_dict(summary),
     }
+
+
+# ---------------------------------------------------------------------------
+# Wikidata (SPARQL fetch) — v0.20.0
+# ---------------------------------------------------------------------------
+
+
+@router.get("/catalogs/wikidata/remote-version")
+async def wikidata_remote_version() -> dict:
+    """Status of the Wikidata fetch.
+
+    Wikidata has no version number — the query service returns "whatever
+    exists now." We report the installed ``fetched_at`` + ``sha256`` if a
+    prior fetch is on disk; ``can_check_remote`` is always False so the UI
+    shows "Fetch latest" unconditionally.
+    """
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+    from nightcrate.catalog_loader.wikidata import (
+        QUERY_VERSION,
+        WIKIDATA_SPARQL_URL,
+        read_installed_version,
+    )
+
+    installed = read_installed_version(user_catalogs_root())
+    installed_query_version = installed.get("query_version")
+    return {
+        "source_id": "wikidata_external_refs",
+        "display_name": "Wikidata (external references)",
+        "endpoint_url": WIKIDATA_SPARQL_URL,
+        "installed_fetched_at": installed.get("fetched_at"),
+        "installed_sha256": installed.get("sha256"),
+        "installed_query_version": installed_query_version,
+        "current_query_version": QUERY_VERSION,
+        # No remote-version semantic; always offer a refetch.
+        "can_check_remote": False,
+        "has_update": (
+            installed.get("fetched_at") is None or installed_query_version != QUERY_VERSION
+        ),
+    }
+
+
+@router.post("/catalogs/wikidata/fetch")
+async def wikidata_fetch() -> dict:
+    """Run the SPARQL query against Wikidata, store the TSV atomically,
+    and reload catalogs so the new rows land in ``dso_external_ref``.
+    """
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+    from nightcrate.catalog_loader.wikidata import fetch_wikidata_external_refs
+    from nightcrate.main import APP_VERSION
+
+    config = load_config()
+    if not config.db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+
+    try:
+        result = await fetch_wikidata_external_refs(user_catalogs_root(), app_version=APP_VERSION)
+    except Exception as exc:  # noqa: BLE001 — surface 502 with reason
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to fetch Wikidata SPARQL: {exc}",
+        ) from exc
+
+    summary = _run_loader(force=True)
+    return {
+        "source_id": "wikidata_external_refs",
+        "fetched_at": result.fetched_at,
+        "size_bytes": result.size_bytes,
+        "sha256": result.sha256,
+        "query_version": result.query_version,
+        **_summary_to_dict(summary),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Image cache reindex (thumbnails + sky-tiles) — v0.20.0
+# ---------------------------------------------------------------------------
+
+
+@router.post("/caches/reindex-images")
+async def reindex_image_caches() -> dict:
+    """Re-index on-disk thumbnail + sky-tile JPEGs into the active DB.
+
+    The cache index tables (``thumbnail_cache``, ``sky_tile_cache``) are
+    empty after a database wipe or recreation, but the JPEG files on
+    disk are keyed on stable sky-coordinate / HEALPix-region identity
+    and survive DB swaps. This endpoint parses each un-indexed on-disk
+    file, resolves it against the current DB, and reinserts the index
+    row — avoiding a CDS re-fetch for every tile the user has already
+    seen. The FastAPI lifespan startup hook runs the same logic on
+    process boot, but this endpoint lets the user trigger it explicitly
+    without restarting the backend.
+    """
+    config = load_config()
+    if not config.db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+    return await _rehydrate_caches_for_active_db()

@@ -1383,3 +1383,46 @@ CREATE INDEX IF NOT EXISTS idx_sky_tile_cache_last_access
     ON sky_tile_cache(last_access_at);
 CREATE INDEX IF NOT EXISTS idx_sky_tile_cache_region
     ON sky_tile_cache(healpix_nside, healpix_ipix);
+
+
+-- ── DSO external refs (migration 0022) ────────────────────────────────────
+-- Associates Wikidata QIDs + Wikipedia article URLs (and future
+-- NED/SIMBAD/Astrobin providers) with canonical DSO rows. Populated by
+-- two loaders — `catalog_loader/wikidata_loader.py` (bulk SPARQL fetch)
+-- and `catalog_loader/external_refs_loader.py` (editorial CSV overrides).
+-- One row per (dso_id, provider, language); `language` is NULL for
+-- language-agnostic providers (wikidata) and required for wikipedia.
+--
+-- Migration 0022 also widens `dso_catalog_source.category` CHECK to
+-- include `'wikidata'`.
+CREATE TABLE dso_external_ref (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    dso_id            INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    provider          TEXT NOT NULL CHECK (provider IN ('wikidata', 'wikipedia')),
+    language          TEXT,
+    identifier        TEXT NOT NULL,
+    url               TEXT,
+    label             TEXT,
+    source_catalog_id INTEGER REFERENCES dso_catalog_source(id),
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (dso_id, provider, language)
+);
+
+CREATE INDEX idx_dso_external_ref_dso
+    ON dso_external_ref(dso_id);
+CREATE INDEX idx_dso_external_ref_provider
+    ON dso_external_ref(provider, identifier);
+-- UNIQUE(dso_id, provider, language) above doesn't enforce uniqueness
+-- when language IS NULL (SQLite unique-index semantics treat NULL as
+-- always distinct). Partial index covers the language-agnostic providers
+-- (wikidata today, future NED/SIMBAD/etc.).
+CREATE UNIQUE INDEX idx_dso_external_ref_langless_unique
+    ON dso_external_ref(dso_id, provider)
+    WHERE language IS NULL;
+-- No global uniqueness on (provider, language, identifier) — a single
+-- external resource may legitimately cover multiple NightCrate DSOs
+-- (Wikipedia's Stephan's Quintet article = 5 galaxies; Wikidata's
+-- Crab Nebula entity = NGC 1952 + Sh2-244; etc.). The loader duplicates
+-- the ref onto every matching DSO so users viewing any of them see the
+-- chip.

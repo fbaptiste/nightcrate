@@ -1,0 +1,22 @@
+# NightCrate external reference overrides. MIT licensed.
+#
+# Precedence: this file runs AFTER the Wikidata loader. Rows here overwrite
+# Wikidata-sourced rows with matching (dso_designation, provider, language).
+#
+# Row semantics:
+#   - upsert:      identifier AND url both provided → insert/update the ref
+#   - suppression: identifier AND url both empty    → delete the ref if present
+#
+# Columns:
+#   dso_designation — any form recognized by /api/dso/lookup (e.g. M42, NGC 1976)
+#   provider        — wikidata | wikipedia
+#   language        — required for wikipedia (e.g. en); must be empty for wikidata
+#   identifier      — QID for wikidata; article slug (underscores) for wikipedia
+#   url             — full URL
+#   label           — display label (article title, Wikidata label)
+#   note            — human note; ignored by loader
+#
+# Examples (commented out — add real rows below the header):
+# M42,wikipedia,en,Orion_Nebula,https://en.wikipedia.org/wiki/Orion_Nebula,Orion Nebula,Verified manually
+# NGC 7000,wikipedia,en,,,,"Wikidata matched wrong article; suppressing"
+dso_designation,provider,language,identifier,url,label,note

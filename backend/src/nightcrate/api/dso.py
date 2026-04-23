@@ -16,6 +16,7 @@ from nightcrate.api.dso_models import (
     DsoFacetsResponse,
     DsoListItem,
     DsoListResponse,
+    ExternalRef,
     RawTypeFacet,
     TypeGroupFacet,
 )
@@ -69,6 +70,46 @@ def normalize_search_key(query: str) -> str:
         if normalized.startswith(long):
             return short + normalized[len(long) :]
     return normalized
+
+
+# Display ordering for external refs: wikipedia first (user-facing), then
+# wikidata (structured-data link). Future providers append alphabetically
+# after these two. Both backend serialization and the frontend rely on
+# this ordering to stay consistent — update in one place.
+_EXTERNAL_REF_PROVIDER_ORDER: tuple[str, ...] = ("wikipedia", "wikidata")
+
+
+def _external_ref_sort_key(provider: str) -> tuple[int, str]:
+    """Stable sort key: known providers in fixed order, unknowns alphabetically last."""
+    try:
+        return (_EXTERNAL_REF_PROVIDER_ORDER.index(provider), "")
+    except ValueError:
+        return (len(_EXTERNAL_REF_PROVIDER_ORDER), provider)
+
+
+async def _load_external_refs(conn, dso_id: int) -> list[ExternalRef]:
+    """Return external refs for *dso_id* in canonical order."""
+    cursor = await conn.execute(
+        """
+        SELECT provider, language, identifier, url, label
+        FROM dso_external_ref
+        WHERE dso_id = ?
+        """,
+        (dso_id,),
+    )
+    rows = await cursor.fetchall()
+    refs = [
+        ExternalRef(
+            provider=row["provider"],
+            language=row["language"],
+            identifier=row["identifier"],
+            url=row["url"],
+            label=row["label"],
+        )
+        for row in rows
+    ]
+    refs.sort(key=lambda r: (_external_ref_sort_key(r.provider), r.language or "", r.identifier))
+    return refs
 
 
 async def _load_designations(
@@ -478,6 +519,7 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         raise HTTPException(status_code=404, detail=f"DSO not found: {dso_id}")
 
     designations = (await _load_designations(conn, [dso_id])).get(dso_id, [])
+    external_refs = await _load_external_refs(conn, dso_id)
 
     src_cursor = await conn.execute(
         "SELECT id, source_id, category, display_name, version, source_url, "
@@ -534,5 +576,6 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         openngc_notes=row["openngc_notes"],
         raw_other_id=row["raw_other_id"],
         designations=designations,
+        external_refs=external_refs,
         source=source,
     )

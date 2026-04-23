@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -10,6 +12,16 @@ class DsoDesignation(BaseModel):
     identifier: str
     display_form: str
     is_primary: bool
+
+
+class ExternalRef(BaseModel):
+    """Link from a DSO to an external knowledge-base entry (Wikipedia, Wikidata)."""
+
+    provider: Literal["wikidata", "wikipedia"]
+    language: str | None = None
+    identifier: str
+    url: str | None = None
+    label: str | None = None
 
 
 class CatalogSource(BaseModel):
@@ -85,6 +97,7 @@ class DsoDetail(BaseModel):
     openngc_notes: str | None
     raw_other_id: str | None
     designations: list[DsoDesignation]
+    external_refs: list[ExternalRef]
     source: CatalogSource
 
 

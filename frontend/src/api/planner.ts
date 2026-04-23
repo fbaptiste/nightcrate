@@ -59,6 +59,24 @@ export interface PlannerTargetItem {
    *  coordinates. Static at fetch time — doesn't update as time
    *  passes on a long-running page. */
   now_status: "up" | "rising" | "set" | null;
+  /** Wikipedia article link for the chip on the planner card. ``null``
+   *  when the DSO has no Wikipedia ref (either Wikidata didn't match
+   *  it or the entity has no English sitelink). Wikidata QIDs stay on
+   *  the DSO-detail endpoint — this is the minimal list-payload carve-
+   *  out for the one chip the card shows. */
+  wikipedia_url: string | null;
+  wikipedia_label: string | null;
+  /** Full catalog cross-references (NGC, IC, Messier, Caldwell, PGC, …).
+   *  Sorted primary-first, then alphabetically. Always includes the
+   *  primary designation; alternates follow. */
+  designations: PlannerDesignation[];
+}
+
+export interface PlannerDesignation {
+  catalog: string;
+  identifier: string;
+  display_form: string;
+  is_primary: boolean;
 }
 
 export interface PlannerTargetsResponse {

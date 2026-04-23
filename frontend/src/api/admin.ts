@@ -113,4 +113,25 @@ export interface ReseedResult {
 export const reseedEquipment = () =>
   apiFetch<ReseedResult>("/admin/reseed", { method: "POST" });
 
+export interface ReindexImageCachesResult {
+  /** Rows newly inserted into the cache index this run. */
+  thumbnails_rehydrated: number;
+  thumbnails_orphans_removed: number;
+  /** Total rows in the cache index AFTER the rehydrate. Surfaced to
+   *  the user as "X thumbnails indexed" — more meaningful than the
+   *  rehydrated delta, which is 0 if everything was already in sync. */
+  thumbnails_indexed: number;
+  sky_tiles_rehydrated: number;
+  sky_tiles_orphans_removed: number;
+  sky_tiles_indexed: number;
+}
+
+/** Re-scan on-disk thumbnail + sky-tile JPEGs and reinsert any DB
+ *  index rows missing from the active database. Use when the DB was
+ *  wiped or recreated but the JPEGs on disk are intact. */
+export const reindexImageCaches = () =>
+  apiFetch<ReindexImageCachesResult>("/admin/caches/reindex-images", {
+    method: "POST",
+  });
+
 export const fetchHealth = () => _fetchHealth() as Promise<HealthResponse>;

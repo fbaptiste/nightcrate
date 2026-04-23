@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.19.0
+**NightCrate version:** 0.20.0
 
 **Last updated:** 2026-04-22
 
@@ -163,13 +163,13 @@ FOV Simulator (v0.18.0 rewrite): drag-to-rotate orange sensor rectangle overlaid
 - **API:** `GET /api/planner/targets` (+ `q`, `restrict_tonight`, `type`, `constellation`, `has_distance`, `horizon_id`, `coverage_min_pct` / `coverage_max_pct`, multi-`sort`), `GET /api/planner/targets/{dso_id}/sky-track` (+ `horizon_id`), `GET /api/planner/targets/{dso_id}/annual-hours` (+ `horizon_id`, `moon_sep_deg`), `GET /api/planner/thumbnails/{dso_id}` (optional `wait_ms` long-poll), `GET /api/planner/sky-tile-grid` (layout math), `GET /api/planner/sky-tile` (cell bytes, optional `wait_ms`), `POST /api/planner/thumbnails/cache/clear`, `GET /api/planner/thumbnails/cache/stats`, `POST /api/planner/sky-tile/cache/clear`, `GET /api/planner/sky-tile/cache/stats`, `GET /api/planner/dsos/in-region`
 - **Key backend:** `services/planner_visibility.py` (`PlannerLocation` + `PlannerHorizon`), `services/planner_sky_track.py`, `services/planner_annual_hours.py`, `services/planner_now_status.py` (v0.19.0 day/night fix), `services/thumbnails.py` + `services/hips_client.py`, `services/sky_tiles.py` + `services/sky_tile_cache.py` (v0.18.0), `services/rig_calculators.py:compute_coverage_pct`, `services/horizon.py:resolve_horizon_altitude`. `api/planner.py` catalog `PLANNER_SORT_FIELDS` (14 fields) + stable-Timsort `_sort_items` helper.
 - **Key frontend:** `pages/PlannerPage.tsx` (v0.19.0 card list + multi-sort panel), `components/planner/{ThumbnailCell,PlannerTargetCard,PlannerSortPanel,SkyPositionGraph,PlannerDetailPanel,FovSimulator,SkyTileCell,SkyTileComposite,DsoAnnotationOverlay,DsoAnnotationPopover,BestTimeOfYearChart,horizonMenuItems}.tsx`, `components/dso/SkyPreview.tsx`, `lib/{plannerSortFields,dsoAnnotations,skyPreviewExtent}.ts`, `stores/{plannerStore,thumbnailCacheStore}.ts`, `api/planner.ts`, `api/horizons.ts`.
-- **Schema:** migrations 0017–0019 (`thumbnail_cache`), 0020 (`sky_tile_cache`, v0.18.0), 0021 (multi-horizon reshape, v0.19.0).
+- **Schema:** migrations 0017–0019 (`thumbnail_cache`), 0020 (`sky_tile_cache`, v0.18.0), 0021 (multi-horizon reshape, v0.19.0), 0022 (`dso_external_ref` + `dso_catalog_source.category` widen, v0.20.0).
 - **Settings (v0.19.0):** `planner_min_visibility_hours` (2h), `planner_max_magnitude` (12), `planner_min_size_arcmin` (5'), `planner_frames_well_min_pct` (15), `planner_frames_well_max_pct` (90), `planner_moon_sep_deg` (0 — "Ignore moon"; default for the Best time of year chart), `thumbnail_cache_max_mb` (500; slider max 5 GB). **Removed:** `planner_min_altitude_deg` (altitude floor now lives per-horizon on the location).
 - **Deliberate deviations from spec:** moon distance is **closest approach during the visibility window**, not at-peak — the at-peak value can be misleading when the moon is below horizon at transit but rises during the visible window. Meridian + Max altitude are always rendered as two separate card lines (no collapse-when-equal) for consistent vertical rhythm in the card list.
 
 ### DSO catalog
 
-**Status:** `[shipped]` (v0.14.0 MVP + v0.15.0 augmentation)
+**Status:** `[shipped]` (v0.14.0 MVP + v0.15.0 augmentation + v0.20.0 external references)
 
 Deep-sky object catalog. Data is **not shipped** in the repo — on first run the tables are empty and the DSO page shows a CTA pointing to Admin → Catalogs. v0.15.0 expands from OpenNGC-only to a multi-source layered model:
 
@@ -189,7 +189,9 @@ VizieR fetches (Sharpless, Barnard) rotate through three CDS mirrors (Strasbourg
 - **Key backend:** `catalog_loader/` module: `remote.py` (OpenNGC GitHub fetch), `vizier.py` + `vizier_tsv.py` (CDS, 3-mirror fallback), `mgc50_fetch.py` + `mgc50_parser.py` (50 MGC GitHub FITS binary table via astropy), `sharpless_loader.py` + `barnard_loader.py` (standalone DSO creation), `mgc50_augmenter.py` (distance augmenter), `redshift_distance.py` (Hubble-law post-load backfill), `augment_loader.py` (editorial overrides), `_common.py` (shared loader primitives + `retry_with_backoff`). `services/dso_type_groups.py` type-group dispatch. `services/astronomy.py` exposes `redshift_to_parsecs`, `distance_modulus_to_parsecs`, and the `SPEED_OF_LIGHT_KM_S` / `HUBBLE_CONSTANT_KM_S_MPC` constants.
 - **Key frontend:** `pages/DsoCatalogPage.tsx` (type-group chips + Advanced expander + distance column), `components/dso/DsoDetailPanel.tsx` (distance row with "~" prefix on redshift-derived values + help-icon opening the distance dialog, B-Mag tooltip, AugmentedBadge), `components/dso/DsoDistanceHelpDialog.tsx` (KaTeX-rendered explanation of the three distance methods), `components/dso/DsoAttributionPanel.tsx` (CDS acknowledgment + per-catalog citations + redshift-derived section), `components/dso/CatalogsAdminSection.tsx` (per-source rows in Admin — OpenNGC + Sharpless + Barnard + 50 MGC GitHub + NightCrate bundled), `lib/distanceFormat.ts`, `lib/dsoTypeGroups.ts`.
 - **Schema:** migrations `0015.dso_catalog.sql` + `0016.dso_augmentation.sql` (adds `distance_pc`, `distance_method` with CHECK vocabulary `{'50mgc', 'curated', 'redshift'}`, `common_name_augmented`, `surface_brightness_augmented` on `dso`).
-- **Data:** not in repo; downloaded to `APP_DIR/catalogs/{openngc,vizier,github/50mgc}/`. NightCrate editorial CSVs bundled at `backend/src/nightcrate/data/catalogs/nightcrate/` (`dso_augment.csv`, `sharpless_crossref.csv`, `barnard_crossref.csv`).
+- **Data:** not in repo; downloaded to `APP_DIR/catalogs/{openngc,vizier,github/50mgc,wikidata}/`. NightCrate editorial CSVs bundled at `backend/src/nightcrate/data/catalogs/nightcrate/` (`dso_augment.csv`, `sharpless_crossref.csv`, `barnard_crossref.csv`, `dso_external_refs.csv`).
+
+**v0.20.0 — external references (Wikidata + Wikipedia):** new provider-agnostic `dso_external_ref` child table populated by two loaders. Wikidata SPARQL fetch pulls catalog-cross-referenced entities (NGC / Messier / Sharpless / Barnard / PGC / UGC via P528/P972 + P3208/P4095/P6340 shortcuts) + their English Wikipedia sitelinks; matching runs in-DB against `dso_designation.search_key`. Editorial CSV override (`dso_external_refs.csv`, ships empty) runs last and always wins — supports both upsert and suppression rows. Wikipedia chips surface on both the DSO catalog detail panel and the planner detail panel via a shared `DsoExternalRefs.tsx` component; Wikidata QIDs are stored silently in the DB for future cross-service enrichment. Admin endpoints: `GET /api/admin/catalogs/wikidata/remote-version`, `POST /api/admin/catalogs/wikidata/fetch`. Wikidata data CC0, Wikipedia content not bundled (links only). Migration 0022 creates the table and widens `dso_catalog_source.category` CHECK to include `'wikidata'` (uses `PRAGMA legacy_alter_table=ON` to preserve `dso.source_catalog_id`'s FK across the rename-rebuild).
 
 ### Image viewer
 
