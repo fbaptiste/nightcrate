@@ -32,6 +32,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.18.1 — Target Planner UX Polish](#v0181--target-planner-ux-polish) ✅
 - [v0.19.0 — Multi-Horizon + Planner Rewrite](#v0190--multi-horizon--planner-rewrite) ✅
 - [v0.20.0 — DSO External References (Wikidata + Wikipedia)](#v0200--dso-external-references-wikidata--wikipedia) ✅
+- [v0.21.0 — Target Planner Scoring Algorithm](#v0210--target-planner-scoring-algorithm) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -3076,6 +3077,178 @@ button. Option B restores the full staged flow.
 - [x] **Best-time-of-year chart January label** — fixes a skipped
       `d3.timeMonths` boundary when the data range starts
       mid-month.
+
+---
+
+## v0.21.0 — Target Planner Scoring Algorithm
+
+**Status:** Done
+**Branch:** `v0.21.0/target-scoring`
+
+Adds a per-target **0–100 quality score** with a categorical chip
+(Excellent / Good / Fair / Poor) and a transparent breakdown on
+every Tonight-mode planner card + detail panel. Answers the single
+question *"how good a target is this for tonight's session, given
+my equipment and what I plan to capture?"* by combining two hard
+gates and four quality dimensions (observability, meridian timing,
+moon impact, frame fit) via weighted geometric mean. 25+ user-
+tunable parameters — every weight, threshold, and sensitivity —
+live in a new Settings accordion with tooltips. Deferred: surface-
+brightness modifier, in-app doc surfacing, Anytime-mode scoring.
+
+### Backend
+
+- [x] **`Settings` scoring fields + validator** — 25 new
+      `scoring_*` fields on `core/config.py:Settings` (4 weights,
+      7 moon sensitivities, 7 moon min-separations, cluster
+      modifier, observability min-altitude, frame-fit ideal +
+      spread, 3 quality-chip thresholds, 2 hard-gate caps). Pydantic
+      `model_validator` enforces descending thresholds
+      (`excellent > good > fair`) and non-negative weights. No
+      migration — KV settings table absorbs the new rows via
+      Pydantic defaults.
+- [x] **`VisibilitySnapshot` retains time-series arrays** — new
+      `VisibilityTimeSeries` dataclass on
+      `services/planner_visibility.py` keeps per-target alt /
+      visible-mask / moon-separation arrays + shared moon-altitude
+      (T,) so scoring can evaluate per-timestep observability +
+      moon dimensions without recomputing astropy transforms.
+      Cache key unchanged; the arrays are free since they were
+      already computed-and-discarded in `_reduce_per_dso`.
+- [x] **`services/planner_scoring.py`** — pure service. Two-stage
+      pipeline (hard gates → 4 quality dimensions → weighted
+      geometric mean). `score_targets(inputs, snapshot, rig_fov,
+      filter_intent, settings, tz)` returns `dict[dso_id,
+      TargetScore]`. No DB / FastAPI deps; pure arithmetic over
+      in-memory arrays. Cluster modifier triggers on `obj_type ∈
+      {OCl, GCl, *Ass}` (Q5 scope).
+- [x] **`services/planner_scoring_constants.py`** — closed
+      `CLUSTER_OBJ_TYPES`, `FILTER_LINES = (Ha, SII, OIII, L, R,
+      G, B)`, `QUALITY_LABELS`.
+- [x] **API wiring in `list_targets`** — new `filter_intent`
+      query param (comma-separated filter-line codes; 422 on
+      unknown codes). After the filter loop, scoring runs over the
+      surviving items in Tonight mode; results (score_pct +
+      quality_label + score_breakdown) attach to each
+      `PlannerTargetItem`. New sort field `score_pct` added to
+      `PLANNER_SORT_FIELDS`. Default Tonight sort is now
+      `[score_pct:desc, primary_designation:asc]` (Anytime unchanged).
+- [x] **`GET /api/planner/targets/{dso_id}/score`** — single-target
+      endpoint for the detail panel's preview-state refetch.
+      Accepts `location_id` / `horizon_id` / `rig_id` /
+      `filter_intent` / `date`; returns `{score_pct, quality_label,
+      score_breakdown}`. Reuses the visibility cache + scoring
+      service; one extra row per call.
+- [x] **Pydantic response models** — `ScoreBreakdownOut`,
+      `DimensionBreakdownOut`, `SingleTargetScoreResponse` added
+      to `api/planner_models.py`; score fields added to
+      `PlannerTargetItem` (all optional, null in Anytime).
+
+### Frontend
+
+- [x] **`api/planner.ts`** — new `FilterLine`, `DimensionBreakdown`,
+      `ScoreBreakdown`, `QualityLabel`, `SingleTargetScoreResponse`
+      types; score fields on `PlannerTargetItem`; `filter_intent`
+      on `fetchPlannerTargets`; `fetchSingleTargetScore(dsoId, params)`.
+- [x] **`api/settings.ts`** — 25 new scoring fields typed.
+- [x] **`stores/plannerStore.ts`** — `filterIntent: FilterLine[]`
+      persisted via Zustand (version bumped to 4).
+- [x] **`lib/plannerScoreColors.ts`** — colorblind-safe chip
+      palette (blue / lighter blue / neutral gray / muted orange —
+      no red/green). Mirrors the rig-calculator guide-suitability
+      palette.
+- [x] **`lib/plannerSortFields.ts`** — `score_pct` entry
+      (Tonight-only).
+- [x] **`components/planner/ScoreChip.tsx`** — number + quality
+      label with colored background; `—` outlined chip for gated
+      targets; tooltip surfaces the first gate-failure reason.
+- [x] **`components/planner/ScoreBreakdownSection.tsx`** — final
+      section of the detail panel. Shows the big chip + per-
+      dimension rows (name, score bar, weight, contribution,
+      human-readable inputs) or gate-failure reasons for unscored
+      targets.
+- [x] **`components/planner/FilterIntentSelect.tsx`** — toggle
+      buttons for Ha / SII / OIII / L / R / G / B with
+      per-line hint tooltips. Rendered in the planner-page filter
+      row in Tonight mode only.
+- [x] **`components/settings/PlannerScoringSection.tsx`** — new
+      Settings card with one collapsible Accordion per parameter
+      family (Weights / Moon sensitivities / Moon min-separations /
+      Cluster / Observability + frame fit / Hard gates / Quality
+      labels). Every control wrapped in a Tooltip explaining the
+      setting + default + one concrete example of changing it.
+- [x] **`PlannerTargetCard.tsx`** — `ScoreChip` at the head of the
+      info block (Line 1).
+- [x] **`PlannerDetailPanel.tsx`** — `ScoreBreakdownSection`
+      appended as the final section. A `previewScoreQuery`
+      `useQuery` refetches score against panel-local preview state
+      (rig / horizon / location differ from page) and splices the
+      fresh score into the item before rendering the breakdown —
+      fixes the "change rig in detail panel, score stays frozen"
+      bug surfaced in Q&A during implementation.
+- [x] **`PlannerPage.tsx`** — `FilterIntentSelect` in the filter
+      row (between Rig dropdown and Clear filters); forwarded to
+      `fetchPlannerTargets`; Tonight mode only.
+- [x] **`SettingsPage.tsx`** — mounts `PlannerScoringSection`
+      after the existing Target Planner card.
+
+### Docs
+
+- [x] **`docs/planner-scoring.md`** — new user-facing reference
+      doc. Sections: conceptual model (gates → dimensions →
+      combination), each dimension in plain language, filter-
+      intent multi-select + limiting-filter rule, full parameter
+      reference, three worked examples (§15), tuning playbook,
+      colorblind-palette rationale. In-app surfacing deferred.
+
+### Tests
+
+- [x] **57 new scoring tests** across 6 files (plus a shared
+      `scoring_helpers.py`):
+      `test_scoring_gates.py` (10 — 5 gates + 5 chip display),
+      `test_scoring_dimensions.py` (17 — 5 observability + 6
+      meridian + 6 frame fit),
+      `test_scoring_moon.py` (10 — including the Ha+OIII → OIII
+      limiting-filter assertion, L+R+G+B → B, cluster modifier on/off),
+      `test_scoring_combination.py` (9 — zero-collapses, weight-0
+      drops, dropped-dimension renormalize, spec §9.2 pinned
+      number),
+      `test_scoring_settings.py` (7 — ordered thresholds,
+      non-negative weights, defaults-match-spec regression),
+      `test_scoring_worked_examples.py` (4 — spec §15.1 M42/Askar
+      V, §15.2 M42/C11, §15.3 NGC 7000 / Ha / full moon, plus a
+      pinned Ha-vs-Ha+OIII collapse check).
+- [x] Full backend suite green: 1854 passed / 3 skipped.
+      `services/planner_scoring.py` at 96% coverage.
+
+### v0.21.0 Completion Criteria
+
+- [x] Every Tonight-mode target renders a score chip (number +
+      label, or `—` + tooltip for gated).
+- [x] Default Tonight sort is score descending; gated targets
+      sort last regardless of direction (nulls-last policy).
+- [x] Filter-intent multi-select on the planner page; empty
+      selection → moon dimension neutral; multi-filter → limiting
+      filter rule demonstrably applied.
+- [x] Detail panel's score breakdown recomputes when panel-local
+      rig / horizon / location overrides differ from the page's
+      values (new `/targets/{id}/score` endpoint).
+- [x] All 25 scoring settings exposed in a collapsible accordion
+      with tooltips; Pydantic validator rejects invalid ordering
+      live.
+- [x] Reference doc at `docs/planner-scoring.md` covers every
+      section of the spec's user-facing material.
+- [x] All three §15 worked examples reproduce within ±5 score
+      points; the frame-fit-collapse case (C11 at 500% coverage)
+      lands at ≤ 30 as spec dictates.
+- [x] Backend lint / format / bandit clean. Frontend build clean.
+- [x] No red / green anywhere in the scoring UI — palette mirrors
+      the rig-calculator guide-suitability palette.
+- [x] Code simplification pass completed — dead `DIMENSION_LABELS`
+      constant removed, unused `alt_row` parameter removed,
+      `_make_dimension_row` helper extracted, IIFE in detail panel
+      replaced with inline ternary, misleading JSDoc on
+      `fetchSingleTargetScore` corrected.
 
 ---
 

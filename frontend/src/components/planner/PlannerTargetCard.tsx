@@ -35,6 +35,7 @@ import { formatDistance } from "@/lib/distanceFormat";
 import { formatDec, formatRa } from "@/lib/dsoFormatters";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import { ScoreChip } from "./ScoreChip";
 import ThumbnailCell from "./ThumbnailCell";
 
 interface Props {
@@ -178,8 +179,17 @@ export default function PlannerTargetCard({
 
           {/* Info block. */}
           <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
-            {/* Line 1 — name + type pill + constellation. */}
+            {/* Line 1 — score chip (Tonight mode only) + name + type
+                pill + constellation. */}
             <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+              {(item.score_pct !== null || item.score_breakdown !== null) && (
+                <ScoreChip
+                  scorePct={item.score_pct}
+                  qualityLabel={item.quality_label}
+                  gateFailures={item.score_breakdown?.gate_failures}
+                  size="small"
+                />
+              )}
               <Typography variant="body1" fontWeight={600}>
                 {item.primary_designation}
               </Typography>

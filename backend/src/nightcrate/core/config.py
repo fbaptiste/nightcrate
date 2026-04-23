@@ -8,7 +8,7 @@ as JSON text so composite types round-trip cleanly.
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 from nightcrate.db.session import get_db
 
@@ -63,6 +63,66 @@ class Settings(BaseModel):
     # clearing the cache invalidates any copies the user's browser HTTP
     # cache holds. Incremented by the cache-clear endpoint.
     thumbnail_cache_generation: int = 0
+    # ─── Target Planner scoring (v0.21.0) ──────────────────────────
+    # Feeds ``services/planner_scoring.py``. See ``docs/planner-scoring.md``.
+    # Combination weights — zero removes the dimension from the geometric mean.
+    scoring_weight_observability: float = 2.0
+    scoring_weight_meridian: float = 1.0
+    scoring_weight_moon: float = 1.5
+    scoring_weight_frame_fit: float = 1.0
+    # Moon sensitivity per filter line: 0 = immune, 1 = broadband-equivalent.
+    scoring_moon_sensitivity_ha: float = 0.15
+    scoring_moon_sensitivity_sii: float = 0.25
+    scoring_moon_sensitivity_oiii: float = 0.70
+    scoring_moon_sensitivity_l: float = 0.95
+    scoring_moon_sensitivity_r: float = 0.55
+    scoring_moon_sensitivity_g: float = 0.85
+    scoring_moon_sensitivity_b: float = 1.00
+    # Min-separation thresholds (deg): proximity factor interpolates
+    # linearly from 0 (at moon) to 1 (at this separation or beyond).
+    scoring_moon_min_sep_ha: float = 60.0
+    scoring_moon_min_sep_sii: float = 60.0
+    scoring_moon_min_sep_oiii: float = 90.0
+    scoring_moon_min_sep_l: float = 90.0
+    scoring_moon_min_sep_r: float = 60.0
+    scoring_moon_min_sep_g: float = 90.0
+    scoring_moon_min_sep_b: float = 90.0
+    # Moon-impact multiplier for OCl / GCl / *Ass (cluster) targets.
+    scoring_cluster_moon_modifier: float = 0.5
+    # Altitude threshold and max-airmass anchor for the observability curve.
+    scoring_observability_min_altitude_deg: float = 30.0
+    # Frame-fit Gaussian shape.
+    scoring_frame_fit_ideal_coverage_pct: float = 55.0
+    scoring_frame_fit_spread: float = 35.0
+    # Quality chip thresholds — validator enforces strict descending order.
+    scoring_threshold_excellent: int = 80
+    scoring_threshold_good: int = 60
+    scoring_threshold_fair: int = 40
+    # Hard gates. ``None`` on the coverage gate disables it — the
+    # frame-fit Gaussian handles oversized targets gracefully on its own.
+    scoring_gate_min_obs_hours: float = 1.0
+    scoring_gate_max_coverage_pct: float | None = None
+
+    @model_validator(mode="after")
+    def _validate_scoring(self) -> Settings:
+        if not (
+            self.scoring_threshold_excellent
+            > self.scoring_threshold_good
+            > self.scoring_threshold_fair
+        ):
+            raise ValueError(
+                "scoring_threshold_excellent > scoring_threshold_good > "
+                "scoring_threshold_fair must hold"
+            )
+        for name in (
+            "scoring_weight_observability",
+            "scoring_weight_meridian",
+            "scoring_weight_moon",
+            "scoring_weight_frame_fit",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be non-negative")
+        return self
 
 
 async def get_settings() -> Settings:

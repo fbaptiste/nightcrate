@@ -12,6 +12,7 @@ import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { PlannerScoringSection } from "@/components/settings/PlannerScoringSection";
 
 export function SettingsPage() {
   const { settings, update } = useSettingsStore();
@@ -243,6 +244,8 @@ export function SettingsPage() {
 
           </CardContent>
         </Card>
+
+        <PlannerScoringSection settings={settings} />
       </Box>
     </Box>
   );

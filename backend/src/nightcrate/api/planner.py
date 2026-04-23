@@ -38,6 +38,7 @@ from nightcrate.api.planner_models import (
     AnnualHoursResponse,
     CacheClearResponse,
     DarkWindowOut,
+    DimensionBreakdownOut,
     NearbyDsoItem,
     NearbyDsosResponse,
     PlannerDesignation,
@@ -46,6 +47,8 @@ from nightcrate.api.planner_models import (
     PlannerRigSummary,
     PlannerTargetItem,
     PlannerTargetsResponse,
+    ScoreBreakdownOut,
+    SingleTargetScoreResponse,
     SkyTileCellLayout,
     SkyTileGridLayout,
     SkyTrackResponse,
@@ -57,6 +60,12 @@ from nightcrate.db.session import get_db
 from nightcrate.services import sky_tile_cache, thumbnails
 from nightcrate.services.planner_annual_hours import compute_annual_hours
 from nightcrate.services.planner_now_status import compute_now_status
+from nightcrate.services.planner_scoring import (
+    ScoringInput,
+    TargetScore,
+    score_targets,
+)
+from nightcrate.services.planner_scoring_constants import FILTER_LINES
 from nightcrate.services.planner_sky_track import compute_sky_track
 from nightcrate.services.planner_visibility import (
     DsoCoord,
@@ -103,9 +112,53 @@ PLANNER_SORT_FIELDS: dict[str, str] = {
     "min_moon_separation_deg": "number",
     "coverage_pct": "number",
     "now_status": "now_status",
+    # v0.21.0 — 0-100 quality score, null for gated targets (always
+    # sorts last, matching the nulls-last policy on every other
+    # numeric field).
+    "score_pct": "number",
 }
 
 _NOW_STATUS_ORDER = {"up": 0, "rising": 1, "set": 2}
+
+
+def _score_breakdown_to_out(score: TargetScore) -> ScoreBreakdownOut:
+    """Convert the scoring service's dataclass breakdown into the API
+    Pydantic shape, preserving dimension order for UI render."""
+    return ScoreBreakdownOut(
+        dimensions=[
+            DimensionBreakdownOut(
+                key=dim.key,
+                label=dim.label,
+                score=round(dim.score, 4),
+                weight=dim.weight,
+                contribution=round(dim.contribution, 4),
+                inputs=list(dim.inputs),
+            )
+            for dim in score.breakdown.dimensions
+        ],
+        gate_failures=list(score.breakdown.gate_failures),
+    )
+
+
+def _parse_filter_intent(raw: str | None) -> list[str]:
+    """Parse a comma-separated filter-intent string. Raises 422 on any
+    unknown line code; empty / whitespace returns an empty list."""
+    if not raw or not raw.strip():
+        return []
+    parsed: list[str] = []
+    for entry in raw.split(","):
+        token = entry.strip()
+        if not token:
+            continue
+        if token not in FILTER_LINES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unknown filter-intent code '{token}'. Allowed: {', '.join(FILTER_LINES)}."
+                ),
+            )
+        parsed.append(token)
+    return parsed
 
 
 def _parse_sort(sort: str | None) -> list[tuple[str, str]]:
@@ -489,9 +542,21 @@ async def list_targets(
             "Comma-separated list of ``field:direction`` pairs (direction "
             "is ``asc`` or ``desc``) evaluated in order. Example: "
             "``hours_visible:desc,mag_v:asc``. Unknown fields return 422. "
-            "If omitted, Tonight mode defaults to ``hours_visible:desc``; "
-            "Anytime defaults to ``primary_designation:asc``. Available "
-            "fields: see ``PLANNER_SORT_FIELDS`` in the planner API."
+            "If omitted, Tonight mode defaults to "
+            "``score_pct:desc,primary_designation:asc``; Anytime defaults "
+            "to ``primary_designation:asc``. Available fields: see "
+            "``PLANNER_SORT_FIELDS`` in the planner API."
+        ),
+    ),
+    filter_intent: str | None = Query(
+        None,
+        description=(
+            "Comma-separated filter-line codes for tonight's session: "
+            "any subset of Ha, SII, OIII, L, R, G, B. Drives the moon "
+            "dimension of the scoring pipeline; a multi-band filter like "
+            "L-eXtreme is represented as ``Ha,OIII``. Empty / absent → "
+            "moon dimension is neutral for every target. Unknown codes "
+            "return 422. Ignored in Anytime mode."
         ),
     ),
 ) -> PlannerTargetsResponse:
@@ -503,6 +568,11 @@ async def list_targets(
             status_code=400,
             detail="location_id is required when restrict_tonight=true",
         )
+
+    # Validate filter intent up-front so a bogus code 422s before any
+    # expensive computation runs. Still validated in Anytime mode so
+    # typos don't silently no-op until the user flips to Tonight.
+    parsed_filter_intent = _parse_filter_intent(filter_intent)
 
     settings = await get_settings()
 
@@ -805,13 +875,46 @@ async def list_targets(
         )
         items.append((item, vis))
 
+    # Per-target scoring — Tonight mode only. Runs over the filtered
+    # items so pagination / sort see the score. Settings changes re-run
+    # the pass without invalidating the cached snapshot.
+    if restrict_tonight and snapshot is not None and location is not None:
+        scoring_inputs = [
+            ScoringInput(
+                dso_id=item.dso_id,
+                obj_type=item.obj_type,
+                coverage_pct=item.coverage_pct,
+                hours_visible=item.hours_visible,
+                peak_time_utc=vis.peak_time_utc if vis is not None else None,
+            )
+            for item, vis in items
+        ]
+        scores = score_targets(
+            scoring_inputs,
+            snapshot,
+            rig_fov[0] if rig_fov is not None else None,
+            rig_fov[1] if rig_fov is not None else None,
+            parsed_filter_intent,
+            settings,
+            location.timezone,
+        )
+        for item, _vis in items:
+            score = scores.get(item.dso_id)
+            if score is None:
+                continue
+            item.score_pct = score.score_pct
+            item.quality_label = score.quality_label
+            item.score_breakdown = _score_breakdown_to_out(score)
+
     # Multi-sort in memory with mode-appropriate fallback. Null values
     # always sort to the end regardless of per-key direction; that's
     # enforced inside ``_sort_items``'s comparator.
     sort_entries = _parse_sort(sort)
     if not sort_entries:
         sort_entries = (
-            [("hours_visible", "desc")] if restrict_tonight else [("primary_designation", "asc")]
+            [("score_pct", "desc"), ("primary_designation", "asc")]
+            if restrict_tonight
+            else [("primary_designation", "asc")]
         )
     _sort_items(items, sort_entries)
 
@@ -897,6 +1000,106 @@ async def list_targets(
         raw_type_counts=raw_type_counts,
         catalog_counts=catalog_counts,
         constellation_counts=constellation_counts,
+    )
+
+
+# ── Single-target scoring (v0.21.0) ──────────────────────────────────────────
+
+
+@router.get(
+    "/targets/{dso_id}/score",
+    response_model=SingleTargetScoreResponse,
+)
+async def score_single_target(
+    dso_id: int,
+    location_id: int,
+    horizon_id: int | None = Query(
+        None,
+        description="Horizon to score against. Defaults to the location's default horizon.",
+    ),
+    rig_id: int | None = Query(
+        None,
+        description=(
+            "Rig FOV to drive the frame-fit dimension + optional "
+            "coverage gate. When omitted, frame-fit drops out."
+        ),
+    ),
+    filter_intent: str | None = Query(
+        None,
+        description=(
+            "Comma-separated filter-line codes the user intends to "
+            "capture (Ha / SII / OIII / L / R / G / B). Empty → moon "
+            "dimension is neutral."
+        ),
+    ),
+    date_: date | None = Query(None, alias="date"),
+) -> SingleTargetScoreResponse:
+    """Score one target against a given preview context.
+
+    Used by the Planner detail panel when the user overrides the
+    rig / horizon / location from the page's choice — the list-
+    fetch score is frozen on the page's rig, so panel-local
+    overrides need to recompute the score against the new preview.
+    Cheap (one snapshot lookup, one scoring-pass row).
+    """
+    parsed_intent = _parse_filter_intent(filter_intent)
+
+    settings = await get_settings()
+
+    async with get_db() as conn:
+        location = await _load_planner_location(conn, location_id)
+        horizon = await _load_planner_horizon(conn, location_id, horizon_id)
+        rig_fov: tuple[float, float] | None = None
+        if rig_id is not None:
+            _, fov_major, fov_minor = await _load_rig_fov(conn, rig_id)
+            rig_fov = (fov_major, fov_minor)
+        metadata = await _load_dso_metadata(conn, [dso_id])
+        dsos = await _load_dso_coords(conn)
+
+    meta = metadata.get(dso_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"DSO {dso_id} not found")
+
+    night_date = date_ if date_ is not None else _tonight_date(location.timezone)
+    snapshot = await asyncio.to_thread(
+        default_cache.get_or_compute, location, horizon, night_date, dsos
+    )
+
+    vis = snapshot.per_dso.get(dso_id)
+    coverage = (
+        compute_coverage_pct(
+            rig_fov[0],
+            rig_fov[1],
+            meta["maj_axis_arcmin"],
+            meta["min_axis_arcmin"],
+        )
+        if rig_fov is not None
+        else None
+    )
+
+    scoring_input = ScoringInput(
+        dso_id=dso_id,
+        obj_type=meta["obj_type"],
+        coverage_pct=coverage,
+        hours_visible=vis.hours_visible if vis is not None else None,
+        peak_time_utc=vis.peak_time_utc if vis is not None else None,
+    )
+
+    scores = score_targets(
+        [scoring_input],
+        snapshot,
+        rig_fov[0] if rig_fov is not None else None,
+        rig_fov[1] if rig_fov is not None else None,
+        parsed_intent,
+        settings,
+        location.timezone,
+    )
+    score = scores[dso_id]
+    return SingleTargetScoreResponse(
+        dso_id=dso_id,
+        score_pct=score.score_pct,
+        quality_label=score.quality_label,
+        score_breakdown=_score_breakdown_to_out(score),
     )
 
 

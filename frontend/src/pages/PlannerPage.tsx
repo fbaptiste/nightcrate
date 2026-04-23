@@ -41,6 +41,7 @@ import PlannerSortPanel from "@/components/planner/PlannerSortPanel";
 import { renderHorizonMenuItems } from "@/components/planner/horizonMenuItems";
 import { serializeSort } from "@/lib/plannerSortFields";
 import { fetchPlannerTargets } from "@/api/planner";
+import { FilterIntentSelect } from "@/components/planner/FilterIntentSelect";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { useDebounce } from "@/lib/useDebounce";
@@ -78,6 +79,8 @@ export default function PlannerPage() {
   const setRigId = usePlannerStore((s) => s.setSelectedRigId);
   const sortBy = usePlannerStore((s) => s.sortBy);
   const setSortBy = usePlannerStore((s) => s.setSortBy);
+  const filterIntent = usePlannerStore((s) => s.filterIntent);
+  const setFilterIntent = usePlannerStore((s) => s.setFilterIntent);
   const [searchQuery, setSearchQuery] = useState("");
   const [restrictTonight, setRestrictTonight] = useState<boolean>(true);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
@@ -211,6 +214,7 @@ export default function PlannerPage() {
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sortParam,
+        filterIntent,
       },
     ],
     // Imaging-focused filters (min_hours / max_magnitude /
@@ -246,6 +250,10 @@ export default function PlannerPage() {
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sort: sortParam,
+        // Tonight-only input — backend ignores in Anytime mode per
+        // its contract, but we still gate here so the query key
+        // doesn't diverge uselessly between modes.
+        filter_intent: restrictTonight ? filterIntent : undefined,
       }),
     // Tonight mode is location-dependent; Anytime runs without one.
     enabled: !restrictTonight || locationId != null,
@@ -516,6 +524,16 @@ export default function PlannerPage() {
               ))}
             </Select>
           </FormControl>
+
+          {restrictTonight && (
+            <FilterIntentSelect
+              value={filterIntent}
+              onChange={(next) => {
+                setFilterIntent(next);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+            />
+          )}
 
           {catalogFiltersActive && (
             <Button size="small" variant="text" onClick={clearCatalogFilters}>

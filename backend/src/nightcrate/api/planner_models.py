@@ -41,6 +41,30 @@ class PlannerDesignation(BaseModel):
     is_primary: bool
 
 
+class DimensionBreakdownOut(BaseModel):
+    """One dimension's per-target contribution to the score."""
+
+    key: str  # "observability" | "meridian" | "moon" | "frame_fit"
+    label: str
+    score: float  # 0-1
+    weight: float
+    contribution: float  # score ** weight, the factor in the geometric mean
+    inputs: list[str]
+
+
+class ScoreBreakdownOut(BaseModel):
+    """Score breakdown attached to each scored target.
+
+    Gated targets (``score_pct=null``): ``gate_failures`` populated,
+    ``dimensions`` empty. Scored targets: the reverse. Dropped
+    dimensions (e.g., frame_fit without a rig) are omitted from
+    ``dimensions``.
+    """
+
+    dimensions: list[DimensionBreakdownOut]
+    gate_failures: list[str]
+
+
 class PlannerTargetItem(BaseModel):
     dso_id: int
     primary_designation: str
@@ -80,6 +104,13 @@ class PlannerTargetItem(BaseModel):
     # minimal list-payload carve-out for the one chip the card shows.
     wikipedia_url: str | None = None
     wikipedia_label: str | None = None
+    # ─── Scoring (v0.21.0) ────────────────────────────────────────
+    # Populated only in Tonight mode. ``score_pct=null`` means a
+    # hard gate tripped — the breakdown's ``gate_failures`` lists
+    # the reasons. In Anytime mode all three fields are ``null``.
+    score_pct: int | None = None
+    quality_label: str | None = None  # "Excellent" / "Good" / "Fair" / "Poor"
+    score_breakdown: ScoreBreakdownOut | None = None
 
 
 class PlannerTargetsResponse(BaseModel):
@@ -112,6 +143,17 @@ class PlannerTargetsResponse(BaseModel):
     raw_type_counts: dict[str, int]
     catalog_counts: dict[str, int]
     constellation_counts: dict[str, int]
+
+
+class SingleTargetScoreResponse(BaseModel):
+    """Response of ``GET /api/planner/targets/{dso_id}/score`` — used by
+    the detail panel to refresh scoring when its rig / horizon /
+    location differs from the list page's choice."""
+
+    dso_id: int
+    score_pct: int | None
+    quality_label: str | None
+    score_breakdown: ScoreBreakdownOut | None
 
 
 class TwilightBandsOut(BaseModel):

@@ -26,6 +26,34 @@ export interface Settings {
   planner_frames_well_max_pct: number;
   planner_moon_sep_deg: number;
   thumbnail_cache_max_mb: number;
+  // ─── Target Planner scoring (v0.21.0) ───────────────────────
+  scoring_weight_observability: number;
+  scoring_weight_meridian: number;
+  scoring_weight_moon: number;
+  scoring_weight_frame_fit: number;
+  scoring_moon_sensitivity_ha: number;
+  scoring_moon_sensitivity_sii: number;
+  scoring_moon_sensitivity_oiii: number;
+  scoring_moon_sensitivity_l: number;
+  scoring_moon_sensitivity_r: number;
+  scoring_moon_sensitivity_g: number;
+  scoring_moon_sensitivity_b: number;
+  scoring_moon_min_sep_ha: number;
+  scoring_moon_min_sep_sii: number;
+  scoring_moon_min_sep_oiii: number;
+  scoring_moon_min_sep_l: number;
+  scoring_moon_min_sep_r: number;
+  scoring_moon_min_sep_g: number;
+  scoring_moon_min_sep_b: number;
+  scoring_cluster_moon_modifier: number;
+  scoring_observability_min_altitude_deg: number;
+  scoring_frame_fit_ideal_coverage_pct: number;
+  scoring_frame_fit_spread: number;
+  scoring_threshold_excellent: number;
+  scoring_threshold_good: number;
+  scoring_threshold_fair: number;
+  scoring_gate_min_obs_hours: number;
+  scoring_gate_max_coverage_pct: number | null;
 }
 
 export function fetchSettings(): Promise<Settings> {

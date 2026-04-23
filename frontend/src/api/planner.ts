@@ -32,6 +32,35 @@ export interface PlannerDarkWindow {
   hours: number;
 }
 
+/** One of the seven atomic filter-line codes the planner's
+ *  filter-intent multi-select emits (v0.21.0 scoring). */
+export type FilterLine = "Ha" | "SII" | "OIII" | "L" | "R" | "G" | "B";
+
+export const FILTER_LINES: FilterLine[] = ["Ha", "SII", "OIII", "L", "R", "G", "B"];
+
+/** One row of a scored target's breakdown — one per quality dimension. */
+export interface DimensionBreakdown {
+  key: "observability" | "meridian" | "moon" | "frame_fit";
+  label: string;
+  /** 0-1 dimensional score. */
+  score: number;
+  weight: number;
+  /** Multiplicative contribution (score ** weight) to the geometric mean. */
+  contribution: number;
+  /** Human-readable facts that drove the dimension's score. */
+  inputs: string[];
+}
+
+/** Score breakdown attached to every scored target. When ``score_pct``
+ *  is ``null`` (hard gate tripped), ``dimensions`` is empty and
+ *  ``gate_failures`` explains why. */
+export interface ScoreBreakdown {
+  dimensions: DimensionBreakdown[];
+  gate_failures: string[];
+}
+
+export type QualityLabel = "Excellent" | "Good" | "Fair" | "Poor";
+
 export interface PlannerTargetItem {
   dso_id: number;
   primary_designation: string;
@@ -70,6 +99,12 @@ export interface PlannerTargetItem {
    *  Sorted primary-first, then alphabetically. Always includes the
    *  primary designation; alternates follow. */
   designations: PlannerDesignation[];
+  /** 0-100 score (v0.21.0). ``null`` in Anytime mode or when the
+   *  target tripped a hard gate — the breakdown's ``gate_failures``
+   *  explains why in the latter case. */
+  score_pct: number | null;
+  quality_label: QualityLabel | null;
+  score_breakdown: ScoreBreakdown | null;
 }
 
 export interface PlannerDesignation {
@@ -145,6 +180,9 @@ export interface PlannerTargetsParams {
    *  Build with ``serializeSort()`` from ``lib/plannerSortFields``.
    *  ``null`` lets the backend apply its mode-appropriate default. */
   sort?: string | null;
+  /** Filter-line codes the user is capturing tonight (v0.21.0 scoring).
+   *  Empty / undefined → moon dimension is neutral. Ignored in Anytime. */
+  filter_intent?: FilterLine[];
 }
 
 export function fetchPlannerTargets(
@@ -173,6 +211,8 @@ export function fetchPlannerTargets(
   if (params.limit != null) qs.set("limit", String(params.limit));
   if (params.offset != null) qs.set("offset", String(params.offset));
   if (params.sort) qs.set("sort", params.sort);
+  if (params.filter_intent?.length)
+    qs.set("filter_intent", params.filter_intent.join(","));
   return apiFetch<PlannerTargetsResponse>(`/planner/targets?${qs.toString()}`);
 }
 
@@ -200,6 +240,39 @@ export interface SkyTrackResponse {
   peak_time_utc: string;
   peak_altitude_deg: number;
   transit_time_utc: string | null;
+}
+
+export interface SingleTargetScoreResponse {
+  dso_id: number;
+  score_pct: number | null;
+  quality_label: QualityLabel | null;
+  score_breakdown: ScoreBreakdown | null;
+}
+
+export interface SingleTargetScoreParams {
+  locationId: number;
+  horizonId?: number | null;
+  rigId?: number | null;
+  filterIntent?: FilterLine[];
+  date?: string | null;
+}
+
+/** Score one target against a panel-local preview context. Used by
+ *  the Planner detail panel when rig/horizon/location differ from
+ *  the list-page values. */
+export function fetchSingleTargetScore(
+  dsoId: number,
+  params: SingleTargetScoreParams,
+): Promise<SingleTargetScoreResponse> {
+  const qs = new URLSearchParams({ location_id: String(params.locationId) });
+  if (params.horizonId != null) qs.set("horizon_id", String(params.horizonId));
+  if (params.rigId != null) qs.set("rig_id", String(params.rigId));
+  if (params.filterIntent?.length)
+    qs.set("filter_intent", params.filterIntent.join(","));
+  if (params.date) qs.set("date", params.date);
+  return apiFetch<SingleTargetScoreResponse>(
+    `/planner/targets/${dsoId}/score?${qs.toString()}`,
+  );
 }
 
 export function fetchSkyTrack(
