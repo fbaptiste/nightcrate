@@ -698,6 +698,46 @@ Per-target 0–100 quality score with a categorical chip (Excellent / Good / Fai
 
 The left-nav in `components/AppShell.tsx` splits into a pinned `HOME_ITEM` row (always at index 0) and a `REORDERABLE_ITEMS` stack (everything else). Reorderable rows use `@dnd-kit`'s `useSortable` with a `PointerSensor` activation-distance of 8 px so clicks still navigate via `NavLink` while a ≥8 px drag starts a reorder. A subtle `DragIndicatorIcon` in a 20-px leading slot (opacity 0.25 → 0.6 on hover) signals draggability; Home gets an empty slot of the same width for icon alignment. Order persists as `settings.nav_order: list[str]` — not surfaced on the Settings page; the nav itself IS the UI. `normalizeNavOrder` filters unknown routes and appends any reorderable route missing from the saved list, so a new nav item in a future version surfaces at the end of whatever order the user has.
 
+## PHD2 Guide-Log Analyzer (v0.22.0 — Pass A: parser + viewer skeleton)
+
+First pass of a nine-version arc (v0.22.0 → v0.30.0). Full spec: `docs/nightcrate-phd2-analyzer-spec-v2.md`. v0.22.0 ships the parser, a D3 time-series chart, a five-phase calibration plot, and per-section summary metrics — enough for "open a PHD2 log, see the guiding graph" as a standalone feature. Interpretive diagnostics start in v0.27.0; persistence lands in v0.29.0. Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
+
+**Architecture (pure service + API split, mirrors `aberration.py` / `api/aberration.py`):**
+
+- `services/phd2_models.py` — Pydantic v2 shapes: `ParsedLog`, `LogSection`, `SectionHeader`, `GuidingSample`, `CalibrationSample`, `CalibrationPhase`, `LogEvent`, `ParseWarning`. All distances in pixels (`arcsec_scale` surfaced alongside metrics so the UI renders dual-unit labels without re-reading the header). `Phd2DebugLogRejected` exception (ValueError subclass).
+- `services/phd2_parser.py` — entry point `parse_log(source: Path | TextIO) -> ParsedLog`. Regex-by-name header parsing (35+ known keys plus a generic `freeform_keys` sweep for unknowns). `_FLOAT_GUIDING_COLUMNS` is the set that gets joined back during locale recovery; integer columns (Frame, RADuration, DECDuration, ErrorCode, StarMass) stay as single tokens. INFO classifier uses `string-contains` regexes (not prefix-exact) so `SETTLING STATE CHANGE, Settling started` matches.
+- `services/phd2_metrics.py` — `compute_section_metrics`: RMS RA/Dec/total, peak RA/Dec, frame + error counts, duration, SNR stats, star-mass mean. v0.22.0 scope only — drift + oscillation + settle filtering arrive in Pass B.
+- `api/phd2.py` + `api/phd2_models.py` — `POST /api/phd2/parse`, `GET /api/phd2/cache/stats`, `POST /api/phd2/cache/clear`. TTL cache keyed by `(path, mtime_ns, size)` with per-key locking (mirrors `api/images.py`). 120 s TTL, 8-entry cap.
+- Frontend — `pages/GuideLogsPage.tsx`, `components/guidelogs/{TimeSeriesChart,CalibrationPlot,StatsPanel,WarningsDrawer,SectionNavigator}.tsx`, `api/guideLogs.ts`. D3 + SVG for both charts (templates from `planner/SkyPositionGraph.tsx` and `planner/BestTimeOfYearChart.tsx`). RA = blue, Dec = orange — colorblind-safe palette from `lib/rigColors.ts`.
+
+**Shared architectural principles (apply across every version of the arc):**
+
+- **Standalone-first, catalog-ready.** The analyzer ships standalone from day one; catalog-linked entry points land in v0.30.0 without re-parse or UI rewrite.
+- **Pixel-canonical representation.** All distances stored and computed in pixels. Arcsec derived at display time from each section's `Pixel scale` header. Missing `Pixel scale` → UI shows pixels only + a warning; never fabricate arcsec.
+- **Parse-by-name, never-by-position.** Column order read per-section from the actual CSV header line. Future PHD2 versions adding/reordering columns must not break the parser.
+- **Never silently coerce missing data.** Empty fields → `None`, never `0.0`. DROP frames have `None` in positional fields (coercing to zero silently corrupts RMS and creates phantom ideal-guiding periods on charts — this is the quiet correctness win that justifies the parser discipline).
+- **No hardcoded ErrorCode→string table.** The log's own ErrorDescription is authoritative. Spec §11.2 documents why the prior table was wrong (`ErrorCode 6` is "Star lost - mass changed", not "Large deflection"; `ErrorCode 7` is "No star found", not "Star lost").
+- **Colorblind-safe palette.** RA = blue, Dec = orange. Never red/green. Viridis for sequential data.
+- **Interpretive claims must be sourced.** Every diagnostic rule from v0.27.0 onward carries a reference URL to the community source (Bruce Waddington tutorial, PHD2 manual, CelestialWonders drift article). No unsourced heuristics.
+- **AI-readiness as a hard constraint.** The `ParsedLog` shape serializes cleanly into a Claude prompt context — no rework expected between v0.22.0 and the v5+ AI analyzer (§9.3 of the spec).
+
+**Format tolerance — what the parser survives (all verified against real ASIAIR + synthetic fixtures):**
+
+- Blank PHD2 app version on the first line (`PHD2 version, Log version 2.5. Log enabled at …`) — ASIAIR-bundled PHD2 omits it.
+- Irregular key separators in header lines — PHD2 packs `key = value` pairs with commas OR bare spaces, sometimes neither (e.g. `Minimum move = 0.100 Aggression = 100% FastSwitch = enabled` has no separator before `Aggression`/`FastSwitch`).
+- Row arity variation inside one section — OK rows are 18 cols, error rows are 19 (trailing quoted `ErrorDescription`).
+- EOF-terminated sections (`Guiding Ends at …` is optional on the final section).
+- Backward section timestamps (NTP resync mid-session) — sections kept in file order, warning emitted.
+- Locale-decimal corruption (IT/DE/FR builds that wrote commas for decimals AND for CSV separators) — detected via token-count ratio `T > C × 1.3` and rebuilt by pairing adjacent numeric tokens as `N.NNN` (only for float columns; integer columns stay as single tokens). `section.locale_recovery_applied = True` surfaces in the warnings drawer.
+
+**Version arc at a glance (see PLAN.md's "Appendix: PHD2 Analyzer Roadmap" for the full map):**
+
+- v0.22.0 Pass A — parser + viewer skeleton (shipped).
+- v0.23.0–v0.24.0 Pass B/C — scatter + settle detection + INFO events + interaction polish.
+- v0.25.0–v0.26.0 Pass D/E — FFT + unguided RA reconstruction + rig picker + worm markers + GA section handling + AO toggle.
+- v0.27.0–v0.28.0 Pass F/G — two-tier diagnostic engine (7 confident rules + 6 speculative), equipment-aware thresholds.
+- v0.29.0–v0.30.0 Pass H/I — multi-log comparison, trends, SQLite persistence, HTML report export, catalog integration.
+
 ## Settings (key-value schema)
 
 Application settings stored in a `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` table (migration 0011, reshaped from the previous `settings(id, data JSON)` singleton). Each Pydantic field on `core/config.py:Settings` maps to one row; `get_settings()` merges rows, silently drops rows with un-parseable JSON, and falls back to defaults on `ValidationError`. `update_settings()` upserts every field in a single loop — each update bumps `updated_at`.

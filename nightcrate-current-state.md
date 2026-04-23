@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.21.1
+**NightCrate version:** 0.22.0
 
 **Last updated:** 2026-04-23
 
@@ -266,6 +266,20 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 - **API:** `/api/diagnostics/*`
 - **Frontend:** `components/ActivityConsole.tsx`
+
+---
+
+### PHD2 Guide-Log Analyzer (v0.22.0 — Pass A)
+
+**Status:** `[in progress]` (Pass A shipped; eight more passes planned through v0.30.0)
+
+First pass of a nine-version arc that delivers a PHD2 guide-log analyzer, aiming to replace the community's "post log to the PHD2 Google Group and wait for expert" workflow with an in-app parser + charts + (eventually, in v0.27.0) an automated diagnostic engine. Functional spec: `docs/nightcrate-phd2-analyzer-spec-v2.md`. v0.22.0 delivers a format-tolerant parser (handles ASIAIR's blank app-version field, irregular header key separators, 18-vs-19-column row arity, DROP frames, locale-decimal recovery, backward timestamp jumps), a D3 time-series chart with RA/Dec traces + correction bars + SNR/mass sub-panels + crosshair cursor, a five-phase calibration plot with derived angle/rate/parity, per-section summary metrics (RMS / peak / duration / SNR / frame count), and a warnings drawer. Standalone-first (spec §4.1) — no persistence yet (in-process TTL cache only); catalog integration lands in v0.30.0.
+
+- **API:** `/api/phd2/parse` (POST), `/api/phd2/cache/stats` (GET), `/api/phd2/cache/clear` (POST)
+- **Backend services:** `services/phd2_parser.py`, `services/phd2_metrics.py`, `services/phd2_models.py`
+- **Frontend:** `pages/GuideLogsPage.tsx`, `components/guidelogs/{TimeSeriesChart,CalibrationPlot,StatsPanel,WarningsDrawer,SectionNavigator}.tsx`, `api/guideLogs.ts`
+- **Route:** `/guide-logs` (top-level, nav entry auto-appended for users with saved nav orders)
+- **Sample log:** `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`
 
 ---
 

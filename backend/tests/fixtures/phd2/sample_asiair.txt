@@ -1,0 +1,85 @@
+PHD2 version, Log version 2.5. Log enabled at 2026-03-07 19:33:45
+
+Calibration Begins at 2026-03-07 19:33:45
+Equipment Profile = 
+Camera = ZWO ASI178MM
+Exposure = 1000 ms
+Pixel scale = 3.96 arc-sec/px, Binning = 2, Focal length = 250 mm
+Mount = ZWO000, Calibration Step = 2000 ms, Assume orthogonal axes = no
+Dec = 69.0 deg, Hour angle = -3.84 hr, Pier side = West, Rotator pos = Unknown
+Lock position = 786.046, 723.641, Star position = 786.046, 723.641, HFD = 2.39 px
+Direction,Step,dx,dy,x,y,Dist
+West,0,0.000,0.000,785.777,723.697,0.000
+West,1,0.188,2.834,785.589,720.863,2.841
+West,2,0.436,5.363,785.341,718.334,5.381
+West,3,0.414,7.891,785.363,715.806,7.902
+West,4,0.629,10.406,785.147,713.291,10.426
+West,5,0.779,12.864,784.998,710.833,12.888
+West,6,1.155,15.112,784.622,708.586,15.156
+West,7,1.174,17.570,784.603,706.127,17.609
+West,8,1.711,19.664,784.066,704.033,19.739
+West,9,2.124,22.342,783.653,701.355,22.443
+West,10,2.201,24.879,783.576,698.818,24.976
+West,11,2.338,27.146,783.439,696.551,27.247
+West calibration complete. Angle = 85.1 deg, Rate = 1.238 px/sec, Parity = N/A
+East,11,2.338,27.146,783.439,696.551,27.247
+East,10,2.091,24.766,783.686,698.931,24.854
+East,9,1.706,22.025,784.071,701.672,22.091
+East,8,1.364,19.790,784.413,703.907,19.837
+East,7,1.117,17.524,784.660,706.173,17.560
+East,6,0.503,14.912,785.274,708.785,14.921
+East,5,0.032,12.334,785.745,711.363,12.334
+East,4,-0.071,10.063,785.847,713.634,10.063
+East,3,-0.462,7.523,786.239,716.174,7.537
+East,2,-1.150,5.234,786.927,718.463,5.359
+East,1,-1.272,2.522,787.048,721.175,2.825
+East,0,-1.293,0.099,787.070,723.598,1.297
+Backlash,0,0.000,0.000,787.070,723.598,0.000
+Backlash,1,-5.244,0.142,792.314,723.456,5.246
+Backlash,2,-12.111,1.140,799.181,722.458,12.165
+Backlash,3,-18.608,1.787,805.678,721.811,18.694
+North,0,0.000,0.000,799.181,722.458,0.000
+North,1,-6.497,0.647,805.678,721.811,6.529
+North,2,-12.773,1.615,811.953,720.843,12.874
+North,3,-19.436,2.310,818.617,720.148,19.573
+North,4,-25.874,2.853,825.055,719.605,26.031
+North calibration complete. Angle = -6.3 deg, Rate = 3.254 px/sec, Parity = N/A
+South,4,-25.874,2.853,825.055,719.605,26.031
+South,3,-22.140,2.609,821.320,719.849,22.293
+South,2,-15.615,2.535,814.796,719.923,15.820
+South,1,-9.382,1.548,808.563,720.910,9.509
+South,0,-3.046,1.103,802.227,721.356,3.240
+Calibration complete, mount = ZWO000.
+
+Guiding Begins at 2026-03-07 19:35:40
+Dither = both axes, Dither scale = 1.000, Image noise reduction = none, Guide-frame time lapse = 0, Server enabled
+Pixel scale = 3.96 arc-sec/px, Binning = 2, Focal length = 250 mm
+Search region = 50 px, Star mass tolerance = 50.0%
+Equipment Profile = 
+Camera = ZWO ASI178MM, gain = 450, full size = 1548 x 1040, have dark, dark dur = 1000, no defect map, pixel size = 2.4 um
+Exposure = 1000 ms
+Mount = ZWO000,  connected, guiding enabled, xAngle = 85.1, xRate = 1.238, yAngle = -6.3, yRate = 3.254, parity = ?/?, 
+X guide algorithm = Hysteresis, Hysteresis = 0.100, Aggression = 1.000, Minimum move = 0.100
+Y guide algorithm = Resist Switch, Minimum move = 0.100 Aggression = 100% FastSwitch = enabled
+Backlash comp = disabled, pulse = 0 ms
+Calibration step = phdlab_placeholder, Max RA duration = 500, Max DEC duration = 500, DEC guide mode = Auto
+RA Guide Speed = Unknown, Dec Guide Speed = Unknown, Cal Dec = 69.0, Last Cal Issue = None, Timestamp = Unknown
+Dec = 69.0 deg, Hour angle = -3.81 hr, Pier side = West, Rotator pos = Unknown
+Lock position = 786.046, 723.641, Star position = 785.801, 723.035, HFD = 2.52 px
+Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDistance,RADuration,RADirection,DECDuration,DECDirection,XStep,YStep,StarMass,SNR,ErrorCode
+INFO: SETTLING STATE CHANGE, Settling started
+1,1.202,"Mount",-0.307,-0.674,-0.698,-0.265,-0.628,0.000,500,E,0,,,,1045,21.07,0
+2,1.985,"Mount",-0.004,-0.227,-0.227,0.010,-0.267,0.000,216,E,0,,,,1197,22.84,0
+3,2.870,"Mount",0.075,-0.037,-0.030,0.077,0.000,0.000,0,,0,,,,1244,23.25,0
+4,4.159,"Mount",0.096,0.265,0.272,0.080,0.245,0.000,198,W,0,,,,1095,21.55,0
+5,5.150,"Mount",0.079,0.098,0.104,0.073,0.118,0.000,95,W,0,,,,1339,24.03,0
+6,6.274,"Mount",0.030,-0.211,-0.208,0.043,-0.175,0.000,142,E,0,,,,1407,24.51,0
+7,7.347,"Mount",-0.256,-0.134,-0.155,-0.247,-0.157,0.000,127,E,0,,,,1376,24.24,0
+8,8.481,"Mount",-0.291,-0.089,-0.113,-0.285,-0.118,-0.285,95,E,87,N,,,1092,21.56,0
+9,9.631,"Mount",0.114,0.314,0.323,0.094,0.279,0.000,225,W,0,,,,1047,21.17,0
+10,10.594,"Mount",-0.037,0.130,0.127,-0.045,0.142,0.000,115,W,0,,,,1322,23.71,0
+11,11.724,"Mount",0.082,-0.217,-0.209,0.096,-0.174,0.000,141,E,0,,,,1158,22.40,0
+12,12.807,"Mount",0.128,-0.183,-0.172,0.139,-0.172,0.000,139,E,0,,,,1237,22.85,0
+INFO: SETTLING STATE CHANGE, Settling complete
+13,13.865,"Mount",0.053,0.156,0.160,0.043,0.127,0.000,103,W,0,,,,973,20.33,0
+Guiding Ends at 2026-03-07 19:35:54

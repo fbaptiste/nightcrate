@@ -28,6 +28,7 @@ from nightcrate.api import (
     horizons,
     images,
     locations,
+    phd2,
     planner,
     rigs,
     settings,
@@ -311,6 +312,18 @@ openapi_tags = [
         ),
     },
     {
+        "name": "PHD2 Guide-Log Analyzer",
+        "description": (
+            "Parse and analyse PHD2 autoguiding logs. Handles format "
+            "irregularities (locale-decimal recovery, missing app version, "
+            "18-vs-19-column arity) and classifies INFO events into a closed "
+            "vocabulary (settle, dither, alert, pause, etc.). v0.22.0 "
+            "delivers the parser, per-section summary metrics, and the "
+            "basic viewer. Advanced analysis (FFT, unguided reconstruction, "
+            "diagnostics) lands in v0.25.0+."
+        ),
+    },
+    {
         "name": "Settings",
         "description": (
             "Read and update application settings stored in the database. Controls "
@@ -360,6 +373,7 @@ app.include_router(calculators.router)
 app.include_router(weather.router)
 app.include_router(dso.router)
 app.include_router(planner.router)
+app.include_router(phd2.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(diagnostics.router)
