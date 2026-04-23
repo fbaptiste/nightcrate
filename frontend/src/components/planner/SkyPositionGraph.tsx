@@ -555,7 +555,6 @@ export default function SkyPositionGraph({
             return null;
           }
           const labelsBarTop = layout.MARGIN.top - TWILIGHT_LABELS_TOTAL_HEIGHT;
-          const lineTop = labelsBarTop + NOW_TIER * TWILIGHT_TIER_HEIGHT;
           const labelY =
             labelsBarTop + (NOW_TIER + 1) * TWILIGHT_TIER_HEIGHT - 3;
           const nowLocal = now.toLocaleTimeString([], {
@@ -564,21 +563,28 @@ export default function SkyPositionGraph({
             hour12: false,
             timeZone: tz,
           });
-          // Triangle points down (▼) with its flat top at ``lineTop``
-          // — looks like a marker pinned to the top of the line.
+          // Line runs only inside the chart data area — from the top
+          // grid edge (90° line) down to the bottom axis. Triangle
+          // sits flush at the top of the chart with its flat base on
+          // the 90° line and its apex pointing down into the chart,
+          // so the "positive stop" reads as an arrowhead capping the
+          // top of the line. Triangle overlaps the line's top
+          // pixels; drawn after the line so the filled triangle
+          // covers cleanly.
           const triSize = 5;
+          const chartTop = layout.MARGIN.top;
           return (
             <g>
               <line
                 x1={nx}
                 x2={nx}
-                y1={lineTop}
+                y1={chartTop}
                 y2={height - layout.MARGIN.bottom}
                 stroke={COLOR_NOW}
                 strokeWidth={1.25}
               />
               <polygon
-                points={`${nx - triSize},${lineTop} ${nx + triSize},${lineTop} ${nx},${lineTop + triSize * 1.3}`}
+                points={`${nx - triSize},${chartTop} ${nx + triSize},${chartTop} ${nx},${chartTop + triSize * 1.3}`}
                 fill={COLOR_NOW}
               />
               <text
