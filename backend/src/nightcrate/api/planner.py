@@ -829,11 +829,18 @@ async def list_targets(
     if page_dso_ids:
         placeholders = ",".join("?" * len(page_dso_ids))
         async with get_db() as conn:
+            # Planner card shows an English-language Wikipedia chip. The
+            # ``language = 'en'`` filter is explicit defence against a
+            # future CSV override that stages a non-``en`` row earlier
+            # in insertion order and would otherwise win the
+            # ``setdefault`` tiebreak below.
             wikipedia_rows = await conn.execute(
                 f"""
                 SELECT dso_id, url, label
                 FROM dso_external_ref
-                WHERE provider = 'wikipedia' AND dso_id IN ({placeholders})
+                WHERE provider = 'wikipedia'
+                  AND language = 'en'
+                  AND dso_id IN ({placeholders})
                 ORDER BY dso_id, id
                 """,  # noqa: S608  # nosec B608 — placeholders built only from ``?``
                 page_dso_ids,

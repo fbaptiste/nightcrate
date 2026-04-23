@@ -45,18 +45,13 @@ import {
 import { EasterEggWand } from "@/components/EasterEggWand";
 import HorizonChart from "@/components/locations/HorizonChart";
 import LocationHorizonsSection from "@/components/locations/LocationHorizonsSection";
-import {
-  createHorizon,
-  deleteHorizon,
-  fetchHorizons,
-  updateHorizon,
-} from "@/api/horizons";
+import { fetchHorizons, replaceLocationHorizons } from "@/api/horizons";
 import {
   fromServerRow,
   hasDirtyHorizons,
-  planSaveOps,
   seedNewLocationDefault,
   toCreateSeeds,
+  toReplaceItems,
   type StagedHorizon,
 } from "@/components/locations/horizonStaging";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
@@ -741,8 +736,16 @@ export default function LocationsPage() {
       };
       if (editingLocation) {
         await updateLocation(editingLocation.id, payload);
-        // Apply staged horizon changes against the existing location.
-        await _applyStagedHorizonsToExisting(editingLocation.id, stagedHorizons);
+        // Atomic horizon replace — the server diff-applies creates /
+        // updates / deletes in one SQL transaction, so partial network
+        // failure mid-save can't corrupt the dirty-state invariant.
+        // Also handles the "replace custom" pattern (delete old +
+        // create new, both customs) that a naïve client-side
+        // ordering would hit the at-most-one-custom partial unique
+        // with (409).
+        if (hasDirtyHorizons(stagedHorizons)) {
+          await replaceLocationHorizons(editingLocation.id, toReplaceItems(stagedHorizons));
+        }
         setSnack({ msg: "Location updated.", severity: "info" });
       } else {
         // New location — atomic create path. Seed horizons are derived
@@ -765,53 +768,17 @@ export default function LocationsPage() {
     }
   };
 
-  /** Apply the staged horizon diff against an existing location.
-   *
-   *  Order (matches planSaveOps docs): creates → updates → promote-
-   *  default → deletes. Rationale: the server enforces exactly-one-
-   *  default via a partial unique index. Creating a new row as default
-   *  while an existing row is still default would fail the constraint
-   *  so we always POST new rows as non-default first, then PATCH
-   *  is_default=true on the target (server atomically demotes the
-   *  previous default), THEN delete any tombstoned rows.
-   */
-  async function _applyStagedHorizonsToExisting(
-    locationId: number,
-    staged: StagedHorizon[],
-  ): Promise<void> {
-    const plan = planSaveOps(staged);
-
-    // Creates — each returns a server row; we capture tempId→realId so
-    // subsequent promote-default / update ops can address by real id.
-    const tempToRealId = new Map<number, number>();
-    for (const create of plan.creates) {
-      const created = await createHorizon(locationId, create.seed);
-      tempToRealId.set(create.tempId, created.id);
-    }
-
-    // Updates — horizonId is always a server id by construction.
-    for (const upd of plan.updates) {
-      await updateHorizon(locationId, upd.horizonId, upd.patch);
-    }
-
-    // Promote default — resolve tempId if the target was a new row.
-    if (plan.promoteDefaultId !== null) {
-      const resolved =
-        plan.promoteDefaultId < 0
-          ? tempToRealId.get(plan.promoteDefaultId)
-          : plan.promoteDefaultId;
-      if (resolved !== undefined) {
-        await updateHorizon(locationId, resolved, { is_default: true });
-      }
-    }
-
-    // Deletes last. If one of them was the server's former default,
-    // step 3 already moved the default flag off it so the DELETE
-    // doesn't need the server's auto-promote fallback.
-    for (const id of plan.deletes) {
-      await deleteHorizon(locationId, id);
-    }
-  }
+  // NOTE: ``_applyStagedHorizonsToExisting`` — which issued per-row
+  // create/update/delete calls client-side — was removed in favour of
+  // the atomic ``PUT /api/locations/{id}/horizons`` endpoint above.
+  // Client-side ordering (creates → updates → promote → deletes)
+  // tripped ``idx_location_horizon_one_custom`` (409) on the
+  // "replace-custom" flow (delete old custom + add new one) and
+  // couldn't offer true atomicity against mid-save network failures.
+  // The server endpoint diff-applies the full desired state in one
+  // transaction so neither issue is reachable. See horizonStaging's
+  // ``planSaveOps`` for the retired plan-builder (kept for reference
+  // + its tests; not used at runtime).
 
   const handleSetDefault = async (loc: Location) => {
     try {

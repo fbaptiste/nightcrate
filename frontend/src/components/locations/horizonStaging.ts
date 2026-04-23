@@ -14,7 +14,7 @@
  *   state=modified  → exists on server but differs in ≥1 field
  *   state=deleted   → tombstone; hidden in UI; becomes a DELETE at Save
  */
-import type { Horizon, HorizonPoint } from "@/api/horizons";
+import type { Horizon, HorizonPoint, HorizonReplaceItem } from "@/api/horizons";
 import type { LocationCreateHorizonSeed } from "@/api/locations";
 
 export type HorizonLifecycle = "unchanged" | "new" | "modified" | "deleted";
@@ -218,6 +218,27 @@ export function markDeleted(
 }
 
 // ── Serialization ──────────────────────────────────────────────────────────
+
+/** Convert staged horizons into the atomic ``PUT /api/locations/{id}/
+ *  horizons`` payload. Server-backed existing rows carry their real id
+ *  so the server UPDATEs them; new rows carry no id so the server
+ *  INSERTs them. Deleted rows are dropped (omission from the payload
+ *  is the signal to DELETE on the server side). The server does the
+ *  diff in one transaction. */
+export function toReplaceItems(staged: StagedHorizon[]): HorizonReplaceItem[] {
+  return visibleHorizons(staged).map((h) => ({
+    // Positive ids are server-backed; negative are temp (new rows),
+    // which serialise as ``undefined`` so the server treats them as
+    // INSERTs.
+    id: h.id > 0 ? h.id : undefined,
+    name: h.name,
+    type: h.type,
+    flat_altitude_deg: h.type === "artificial" ? h.flat_altitude_deg : null,
+    points: h.type === "custom" ? h.points : undefined,
+    source: h.type === "custom" ? "drawn" : null,
+    is_default: h.is_default,
+  }));
+}
 
 /** Convert staged horizons into seeds for ``POST /api/locations`` atomic
  *  create. Drops deleted entries (they were never saved so nothing to

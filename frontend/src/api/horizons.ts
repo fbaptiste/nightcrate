@@ -127,3 +127,34 @@ export function downloadHorizonExport(
   a.click();
   a.remove();
 }
+
+/** One item in the atomic ``replaceLocationHorizons`` payload. Same
+ *  shape as ``HorizonCreateBody`` but with an optional ``id`` field —
+ *  present when the caller wants to UPDATE an existing row, absent
+ *  when the caller wants to CREATE a new one. */
+export interface HorizonReplaceItem {
+  id?: number | null;
+  name: string;
+  type: HorizonType;
+  flat_altitude_deg?: number | null;
+  points?: HorizonPoint[];
+  source?: HorizonSource | null;
+  source_filename?: string | null;
+  notes?: string | null;
+  is_default: boolean;
+}
+
+/** Atomically replace the horizon set for a location. The server
+ *  diff-applies creates / updates / deletes in one SQL transaction so
+ *  partial network failures mid-save can't corrupt the dirty-state
+ *  invariant ("Save commits everything, Cancel discards everything").
+ *  Returns the fresh full horizon list. */
+export const replaceLocationHorizons = (
+  locationId: number,
+  horizons: HorizonReplaceItem[],
+): Promise<Horizon[]> =>
+  apiFetch<Horizon[]>(`/locations/${locationId}/horizons`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ horizons }),
+  });

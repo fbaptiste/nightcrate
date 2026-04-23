@@ -19,7 +19,7 @@ help:
 	} \
 	{ lastLine = $$0 }' $(MAKEFILE_LIST)
 
-.PHONY: help dev backend frontend install lint format test
+.PHONY: help dev backend frontend install lint format test test-fast
 
 ## Start backend and frontend together (Ctrl+C stops both).
 ## Log level defaults to INFO; override with `make dev LOG=DEBUG`.
@@ -52,6 +52,10 @@ lint:
 format:
 	cd backend && uv run ruff format src/
 
-## Run backend tests
+## Run backend tests (serial — full output, consistent ordering)
 test:
 	cd backend && uv run pytest
+
+## Run backend tests in parallel via pytest-xdist (fast — uses all CPU cores)
+test-fast:
+	cd backend && uv run pytest -n auto

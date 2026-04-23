@@ -93,7 +93,8 @@ make frontend  # Frontend only (http://localhost:5173)
 make install   # Sync all deps after pulling changes
 make lint      # ruff check
 make format    # ruff format
-make test      # pytest
+make test      # pytest (serial — full output, consistent ordering, ~7 min on v0.20.0)
+make test-fast # pytest -n auto (parallel via pytest-xdist, typically 2-3x faster)
 ```
 
 Direct commands when needed:
