@@ -92,7 +92,11 @@ const TWILIGHT_TIER_HEIGHT = 14;
 const TWILIGHT_MAX_TIER = 5;
 const MERIDIAN_TIER = 4;
 const NOW_TIER = 5;
-const TWILIGHT_LABEL_BAR_GAP = 8;
+// Gap between the lowest tier's label baseline and the chart grid.
+// Kept tight so the "now" line's label reads as pinned to the chart
+// top instead of floating above it. Any more breathing room separates
+// the eye from the freshest data.
+const TWILIGHT_LABEL_BAR_GAP = 2;
 const TWILIGHT_LABELS_TOTAL_HEIGHT =
   (TWILIGHT_MAX_TIER + 1) * TWILIGHT_TIER_HEIGHT + TWILIGHT_LABEL_BAR_GAP;
 
@@ -107,18 +111,25 @@ interface TwilightMarker {
 export default function SkyPositionGraph({
   track,
   tz,
-  // Default bumped 260 → 324 → 338 → 352 over successive tier
-  // additions. The 92 px label strip above the chart grid reserves
-  // six tiers: astro / nautical / civil dark + sunset / sunrise,
-  // then meridian on its own row so a meridian-near-sunset doesn't
-  // collide with the sunset label, then now closest to the chart.
-  // Chart data area stays its historic 222 px tall.
-  height = 352,
+  // Default bumped 260 → 324 → 338 → 352 → 346 over successive tier
+  // additions + a final compaction of the label-strip-to-chart gap.
+  // The 86 px label strip above the chart grid reserves six tiers:
+  // astro / nautical / civil dark + sunset / sunrise, then meridian
+  // on its own row so a meridian-near-sunset doesn't collide with
+  // the sunset label, then now closest to the chart. Chart data area
+  // stays its historic 222 px tall.
+  height = 346,
 }: Props) {
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(600);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  // Bare counter used only to trigger a re-render when the minute
+  // rolls over — lets the "now" marker advance on its own instead of
+  // getting frozen at whatever wall-clock time the panel was first
+  // opened at. The actual time displayed still comes from
+  // ``new Date()`` inside the render.
+  const [, setMinuteTick] = useState(0);
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -132,6 +143,24 @@ export default function SkyPositionGraph({
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    // Wake up at the next minute boundary, then tick every 60s so the
+    // minute stays flush with real time (a fixed 60s setInterval would
+    // drift relative to the wall clock). HH:MM precision is enough —
+    // no need for per-second updates, which would cause needless SVG
+    // churn on every tooltip movement.
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    const msUntilNextMinute = 60_000 - (Date.now() % 60_000);
+    const timeoutId = setTimeout(() => {
+      setMinuteTick((t) => t + 1);
+      intervalId = setInterval(() => setMinuteTick((t) => t + 1), 60_000);
+    }, msUntilNextMinute);
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId !== undefined) clearInterval(intervalId);
+    };
   }, []);
 
   const tw = twilightFill(theme.palette.mode);
@@ -313,7 +342,11 @@ export default function SkyPositionGraph({
     });
   }
 
-  const ticks = layout.x.ticks(6);
+  // Every hour, not every-other-hour. ``d3.timeHour.range`` returns
+  // every hour boundary inside ``[tmin, tmax)`` — one tick per
+  // clock-aligned hour across the chart's visible window.
+  const [tmin, tmax] = layout.x.domain() as [Date, Date];
+  const ticks = d3.timeHour.range(tmin, tmax);
 
   return (
     <Box ref={wrapperRef} sx={{ position: "relative", width: "100%" }}>

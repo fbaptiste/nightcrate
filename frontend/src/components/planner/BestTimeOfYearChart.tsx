@@ -138,7 +138,29 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
   }
 
   const monthTicks = useMemo(
-    () => d3.timeMonths(layout.dates[0], layout.dates[layout.dates.length - 1]),
+    () => {
+      // ``d3.timeMonths`` returns month-boundary dates in ``[tmin,
+      // tmax)``. When the chart's leftmost date lands mid-month (e.g.
+      // Jan 15), the month containing that date is skipped and its
+      // label (e.g. "Jan") never renders. Prepend ``tmin`` itself as a
+      // virtual tick for that month so every month in the range gets a
+      // label — the tick line sits at the chart's left edge and the
+      // label formats as the short month name (same
+      // ``toLocaleDateString({month:"short"})`` treatment as the real
+      // boundary ticks downstream).
+      const tmin = layout.dates[0];
+      const tmax = layout.dates[layout.dates.length - 1];
+      if (!tmin || !tmax) return [];
+      const ticks = d3.timeMonths(tmin, tmax);
+      const firstMonthBoundary = d3.timeMonth.floor(tmin);
+      if (
+        ticks.length === 0 ||
+        ticks[0].getTime() !== firstMonthBoundary.getTime()
+      ) {
+        return [tmin, ...ticks];
+      }
+      return ticks;
+    },
     [layout.dates],
   );
 
