@@ -63,15 +63,6 @@ interface Props {
   onClose: () => void;
 }
 
-function coverageNarrative(pct: number): string {
-  if (pct < 5) return `fills only ~${pct.toFixed(0)}% of the frame — lost in the field`;
-  if (pct < 15) return `covers ${pct.toFixed(0)}% of the frame — tight crop recommended`;
-  if (pct < 50) return `fits comfortably at ${pct.toFixed(0)}%`;
-  if (pct <= 90) return `fills the frame nicely at ${pct.toFixed(0)}%`;
-  if (pct < 150) return `covers ${pct.toFixed(0)}% of the frame — will be cropped`;
-  return `far larger than the frame (${pct.toFixed(0)}%) — mosaic needed`;
-}
-
 /** Null-safe variant — renders ``—`` for null/invalid ISO strings.
  *  Same shape as ``formatLocalTime`` in ``PlannerPage`` /
  *  ``PlannerTargetCard``; keep the name in step across the three
@@ -272,7 +263,6 @@ export default function PlannerDetailPanel({
         return [Math.max(w, h), Math.min(w, h)];
       })()
     : null;
-  const rigName = previewRig?.name ?? null;
 
   const coveragePct =
     rigFov && dso?.maj_axis_arcmin
@@ -289,25 +279,15 @@ export default function PlannerDetailPanel({
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle sx={{ display: "flex", alignItems: "flex-start", gap: 2, py: 1.25 }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          {/* Title row: primary designation + constellation + distance
-              chip. Distance uses ``ml: auto`` to right-align inside the
-              flex row so the user's eye catches "how far away" on the
-              same line as the name — the two facts most users check
-              first when picking a target. */}
-          <Stack direction="row" gap={1.5} alignItems="center" flexWrap="wrap">
+          {/* Title row: primary designation + constellation. Distance
+              moved to the fact grid below so the header stays focused
+              on identifiers (name + cross-refs + type). */}
+          <Stack direction="row" gap={1.5} alignItems="baseline" flexWrap="wrap">
             <Typography variant="h6">{dso?.primary_designation ?? "…"}</Typography>
             {dso?.constellation && (
               <Typography variant="body2" color="text.secondary">
                 {displayConstellation(dso.constellation)}
               </Typography>
-            )}
-            {distance && (
-              <Chip
-                label={`${distance.primary} · ${distance.secondary}`}
-                size="small"
-                variant="outlined"
-                sx={{ ml: "auto" }}
-              />
             )}
           </Stack>
 
@@ -549,94 +529,104 @@ export default function PlannerDetailPanel({
             next to the type/distance chips (search this file for
             ``dso.designations.map``). */}
 
-        {/* Compact fact grid — one line per fact; auto-fit packs as many
-            columns as the dialog width allows. */}
-        <Box
-          sx={{
-            mt: 1.5,
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            columnGap: 2,
-            rowGap: 0.25,
-          }}
-        >
-          <Fact
-            label="Mag V"
-            value={dso?.mag_v != null ? dso.mag_v.toFixed(1) : "—"}
-          />
-          <Fact
-            label="Mag B"
-            value={dso?.mag_b != null ? dso.mag_b.toFixed(1) : "—"}
-          />
-          <Fact
-            label="Size"
-            value={
-              dso?.maj_axis_arcmin
-                ? `${dso.maj_axis_arcmin.toFixed(1)}' × ${(
-                    dso.min_axis_arcmin ?? dso.maj_axis_arcmin
-                  ).toFixed(1)}'`
-                : "—"
-            }
-          />
-          <Fact
-            label="Hours visible"
-            value={
-              target?.hours_visible != null
-                ? `${target.hours_visible.toFixed(1)} h`
-                : "—"
-            }
-          />
-          <Fact
-            label="Max alt. in dark"
-            help={
-              "Highest altitude the target reaches during astronomical darkness (sun below −18°). " +
-              "If the target transits during twilight or daylight, the true transit altitude may be " +
-              "higher — see the Meridian row for that."
-            }
-            value={
-              target?.max_altitude_deg != null && target.peak_time_utc != null
-                ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocalTime(
-                    target.peak_time_utc,
-                    tz,
-                  )}`
-                : "—"
-            }
-          />
-          <Fact
-            label="Meridian"
-            value={
-              target?.altitude_at_transit_deg != null &&
-              target.transit_time_utc != null
-                ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocalTime(
-                    target.transit_time_utc,
-                    tz,
-                  )}`
-                : "—"
-            }
-          />
-          <Fact
-            label="Moon separation"
-            value={
-              target?.min_moon_separation_deg != null
-                ? `${target.min_moon_separation_deg.toFixed(0)}°`
-                : "—"
-            }
-          />
-          {rigFov && (
+        {/* Fact grid — three explicit rows with semantic grouping:
+              Row 1: physical/imaging-framing facts (distance, size,
+                     FOV coverage when a rig is selected).
+              Row 2: tonight-visibility facts (hours, max altitude,
+                     meridian transit, moon separation).
+              Row 3: photometry (Mag V, Mag B). Low priority, on its
+                     own line so it doesn't crowd the more-often-
+                     consulted rows above.
+
+            Flex + wrap handles narrow screens; each row's items pack
+            left-aligned with a consistent gap. The FOV coverage cell
+            is rendered unconditionally so row 1 keeps three columns
+            whether or not a rig is selected (shows "—" when absent).
+            The "This object fits comfortably…" narrative that used
+            to live here was removed — users can see the framing in
+            the simulator above; the sentence duplicated that signal. */}
+        <Stack spacing={0.75} sx={{ mt: 1.5 }}>
+          <Stack direction="row" gap={3} flexWrap="wrap">
+            <Fact
+              label="Distance"
+              value={distance ? `${distance.primary} · ${distance.secondary}` : "—"}
+            />
+            <Fact
+              label="Size"
+              value={
+                dso?.maj_axis_arcmin
+                  ? `${dso.maj_axis_arcmin.toFixed(1)}' × ${(
+                      dso.min_axis_arcmin ?? dso.maj_axis_arcmin
+                    ).toFixed(1)}'`
+                  : "—"
+              }
+            />
             <Fact
               label="FOV coverage"
               value={
-                coveragePct != null ? `${coveragePct.toFixed(0)}%` : "—"
+                rigFov && coveragePct != null
+                  ? `${coveragePct.toFixed(0)}%`
+                  : "—"
               }
             />
-          )}
-        </Box>
-
-        {coveragePct != null && rigName && (
-          <Typography variant="body2" sx={{ mt: 1.5 }}>
-            This object {coverageNarrative(coveragePct)} in your <strong>{rigName}</strong> rig.
-          </Typography>
-        )}
+          </Stack>
+          <Stack direction="row" gap={3} flexWrap="wrap">
+            <Fact
+              label="Hours visible"
+              value={
+                target?.hours_visible != null
+                  ? `${target.hours_visible.toFixed(1)} h`
+                  : "—"
+              }
+            />
+            <Fact
+              label="Max alt. in dark"
+              help={
+                "Highest altitude the target reaches during astronomical darkness (sun below −18°). " +
+                "If the target transits during twilight or daylight, the true transit altitude may be " +
+                "higher — see the Meridian row for that."
+              }
+              value={
+                target?.max_altitude_deg != null && target.peak_time_utc != null
+                  ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocalTime(
+                      target.peak_time_utc,
+                      tz,
+                    )}`
+                  : "—"
+              }
+            />
+            <Fact
+              label="Meridian"
+              value={
+                target?.altitude_at_transit_deg != null &&
+                target.transit_time_utc != null
+                  ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocalTime(
+                      target.transit_time_utc,
+                      tz,
+                    )}`
+                  : "—"
+              }
+            />
+            <Fact
+              label="Moon separation"
+              value={
+                target?.min_moon_separation_deg != null
+                  ? `${target.min_moon_separation_deg.toFixed(0)}°`
+                  : "—"
+              }
+            />
+          </Stack>
+          <Stack direction="row" gap={3} flexWrap="wrap">
+            <Fact
+              label="Mag V"
+              value={dso?.mag_v != null ? dso.mag_v.toFixed(1) : "—"}
+            />
+            <Fact
+              label="Mag B"
+              value={dso?.mag_b != null ? dso.mag_b.toFixed(1) : "—"}
+            />
+          </Stack>
+        </Stack>
 
         {/* External-reference chip now lives in the header next to the
             designation pills. */}
