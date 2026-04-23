@@ -1,7 +1,8 @@
 import Box from "@mui/material/Box";
-import Chip from "@mui/material/Chip";
+import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 
 import type { ExternalRef } from "../../api/dsos";
 
@@ -11,14 +12,18 @@ interface DsoExternalRefsProps {
 }
 
 /**
- * External-reference chips for a DSO. Surfaces Wikipedia links via
- * Wikidata. Wikidata QIDs are stored alongside each Wikipedia entry for
- * future features (automated enrichment, NED cross-lookup) but are not
- * rendered in the MVP UI — chips stay focused on user-facing resources.
+ * External-reference section for a DSO detail panel. Renders each
+ * Wikipedia ref as a plain hyperlink (theme primary, underline on
+ * hover) with a trailing ``OpenInNewIcon`` — deliberately NOT as a
+ * chip so "opens in a new tab" is unambiguous visually and doesn't
+ * get confused with non-clickable designation chips elsewhere in the
+ * panel.
  *
- * Renders nothing when there are no Wikipedia refs, matching the
- * silent-absence convention used for OpenNGC/NED notes elsewhere in the
- * detail panel.
+ * Wikidata QIDs are stored alongside each Wikipedia entry (for
+ * future features — Commons image pulls, NED cross-lookup) but are
+ * not rendered in the MVP UI. Renders nothing when there are no
+ * Wikipedia refs, matching the silent-absence convention used for
+ * OpenNGC/NED notes elsewhere in the panel.
  */
 export function DsoExternalRefs({ refs, title = "External references" }: DsoExternalRefsProps) {
   const wikipedia = refs.filter((ref) => ref.provider === "wikipedia");
@@ -37,26 +42,31 @@ export function DsoExternalRefs({ refs, title = "External references" }: DsoExte
         aria-labelledby="external-refs-heading"
         direction="row"
         flexWrap="wrap"
-        gap={1}
-        sx={{ mt: 1, pl: 0, mb: 0, listStyle: "none" }}
+        gap={2}
+        sx={{ mt: 0.5, pl: 0, mb: 0, listStyle: "none" }}
       >
         {wikipedia.map((ref) => {
           const label = ref.label || ref.identifier;
-          const displayLabel = `Wikipedia · ${label}`;
           const ariaLabel = `Open Wikipedia article: ${label} (opens in new tab)`;
           return (
             <li key={`${ref.provider}-${ref.language ?? ""}-${ref.identifier}`}>
-              <Chip
-                component="a"
-                clickable
+              <Link
                 href={ref.url ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
+                underline="hover"
                 aria-label={ariaLabel}
-                label={displayLabel}
-                size="small"
-                variant="outlined"
-              />
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                }}
+              >
+                Wikipedia: {label}
+                <OpenInNewIcon sx={{ fontSize: 14 }} />
+              </Link>
             </li>
           );
         })}
