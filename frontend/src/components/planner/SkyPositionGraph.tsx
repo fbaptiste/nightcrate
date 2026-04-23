@@ -78,17 +78,20 @@ const SNAP_PX = 6;
 // Twilight + meridian + now markers live in a stacked label area above
 // the chart grid. ``tier 0`` is the topmost label row (farthest from
 // the chart); the corresponding vertical line is the longest. Higher
-// tier numbers sit closer to the chart with shorter lines. Astro
-// boundaries get tier 0, nautical tier 1, civil tier 2,
-// sunset/sunrise + meridian tier 3 (they share a row because they're
-// always time-disjoint — meridian is in astro dark, sunset/sunrise
-// are far from it — and meridian's object-blue colour distinguishes
-// its label from the grey sunset/sunrise labels). Tier 4 is reserved
-// for the "now" indicator so its label sits closest to the chart.
+// tier numbers sit closer to the chart with shorter lines.
+//
+// Tier 0: Astro dark boundaries    (longest line, farthest label)
+// Tier 1: Nautical dark boundaries
+// Tier 2: Civil dark boundaries
+// Tier 3: Sunset / sunrise
+// Tier 4: Meridian transit          (own tier — not shared with
+//                                    sunset/sunrise because a meridian
+//                                    near sunset would overlap text)
+// Tier 5: Now                       (closest to chart, shortest line)
 const TWILIGHT_TIER_HEIGHT = 14;
-const TWILIGHT_MAX_TIER = 4;
-const MERIDIAN_TIER = 3;
-const NOW_TIER = 4;
+const TWILIGHT_MAX_TIER = 5;
+const MERIDIAN_TIER = 4;
+const NOW_TIER = 5;
 const TWILIGHT_LABEL_BAR_GAP = 8;
 const TWILIGHT_LABELS_TOTAL_HEIGHT =
   (TWILIGHT_MAX_TIER + 1) * TWILIGHT_TIER_HEIGHT + TWILIGHT_LABEL_BAR_GAP;
@@ -104,13 +107,13 @@ interface TwilightMarker {
 export default function SkyPositionGraph({
   track,
   tz,
-  // Default bumped 260 → 324 → 338. The 64 → 78 px label strip above
-  // the chart grid now reserves a 5th tier for the "now" indicator
-  // (closest to the chart), in addition to the four earlier tiers for
-  // twilight boundaries + meridian (astro / nautical / civil dark,
-  // then sunset/sunrise sharing a row with meridian). Chart data area
-  // stays its historic 222 px tall.
-  height = 338,
+  // Default bumped 260 → 324 → 338 → 352 over successive tier
+  // additions. The 92 px label strip above the chart grid reserves
+  // six tiers: astro / nautical / civil dark + sunset / sunrise,
+  // then meridian on its own row so a meridian-near-sunset doesn't
+  // collide with the sunset label, then now closest to the chart.
+  // Chart data area stays its historic 222 px tall.
+  height = 352,
 }: Props) {
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -491,11 +494,11 @@ export default function SkyPositionGraph({
           );
         })}
 
-        {/* Meridian crossing — vertical dashed line with label, now
-            living on tier 3 (shared with sunset/sunrise — they're
-            always time-disjoint, and meridian's object-blue colour
-            keeps the labels distinguishable at a glance). Drawn only
-            when transit falls inside the display window. */}
+        {/* Meridian crossing — vertical dashed line with label on
+            its own tier (one above "now", below sunset/sunrise).
+            Earlier shared tier 3 with sunset/sunrise, but a meridian
+            close to sunset made the labels overlap. Drawn only when
+            transit falls inside the display window. */}
         {track.transit_time_utc &&
           (() => {
             const tx = layout.x(new Date(track.transit_time_utc));
