@@ -13,7 +13,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import type { SkyTrackResponse } from "@/api/planner";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {
   track: SkyTrackResponse;
@@ -26,6 +26,10 @@ interface Props {
 // the colorblind-safe blue/orange/teal trio.
 const COLOR_OBJECT = RIG_BLUE;
 const COLOR_MOON = RIG_ORANGE;
+// "Now" indicator colour — distinct from object/moon so the vertical
+// line and its triangular anchor read as "this is happening now" at
+// a glance. Teal is already in the colorblind-safe rig palette.
+const COLOR_NOW = RIG_TEAL;
 
 function blockedSkyFill(mode: "light" | "dark") {
   // Filled area below the horizon (sky that the horizon profile blocks).
@@ -71,14 +75,20 @@ interface HoverInfo {
 // mouse, narrow enough that it feels intentional rather than sticky.
 const SNAP_PX = 6;
 
-// Twilight markers live in a stacked label area above the chart grid.
-// ``tier 0`` is the topmost label row (farthest from the chart); the
-// corresponding vertical line is the longest. Higher tier numbers
-// sit closer to the chart with shorter lines. Astro boundaries get
-// tier 0, nautical tier 1, civil tier 2, sunset/sunrise tier 3 —
-// matches the weather app's Darkness-bar labelling.
+// Twilight + meridian + now markers live in a stacked label area above
+// the chart grid. ``tier 0`` is the topmost label row (farthest from
+// the chart); the corresponding vertical line is the longest. Higher
+// tier numbers sit closer to the chart with shorter lines. Astro
+// boundaries get tier 0, nautical tier 1, civil tier 2,
+// sunset/sunrise + meridian tier 3 (they share a row because they're
+// always time-disjoint — meridian is in astro dark, sunset/sunrise
+// are far from it — and meridian's object-blue colour distinguishes
+// its label from the grey sunset/sunrise labels). Tier 4 is reserved
+// for the "now" indicator so its label sits closest to the chart.
 const TWILIGHT_TIER_HEIGHT = 14;
-const TWILIGHT_MAX_TIER = 3;
+const TWILIGHT_MAX_TIER = 4;
+const MERIDIAN_TIER = 3;
+const NOW_TIER = 4;
 const TWILIGHT_LABEL_BAR_GAP = 8;
 const TWILIGHT_LABELS_TOTAL_HEIGHT =
   (TWILIGHT_MAX_TIER + 1) * TWILIGHT_TIER_HEIGHT + TWILIGHT_LABEL_BAR_GAP;
@@ -94,11 +104,13 @@ interface TwilightMarker {
 export default function SkyPositionGraph({
   track,
   tz,
-  // Default bumped from 260 → 324 to reserve a 64 px label strip
-  // above the chart grid for the four tiers of boundary markers
-  // (astro / nautical / civil dark + sunset/sunrise). The chart
-  // data area itself stays its historic 222 px tall.
-  height = 324,
+  // Default bumped 260 → 324 → 338. The 64 → 78 px label strip above
+  // the chart grid now reserves a 5th tier for the "now" indicator
+  // (closest to the chart), in addition to the four earlier tiers for
+  // twilight boundaries + meridian (astro / nautical / civil dark,
+  // then sunset/sunrise sharing a row with meridian). Chart data area
+  // stays its historic 222 px tall.
+  height = 338,
 }: Props) {
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -256,6 +268,14 @@ export default function SkyPositionGraph({
     }
 
     tryCandidate(track.transit_time_utc, "meridian");
+    // Snap to the "now" line when the cursor is near it — completes
+    // the set of landmarks the user can land on precisely.
+    const now = new Date();
+    const tmin = layout.times[0];
+    const tmax = layout.times[layout.times.length - 1];
+    if (tmin && tmax && now >= tmin && now <= tmax) {
+      tryCandidate(now.toISOString(), "now");
+    }
     for (const m of twilightMarkers) {
       tryCandidate(m.utc, m.label.toLowerCase());
     }
@@ -471,18 +491,31 @@ export default function SkyPositionGraph({
           );
         })}
 
-        {/* Meridian crossing — vertical dashed line with label. Drawn only
+        {/* Meridian crossing — vertical dashed line with label, now
+            living on tier 3 (shared with sunset/sunrise — they're
+            always time-disjoint, and meridian's object-blue colour
+            keeps the labels distinguishable at a glance). Drawn only
             when transit falls inside the display window. */}
         {track.transit_time_utc &&
           (() => {
             const tx = layout.x(new Date(track.transit_time_utc));
             if (tx < layout.MARGIN.left || tx > width - layout.MARGIN.right) return null;
+            const labelsBarTop = layout.MARGIN.top - TWILIGHT_LABELS_TOTAL_HEIGHT;
+            const lineTop = labelsBarTop + MERIDIAN_TIER * TWILIGHT_TIER_HEIGHT;
+            const labelY =
+              labelsBarTop + (MERIDIAN_TIER + 1) * TWILIGHT_TIER_HEIGHT - 3;
+            const timeLocal = new Date(track.transit_time_utc).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+              timeZone: tz,
+            });
             return (
               <g>
                 <line
                   x1={tx}
                   x2={tx}
-                  y1={layout.MARGIN.top}
+                  y1={lineTop}
                   y2={height - layout.MARGIN.bottom}
                   stroke={COLOR_OBJECT}
                   strokeWidth={1}
@@ -491,17 +524,77 @@ export default function SkyPositionGraph({
                 />
                 <text
                   x={tx}
-                  y={layout.MARGIN.top - 5}
+                  y={labelY}
                   textAnchor="middle"
                   fontSize={10}
-                  fill={COLOR_OBJECT}
-                  opacity={0.9}
+                  fontFamily="inherit"
                 >
-                  meridian
+                  <tspan fill={COLOR_OBJECT}>meridian </tspan>
+                  <tspan fill={theme.palette.text.primary}>{timeLocal}</tspan>
                 </text>
               </g>
             );
           })()}
+
+        {/* "Now" indicator — vertical line + filled-triangle "stop" at
+            the top + time label on tier 4 (closest to the chart). Drawn
+            only when the current wall-clock time falls inside the
+            chart's time window. The triangle acts as a positive visual
+            anchor so the line's top is unambiguous even at low
+            opacities. The line uses a teal colour distinct from object
+            (blue) and moon (orange) so it reads as "this is right now"
+            at a glance. Wrapped in an IIFE so the intermediate ``now``
+            variable doesn't leak into the outer scope. */}
+        {(() => {
+          const now = new Date();
+          const tmin = layout.times[0];
+          const tmax = layout.times[layout.times.length - 1];
+          if (!tmin || !tmax || now < tmin || now > tmax) return null;
+          const nx = layout.x(now);
+          if (nx < layout.MARGIN.left || nx > width - layout.MARGIN.right) {
+            return null;
+          }
+          const labelsBarTop = layout.MARGIN.top - TWILIGHT_LABELS_TOTAL_HEIGHT;
+          const lineTop = labelsBarTop + NOW_TIER * TWILIGHT_TIER_HEIGHT;
+          const labelY =
+            labelsBarTop + (NOW_TIER + 1) * TWILIGHT_TIER_HEIGHT - 3;
+          const nowLocal = now.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+            timeZone: tz,
+          });
+          // Triangle points down (▼) with its flat top at ``lineTop``
+          // — looks like a marker pinned to the top of the line.
+          const triSize = 5;
+          return (
+            <g>
+              <line
+                x1={nx}
+                x2={nx}
+                y1={lineTop}
+                y2={height - layout.MARGIN.bottom}
+                stroke={COLOR_NOW}
+                strokeWidth={1.25}
+              />
+              <polygon
+                points={`${nx - triSize},${lineTop} ${nx + triSize},${lineTop} ${nx},${lineTop + triSize * 1.3}`}
+                fill={COLOR_NOW}
+              />
+              <text
+                x={nx}
+                y={labelY}
+                textAnchor="middle"
+                fontSize={10}
+                fontWeight={600}
+                fontFamily="inherit"
+                fill={COLOR_NOW}
+              >
+                now {nowLocal}
+              </text>
+            </g>
+          );
+        })()}
 
         {/* Hover marker */}
         {hover && (
