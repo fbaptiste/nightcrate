@@ -3013,17 +3013,30 @@ button. Option B restores the full staged flow.
 
 ### v0.20.0 Completion Criteria
 
-- [x] Full backend test suite green. 29 new tests:
-      `test_wikidata_tsv.py` (10), `test_wikidata_loader.py` (8),
-      `test_external_refs_loader.py` (10), `test_dso_api.py` +4
-      (external_refs field presence, ordering, list-response
-      omission, lookup shape), `test_admin_api.py` +3 (Wikidata
-      remote-version sentinel, fetch-requires-db, network-failure
-      502).
+- [x] Full backend test suite green (1790 passed / 3 skipped).
+      37 new tests:
+      `test_wikidata_tsv.py` (10), `test_wikidata_loader.py` (9 —
+      incl. NULL-language dedup regression + multi-match duplication),
+      `test_external_refs_loader.py` (10),
+      `test_locations_api.py` +8 (atomic create + validation),
+      `test_dso_api.py` +4 (external_refs field presence,
+      ordering, list-response omission, lookup shape),
+      `test_admin_api.py` +3 (Wikidata remote-version sentinel,
+      fetch-requires-db, network-failure 502).
 - [x] Backend lint / format / bandit clean.
 - [x] Frontend build clean.
 - [x] SPARQL query verified against live Wikidata (M42, M31,
       Andromeda, Horsehead all resolved correctly).
+- [x] Multi-match design (Option 2): Wikidata entities that cross-
+      reference multiple NightCrate DSOs (Crab = NGC 1952 + Sh2-244,
+      California Nebula = NGC 1499 + Sh2-220, etc.) splay the ref
+      onto every matching DSO so the chip surfaces regardless of
+      which DSO page the user lands on.
+- [x] Horizon staging restoration (Option B): Location editor
+      dialog owns horizon state end-to-end; Save commits atomically,
+      Cancel discards; per-row new/modified/deleted chips visible.
+- [x] CLAUDE.md guardrail + memory note added so the horizon
+      staging contract doesn't get regressed again.
 
 ---
 
