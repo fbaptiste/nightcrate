@@ -2979,6 +2979,38 @@ future features (cross-service enrichment, NED/SIMBAD lookups).
       dedication text (Wikidata's license; carried for
       transparency even though CC0 imposes no requirements).
 
+### Horizon staging restoration (Option B)
+
+v0.19.0's LocationHorizonsSection rewrite accidentally dropped the
+v0.13.0 staged-save semantic — horizon edits persisted immediately
+instead of being committed with the outer Location editor's Save
+button. Option B restores the full staged flow.
+
+- [x] **Backend atomic-create** — `LocationCreate.horizons:
+      list[HorizonCreate] | None` optional field on `POST /api/
+      locations`. When a non-empty list is supplied, the endpoint
+      creates the location + all horizons in a single transaction
+      and skips the `0° flat` auto-seed. 422 on empty list,
+      duplicate-default, multiple-custom, duplicate-name.
+      8 new validation tests.
+- [x] **Frontend staged-state model** —
+      `components/locations/horizonStaging.ts`. Defines
+      `StagedHorizon` (state tag: `unchanged` / `new` / `modified`
+      / `deleted`), lifecycle helpers, and the save-dispatch plan
+      builder for existing-location diff.
+- [x] **LocationHorizonsSection rewrite** — operates purely on the
+      staged state + onChange prop passed by the parent. No network
+      calls. Per-row `state` chips (new/modified/deleted) so the
+      user sees exactly what'll commit.
+- [x] **LocationsPage orchestration** — stagedHorizons state
+      lifted; `openCreate` seeds a 0° default; `openEdit` fetches
+      server horizons and populates the staged list;
+      `hasUnsavedChanges` extends to include horizon diffs (matches
+      v0.13.0); `handleSave` dispatches atomic-create for new
+      locations and an ordered diff-apply
+      (creates → updates → promote-default → deletes) for existing
+      ones.
+
 ### v0.20.0 Completion Criteria
 
 - [x] Full backend test suite green. 29 new tests:

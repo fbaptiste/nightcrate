@@ -1,18 +1,19 @@
 /**
  * Horizons section for the Location editor dialog.
  *
- * Replaces the v0.13.0 staged-save flow with immediate persistence:
- * every Create / Update / Delete / Promote-default hits the server
- * right away, decoupled from the outer location editor's Save. The
- * mental model is "horizons are their own thing, attached to a
- * location". Matches how rigs behave.
+ * Restores the v0.13.0 staged-save flow that v0.19.0 accidentally
+ * dropped: every Create / Update / Delete / Promote-default writes to
+ * the parent's staged state, NOT the server. The outer Location
+ * editor's Save button commits everything together; its Cancel button
+ * discards every local change. This keeps the dialog's dirty-state
+ * behaviour consistent across the location's own fields AND its
+ * horizons.
  *
  * One location → at most one ``type='custom'`` polyline + any number
- * of ``type='artificial'`` flat-altitude rows. Exactly one row per
- * location is ``is_default`` (enforced server-side).
+ * of ``type='artificial'`` flat-altitude rows. Exactly one visible
+ * row is ``is_default`` (UI-enforced; server re-validates on save).
  */
 import { useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -31,80 +32,111 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import {
-  createHorizon,
-  deleteHorizon,
   downloadHorizonExport,
-  fetchHorizons,
   parseHorizonFile,
-  updateHorizon,
-  type Horizon,
   type HorizonExportFormat,
   type HorizonPoint,
 } from "@/api/horizons";
 import HorizonEditor from "./HorizonEditor";
+import {
+  customHorizon,
+  markDeleted,
+  newArtificial,
+  newCustom,
+  promoteDefault,
+  retagState,
+  visibleHorizons,
+  type StagedHorizon,
+} from "./horizonStaging";
 
 interface Props {
-  locationId: number;
+  /** Server id for an existing location; ``null`` when creating a new
+   *  location (no server record exists yet). Needed by the export
+   *  helper for existing custom horizons. */
+  locationId: number | null;
   locationName: string;
+  /** Full staged state — owned by the parent so it can serialise on
+   *  Save and track dirtiness alongside the location's own fields. */
+  staged: StagedHorizon[];
+  onChange: (next: StagedHorizon[]) => void;
 }
 
-export default function LocationHorizonsSection({ locationId, locationName }: Props) {
-  const queryClient = useQueryClient();
+export default function LocationHorizonsSection({
+  locationId,
+  locationName,
+  staged,
+  onChange,
+}: Props) {
   const [snack, setSnack] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [editorCustom, setEditorCustom] = useState<Horizon | null>(null);
+  const [editorTarget, setEditorTarget] = useState<StagedHorizon | null>(null);
   const [creatingCustom, setCreatingCustom] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Horizon | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StagedHorizon | null>(null);
 
-  const { data: horizons = [], isLoading } = useQuery({
-    queryKey: ["horizons", locationId],
-    queryFn: () => fetchHorizons(locationId),
-  });
+  const visible = visibleHorizons(staged);
+  const currentCustom = customHorizon(staged);
 
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["horizons", locationId] });
-
-  const customHorizon = horizons.find((h) => h.type === "custom") ?? null;
-
-  const handlePromoteDefault = async (h: Horizon) => {
+  const handlePromoteDefault = (h: StagedHorizon) => {
     if (h.is_default) return;
-    try {
-      await updateHorizon(locationId, h.id, { is_default: true });
-      invalidate();
-    } catch (err) {
-      setSnack(err instanceof Error ? err.message : "Failed to promote default");
-    }
+    onChange(promoteDefault(staged, h.id));
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!deleteTarget) return;
-    try {
-      await deleteHorizon(locationId, deleteTarget.id);
+    // Guard: can't delete the last remaining visible horizon — matches
+    // the server's "location must have ≥1 horizon" invariant. Surface
+    // the rule up front instead of waiting for a 422 at Save.
+    if (visible.length === 1) {
+      setSnack("Every location needs at least one horizon.");
       setDeleteTarget(null);
-      invalidate();
-    } catch (err) {
-      setSnack(err instanceof Error ? err.message : "Delete failed");
+      return;
     }
+    let next = markDeleted(staged, deleteTarget.id);
+    // If we deleted the default, promote the first remaining visible
+    // one so the "exactly one default" invariant stays satisfied. The
+    // server would auto-promote on DELETE anyway but doing it here
+    // keeps the UI state coherent for the user's remaining edits.
+    if (deleteTarget.is_default) {
+      const next_visible = visibleHorizons(next);
+      if (next_visible.length > 0) {
+        next = promoteDefault(next, next_visible[0].id);
+      }
+    }
+    onChange(next);
+    setDeleteTarget(null);
+  };
+
+  const handleAddArtificial = ({ name, altitude }: { name: string; altitude: number }) => {
+    const entry = newArtificial({ staged, name, flat_altitude_deg: altitude });
+    onChange([...staged, entry]);
+    setAddOpen(false);
   };
 
   const handleCustomSaved = async (points: HorizonPoint[]) => {
-    try {
-      if (editorCustom) {
-        await updateHorizon(locationId, editorCustom.id, { points });
-      } else {
-        await createHorizon(locationId, {
-          name: "Custom horizon",
-          type: "custom",
-          points,
-          source: "drawn",
-        });
-      }
-      setEditorCustom(null);
-      setCreatingCustom(false);
-      invalidate();
-    } catch (err) {
-      setSnack(err instanceof Error ? err.message : "Save failed");
+    if (editorTarget) {
+      // Editing an existing custom horizon — update in place and
+      // re-tag state so unchanged-vs-modified is correct.
+      onChange(
+        staged.map((h) =>
+          h.id === editorTarget.id ? retagState({ ...h, points }) : h,
+        ),
+      );
+    } else {
+      // Creating a new custom. New locations or locations without a
+      // custom yet can have one. Default is inherited from visibility
+      // state: if there are no other horizons, the new custom is
+      // default; otherwise it's a non-default addition.
+      const shouldBeDefault = visible.length === 0;
+      const entry = newCustom({
+        staged,
+        name: "Custom horizon",
+        points,
+        is_default: shouldBeDefault,
+      });
+      onChange([...staged, entry]);
     }
+    setEditorTarget(null);
+    setCreatingCustom(false);
   };
 
   const handleImport = async (file: File) => {
@@ -115,8 +147,13 @@ export default function LocationHorizonsSection({ locationId, locationName }: Pr
   };
 
   const handleExport = (format: HorizonExportFormat) => {
-    if (!customHorizon) return;
-    downloadHorizonExport(locationId, customHorizon.id, format);
+    if (!editorTarget || editorTarget.state === "new" || locationId === null) {
+      // Export requires a server-backed horizon. Not available while
+      // the user is editing a staged-but-not-yet-saved horizon.
+      setSnack("Save the location first to export this horizon.");
+      return;
+    }
+    downloadHorizonExport(locationId, editorTarget.id, format);
   };
 
   return (
@@ -132,12 +169,12 @@ export default function LocationHorizonsSection({ locationId, locationName }: Pr
         >
           Artificial
         </Button>
-        {!customHorizon && (
+        {!currentCustom && (
           <Button
             size="small"
             startIcon={<AddIcon />}
             onClick={() => {
-              setEditorCustom(null);
+              setEditorTarget(null);
               setCreatingCustom(true);
             }}
           >
@@ -147,17 +184,13 @@ export default function LocationHorizonsSection({ locationId, locationName }: Pr
       </Stack>
 
       <Paper variant="outlined" sx={{ p: 1.5 }}>
-        {isLoading ? (
-          <Typography variant="body2" color="text.secondary">
-            Loading horizons…
-          </Typography>
-        ) : horizons.length === 0 ? (
+        {visible.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             No horizons — add one to use this location in the planner.
           </Typography>
         ) : (
           <Stack spacing={0.5}>
-            {horizons.map((h) => (
+            {visible.map((h) => (
               <Stack
                 key={h.id}
                 direction="row"
@@ -192,12 +225,24 @@ export default function LocationHorizonsSection({ locationId, locationName }: Pr
                     ? `${h.flat_altitude_deg?.toFixed(0) ?? "?"}°`
                     : `${h.points.length} pts`}
                 </Typography>
+                {/* Per-row state tag so the user can see which rows are
+                    going to commit as INSERT / PATCH / DELETE at the
+                    outer Save. ``unchanged`` → no tag. */}
+                {h.state !== "unchanged" && (
+                  <Chip
+                    size="small"
+                    label={h.state}
+                    variant="outlined"
+                    color="warning"
+                    sx={{ height: 18, fontSize: "0.65rem", textTransform: "capitalize" }}
+                  />
+                )}
                 {h.type === "custom" && (
                   <IconButton
                     size="small"
                     onClick={() => {
                       setCreatingCustom(false);
-                      setEditorCustom(h);
+                      setEditorTarget(h);
                     }}
                     aria-label="Edit custom horizon"
                   >
@@ -220,43 +265,35 @@ export default function LocationHorizonsSection({ locationId, locationName }: Pr
       <ArtificialHorizonDialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        onCreate={async ({ name, altitude }) => {
-          try {
-            await createHorizon(locationId, {
-              name,
-              type: "artificial",
-              flat_altitude_deg: altitude,
-            });
-            setAddOpen(false);
-            invalidate();
-          } catch (err) {
-            setSnack(err instanceof Error ? err.message : "Create failed");
-          }
-        }}
+        onCreate={handleAddArtificial}
       />
 
       <HorizonEditor
-        open={editorCustom !== null || creatingCustom}
+        open={editorTarget !== null || creatingCustom}
         locationName={locationName}
-        initialPoints={editorCustom?.points ?? null}
+        initialPoints={editorTarget?.points ?? null}
         onClose={() => {
-          setEditorCustom(null);
+          setEditorTarget(null);
           setCreatingCustom(false);
         }}
         onSave={handleCustomSaved}
         onImport={handleImport}
         onExport={handleExport}
-        exportsDisabled={editorCustom === null}
+        exportsDisabled={
+          editorTarget === null ||
+          editorTarget.state === "new" ||
+          locationId === null
+        }
       />
 
       <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
         <DialogTitle>Delete horizon?</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
-            Delete <strong>{deleteTarget?.name}</strong>? If this is the
-            location's default horizon, another one will be promoted
-            automatically. The last horizon on a location can't be
-            deleted.
+            Delete <strong>{deleteTarget?.name}</strong>? The change is
+            staged until you click Save on the Location editor. If this
+            is the current default, another visible horizon will be
+            promoted in its place.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -282,14 +319,13 @@ export default function LocationHorizonsSection({ locationId, locationName }: Pr
 interface ArtificialHorizonDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (body: { name: string; altitude: number }) => Promise<void>;
+  onCreate: (body: { name: string; altitude: number }) => void;
 }
 
 function ArtificialHorizonDialog({ open, onClose, onCreate }: ArtificialHorizonDialogProps) {
   const [altitude, setAltitude] = useState("30");
   const [name, setName] = useState("");
   const nameEditedRef = useRef(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Name auto-fills from the altitude (e.g. "30° flat") until the user
@@ -303,7 +339,7 @@ function ArtificialHorizonDialog({ open, onClose, onCreate }: ArtificialHorizonD
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     const alt = parseFloat(altitude);
     if (isNaN(alt) || alt < -5 || alt > 90) {
       setError("Altitude must be between -5 and 90 degrees.");
@@ -313,19 +349,12 @@ function ArtificialHorizonDialog({ open, onClose, onCreate }: ArtificialHorizonD
       setError("Name is required.");
       return;
     }
-    setSaving(true);
     setError(null);
-    try {
-      await onCreate({ name: effectiveName.trim(), altitude: alt });
-      // Reset for next open.
-      setAltitude("30");
-      setName("");
-      nameEditedRef.current = false;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Create failed");
-    } finally {
-      setSaving(false);
-    }
+    onCreate({ name: effectiveName.trim(), altitude: alt });
+    // Reset for next open.
+    setAltitude("30");
+    setName("");
+    nameEditedRef.current = false;
   };
 
   return (
@@ -362,8 +391,8 @@ function ArtificialHorizonDialog({ open, onClose, onCreate }: ArtificialHorizonD
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" onClick={handleSubmit} disabled={saving}>
-          {saving ? "Adding…" : "Add"}
+        <Button variant="contained" onClick={handleSubmit}>
+          Add
         </Button>
       </DialogActions>
     </Dialog>

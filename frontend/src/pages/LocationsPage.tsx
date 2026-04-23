@@ -45,7 +45,20 @@ import {
 import { EasterEggWand } from "@/components/EasterEggWand";
 import HorizonChart from "@/components/locations/HorizonChart";
 import LocationHorizonsSection from "@/components/locations/LocationHorizonsSection";
-import { fetchHorizons } from "@/api/horizons";
+import {
+  createHorizon,
+  deleteHorizon,
+  fetchHorizons,
+  updateHorizon,
+} from "@/api/horizons";
+import {
+  fromServerRow,
+  hasDirtyHorizons,
+  planSaveOps,
+  seedNewLocationDefault,
+  toCreateSeeds,
+  type StagedHorizon,
+} from "@/components/locations/horizonStaging";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import type { WeatherUnits } from "@/api/settings";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -325,6 +338,11 @@ export default function LocationsPage() {
   // dirty check. Ref so it doesn't re-render.
   const originalFormRef = useRef<FormState>(emptyForm());
   const [confirmDiscardLocation, setConfirmDiscardLocation] = useState(false);
+  // Staged horizons — the full desired horizon state the user sees in
+  // the dialog. Mutated locally by LocationHorizonsSection; committed
+  // to the server by ``handleSave``; discarded on Cancel. Restores the
+  // v0.13.0 "outer Save owns everything" behaviour.
+  const [stagedHorizons, setStagedHorizons] = useState<StagedHorizon[]>([]);
   const selectedLocation = selectedLocationId != null
     ? locations.find((l) => l.id === selectedLocationId) ?? null
     : null;
@@ -609,21 +627,38 @@ export default function LocationsPage() {
     originalFormRef.current = fresh;
     setErrors({});
     setGeoTzEditable(false);
+    // Seed with a 0° flat default — mirrors the server's legacy auto-
+    // seed so the user starts with a valid horizon set they can modify
+    // or replace before committing.
+    setStagedHorizons(seedNewLocationDefault());
     setDialogOpen(true);
   };
 
-  const openEdit = (loc: Location) => {
+  const openEdit = async (loc: Location) => {
     setEditingLocation(loc);
     const snapshot = locationToForm(loc, units);
     setForm(snapshot);
     originalFormRef.current = snapshot;
     setErrors({});
     setGeoTzEditable(false);
+    // Populate staged horizons from the server snapshot. Keep the
+    // dialog open even if the fetch fails — the horizons section shows
+    // an empty list and a fallback error is surfaced via snackbar.
+    setStagedHorizons([]);
     setDialogOpen(true);
+    try {
+      const serverHorizons = await fetchHorizons(loc.id);
+      setStagedHorizons(serverHorizons.map(fromServerRow));
+    } catch (err) {
+      setSnack({
+        msg: err instanceof Error ? err.message : "Failed to load horizons",
+        severity: "error",
+      });
+    }
   };
 
   const hasUnsavedChanges = (): boolean => {
-    return formsDiffer(form, originalFormRef.current);
+    return formsDiffer(form, originalFormRef.current) || hasDirtyHorizons(stagedHorizons);
   };
 
   const attemptClose = () => {
@@ -706,9 +741,19 @@ export default function LocationsPage() {
       };
       if (editingLocation) {
         await updateLocation(editingLocation.id, payload);
+        // Apply staged horizon changes against the existing location.
+        await _applyStagedHorizonsToExisting(editingLocation.id, stagedHorizons);
         setSnack({ msg: "Location updated.", severity: "info" });
       } else {
-        await createLocation(payload);
+        // New location — atomic create path. Seed horizons are derived
+        // from the staged list, validated client-side by the UI and
+        // re-validated by the server (exactly-one-default, ≤1 custom).
+        const seeds = toCreateSeeds(stagedHorizons);
+        const atomicPayload: LocationCreate = {
+          ...payload,
+          horizons: seeds,
+        };
+        await createLocation(atomicPayload);
         setSnack({ msg: "Location added.", severity: "info" });
       }
       invalidate();
@@ -719,6 +764,54 @@ export default function LocationsPage() {
       setSaving(false);
     }
   };
+
+  /** Apply the staged horizon diff against an existing location.
+   *
+   *  Order (matches planSaveOps docs): creates → updates → promote-
+   *  default → deletes. Rationale: the server enforces exactly-one-
+   *  default via a partial unique index. Creating a new row as default
+   *  while an existing row is still default would fail the constraint
+   *  so we always POST new rows as non-default first, then PATCH
+   *  is_default=true on the target (server atomically demotes the
+   *  previous default), THEN delete any tombstoned rows.
+   */
+  async function _applyStagedHorizonsToExisting(
+    locationId: number,
+    staged: StagedHorizon[],
+  ): Promise<void> {
+    const plan = planSaveOps(staged);
+
+    // Creates — each returns a server row; we capture tempId→realId so
+    // subsequent promote-default / update ops can address by real id.
+    const tempToRealId = new Map<number, number>();
+    for (const create of plan.creates) {
+      const created = await createHorizon(locationId, create.seed);
+      tempToRealId.set(create.tempId, created.id);
+    }
+
+    // Updates — horizonId is always a server id by construction.
+    for (const upd of plan.updates) {
+      await updateHorizon(locationId, upd.horizonId, upd.patch);
+    }
+
+    // Promote default — resolve tempId if the target was a new row.
+    if (plan.promoteDefaultId !== null) {
+      const resolved =
+        plan.promoteDefaultId < 0
+          ? tempToRealId.get(plan.promoteDefaultId)
+          : plan.promoteDefaultId;
+      if (resolved !== undefined) {
+        await updateHorizon(locationId, resolved, { is_default: true });
+      }
+    }
+
+    // Deletes last. If one of them was the server's former default,
+    // step 3 already moved the default flag off it so the DELETE
+    // doesn't need the server's auto-promote fallback.
+    for (const id of plan.deletes) {
+      await deleteHorizon(locationId, id);
+    }
+  }
 
   const handleSetDefault = async (loc: Location) => {
     try {
@@ -1208,28 +1301,13 @@ export default function LocationsPage() {
               </Box>
             )}
 
-            {editingLocation ? (
-              <LocationHorizonsSection
-                locationId={editingLocation.id}
-                locationName={editingLocation.name}
-              />
-            ) : (
-              <Box
-                sx={{
-                  mt: 1,
-                  p: 1.5,
-                  border: 1,
-                  borderColor: "divider",
-                  borderStyle: "dashed",
-                  borderRadius: 1,
-                }}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  Save this location first, then reopen the editor to manage its
-                  horizons. A default 0° artificial horizon is created automatically.
-                </Typography>
-              </Box>
-            )}
+            <LocationHorizonsSection
+              locationId={editingLocation?.id ?? null}
+              locationName={editingLocation?.name ?? (form.name || "New location")}
+              staged={stagedHorizons}
+              onChange={setStagedHorizons}
+            />
+
 
             <TextField
               label="Notes"
