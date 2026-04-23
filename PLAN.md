@@ -33,6 +33,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.19.0 — Multi-Horizon + Planner Rewrite](#v0190--multi-horizon--planner-rewrite) ✅
 - [v0.20.0 — DSO External References (Wikidata + Wikipedia)](#v0200--dso-external-references-wikidata--wikipedia) ✅
 - [v0.21.0 — Target Planner Scoring Algorithm](#v0210--target-planner-scoring-algorithm) ✅
+- [v0.21.1 — Scoring Polish + Startup Race Fix](#v0211--scoring-polish--startup-race-fix) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -3249,6 +3250,86 @@ brightness modifier, in-app doc surfacing, Anytime-mode scoring.
       `_make_dimension_row` helper extracted, IIFE in detail panel
       replaced with inline ternary, misleading JSDoc on
       `fetchSingleTargetScore` corrected.
+
+---
+
+## v0.21.1 — Scoring Polish + Startup Race Fix
+
+**Status:** Done
+**Branch:** `v0.21.1/scoring-polish`
+
+Polish pass folding in every code-review finding from PR #26 (both
+the two ≥80 items that were posted publicly and the four sub-80
+items surfaced to Fred for triage), plus a long-standing startup
+race that v0.21.0 testing happened to expose.
+
+### Code-review findings fixed
+
+- [x] **`test_observability_circumpolar_high_altitude` pinned** —
+      replaced `obs.score > 0.9` with
+      `pytest.approx(0.9647, abs=0.001)`. Constant 75° altitude
+      makes the expected quality deterministic via `sin(75°) =
+      0.96593`, `airmass = 1.03528`, `max_airmass = 2.0`, quality
+      `= 1 - 0.03528 / 1 = 0.96472` everywhere.
+- [x] **`test_observability_linear_rise` pinned** — replaced
+      `0.45 < obs.score < 0.58` with
+      `pytest.approx(0.5330, abs=0.001)` after computing the
+      numeric mean from the 120-sample linear sweep.
+- [x] **`test_moon_ha_tolerates_full_moon` pinned** — replaced
+      `moon.score > 0.8` with `pytest.approx(0.8844, abs=0.001)`
+      after recomputing the full Ha-impact aggregate (0.15 × 1.0
+      × √sin(45°) × (1 − 5/60) ≈ 0.1156 impact × 1.0 overlap
+      → 1 − 0.1156 ≈ 0.8844).
+- [x] **`plannerStore.ts` migrate function added** — v3 → v4
+      bump now explicitly carries forward `selectedLocationId`,
+      `selectedHorizonId`, `selectedRigId`, and `sortBy`, and
+      defaults the new `filterIntent` to `[]`. Without an explicit
+      `migrate`, Zustand's default behaviour is to discard all v3
+      state on mismatch — which would wipe the user's saved rig /
+      location / horizon / sort preferences on the v0.21.0 → v0.21.1
+      upgrade.
+- [x] **`DimensionBreakdownOut.key` typed as `DimensionKey`
+      Literal** — replaced the loose `key: str` + enumerating
+      comment with the already-defined `Literal["observability",
+      "meridian", "moon", "frame_fit"]` imported from
+      `planner_scoring.py`. The Pydantic response now enforces the
+      allowed values at the API boundary AND publishes the enum in
+      the OpenAPI schema.
+- [x] **`api/planner.py` module docstring updated** — version
+      range bumped to `v0.16.0–v0.21.0`, the route inventory now
+      includes the new `GET /api/planner/targets/{dso_id}/score`
+      endpoint + the pre-existing
+      `/targets/{dso_id}/annual-hours` and `/dsos/in-region`
+      entries that the previous docstring also missed.
+
+### New fix — startup health-check race
+
+- [x] **`App.tsx` no longer treats "backend unreachable" the same
+      as "db_configured=false".** Adds
+      `retry: Infinity` + exponential-backoff `retryDelay` capped
+      at 3 s on the `useQuery(["health"])` call, and gates the
+      `SetupWizard` render on `healthQuery.isSuccess` instead of
+      `data === undefined`. Under `make dev`, Vite is ready in
+      <200 ms but uvicorn takes ~5 s to boot (catalog loader
+      integrity checks + astropy imports + redshift backfill);
+      before this fix, the frontend burned through TanStack
+      Query's default 3 retries during the first second and then
+      permanently rendered the SetupWizard until the user
+      manually hard-reloaded the tab. Race was pre-existing but
+      v0.21.0's slightly-expanded startup path (scoring settings
+      loaded via `get_settings()` on first health response)
+      happened to make it noticeable.
+
+### v0.21.1 Completion Criteria
+
+- [x] Every deferred PR #26 code-review finding addressed (2
+      ≥80 + 4 sub-80).
+- [x] Backend lint / format / bandit clean.
+- [x] Frontend `tsc --noEmit` + `npm run build` clean.
+- [x] Full backend suite green (1854 passed / 3 skipped), no
+      coverage regression on `services/planner_scoring.py` (still
+      ≥ 96%).
+- [x] Version headers bumped across the four tracked docs.
 
 ---
 

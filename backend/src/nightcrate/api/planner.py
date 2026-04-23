@@ -1,18 +1,21 @@
-"""Target Planner API (v0.16.0–v0.18.0).
+"""Target Planner API (v0.16.0–v0.21.0).
 
 Routes for the "what's up tonight" planner page:
 
     GET  /api/planner/targets
+    GET  /api/planner/targets/{dso_id}/score       — per-target scoring (v0.21.0)
     GET  /api/planner/targets/{dso_id}/sky-track
-    GET  /api/planner/thumbnails/{dso_id}      — DSO-keyed cache (Pass A/B)
+    GET  /api/planner/targets/{dso_id}/annual-hours
+    GET  /api/planner/thumbnails/{dso_id}          — DSO-keyed cache (Pass A/B)
     POST /api/planner/thumbnails/cache/clear
     GET  /api/planner/thumbnails/cache/stats
-    GET  /api/planner/sky-tile-grid            — view layout (Pass C, v0.18.0)
-    GET  /api/planner/sky-tile                 — cell bytes (Pass C, v0.18.0)
+    GET  /api/planner/sky-tile-grid                — view layout (Pass C, v0.18.0)
+    GET  /api/planner/sky-tile                     — cell bytes (Pass C, v0.18.0)
     POST /api/planner/sky-tile/cache/clear
     GET  /api/planner/sky-tile/cache/stats
+    GET  /api/planner/dsos/in-region
 
-Visibility + sky-track computations are delegated to
+Visibility + sky-track + scoring computations are delegated to
 ``services/planner_*``. Thumbnail lifecycle is in
 ``services/thumbnails``. The v0.18.0 DSO-agnostic sky-tile cache
 lives in ``services/sky_tile_cache`` and its math in

@@ -60,19 +60,15 @@ def test_observability_grazing_scores_zero():
 
 
 def test_observability_linear_rise():
-    """Target rising from 30° to 60° linearly → pinned intermediate.
+    """Target rising linearly from 30° to 60° over 120 samples.
 
-    Hand-compute: sin of 30°, 45°, 60° ≈ 0.5, 0.707, 0.866
-    airmass ≈ 2, 1.414, 1.155; max_airmass = 2; quality = 1 - (am - 1);
-    At 30°: 0.0, 45°: 0.586, 60°: 0.845. Mean of linear sweep over 30-60
-    should be somewhere around 0.5.
+    q(a) = 1 - (csc(a) - 1) / (csc(30°) - 1). With max_airmass=2
+    and a linearly-spaced sample grid, the numeric mean is 0.5330.
     """
     alt = np.linspace(30.0, 60.0, 120)
     result, obs = _obs_score(alt)
     assert obs is not None
-    # Analytical mean of q(a) = 1 - (csc(a)-1)/(csc(30)-1) from 30° to 60°
-    # numerically: ~ 0.50 ± 0.02.
-    assert 0.45 < obs.score < 0.58
+    assert obs.score == pytest.approx(0.5330, abs=0.001)
 
 
 def test_observability_with_lower_threshold():
@@ -87,11 +83,12 @@ def test_observability_with_lower_threshold():
 
 
 def test_observability_circumpolar_high_altitude():
-    """Target above 60° all night at lat 50° → near 1.0."""
+    """Target at constant 75° altitude: sin(75°)=0.96593, airmass=1.03528,
+    max_airmass=1/sin(30°)=2.0, quality = 1 - 0.03528/1 = 0.96472 everywhere."""
     alt = np.full(120, 75.0)
     result, obs = _obs_score(alt)
     assert obs is not None
-    assert obs.score > 0.9
+    assert obs.score == pytest.approx(0.9647, abs=0.001)
 
 
 # ── Meridian — §14.3 ──────────────────────────────────────────────
