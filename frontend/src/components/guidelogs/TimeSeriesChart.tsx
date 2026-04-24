@@ -236,8 +236,10 @@ export default function TimeSeriesChart({ samples, height = 360 }: Props) {
 
   // Y axis ticks for main panel
   const mainTicks = yDistScale.ticks(5);
-  const snrTicks = ySnrScale.ticks(3);
-  const massTicks = yMassScale.ticks(3);
+  // SNR + mass panels are ~40 px tall; anything more than 2 ticks stacks
+  // the labels on top of each other in the narrow band.
+  const snrTicks = ySnrScale.ticks(2);
+  const massTicks = yMassScale.ticks(2);
 
   // Sample-nearest hover
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
@@ -445,23 +447,25 @@ export default function TimeSeriesChart({ samples, height = 360 }: Props) {
           </text>
         ))}
 
-        {/* Panel labels */}
+        {/* Panel labels — float inside the top-left corner of each panel so
+            they don't collide with the tick-number column on the outside. */}
         <text
-          x={MARGIN.left - 6}
-          y={mainY0 + 8}
+          x={MARGIN.left + 4}
+          y={mainY0 + 10}
           fill={textColor}
+          fillOpacity={0.55}
           fontSize={10}
-          textAnchor="end"
+          textAnchor="start"
         >
           px
         </text>
         <text
-          x={MARGIN.left - 6}
-          y={corrY0 + corrH / 2}
+          x={MARGIN.left + 4}
+          y={corrY0 + 10}
           fill={textColor}
+          fillOpacity={0.55}
           fontSize={10}
-          textAnchor="end"
-          dominantBaseline="central"
+          textAnchor="start"
         >
           ms
         </text>
@@ -479,11 +483,12 @@ export default function TimeSeriesChart({ samples, height = 360 }: Props) {
           </text>
         ))}
         <text
-          x={MARGIN.left - 6}
-          y={snrY0 + 8}
+          x={MARGIN.left + 4}
+          y={snrY0 + 10}
           fill={textColor}
+          fillOpacity={0.55}
           fontSize={10}
-          textAnchor="end"
+          textAnchor="start"
         >
           SNR
         </text>
@@ -501,11 +506,12 @@ export default function TimeSeriesChart({ samples, height = 360 }: Props) {
           </text>
         ))}
         <text
-          x={MARGIN.left - 6}
-          y={massY0 + 8}
+          x={MARGIN.left + 4}
+          y={massY0 + 10}
           fill={textColor}
+          fillOpacity={0.55}
           fontSize={10}
-          textAnchor="end"
+          textAnchor="start"
         >
           mass
         </text>
