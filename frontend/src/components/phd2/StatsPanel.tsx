@@ -100,6 +100,17 @@ export default function StatsPanel({
     if (scale === null) return `${px.toFixed(3)} px`;
     return `${px.toFixed(3)} px / ${(px * scale).toFixed(2)}″`;
   };
+  const renderDrift = (pxPerMin: number | null): string => {
+    if (pxPerMin === null) return "—";
+    // Sign-preserving; no absolute value. 3 decimals for px (typical
+    // values sub-pixel per minute), 2 for arcsec.
+    if (scale === null) return `${pxPerMin.toFixed(3)} px/min`;
+    return `${pxPerMin.toFixed(3)} px/min / ${(pxPerMin * scale).toFixed(2)}″/min`;
+  };
+  const renderOscillation = (frac: number | null): string => {
+    if (frac === null) return "—";
+    return `${(frac * 100).toFixed(1)}%`;
+  };
 
   const items: Array<{ label: string; value: string }> = [
     { label: "RMS total", value: renderDist(metrics.rms_total_px) },
@@ -107,6 +118,10 @@ export default function StatsPanel({
     { label: "RMS Dec", value: renderDist(metrics.rms_dec_px) },
     { label: "Peak RA", value: renderDist(metrics.peak_ra_px) },
     { label: "Peak Dec", value: renderDist(metrics.peak_dec_px) },
+    { label: "Drift RA", value: renderDrift(metrics.drift_ra_px_per_min) },
+    { label: "Drift Dec", value: renderDrift(metrics.drift_dec_px_per_min) },
+    { label: "Osc RA", value: renderOscillation(metrics.oscillation_ra) },
+    { label: "Osc Dec", value: renderOscillation(metrics.oscillation_dec) },
     {
       label: "Duration",
       value: formatDuration(metrics.duration_seconds),
