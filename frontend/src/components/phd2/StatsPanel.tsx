@@ -123,10 +123,14 @@ export default function StatsPanel({
   };
   const renderDrift = (pxPerMin: number | null): string => {
     if (pxPerMin === null) return "—";
-    // Sign-preserving; no absolute value. 3 decimals for px (typical
-    // values sub-pixel per minute), 2 for arcsec.
-    if (scale === null) return `${pxPerMin.toFixed(3)} px/min`;
-    return `${pxPerMin.toFixed(3)} px/min / ${(pxPerMin * scale).toFixed(2)}″/min`;
+    // Well-guided sessions drift at 10⁻³–10⁻² px/min (= 10⁻²–10⁻¹ ″/min
+    // at a typical scale) — four decimals on px and three on arcsec
+    // let small-but-real drift show instead of rounding to zero. Sign
+    // preserved; no absolute value.
+    const pxStr = pxPerMin.toFixed(4);
+    if (scale === null) return `${pxStr} px/min`;
+    const arcsecStr = (pxPerMin * scale).toFixed(3);
+    return `${pxStr} px/min / ${arcsecStr}″/min`;
   };
   const renderOscillation = (frac: number | null): string => {
     if (frac === null) return "—";
