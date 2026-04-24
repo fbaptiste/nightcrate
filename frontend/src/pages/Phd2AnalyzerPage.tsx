@@ -32,6 +32,17 @@ import { computeGuidingMetrics, computeSettleIntervals } from "@/lib/phd2Guiding
 import ScatterPlot from "@/components/phd2/ScatterPlot";
 import EventList from "@/components/phd2/EventList";
 import type { TimeSeriesChartHandle } from "@/components/phd2/TimeSeriesChart";
+import {
+  addRecentFile,
+  clearRecentFiles,
+  formatRelativeTime,
+  getRecentFiles,
+  removeRecentFile,
+  type RecentFile,
+} from "@/lib/phd2RecentFiles";
+import CloseIcon from "@mui/icons-material/Close";
+import Link from "@mui/material/Link";
+import { formatWallClock } from "@/lib/phd2Format";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import SectionNavigator from "@/components/phd2/SectionNavigator";
 import StatsPanel from "@/components/phd2/StatsPanel";
@@ -76,6 +87,19 @@ export default function Phd2AnalyzerPage() {
   // forward clicks through this so the chart pans / zooms to the
   // event time without drilling d3 through props.
   const chartRef = useRef<TimeSeriesChartHandle | null>(null);
+  // User-drawn selection + exclusion bands — both multi-additive.
+  // Shift-drag appends a selection (teal band), Shift+Alt-drag
+  // appends an exclusion (hatched-grey band). Net sample set =
+  // union(selections) − union(exclusions). Removed via the per-zone
+  // × button on the chart or the "Clear all" toolbar action. All
+  // reset on section change alongside viewport.
+  const [selections, setSelections] = useState<Array<[number, number]>>([]);
+  const [exclusions, setExclusions] = useState<Array<[number, number]>>([]);
+  // Recent files history — localStorage-backed, displayed on the
+  // empty-state landing when no log is currently loaded.
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() =>
+    getRecentFiles(),
+  );
 
   useEffect(() => {
     setActivity("PHD2 Analyzer");
@@ -86,11 +110,15 @@ export default function Phd2AnalyzerPage() {
       setActivity(`Parse log ${path.split("/").pop() ?? "file"}`);
       return parseGuideLog(path);
     },
-    onSuccess: (data) => {
+    onSuccess: (data, path) => {
       setParsed(data);
       // Select the first guiding section if present; else the first section.
       const firstGuiding = data.sections.find((s) => s.section.kind === "guiding");
       setSelectedIndex(firstGuiding?.section.index ?? data.sections[0]?.section.index ?? 0);
+      // Only record successfully-parsed logs in the recent-files
+      // history so a typo path or unreadable file doesn't pollute
+      // the list.
+      setRecentFiles(addRecentFile(path));
     },
   });
 
@@ -99,12 +127,14 @@ export default function Phd2AnalyzerPage() {
     return parsed.sections.find((s) => s.section.index === selectedIndex) ?? parsed.sections[0];
   }, [parsed, selectedIndex]);
 
-  // Reset viewport state when the user switches sections — the new
-  // section's chart mounts un-zoomed, but without this the stale
-  // ``viewport`` from the previous section would briefly filter the
-  // new section's samples before the chart fires its initial event.
+  // Reset viewport + user-drawn selection / exclusion state when the
+  // user switches sections. Without this, a stale range from the
+  // previous section would briefly filter the new section's samples
+  // before the chart fires its initial event.
   useEffect(() => {
     setViewport(null);
+    setSelections([]);
+    setExclusions([]);
   }, [selectedIndex]);
 
   // Settle intervals for the selected guiding section — derived once
@@ -133,17 +163,38 @@ export default function Phd2AnalyzerPage() {
     );
   }, [selected, includeSettle]);
 
-  // Viewport-filtered samples + metrics for the Viewport Summary
-  // panel. Guiding sections only; calibration gets no chart so there's
-  // no viewport to speak of.
+  // Sample subset driving the Selection / Viewport Summary panel.
+  // Base set = union of all selections (Shift-drag) when any exist;
+  // else the zoom-driven viewport; else the full section. Then
+  // subtract union of exclusions (Shift+Alt-drag). Guiding sections
+  // only — calibration has no chart so there's no viewport to speak
+  // of.
   const viewportSamples = useMemo(() => {
     if (!selected || selected.section.kind !== "guiding") return null;
-    if (!viewport) return selected.section.samples;
-    const [t0, t1] = viewport;
-    return selected.section.samples.filter(
-      (s) => s.time_seconds >= t0 && s.time_seconds <= t1,
+    const base = (() => {
+      if (selections.length > 0) {
+        return selected.section.samples.filter((s) =>
+          selections.some(
+            ([t0, t1]) => s.time_seconds >= t0 && s.time_seconds <= t1,
+          ),
+        );
+      }
+      if (viewport) {
+        const [t0, t1] = viewport;
+        return selected.section.samples.filter(
+          (s) => s.time_seconds >= t0 && s.time_seconds <= t1,
+        );
+      }
+      return selected.section.samples;
+    })();
+    if (exclusions.length === 0) return base;
+    return base.filter(
+      (s) =>
+        !exclusions.some(
+          ([e0, e1]) => s.time_seconds >= e0 && s.time_seconds <= e1,
+        ),
     );
-  }, [selected, viewport]);
+  }, [selected, viewport, selections, exclusions]);
 
   const viewportMetrics = useMemo(() => {
     if (!viewportSamples || !selected) return null;
@@ -243,12 +294,90 @@ export default function Phd2AnalyzerPage() {
             <code>PHD2_GuideLog_*.txt</code>) and press Open. The analyzer parses
             the file in-process — nothing is uploaded or persisted.
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 2, maxWidth: 640 }}>
-            v0.22.0 Pass A delivers the parser, the time-series chart, the
-            calibration plot, and per-section summary metrics. Advanced analysis
-            (FFT, unguided reconstruction, automated diagnostics) lands in later
-            versions.
-          </Typography>
+          {recentFiles.length > 0 && (
+            <Box sx={{ mt: 3, maxWidth: 720 }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ mb: 1 }}
+              >
+                <Typography variant="subtitle2">Recent logs</Typography>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    clearRecentFiles();
+                    setRecentFiles([]);
+                  }}
+                >
+                  Clear all
+                </Button>
+              </Stack>
+              <Stack spacing={0.5}>
+                {recentFiles.map((entry) => (
+                  <Stack
+                    key={entry.path}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{
+                      borderRadius: 1,
+                      px: 1,
+                      py: 0.5,
+                      "&:hover": { bgcolor: "action.hover" },
+                    }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Link
+                        component="button"
+                        variant="body2"
+                        onClick={() => openPath(entry.path)}
+                        sx={{
+                          fontFamily: "monospace",
+                          textAlign: "left",
+                          display: "block",
+                          width: "100%",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {basename(entry.path)}
+                      </Link>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          display: "block",
+                          fontFamily: "monospace",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={entry.path}
+                      >
+                        {entry.path}
+                      </Typography>
+                    </Box>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ flexShrink: 0, minWidth: 96, textAlign: "right" }}
+                    >
+                      {formatRelativeTime(entry.openedAt)}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      aria-label={`Remove ${entry.path} from recent logs`}
+                      onClick={() => setRecentFiles(removeRecentFile(entry.path))}
+                    >
+                      <CloseIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Stack>
+                ))}
+              </Stack>
+            </Box>
+          )}
         </Box>
       )}
 
@@ -341,6 +470,10 @@ export default function Phd2AnalyzerPage() {
                     onViewportChange={setViewport}
                     settleIntervals={settleIntervals}
                     showSettleShading={!includeSettle}
+                    selections={selections}
+                    exclusions={exclusions}
+                    onSelectionsChange={setSelections}
+                    onExclusionsChange={setExclusions}
                   />
                   <FormControlLabel
                     control={
@@ -368,12 +501,19 @@ export default function Phd2AnalyzerPage() {
                     <StatsPanel
                       metrics={viewportMetrics}
                       kind="guiding"
-                      title="Viewport summary"
-                      subtitle={
-                        viewport === null
-                          ? "All frames visible"
-                          : `${viewportSamples.length.toLocaleString()} / ${selected.section.samples.length.toLocaleString()} frames visible`
+                      title={
+                        selections.length > 0
+                          ? "Selection summary"
+                          : "Viewport summary"
                       }
+                      subtitle={formatSubtitle(
+                        selections,
+                        exclusions,
+                        viewport,
+                        viewportSamples.length,
+                        selected.section.samples.length,
+                        selected.section.start_time,
+                      )}
                       collapsible
                     />
                   )}
@@ -448,4 +588,46 @@ export default function Phd2AnalyzerPage() {
       )}
     </Box>
   );
+}
+
+/** Last filesystem path segment. Handles both ``/`` and ``\`` so
+ *  Windows-style paths render cleanly on macOS too (archive virtual
+ *  paths like ``file.zip::entry.txt`` keep the ``::`` suffix since
+ *  it's part of the filename from the user's perspective). */
+function basename(path: string): string {
+  const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return idx >= 0 ? path.slice(idx + 1) : path;
+}
+
+/** Build the subtitle for the Selection / Viewport summary panel.
+ *  The panel title is "Selection summary" when any user-drawn
+ *  selection exists, otherwise "Viewport summary"; the subtitle
+ *  describes the active window + any exclusions subtracting from it. */
+function formatSubtitle(
+  selections: Array<[number, number]>,
+  exclusions: Array<[number, number]>,
+  viewport: [number, number] | null,
+  visibleCount: number,
+  totalCount: number,
+  startIso: string,
+): string {
+  const fmtRange = ([t0, t1]: [number, number]) =>
+    `${formatWallClock(startIso, t0)} → ${formatWallClock(startIso, t1)}`;
+  const framesLabel = `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`;
+  const parts: string[] = [];
+  if (selections.length === 1) {
+    parts.push(fmtRange(selections[0]), framesLabel);
+  } else if (selections.length > 1) {
+    parts.push(`${selections.length} selections`, framesLabel);
+  } else if (viewport) {
+    parts.push(`${framesLabel} visible`);
+  } else {
+    parts.push("All frames visible");
+  }
+  if (exclusions.length === 1) {
+    parts.push(`excluding ${fmtRange(exclusions[0])}`);
+  } else if (exclusions.length > 1) {
+    parts.push(`excluding ${exclusions.length} ranges`);
+  }
+  return parts.join(" · ");
 }

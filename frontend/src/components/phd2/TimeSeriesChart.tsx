@@ -45,7 +45,7 @@ import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { useTheme } from "@mui/material/styles";
 import type { GuidingSample, LogEvent } from "@/api/phd2";
 import { formatWallClock } from "@/lib/phd2Format";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {
   samples: GuidingSample[];
@@ -73,6 +73,22 @@ interface Props {
    *  the user has opted to include settle frames in stats, greying them
    *  out would be inconsistent. Default ``true``. */
   showSettleShading?: boolean;
+  /** User-drawn selection windows — translucent teal bands. Samples
+   *  inside the union of selections form the base set for the
+   *  Selection / Viewport summary panel; exclusions subtract from
+   *  that base. Multiple selections accumulate via shift-drag. */
+  selections?: Array<[number, number]>;
+  /** User-drawn exclusion windows — hatched-grey bands. Samples
+   *  inside any exclusion are dropped from the summary. Multiple
+   *  exclusions accumulate via shift+alt-drag. */
+  exclusions?: Array<[number, number]>;
+  /** Parent's state setter for selections. Chart computes the new
+   *  array (append on shift-drag, splice on × click, empty array on
+   *  Clear all) and forwards it via this callback. */
+  onSelectionsChange?: (next: Array<[number, number]>) => void;
+  /** Parent's state setter for exclusions. Same contract as
+   *  ``onSelectionsChange``. */
+  onExclusionsChange?: (next: Array<[number, number]>) => void;
 }
 
 const COLOR_RA = RIG_BLUE;
@@ -174,6 +190,10 @@ function TimeSeriesChartInner(
     onViewportChange,
     settleIntervals = [],
     showSettleShading = true,
+    selections = [],
+    exclusions = [],
+    onSelectionsChange,
+    onExclusionsChange,
   }: Props,
   ref: React.Ref<TimeSeriesChartHandle>,
 ) {
@@ -185,6 +205,7 @@ function TimeSeriesChartInner(
   const clipMain = `phd2-clip-main-${uid}`;
   const clipSnr = `phd2-clip-snr-${uid}`;
   const clipMass = `phd2-clip-mass-${uid}`;
+  const excludePatternId = `phd2-exclude-hatch-${uid}`;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Reference to the active d3.zoom behavior attached to the SVG. The
@@ -224,6 +245,16 @@ function TimeSeriesChartInner(
   // from the section header; when absent, the toggle stays disabled
   // and the chart silently stays in pixels.
   const [guideUnit, setGuideUnit] = useState<"px" | "arcsec">("px");
+  // Live-preview rectangles for in-progress shift-drag / shift+alt-
+  // drag. Committed arrays live on the parent; only on mouseup do we
+  // fire ``onSelectionsChange`` / ``onExclusionsChange`` with the new
+  // appended value.
+  const [pendingSelection, setPendingSelection] = useState<
+    [number, number] | null
+  >(null);
+  const [pendingExclusion, setPendingExclusion] = useState<
+    [number, number] | null
+  >(null);
   // ``ready`` guards against the first-paint flash where the SVG
   // renders at the default width=640 before the ResizeObserver fires
   // — the pulse bars briefly landed at wrong positions. We show a
@@ -408,6 +439,14 @@ function TimeSeriesChartInner(
         [MARGIN.left, 0],
         [MARGIN.left + innerW, height],
       ])
+      // Shift-drag is reserved for the selection / exclusion gestures
+      // (Shift → select, Shift+Alt → exclude), so d3.zoom ignores those
+      // events and lets our own mousedown handler take over.
+      .filter((e) => {
+        const me = e as MouseEvent;
+        if (me.type === "mousedown" && me.shiftKey) return false;
+        return !e.ctrlKey && !e.button;
+      })
       .on("zoom", (e) => {
         const rescaled = e.transform.rescaleX(base);
         setZoomX(rescaled.domain() as [number, number]);
@@ -836,6 +875,105 @@ function TimeSeriesChartInner(
     document.addEventListener("mouseup", onUp);
   };
 
+  // ── Selection / exclusion drag gestures ────────────────────────────
+  //
+  // Shift+drag → select a time range; the Selection Summary panel
+  // recomputes metrics over the samples inside. Shift+Alt+drag →
+  // exclude a range from the Selection / Viewport Summary.
+  //
+  // A very short drag (< 0.25 s in domain space) treats the gesture
+  // as a "click to clear" and resets the corresponding band. d3.zoom's
+  // filter above already bypasses shift-keyed mousedowns so this
+  // handler owns the gesture start.
+  const selectionDragRef = useRef<{
+    mode: "select" | "exclude";
+    anchorTime: number;
+  } | null>(null);
+
+  // Keep refs to values the drag handlers below need at their latest
+  // value — the onMove / onUp closures below capture these refs on
+  // mousedown, so without the live sync they'd drift after any re-
+  // render (wheel-zoom mid-drag, append-on-drag needing the fresh
+  // array, etc.).
+  const xScaleRef = useLatestRef(xScale);
+  const selectionsRef = useLatestRef(selections);
+  const exclusionsRef = useLatestRef(exclusions);
+
+  const handleSelectionMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!e.shiftKey) return;
+    // Only honour the gesture when at least one of the change callbacks
+    // is wired — avoids capturing events on charts rendered without
+    // the selection wiring.
+    const mode: "select" | "exclude" = e.altKey ? "exclude" : "select";
+    if (mode === "select" && !onSelectionsChange) return;
+    if (mode === "exclude" && !onExclusionsChange) return;
+
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const mx0 = e.clientX - rect.left;
+    if (mx0 < MARGIN.left || mx0 > MARGIN.left + innerW) return;
+    const anchorTime = clamp(
+      xScaleRef.current.invert(mx0),
+      tmin,
+      tmax,
+    );
+    selectionDragRef.current = { mode, anchorTime };
+    // Prevent the event from bubbling into d3.zoom's drag start and
+    // suppress the browser's default text-selection behaviour.
+    e.preventDefault();
+    e.stopPropagation();
+
+    const onMove = (ev: MouseEvent) => {
+      const drag = selectionDragRef.current;
+      if (!drag || !svgRef.current) return;
+      const r = svgRef.current.getBoundingClientRect();
+      const mx = ev.clientX - r.left;
+      const t = clamp(xScaleRef.current.invert(mx), tmin, tmax);
+      const lo = Math.min(drag.anchorTime, t);
+      const hi = Math.max(drag.anchorTime, t);
+      // Live preview — selection + exclusion both drive a pending
+      // rect that renders until mouseup commits (or discards).
+      if (drag.mode === "select") {
+        setPendingSelection([lo, hi]);
+      } else {
+        setPendingExclusion([lo, hi]);
+      }
+    };
+    const onUp = (ev: MouseEvent) => {
+      const drag = selectionDragRef.current;
+      if (!drag || !svgRef.current) {
+        selectionDragRef.current = null;
+        setPendingSelection(null);
+        setPendingExclusion(null);
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        return;
+      }
+      const r = svgRef.current.getBoundingClientRect();
+      const mx = ev.clientX - r.left;
+      const t = clamp(xScaleRef.current.invert(mx), tmin, tmax);
+      const lo = Math.min(drag.anchorTime, t);
+      const hi = Math.max(drag.anchorTime, t);
+      // Tiny drag (< 0.25 s) → no-op. The × button per zone + the
+      // "Clear all" toolbar button cover the removal flows; an
+      // accidental click shouldn't wipe state.
+      if (hi - lo >= 0.25) {
+        if (drag.mode === "select") {
+          onSelectionsChange?.([...selectionsRef.current, [lo, hi]]);
+        } else {
+          onExclusionsChange?.([...exclusionsRef.current, [lo, hi]]);
+        }
+      }
+      setPendingSelection(null);
+      setPendingExclusion(null);
+      selectionDragRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   // Horizontal position of the tooltip within its reservation area.
   // Centered on the cursor; clamped so the tooltip stays inside the
   // chart's horizontal span.
@@ -1067,8 +1205,45 @@ function TimeSeriesChartInner(
           color="text.secondary"
           sx={{ fontStyle: "italic" }}
         >
-          Scroll to zoom · drag to pan
+          Scroll to zoom · drag to pan · shift-drag: include · shift+alt-drag: exclude
         </Typography>
+        {onSelectionsChange && (
+          <Button
+            size="small"
+            disabled={zoomX === null}
+            onClick={() => {
+              if (!zoomX) return;
+              onSelectionsChange([...selections, [zoomX[0], zoomX[1]]]);
+            }}
+          >
+            Include in view
+          </Button>
+        )}
+        {onExclusionsChange && (
+          <Button
+            size="small"
+            disabled={zoomX === null}
+            onClick={() => {
+              if (!zoomX) return;
+              onExclusionsChange([...exclusions, [zoomX[0], zoomX[1]]]);
+            }}
+          >
+            Exclude in view
+          </Button>
+        )}
+        <Button
+          size="small"
+          disabled={selections.length === 0 && exclusions.length === 0}
+          onClick={() => {
+            onSelectionsChange?.([]);
+            onExclusionsChange?.([]);
+          }}
+        >
+          Clear all
+          {selections.length + exclusions.length > 0
+            ? ` (${selections.length + exclusions.length})`
+            : ""}
+        </Button>
         <Button
           size="small"
           startIcon={<RestartAltIcon />}
@@ -1182,6 +1357,7 @@ function TimeSeriesChartInner(
         height={height}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHover(null)}
+        onMouseDown={handleSelectionMouseDown}
         style={{
           display: ready ? "block" : "none",
           // ``grab`` by default signals "drag to pan" (works when
@@ -1206,6 +1382,29 @@ function TimeSeriesChartInner(
           <clipPath id={clipMass}>
             <rect x={MARGIN.left} y={massY0} width={innerW} height={massH} />
           </clipPath>
+          {/* Diagonal-hatch pattern for the exclusion band — visually
+              distinct from the solid-grey settle shading. */}
+          <pattern
+            id={excludePatternId}
+            patternUnits="userSpaceOnUse"
+            width={6}
+            height={6}
+            patternTransform="rotate(45)"
+          >
+            <rect
+              width={6}
+              height={6}
+              fill={isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"}
+            />
+            <line
+              x1={0}
+              y1={0}
+              x2={0}
+              y2={6}
+              stroke={isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.18)"}
+              strokeWidth={1.5}
+            />
+          </pattern>
         </defs>
 
         {/* Uniform background tint on all three panels so they read as
@@ -1296,6 +1495,79 @@ function TimeSeriesChartInner(
             ))}
           </>
         )}
+
+        {/* User-drawn selection bands (teal) + exclusion bands
+            (hatched grey). Anchored in section-time so they stay put
+            under zoom/pan. Each zone's bar is rendered inside the
+            main-panel clipPath so it can't paint over the axis tick
+            columns; the × close button that follows is rendered
+            OUTSIDE the clipPath so it stays clickable even when the
+            band is clipped. Committed bands render at lower opacity
+            than the live-preview pending band so a drag-in-progress
+            reads as the focused element. */}
+        <ZoneBands
+          keyPrefix="sel"
+          clipId={clipMain}
+          zones={selections}
+          pending={pendingSelection}
+          xScale={xScale}
+          y={mainY0}
+          height={mainH}
+          fill={RIG_TEAL}
+          committedFillOpacity={0.14}
+          pendingFillOpacity={0.2}
+          stroke={RIG_TEAL}
+          committedStrokeOpacity={0.7}
+          pendingStrokeOpacity={0.9}
+          strokeDasharray="2 2"
+        />
+        <ZoneBands
+          keyPrefix="excl"
+          clipId={clipMain}
+          zones={exclusions}
+          pending={pendingExclusion}
+          xScale={xScale}
+          y={mainY0}
+          height={mainH}
+          fill={`url(#${excludePatternId})`}
+          stroke={axisColor}
+          committedStrokeOpacity={0.5}
+          pendingStrokeOpacity={0.8}
+          strokeDasharray="4 3"
+        />
+
+        {/* Per-zone × close buttons — rendered OUTSIDE the main clip
+            so they remain visible (and clickable) even when the zone
+            is partially clipped by zoom. Selection ×s sit at the top
+            of the panel; exclusion ×s sit 16 px lower so the two
+            don't collide when a selection and exclusion happen to
+            share their right edge. */}
+        {selections.map(([t0, t1], i) => (
+          <ZoneCloseButton
+            key={`sel-close-${i}`}
+            cx={clamp(xScale(t1) - 9, MARGIN.left + 10, MARGIN.left + innerW - 10)}
+            cy={mainY0 + 10}
+            stroke={RIG_TEAL}
+            bg={isDark ? "rgba(18,18,18,0.85)" : "rgba(255,255,255,0.9)"}
+            onRemove={() =>
+              onSelectionsChange?.(selections.filter((_, j) => j !== i))
+            }
+            title={`Remove selection ${i + 1} of ${selections.length} (${t0.toFixed(1)}s → ${t1.toFixed(1)}s)`}
+          />
+        ))}
+        {exclusions.map(([t0, t1], i) => (
+          <ZoneCloseButton
+            key={`excl-close-${i}`}
+            cx={clamp(xScale(t1) - 9, MARGIN.left + 10, MARGIN.left + innerW - 10)}
+            cy={mainY0 + 26}
+            stroke={axisColor}
+            bg={isDark ? "rgba(18,18,18,0.85)" : "rgba(255,255,255,0.9)"}
+            onRemove={() =>
+              onExclusionsChange?.(exclusions.filter((_, j) => j !== i))
+            }
+            title={`Remove exclusion ${i + 1} of ${exclusions.length} (${t0.toFixed(1)}s → ${t1.toFixed(1)}s)`}
+          />
+        ))}
 
         {/* Everything inside the main panel's data area is clipped so
             pulse bars and traces can never paint over the tick labels
@@ -1914,6 +2186,147 @@ function formatMassTick(t: number): string {
   if (t < 1000) return Math.round(t).toLocaleString();
   if (t < 10_000) return `${(t / 1000).toFixed(1)}k`;
   return `${Math.round(t / 1000)}k`;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Mirror a reactive value into a ref that the latest render always
+ *  writes to. Read ``.current`` inside imperative handlers (e.g. drag
+ *  ``mousemove`` / ``mouseup``) that were registered once but need to
+ *  see the freshest React value instead of the one closed over at
+ *  registration time. */
+function useLatestRef<T>(value: T): React.MutableRefObject<T> {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
+
+/** Renders the committed + pending rectangles for one user-drawn zone
+ *  family (selections or exclusions). Styling differs between families
+ *  but the geometry, clipPath wrapping, and committed-vs-pending
+ *  opacity split are identical; this component owns that shared
+ *  shape. Returns ``null`` when there's nothing to render so the
+ *  parent SVG doesn't accumulate empty ``<g>`` nodes. */
+function ZoneBands({
+  keyPrefix,
+  clipId,
+  zones,
+  pending,
+  xScale,
+  y,
+  height,
+  fill,
+  committedFillOpacity,
+  pendingFillOpacity,
+  stroke,
+  committedStrokeOpacity,
+  pendingStrokeOpacity,
+  strokeDasharray,
+}: {
+  keyPrefix: string;
+  clipId: string;
+  zones: Array<[number, number]>;
+  pending: [number, number] | null;
+  xScale: d3.ScaleLinear<number, number>;
+  y: number;
+  height: number;
+  fill: string;
+  /** Optional: set for the selection family (teal fill, ~15–20 % alpha).
+   *  Leave undefined for the exclusion family — the hatched pattern
+   *  already encodes its own alpha. */
+  committedFillOpacity?: number;
+  pendingFillOpacity?: number;
+  stroke: string;
+  committedStrokeOpacity: number;
+  pendingStrokeOpacity: number;
+  strokeDasharray: string;
+}) {
+  if (zones.length === 0 && !pending) return null;
+  const renderRect = (
+    range: [number, number],
+    key: string,
+    fillOpacity: number | undefined,
+    strokeOpacity: number,
+  ) => (
+    <rect
+      key={key}
+      x={xScale(range[0])}
+      y={y}
+      width={Math.max(1, xScale(range[1]) - xScale(range[0]))}
+      height={height}
+      fill={fill}
+      fillOpacity={fillOpacity}
+      stroke={stroke}
+      strokeOpacity={strokeOpacity}
+      strokeWidth={1}
+      strokeDasharray={strokeDasharray}
+      pointerEvents="none"
+    />
+  );
+  return (
+    <g clipPath={`url(#${clipId})`}>
+      {zones.map((range, i) =>
+        renderRect(range, `${keyPrefix}-${i}`, committedFillOpacity, committedStrokeOpacity),
+      )}
+      {pending &&
+        renderRect(pending, `${keyPrefix}-pending`, pendingFillOpacity, pendingStrokeOpacity)}
+    </g>
+  );
+}
+
+/** Small circular × close button anchored at ``(cx, cy)`` in SVG
+ *  coords. Rendered outside the main-panel clipPath so it stays
+ *  visible + clickable even when its owning zone is partially
+ *  clipped. Used for both selection and exclusion zone removal. */
+function ZoneCloseButton({
+  cx,
+  cy,
+  stroke,
+  bg,
+  onRemove,
+  title,
+}: {
+  cx: number;
+  cy: number;
+  stroke: string;
+  bg: string;
+  onRemove: () => void;
+  title: string;
+}) {
+  return (
+    <g
+      onClick={(e) => {
+        e.stopPropagation();
+        onRemove();
+      }}
+      style={{ cursor: "pointer" }}
+    >
+      <title>{title}</title>
+      <circle
+        cx={cx}
+        cy={cy}
+        r={7}
+        fill={bg}
+        stroke={stroke}
+        strokeOpacity={0.8}
+        strokeWidth={1}
+      />
+      <text
+        x={cx}
+        y={cy}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={600}
+        fill={stroke}
+        pointerEvents="none"
+      >
+        ×
+      </text>
+    </g>
+  );
 }
 
 /** Augments d3's ``ticks()`` with the scale's domain endpoints so the
