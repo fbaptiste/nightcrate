@@ -35,17 +35,23 @@ export const PHASE_COLORS: Record<string, string> = {
 
 const MARGIN = { top: 16, right: 16, bottom: 36, left: 52 };
 
-export default function CalibrationPlot({ phases, height = 320 }: Props) {
+/** Maximum px width for the calibration plot. Beyond this the plot would
+ *  just have huge dead margins on either side of the square data area —
+ *  see the commit that introduced this for the screenshot. The geometry
+ *  panel takes whatever horizontal space is left. */
+const MAX_PLOT_WIDTH = 460;
+
+export default function CalibrationPlot({ phases, height = 400 }: Props) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const [width, setWidth] = useState(520);
+  const [width, setWidth] = useState(MAX_PLOT_WIDTH);
 
   useEffect(() => {
     if (!wrapperRef.current) return;
     const obs = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 520;
-      if (w > 0) setWidth(w);
+      const w = entries[0]?.contentRect.width ?? MAX_PLOT_WIDTH;
+      if (w > 0) setWidth(Math.min(MAX_PLOT_WIDTH, w));
     });
     obs.observe(wrapperRef.current);
     return () => obs.disconnect();
@@ -101,8 +107,22 @@ export default function CalibrationPlot({ phases, height = 320 }: Props) {
   const northPhase = phases.find((p) => p.direction === "North");
 
   return (
-    <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ width: "100%" }}>
-      <Box ref={wrapperRef} sx={{ flex: 1, minWidth: 240 }}>
+    <Stack
+      direction={{ xs: "column", md: "row" }}
+      spacing={3}
+      alignItems="flex-start"
+      sx={{ width: "100%" }}
+    >
+      <Box
+        ref={wrapperRef}
+        sx={{
+          // Cap the plot width so the square data area fills the box
+          // instead of floating in a sea of dead horizontal margin.
+          width: "100%",
+          maxWidth: MAX_PLOT_WIDTH,
+          flexShrink: 0,
+        }}
+      >
         <svg width={width} height={height} style={{ display: "block" }}>
           {/* Grid */}
           {xTicks.map((t) => (
@@ -213,7 +233,7 @@ export default function CalibrationPlot({ phases, height = 320 }: Props) {
           </text>
         </svg>
       </Box>
-      <Box sx={{ minWidth: 220, maxWidth: 280 }}>
+      <Box sx={{ flex: 1, minWidth: 220 }}>
         <Typography variant="subtitle2" sx={{ mb: 1 }}>
           Calibration geometry
         </Typography>

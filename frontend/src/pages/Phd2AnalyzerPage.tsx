@@ -43,6 +43,12 @@ export default function Phd2AnalyzerPage() {
   // Section-view tab: 0 = Graph, 1 = Data. Tab state is page-level so
   // switching sections keeps the user on the same tab.
   const [tab, setTab] = useState(0);
+  // Lazy-mount the Data tab. The heavy DataTable useMemo pass (14
+  // columns × 7 500 rows) was competing for the first render with the
+  // chart — pulses appeared to "come in later" because the chart's
+  // render was blocked. Once Data has been visited once, it stays
+  // mounted so the user keeps their scroll position.
+  const [dataVisited, setDataVisited] = useState(false);
 
   useEffect(() => {
     setActivity("PHD2 Analyzer");
@@ -194,7 +200,10 @@ export default function Phd2AnalyzerPage() {
           <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }}>
             <Tabs
               value={tab}
-              onChange={(_, v) => setTab(v)}
+              onChange={(_, v) => {
+                setTab(v);
+                if (v === 1) setDataVisited(true);
+              }}
               sx={{ px: 2, borderBottom: 1, borderColor: "divider", minHeight: 40 }}
             >
               <Tab label="Graph" sx={{ minHeight: 40 }} />
@@ -237,10 +246,12 @@ export default function Phd2AnalyzerPage() {
                 minWidth: 0,
               }}
             >
-              <SectionDataTab
-                key={selected.section.index}
-                section={selected.section}
-              />
+              {dataVisited && (
+                <SectionDataTab
+                  key={selected.section.index}
+                  section={selected.section}
+                />
+              )}
             </Box>
           </Box>
         </Box>

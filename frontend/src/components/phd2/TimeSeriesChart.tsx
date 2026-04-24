@@ -24,6 +24,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
@@ -89,12 +90,21 @@ export default function TimeSeriesChart({
   // User-adjustable Y range for the main panel. Empty string = auto-fit
   // (domain derived from the data); a positive number clamps to ±value.
   const [yMaxInput, setYMaxInput] = useState<string>("");
+  // ``ready`` guards against the first-paint flash where the SVG
+  // renders at the default width=640 before the ResizeObserver fires
+  // — the pulse bars briefly landed at wrong positions. We show a
+  // spinner until the first width measurement lands, then the full
+  // chart swaps in.
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (!wrapperRef.current) return;
     const obs = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 640;
-      if (w > 0) setWidth(w);
+      if (w > 0) {
+        setWidth(w);
+        setReady(true);
+      }
     });
     obs.observe(wrapperRef.current);
     return () => obs.disconnect();
@@ -126,11 +136,13 @@ export default function TimeSeriesChart({
     const maxAbs =
       Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : autoMaxAbs * 1.1;
 
-    // Pulse axis range — scoped to the samples in the current X zoom so
-    // panning to a quieter region shrinks the scale (and vice versa).
-    // Uses the max pulse in the visible range (floored at 100 ms) so
-    // outliers in the visible range are seen at full height, matching
-    // the user's explicit request.
+    // Pulse axis range — scoped to the samples in the current X zoom
+    // so panning to a quieter region shrinks the scale. Uses the 75th
+    // percentile rather than the absolute max so the typical pulse
+    // fills most of the panel; larger outliers clip off the top / bottom
+    // rather than flattening all the other bars.  Combined with the
+    // min-bar-height floor below, this keeps pulses distinctly visible
+    // regardless of zoom level.
     const visibleSamples = zoomX
       ? samples.filter(
           (s) => s.time_seconds >= zoomX[0] && s.time_seconds <= zoomX[1],
@@ -139,8 +151,9 @@ export default function TimeSeriesChart({
     const visibleDurations = visibleSamples.flatMap((s) =>
       [s.ra_duration_ms ?? 0, s.dec_duration_ms ?? 0].filter((v) => v > 0),
     );
-    const maxDur = visibleDurations.length ? d3.max(visibleDurations) ?? 100 : 100;
-    const durMax = Math.max(100, maxDur);
+    const sortedDur = [...visibleDurations].sort((a, b) => a - b);
+    const p75 = sortedDur[Math.floor(sortedDur.length * 0.75)] ?? 100;
+    const durMax = Math.max(100, p75);
 
     const snrs = samples.map((s) => s.snr).filter((v): v is number => v !== null);
     const snrMax = snrs.length ? Math.max(10, d3.max(snrs) ?? 10) : 10;
@@ -257,6 +270,12 @@ export default function TimeSeriesChart({
       : samples.length;
     const nSamples = Math.max(1, visibleCount);
     const barW = Math.max(3, Math.min(10, (innerW / nSamples) * 0.6));
+    // Every non-zero pulse gets at least this much vertical presence so
+    // small pulses remain visible even when the scale is set for larger
+    // ones. Bars that would exceed the main panel clip at ±mainH/2.
+    const minH = 5;
+    const panelHalf = mainH / 2;
+    const y0 = yPulseScale(0);
     const ra: Array<{ x: number; y: number; h: number }> = [];
     const dec: Array<{ x: number; y: number; h: number }> = [];
     for (const s of samples) {
@@ -265,27 +284,27 @@ export default function TimeSeriesChart({
       const decDur = s.dec_duration_ms ?? 0;
       if (raDur > 0 && s.ra_direction) {
         const sign = s.ra_direction === "W" ? 1 : -1;
-        const y0 = yPulseScale(0);
-        const y1 = yPulseScale(sign * raDur);
+        const rawH = Math.abs(yPulseScale(sign * raDur) - y0);
+        const h = Math.min(panelHalf, Math.max(minH, rawH));
         ra.push({
           x: cx - barW / 2,
-          y: Math.min(y0, y1),
-          h: Math.abs(y1 - y0),
+          y: sign > 0 ? y0 - h : y0,
+          h,
         });
       }
       if (decDur > 0 && s.dec_direction) {
         const sign = s.dec_direction === "N" ? 1 : -1;
-        const y0 = yPulseScale(0);
-        const y1 = yPulseScale(sign * decDur);
+        const rawH = Math.abs(yPulseScale(sign * decDur) - y0);
+        const h = Math.min(panelHalf, Math.max(minH, rawH));
         dec.push({
           x: cx - barW / 2,
-          y: Math.min(y0, y1),
-          h: Math.abs(y1 - y0),
+          y: sign > 0 ? y0 - h : y0,
+          h,
         });
       }
     }
     return { ra, dec, barW };
-  }, [samples, xScale, yPulseScale, innerW, zoomX]);
+  }, [samples, xScale, yPulseScale, innerW, zoomX, mainH]);
 
   const gridColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
   const axisColor = isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.6)";
@@ -386,9 +405,15 @@ export default function TimeSeriesChart({
           </Typography>
         </Stack>
         <Stack direction="row" spacing={0.5} alignItems="center">
-          <Box sx={{ width: 6, height: 10, bgcolor: COLOR_RA, opacity: 0.35 }} />
-          <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            pulses
+          <Box sx={{ width: 6, height: 10, bgcolor: COLOR_RA, opacity: 0.6 }} />
+          <Typography variant="caption" sx={{ color: COLOR_RA }}>
+            RA pulse
+          </Typography>
+        </Stack>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Box sx={{ width: 6, height: 10, bgcolor: COLOR_DEC, opacity: 0.6 }} />
+          <Typography variant="caption" sx={{ color: COLOR_DEC }}>
+            Dec pulse
           </Typography>
         </Stack>
         {events.some((e) => e.kind === "dither") && (
@@ -402,6 +427,13 @@ export default function TimeSeriesChart({
           </Stack>
         )}
         <Box sx={{ flex: 1 }} />
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ fontStyle: "italic" }}
+        >
+          Scroll to zoom · drag to pan
+        </Typography>
         <TextField
           label="Y max"
           size="small"
@@ -423,13 +455,34 @@ export default function TimeSeriesChart({
           Reset X zoom
         </Button>
       </Stack>
+      {!ready && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height,
+          }}
+        >
+          <CircularProgress size={28} />
+        </Box>
+      )}
       <svg
         ref={svgRef}
         width={width}
         height={height}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHover(null)}
-        style={{ display: "block", cursor: "crosshair" }}
+        style={{
+          display: ready ? "block" : "none",
+          // ``grab`` by default signals "drag to pan" (works when
+          // zoomed in). Crosshair would also be reasonable but
+          // users need a visual cue that the chart is draggable.
+          // ``touch-action: none`` prevents the browser from
+          // stealing wheel / touch gestures before d3.zoom sees them.
+          cursor: zoomX ? "grab" : "crosshair",
+          touchAction: "none",
+        }}
       >
         {/* Subtle background tint on alternating panels for visual
             separation between main / SNR / mass. */}

@@ -57,8 +57,13 @@ interface GuidingRow {
   dec_raw_px: number | null;
   ra_guide_px: number | null;
   dec_guide_px: number | null;
-  ra_pulse: string;
-  dec_pulse: string;
+  // Pulse split into numeric value + direction so users can sort by
+  // pulse size (the value column's natural numeric sort) without the
+  // direction letter polluting the sort order.
+  ra_pulse_ms: number | null;
+  ra_pulse_dir: "W" | "E" | null;
+  dec_pulse_ms: number | null;
+  dec_pulse_dir: "N" | "S" | null;
   snr: number | null;
   star_mass: number | null;
   error_code: number;
@@ -145,14 +150,13 @@ export default function SectionDataTab({ section }: Props) {
       dec_raw_px: s.dec_raw_px,
       ra_guide_px: s.ra_guide_px,
       dec_guide_px: s.dec_guide_px,
-      ra_pulse:
-        s.ra_duration_ms != null && s.ra_duration_ms > 0
-          ? `${s.ra_duration_ms} ms ${s.ra_direction ?? ""}`.trim()
-          : "",
-      dec_pulse:
-        s.dec_duration_ms != null && s.dec_duration_ms > 0
-          ? `${s.dec_duration_ms} ms ${s.dec_direction ?? ""}`.trim()
-          : "",
+      ra_pulse_ms:
+        s.ra_duration_ms != null && s.ra_duration_ms > 0 ? s.ra_duration_ms : null,
+      ra_pulse_dir: s.ra_duration_ms != null && s.ra_duration_ms > 0 ? s.ra_direction : null,
+      dec_pulse_ms:
+        s.dec_duration_ms != null && s.dec_duration_ms > 0 ? s.dec_duration_ms : null,
+      dec_pulse_dir:
+        s.dec_duration_ms != null && s.dec_duration_ms > 0 ? s.dec_direction : null,
       snr: s.snr,
       star_mass: s.star_mass,
       error_code: s.error_code,
@@ -282,8 +286,22 @@ export default function SectionDataTab({ section }: Props) {
         align: "right",
         format: fmt3,
       },
-      { field: "ra_pulse", headerName: "RA pulse", width: 100, sortable: false },
-      { field: "dec_pulse", headerName: "Dec pulse", width: 100, sortable: false },
+      {
+        field: "ra_pulse_ms",
+        headerName: "RA pulse (ms)",
+        width: 105,
+        align: "right",
+        format: fmtInt,
+      },
+      { field: "ra_pulse_dir", headerName: "RA dir", width: 75, align: "center" },
+      {
+        field: "dec_pulse_ms",
+        headerName: "Dec pulse (ms)",
+        width: 110,
+        align: "right",
+        format: fmtInt,
+      },
+      { field: "dec_pulse_dir", headerName: "Dec dir", width: 78, align: "center" },
       { field: "snr", headerName: "SNR", width: 75, align: "right", format: fmt2 },
       { field: "star_mass", headerName: "Mass", width: 85, align: "right", format: fmtInt },
       {
