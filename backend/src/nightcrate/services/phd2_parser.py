@@ -64,6 +64,11 @@ _RE_PHASE_COMPLETE = re.compile(
 )
 _RE_INFO = re.compile(r"^INFO:\s*(?P<message>.*)$")
 
+# Module-level tuple constant for the narrow except clause below —
+# sidesteps the py314 ruff-format bug documented in CLAUDE.md Gotchas
+# where ruff strips the parens off `except (A, B):`.
+_CAL_ROW_ERRORS: tuple[type[BaseException], ...] = (TypeError, ValueError)
+
 # ── Header key patterns ────────────────────────────────────────────────────────
 #
 # One regex per typed field. Each is anchored so overlapping prefixes don't
@@ -839,7 +844,7 @@ def _parse_calibration_body(
                 y_px=float(mapped.get("y", "0") or 0),
                 distance_px=float(mapped.get("Dist", "0") or 0),
             )
-        except TypeError, ValueError:
+        except _CAL_ROW_ERRORS:
             warnings.append(
                 ParseWarning(
                     code="bad_calibration_row",

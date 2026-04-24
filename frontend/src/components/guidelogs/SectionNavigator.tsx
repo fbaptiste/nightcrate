@@ -48,7 +48,7 @@ export default function SectionNavigator({ sections, selectedIndex, onSelect }: 
                     size="small"
                     sx={{
                       bgcolor: kindColor,
-                      color: "#fff",
+                      color: "#ffffff",
                       fontSize: 10,
                       height: 18,
                     }}
