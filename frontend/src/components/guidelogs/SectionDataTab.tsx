@@ -1,36 +1,26 @@
 /**
  * Data tab for the Guide Logs section view.
  *
- * Renders a DataGrid over the parsed rows of the currently-selected
+ * Renders a DataTable over the parsed rows of the currently-selected
  * section — per-frame ``GuidingSample`` rows for guiding sections, or
  * flattened ``CalibrationSample`` rows across all five phases for
- * calibration sections. Below the grid: a compact chronological list
+ * calibration sections. Below the table: a compact chronological list
  * of the section's INFO events (settle, dither, lock, alert, …).
  *
- * Pagination UI matches the DSO catalog: ``PaginationActions`` slot
- * (First / Prev / page input / Next / Last) + MUI's default rows-
- * per-page dropdown.
- *
- * Filter UX: columns with closed vocabularies (Type on guiding, Phase
- * on calibration) and the Error column use ``type: "singleSelect"``
- * with ``valueOptions`` so the user gets a dropdown of the actual
- * values present instead of a free-text string filter.
+ * Filter controls (Type / Error for guiding, Phase for calibration)
+ * live above the grid in the DataTable's filter bar.
  */
-import { useEffect, useMemo, useState } from "react";
-import {
-  DataGrid,
-  type GridColDef,
-  type GridPaginationModel,
-} from "@mui/x-data-grid";
+import { useMemo } from "react";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
-import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
-import ToggleButton from "@mui/material/ToggleButton";
-import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import type { LogSection } from "@/api/guideLogs";
-import PaginationActions from "@/components/common/PaginationActions";
+import { DataTable } from "@/components/common/DataTable";
+import type {
+  DataTableColumn,
+  DataTableFilter,
+} from "@/components/common/DataTable";
 import { formatWallClock } from "@/lib/guideLogFormat";
 import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 import { PHASE_COLORS } from "./CalibrationPlot";
@@ -41,21 +31,22 @@ interface Props {
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
-const fmt3 = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(3));
-const fmt2 = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(2));
-const fmtInt = (v: number | null | undefined) =>
-  v == null ? "—" : v.toLocaleString();
+const fmt3 = (v: unknown) => (v == null ? "—" : (v as number).toFixed(3));
+const fmt2 = (v: unknown) => (v == null ? "—" : (v as number).toFixed(2));
+const fmtInt = (v: unknown) =>
+  v == null ? "—" : (v as number).toLocaleString();
 
 // Sentinel filter value for non-error rows — kept as the literal em-dash
 // so what the user sees in the cell matches the filter-dropdown entry.
 const NO_ERROR = "—";
 
-// ── Guiding-sample grid ──────────────────────────────────────────────────────
+// ── Row types ────────────────────────────────────────────────────────────────
 
 interface GuidingRow {
   id: number;
   frame: number;
   time_seconds: number;
+  wall_clock: string;
   mount_kind: "Mount" | "AO" | "DROP";
   dx_px: number | null;
   dy_px: number | null;
@@ -63,30 +54,14 @@ interface GuidingRow {
   dec_raw_px: number | null;
   ra_guide_px: number | null;
   dec_guide_px: number | null;
-  ra_duration_ms: number | null;
-  ra_direction: "W" | "E" | null;
-  dec_duration_ms: number | null;
-  dec_direction: "N" | "S" | null;
+  ra_pulse: string;
+  dec_pulse: string;
   snr: number | null;
   star_mass: number | null;
   error_code: number;
-  error_description: string | null;
+  error_label: string;
+  error_display: string;
 }
-
-const MOUNT_COLOR: Record<string, string> = {
-  Mount: RIG_BLUE,
-  AO: RIG_TEAL,
-  DROP: RIG_ORANGE,
-};
-
-// Closed vocabulary from the parser — every guiding row's `mount_kind`
-// must be one of these, so a fixed list drives the filter dropdown.
-const MOUNT_KIND_OPTIONS: Array<"Mount" | "AO" | "DROP"> = ["Mount", "AO", "DROP"];
-
-// Calibration's five phases are fixed too.
-const PHASE_OPTIONS: string[] = ["West", "East", "Backlash", "North", "South"];
-
-// ── Calibration-sample grid types ────────────────────────────────────────────
 
 interface CalibrationRow {
   id: string;
@@ -99,36 +74,30 @@ interface CalibrationRow {
   distance_px: number;
 }
 
+const MOUNT_COLOR: Record<string, string> = {
+  Mount: RIG_BLUE,
+  AO: RIG_TEAL,
+  DROP: RIG_ORANGE,
+};
+
+const PHASE_OPTIONS: readonly string[] = [
+  "West",
+  "East",
+  "Backlash",
+  "North",
+  "South",
+];
+
 // ── Main component ───────────────────────────────────────────────────────────
 
-type ViewMode = "paginated" | "scroll";
-
-// Defaults for the guiding DataGrid's pagination state. The Scroll
-// view's pageSize is set dynamically based on row count in an effect
-// below so the whole section fits in one virtualized page.
-const DEFAULT_PAGE_SIZE = 100;
-
 export default function SectionDataTab({ section }: Props) {
-  // Paginated vs scroll presentation of the guiding DataGrid. Scroll
-  // is the default — users want to scan the full section by default;
-  // pagination is the explicit opt-in for page-at-a-time analysis.
-  const [viewMode, setViewMode] = useState<ViewMode>("scroll");
-  // Controlled pagination. Using controlled state (rather than MUI's
-  // internal `initialState`) lets us switch pageSize between modes
-  // *without* remounting the grid — the aria-hidden warning Fred
-  // hit was caused by the previous `key={viewMode}` remount while
-  // focus sat on an unrelated button.
-  const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({
-    page: 0,
-    pageSize: DEFAULT_PAGE_SIZE,
-  });
-
   const guidingRows = useMemo<GuidingRow[]>(() => {
     if (section.kind !== "guiding") return [];
     return section.samples.map((s) => ({
       id: s.frame,
       frame: s.frame,
       time_seconds: s.time_seconds,
+      wall_clock: formatWallClock(section.start_time, s.time_seconds),
       mount_kind: s.mount_kind,
       dx_px: s.dx_px,
       dy_px: s.dy_px,
@@ -136,14 +105,23 @@ export default function SectionDataTab({ section }: Props) {
       dec_raw_px: s.dec_raw_px,
       ra_guide_px: s.ra_guide_px,
       dec_guide_px: s.dec_guide_px,
-      ra_duration_ms: s.ra_duration_ms,
-      ra_direction: s.ra_direction,
-      dec_duration_ms: s.dec_duration_ms,
-      dec_direction: s.dec_direction,
+      ra_pulse:
+        s.ra_duration_ms != null && s.ra_duration_ms > 0
+          ? `${s.ra_duration_ms} ms ${s.ra_direction ?? ""}`.trim()
+          : "—",
+      dec_pulse:
+        s.dec_duration_ms != null && s.dec_duration_ms > 0
+          ? `${s.dec_duration_ms} ms ${s.dec_direction ?? ""}`.trim()
+          : "—",
       snr: s.snr,
       star_mass: s.star_mass,
       error_code: s.error_code,
-      error_description: s.error_description,
+      error_label:
+        s.error_code === 0 ? NO_ERROR : (s.error_description ?? "(no description)"),
+      error_display:
+        s.error_code === 0
+          ? NO_ERROR
+          : `${s.error_code}: ${s.error_description ?? "(no description)"}`,
     }));
   }, [section]);
 
@@ -163,72 +141,27 @@ export default function SectionDataTab({ section }: Props) {
     );
   }, [section]);
 
-  // Sync paginationModel when the view mode changes or a new section
-  // is selected. Scroll mode fits every row on one virtualized page so
-  // the DataGrid's own row virtualization handles scroll performance;
-  // Paginated mode resets back to page 0 with the default page size.
-  useEffect(() => {
-    if (viewMode === "scroll") {
-      setPaginationModel({
-        page: 0,
-        pageSize: Math.max(1, guidingRows.length),
-      });
-    } else {
-      setPaginationModel({ page: 0, pageSize: DEFAULT_PAGE_SIZE });
-    }
-  }, [viewMode, guidingRows.length]);
-
-  // Data-driven filter options for the Error column: unique descriptions
-  // that actually appear in this section, plus a "no error" entry when
-  // any good rows are present. Sorted alphabetically for a stable dropdown.
-  const errorOptions = useMemo(() => {
-    const descriptions = new Set<string>();
-    let hasOkRow = false;
-    for (const r of guidingRows) {
-      if (r.error_code === 0) {
-        hasOkRow = true;
-      } else {
-        descriptions.add(r.error_description ?? "(no description)");
-      }
-    }
-    const sorted = Array.from(descriptions).sort();
-    return hasOkRow ? [NO_ERROR, ...sorted] : sorted;
-  }, [guidingRows]);
-
-  const sectionStartIso = section.start_time;
-
-  const guidingColumns = useMemo<GridColDef<GuidingRow>[]>(
+  const guidingColumns = useMemo<DataTableColumn<GuidingRow>[]>(
     () => [
-      { field: "frame", headerName: "Frame", width: 80 },
+      { field: "frame", headerName: "Frame", width: 70, align: "right" },
       {
         field: "time_seconds",
         headerName: "Time (s)",
-        width: 90,
-        valueFormatter: (v: number) => v.toFixed(2),
+        width: 85,
+        align: "right",
+        format: (v) => (v as number).toFixed(2),
       },
-      {
-        field: "wall_clock",
-        headerName: "Clock",
-        width: 90,
-        // Wall-clock is monotonic with Time(s) within a section — no
-        // sort/filter UX value, and filtering on a continuous time
-        // value doesn't help anyway.
-        sortable: false,
-        filterable: false,
-        valueGetter: (_v, row) => formatWallClock(sectionStartIso, row.time_seconds),
-      },
+      { field: "wall_clock", headerName: "Clock", width: 85, sortable: false },
       {
         field: "mount_kind",
         headerName: "Type",
-        width: 95,
-        type: "singleSelect",
-        valueOptions: MOUNT_KIND_OPTIONS,
-        renderCell: (params) => (
+        width: 85,
+        renderCell: (row) => (
           <Chip
-            label={params.value}
+            label={row.mount_kind}
             size="small"
             sx={{
-              bgcolor: MOUNT_COLOR[params.value as string],
+              bgcolor: MOUNT_COLOR[row.mount_kind],
               color: "#ffffff",
               fontSize: 11,
               height: 20,
@@ -236,145 +169,139 @@ export default function SectionDataTab({ section }: Props) {
           />
         ),
       },
-      { field: "dx_px", headerName: "dx (px)", width: 95, valueFormatter: fmt3 },
-      { field: "dy_px", headerName: "dy (px)", width: 95, valueFormatter: fmt3 },
+      { field: "dx_px", headerName: "dx (px)", width: 85, align: "right", format: fmt3 },
+      { field: "dy_px", headerName: "dy (px)", width: 85, align: "right", format: fmt3 },
       {
         field: "ra_raw_px",
         headerName: "RA raw (px)",
-        width: 110,
-        valueFormatter: fmt3,
+        width: 100,
+        align: "right",
+        format: fmt3,
       },
       {
         field: "dec_raw_px",
         headerName: "Dec raw (px)",
-        width: 115,
-        valueFormatter: fmt3,
+        width: 100,
+        align: "right",
+        format: fmt3,
       },
       {
         field: "ra_guide_px",
         headerName: "RA guide (px)",
-        width: 120,
-        valueFormatter: fmt3,
+        width: 110,
+        align: "right",
+        format: fmt3,
       },
       {
         field: "dec_guide_px",
         headerName: "Dec guide (px)",
-        width: 125,
-        valueFormatter: fmt3,
+        width: 115,
+        align: "right",
+        format: fmt3,
       },
+      { field: "ra_pulse", headerName: "RA pulse", width: 100, sortable: false },
+      { field: "dec_pulse", headerName: "Dec pulse", width: 100, sortable: false },
+      { field: "snr", headerName: "SNR", width: 75, align: "right", format: fmt2 },
+      { field: "star_mass", headerName: "Mass", width: 85, align: "right", format: fmtInt },
       {
-        field: "ra_pulse",
-        headerName: "RA pulse",
-        width: 105,
-        sortable: false,
-        valueGetter: (_v, row) =>
-          row.ra_duration_ms != null && row.ra_duration_ms > 0
-            ? `${row.ra_duration_ms} ms ${row.ra_direction ?? ""}`.trim()
-            : "—",
-      },
-      {
-        field: "dec_pulse",
-        headerName: "Dec pulse",
-        width: 105,
-        sortable: false,
-        valueGetter: (_v, row) =>
-          row.dec_duration_ms != null && row.dec_duration_ms > 0
-            ? `${row.dec_duration_ms} ms ${row.dec_direction ?? ""}`.trim()
-            : "—",
-      },
-      { field: "snr", headerName: "SNR", width: 85, valueFormatter: fmt2 },
-      { field: "star_mass", headerName: "Mass", width: 95, valueFormatter: fmtInt },
-      {
-        field: "error",
+        field: "error_display",
         headerName: "Error",
         flex: 1,
         minWidth: 200,
         sortable: false,
-        type: "singleSelect",
-        valueOptions: errorOptions,
-        // `valueGetter` drives filtering + sorting — we expose the
-        // description (or the NO_ERROR sentinel) so the singleSelect
-        // dropdown matches the filter value.
-        valueGetter: (_v, row) =>
-          row.error_code === 0
-            ? NO_ERROR
-            : (row.error_description ?? "(no description)"),
-        // `renderCell` is the display form — prepend the numeric code
-        // so users still see "6: Star lost - mass changed".
-        renderCell: (params) => {
-          const row = params.row;
-          if (row.error_code === 0) return NO_ERROR;
-          return `${row.error_code}: ${row.error_description ?? "(no description)"}`;
-        },
-      },
-    ],
-    [errorOptions, sectionStartIso],
-  );
-
-  const calibrationColumns = useMemo<GridColDef<CalibrationRow>[]>(
-    () => [
-      {
-        field: "direction",
-        headerName: "Phase",
-        width: 120,
-        type: "singleSelect",
-        valueOptions: PHASE_OPTIONS,
-        renderCell: (params) => (
-          <Chip
-            label={params.value}
-            size="small"
-            sx={{
-              bgcolor: PHASE_COLORS[params.value as string],
-              color: "#ffffff",
-              fontSize: 11,
-              height: 20,
-            }}
-          />
-        ),
-      },
-      { field: "step", headerName: "Step", width: 80 },
-      { field: "dx_px", headerName: "dx (px)", width: 95, valueFormatter: fmt3 },
-      { field: "dy_px", headerName: "dy (px)", width: 95, valueFormatter: fmt3 },
-      { field: "x_px", headerName: "x (px)", width: 95, valueFormatter: fmt3 },
-      { field: "y_px", headerName: "y (px)", width: 95, valueFormatter: fmt3 },
-      {
-        field: "distance_px",
-        headerName: "Distance (px)",
-        flex: 1,
-        minWidth: 120,
-        valueFormatter: fmt3,
+        // Display shows "N: description" but the column's underlying
+        // value is already that string.
       },
     ],
     [],
   );
 
-  const isGuiding = section.kind === "guiding";
+  const calibrationColumns = useMemo<DataTableColumn<CalibrationRow>[]>(
+    () => [
+      {
+        field: "direction",
+        headerName: "Phase",
+        width: 110,
+        renderCell: (row) => (
+          <Chip
+            label={row.direction}
+            size="small"
+            sx={{
+              bgcolor: PHASE_COLORS[row.direction],
+              color: "#ffffff",
+              fontSize: 11,
+              height: 20,
+            }}
+          />
+        ),
+      },
+      { field: "step", headerName: "Step", width: 80, align: "right" },
+      { field: "dx_px", headerName: "dx (px)", width: 95, align: "right", format: fmt3 },
+      { field: "dy_px", headerName: "dy (px)", width: 95, align: "right", format: fmt3 },
+      { field: "x_px", headerName: "x (px)", width: 95, align: "right", format: fmt3 },
+      { field: "y_px", headerName: "y (px)", width: 95, align: "right", format: fmt3 },
+      {
+        field: "distance_px",
+        headerName: "Distance (px)",
+        flex: 1,
+        minWidth: 120,
+        align: "right",
+        format: fmt3,
+      },
+    ],
+    [],
+  );
+
+  // Filter definitions. Type + Error apply only to guiding rows; the
+  // options for Error are data-driven (each section has its own mix of
+  // error descriptions).
+  const guidingFilters = useMemo<DataTableFilter<GuidingRow>[]>(
+    () => [
+      {
+        field: "mount_kind",
+        label: "Type",
+        options: ["Mount", "AO", "DROP"],
+        valueGetter: (r) => r.mount_kind,
+      },
+      {
+        field: "error_label",
+        label: "Error",
+        options: (rows) => {
+          const set = new Set<string>();
+          let hasOk = false;
+          for (const r of rows as GuidingRow[]) {
+            if (r.error_code === 0) hasOk = true;
+            else set.add(r.error_label);
+          }
+          const arr = Array.from(set).sort();
+          return hasOk ? [NO_ERROR, ...arr] : arr;
+        },
+        valueGetter: (r) => r.error_label,
+      },
+    ],
+    [],
+  );
+
+  const calibrationFilters = useMemo<DataTableFilter<CalibrationRow>[]>(
+    () => [
+      {
+        field: "direction",
+        label: "Phase",
+        options: PHASE_OPTIONS,
+        valueGetter: (r) => r.direction,
+      },
+    ],
+    [],
+  );
 
   return (
     <Stack spacing={2} sx={{ height: "100%", minHeight: 0 }}>
-      {isGuiding && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
-          <Typography variant="caption" color="text.secondary">
-            View
-          </Typography>
-          <ViewModeToggle
-            value={viewMode}
-            onChange={(v) => setViewMode(v)}
-          />
-          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-            {viewMode === "paginated"
-              ? `${guidingRows.length.toLocaleString()} rows`
-              : `${guidingRows.length.toLocaleString()} rows, virtualized scroll`}
-          </Typography>
-        </Stack>
-      )}
-      <Paper
-        variant="outlined"
+      <Box
         sx={{
-          // flex + minHeight: 0 let the grid shrink with the viewport so
-          // the paginator footer stays visible even on short windows.
           flex: 1,
           minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
           // DROP-frame rows get a subtle tint so the user can spot
           // errors at a glance without needing a red/green signal.
           "& .guidelogs-drop-row": {
@@ -382,74 +309,29 @@ export default function SectionDataTab({ section }: Props) {
           },
         }}
       >
-        {isGuiding ? (
-          <DataGrid
+        {section.kind === "guiding" ? (
+          <DataTable
             rows={guidingRows}
             columns={guidingColumns}
-            density="compact"
-            disableRowSelectionOnClick
-            paginationModel={paginationModel}
-            onPaginationModelChange={setPaginationModel}
-            pageSizeOptions={
-              viewMode === "paginated"
-                ? [25, 50, 100]
-                : [Math.max(1, guidingRows.length)]
-            }
-            hideFooterPagination={viewMode === "scroll"}
-            slotProps={
-              viewMode === "paginated"
-                ? {
-                    basePagination: {
-                      ActionsComponent: PaginationActions,
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    } as any,
-                  }
-                : undefined
-            }
-            getRowClassName={(params) =>
-              params.row.mount_kind === "DROP" ? "guidelogs-drop-row" : ""
-            }
-            sx={{ border: 0 }}
+            filters={guidingFilters}
+            getRowClassName={(r) => (r.mount_kind === "DROP" ? "guidelogs-drop-row" : undefined)}
+            initialSort={{ field: "frame", direction: "asc" }}
+            defaultViewMode="scroll"
+            defaultPageSize={100}
+            pageSizeOptions={[25, 50, 100, 250]}
           />
         ) : (
-          <DataGrid
+          <DataTable
             rows={calibrationRows}
             columns={calibrationColumns}
-            density="compact"
-            disableRowSelectionOnClick
-            hideFooterPagination
-            hideFooterSelectedRowCount
-            sx={{ border: 0 }}
+            filters={calibrationFilters}
+            defaultViewMode="scroll"
+            showViewModeToggle={false}
           />
         )}
-      </Paper>
+      </Box>
       <EventsList section={section} />
     </Stack>
-  );
-}
-
-// ── View-mode toggle ─────────────────────────────────────────────────────────
-
-function ViewModeToggle({
-  value,
-  onChange,
-}: {
-  value: ViewMode;
-  onChange: (v: ViewMode) => void;
-}) {
-  return (
-    <ToggleButtonGroup
-      value={value}
-      exclusive
-      size="small"
-      onChange={(_, v) => {
-        if (v) onChange(v as ViewMode);
-      }}
-      sx={{ "& .MuiToggleButton-root": { py: 0.25, px: 1, fontSize: 12 } }}
-    >
-      <ToggleButton value="scroll">Scroll</ToggleButton>
-      <ToggleButton value="paginated">Paginated</ToggleButton>
-    </ToggleButtonGroup>
   );
 }
 
