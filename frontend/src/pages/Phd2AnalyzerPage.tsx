@@ -329,6 +329,7 @@ export default function Phd2AnalyzerPage() {
                     samples={selected.section.samples}
                     events={selected.section.events}
                     startIso={selected.section.start_time}
+                    arcsecScale={selected.metrics.arcsec_scale}
                     onViewportChange={setViewport}
                     settleIntervals={settleIntervals}
                     showSettleShading={!includeSettle}
@@ -350,7 +351,7 @@ export default function Phd2AnalyzerPage() {
                           color="text.secondary"
                           sx={{ ml: 1 }}
                         >
-                          Off by default — matches PHD2 / PHDLogViewer
+                          Off by default
                         </Typography>
                       </Typography>
                     }

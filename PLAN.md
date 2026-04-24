@@ -3573,15 +3573,75 @@ deferred to Pass C (v0.24.0) per the approved plan.
 
 ### Tests
 
-- [x] 47 new PHD2 tests (parser §3 correctness + metrics pinned
-      regressions + API endpoints). Total suite: **1909 passed, 3
-      skipped** (up from 1862).
+- [x] 47 initial PHD2 tests (parser §3 correctness + metrics pinned
+      regressions + API endpoints). Plus 8 `TestSettleExclusion`
+      tests added during the post-landing polish round below. Total
+      suite: **1928 passed, 3 skipped** (up from 1862 at v0.21.1).
 - [x] Fixtures: trimmed ASIAIR sample + 5 synthetic edge-case
       fixtures (locale-corrupted, backward-timestamp, missing pixel
       scale, debug-log, mixed arity).
 - [x] Pinned RMS regression tests with hand-computed expected values.
 - [x] DROP-frame handling verified: `None` in positional fields,
       never `0.0`.
+
+### Pass-A polish round (post-initial-landing)
+
+Significant work on top of the initial landing, some brought forward
+from Pass B scope because the affected behaviour was actively
+misleading users.
+
+- [x] **Settle-window exclusion in guide-quality metrics** (PHD2 /
+      PHDLogViewer convention — brought forward from Pass B). Peak /
+      RMS / SNR / Mass no longer count samples bracketed by
+      `settle_begin` / `settle_end` events, so the numbers reflect
+      actual guiding instead of dither-excursion amplitudes. New
+      `_settle_intervals` state-machine helper (tolerant of None-
+      anchored, lone-end, unclosed-begin, duplicate-begin), new
+      `frame_count_in_settle` / `frame_count_in_stats` fields on
+      `SectionMetrics`, chart settle-region shading, page-level
+      "Include settle frames in stats" toggle. Backend filters at
+      source; frontend `lib/phd2GuidingMetrics.ts` mirrors the math
+      client-side so the toggle flips without a round-trip.
+- [x] **Viewport Summary panel** — second `StatsPanel` above the
+      Section Summary that recomputes every metric over just the
+      chart's visible X-domain samples. Page owns a `viewport` state,
+      chart exposes `onViewportChange`. Both panels are collapsible.
+- [x] **Event vertical-line markers with row-packed labels** —
+      replaces the earlier event-dot indicator. Non-dither events get
+      a thin dashed vertical line spanning every panel plus a short
+      text label in one of three stacked rows (greedy-packed so
+      labels don't overlap). Dither keeps its triangle marker.
+- [x] **Chart polish** — clip paths per panel data area; rotated
+      y-axis labels; axis extreme ticks (`withDomainExtremes`);
+      clipped-pulse caret indicators; pulse/SNR/mass tick rounding
+      to drop float-precision artifacts; Guide-axis unit toggle
+      (px / ″); SNR/Mass Auto/Fixed scale toggles; legend-aware
+      auto-fit (hiding a series narrows the axis); sentinel filter
+      for non-physical SNR/Mass values; per-section zoom reset;
+      uniform panel background tint; main-panel vertical axes
+      removed for parity with the sub-panels' look; +50 px gap
+      between legend and chart so the hover tooltip has room.
+- [x] **Left-column axis controls** — Guide unit / Guide axis /
+      Pulse axis / SNR scale / Mass scale absolutely-positioned and
+      each vertically centred on its target panel inside the SVG.
+      Toggle wrapper uses `translateY(-50%)` so centring stays
+      robust against MUI rendering-height surprises; label floats
+      above via `position: absolute, bottom: 100%`.
+- [x] **Tooltip restructured** — RA / Dec error + pulse grid with
+      blanks (not em-dashes) for null cells; event info removed
+      from the tooltip now that the chart's line+label markers
+      convey it; tooltip anchored at the toolbar's top and extends
+      downward so the chart area isn't reserved when hover is idle
+      and the tooltip never escapes the Tabs panel.
+- [x] **Navigator + warnings** — Section navigator is collapsible
+      to a thin rail; warnings chip converted to a hover tooltip
+      with friendly event titles instead of raw codes.
+- [x] **Moonrise in Tonight calculator** — `_moon_rise_set` widened
+      from the sun's 24 h noon-to-noon grid to a dedicated 48 h
+      window anchored at local midnight, so daytime moonrises are
+      captured instead of returning `None`. Applies beyond PHD2 —
+      the Tonight at-a-glance calculator now reports actual
+      moonrise times even when the moon rose earlier in the day.
 
 ### Docs
 

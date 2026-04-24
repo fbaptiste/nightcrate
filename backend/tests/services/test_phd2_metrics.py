@@ -251,7 +251,7 @@ class TestSettleExclusion:
         samples = [
             _sample(1, 1.0, 10.0, 0.0),  # before the end → excluded
             _sample(2, 2.0, 10.0, 0.0),  # on the end boundary → excluded
-            _sample(3, 3.0, 1.0, 0.0),   # after → kept
+            _sample(3, 3.0, 1.0, 0.0),  # after → kept
             _sample(4, 4.0, -1.0, 0.0),  # after → kept
         ]
         events = [_settle_end(2.0)]
@@ -265,7 +265,7 @@ class TestSettleExclusion:
         section ended during settling — exclude from begin through the
         last sample's time."""
         samples = [
-            _sample(1, 1.0, 1.0, 0.0),   # before begin → kept
+            _sample(1, 1.0, 1.0, 0.0),  # before begin → kept
             _sample(2, 2.0, 50.0, 0.0),  # on begin boundary → excluded
             _sample(3, 3.0, 75.0, 0.0),  # inside settle → excluded
         ]
@@ -280,9 +280,9 @@ class TestSettleExclusion:
         NOT double-count against in_stats (in_stats already excludes via
         the null-positional filter)."""
         samples = [
-            _sample(1, 1.0, 2.0, 2.0),                       # kept
-            _sample(2, 2.0, None, None, kind="DROP", err=6), # in settle AND null → in_settle only
-            _sample(3, 3.0, 3.0, 3.0),                       # kept
+            _sample(1, 1.0, 2.0, 2.0),  # kept
+            _sample(2, 2.0, None, None, kind="DROP", err=6),  # in settle AND null → in_settle only
+            _sample(3, 3.0, 3.0, 3.0),  # kept
         ]
         events = [_settle_begin(1.5), _settle_end(2.5)]
         metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
@@ -313,7 +313,7 @@ class TestSettleExclusion:
             _sample(1, 1.0, 99.0, 0.0),  # inside the [0, 3] settle → excluded
             _sample(2, 2.0, 99.0, 0.0),  # excluded
             _sample(3, 3.0, 99.0, 0.0),  # on end boundary → excluded
-            _sample(4, 4.0, 2.0, 0.0),   # after → kept
+            _sample(4, 4.0, 2.0, 0.0),  # after → kept
         ]
         events = [_settle_begin(None), _settle_end(3.0)]
         metrics = compute_section_metrics(_make_guiding_section(samples, events=events))

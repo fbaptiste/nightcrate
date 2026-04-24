@@ -706,9 +706,12 @@ First pass of a nine-version arc (v0.22.0 → v0.30.0). Full spec: `docs/nightcr
 
 - `services/phd2_models.py` — Pydantic v2 shapes: `ParsedLog`, `LogSection`, `SectionHeader`, `GuidingSample`, `CalibrationSample`, `CalibrationPhase`, `LogEvent`, `ParseWarning`. All distances in pixels (`arcsec_scale` surfaced alongside metrics so the UI renders dual-unit labels without re-reading the header). `Phd2DebugLogRejected` exception (ValueError subclass).
 - `services/phd2_parser.py` — entry point `parse_log(source: Path | TextIO) -> ParsedLog`. Regex-by-name header parsing (35+ known keys plus a generic `freeform_keys` sweep for unknowns). `_FLOAT_GUIDING_COLUMNS` is the set that gets joined back during locale recovery; integer columns (Frame, RADuration, DECDuration, ErrorCode, StarMass) stay as single tokens. INFO classifier uses `string-contains` regexes (not prefix-exact) so `SETTLING STATE CHANGE, Settling started` matches.
-- `services/phd2_metrics.py` — `compute_section_metrics`: RMS RA/Dec/total, peak RA/Dec, frame + error counts, duration, SNR stats, star-mass mean. v0.22.0 scope only — drift + oscillation + settle filtering arrive in Pass B.
+- `services/phd2_metrics.py` — `compute_section_metrics`: RMS RA/Dec/total, peak RA/Dec, frame + error counts, duration, SNR stats, star-mass mean. **Settle-window exclusion** brought forward from Pass B (PHD2 / PHDLogViewer convention): samples inside `settle_begin`/`settle_end` windows drop out of every quality metric, including `frame_count_error`. `_settle_intervals` state-machine tolerates None-anchored begins, lone ends (section opened mid-settle), unclosed begins at EOF, and duplicate begins. Surfaces `frame_count_in_settle` + `frame_count_in_stats` fields so the UI can show the "N total · M in stats · K in settle" decomposition. Drift + oscillation still Pass B.
 - `api/phd2.py` + `api/phd2_models.py` — `POST /api/phd2/parse`, `GET /api/phd2/cache/stats`, `POST /api/phd2/cache/clear`. TTL cache keyed by `(path, mtime_ns, size)` with per-key locking (mirrors `api/images.py`). 120 s TTL, 8-entry cap.
-- Frontend — `pages/GuideLogsPage.tsx`, `components/guidelogs/{TimeSeriesChart,CalibrationPlot,StatsPanel,WarningsDrawer,SectionNavigator}.tsx`, `api/guideLogs.ts`. D3 + SVG for both charts (templates from `planner/SkyPositionGraph.tsx` and `planner/BestTimeOfYearChart.tsx`). RA = blue, Dec = orange — colorblind-safe palette from `lib/rigColors.ts`.
+- Frontend — `pages/Phd2AnalyzerPage.tsx`, `components/phd2/{TimeSeriesChart,CalibrationPlot,StatsPanel,WarningsDrawer,SectionNavigator,SectionDataTab}.tsx`, `lib/phd2GuidingMetrics.ts`, `api/phd2.ts`. D3 + SVG for both charts (templates from `planner/SkyPositionGraph.tsx` and `planner/BestTimeOfYearChart.tsx`). RA = blue, Dec = orange — colorblind-safe palette from `lib/rigColors.ts`.
+- `lib/phd2GuidingMetrics.ts` — client-side port of the backend `compute_section_metrics` math. Drives both the **Section Summary** (over all samples) and the **Viewport Summary** panel (over only the chart's visible X-domain samples). A single `{ includeSettle }` option flips the backend-matching settle filter for both panels synchronously without a round-trip; the page-level toggle is the single source of truth.
+- **Chart** (`components/phd2/TimeSeriesChart.tsx`) — main panel with dual Y-axes (Guide error px + Pulses ms) plus SNR and Mass sub-panels. Clip paths per panel; rotated y-axis labels; settle-region shading tied to the page-level include-settle toggle; Guide-axis unit toggle (px / ″); SNR/Mass Auto/Fixed scale toggles; per-axis manual range dropdowns; legend-aware auto-fit; row-packed vertical-line event markers (non-dither events); dither keeps its triangle marker; hover tooltip anchored at the toolbar top so the chart reserves no space when hover is idle. Sub-panel sentinel filter for non-physical SNR / Mass values. Zoom/pan reset on section change.
+- **Left column axis-controls** are absolutely-positioned children of the chart wrapper, each centred on its target panel's vertical midpoint (Guide unit + Guide axis + Pulse axis pinned to the main panel, SNR / Mass toggles to their sub-panels). `SubPanelScaleToggle` renders its caption with `position: absolute` so `translateY(-50%)` centres only the ToggleButtonGroup, not the caption + toggle pair.
 
 **Shared architectural principles (apply across every version of the arc):**
 
@@ -732,8 +735,11 @@ First pass of a nine-version arc (v0.22.0 → v0.30.0). Full spec: `docs/nightcr
 
 **Version arc at a glance (see PLAN.md's "Appendix: PHD2 Analyzer Roadmap" for the full map):**
 
-- v0.22.0 Pass A — parser + viewer skeleton (shipped).
-- v0.23.0–v0.24.0 Pass B/C — scatter + settle detection + INFO events + interaction polish.
+- v0.22.0 Pass A — parser + viewer skeleton (shipped). Post-landing
+  polish pulled **settle-window exclusion** forward from Pass B, added
+  a **Viewport Summary** panel, and replaced the chart's dot-style
+  event indicators with row-packed **vertical-line markers + labels**.
+- v0.23.0–v0.24.0 Pass B/C — scatter + drift + oscillation metrics + INFO events + interaction polish.
 - v0.25.0–v0.26.0 Pass D/E — FFT + unguided RA reconstruction + rig picker + worm markers + GA section handling + AO toggle.
 - v0.27.0–v0.28.0 Pass F/G — two-tier diagnostic engine (7 confident rules + 6 speculative), equipment-aware thresholds.
 - v0.29.0–v0.30.0 Pass H/I — multi-log comparison, trends, SQLite persistence, HTML report export, catalog integration.

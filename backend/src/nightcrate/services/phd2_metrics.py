@@ -1,8 +1,11 @@
 """PHD2 guide-log metrics — v0.22.0 scope.
 
-Pure functions over the parsed data model. v0.22.0 computes only the
-top-line summary metrics (RMS, peak, frame count, duration, SNR, star mass).
-Drift, oscillation, and settle-aware filtering arrive in v0.23.0 (Pass B).
+Pure functions over the parsed data model. v0.22.0 computes the top-line
+summary metrics (RMS, peak, frame count, duration, SNR, star mass) **with
+settle-window exclusion** — samples inside ``settle_begin``/``settle_end``
+windows drop out of every quality metric so dither excursions don't
+inflate the numbers (matches PHD2 / PHDLogViewer convention). Drift and
+oscillation metrics arrive in v0.23.0 (Pass B).
 
 All distances are in guide-camera pixels. `arcsec_scale` is surfaced so the
 display layer can render dual-unit labels without re-reading the section
@@ -131,9 +134,7 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
     )
 
 
-def _settle_intervals(
-    events: list[LogEvent], fallback_end_t: float
-) -> list[tuple[float, float]]:
+def _settle_intervals(events: list[LogEvent], fallback_end_t: float) -> list[tuple[float, float]]:
     """Derive closed settle intervals from a section's INFO events.
 
     State-machine over sorted ``settle_begin`` / ``settle_end`` events.
