@@ -15,6 +15,8 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
+import Tab from "@mui/material/Tab";
+import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
@@ -25,6 +27,7 @@ import SectionNavigator from "@/components/guidelogs/SectionNavigator";
 import StatsPanel from "@/components/guidelogs/StatsPanel";
 import TimeSeriesChart from "@/components/guidelogs/TimeSeriesChart";
 import CalibrationPlot from "@/components/guidelogs/CalibrationPlot";
+import SectionDataTab from "@/components/guidelogs/SectionDataTab";
 import WarningsDrawer from "@/components/guidelogs/WarningsDrawer";
 
 // Stable reference — consumers of FileBrowser should pass a stable array
@@ -37,6 +40,9 @@ export default function GuideLogsPage() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
+  // Section-view tab: 0 = Graph, 1 = Data. Tab state is page-level so
+  // switching sections keeps the user on the same tab.
+  const [tab, setTab] = useState(0);
 
   useEffect(() => {
     setActivity("Guide Logs");
@@ -83,7 +89,6 @@ export default function GuideLogsPage() {
             size="small"
             startIcon={<FolderOpenIcon sx={{ fontSize: 16 }} />}
             onClick={() => setBrowserOpen(true)}
-            sx={{ height: 32 }}
           >
             Browse
           </Button>
@@ -180,19 +185,53 @@ export default function GuideLogsPage() {
               onSelect={setSelectedIndex}
             />
           </Box>
-          {/* Right — section view */}
-          <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
-            {selected.section.kind === "guiding" ? (
-              <Stack spacing={2}>
-                <TimeSeriesChart samples={selected.section.samples} />
-                <StatsPanel metrics={selected.metrics} kind="guiding" />
-              </Stack>
-            ) : (
-              <Stack spacing={2}>
-                <CalibrationPlot phases={selected.section.calibration_phases} />
-                <StatsPanel metrics={selected.metrics} kind="calibration" />
-              </Stack>
-            )}
+          {/* Right — section view with tabs */}
+          <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <Tabs
+              value={tab}
+              onChange={(_, v) => setTab(v)}
+              sx={{ px: 2, borderBottom: 1, borderColor: "divider", minHeight: 40 }}
+            >
+              <Tab label="Graph" sx={{ minHeight: 40 }} />
+              <Tab label="Data" sx={{ minHeight: 40 }} />
+            </Tabs>
+            {/* Graph panel — display-toggle so chart state (zoom) is preserved */}
+            <Box
+              sx={{
+                flex: 1,
+                overflow: "auto",
+                p: 2,
+                display: tab === 0 ? "block" : "none",
+              }}
+            >
+              {selected.section.kind === "guiding" ? (
+                <Stack spacing={2}>
+                  <TimeSeriesChart samples={selected.section.samples} />
+                  <StatsPanel metrics={selected.metrics} kind="guiding" />
+                </Stack>
+              ) : (
+                <Stack spacing={2}>
+                  <CalibrationPlot phases={selected.section.calibration_phases} />
+                  <StatsPanel metrics={selected.metrics} kind="calibration" />
+                </Stack>
+              )}
+            </Box>
+            {/* Data panel — keyed by section index so the DataGrid resets
+                scroll + selection when the user picks a different section. */}
+            <Box
+              sx={{
+                flex: 1,
+                p: 2,
+                display: tab === 1 ? "flex" : "none",
+                flexDirection: "column",
+                minHeight: 0,
+              }}
+            >
+              <SectionDataTab
+                key={selected.section.index}
+                section={selected.section}
+              />
+            </Box>
           </Box>
         </Box>
       )}

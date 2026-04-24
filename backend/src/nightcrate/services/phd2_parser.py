@@ -430,7 +430,7 @@ def _parse_section(
                 code="frames_with_errors",
                 message=(
                     f"Section {index} ({kind}) has {error_count} frame(s) with "
-                    "ErrorCode != 0. Open the events tab for detail."
+                    "ErrorCode != 0. Switch to the Data tab to see which frames errored."
                 ),
                 section_index=index,
             )

@@ -23,7 +23,9 @@ interface Props {
   height?: number;
 }
 
-const PHASE_COLORS: Record<string, string> = {
+/** Per-phase color map. Exported so the Data-tab Chip rendering in
+ *  ``SectionDataTab`` stays visually consistent with the plot legend. */
+export const PHASE_COLORS: Record<string, string> = {
   West: RIG_BLUE,
   East: RIG_BLUE_LIGHT,
   Backlash: RIG_TEAL,
