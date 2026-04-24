@@ -87,6 +87,16 @@ export default function TimeSeriesChart({
   const [width, setWidth] = useState(640);
   const [zoomX, setZoomX] = useState<[number, number] | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  // Per-series visibility, toggled by clicking a legend chip. All
+  // series default to shown; individual series can be hidden without
+  // affecting the axes so zoom/pan state stays coherent.
+  const [visibility, setVisibility] = useState({
+    ra: true,
+    dec: true,
+    raPulse: true,
+    decPulse: true,
+    dither: true,
+  });
   // User-adjustable Y range for the main panel. Empty string = auto-fit
   // (domain derived from the data); a positive number clamps to ±value.
   const [yMaxInput, setYMaxInput] = useState<string>("");
@@ -326,12 +336,12 @@ export default function TimeSeriesChart({
     }
 
     // Magnetic snap to dither markers — when the cursor is within
-    // DITHER_SNAP_PX of a dither's X, grab that dither. Lets Fred
-    // read each dither's Δx/Δy cleanly without pixel-perfect mousing.
+    // DITHER_SNAP_PX of a dither's X, grab that dither. Skipped when
+    // the user has toggled the Dither series off.
     let snapDither: LogEvent | null = null;
     let snapTime: number | null = null;
     let bestDist = DITHER_SNAP_PX + 0.5;
-    for (const ev of events) {
+    for (const ev of visibility.dither ? events : []) {
       if (ev.kind !== "dither" || ev.time_seconds == null) continue;
       const ex = xScale(ev.time_seconds);
       if (ex < MARGIN.left || ex > MARGIN.left + innerW) continue;
@@ -391,40 +401,43 @@ export default function TimeSeriesChart({
 
   return (
     <Box ref={wrapperRef} sx={{ position: "relative", width: "100%" }}>
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ pb: 0.5 }}>
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Box sx={{ width: 14, height: 2, bgcolor: COLOR_RA }} />
-          <Typography variant="caption" sx={{ color: COLOR_RA }}>
-            RA
-          </Typography>
-        </Stack>
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Box sx={{ width: 14, height: 2, bgcolor: COLOR_DEC }} />
-          <Typography variant="caption" sx={{ color: COLOR_DEC }}>
-            Dec
-          </Typography>
-        </Stack>
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Box sx={{ width: 6, height: 10, bgcolor: COLOR_RA, opacity: 0.6 }} />
-          <Typography variant="caption" sx={{ color: COLOR_RA }}>
-            RA pulse
-          </Typography>
-        </Stack>
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Box sx={{ width: 6, height: 10, bgcolor: COLOR_DEC, opacity: 0.6 }} />
-          <Typography variant="caption" sx={{ color: COLOR_DEC }}>
-            Dec pulse
-          </Typography>
-        </Stack>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ pb: 0.5 }} flexWrap="wrap" useFlexGap>
+        <LegendToggle
+          label="RA"
+          color={COLOR_RA}
+          shape="line"
+          active={visibility.ra}
+          onToggle={() => setVisibility((v) => ({ ...v, ra: !v.ra }))}
+        />
+        <LegendToggle
+          label="Dec"
+          color={COLOR_DEC}
+          shape="line"
+          active={visibility.dec}
+          onToggle={() => setVisibility((v) => ({ ...v, dec: !v.dec }))}
+        />
+        <LegendToggle
+          label="RA pulse"
+          color={COLOR_RA}
+          shape="bar"
+          active={visibility.raPulse}
+          onToggle={() => setVisibility((v) => ({ ...v, raPulse: !v.raPulse }))}
+        />
+        <LegendToggle
+          label="Dec pulse"
+          color={COLOR_DEC}
+          shape="bar"
+          active={visibility.decPulse}
+          onToggle={() => setVisibility((v) => ({ ...v, decPulse: !v.decPulse }))}
+        />
         {events.some((e) => e.kind === "dither") && (
-          <Stack direction="row" spacing={0.5} alignItems="center">
-            <svg width={12} height={10} style={{ display: "block" }}>
-              <path d="M 1,1 L 11,1 L 6,9 Z" fill={COLOR_RA} />
-            </svg>
-            <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              Dither
-            </Typography>
-          </Stack>
+          <LegendToggle
+            label="Dither"
+            color={COLOR_RA}
+            shape="triangle"
+            active={visibility.dither}
+            onToggle={() => setVisibility((v) => ({ ...v, dither: !v.dither }))}
+          />
         )}
         <Box sx={{ flex: 1 }} />
         <Typography
@@ -523,45 +536,52 @@ export default function TimeSeriesChart({
         />
 
         {/* Pulse bars — drawn BEFORE traces so lines paint on top. */}
-        {pulseBars.ra.map((b, i) => (
-          <rect
-            key={`rab-${i}`}
-            x={b.x}
-            y={b.y}
-            width={pulseBars.barW}
-            height={b.h}
-            fill={COLOR_RA}
-            opacity={0.6}
-          />
-        ))}
-        {pulseBars.dec.map((b, i) => (
-          <rect
-            key={`decb-${i}`}
-            x={b.x}
-            y={b.y}
-            width={pulseBars.barW}
-            height={b.h}
-            fill={COLOR_DEC}
-            opacity={0.6}
-          />
-        ))}
+        {visibility.raPulse &&
+          pulseBars.ra.map((b, i) => (
+            <rect
+              key={`rab-${i}`}
+              x={b.x}
+              y={b.y}
+              width={pulseBars.barW}
+              height={b.h}
+              fill={COLOR_RA}
+              opacity={0.6}
+            />
+          ))}
+        {visibility.decPulse &&
+          pulseBars.dec.map((b, i) => (
+            <rect
+              key={`decb-${i}`}
+              x={b.x}
+              y={b.y}
+              width={pulseBars.barW}
+              height={b.h}
+              fill={COLOR_DEC}
+              opacity={0.6}
+            />
+          ))}
 
         {/* Main traces */}
-        <path
-          d={raLine(samples) ?? undefined}
-          fill="none"
-          stroke={COLOR_RA}
-          strokeWidth={1.3}
-        />
-        <path
-          d={decLine(samples) ?? undefined}
-          fill="none"
-          stroke={COLOR_DEC}
-          strokeWidth={1.3}
-        />
+        {visibility.ra && (
+          <path
+            d={raLine(samples) ?? undefined}
+            fill="none"
+            stroke={COLOR_RA}
+            strokeWidth={1.3}
+          />
+        )}
+        {visibility.dec && (
+          <path
+            d={decLine(samples) ?? undefined}
+            fill="none"
+            stroke={COLOR_DEC}
+            strokeWidth={1.3}
+          />
+        )}
 
         {/* Dither markers — downward triangles in the top margin. */}
-        {events
+        {visibility.dither &&
+          events
           .filter((e) => e.kind === "dither" && e.time_seconds != null)
           .map((e) => {
             const cx = xScale(e.time_seconds as number);
@@ -832,6 +852,56 @@ export default function TimeSeriesChart({
         </Box>
       )}
     </Box>
+  );
+}
+
+// ── Legend toggle ────────────────────────────────────────────────────────────
+
+interface LegendToggleProps {
+  label: string;
+  color: string;
+  shape: "line" | "bar" | "triangle";
+  active: boolean;
+  onToggle: () => void;
+}
+
+/** Clickable legend chip — swatch + label. Clicking toggles the series
+ *  on/off. The "off" state greys out the swatch and strikes through the
+ *  label so users can see at a glance which series are hidden. */
+function LegendToggle({ label, color, shape, active, onToggle }: LegendToggleProps) {
+  return (
+    <Stack
+      direction="row"
+      spacing={0.5}
+      alignItems="center"
+      onClick={onToggle}
+      sx={{
+        cursor: "pointer",
+        userSelect: "none",
+        px: 0.75,
+        py: 0.25,
+        borderRadius: 1,
+        opacity: active ? 1 : 0.4,
+        "&:hover": { bgcolor: "action.hover" },
+      }}
+    >
+      {shape === "line" && <Box sx={{ width: 14, height: 2, bgcolor: color }} />}
+      {shape === "bar" && <Box sx={{ width: 6, height: 10, bgcolor: color, opacity: 0.6 }} />}
+      {shape === "triangle" && (
+        <svg width={12} height={10} style={{ display: "block" }}>
+          <path d="M 1,1 L 11,1 L 6,9 Z" fill={color} />
+        </svg>
+      )}
+      <Typography
+        variant="caption"
+        sx={{
+          color,
+          textDecoration: active ? "none" : "line-through",
+        }}
+      >
+        {label}
+      </Typography>
+    </Stack>
   );
 }
 
