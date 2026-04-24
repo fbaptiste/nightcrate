@@ -698,9 +698,9 @@ Per-target 0–100 quality score with a categorical chip (Excellent / Good / Fai
 
 The left-nav in `components/AppShell.tsx` splits into a pinned `HOME_ITEM` row (always at index 0) and a `REORDERABLE_ITEMS` stack (everything else). Reorderable rows use `@dnd-kit`'s `useSortable` with a `PointerSensor` activation-distance of 8 px so clicks still navigate via `NavLink` while a ≥8 px drag starts a reorder. A subtle `DragIndicatorIcon` in a 20-px leading slot (opacity 0.25 → 0.6 on hover) signals draggability; Home gets an empty slot of the same width for icon alignment. Order persists as `settings.nav_order: list[str]` — not surfaced on the Settings page; the nav itself IS the UI. `normalizeNavOrder` filters unknown routes and appends any reorderable route missing from the saved list, so a new nav item in a future version surfaces at the end of whatever order the user has.
 
-## PHD2 Guide-Log Analyzer (v0.22.0 — Pass A: parser + viewer skeleton)
+## PHD2 Guide-Log Analyzer (v0.22.0 Pass A + v0.23.0 Pass B + v0.24.0 Pass C)
 
-First pass of a nine-version arc (v0.22.0 → v0.30.0). Full spec: `docs/nightcrate-phd2-analyzer-spec-v2.md`. v0.22.0 ships the parser, a D3 time-series chart, a five-phase calibration plot, and per-section summary metrics — enough for "open a PHD2 log, see the guiding graph" as a standalone feature. Interpretive diagnostics start in v0.27.0; persistence lands in v0.29.0. Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
+Part of a nine-version arc (v0.22.0 → v0.30.0). Full spec: `docs/nightcrate-phd2-analyzer-spec-v2.md`. Passes A–C are live: parser + time-series chart + calibration plot + per-section + viewport summary metrics (including settle-window exclusion, drift + oscillation), scatter plot, event list with click-to-jump, and Shift-drag range selection / exclusion + copy-stats + recent-files history. Interpretive diagnostics start in v0.27.0; persistence lands in v0.29.0. Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
 
 **Architecture (pure service + API split, mirrors `aberration.py` / `api/aberration.py`):**
 

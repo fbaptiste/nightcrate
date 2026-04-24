@@ -74,7 +74,7 @@ interface Props {
    *  out would be inconsistent. Default ``true``. */
   showSettleShading?: boolean;
   /** User-drawn selection window (section-relative seconds). Rendered
-   *  as a translucent orange band on the main panel; the StatsPanel
+   *  as a translucent teal band on the main panel; the StatsPanel
    *  on the parent page recomputes metrics over the samples inside. */
   selection?: [number, number] | null;
   /** User-drawn exclusion window. Rendered as a hatched grey band;
@@ -877,6 +877,14 @@ function TimeSeriesChartInner(
     anchorTime: number;
   } | null>(null);
 
+  // Keep a ref to the current ``xScale`` so the drag handlers below
+  // read the up-to-date scale even when the chart re-renders mid-drag
+  // (e.g. the user wheel-zooms while holding shift). Without this, the
+  // onMove / onUp closures would capture the xScale from mousedown
+  // time and drift after any zoom/pan state change.
+  const xScaleRef = useRef(xScale);
+  xScaleRef.current = xScale;
+
   const handleSelectionMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!e.shiftKey) return;
     // Only honour the gesture when at least one of the change callbacks
@@ -891,7 +899,7 @@ function TimeSeriesChartInner(
     const mx0 = e.clientX - rect.left;
     if (mx0 < MARGIN.left || mx0 > MARGIN.left + innerW) return;
     const anchorTime = clamp(
-      xScale.invert(mx0),
+      xScaleRef.current.invert(mx0),
       tmin,
       tmax,
     );
@@ -906,7 +914,7 @@ function TimeSeriesChartInner(
       if (!drag || !svgRef.current) return;
       const r = svgRef.current.getBoundingClientRect();
       const mx = ev.clientX - r.left;
-      const t = clamp(xScale.invert(mx), tmin, tmax);
+      const t = clamp(xScaleRef.current.invert(mx), tmin, tmax);
       const lo = Math.min(drag.anchorTime, t);
       const hi = Math.max(drag.anchorTime, t);
       if (drag.mode === "select") {
@@ -925,7 +933,7 @@ function TimeSeriesChartInner(
       }
       const r = svgRef.current.getBoundingClientRect();
       const mx = ev.clientX - r.left;
-      const t = clamp(xScale.invert(mx), tmin, tmax);
+      const t = clamp(xScaleRef.current.invert(mx), tmin, tmax);
       const lo = Math.min(drag.anchorTime, t);
       const hi = Math.max(drag.anchorTime, t);
       // Tiny drag (< 0.25 s) → treat as click-to-clear.
@@ -1445,7 +1453,7 @@ function TimeSeriesChartInner(
           </>
         )}
 
-        {/* User-drawn selection band (orange) + exclusion band (hatched
+        {/* User-drawn selection band (teal) + exclusion band (hatched
             grey). Anchored in section-time so they stay put under
             zoom/pan. Stroke at the edges gives a clear boundary for
             click-to-clear discoverability. */}
