@@ -77,15 +77,20 @@ interface Props {
    *  as a translucent teal band on the main panel; the StatsPanel
    *  on the parent page recomputes metrics over the samples inside. */
   selection?: [number, number] | null;
-  /** User-drawn exclusion window. Rendered as a hatched grey band;
-   *  samples inside are dropped from the Selection/Viewport summary. */
-  exclusion?: [number, number] | null;
+  /** User-drawn exclusion windows — each renders as a hatched grey
+   *  band; samples inside any of them are dropped from the Selection
+   *  / Viewport summary. Multiple regions accumulate via successive
+   *  shift+alt-drags. */
+  exclusions?: Array<[number, number]>;
   /** Fired when the user Shift-drags to set / adjust / clear the
    *  selection band. ``null`` indicates clear. */
   onSelectionChange?: (range: [number, number] | null) => void;
-  /** Fired when the user Shift+Alt-drags to set / adjust / clear the
-   *  exclusion band. ``null`` indicates clear. */
-  onExclusionChange?: (range: [number, number] | null) => void;
+  /** Fired when the user Shift+Alt-drags to append a new exclusion
+   *  range to the existing list. */
+  onExclusionAdd?: (range: [number, number]) => void;
+  /** Fired when the user short-drags or clicks "Clear exclusions" to
+   *  wipe every exclusion range at once. */
+  onExclusionsClear?: () => void;
 }
 
 const COLOR_RA = RIG_BLUE;
@@ -188,9 +193,10 @@ function TimeSeriesChartInner(
     settleIntervals = [],
     showSettleShading = true,
     selection = null,
-    exclusion = null,
+    exclusions = [],
     onSelectionChange,
-    onExclusionChange,
+    onExclusionAdd,
+    onExclusionsClear,
   }: Props,
   ref: React.Ref<TimeSeriesChartHandle>,
 ) {
@@ -242,6 +248,12 @@ function TimeSeriesChartInner(
   // from the section header; when absent, the toggle stays disabled
   // and the chart silently stays in pixels.
   const [guideUnit, setGuideUnit] = useState<"px" | "arcsec">("px");
+  // Live-preview rectangle shown during an in-progress shift+alt-drag.
+  // Committed exclusions live on the parent (``exclusions`` prop) and
+  // are only appended on mouseup via ``onExclusionAdd``.
+  const [pendingExclusion, setPendingExclusion] = useState<
+    [number, number] | null
+  >(null);
   // ``ready`` guards against the first-paint flash where the SVG
   // renders at the default width=640 before the ResizeObserver fires
   // — the pulse bars briefly landed at wrong positions. We show a
@@ -892,7 +904,7 @@ function TimeSeriesChartInner(
     // the selection wiring.
     const mode: "select" | "exclude" = e.altKey ? "exclude" : "select";
     if (mode === "select" && !onSelectionChange) return;
-    if (mode === "exclude" && !onExclusionChange) return;
+    if (mode === "exclude" && !onExclusionAdd) return;
 
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
@@ -917,16 +929,21 @@ function TimeSeriesChartInner(
       const t = clamp(xScaleRef.current.invert(mx), tmin, tmax);
       const lo = Math.min(drag.anchorTime, t);
       const hi = Math.max(drag.anchorTime, t);
+      // Selection has live preview via onSelectionChange. Exclusion
+      // preview is implicit: the new drag rect shows below via the
+      // ``pendingExclusionRef`` sync — we draw it from local state
+      // updated on every move.
       if (drag.mode === "select") {
         onSelectionChange?.([lo, hi]);
       } else {
-        onExclusionChange?.([lo, hi]);
+        setPendingExclusion([lo, hi]);
       }
     };
     const onUp = (ev: MouseEvent) => {
       const drag = selectionDragRef.current;
       if (!drag || !svgRef.current) {
         selectionDragRef.current = null;
+        setPendingExclusion(null);
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
         return;
@@ -937,13 +954,17 @@ function TimeSeriesChartInner(
       const lo = Math.min(drag.anchorTime, t);
       const hi = Math.max(drag.anchorTime, t);
       // Tiny drag (< 0.25 s) → treat as click-to-clear.
+      // - Selection: clears the single selection band.
+      // - Exclusion: clears ALL exclusion ranges (single shortcut for
+      //   wipe, the toolbar button offers the same).
       if (hi - lo < 0.25) {
         if (drag.mode === "select") onSelectionChange?.(null);
-        else onExclusionChange?.(null);
+        else onExclusionsClear?.();
       } else {
         if (drag.mode === "select") onSelectionChange?.([lo, hi]);
-        else onExclusionChange?.([lo, hi]);
+        else onExclusionAdd?.([lo, hi]);
       }
+      setPendingExclusion(null);
       selectionDragRef.current = null;
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
@@ -1193,12 +1214,10 @@ function TimeSeriesChartInner(
             Clear selection
           </Button>
         )}
-        {exclusion && onExclusionChange && (
-          <Button
-            size="small"
-            onClick={() => onExclusionChange(null)}
-          >
-            Clear exclusion
+        {exclusions.length > 0 && onExclusionsClear && (
+          <Button size="small" onClick={() => onExclusionsClear()}>
+            Clear exclusion{exclusions.length > 1 ? "s" : ""}
+            {exclusions.length > 1 ? ` (${exclusions.length})` : ""}
           </Button>
         )}
         <Button
@@ -1474,20 +1493,41 @@ function TimeSeriesChartInner(
             />
           </g>
         )}
-        {exclusion && (
+        {(exclusions.length > 0 || pendingExclusion) && (
           <g clipPath={`url(#${clipMain})`}>
-            <rect
-              x={xScale(exclusion[0])}
-              y={mainY0}
-              width={Math.max(1, xScale(exclusion[1]) - xScale(exclusion[0]))}
-              height={mainH}
-              fill={`url(#${excludePatternId})`}
-              stroke={axisColor}
-              strokeOpacity={0.5}
-              strokeWidth={1}
-              strokeDasharray="4 3"
-              pointerEvents="none"
-            />
+            {exclusions.map(([t0, t1], i) => (
+              <rect
+                key={`excl-${i}`}
+                x={xScale(t0)}
+                y={mainY0}
+                width={Math.max(1, xScale(t1) - xScale(t0))}
+                height={mainH}
+                fill={`url(#${excludePatternId})`}
+                stroke={axisColor}
+                strokeOpacity={0.5}
+                strokeWidth={1}
+                strokeDasharray="4 3"
+                pointerEvents="none"
+              />
+            ))}
+            {pendingExclusion && (
+              <rect
+                key="excl-pending"
+                x={xScale(pendingExclusion[0])}
+                y={mainY0}
+                width={Math.max(
+                  1,
+                  xScale(pendingExclusion[1]) - xScale(pendingExclusion[0]),
+                )}
+                height={mainH}
+                fill={`url(#${excludePatternId})`}
+                stroke={axisColor}
+                strokeOpacity={0.8}
+                strokeWidth={1}
+                strokeDasharray="4 3"
+                pointerEvents="none"
+              />
+            )}
           </g>
         )}
 

@@ -87,11 +87,12 @@ export default function Phd2AnalyzerPage() {
   // forward clicks through this so the chart pans / zooms to the
   // event time without drilling d3 through props.
   const chartRef = useRef<TimeSeriesChartHandle | null>(null);
-  // User-drawn selection + exclusion bands. Both null by default.
-  // Drawn on the chart via Shift-drag (select) and Shift+Alt-drag
-  // (exclude). Reset on section change alongside viewport.
+  // User-drawn selection + exclusion bands. Selection is a single
+  // window (Shift-drag). Exclusions accumulate via successive
+  // Shift+Alt-drags (short drag or "Clear exclusions" wipes all).
+  // All reset on section change alongside viewport.
   const [selection, setSelection] = useState<[number, number] | null>(null);
-  const [exclusion, setExclusion] = useState<[number, number] | null>(null);
+  const [exclusions, setExclusions] = useState<Array<[number, number]>>([]);
   // Recent files history — localStorage-backed, displayed on the
   // empty-state landing when no log is currently loaded.
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() =>
@@ -131,7 +132,7 @@ export default function Phd2AnalyzerPage() {
   useEffect(() => {
     setViewport(null);
     setSelection(null);
-    setExclusion(null);
+    setExclusions([]);
   }, [selectedIndex]);
 
   // Settle intervals for the selected guiding section — derived once
@@ -182,10 +183,14 @@ export default function Phd2AnalyzerPage() {
       }
       return selected.section.samples;
     })();
-    if (!exclusion) return base;
-    const [e0, e1] = exclusion;
-    return base.filter((s) => s.time_seconds < e0 || s.time_seconds > e1);
-  }, [selected, viewport, selection, exclusion]);
+    if (exclusions.length === 0) return base;
+    return base.filter(
+      (s) =>
+        !exclusions.some(
+          ([e0, e1]) => s.time_seconds >= e0 && s.time_seconds <= e1,
+        ),
+    );
+  }, [selected, viewport, selection, exclusions]);
 
   const viewportMetrics = useMemo(() => {
     if (!viewportSamples || !selected) return null;
@@ -462,9 +467,12 @@ export default function Phd2AnalyzerPage() {
                     settleIntervals={settleIntervals}
                     showSettleShading={!includeSettle}
                     selection={selection}
-                    exclusion={exclusion}
+                    exclusions={exclusions}
                     onSelectionChange={setSelection}
-                    onExclusionChange={setExclusion}
+                    onExclusionAdd={(range) =>
+                      setExclusions((prev) => [...prev, range])
+                    }
+                    onExclusionsClear={() => setExclusions([])}
                   />
                   <FormControlLabel
                     control={
@@ -495,7 +503,7 @@ export default function Phd2AnalyzerPage() {
                       title={selection ? "Selection summary" : "Viewport summary"}
                       subtitle={formatSubtitle(
                         selection,
-                        exclusion,
+                        exclusions,
                         viewport,
                         viewportSamples.length,
                         selected.section.samples.length,
@@ -589,10 +597,10 @@ function basename(path: string): string {
 /** Build the subtitle for the Selection / Viewport summary panel.
  *  The panel title is "Selection summary" when a user-drawn selection
  *  band exists, otherwise "Viewport summary"; the subtitle describes
- *  the active window + any exclusion that's subtracting from it. */
+ *  the active window + any exclusions subtracting from it. */
 function formatSubtitle(
   selection: [number, number] | null,
-  exclusion: [number, number] | null,
+  exclusions: Array<[number, number]>,
   viewport: [number, number] | null,
   visibleCount: number,
   totalCount: number,
@@ -609,8 +617,10 @@ function formatSubtitle(
   } else {
     parts.push("All frames visible");
   }
-  if (exclusion) {
-    parts.push(`excluding ${fmtRange(exclusion)}`);
+  if (exclusions.length === 1) {
+    parts.push(`excluding ${fmtRange(exclusions[0])}`);
+  } else if (exclusions.length > 1) {
+    parts.push(`excluding ${exclusions.length} ranges`);
   }
   return parts.join(" · ");
 }
