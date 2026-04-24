@@ -1,21 +1,31 @@
 /**
- * PHD2 guiding time-series chart.
+ * PHD2 time-series chart.
  *
- * D3 + SVG. X axis: elapsed seconds from section start (wall-clock toggle
- * lands in Pass B). Y axis: RA + Dec raw distance in pixels. Below the main
- * traces: correction-duration bars encoding direction via sign. Two
- * stacked sub-panels for SNR and StarMass. Crosshair cursor with all-trace
- * readouts at the cursor position.
+ * Layout follows the PHD2 / PHDLogViewer convention:
  *
- * Null values break the line — DROP frames and missing fields must never
- * visually interpolate to zero (that's the quiet correctness win that
- * justifies the whole parser discipline).
+ * - One main chart area with *dual y-axes*. Left axis shows the RA/Dec
+ *   raw distance (pixels); right axis shows the guide-pulse duration
+ *   (milliseconds). Both scales are zero-aligned to the same horizontal
+ *   line so a W pulse (positive RA correction) prints above zero along
+ *   with any positive star deflection, and an E pulse prints below.
+ * - Separate SNR + star-mass sub-panels underneath — these aren't in
+ *   PHD2's live graph but PHDLogViewer stacks them the same way and
+ *   they give useful context for diagnosing lost-star events.
+ * - User-adjustable Y range for the left axis: a small numeric input in
+ *   the toolbar lets the user clamp the axis to e.g. ±2 px to see
+ *   small-scale jitter, at the cost of clipping large excursions. PHD2
+ *   allows this as well.
+ *
+ * Null values break the line — DROP frames and missing fields must
+ * never visually interpolate to zero (the parser's quiet-correctness
+ * contract).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { useTheme } from "@mui/material/styles";
@@ -25,12 +35,11 @@ import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {
   samples: GuidingSample[];
-  /** Section's INFO events — only ``dither`` events are rendered as
-   *  markers on the chart. Pass-through from the parsed section. */
+  /** Section's INFO events — only ``dither`` events are rendered on
+   *  the chart. Pass-through from the parsed section. */
   events?: LogEvent[];
   /** Section start timestamp (naive ISO local) — used to render
-   *  X-axis tick labels + cursor tooltip as wall-clock HH:MM:SS
-   *  instead of elapsed seconds. */
+   *  X-axis tick labels + cursor tooltip as wall-clock. */
   startIso?: string;
   height?: number;
 }
@@ -38,20 +47,10 @@ interface Props {
 const COLOR_RA = RIG_BLUE;
 const COLOR_DEC = RIG_ORANGE;
 
-const MARGIN = { top: 16, right: 16, bottom: 40, left: 56 };
-const MAIN_H_RATIO = 0.5;
-// Two narrow bands — one for RA pulses, one for Dec pulses — each with
-// its own zero axis. This mirrors the conventional PHDLogViewer layout
-// where RA corrections and Dec corrections live in separate strips so
-// bars above/below each strip's axis are read as "in this direction".
-const CORR_RA_H_RATIO = 0.1;
-const CORR_DEC_H_RATIO = 0.1;
+const MARGIN = { top: 16, right: 56, bottom: 40, left: 56 };
+const MAIN_H_RATIO = 0.7;
 const SNR_H_RATIO = 0.14;
 const MASS_H_RATIO = 0.16;
-// Gap between stacked panels (px).
-// Larger gap between panels so the user can read them as five distinct
-// strips rather than a continuous scrolling mass. The 4-px gap looked
-// compressed against the dark theme background.
 const PANEL_GAP = 18;
 
 interface HoverInfo {
@@ -72,9 +71,6 @@ export default function TimeSeriesChart({
   samples,
   events = [],
   startIso,
-  // Default bumped from 360 to 440 so the five stacked panels
-  // (guide-error / RA pulses / Dec pulses / SNR / mass) plus the new
-  // 18-px gaps have enough vertical room to read as distinct strips.
   height = 440,
 }: Props) {
   const theme = useTheme();
@@ -84,8 +80,10 @@ export default function TimeSeriesChart({
   const [width, setWidth] = useState(640);
   const [zoomX, setZoomX] = useState<[number, number] | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  // User-adjustable Y range for the main panel. Empty string = auto-fit
+  // (domain derived from the data); a positive number clamps to ±value.
+  const [yMaxInput, setYMaxInput] = useState<string>("");
 
-  // Responsive width — observe the wrapper.
   useEffect(() => {
     if (!wrapperRef.current) return;
     const obs = new ResizeObserver((entries) => {
@@ -96,23 +94,18 @@ export default function TimeSeriesChart({
     return () => obs.disconnect();
   }, []);
 
-  // Panel bands (pixel y-ranges within the SVG)
+  // Panel rectangles.
   const innerW = Math.max(100, width - MARGIN.left - MARGIN.right);
   const innerH = height - MARGIN.top - MARGIN.bottom;
   const mainH = innerH * MAIN_H_RATIO - PANEL_GAP;
-  const raCorrH = innerH * CORR_RA_H_RATIO - PANEL_GAP;
-  const decCorrH = innerH * CORR_DEC_H_RATIO - PANEL_GAP;
   const snrH = innerH * SNR_H_RATIO - PANEL_GAP;
   const massH = innerH * MASS_H_RATIO;
-
   const mainY0 = MARGIN.top;
-  const raCorrY0 = mainY0 + mainH + PANEL_GAP;
-  const decCorrY0 = raCorrY0 + raCorrH + PANEL_GAP;
-  const snrY0 = decCorrY0 + decCorrH + PANEL_GAP;
+  const snrY0 = mainY0 + mainH + PANEL_GAP;
   const massY0 = snrY0 + snrH + PANEL_GAP;
 
-  // Scales derived from samples
-  const { xScale, yDistScale, ySnrScale, yMassScale, yRaCorrScale, yDecCorrScale } = useMemo(() => {
+  // Scales.
+  const { xScale, yDistScale, yPulseScale, ySnrScale, yMassScale } = useMemo(() => {
     const times = samples.map((s) => s.time_seconds);
     const tmin = times.length ? times[0] : 0;
     const tmax = times.length ? times[times.length - 1] : 1;
@@ -120,23 +113,22 @@ export default function TimeSeriesChart({
     const distVals = samples.flatMap((s) =>
       [s.ra_raw_px, s.dec_raw_px].filter((v): v is number => v !== null),
     );
-    const maxAbs = distVals.length
+    const autoMaxAbs = distVals.length
       ? Math.max(1.0, d3.max(distVals.map((v) => Math.abs(v))) ?? 1.0)
       : 1.0;
+    const parsedMax = parseFloat(yMaxInput);
+    const maxAbs =
+      Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : autoMaxAbs * 1.1;
 
-    const snrs = samples.map((s) => s.snr).filter((v): v is number => v !== null);
-    const snrMax = snrs.length ? Math.max(10, d3.max(snrs) ?? 10) : 10;
-
-    const masses = samples.map((s) => s.star_mass).filter((v): v is number => v !== null);
-    const massMax = masses.length ? d3.max(masses) ?? 1 : 1;
-
-    // Shared correction-bar domain across the RA + Dec panels so a
-    // 400 ms RA pulse and a 400 ms Dec pulse render at the same pixel
-    // height, making the two bands directly comparable.
     const durations = samples.flatMap((s) =>
       [s.ra_duration_ms ?? 0, s.dec_duration_ms ?? 0].filter((v) => v > 0),
     );
     const durMax = durations.length ? d3.max(durations) ?? 500 : 500;
+
+    const snrs = samples.map((s) => s.snr).filter((v): v is number => v !== null);
+    const snrMax = snrs.length ? Math.max(10, d3.max(snrs) ?? 10) : 10;
+    const masses = samples.map((s) => s.star_mass).filter((v): v is number => v !== null);
+    const massMax = masses.length ? d3.max(masses) ?? 1 : 1;
 
     const domain = zoomX ?? [tmin, tmax];
     return {
@@ -144,18 +136,17 @@ export default function TimeSeriesChart({
         .scaleLinear()
         .domain(domain)
         .range([MARGIN.left, MARGIN.left + innerW]),
+      // Both dist + pulse scales share the same pixel range and zero
+      // line. The pulse domain is ±durMax so a 500 ms W pulse prints
+      // at the top of the main area when durMax = 500.
       yDistScale: d3
         .scaleLinear()
-        .domain([-maxAbs * 1.1, maxAbs * 1.1])
+        .domain([-maxAbs, maxAbs])
         .range([mainY0 + mainH, mainY0]),
-      yRaCorrScale: d3
+      yPulseScale: d3
         .scaleLinear()
         .domain([-durMax, durMax])
-        .range([raCorrY0 + raCorrH, raCorrY0]),
-      yDecCorrScale: d3
-        .scaleLinear()
-        .domain([-durMax, durMax])
-        .range([decCorrY0 + decCorrH, decCorrY0]),
+        .range([mainY0 + mainH, mainY0]),
       ySnrScale: d3
         .scaleLinear()
         .domain([0, snrMax * 1.1])
@@ -166,9 +157,9 @@ export default function TimeSeriesChart({
         .range([massY0 + massH, massY0]),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [samples, width, height, zoomX, innerW, mainH, raCorrH, decCorrH, snrH, massH]);
+  }, [samples, width, height, zoomX, yMaxInput, innerW, mainH, snrH, massH]);
 
-  // D3 zoom — pan + zoom X only.
+  // D3 zoom (X axis only).
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -187,8 +178,7 @@ export default function TimeSeriesChart({
         [MARGIN.left + innerW, height],
       ])
       .on("zoom", (e) => {
-        const t = e.transform;
-        const rescaled = t.rescaleX(base);
+        const rescaled = e.transform.rescaleX(base);
         setZoomX(rescaled.domain() as [number, number]);
       });
     d3.select(svg).call(zoom);
@@ -235,47 +225,51 @@ export default function TimeSeriesChart({
     [xScale, yMassScale],
   );
 
-  // Correction bars — each sample becomes one thin rect in the correction
-  // panel. Height = pulse duration; sign = direction (above=W/N, below=E/S).
-  const correctionBars = useMemo(() => {
-    if (samples.length < 2) return [];
-    const barW = Math.max(
-      1,
-      Math.min(6, (innerW / samples.length) * 0.45),
-    );
-    return samples.map((s, i) => {
+  // Pulse bars — one rect per non-zero pulse per axis. Drawn before the
+  // traces so lines render on top. Color matches the axis (RA blue, Dec
+  // orange). Fill opacity is low so the trace remains the dominant signal.
+  const pulseBars = useMemo(() => {
+    if (samples.length < 2) return { ra: [], dec: [] };
+    const barW = Math.max(1, Math.min(3, (innerW / samples.length) * 0.35));
+    const ra: Array<{ x: number; y: number; h: number }> = [];
+    const dec: Array<{ x: number; y: number; h: number }> = [];
+    for (const s of samples) {
       const cx = xScale(s.time_seconds);
       const raDur = s.ra_duration_ms ?? 0;
       const decDur = s.dec_duration_ms ?? 0;
-      // RA bars — signed by W (above, blue, +) or E (below, blue, -).
-      const raSign = s.ra_direction === "W" ? 1 : s.ra_direction === "E" ? -1 : 0;
-      const decSign = s.dec_direction === "N" ? 1 : s.dec_direction === "S" ? -1 : 0;
-      return {
-        key: i,
-        cx,
-        barW,
-        raHeight: raSign === 0 ? 0 : Math.abs(yRaCorrScale(raSign * raDur) - yRaCorrScale(0)),
-        raY: raSign >= 0 ? yRaCorrScale(raSign * raDur) : yRaCorrScale(0),
-        decHeight:
-          decSign === 0 ? 0 : Math.abs(yDecCorrScale(decSign * decDur) - yDecCorrScale(0)),
-        decY: decSign >= 0 ? yDecCorrScale(decSign * decDur) : yDecCorrScale(0),
-      };
-    });
-  }, [samples, xScale, yRaCorrScale, yDecCorrScale, innerW]);
+      if (raDur > 0 && s.ra_direction) {
+        const sign = s.ra_direction === "W" ? 1 : -1;
+        const y0 = yPulseScale(0);
+        const y1 = yPulseScale(sign * raDur);
+        ra.push({
+          x: cx - barW / 2,
+          y: Math.min(y0, y1),
+          h: Math.abs(y1 - y0),
+        });
+      }
+      if (decDur > 0 && s.dec_direction) {
+        const sign = s.dec_direction === "N" ? 1 : -1;
+        const y0 = yPulseScale(0);
+        const y1 = yPulseScale(sign * decDur);
+        dec.push({
+          x: cx - barW / 2,
+          y: Math.min(y0, y1),
+          h: Math.abs(y1 - y0),
+        });
+      }
+    }
+    return { ra, dec, barW };
+  }, [samples, xScale, yPulseScale, innerW]);
 
-  // Gridline + axis colours theme-aware
   const gridColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
   const axisColor = isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.6)";
   const textColor = isDark ? "rgba(255,255,255,0.87)" : "rgba(0,0,0,0.87)";
 
-  // Y axis ticks for main panel
-  const mainTicks = yDistScale.ticks(5);
-  // SNR + mass panels are ~40 px tall; anything more than 2 ticks stacks
-  // the labels on top of each other in the narrow band.
+  const distTicks = yDistScale.ticks(5);
+  const pulseTicks = yPulseScale.ticks(5);
   const snrTicks = ySnrScale.ticks(2);
   const massTicks = yMassScale.ticks(2);
 
-  // Sample-nearest hover
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     if (samples.length === 0) return;
     const svg = e.currentTarget;
@@ -334,36 +328,53 @@ export default function TimeSeriesChart({
     <Box ref={wrapperRef} sx={{ position: "relative", width: "100%" }}>
       <Stack direction="row" spacing={2} alignItems="center" sx={{ pb: 0.5 }}>
         <Stack direction="row" spacing={0.5} alignItems="center">
-          <Box sx={{ width: 12, height: 2, bgcolor: COLOR_RA }} />
+          <Box sx={{ width: 14, height: 2, bgcolor: COLOR_RA }} />
           <Typography variant="caption" sx={{ color: COLOR_RA }}>
             RA
           </Typography>
         </Stack>
         <Stack direction="row" spacing={0.5} alignItems="center">
-          <Box sx={{ width: 12, height: 2, bgcolor: COLOR_DEC }} />
+          <Box sx={{ width: 14, height: 2, bgcolor: COLOR_DEC }} />
           <Typography variant="caption" sx={{ color: COLOR_DEC }}>
             Dec
           </Typography>
         </Stack>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Box sx={{ width: 6, height: 10, bgcolor: COLOR_RA, opacity: 0.35 }} />
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            pulses
+          </Typography>
+        </Stack>
         {events.some((e) => e.kind === "dither") && (
           <Stack direction="row" spacing={0.5} alignItems="center">
-            {/* Inline triangle mirror of the on-chart dither marker. */}
             <svg width={12} height={10} style={{ display: "block" }}>
               <path d="M 1,1 L 11,1 L 6,9 Z" fill={COLOR_RA} />
             </svg>
-            <Typography variant="caption" sx={{ color: COLOR_RA }}>
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
               Dither
             </Typography>
           </Stack>
         )}
         <Box sx={{ flex: 1 }} />
+        <TextField
+          label="Y max (px)"
+          size="small"
+          value={yMaxInput}
+          onChange={(e) => setYMaxInput(e.target.value)}
+          placeholder="auto"
+          inputProps={{
+            inputMode: "decimal",
+            style: { width: 52, textAlign: "right" },
+          }}
+          sx={{ "& .MuiInputBase-root": { fontSize: 12 } }}
+        />
         <Button
           size="small"
           startIcon={<RestartAltIcon />}
           onClick={handleReset}
           disabled={zoomX === null}
         >
-          Reset zoom
+          Reset X zoom
         </Button>
       </Stack>
       <svg
@@ -374,34 +385,25 @@ export default function TimeSeriesChart({
         onMouseLeave={() => setHover(null)}
         style={{ display: "block", cursor: "crosshair" }}
       >
-        {/* Panel background tints — alternating very-subtle fill per
-            stacked strip so each panel reads as its own area rather
-            than melting into the neighbours. */}
-        {(() => {
-          const panelTint = isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)";
-          const bands: Array<{ y: number; h: number }> = [
-            { y: mainY0, h: mainH },
-            { y: raCorrY0, h: raCorrH },
-            { y: decCorrY0, h: decCorrH },
-            { y: snrY0, h: snrH },
-            { y: massY0, h: massH },
-          ];
-          return bands.map((b, i) =>
-            i % 2 === 1 ? (
-              <rect
-                key={`panel-bg-${i}`}
-                x={MARGIN.left}
-                y={b.y}
-                width={innerW}
-                height={b.h}
-                fill={panelTint}
-              />
-            ) : null,
-          );
-        })()}
+        {/* Subtle background tint on alternating panels for visual
+            separation between main / SNR / mass. */}
+        <rect
+          x={MARGIN.left}
+          y={snrY0}
+          width={innerW}
+          height={snrH}
+          fill={isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)"}
+        />
+        <rect
+          x={MARGIN.left}
+          y={massY0}
+          width={innerW}
+          height={massH}
+          fill={isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"}
+        />
 
-        {/* Main panel — gridlines */}
-        {mainTicks.map((t) => (
+        {/* Main panel gridlines (left axis) */}
+        {distTicks.map((t) => (
           <line
             key={`gm-${t}`}
             x1={MARGIN.left}
@@ -411,7 +413,7 @@ export default function TimeSeriesChart({
             stroke={gridColor}
           />
         ))}
-        {/* Main zero-axis emphasised */}
+        {/* Main panel zero axis */}
         <line
           x1={MARGIN.left}
           x2={MARGIN.left + innerW}
@@ -421,49 +423,28 @@ export default function TimeSeriesChart({
           strokeWidth={1}
         />
 
-        {/* RA correction panel zero axis */}
-        <line
-          x1={MARGIN.left}
-          x2={MARGIN.left + innerW}
-          y1={yRaCorrScale(0)}
-          y2={yRaCorrScale(0)}
-          stroke={axisColor}
-          strokeWidth={1}
-        />
-        {/* Dec correction panel zero axis */}
-        <line
-          x1={MARGIN.left}
-          x2={MARGIN.left + innerW}
-          y1={yDecCorrScale(0)}
-          y2={yDecCorrScale(0)}
-          stroke={axisColor}
-          strokeWidth={1}
-        />
-
-        {/* Correction bars — RA in its own band, Dec in its own band. */}
-        {correctionBars.map((b) => (
-          <g key={`bars-${b.key}`}>
-            {b.raHeight > 0 && (
-              <rect
-                x={b.cx - b.barW / 2}
-                y={b.raY}
-                width={b.barW}
-                height={b.raHeight}
-                fill={COLOR_RA}
-                opacity={0.85}
-              />
-            )}
-            {b.decHeight > 0 && (
-              <rect
-                x={b.cx - b.barW / 2}
-                y={b.decY}
-                width={b.barW}
-                height={b.decHeight}
-                fill={COLOR_DEC}
-                opacity={0.85}
-              />
-            )}
-          </g>
+        {/* Pulse bars — drawn BEFORE traces so lines paint on top. */}
+        {pulseBars.ra.map((b, i) => (
+          <rect
+            key={`rab-${i}`}
+            x={b.x}
+            y={b.y}
+            width={pulseBars.barW}
+            height={b.h}
+            fill={COLOR_RA}
+            opacity={0.35}
+          />
+        ))}
+        {pulseBars.dec.map((b, i) => (
+          <rect
+            key={`decb-${i}`}
+            x={b.x}
+            y={b.y}
+            width={pulseBars.barW}
+            height={b.h}
+            fill={COLOR_DEC}
+            opacity={0.35}
+          />
         ))}
 
         {/* Main traces */}
@@ -471,18 +452,16 @@ export default function TimeSeriesChart({
           d={raLine(samples) ?? undefined}
           fill="none"
           stroke={COLOR_RA}
-          strokeWidth={1.25}
+          strokeWidth={1.3}
         />
         <path
           d={decLine(samples) ?? undefined}
           fill="none"
           stroke={COLOR_DEC}
-          strokeWidth={1.25}
+          strokeWidth={1.3}
         />
 
-        {/* Dither markers — small downward triangles in the main panel's
-            top margin, one per dither event. Skipped when the event's
-            time is outside the current zoom domain. */}
+        {/* Dither markers — downward triangles in the top margin. */}
         {events
           .filter((e) => e.kind === "dither" && e.time_seconds != null)
           .map((e) => {
@@ -505,6 +484,59 @@ export default function TimeSeriesChart({
             );
           })}
 
+        {/* Left-axis ticks (distance, px) */}
+        {distTicks.map((t) => (
+          <text
+            key={`yt-${t}`}
+            x={MARGIN.left - 6}
+            y={yDistScale(t)}
+            fill={textColor}
+            fontSize={10}
+            textAnchor="end"
+            dominantBaseline="central"
+          >
+            {t.toFixed(1)}
+          </text>
+        ))}
+        <text
+          x={MARGIN.left + 4}
+          y={mainY0 + 12}
+          fill={textColor}
+          fillOpacity={0.7}
+          fontSize={11}
+          fontWeight={600}
+          textAnchor="start"
+        >
+          Guide error (px)
+        </text>
+
+        {/* Right-axis ticks (pulse duration, ms) */}
+        {pulseTicks.map((t) => (
+          <text
+            key={`pt-${t}`}
+            x={MARGIN.left + innerW + 6}
+            y={yPulseScale(t)}
+            fill={textColor}
+            fillOpacity={0.6}
+            fontSize={10}
+            textAnchor="start"
+            dominantBaseline="central"
+          >
+            {t}
+          </text>
+        ))}
+        <text
+          x={MARGIN.left + innerW - 4}
+          y={mainY0 + 12}
+          fill={textColor}
+          fillOpacity={0.7}
+          fontSize={11}
+          fontWeight={600}
+          textAnchor="end"
+        >
+          Pulses (ms)
+        </text>
+
         {/* SNR panel */}
         <line
           x1={MARGIN.left}
@@ -520,73 +552,6 @@ export default function TimeSeriesChart({
           strokeWidth={1}
           opacity={0.7}
         />
-
-        {/* StarMass panel */}
-        <line
-          x1={MARGIN.left}
-          x2={MARGIN.left + innerW}
-          y1={massY0 + massH}
-          y2={massY0 + massH}
-          stroke={axisColor}
-        />
-        <path
-          d={massLine(samples) ?? undefined}
-          fill="none"
-          stroke={axisColor}
-          strokeWidth={1}
-          opacity={0.5}
-        />
-
-        {/* Y-axis ticks — main panel */}
-        {mainTicks.map((t) => (
-          <text
-            key={`yt-${t}`}
-            x={MARGIN.left - 6}
-            y={yDistScale(t)}
-            fill={textColor}
-            fontSize={10}
-            textAnchor="end"
-            dominantBaseline="central"
-          >
-            {t.toFixed(1)}
-          </text>
-        ))}
-
-        {/* Panel labels — float inside the top-left corner of each panel so
-            they don't collide with the tick-number column on the outside. */}
-        <text
-          x={MARGIN.left + 4}
-          y={mainY0 + 10}
-          fill={textColor}
-          fillOpacity={0.7}
-          fontSize={11}
-          fontWeight={600}
-          textAnchor="start"
-        >
-          Guide error (px)
-        </text>
-        <text
-          x={MARGIN.left + 4}
-          y={raCorrY0 + 10}
-          fill={COLOR_RA}
-          fillOpacity={0.85}
-          fontSize={11}
-          fontWeight={600}
-          textAnchor="start"
-        >
-          RA pulses (ms) · above = W, below = E
-        </text>
-        <text
-          x={MARGIN.left + 4}
-          y={decCorrY0 + 10}
-          fill={COLOR_DEC}
-          fillOpacity={0.85}
-          fontSize={11}
-          fontWeight={600}
-          textAnchor="start"
-        >
-          Dec pulses (ms) · above = N, below = S
-        </text>
         {snrTicks.map((t) => (
           <text
             key={`st-${t}`}
@@ -602,7 +567,7 @@ export default function TimeSeriesChart({
         ))}
         <text
           x={MARGIN.left + 4}
-          y={snrY0 + 10}
+          y={snrY0 + 12}
           fill={textColor}
           fillOpacity={0.7}
           fontSize={11}
@@ -611,6 +576,22 @@ export default function TimeSeriesChart({
         >
           Star SNR
         </text>
+
+        {/* Mass panel */}
+        <line
+          x1={MARGIN.left}
+          x2={MARGIN.left + innerW}
+          y1={massY0 + massH}
+          y2={massY0 + massH}
+          stroke={axisColor}
+        />
+        <path
+          d={massLine(samples) ?? undefined}
+          fill="none"
+          stroke={axisColor}
+          strokeWidth={1}
+          opacity={0.5}
+        />
         {massTicks.map((t) => (
           <text
             key={`mt-${t}`}
@@ -626,7 +607,7 @@ export default function TimeSeriesChart({
         ))}
         <text
           x={MARGIN.left + 4}
-          y={massY0 + 10}
+          y={massY0 + 12}
           fill={textColor}
           fillOpacity={0.7}
           fontSize={11}
@@ -693,7 +674,7 @@ export default function TimeSeriesChart({
         <Box
           sx={{
             position: "absolute",
-            top: 8,
+            top: 40,
             right: 8,
             p: 1,
             bgcolor: "background.paper",
@@ -701,7 +682,7 @@ export default function TimeSeriesChart({
             borderColor: "divider",
             borderRadius: 1,
             fontSize: 12,
-            minWidth: 160,
+            minWidth: 180,
             pointerEvents: "none",
           }}
         >
@@ -736,19 +717,15 @@ function formatPx(v: number | null): string {
   return v.toFixed(3);
 }
 
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds - m * 60);
-  return `${m}m${String(s).padStart(2, "0")}`;
-}
-
 function formatXTick(elapsedSec: number, startIso: string | undefined): string {
-  // Wall-clock "HH:MM" when we have a section start; else the compact
-  // elapsed-minutes form (for charts without a known anchor).
-  if (!startIso) return formatElapsed(elapsedSec);
+  if (!startIso) {
+    if (elapsedSec < 60) return `${Math.round(elapsedSec)}s`;
+    const m = Math.floor(elapsedSec / 60);
+    const s = Math.round(elapsedSec - m * 60);
+    return `${m}m${String(s).padStart(2, "0")}`;
+  }
   const start = new Date(startIso);
-  if (Number.isNaN(start.getTime())) return formatElapsed(elapsedSec);
+  if (Number.isNaN(start.getTime())) return `${Math.round(elapsedSec)}s`;
   const dt = new Date(start.getTime() + elapsedSec * 1000);
   return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
 }
