@@ -14,6 +14,7 @@ import pytest
 from nightcrate.services.phd2_metrics import compute_section_metrics
 from nightcrate.services.phd2_models import (
     GuidingSample,
+    LogEvent,
     LogSection,
     SectionHeader,
 )
@@ -23,6 +24,7 @@ def _make_guiding_section(
     samples: list[GuidingSample],
     *,
     pixel_scale: float | None = 2.0,
+    events: list[LogEvent] | None = None,
 ) -> LogSection:
     return LogSection(
         kind="guiding",
@@ -30,7 +32,16 @@ def _make_guiding_section(
         start_time=datetime(2026, 1, 1, 0, 0, 0),
         header=SectionHeader(pixel_scale_arcsec_per_px=pixel_scale),
         samples=samples,
+        events=events or [],
     )
+
+
+def _settle_begin(time_s: float | None) -> LogEvent:
+    return LogEvent(time_seconds=time_s, kind="settle_begin", raw_message="Settling started")
+
+
+def _settle_end(time_s: float | None) -> LogEvent:
+    return LogEvent(time_seconds=time_s, kind="settle_end", raw_message="Settling complete")
 
 
 def _sample(
@@ -188,4 +199,135 @@ class TestEmptySection:
         metrics = compute_section_metrics(section)
         assert metrics.rms_ra_px is None
         assert metrics.frame_count_total == 0
+        assert metrics.frame_count_in_settle == 0
+        assert metrics.frame_count_in_stats == 0
         assert metrics.duration_seconds == 0.0
+
+
+class TestSettleExclusion:
+    """Per PHD2 / PHDLogViewer convention, samples inside settle windows
+    (bracketed by ``settle_begin`` / ``settle_end`` INFO events) must be
+    excluded from every guide-quality metric — not just RMS.
+    """
+
+    def test_simple_pair_excludes_spike_from_rms_and_peak(self):
+        """Two calm samples around a huge spike bracketed by a settle pair.
+
+        Spike (RA=100 px at t=2.0) must NOT appear in RMS or peak.
+        """
+        samples = [
+            _sample(1, 1.0, 1.0, 0.0),
+            _sample(2, 2.0, 100.0, 0.0),  # inside settle window
+            _sample(3, 3.0, -1.0, 0.0),
+        ]
+        events = [_settle_begin(1.5), _settle_end(2.5)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        # Only frames 1 and 3 contribute — RMS = sqrt((1² + 1²)/2) = 1.
+        assert metrics.rms_ra_px == pytest.approx(1.0)
+        assert metrics.peak_ra_px == pytest.approx(1.0)
+        assert metrics.frame_count_total == 3
+        assert metrics.frame_count_in_settle == 1
+        assert metrics.frame_count_in_stats == 2
+
+    def test_boundary_sample_is_treated_as_in_settle(self):
+        """A sample with time_seconds exactly equal to an interval edge
+        is a transition sample — excluded, to match PHDLogViewer."""
+        samples = [
+            _sample(1, 1.0, 2.0, 0.0),  # on settle_begin boundary → excluded
+            _sample(2, 2.0, 5.0, 0.0),  # inside → excluded
+            _sample(3, 3.0, 3.0, 0.0),  # on settle_end boundary → excluded
+            _sample(4, 4.0, 4.0, 0.0),  # after settle → kept
+        ]
+        events = [_settle_begin(1.0), _settle_end(3.0)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        assert metrics.frame_count_in_settle == 3
+        assert metrics.frame_count_in_stats == 1
+        assert metrics.rms_ra_px == pytest.approx(4.0)
+
+    def test_section_opens_mid_settle_from_lone_end(self):
+        """A lone ``settle_end`` at t=2.0 with no preceding ``settle_begin``
+        means the section opened inside an active settle — exclude everything
+        up through t=2.0."""
+        samples = [
+            _sample(1, 1.0, 10.0, 0.0),  # before the end → excluded
+            _sample(2, 2.0, 10.0, 0.0),  # on the end boundary → excluded
+            _sample(3, 3.0, 1.0, 0.0),   # after → kept
+            _sample(4, 4.0, -1.0, 0.0),  # after → kept
+        ]
+        events = [_settle_end(2.0)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        assert metrics.frame_count_in_settle == 2
+        assert metrics.frame_count_in_stats == 2
+        assert metrics.rms_ra_px == pytest.approx(1.0)
+
+    def test_unclosed_begin_extends_to_last_sample(self):
+        """A ``settle_begin`` without a matching ``settle_end`` means the
+        section ended during settling — exclude from begin through the
+        last sample's time."""
+        samples = [
+            _sample(1, 1.0, 1.0, 0.0),   # before begin → kept
+            _sample(2, 2.0, 50.0, 0.0),  # on begin boundary → excluded
+            _sample(3, 3.0, 75.0, 0.0),  # inside settle → excluded
+        ]
+        events = [_settle_begin(2.0)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        assert metrics.frame_count_in_settle == 2
+        assert metrics.frame_count_in_stats == 1
+        assert metrics.rms_ra_px == pytest.approx(1.0)
+
+    def test_drop_inside_settle_counts_as_in_settle_not_double(self):
+        """A DROP row inside a settle window must count in in_settle but
+        NOT double-count against in_stats (in_stats already excludes via
+        the null-positional filter)."""
+        samples = [
+            _sample(1, 1.0, 2.0, 2.0),                       # kept
+            _sample(2, 2.0, None, None, kind="DROP", err=6), # in settle AND null → in_settle only
+            _sample(3, 3.0, 3.0, 3.0),                       # kept
+        ]
+        events = [_settle_begin(1.5), _settle_end(2.5)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        assert metrics.frame_count_total == 3
+        assert metrics.frame_count_in_settle == 1
+        # in_stats = samples that had positional data AND were outside
+        # settle — the two non-DROP samples.
+        assert metrics.frame_count_in_stats == 2
+
+    def test_frame_count_error_excludes_settle_errors(self):
+        """Error rows inside settle windows are transitional noise, not
+        real guiding failures — they must not count toward error count."""
+        samples = [
+            _sample(1, 1.0, 1.0, 0.0, err=0),
+            _sample(2, 2.0, None, None, kind="DROP", err=6),  # in settle
+            _sample(3, 3.0, 1.0, 0.0, err=0),
+            _sample(4, 4.0, None, None, kind="DROP", err=7),  # outside settle
+        ]
+        events = [_settle_begin(1.5), _settle_end(2.5)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        # Only frame 4's error row counts — frame 2's is inside settle.
+        assert metrics.frame_count_error == 1
+
+    def test_none_anchored_begin_treated_as_zero(self):
+        """A ``settle_begin`` event emitted before the first sample has
+        ``time_seconds = None`` — anchor it to the section start (0.0)."""
+        samples = [
+            _sample(1, 1.0, 99.0, 0.0),  # inside the [0, 3] settle → excluded
+            _sample(2, 2.0, 99.0, 0.0),  # excluded
+            _sample(3, 3.0, 99.0, 0.0),  # on end boundary → excluded
+            _sample(4, 4.0, 2.0, 0.0),   # after → kept
+        ]
+        events = [_settle_begin(None), _settle_end(3.0)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        assert metrics.frame_count_in_settle == 3
+        assert metrics.rms_ra_px == pytest.approx(2.0)
+
+    def test_no_settle_events_leaves_metrics_unfiltered(self):
+        """When a section has no settle events, behaviour matches the
+        pre-settle-support baseline — every sample goes into stats."""
+        samples = [
+            _sample(1, 1.0, 1.0, 0.0),
+            _sample(2, 2.0, -1.0, 0.0),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.frame_count_in_settle == 0
+        assert metrics.frame_count_in_stats == 2
+        assert metrics.rms_ra_px == pytest.approx(1.0)

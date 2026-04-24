@@ -6,27 +6,90 @@
  * backend surfaces `arcsec_scale` alongside every metric so the UI doesn't
  * need to re-read the header.
  */
+import { useState } from "react";
 import Box from "@mui/material/Box";
+import Collapse from "@mui/material/Collapse";
 import Grid from "@mui/material/Grid";
+import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import type { SectionMetrics } from "@/api/phd2";
 
 interface Props {
   metrics: SectionMetrics;
   kind: "calibration" | "guiding";
+  /** Heading above the metrics grid. Defaults to "Section summary"
+   *  for the section-wide panel; the Viewport Summary panel overrides
+   *  with its own label. */
+  title?: string;
+  /** Optional second-line caption under the title — used by the
+   *  Viewport Summary to show "N / M frames visible". */
+  subtitle?: string;
+  /** When true, the title row becomes a click target with a chevron
+   *  that collapses the metrics grid. */
+  collapsible?: boolean;
+  /** Initial expanded state when ``collapsible``. Default true. */
+  defaultExpanded?: boolean;
 }
 
-export default function StatsPanel({ metrics, kind }: Props) {
+export default function StatsPanel({
+  metrics,
+  kind,
+  title = "Section summary",
+  subtitle,
+  collapsible = false,
+  defaultExpanded = true,
+}: Props) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const isOpen = collapsible ? expanded : true;
+  const toggle = () => collapsible && setExpanded((v) => !v);
+
+  const header = (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.5}
+      onClick={toggle}
+      sx={{
+        cursor: collapsible ? "pointer" : "default",
+        userSelect: "none",
+        mb: subtitle || !isOpen ? 0.25 : 1,
+      }}
+    >
+      {collapsible && (
+        <ExpandMoreIcon
+          fontSize="small"
+          sx={{
+            transition: "transform 120ms ease",
+            transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)",
+            color: "text.secondary",
+          }}
+        />
+      )}
+      <Typography variant="subtitle2">{title}</Typography>
+    </Stack>
+  );
+
+  const subtitleNode = subtitle && (
+    <Typography
+      variant="caption"
+      color="text.secondary"
+      sx={{ display: "block", mb: isOpen ? 1 : 0, pl: collapsible ? 3 : 0 }}
+    >
+      {subtitle}
+    </Typography>
+  );
   if (kind === "calibration") {
     return (
       <Box>
-        <Typography variant="subtitle2" sx={{ mb: 1 }}>
-          Section summary
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Calibration sections don't carry guide-performance metrics. See the
-          derived angle + rate values in the plot legend.
-        </Typography>
+        {header}
+        {subtitleNode}
+        <Collapse in={isOpen} unmountOnExit>
+          <Typography variant="body2" color="text.secondary">
+            Calibration sections don't carry guide-performance metrics. See the
+            derived angle + rate values in the plot legend.
+          </Typography>
+        </Collapse>
       </Box>
     );
   }
@@ -50,10 +113,7 @@ export default function StatsPanel({ metrics, kind }: Props) {
     },
     {
       label: "Frames",
-      value:
-        metrics.frame_count_error > 0
-          ? `${metrics.frame_count_total} total · ${metrics.frame_count_error} error`
-          : `${metrics.frame_count_total}`,
+      value: formatFrameCount(metrics),
     },
     {
       label: "Mean SNR",
@@ -70,10 +130,10 @@ export default function StatsPanel({ metrics, kind }: Props) {
 
   return (
     <Box>
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Section summary
-      </Typography>
-      <Grid container spacing={1}>
+      {header}
+      {subtitleNode}
+      <Collapse in={isOpen} unmountOnExit>
+        <Grid container spacing={1}>
         {items.map((item) => (
           <Grid key={item.label} size={{ xs: 6, sm: 4 }}>
             <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
@@ -85,13 +145,34 @@ export default function StatsPanel({ metrics, kind }: Props) {
           </Grid>
         ))}
       </Grid>
-      {scale === null && (
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
-          Pixel scale not declared in header — arcsec values unavailable.
-        </Typography>
-      )}
+        {scale === null && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+            Pixel scale not declared in header — arcsec values unavailable.
+          </Typography>
+        )}
+      </Collapse>
     </Box>
   );
+}
+
+/** Render the frames-row value with an optional "N total · M in stats ·
+ *  K in settle" decomposition when settle exclusion actually removed
+ *  frames. Falls back to "N total · K error" and "N" for the simpler
+ *  cases. */
+function formatFrameCount(metrics: SectionMetrics): string {
+  const t = metrics.frame_count_total.toLocaleString();
+  const parts: string[] = [`${t} total`];
+  if (metrics.frame_count_in_settle > 0) {
+    parts.push(`${metrics.frame_count_in_stats.toLocaleString()} in stats`);
+    parts.push(`${metrics.frame_count_in_settle.toLocaleString()} in settle`);
+  }
+  if (metrics.frame_count_error > 0) {
+    parts.push(`${metrics.frame_count_error.toLocaleString()} error`);
+  }
+  // When nothing special happened — no settle, no errors — fall back
+  // to the tidy single-number form.
+  if (parts.length === 1) return metrics.frame_count_total.toLocaleString();
+  return parts.join(" · ");
 }
 
 function formatDuration(seconds: number): string {

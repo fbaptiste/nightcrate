@@ -20,8 +20,15 @@ import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import IconButton from "@mui/material/IconButton";
+import Switch from "@mui/material/Switch";
+import Tooltip from "@mui/material/Tooltip";
 import { parseGuideLog, type ParseResponse } from "@/api/phd2";
 import { setActivity } from "@/api/client";
+import { computeGuidingMetrics, computeSettleIntervals } from "@/lib/phd2GuidingMetrics";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import SectionNavigator from "@/components/phd2/SectionNavigator";
 import StatsPanel from "@/components/phd2/StatsPanel";
@@ -49,6 +56,19 @@ export default function Phd2AnalyzerPage() {
   // render was blocked. Once Data has been visited once, it stays
   // mounted so the user keeps their scroll position.
   const [dataVisited, setDataVisited] = useState(false);
+  // Collapse the section nav to a thin rail so the graph can use the
+  // freed horizontal space. Rail stays visible with a single expand
+  // arrow so the control never leaves the DOM.
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  // Visible X-domain of the chart (null == full section). Driven by
+  // TimeSeriesChart via ``onViewportChange``; consumed by the Viewport
+  // Summary panel so metrics recompute over just the in-view samples.
+  const [viewport, setViewport] = useState<[number, number] | null>(null);
+  // PHD2 / PHDLogViewer default: settle frames are excluded from
+  // guide-quality metrics. ``true`` flips both summary panels back to
+  // the pre-v0.22.0 "include everything" behaviour AND hides the
+  // settle shading on the chart.
+  const [includeSettle, setIncludeSettle] = useState(false);
 
   useEffect(() => {
     setActivity("PHD2 Analyzer");
@@ -71,6 +91,62 @@ export default function Phd2AnalyzerPage() {
     if (!parsed) return null;
     return parsed.sections.find((s) => s.section.index === selectedIndex) ?? parsed.sections[0];
   }, [parsed, selectedIndex]);
+
+  // Reset viewport state when the user switches sections — the new
+  // section's chart mounts un-zoomed, but without this the stale
+  // ``viewport`` from the previous section would briefly filter the
+  // new section's samples before the chart fires its initial event.
+  useEffect(() => {
+    setViewport(null);
+  }, [selectedIndex]);
+
+  // Settle intervals for the selected guiding section — derived once
+  // per section and reused by both the chart shading and the
+  // client-side metrics helpers.
+  const settleIntervals = useMemo(() => {
+    if (!selected || selected.section.kind !== "guiding") return [];
+    const samples = selected.section.samples;
+    const fallbackEnd =
+      samples.length > 0 ? samples[samples.length - 1].time_seconds : 0;
+    return computeSettleIntervals(selected.section.events, fallbackEnd);
+  }, [selected]);
+
+  // Section Summary — client-side recompute so the include-settle
+  // toggle can flip without a backend round-trip. ``selected.metrics``
+  // stays authoritative for the Section Navigator sidebar (which
+  // doesn't honour the toggle — the default "excluded" view is right
+  // for at-a-glance browsing).
+  const sectionMetrics = useMemo(() => {
+    if (!selected || selected.section.kind !== "guiding") return null;
+    return computeGuidingMetrics(
+      selected.section.samples,
+      selected.section.events,
+      selected.metrics.arcsec_scale,
+      { includeSettle },
+    );
+  }, [selected, includeSettle]);
+
+  // Viewport-filtered samples + metrics for the Viewport Summary
+  // panel. Guiding sections only; calibration gets no chart so there's
+  // no viewport to speak of.
+  const viewportSamples = useMemo(() => {
+    if (!selected || selected.section.kind !== "guiding") return null;
+    if (!viewport) return selected.section.samples;
+    const [t0, t1] = viewport;
+    return selected.section.samples.filter(
+      (s) => s.time_seconds >= t0 && s.time_seconds <= t1,
+    );
+  }, [selected, viewport]);
+
+  const viewportMetrics = useMemo(() => {
+    if (!viewportSamples || !selected) return null;
+    return computeGuidingMetrics(
+      viewportSamples,
+      selected.section.events,
+      selected.metrics.arcsec_scale,
+      { includeSettle },
+    );
+  }, [viewportSamples, selected, includeSettle]);
 
   const openPath = (path: string) => {
     const trimmed = path.trim();
@@ -98,6 +174,7 @@ export default function Phd2AnalyzerPage() {
             size="small"
             startIcon={<FolderOpenIcon sx={{ fontSize: 16 }} />}
             onClick={() => setBrowserOpen(true)}
+            sx={{ height: 32, flexShrink: 0, whiteSpace: "nowrap" }}
           >
             Browse
           </Button>
@@ -117,17 +194,20 @@ export default function Phd2AnalyzerPage() {
             size="small"
             onClick={handleOpen}
             disabled={!pathInput.trim() || parseMutation.isPending}
+            sx={{ height: 32, flexShrink: 0, whiteSpace: "nowrap" }}
           >
             {parseMutation.isPending ? "Parsing…" : "Open"}
           </Button>
           {parsed && (
             <>
               <Divider orientation="vertical" flexItem />
-              <Chip
-                label={`PHD2 ${parsed.log.phd2_version ?? "—"}`}
-                size="small"
-                variant="outlined"
-              />
+              {parsed.log.phd2_version && (
+                <Chip
+                  label={`PHD2 ${parsed.log.phd2_version}`}
+                  size="small"
+                  variant="outlined"
+                />
+              )}
               <Chip label={`Log v${parsed.log.log_version}`} size="small" variant="outlined" />
               <Chip label={`${parsed.sections.length} sections`} size="small" variant="outlined" />
               <WarningsDrawer warnings={parsed.log.warnings} />
@@ -177,22 +257,47 @@ export default function Phd2AnalyzerPage() {
 
       {parsed && selected && (
         <Box sx={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
-          {/* Left — section list */}
+          {/* Left — section list, collapsible to a thin rail */}
           <Box
             sx={{
-              width: 280,
+              width: navCollapsed ? 32 : 280,
               flexShrink: 0,
               borderRight: 1,
               borderColor: "divider",
-              overflow: "auto",
-              p: 1,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              transition: "width 120ms ease",
             }}
           >
-            <SectionNavigator
-              sections={parsed.sections}
-              selectedIndex={selectedIndex}
-              onSelect={setSelectedIndex}
-            />
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="flex-end"
+              sx={{ pr: 0.25, pt: 0.5, flexShrink: 0 }}
+            >
+              <Tooltip title={navCollapsed ? "Expand sections" : "Collapse sections"}>
+                <IconButton
+                  size="small"
+                  onClick={() => setNavCollapsed((v) => !v)}
+                >
+                  {navCollapsed ? (
+                    <ChevronRightIcon fontSize="small" />
+                  ) : (
+                    <ChevronLeftIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </Tooltip>
+            </Stack>
+            {!navCollapsed && (
+              <Box sx={{ overflow: "auto", p: 1, pt: 0 }}>
+                <SectionNavigator
+                  sections={parsed.sections}
+                  selectedIndex={selectedIndex}
+                  onSelect={setSelectedIndex}
+                />
+              </Box>
+            )}
           </Box>
           {/* Right — section view with tabs. ``minWidth: 0`` is needed
               everywhere down the flex chain so the DataTable's wide
@@ -224,13 +329,61 @@ export default function Phd2AnalyzerPage() {
                     samples={selected.section.samples}
                     events={selected.section.events}
                     startIso={selected.section.start_time}
+                    onViewportChange={setViewport}
+                    settleIntervals={settleIntervals}
+                    showSettleShading={!includeSettle}
                   />
-                  <StatsPanel metrics={selected.metrics} kind="guiding" />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={includeSettle}
+                        onChange={(e) => setIncludeSettle(e.target.checked)}
+                      />
+                    }
+                    label={
+                      <Typography variant="body2">
+                        Include settle frames in stats
+                        <Typography
+                          component="span"
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ ml: 1 }}
+                        >
+                          Off by default — matches PHD2 / PHDLogViewer
+                        </Typography>
+                      </Typography>
+                    }
+                  />
+                  {viewportMetrics && viewportSamples && (
+                    <StatsPanel
+                      metrics={viewportMetrics}
+                      kind="guiding"
+                      title="Viewport summary"
+                      subtitle={
+                        viewport === null
+                          ? "All frames visible"
+                          : `${viewportSamples.length.toLocaleString()} / ${selected.section.samples.length.toLocaleString()} frames visible`
+                      }
+                      collapsible
+                    />
+                  )}
+                  {sectionMetrics && (
+                    <StatsPanel
+                      metrics={sectionMetrics}
+                      kind="guiding"
+                      collapsible
+                    />
+                  )}
                 </Stack>
               ) : (
                 <Stack spacing={2}>
                   <CalibrationPlot phases={selected.section.calibration_phases} />
-                  <StatsPanel metrics={selected.metrics} kind="calibration" />
+                  <StatsPanel
+                    metrics={selected.metrics}
+                    kind="calibration"
+                    collapsible
+                  />
                 </Stack>
               )}
             </Box>

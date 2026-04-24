@@ -144,6 +144,8 @@ export interface SectionMetrics {
   peak_dec_px: number | null;
   frame_count_total: number;
   frame_count_error: number;
+  frame_count_in_settle: number;
+  frame_count_in_stats: number;
   duration_seconds: number;
   mean_snr: number | null;
   median_snr: number | null;

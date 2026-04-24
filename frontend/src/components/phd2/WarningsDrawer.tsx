@@ -1,16 +1,15 @@
 /**
- * Parse-time warnings drawer.
+ * Parse-time warnings hover card.
  *
- * Chip in the page header shows the count; click expands to a short
- * list. v0.22.0 keeps it simple — Pass B reshapes this as a grouped
- * tabs/drawer when analysis-time warnings (settle detection, FFT
- * cadence, etc.) land.
+ * Header-row chip shows the count; hovering reveals the full list in a
+ * tooltip. Warning codes from the parser (``frames_with_errors``, etc.)
+ * are translated to friendly titles — the raw code is an internal
+ * identifier, not something the user should see verbatim.
  */
-import { useState } from "react";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
-import Collapse from "@mui/material/Collapse";
 import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import type { ParseWarning } from "@/api/phd2";
@@ -19,35 +18,58 @@ interface Props {
   warnings: ParseWarning[];
 }
 
+/** Friendly titles for parser warning codes. Keep in lockstep with
+ *  the codes emitted by ``services/phd2_parser.py``. Falls back to
+ *  a Start-Case rendering of the raw code if one isn't mapped. */
+const WARNING_TITLES: Record<string, string> = {
+  backward_timestamp_jump: "Clock jumped backward",
+  no_csv_header: "Missing CSV header",
+  missing_pixel_scale: "Missing pixel scale",
+  frames_with_errors: "Frames with errors",
+  header_validation_error: "Header validation error",
+  locale_recovery_applied: "Locale-decimal recovery",
+  short_row: "Short row",
+  bad_calibration_row: "Bad calibration row",
+};
+
+function friendlyTitle(code: string): string {
+  return (
+    WARNING_TITLES[code] ??
+    code
+      .split("_")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ")
+  );
+}
+
 export default function WarningsDrawer({ warnings }: Props) {
-  const [open, setOpen] = useState(false);
   if (warnings.length === 0) return null;
 
+  const tooltipBody = (
+    <Stack spacing={1} sx={{ p: 0.5, maxWidth: 360 }}>
+      {warnings.map((w, i) => (
+        <Box key={i}>
+          <Typography variant="caption" sx={{ fontWeight: 700, display: "block" }}>
+            {friendlyTitle(w.code)}
+            {w.section_index !== null ? ` · Section ${w.section_index}` : ""}
+          </Typography>
+          <Typography variant="caption" sx={{ display: "block", opacity: 0.85 }}>
+            {w.message}
+          </Typography>
+        </Box>
+      ))}
+    </Stack>
+  );
+
   return (
-    <Box>
+    <Tooltip title={tooltipBody} arrow placement="bottom-end">
       <Chip
         icon={<WarningAmberIcon />}
         label={`${warnings.length} warning${warnings.length === 1 ? "" : "s"}`}
         color="warning"
-        variant={open ? "filled" : "outlined"}
-        onClick={() => setOpen((v) => !v)}
+        variant="outlined"
         size="small"
       />
-      <Collapse in={open}>
-        <Stack spacing={0.5} sx={{ mt: 1, pl: 1, borderLeft: 2, borderColor: "warning.main" }}>
-          {warnings.map((w, i) => (
-            <Box key={i}>
-              <Typography variant="caption" sx={{ fontFamily: "monospace", fontWeight: 600 }}>
-                {w.code}
-                {w.section_index !== null ? ` (section ${w.section_index})` : ""}
-              </Typography>
-              <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                {w.message}
-              </Typography>
-            </Box>
-          ))}
-        </Stack>
-      </Collapse>
-    </Box>
+    </Tooltip>
   );
 }

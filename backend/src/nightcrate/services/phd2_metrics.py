@@ -16,7 +16,7 @@ from statistics import median
 
 from pydantic import BaseModel, ConfigDict
 
-from nightcrate.services.phd2_models import LogSection
+from nightcrate.services.phd2_models import GuidingSample, LogEvent, LogSection
 
 
 class SectionMetrics(BaseModel):
@@ -31,6 +31,15 @@ class SectionMetrics(BaseModel):
     peak_dec_px: float | None
     frame_count_total: int
     frame_count_error: int
+    # Samples that fell inside a settle window (bracketed by
+    # ``settle_begin`` / ``settle_end`` INFO events) — excluded from
+    # every quality metric above per PHD2 / PHDLogViewer convention.
+    # Includes DROP rows that happened to land in the window.
+    frame_count_in_settle: int
+    # Samples that actually contributed to the filtered metrics above:
+    # has positional data AND outside every settle window. Surfaces
+    # as the "active" denominator in the UI frames row.
+    frame_count_in_stats: int
     duration_seconds: float
     mean_snr: float | None
     median_snr: float | None
@@ -44,6 +53,13 @@ class SectionMetrics(BaseModel):
 def compute_section_metrics(section: LogSection) -> SectionMetrics:
     """Compute summary metrics for one guiding section.
 
+    Samples inside settle windows (bracketed by ``settle_begin`` /
+    ``settle_end`` INFO events) are excluded from every quality metric —
+    RMS, peak, SNR, star mass, and even the error count — per PHD2 and
+    PHDLogViewer convention. The raw totals (``frame_count_total``,
+    ``duration_seconds``) remain unfiltered so the UI can display the
+    decomposition "N total · M in stats · K in settle".
+
     Calibration sections also route through this (returning mostly `None` +
     zero counts) so the API response shape stays uniform across kinds.
     """
@@ -56,6 +72,8 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
             peak_dec_px=None,
             frame_count_total=len(section.samples),
             frame_count_error=sum(1 for s in section.samples if s.error_code != 0),
+            frame_count_in_settle=0,
+            frame_count_in_stats=0,
             duration_seconds=_duration_seconds(section),
             mean_snr=None,
             median_snr=None,
@@ -63,10 +81,24 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
             arcsec_scale=section.header.pixel_scale_arcsec_per_px,
         )
 
-    ra_raw = [s.ra_raw_px for s in section.samples if s.ra_raw_px is not None]
-    dec_raw = [s.dec_raw_px for s in section.samples if s.dec_raw_px is not None]
-    snrs = [s.snr for s in section.samples if s.snr is not None]
-    masses = [s.star_mass for s in section.samples if s.star_mass is not None]
+    fallback_end = section.samples[-1].time_seconds
+    intervals = _settle_intervals(section.events, fallback_end)
+
+    # Partition: in_settle vs in_stats. A sample only contributes to
+    # in_stats when it's outside every settle window AND has positional
+    # data (the existing DROP-exclusion rule).
+    in_settle_count = 0
+    stats_samples: list[GuidingSample] = []
+    for s in section.samples:
+        if _in_any_interval(s.time_seconds, intervals):
+            in_settle_count += 1
+            continue
+        stats_samples.append(s)
+
+    ra_raw = [s.ra_raw_px for s in stats_samples if s.ra_raw_px is not None]
+    dec_raw = [s.dec_raw_px for s in stats_samples if s.dec_raw_px is not None]
+    snrs = [s.snr for s in stats_samples if s.snr is not None]
+    masses = [s.star_mass for s in stats_samples if s.star_mass is not None]
 
     rms_ra = _rms(ra_raw)
     rms_dec = _rms(dec_raw)
@@ -75,6 +107,11 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
     )
     peak_ra = max((abs(v) for v in ra_raw), default=None)
     peak_dec = max((abs(v) for v in dec_raw), default=None)
+    # Samples that actually contributed to RMS/peak — both axes use the
+    # same null-filter shape so counting either gives the stats-active
+    # denominator. Uses ra_raw length; samples with one-axis-null are
+    # rare and would be a parser anomaly.
+    in_stats_count = len(ra_raw)
 
     return SectionMetrics(
         rms_ra_px=rms_ra,
@@ -83,13 +120,75 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
         peak_ra_px=peak_ra,
         peak_dec_px=peak_dec,
         frame_count_total=len(section.samples),
-        frame_count_error=sum(1 for s in section.samples if s.error_code != 0),
+        frame_count_error=sum(1 for s in stats_samples if s.error_code != 0),
+        frame_count_in_settle=in_settle_count,
+        frame_count_in_stats=in_stats_count,
         duration_seconds=_duration_seconds(section),
         mean_snr=sum(snrs) / len(snrs) if snrs else None,
         median_snr=median(snrs) if snrs else None,
         mean_star_mass=sum(masses) / len(masses) if masses else None,
         arcsec_scale=section.header.pixel_scale_arcsec_per_px,
     )
+
+
+def _settle_intervals(
+    events: list[LogEvent], fallback_end_t: float
+) -> list[tuple[float, float]]:
+    """Derive closed settle intervals from a section's INFO events.
+
+    State-machine over sorted ``settle_begin`` / ``settle_end`` events.
+    Handles every parser-realistic edge case:
+
+    - ``time_seconds is None`` on a begin → anchor at ``0.0``
+      (the event precedes any sample, so "from section start").
+    - ``time_seconds is None`` on an end → skip (can't anchor a close).
+    - Duplicate begin while open → ignore.
+    - Unmatched end (section began mid-settle) → emit ``[0.0, t]``.
+    - Unclosed begin at end of walk → close at ``fallback_end_t``.
+    """
+    relevant: list[tuple[float, str]] = []
+    for e in events:
+        if e.kind not in ("settle_begin", "settle_end"):
+            continue
+        if e.time_seconds is None:
+            if e.kind == "settle_begin":
+                relevant.append((0.0, "settle_begin"))
+            # A None-anchored end has nothing to anchor against; skip.
+            continue
+        relevant.append((e.time_seconds, e.kind))
+    relevant.sort(key=lambda p: p[0])
+
+    intervals: list[tuple[float, float]] = []
+    open_start: float | None = None
+    for t, kind in relevant:
+        if kind == "settle_begin":
+            if open_start is None:
+                open_start = t
+            # Duplicate begin while open — ignore.
+            continue
+        # kind == "settle_end"
+        if open_start is not None:
+            intervals.append((open_start, t))
+            open_start = None
+        else:
+            # Section opened mid-settle — interval from section start
+            # up through this end marker.
+            intervals.append((0.0, t))
+    if open_start is not None:
+        intervals.append((open_start, fallback_end_t))
+    return intervals
+
+
+def _in_any_interval(t: float, intervals: list[tuple[float, float]]) -> bool:
+    """Closed-interval membership across a (small) list of windows.
+
+    A sample exactly on a boundary is treated as in-settle — it's a
+    transition sample and excluding it matches PHDLogViewer's behaviour.
+    """
+    for t0, t1 in intervals:
+        if t0 <= t <= t1:
+            return True
+    return False
 
 
 def _rms(values: list[float]) -> float | None:
