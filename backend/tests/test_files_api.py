@@ -364,3 +364,78 @@ async def test_browse_project_parse_error(client, tmp_path, monkeypatch):
         params={"path": str(proj_dir)},
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /api/files/browse — accept filter
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def browse_dir_with_txt(tmp_path: Path) -> Path:
+    """Directory with one FITS, one .txt, and one .log file for filter testing."""
+    data = np.zeros((10, 10), dtype=np.uint16)
+    fits.PrimaryHDU(data).writeto(tmp_path / "image.fits", overwrite=True)
+    (tmp_path / "PHD2_GuideLog_2026-01-01.txt").write_text("PHD2 version, Log version 2.5\n")
+    (tmp_path / "other.log").write_text("some other log\n")
+    return tmp_path
+
+
+@pytest.mark.anyio
+async def test_browse_without_accept_defaults_to_images(client, browse_dir_with_txt):
+    """No ``accept`` query param → FITS shows, .txt + .log hide (image-viewer default)."""
+    resp = await client.get("/api/files/browse", params={"path": str(browse_dir_with_txt)})
+    assert resp.status_code == 200
+    names = {f["name"] for f in resp.json()["files"]}
+    assert "image.fits" in names
+    assert "PHD2_GuideLog_2026-01-01.txt" not in names
+    assert "other.log" not in names
+
+
+@pytest.mark.anyio
+async def test_browse_with_accept_txt_shows_only_txt(client, browse_dir_with_txt):
+    """``accept=.txt`` → only .txt files show; FITS and .log are filtered out."""
+    resp = await client.get(
+        "/api/files/browse",
+        params={"path": str(browse_dir_with_txt), "accept": ".txt"},
+    )
+    assert resp.status_code == 200
+    names = {f["name"] for f in resp.json()["files"]}
+    assert names == {"PHD2_GuideLog_2026-01-01.txt"}
+
+
+@pytest.mark.anyio
+async def test_browse_accept_without_dot_is_normalized(client, browse_dir_with_txt):
+    """``accept=txt`` (without leading dot) is treated the same as ``.txt``."""
+    resp = await client.get(
+        "/api/files/browse",
+        params={"path": str(browse_dir_with_txt), "accept": "txt"},
+    )
+    assert resp.status_code == 200
+    names = {f["name"] for f in resp.json()["files"]}
+    assert names == {"PHD2_GuideLog_2026-01-01.txt"}
+
+
+@pytest.mark.anyio
+async def test_browse_accept_multiple_extensions(client, browse_dir_with_txt):
+    """``accept=.txt,.log`` includes both extensions."""
+    resp = await client.get(
+        "/api/files/browse",
+        params={"path": str(browse_dir_with_txt), "accept": ".txt,.log"},
+    )
+    assert resp.status_code == 200
+    names = {f["name"] for f in resp.json()["files"]}
+    assert names == {"PHD2_GuideLog_2026-01-01.txt", "other.log"}
+
+
+@pytest.mark.anyio
+async def test_browse_empty_accept_falls_back_to_default(client, browse_dir_with_txt):
+    """Empty ``accept`` (all whitespace after splitting) → default image extensions."""
+    resp = await client.get(
+        "/api/files/browse",
+        params={"path": str(browse_dir_with_txt), "accept": " , , "},
+    )
+    assert resp.status_code == 200
+    names = {f["name"] for f in resp.json()["files"]}
+    assert "image.fits" in names
+    assert "PHD2_GuideLog_2026-01-01.txt" not in names

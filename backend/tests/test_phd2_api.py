@@ -117,3 +117,69 @@ class TestValidation:
         )
         # Pydantic `extra="forbid"` rejects unknown keys.
         assert resp.status_code == 422
+
+
+# ── Archive virtual paths ─────────────────────────────────────────────────────
+
+
+class TestArchivePaths:
+    async def _make_zip_with_log(
+        self, tmp_path: Path, entry_name: str = "PHD2_GuideLog.txt"
+    ) -> Path:
+        """Build a zip containing a copy of the trimmed ASIAIR sample log."""
+        import zipfile
+
+        zip_path = tmp_path / "logs.zip"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.write(SAMPLE, arcname=entry_name)
+        return zip_path
+
+    async def test_parse_from_zip_virtual_path(self, client: AsyncClient, tmp_path: Path):
+        """`archive.zip::entry.txt` extracts the entry and parses it."""
+        zip_path = await self._make_zip_with_log(tmp_path)
+        virtual = f"{zip_path}::PHD2_GuideLog.txt"
+        resp = await client.post("/api/phd2/parse", json={"path": virtual})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["log"]["log_version"] == "2.5"
+        assert len(data["sections"]) == 2
+
+    async def test_parse_from_zip_nested_entry(self, client: AsyncClient, tmp_path: Path):
+        """Entries inside subdirectories of the archive are addressable."""
+        zip_path = await self._make_zip_with_log(tmp_path, entry_name="session1/guide.txt")
+        virtual = f"{zip_path}::session1/guide.txt"
+        resp = await client.post("/api/phd2/parse", json={"path": virtual})
+        assert resp.status_code == 200
+
+    async def test_parse_zip_missing_entry_404(self, client: AsyncClient, tmp_path: Path):
+        zip_path = await self._make_zip_with_log(tmp_path)
+        virtual = f"{zip_path}::does_not_exist.txt"
+        resp = await client.post("/api/phd2/parse", json={"path": virtual})
+        assert resp.status_code == 404
+
+    async def test_parse_zip_archive_missing_404(self, client: AsyncClient, tmp_path: Path):
+        virtual = f"{tmp_path / 'nope.zip'}::x.txt"
+        resp = await client.post("/api/phd2/parse", json={"path": virtual})
+        assert resp.status_code == 404
+
+    async def test_parse_non_archive_with_double_colon_rejected(
+        self, client: AsyncClient, tmp_path: Path
+    ):
+        """A ``::`` separator on a non-archive file is rejected as 400."""
+        plain = tmp_path / "plain.txt"
+        plain.write_text("PHD2 version, Log version 2.5. Log enabled at 2026-01-01 00:00:00\n")
+        virtual = f"{plain}::something.txt"
+        resp = await client.post("/api/phd2/parse", json={"path": virtual})
+        assert resp.status_code == 400
+
+    async def test_archive_parse_cache_hit(self, client: AsyncClient, tmp_path: Path):
+        """Second parse of the same archive+entry is served from cache."""
+        zip_path = await self._make_zip_with_log(tmp_path)
+        virtual = f"{zip_path}::PHD2_GuideLog.txt"
+        r1 = await client.post("/api/phd2/parse", json={"path": virtual})
+        assert r1.status_code == 200
+        stats1 = (await client.get("/api/phd2/cache/stats")).json()
+        r2 = await client.post("/api/phd2/parse", json={"path": virtual})
+        assert r2.status_code == 200
+        stats2 = (await client.get("/api/phd2/cache/stats")).json()
+        assert stats2["entries"] == stats1["entries"]  # cache slot reused

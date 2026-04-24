@@ -4,6 +4,14 @@ Exposes the parser + metrics behind a small set of HTTP endpoints with an
 in-process TTL cache so reopen-the-same-log is a fast path. Mirrors the
 cache + per-key lock pattern used by `api/images.py`.
 
+Accepts two path shapes on ``POST /parse``:
+
+- Plain filesystem path — e.g. ``/path/to/PHD2_GuideLog_…txt``
+- Archive virtual path — e.g. ``/path/to/logs.zip::PHD2_GuideLog_…txt``.
+  The ``::`` separator mirrors the image-viewer convention and is handled
+  by extracting the entry via ``archive_io`` and parsing it from a
+  ``StringIO`` (the parser already supports ``Path | TextIO``).
+
 Endpoints:
 - ``POST /api/phd2/parse`` — parse a log file, return parsed data + metrics
 - ``GET  /api/phd2/cache/stats``
@@ -13,6 +21,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import threading
 import time
@@ -26,6 +35,7 @@ from nightcrate.api.phd2_models import (
     ParseResponse,
     SectionWithMetrics,
 )
+from nightcrate.services import archive_io
 from nightcrate.services.phd2_metrics import compute_section_metrics
 from nightcrate.services.phd2_parser import parse_log
 
@@ -39,21 +49,65 @@ router = APIRouter(prefix="/api/phd2", tags=["PHD2 Guide-Log Analyzer"])
 _CACHE_MAX_ENTRIES = 8
 _CACHE_TTL_SECONDS = 120
 
+# Cache keys are (display_path, mtime_ns, size_bytes). For plain paths that's
+# the file's own stat; for archive virtual paths it's the containing
+# archive's stat so editing the archive invalidates the cache.
 _cache: dict[tuple[str, int, int], tuple[ParseResponse, float]] = {}
 _key_locks: dict[tuple[str, int, int], threading.Lock] = {}
 _cache_lock = threading.Lock()
 
 
-def _cache_key(path: Path) -> tuple[str, int, int]:
-    """Key by path + mtime_ns + size so a file edit invalidates the cache."""
+def _resolve_request_path(raw: str) -> tuple[str, int, int, object]:
+    """Validate the request path and return (display_path, mtime_ns, size, loader).
+
+    ``loader`` is a zero-arg callable that returns a ``Path | TextIO`` ready
+    to hand to ``parse_log``. Separating validation from loading lets us
+    surface errors with consistent HTTP status codes without duplicating the
+    archive-vs-filesystem branch logic.
+    """
+    if "::" in raw:
+        archive_str, entry = raw.split("::", 1)
+        archive_path = Path(archive_str).expanduser().resolve()
+        if not archive_path.exists():
+            raise HTTPException(status_code=404, detail=f"Archive not found: {archive_str}")
+        if not archive_path.is_file():
+            raise HTTPException(status_code=400, detail=f"Not a file: {archive_str}")
+        if not archive_io.is_archive(archive_path):
+            raise HTTPException(status_code=400, detail=f"Not a recognized archive: {archive_str}")
+        stat = archive_path.stat()
+        display = f"{archive_path}::{entry}"
+
+        def _load_archive_entry() -> io.StringIO:
+            try:
+                buf = archive_io.extract_entry(archive_path, entry)
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Entry not found in archive: {entry}",
+                ) from exc
+            stream = io.StringIO(buf.getvalue().decode("utf-8", errors="replace"))
+            # parse_log reads ``source.name`` as the log's file_path. Stamp
+            # the virtual path so downstream consumers see a sensible label.
+            stream.name = display  # type: ignore[attr-defined]
+            return stream
+
+        return display, stat.st_mtime_ns, stat.st_size, _load_archive_entry
+
+    path = Path(raw).expanduser().resolve()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {raw}")
+    if not path.is_file():
+        raise HTTPException(status_code=400, detail=f"Not a file: {raw}")
     stat = path.stat()
-    return (str(path), stat.st_mtime_ns, stat.st_size)
+    return str(path), stat.st_mtime_ns, stat.st_size, lambda: path
 
 
-def _get_cached_parse(path: Path) -> ParseResponse:
-    """Parse the log, caching the result; concurrent requests for the same file share one parse."""
-    key = _cache_key(path)
-
+def _get_cached_parse(
+    key: tuple[str, int, int],
+    loader,
+) -> ParseResponse:
+    """Parse the log, caching the result; concurrent requests for the same
+    key share one parse."""
     with _cache_lock:
         entry = _cache.get(key)
         if entry is not None:
@@ -73,7 +127,8 @@ def _get_cached_parse(path: Path) -> ParseResponse:
                 if time.monotonic() - ts < _CACHE_TTL_SECONDS:
                     return val
 
-        result = _parse_and_build_response(path)
+        source = loader()
+        result = _parse_and_build_response(source)
 
         with _cache_lock:
             while len(_cache) >= _CACHE_MAX_ENTRIES:
@@ -85,9 +140,9 @@ def _get_cached_parse(path: Path) -> ParseResponse:
     return result
 
 
-def _parse_and_build_response(path: Path) -> ParseResponse:
+def _parse_and_build_response(source) -> ParseResponse:
     """Parse + compute metrics. Called from inside the per-key lock."""
-    parsed = parse_log(path)
+    parsed = parse_log(source)
     bundled = [
         SectionWithMetrics(section=section, metrics=compute_section_metrics(section))
         for section in parsed.sections
@@ -102,18 +157,17 @@ def _parse_and_build_response(path: Path) -> ParseResponse:
 async def parse(request: ParseRequest) -> ParseResponse:
     """Parse a PHD2 guide log at ``request.path`` and return structured data.
 
-    Not a file upload — the backend reads the file directly from the user's
-    filesystem (same pattern as the image viewer). Parsing runs in a worker
+    Accepts either a plain filesystem path or an archive virtual path in the
+    form ``archive.zip::path/inside/archive.txt``. Parsing runs in a worker
     thread because the parser is synchronous / CPU-bound.
     """
-    path = Path(request.path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {request.path}")
-    if not path.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {request.path}")
+    display, mtime_ns, size, loader = _resolve_request_path(request.path)
+    key = (display, mtime_ns, size)
 
     try:
-        return await asyncio.to_thread(_get_cached_parse, path)
+        return await asyncio.to_thread(_get_cached_parse, key, loader)
+    except HTTPException:
+        raise
     except ValueError as exc:
         # Covers Phd2DebugLogRejected (ValueError subclass) and bare ValueError
         # raised by the parser when the file isn't a PHD2 guide log at all.

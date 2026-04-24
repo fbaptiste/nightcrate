@@ -73,8 +73,19 @@ export function fetchVolumes(): Promise<VolumeEntry[]> {
   return apiFetch<VolumeEntry[]>("/files/volumes");
 }
 
-export function browseDirectory(path: string): Promise<BrowseResult> {
-  return apiFetch<BrowseResult>(`/files/browse?path=${encodeURIComponent(path)}`);
+function acceptQuery(accept?: string[]): string {
+  return accept && accept.length > 0
+    ? `&accept=${encodeURIComponent(accept.join(","))}`
+    : "";
+}
+
+export function browseDirectory(
+  path: string,
+  accept?: string[],
+): Promise<BrowseResult> {
+  return apiFetch<BrowseResult>(
+    `/files/browse?path=${encodeURIComponent(path)}${acceptQuery(accept)}`,
+  );
 }
 
 export function browseProject(path: string): Promise<ProjectBrowseResult> {
@@ -83,10 +94,11 @@ export function browseProject(path: string): Promise<ProjectBrowseResult> {
 
 export function browseArchive(
   archivePath: string,
-  subdir: string = ""
+  subdir: string = "",
+  accept?: string[],
 ): Promise<ArchiveBrowseResult> {
   return apiFetch<ArchiveBrowseResult>(
-    `/files/browse-archive?path=${encodeURIComponent(archivePath)}&subdir=${encodeURIComponent(subdir)}`
+    `/files/browse-archive?path=${encodeURIComponent(archivePath)}&subdir=${encodeURIComponent(subdir)}${acceptQuery(accept)}`,
   );
 }
 

@@ -17,18 +17,26 @@ import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import { parseGuideLog, type ParseResponse } from "@/api/guideLogs";
 import { setActivity } from "@/api/client";
+import { FileBrowser } from "@/components/fits/FileBrowser";
 import SectionNavigator from "@/components/guidelogs/SectionNavigator";
 import StatsPanel from "@/components/guidelogs/StatsPanel";
 import TimeSeriesChart from "@/components/guidelogs/TimeSeriesChart";
 import CalibrationPlot from "@/components/guidelogs/CalibrationPlot";
 import WarningsDrawer from "@/components/guidelogs/WarningsDrawer";
 
+// Stable reference — consumers of FileBrowser should pass a stable array
+// for ``accept`` so the browser's useEffect deps don't churn on each render.
+const GUIDE_LOG_ACCEPT = [".txt"];
+
 export default function GuideLogsPage() {
   const [pathInput, setPathInput] = useState("");
+  const [activePath, setActivePath] = useState<string>("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   useEffect(() => {
     setActivity("Guide Logs");
@@ -52,11 +60,15 @@ export default function GuideLogsPage() {
     return parsed.sections.find((s) => s.section.index === selectedIndex) ?? parsed.sections[0];
   }, [parsed, selectedIndex]);
 
-  const handleOpen = () => {
-    const path = pathInput.trim();
-    if (!path) return;
-    parseMutation.mutate(path);
+  const openPath = (path: string) => {
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    setActivePath(trimmed);
+    setPathInput(trimmed);
+    parseMutation.mutate(trimmed);
   };
+
+  const handleOpen = () => openPath(pathInput);
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -66,10 +78,19 @@ export default function GuideLogsPage() {
           <Typography variant="h6" sx={{ mr: 2 }}>
             Guide Logs
           </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<FolderOpenIcon sx={{ fontSize: 16 }} />}
+            onClick={() => setBrowserOpen(true)}
+            sx={{ height: 32 }}
+          >
+            Browse
+          </Button>
           <TextField
             size="small"
             fullWidth
-            placeholder="Path to PHD2_GuideLog_*.txt file"
+            placeholder="Path to PHD2_GuideLog_*.txt (or archive.zip::log.txt)"
             value={pathInput}
             onChange={(e) => setPathInput(e.target.value)}
             onKeyDown={(e) => {
@@ -129,6 +150,16 @@ export default function GuideLogsPage() {
           </Typography>
         </Box>
       )}
+
+      <FileBrowser
+        open={browserOpen}
+        onClose={() => setBrowserOpen(false)}
+        onSelect={(path) => openPath(path)}
+        activePath={activePath}
+        accept={GUIDE_LOG_ACCEPT}
+        title="Open PHD2 Guide Log"
+        emptyMessage="No guide logs or folders here"
+      />
 
       {parsed && selected && (
         <Box sx={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>

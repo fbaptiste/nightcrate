@@ -44,8 +44,14 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onSelect: (path: string, displayName?: string) => void;
-  /** Currently displayed image path — browser opens to its directory with it pre-selected. */
+  /** Currently displayed file path — browser opens to its directory with it pre-selected. */
   activePath?: string;
+  /** Extension filter (e.g. ``[".txt"]``). Undefined = default image extensions. */
+  accept?: string[];
+  /** Dialog title. Defaults to "Open Image File" for backward compatibility. */
+  title?: string;
+  /** Empty-state message. Defaults to image-viewer wording. */
+  emptyMessage?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -54,7 +60,15 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileBrowser({ open, onClose, onSelect, activePath }: Props) {
+export function FileBrowser({
+  open,
+  onClose,
+  onSelect,
+  activePath,
+  accept,
+  title = "Open Image File",
+  emptyMessage = "No directories or image files here",
+}: Props) {
   const { settings, update } = useSettingsStore();
   const initialPath = settings?.last_browse_path ?? "~";
   const favorites = settings?.browser_favorites ?? [];
@@ -127,7 +141,7 @@ export function FileBrowser({ open, onClose, onSelect, activePath }: Props) {
     if (!pendingSelect.current) {
       setSelectedFile(null);
     }
-    browseDirectory(currentPath)
+    browseDirectory(currentPath, accept)
       .then((data) => {
         setResult(data);
         setLoading(false);
@@ -182,7 +196,7 @@ export function FileBrowser({ open, onClose, onSelect, activePath }: Props) {
     }
     setArchiveLoading(true);
     setSelectedFile(null);
-    browseArchive(activeArchive, archiveSubdir)
+    browseArchive(activeArchive, archiveSubdir, accept)
       .then((data) => {
         setArchiveResult(data);
         setArchiveLoading(false);
@@ -236,7 +250,7 @@ export function FileBrowser({ open, onClose, onSelect, activePath }: Props) {
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Open Image File</DialogTitle>
+      <DialogTitle>{title}</DialogTitle>
       <DialogContent
         sx={{ display: "flex", gap: 0, p: 0, minHeight: 450, overflow: "hidden" }}
       >
@@ -479,7 +493,7 @@ export function FileBrowser({ open, onClose, onSelect, activePath }: Props) {
               {/* Empty state */}
               {result.dirs.length === 0 && result.files.length === 0 && result.projects.length === 0 && (result.archives?.length ?? 0) === 0 && (
                 <Typography sx={{ p: 2 }} color="text.secondary" variant="body2">
-                  No directories or image files here
+                  {emptyMessage}
                 </Typography>
               )}
             </List>
