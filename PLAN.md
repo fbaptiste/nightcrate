@@ -36,6 +36,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.21.1 — Scoring Polish + Planner UX + External Refs Extension](#v0211--scoring-polish--planner-ux--external-refs-extension) ✅
 - [v0.22.0 — PHD2 Guide-Log Analyzer Pass A (Parser + Viewer Skeleton)](#v0220--phd2-guide-log-analyzer-pass-a-parser--viewer-skeleton) ✅
 - [v0.23.0 — PHD2 Pass B (Drift + Oscillation + Scatter + Event List)](#v0230--phd2-pass-b-drift--oscillation--scatter--event-list) ✅
+- [v0.24.0 — PHD2 Pass C (Range Selection + Copy Stats + Recent Files)](#v0240--phd2-pass-c-range-selection--copy-stats--recent-files) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -3750,6 +3751,74 @@ Pass B items per spec §5.2 / §5.3 / §5.6:
 
 These are interaction-polish items (spec §5.5) that would double
 this pass's scope.
+
+---
+
+## v0.24.0 — PHD2 Pass C (Range Selection + Copy Stats + Recent Files)
+
+**Status:** Done
+**Branch:** `v0.24.0/phd2-pass-c`
+
+Third pass of the nine-version PHD2 arc. Completes the spec §5.5
+interaction-polish bundle that was deferred from Pass A + B.
+
+### Manual range selection + exclusion (spec §5.5)
+
+- [x] Shift+drag on the time-series chart creates a **selection**
+      band — translucent teal, visible across zoom/pan. Stats
+      recompute over the samples inside.
+- [x] Shift+Alt+drag creates an **exclusion** band — hatched grey
+      (distinct from solid-grey settle shading). Samples inside are
+      subtracted from the active summary subset.
+- [x] d3.zoom's `.filter` excludes shift-keyed mousedowns so the
+      new gesture doesn't fight with existing pan.
+- [x] Tiny drag (< 0.25 s) treats as click-to-clear.
+- [x] "Clear selection" + "Clear exclusion" buttons appear in the
+      chart toolbar when the respective band is active.
+- [x] Selection + exclusion reset on section change.
+- [x] Viewport Summary panel folds into **Selection Summary** when
+      a selection exists; subtitle shows the wall-clock range +
+      frame count + exclusion detail.
+
+### Copy stats to clipboard (spec §5.5)
+
+- [x] StatsPanel header (guiding kind only) gains a
+      `ContentCopyIcon` button. Click → TSV-formatted stats
+      (title + subtitle header, then one label/value row per
+      metric) write to `navigator.clipboard`.
+- [x] Transient MUI Snackbar ("Stats copied to clipboard")
+      confirms the write.
+
+### Recent files history (spec §5.5)
+
+- [x] New `lib/phd2RecentFiles.ts` — localStorage-backed store
+      with a 10-entry cap. `getRecentFiles` / `addRecentFile` /
+      `removeRecentFile` / `clearRecentFiles` helpers + a tiny
+      `formatRelativeTime` formatter (no date-fns dep).
+- [x] Added to history only on **successful parse** (prevents a
+      typo path from polluting the list).
+- [x] Empty-state landing page shows "Recent logs" when entries
+      exist: filename (monospace, clickable to reopen), full path
+      (secondary, title-hover for full text), relative timestamp,
+      × icon per entry, "Clear all" button.
+
+### Out of scope
+
+- Lock-scale across sections — **already shipped** via the Guide
+  / Pulse axis Fixed dropdown modes which persist per-chart and
+  survive section switches.
+- Reveal-in-finder — user-vetoed.
+
+### Verification
+
+- Frontend `npm run build` clean.
+- Backend `uv run pytest` stays at **1939 passed / 3 skipped**
+  (no backend changes).
+- Manual flows cover: shift-drag select → stats recompute;
+  shift+alt-drag exclude → stats drop samples; clear buttons
+  wipe each band; section switch resets both; copy icon writes
+  TSV + shows Snackbar; empty state shows recent-logs list;
+  click to reopen; × removes; Clear all wipes.
 
 ---
 

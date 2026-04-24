@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.23.0
+**NightCrate version:** 0.24.0
 
 **Last updated:** 2026-04-24
 
@@ -269,9 +269,9 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ---
 
-### PHD2 Guide-Log Analyzer (v0.22.0 Pass A + polish + v0.23.0 Pass B)
+### PHD2 Guide-Log Analyzer (Passes A + B + C)
 
-**Status:** `[in progress]` (Passes A + B shipped; seven more passes planned through v0.30.0)
+**Status:** `[in progress]` (Passes A + B + C shipped; six more passes planned through v0.30.0)
 
 First pass of a nine-version arc that delivers a PHD2 guide-log analyzer, aiming to replace the community's "post log to the PHD2 Google Group and wait for expert" workflow with an in-app parser + charts + (eventually, in v0.27.0) an automated diagnostic engine. Functional spec: `docs/nightcrate-phd2-analyzer-spec-v2.md`. v0.22.0 delivers a format-tolerant parser (handles ASIAIR's blank app-version field, irregular header key separators, 18-vs-19-column row arity, DROP frames, locale-decimal recovery, backward timestamp jumps), a D3 time-series chart with RA/Dec traces + correction bars + SNR/mass sub-panels + crosshair cursor + row-packed vertical-line event markers, a five-phase calibration plot with derived angle/rate/parity, per-section + viewport summary panels (collapsible), and a warnings hover-tooltip. Settle-window exclusion in the quality metrics (originally Pass B scope) was pulled forward during the polish round because inflated Peak/RMS numbers from dither excursions were actively misleading — matches PHD2 and PHDLogViewer convention. Standalone-first (spec §4.1) — no persistence yet (in-process TTL cache only); catalog integration lands in v0.30.0.
 
@@ -280,6 +280,8 @@ First pass of a nine-version arc that delivers a PHD2 guide-log analyzer, aiming
 - **Frontend:** `pages/Phd2AnalyzerPage.tsx`, `components/phd2/{TimeSeriesChart,CalibrationPlot,ScatterPlot,StatsPanel,EventList,WarningsDrawer,SectionNavigator,SectionDataTab}.tsx`, `lib/phd2GuidingMetrics.ts` (client-side metrics helper for Viewport Summary + toggle-aware recompute), `api/phd2.ts`
 
 v0.23.0 Pass B added: drift + oscillation metrics on both Section + Viewport Summary panels; a ScatterPlot component (dx vs dy with 1σ / 2σ dispersion ellipse + centroid); a collapsible EventList that pans the chart to a clicked event via a new `scrollToTime` imperative handle on TimeSeriesChart.
+
+v0.24.0 Pass C added: Shift-drag selection + Shift+Alt-drag exclusion bands on the chart with click-to-clear and a Selection Summary fold-in on the Viewport Summary panel; copy-stats-to-clipboard icon on the StatsPanel header (TSV via `navigator.clipboard` + transient Snackbar); recent-files history (`lib/phd2RecentFiles.ts`) on the empty-state landing, localStorage-backed, 10-entry cap.
 - **Route:** `/phd2-analyzer` (top-level, nav entry auto-appended for users with saved nav orders)
 - **Sample log:** `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`
 

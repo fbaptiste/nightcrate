@@ -45,7 +45,7 @@ import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { useTheme } from "@mui/material/styles";
 import type { GuidingSample, LogEvent } from "@/api/phd2";
 import { formatWallClock } from "@/lib/phd2Format";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {
   samples: GuidingSample[];
@@ -73,6 +73,19 @@ interface Props {
    *  the user has opted to include settle frames in stats, greying them
    *  out would be inconsistent. Default ``true``. */
   showSettleShading?: boolean;
+  /** User-drawn selection window (section-relative seconds). Rendered
+   *  as a translucent orange band on the main panel; the StatsPanel
+   *  on the parent page recomputes metrics over the samples inside. */
+  selection?: [number, number] | null;
+  /** User-drawn exclusion window. Rendered as a hatched grey band;
+   *  samples inside are dropped from the Selection/Viewport summary. */
+  exclusion?: [number, number] | null;
+  /** Fired when the user Shift-drags to set / adjust / clear the
+   *  selection band. ``null`` indicates clear. */
+  onSelectionChange?: (range: [number, number] | null) => void;
+  /** Fired when the user Shift+Alt-drags to set / adjust / clear the
+   *  exclusion band. ``null`` indicates clear. */
+  onExclusionChange?: (range: [number, number] | null) => void;
 }
 
 const COLOR_RA = RIG_BLUE;
@@ -174,6 +187,10 @@ function TimeSeriesChartInner(
     onViewportChange,
     settleIntervals = [],
     showSettleShading = true,
+    selection = null,
+    exclusion = null,
+    onSelectionChange,
+    onExclusionChange,
   }: Props,
   ref: React.Ref<TimeSeriesChartHandle>,
 ) {
@@ -185,6 +202,7 @@ function TimeSeriesChartInner(
   const clipMain = `phd2-clip-main-${uid}`;
   const clipSnr = `phd2-clip-snr-${uid}`;
   const clipMass = `phd2-clip-mass-${uid}`;
+  const excludePatternId = `phd2-exclude-hatch-${uid}`;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Reference to the active d3.zoom behavior attached to the SVG. The
@@ -408,6 +426,14 @@ function TimeSeriesChartInner(
         [MARGIN.left, 0],
         [MARGIN.left + innerW, height],
       ])
+      // Shift-drag is reserved for the selection / exclusion gestures
+      // (Shift → select, Shift+Alt → exclude), so d3.zoom ignores those
+      // events and lets our own mousedown handler take over.
+      .filter((e) => {
+        const me = e as MouseEvent;
+        if (me.type === "mousedown" && me.shiftKey) return false;
+        return !e.ctrlKey && !e.button;
+      })
       .on("zoom", (e) => {
         const rescaled = e.transform.rescaleX(base);
         setZoomX(rescaled.domain() as [number, number]);
@@ -836,6 +862,88 @@ function TimeSeriesChartInner(
     document.addEventListener("mouseup", onUp);
   };
 
+  // ── Selection / exclusion drag gestures ────────────────────────────
+  //
+  // Shift+drag → select a time range; the Selection Summary panel
+  // recomputes metrics over the samples inside. Shift+Alt+drag →
+  // exclude a range from the Selection / Viewport Summary.
+  //
+  // A very short drag (< 0.25 s in domain space) treats the gesture
+  // as a "click to clear" and resets the corresponding band. d3.zoom's
+  // filter above already bypasses shift-keyed mousedowns so this
+  // handler owns the gesture start.
+  const selectionDragRef = useRef<{
+    mode: "select" | "exclude";
+    anchorTime: number;
+  } | null>(null);
+
+  const handleSelectionMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!e.shiftKey) return;
+    // Only honour the gesture when at least one of the change callbacks
+    // is wired — avoids capturing events on charts rendered without
+    // the selection wiring.
+    const mode: "select" | "exclude" = e.altKey ? "exclude" : "select";
+    if (mode === "select" && !onSelectionChange) return;
+    if (mode === "exclude" && !onExclusionChange) return;
+
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const mx0 = e.clientX - rect.left;
+    if (mx0 < MARGIN.left || mx0 > MARGIN.left + innerW) return;
+    const anchorTime = clamp(
+      xScale.invert(mx0),
+      tmin,
+      tmax,
+    );
+    selectionDragRef.current = { mode, anchorTime };
+    // Prevent the event from bubbling into d3.zoom's drag start and
+    // suppress the browser's default text-selection behaviour.
+    e.preventDefault();
+    e.stopPropagation();
+
+    const onMove = (ev: MouseEvent) => {
+      const drag = selectionDragRef.current;
+      if (!drag || !svgRef.current) return;
+      const r = svgRef.current.getBoundingClientRect();
+      const mx = ev.clientX - r.left;
+      const t = clamp(xScale.invert(mx), tmin, tmax);
+      const lo = Math.min(drag.anchorTime, t);
+      const hi = Math.max(drag.anchorTime, t);
+      if (drag.mode === "select") {
+        onSelectionChange?.([lo, hi]);
+      } else {
+        onExclusionChange?.([lo, hi]);
+      }
+    };
+    const onUp = (ev: MouseEvent) => {
+      const drag = selectionDragRef.current;
+      if (!drag || !svgRef.current) {
+        selectionDragRef.current = null;
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        return;
+      }
+      const r = svgRef.current.getBoundingClientRect();
+      const mx = ev.clientX - r.left;
+      const t = clamp(xScale.invert(mx), tmin, tmax);
+      const lo = Math.min(drag.anchorTime, t);
+      const hi = Math.max(drag.anchorTime, t);
+      // Tiny drag (< 0.25 s) → treat as click-to-clear.
+      if (hi - lo < 0.25) {
+        if (drag.mode === "select") onSelectionChange?.(null);
+        else onExclusionChange?.(null);
+      } else {
+        if (drag.mode === "select") onSelectionChange?.([lo, hi]);
+        else onExclusionChange?.([lo, hi]);
+      }
+      selectionDragRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   // Horizontal position of the tooltip within its reservation area.
   // Centered on the cursor; clamped so the tooltip stays inside the
   // chart's horizontal span.
@@ -1067,8 +1175,24 @@ function TimeSeriesChartInner(
           color="text.secondary"
           sx={{ fontStyle: "italic" }}
         >
-          Scroll to zoom · drag to pan
+          Scroll to zoom · drag to pan · shift-drag to select · shift+alt-drag to exclude
         </Typography>
+        {selection && onSelectionChange && (
+          <Button
+            size="small"
+            onClick={() => onSelectionChange(null)}
+          >
+            Clear selection
+          </Button>
+        )}
+        {exclusion && onExclusionChange && (
+          <Button
+            size="small"
+            onClick={() => onExclusionChange(null)}
+          >
+            Clear exclusion
+          </Button>
+        )}
         <Button
           size="small"
           startIcon={<RestartAltIcon />}
@@ -1182,6 +1306,7 @@ function TimeSeriesChartInner(
         height={height}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHover(null)}
+        onMouseDown={handleSelectionMouseDown}
         style={{
           display: ready ? "block" : "none",
           // ``grab`` by default signals "drag to pan" (works when
@@ -1206,6 +1331,29 @@ function TimeSeriesChartInner(
           <clipPath id={clipMass}>
             <rect x={MARGIN.left} y={massY0} width={innerW} height={massH} />
           </clipPath>
+          {/* Diagonal-hatch pattern for the exclusion band — visually
+              distinct from the solid-grey settle shading. */}
+          <pattern
+            id={excludePatternId}
+            patternUnits="userSpaceOnUse"
+            width={6}
+            height={6}
+            patternTransform="rotate(45)"
+          >
+            <rect
+              width={6}
+              height={6}
+              fill={isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"}
+            />
+            <line
+              x1={0}
+              y1={0}
+              x2={0}
+              y2={6}
+              stroke={isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.18)"}
+              strokeWidth={1.5}
+            />
+          </pattern>
         </defs>
 
         {/* Uniform background tint on all three panels so they read as
@@ -1295,6 +1443,44 @@ function TimeSeriesChartInner(
               </g>
             ))}
           </>
+        )}
+
+        {/* User-drawn selection band (orange) + exclusion band (hatched
+            grey). Anchored in section-time so they stay put under
+            zoom/pan. Stroke at the edges gives a clear boundary for
+            click-to-clear discoverability. */}
+        {selection && (
+          <g clipPath={`url(#${clipMain})`}>
+            <rect
+              x={xScale(selection[0])}
+              y={mainY0}
+              width={Math.max(1, xScale(selection[1]) - xScale(selection[0]))}
+              height={mainH}
+              fill={RIG_TEAL}
+              fillOpacity={0.14}
+              stroke={RIG_TEAL}
+              strokeOpacity={0.7}
+              strokeWidth={1}
+              strokeDasharray="2 2"
+              pointerEvents="none"
+            />
+          </g>
+        )}
+        {exclusion && (
+          <g clipPath={`url(#${clipMain})`}>
+            <rect
+              x={xScale(exclusion[0])}
+              y={mainY0}
+              width={Math.max(1, xScale(exclusion[1]) - xScale(exclusion[0]))}
+              height={mainH}
+              fill={`url(#${excludePatternId})`}
+              stroke={axisColor}
+              strokeOpacity={0.5}
+              strokeWidth={1}
+              strokeDasharray="4 3"
+              pointerEvents="none"
+            />
+          </g>
         )}
 
         {/* Everything inside the main panel's data area is clipped so
@@ -1914,6 +2100,10 @@ function formatMassTick(t: number): string {
   if (t < 1000) return Math.round(t).toLocaleString();
   if (t < 10_000) return `${(t / 1000).toFixed(1)}k`;
   return `${Math.round(t / 1000)}k`;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
 /** Augments d3's ``ticks()`` with the scale's domain endpoints so the

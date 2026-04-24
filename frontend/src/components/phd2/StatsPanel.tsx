@@ -10,8 +10,12 @@ import { useState } from "react";
 import Box from "@mui/material/Box";
 import Collapse from "@mui/material/Collapse";
 import Grid from "@mui/material/Grid";
+import IconButton from "@mui/material/IconButton";
+import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import type { SectionMetrics } from "@/api/phd2";
 
@@ -41,6 +45,7 @@ export default function StatsPanel({
   defaultExpanded = true,
 }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [copiedOpen, setCopiedOpen] = useState(false);
   const isOpen = collapsible ? expanded : true;
   const toggle = () => collapsible && setExpanded((v) => !v);
 
@@ -67,6 +72,22 @@ export default function StatsPanel({
         />
       )}
       <Typography variant="subtitle2">{title}</Typography>
+      {kind === "guiding" && (
+        <Tooltip title="Copy stats to clipboard (TSV)">
+          <IconButton
+            size="small"
+            sx={{ ml: 0.5, p: 0.25 }}
+            onClick={(ev) => {
+              // Stop propagation so clicking the icon doesn't also
+              // toggle the collapse state.
+              ev.stopPropagation();
+              handleCopy();
+            }}
+          >
+            <ContentCopyIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </Tooltip>
+      )}
     </Stack>
   );
 
@@ -143,6 +164,24 @@ export default function StatsPanel({
     },
   ];
 
+  const handleCopy = () => {
+    // Tab-separated metric rows, prefixed with the panel title and
+    // optional subtitle. Matches PHD2's own copy-stats output so the
+    // text pastes cleanly into a spreadsheet or the PHD2 forum.
+    const header = subtitle ? `${title}\t${subtitle}` : title;
+    const body = items.map((i) => `${i.label}\t${i.value}`).join("\n");
+    const tsv = `${header}\n${body}`;
+    // ``navigator.clipboard`` requires a secure context — in local
+    // dev (http://localhost) this is granted; swallow failures
+    // quietly if the browser refuses.
+    void navigator.clipboard
+      ?.writeText(tsv)
+      .then(() => setCopiedOpen(true))
+      .catch(() => {
+        /* clipboard blocked — skip feedback */
+      });
+  };
+
   return (
     <Box>
       {header}
@@ -166,6 +205,13 @@ export default function StatsPanel({
           </Typography>
         )}
       </Collapse>
+      <Snackbar
+        open={copiedOpen}
+        autoHideDuration={1500}
+        onClose={() => setCopiedOpen(false)}
+        message="Stats copied to clipboard"
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
     </Box>
   );
 }

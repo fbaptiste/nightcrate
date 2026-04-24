@@ -711,6 +711,9 @@ First pass of a nine-version arc (v0.22.0 → v0.30.0). Full spec: `docs/nightcr
 - Frontend — `pages/Phd2AnalyzerPage.tsx`, `components/phd2/{TimeSeriesChart,CalibrationPlot,ScatterPlot,StatsPanel,EventList,WarningsDrawer,SectionNavigator,SectionDataTab}.tsx`, `lib/phd2GuidingMetrics.ts`, `api/phd2.ts`. D3 + SVG for the time-series, calibration, and scatter charts (templates from `planner/SkyPositionGraph.tsx` and `planner/BestTimeOfYearChart.tsx`). RA = blue, Dec = orange — colorblind-safe palette from `lib/rigColors.ts`.
 - **ScatterPlot** — D3 SVG scatter of `(dx, dy)` with 1σ / 2σ dispersion ellipses and a centroid marker. Covariance matrix → closed-form 2×2 eigen-decomposition for the ellipse axes + rotation angle. Axis-aligned pixel domain; optional arcsec dual-unit axis ticks. Collapsible, side-panel with centroid coordinates + 1σ axis lengths + principal angle.
 - **EventList** — collapsible chronological list of anchored INFO events per section. Friendly kind chip + wall-clock timestamp + raw message (Δx/Δy for dither). Clicking a row calls `TimeSeriesChart.scrollToTime(time_seconds)` — an imperative handle exposed via `forwardRef` + `useImperativeHandle` that pans + zooms the chart to a ~60 s window around the target (or preserves current zoom if already zoomed in).
+- **Range selection + exclusion** (v0.24.0) — Shift+drag on the chart creates a translucent teal selection band; Shift+Alt+drag creates a hatched-grey exclusion band. d3.zoom's `.filter` bypasses shift-keyed mousedowns so the new gestures don't fight the existing pan. Selection wins over zoom-driven viewport as the "stats subset" base set; exclusion subtracts from whichever base is active. Short drags (<0.25 s) click-to-clear. `Phd2AnalyzerPage` flips the Viewport Summary panel to **Selection Summary** when a selection exists and builds the wall-clock subtitle accordingly.
+- **Copy stats to clipboard** (v0.24.0) — `StatsPanel` header (guiding kind only) gains a `ContentCopyIcon` button that writes a TSV dump of the metric rows via `navigator.clipboard.writeText` and flashes a 1.5 s Snackbar. Format: panel title + subtitle header row, then tab-separated `label\tvalue` per metric — pastes cleanly into spreadsheets or the PHD2 forum.
+- **Recent files history** (v0.24.0) — `lib/phd2RecentFiles.ts` exposes `getRecentFiles` / `addRecentFile` / `removeRecentFile` / `clearRecentFiles` + a tiny `formatRelativeTime` formatter. Backed by `localStorage` under `phd2.recentFiles`, capped at 10 entries, deduped by path. `Phd2AnalyzerPage`'s empty-state landing shows the list when non-empty (monospace filename → reopens, full path + relative time under it, × per entry, "Clear all" button). Logs are added **only on successful parse**.
 - `lib/phd2GuidingMetrics.ts` — client-side port of the backend `compute_section_metrics` math. Drives both the **Section Summary** (over all samples) and the **Viewport Summary** panel (over only the chart's visible X-domain samples). A single `{ includeSettle }` option flips the backend-matching settle filter for both panels synchronously without a round-trip; the page-level toggle is the single source of truth.
 - **Chart** (`components/phd2/TimeSeriesChart.tsx`) — main panel with dual Y-axes (Guide error px + Pulses ms) plus SNR and Mass sub-panels. Clip paths per panel; rotated y-axis labels; settle-region shading tied to the page-level include-settle toggle; Guide-axis unit toggle (px / ″); SNR/Mass Auto/Fixed scale toggles; per-axis manual range dropdowns; legend-aware auto-fit; row-packed vertical-line event markers (non-dither events); dither keeps its triangle marker; hover tooltip anchored at the toolbar top so the chart reserves no space when hover is idle. Sub-panel sentinel filter for non-physical SNR / Mass values. Zoom/pan reset on section change.
 - **Left column axis-controls** are absolutely-positioned children of the chart wrapper, each centred on its target panel's vertical midpoint (Guide unit + Guide axis + Pulse axis pinned to the main panel, SNR / Mass toggles to their sub-panels). `SubPanelScaleToggle` renders its caption with `position: absolute` so `translateY(-50%)` centres only the ToggleButtonGroup, not the caption + toggle pair.
@@ -747,9 +750,14 @@ First pass of a nine-version arc (v0.22.0 → v0.30.0). Full spec: `docs/nightcr
   component (dx vs dy with 1σ/2σ covariance ellipse + centroid), and
   **EventList** component with click-to-jump into the chart via a new
   `scrollToTime` imperative handle on TimeSeriesChart (shipped).
-- v0.24.0 Pass C — interaction polish: manual range selection,
-  lock-scale across sections, copy-stats, reveal-in-finder, recent
-  files history.
+- v0.24.0 Pass C — **range selection + exclusion** (Shift-drag /
+  Shift+Alt-drag on the chart; Selection Summary title fold;
+  click-to-clear buttons), **copy stats to clipboard** (TSV via
+  `navigator.clipboard` + a confirmation Snackbar), and
+  **recent-files history** (`lib/phd2RecentFiles.ts` — localStorage-
+  backed, 10-entry cap, shown on the empty-state landing). Lock-
+  scale was already covered by the existing Guide / Pulse axis Fixed
+  dropdowns; reveal-in-finder was explicitly dropped from scope.
 - v0.25.0–v0.26.0 Pass D/E — FFT + unguided RA reconstruction + rig picker + worm markers + GA section handling + AO toggle.
 - v0.27.0–v0.28.0 Pass F/G — two-tier diagnostic engine (7 confident rules + 6 speculative), equipment-aware thresholds.
 - v0.29.0–v0.30.0 Pass H/I — multi-log comparison, trends, SQLite persistence, HTML report export, catalog integration.
