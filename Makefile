@@ -23,10 +23,15 @@ help:
 
 ## Start backend and frontend together (Ctrl+C stops both).
 ## Log level defaults to INFO; override with `make dev LOG=DEBUG`.
+## BROWSER defaults to Brave (Fred's default); override with `make dev BROWSER=...`
+## or BROWSER=none to suppress auto-opening. Vite's macOS heuristic picks the
+## first running Chromium-family browser from its own list (Chrome before Brave),
+## so setting BROWSER explicitly is needed when multiple are running.
 LOG ?= INFO
+BROWSER ?= Brave Browser
 dev:
 	@(cd backend && NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --port 8000) & \
-	(cd frontend && npm run dev) & \
+	(cd frontend && BROWSER="$(BROWSER)" npm run dev) & \
 	trap '' INT TERM; \
 	wait; \
 	stty sane 2>/dev/null; true

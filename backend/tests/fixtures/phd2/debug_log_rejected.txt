@@ -1,0 +1,2 @@
+PHD2 debug log. This is not a guide log — should be rejected.
+Some other debug content here that the parser won't read.

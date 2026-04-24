@@ -1,0 +1,21 @@
+PHD2 version 2.6.13, Log version 2.5. Log enabled at 2026-03-07 20:00:00
+
+Guiding Begins at 2026-03-07 21:00:00
+Pixel scale = 2.0 arc-sec/px, Binning = 1, Focal length = 500 mm
+Mount = Test Mount, xAngle = 0.0, xRate = 1.0, yAngle = 90.0, yRate = 1.0, parity = N/A
+Exposure = 1000 ms
+Dec = 0.0 deg, Hour angle = 0.00 hr, Pier side = West, Rotator pos = Unknown
+Lock position = 100.0, 100.0, Star position = 100.0, 100.0, HFD = 2.0 px
+Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDistance,RADuration,RADirection,DECDuration,DECDirection,XStep,YStep,StarMass,SNR,ErrorCode
+1,1.000,"Mount",0.000,0.000,0.000,0.000,0.000,0.000,0,,0,,,,1000,20.0,0
+Guiding Ends at 2026-03-07 21:00:01
+
+Guiding Begins at 2026-03-07 20:30:00
+Pixel scale = 2.0 arc-sec/px, Binning = 1, Focal length = 500 mm
+Mount = Test Mount, xAngle = 0.0, xRate = 1.0, yAngle = 90.0, yRate = 1.0, parity = N/A
+Exposure = 1000 ms
+Dec = 0.0 deg, Hour angle = 0.00 hr, Pier side = West, Rotator pos = Unknown
+Lock position = 100.0, 100.0, Star position = 100.0, 100.0, HFD = 2.0 px
+Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDistance,RADuration,RADirection,DECDuration,DECDirection,XStep,YStep,StarMass,SNR,ErrorCode
+1,1.000,"Mount",0.000,0.000,0.000,0.000,0.000,0.000,0,,0,,,,1000,20.0,0
+Guiding Ends at 2026-03-07 20:30:01

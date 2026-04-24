@@ -278,15 +278,47 @@ def _phase_name_from_delta_lon(delta_lon: float) -> str:
 
 
 def _moon_rise_set(
-    times: Time,
+    night_date: date,
     location: EarthLocation,
     tz: ZoneInfo,
 ) -> tuple[str | None, str | None]:
-    """Find moonrise and moonset times within the time window."""
+    """Find the moonrise + moonset most relevant to ``night_date``'s night.
+
+    Searches a **48h** window starting at local midnight of ``night_date``
+    — wider than the sun's noon-to-noon window — because the lunar
+    period is ~24h50m and a moon that rose just before noon won't rise
+    again until after tomorrow's noon, which would slip outside a 24h
+    search and leave moonrise as ``None``. The 48h window also captures
+    rises that happened during the morning's daytime so the user sees
+    the actual time the moon came up, even though that's not "tonight"
+    in a strict sense.
+
+    Returns the first rise and the first set that follows it. If the
+    moon never rises above the horizon in the window (polar winter for
+    high latitudes), both fields are ``None``.
+    """
+    start_local = datetime(night_date.year, night_date.month, night_date.day, 0, 0, 0, tzinfo=tz)
+    end_local = start_local + timedelta(hours=48)
+    start_utc = start_local.astimezone(UTC)
+    end_utc = end_local.astimezone(UTC)
+
+    # 1-minute resolution over 48h — same resolution as the existing
+    # sun-crossing grid so rise/set precision stays at ±30 s.
+    n_samples = 48 * 60 + 1
+    times = _make_time_grid(start_utc, end_utc, n_samples)
     moon_alts = _moon_altitudes(times, location)
 
     rise_dt = _find_crossing(times, moon_alts, _HORIZON, direction="up")
-    set_dt = _find_crossing(times, moon_alts, _HORIZON, direction="down")
+
+    # Start the set search strictly after the rise so a lingering "already
+    # up" window in the first hour doesn't cause us to emit the previous
+    # cycle's set as tonight's. When the moon never rises in the window,
+    # fall back to scanning from the start so a set-without-rise case
+    # (section opened with moon already up) still reports the set.
+    if rise_dt is not None:
+        set_dt = _find_crossing_after(times, moon_alts, _HORIZON, direction="down", after=rise_dt)
+    else:
+        set_dt = _find_crossing(times, moon_alts, _HORIZON, direction="down")
 
     rise_str = rise_dt.astimezone(tz).strftime("%H:%M") if rise_dt else None
     set_str = set_dt.astimezone(tz).strftime("%H:%M") if set_dt else None
@@ -464,8 +496,11 @@ def compute_night_summary(
 
     moon_info = _moon_phase_info(midnight_time, location)
 
-    # Moon rise/set during the night window
-    moonrise_str, moonset_str = _moon_rise_set(times, location, tz)
+    # Moon rise/set relevant to this night. Uses its own 48h search
+    # window internally — the 24h sun grid above is too narrow given
+    # the lunar period, and we want to capture rises that happened in
+    # the daytime before tonight's astro-dark window.
+    moonrise_str, moonset_str = _moon_rise_set(night_date, location, tz)
     moon_info = MoonInfo(
         illumination_pct=moon_info.illumination_pct,
         elongation_deg=moon_info.elongation_deg,

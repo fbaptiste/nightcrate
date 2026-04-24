@@ -29,6 +29,7 @@ import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturi
 import SettingsIcon from "@mui/icons-material/Settings";
 import StarsIcon from "@mui/icons-material/Stars";
 import WbSunnyIcon from "@mui/icons-material/WbSunny";
+import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
@@ -79,6 +80,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
   { to: "/planner", label: "Planner", icon: <StarsIcon /> },
   { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
+  { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },

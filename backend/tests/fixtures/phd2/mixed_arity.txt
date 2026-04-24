@@ -1,0 +1,18 @@
+PHD2 version 2.6.13, Log version 2.5. Log enabled at 2026-03-07 19:33:45
+
+Guiding Begins at 2026-03-07 19:35:40
+Camera = ZWO ASI178MM
+Pixel scale = 3.96 arc-sec/px, Binning = 2, Focal length = 250 mm
+Mount = ZWO000, xAngle = 85.1, xRate = 1.238, yAngle = -6.3, yRate = 3.254, parity = N/A
+Exposure = 1000 ms
+Dec = 69.0 deg, Hour angle = -3.81 hr, Pier side = West, Rotator pos = Unknown
+Lock position = 786.046, 723.641, Star position = 785.801, 723.035, HFD = 2.52 px
+X guide algorithm = Hysteresis
+Y guide algorithm = Resist Switch
+Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDistance,RADuration,RADirection,DECDuration,DECDirection,XStep,YStep,StarMass,SNR,ErrorCode
+1,1.000,"Mount",0.100,0.200,0.150,0.180,0.100,0.100,50,W,60,N,,,1000,20.0,0
+2,2.000,"Mount",-0.100,-0.200,-0.150,-0.180,-0.100,-0.100,50,E,60,S,,,1000,20.0,0
+3,3.000,"DROP",,,,,,,,,,,,,500,15.0,6,"Star lost - mass changed"
+4,4.000,"DROP",,,,,,,,,,,,,400,14.0,7,"No star found"
+5,5.000,"Mount",0.050,-0.080,-0.060,0.045,-0.040,0.030,25,E,20,S,,,950,19.5,0
+Guiding Ends at 2026-03-07 19:35:45

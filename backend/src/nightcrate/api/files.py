@@ -13,6 +13,27 @@ router = APIRouter(prefix="/api/files", tags=["File Browser"])
 PROJECT_EXTENSIONS = {".pxiproject"}
 
 
+def _parse_accept(raw: str | None) -> set[str] | None:
+    """Parse a comma-separated list of extensions.
+
+    ``None`` (no ``accept`` query param) → ``None``, meaning "use the default
+    image-extension set". A non-empty ``accept`` wins even when
+    ``ALL_EXTENSIONS`` also matches — callers that want guide-log-only
+    listings pass ``accept=.txt``.
+    """
+    if not raw:
+        return None
+    exts: set[str] = set()
+    for token in raw.split(","):
+        ext = token.strip().lower()
+        if not ext:
+            continue
+        if not ext.startswith("."):
+            ext = "." + ext
+        exts.add(ext)
+    return exts or None
+
+
 @router.get("/volumes")
 async def list_volumes() -> list[dict]:
     """List available filesystem volumes/mount points."""
@@ -56,12 +77,22 @@ async def list_volumes() -> list[dict]:
 @router.get("/browse")
 async def browse(
     path: str = Query(default="~", description="Directory path to list"),
+    accept: str | None = Query(
+        default=None,
+        description=(
+            "Comma-separated list of file extensions to show (e.g. '.txt'). "
+            "When omitted, defaults to the image-viewer extension set. "
+            "Archives and projects are always shown regardless of this filter."
+        ),
+    ),
 ) -> dict:
-    """List directory contents — subdirectories and image files only."""
+    """List directory contents — subdirectories and files whose extension matches ``accept``."""
     p = Path(path).expanduser().resolve()
 
     if not p.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {p}")
+
+    accepted_exts = _parse_accept(accept) or ALL_EXTENSIONS
 
     dirs: list[dict] = []
     files: list[dict] = []
@@ -85,7 +116,7 @@ async def browse(
         elif entry.is_file():
             if archive_io.is_archive(entry):
                 archives.append({"name": entry.name, "path": str(entry)})
-            elif entry.suffix.lower() in ALL_EXTENSIONS:
+            elif entry.suffix.lower() in accepted_exts:
                 try:
                     size = entry.stat().st_size
                 except OSError:
@@ -106,6 +137,13 @@ async def browse(
 async def browse_archive(
     path: str = Query(...),
     subdir: str = Query(default=""),
+    accept: str | None = Query(
+        default=None,
+        description=(
+            "Comma-separated list of file extensions to show (e.g. '.txt'). "
+            "When omitted, all files in the archive are listed."
+        ),
+    ),
 ) -> dict:
     """List contents of an archive at the given subdirectory level."""
     archive_path = Path(path).expanduser().resolve()
@@ -117,6 +155,10 @@ async def browse_archive(
     entries = archive_io.list_contents(archive_path, subdir)
     dirs = [e for e in entries if e["type"] == "dir"]
     files = [e for e in entries if e["type"] == "file"]
+
+    accepted_exts = _parse_accept(accept)
+    if accepted_exts is not None:
+        files = [f for f in files if Path(f["name"]).suffix.lower() in accepted_exts]
 
     if not subdir:
         parent = None

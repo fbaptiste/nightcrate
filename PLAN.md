@@ -34,9 +34,11 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.20.0 — DSO External References (Wikidata + Wikipedia)](#v0200--dso-external-references-wikidata--wikipedia) ✅
 - [v0.21.0 — Target Planner Scoring Algorithm](#v0210--target-planner-scoring-algorithm) ✅
 - [v0.21.1 — Scoring Polish + Planner UX + External Refs Extension](#v0211--scoring-polish--planner-ux--external-refs-extension) ✅
+- [v0.22.0 — PHD2 Guide-Log Analyzer Pass A (Parser + Viewer Skeleton)](#v0220--phd2-guide-log-analyzer-pass-a-parser--viewer-skeleton) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
+- [Appendix: PHD2 Analyzer Roadmap](#appendix-phd2-analyzer-roadmap)
 - [Appendix: Library Reference](#appendix-library-reference)
 
 ---
@@ -3449,6 +3451,233 @@ external-refs infrastructure introduced in v0.20.0.
 
 ---
 
+## v0.22.0 — PHD2 Guide-Log Analyzer Pass A (Parser + Viewer Skeleton)
+
+**Status:** Done
+**Branch:** `v0.22.0/phd2-analyzer-pass-a`
+
+First pass of a multi-version PHD2 guide-log analyzer (v0.22.0 →
+v0.30.0, functional spec at
+`docs/nightcrate-phd2-analyzer-spec-v2.md`). v0.22.0 delivers the
+parser, a D3 time-series chart, a five-phase calibration plot,
+per-section summary metrics (RMS / peak / duration / SNR / frame
+count), and a warnings drawer — enough for "open a PHD2 log, see the
+guiding graph" as a standalone feature. Every later pass extends this
+foundation without rework.
+
+### Goals
+
+- Anchor the multi-version arc on a correct, format-tolerant parser.
+- Prove the data-model shape against a single high-confidence chart
+  before the UI surface widens.
+- Ship as a standalone feature (spec §4.1) — no catalog dependency.
+
+### Parser (§3 of the spec)
+
+- [x] File identification via content sniff (first non-blank line
+      starts with `PHD2 version`); debug logs raise
+      `Phd2DebugLogRejected` → HTTP 422.
+- [x] Log-version capture when the PHD2 app version is blank (ASIAIR
+      bundles).
+- [x] Section splitting — Calibration + Guiding sections kept in file
+      order (not timestamp order, per spec §3.8).
+- [x] Section-header block parsing — regex-by-name for 35+ known keys;
+      unrecognized keys retained verbatim in `freeform_keys` so future
+      PHD2 versions don't lose information.
+- [x] Guiding CSV parsing — by-name mapping, 18-vs-19-column arity
+      tolerance (ErrorDescription trailing field), empty fields resolve
+      to `None` (never `0.0`), DROP frames preserve `None` in
+      positional fields.
+- [x] ErrorDescription captured verbatim from the log — no hardcoded
+      code→string table (spec §11.2 documents why the prior table was
+      wrong).
+- [x] Calibration CSV parsing — five named phases
+      (West/East/Backlash/North/South) with derived angle + rate +
+      parity extracted from the `<Axis> calibration complete` prose
+      lines.
+- [x] INFO event classification — closed vocabulary + raw-message
+      retention for fallthrough: `settle_begin`, `settle_end`,
+      `lock_position_set`, `dither`, `server_pause`, `server_resume`,
+      `star_selected`, `alert`, `guiding_enabled`, `guiding_disabled`,
+      generic `info`.
+- [x] Locale-decimal recovery — detect via token-count heuristic
+      (`T > C × 1.3`), rebuild float fields (integer columns like
+      Frame and RADuration stay as a single token).
+- [x] Backward-timestamp tolerance — sections in file order with a
+      warning when start times go backward.
+- [x] Parse-warning collection across the file (locale, backward
+      timestamp, missing pixel scale, short row, error-count summary).
+
+### Data model
+
+- [x] Pydantic v2 models: `ParsedLog`, `LogSection`, `SectionHeader`,
+      `GuidingSample`, `CalibrationSample`, `CalibrationPhase`,
+      `LogEvent`, `ParseWarning`. All distances in pixels;
+      `arcsec_scale` surfaced alongside metrics so the UI renders
+      dual-unit labels without re-reading the header.
+- [x] `Phd2DebugLogRejected` exception (ValueError subclass).
+
+### Metrics (v0.22.0 scope only)
+
+- [x] `compute_section_metrics`: RMS RA / Dec / total, peak RA / Dec,
+      frame count + error count, duration, mean SNR, median SNR, mean
+      star mass. Pixel-only compute; arcsec conversion at display time.
+- [x] DROP frames excluded from RMS (positional fields are `None`).
+- [x] Calibration sections route through `compute_section_metrics`
+      returning `None` for guiding metrics — uniform API shape across
+      section kinds.
+
+Drift + oscillation + settle-aware filtering → Pass B (v0.23.0).
+
+### API
+
+- [x] `POST /api/phd2/parse` — body `{path: str}`, returns
+      `ParseResponse` (ParsedLog + per-section metrics).
+- [x] In-process TTL cache keyed by `(path, mtime_ns, size)` with
+      per-key locking (mirrors `api/images.py`). 120 s TTL, 8-entry
+      cap.
+- [x] `GET /api/phd2/cache/stats`, `POST /api/phd2/cache/clear`.
+- [x] 404 on missing file, 400 on directory, 422 on debug log /
+      non-PHD2 content.
+
+### Frontend
+
+- [x] New `/guide-logs` route + nav entry in `AppShell.tsx`
+      (`ShowChartIcon`, auto-appends via the v0.21.1 nav-reorder
+      machinery for users with saved orders).
+- [x] `pages/GuideLogsPage.tsx` — path input + Open button + parse
+      status + summary strip + warnings drawer.
+- [x] `components/guidelogs/TimeSeriesChart.tsx` — D3 time-series:
+      RA blue + Dec orange traces, correction bars below the traces,
+      SNR + StarMass sub-panels, crosshair cursor with all-trace
+      readouts, D3 zoom/pan + reset. **Null values break the line**
+      (never interpolate across DROP frames — the quiet correctness
+      win that justifies the parser discipline).
+- [x] `components/guidelogs/CalibrationPlot.tsx` — five-phase
+      stepped path in dx/dy pixel space, origin-preserving square
+      layout, phase legend with derived angle + rate + parity +
+      axis-separation readout.
+- [x] `components/guidelogs/StatsPanel.tsx` — dual-unit
+      ("0.42 px / 1.66″") rendering when `Pixel scale` is declared,
+      pixels-only otherwise.
+- [x] `components/guidelogs/WarningsDrawer.tsx` — chip in header
+      expanding to a short list.
+- [x] `components/guidelogs/SectionNavigator.tsx` — left-column list
+      with type chip, start time, duration, and a top-line stat.
+- [x] `api/guideLogs.ts` — TypeScript types mirroring Pydantic
+      models, `parseGuideLog`, cache endpoints.
+
+Interaction polish (manual range selection, lock-scale, copy-stats,
+recently-analyzed list, reveal-in-finder, drag-and-drop ingestion) is
+deferred to Pass C (v0.24.0) per the approved plan.
+
+### Tests
+
+- [x] 47 initial PHD2 tests (parser §3 correctness + metrics pinned
+      regressions + API endpoints). Plus 8 `TestSettleExclusion`
+      tests added during the post-landing polish round below. Total
+      suite: **1928 passed, 3 skipped** (up from 1862 at v0.21.1).
+- [x] Fixtures: trimmed ASIAIR sample + 5 synthetic edge-case
+      fixtures (locale-corrupted, backward-timestamp, missing pixel
+      scale, debug-log, mixed arity).
+- [x] Pinned RMS regression tests with hand-computed expected values.
+- [x] DROP-frame handling verified: `None` in positional fields,
+      never `0.0`.
+
+### Pass-A polish round (post-initial-landing)
+
+Significant work on top of the initial landing, some brought forward
+from Pass B scope because the affected behaviour was actively
+misleading users.
+
+- [x] **Settle-window exclusion in guide-quality metrics** (PHD2 /
+      PHDLogViewer convention — brought forward from Pass B). Peak /
+      RMS / SNR / Mass no longer count samples bracketed by
+      `settle_begin` / `settle_end` events, so the numbers reflect
+      actual guiding instead of dither-excursion amplitudes. New
+      `_settle_intervals` state-machine helper (tolerant of None-
+      anchored, lone-end, unclosed-begin, duplicate-begin), new
+      `frame_count_in_settle` / `frame_count_in_stats` fields on
+      `SectionMetrics`, chart settle-region shading, page-level
+      "Include settle frames in stats" toggle. Backend filters at
+      source; frontend `lib/phd2GuidingMetrics.ts` mirrors the math
+      client-side so the toggle flips without a round-trip.
+- [x] **Viewport Summary panel** — second `StatsPanel` above the
+      Section Summary that recomputes every metric over just the
+      chart's visible X-domain samples. Page owns a `viewport` state,
+      chart exposes `onViewportChange`. Both panels are collapsible.
+- [x] **Event vertical-line markers with row-packed labels** —
+      replaces the earlier event-dot indicator. Non-dither events get
+      a thin dashed vertical line spanning every panel plus a short
+      text label in one of three stacked rows (greedy-packed so
+      labels don't overlap). Dither keeps its triangle marker.
+- [x] **Chart polish** — clip paths per panel data area; rotated
+      y-axis labels; axis extreme ticks (`withDomainExtremes`);
+      clipped-pulse caret indicators; pulse/SNR/mass tick rounding
+      to drop float-precision artifacts; Guide-axis unit toggle
+      (px / ″); SNR/Mass Auto/Fixed scale toggles; legend-aware
+      auto-fit (hiding a series narrows the axis); sentinel filter
+      for non-physical SNR/Mass values; per-section zoom reset;
+      uniform panel background tint; main-panel vertical axes
+      removed for parity with the sub-panels' look; +50 px gap
+      between legend and chart so the hover tooltip has room.
+- [x] **Left-column axis controls** — Guide unit / Guide axis /
+      Pulse axis / SNR scale / Mass scale absolutely-positioned and
+      each vertically centred on its target panel inside the SVG.
+      Toggle wrapper uses `translateY(-50%)` so centring stays
+      robust against MUI rendering-height surprises; label floats
+      above via `position: absolute, bottom: 100%`.
+- [x] **Tooltip restructured** — RA / Dec error + pulse grid with
+      blanks (not em-dashes) for null cells; event info removed
+      from the tooltip now that the chart's line+label markers
+      convey it; tooltip anchored at the toolbar's top and extends
+      downward so the chart area isn't reserved when hover is idle
+      and the tooltip never escapes the Tabs panel.
+- [x] **Navigator + warnings** — Section navigator is collapsible
+      to a thin rail; warnings chip converted to a hover tooltip
+      with friendly event titles instead of raw codes.
+- [x] **Moonrise in Tonight calculator** — `_moon_rise_set` widened
+      from the sun's 24 h noon-to-noon grid to a dedicated 48 h
+      window anchored at local midnight, so daytime moonrises are
+      captured instead of returning `None`. Applies beyond PHD2 —
+      the Tonight at-a-glance calculator now reports actual
+      moonrise times even when the moon rose earlier in the day.
+
+### Docs
+
+- [x] Spec at `docs/nightcrate-phd2-analyzer-spec-v2.md`.
+- [x] CLAUDE.md — new "PHD2 Guide-Log Analyzer" section describing
+      the architecture + the shared architectural principles that
+      apply across the multi-version arc.
+- [x] `nightcrate-current-state.md` — new feature entry, v0.22.0
+      version bump.
+- [x] New "Appendix: PHD2 Analyzer Roadmap" (below) — one-line
+      descriptions of v0.22.0 → v0.30.0.
+
+### Verification
+
+- [x] Backend: `ruff check`, `ruff format --check`, `bandit -r src/`,
+      `pytest -n auto` — **all green, 1909 tests pass**.
+- [x] Frontend: `npm run build` — TypeScript clean.
+- [ ] Manual UI rundown via `make dev` — user task, see PR body.
+
+### Out of scope (deferred to later passes)
+
+See the PHD2 Analyzer Roadmap appendix for the full arc. Highlights:
+
+- Scatter plot, unit toggle, drift/oscillation metrics, settle
+  detection → Pass B (v0.23.0).
+- Manual range selection, lock scale, copy stats, recent-files
+  → Pass C (v0.24.0).
+- FFT + unguided reconstruction + rig picker + worm markers
+  → Pass D (v0.25.0).
+- GA handling + AO toggle → Pass E (v0.26.0).
+- Diagnostic engine → Pass F (v0.27.0) + Pass G (v0.28.0).
+- Multi-log comparison + persistence → Pass H (v0.29.0).
+- HTML report + catalog integration → Pass I (v0.30.0).
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.
@@ -5143,6 +5372,56 @@ Extend the same pattern to other equipment types — allow one or more URLs on c
 - **IMAGETYP filename fallback:** When IMAGETYP is missing (some SharpCap versions), fall back to filename pattern matching (e.g., `Dark_10.0s_...` or path containing `/darks/`).
 
 ---
+
+---
+
+## Appendix: PHD2 Analyzer Roadmap
+
+The PHD2 guide-log analyzer is planned as a nine-version arc (v0.22.0
+→ v0.30.0). Full spec: `docs/nightcrate-phd2-analyzer-spec-v2.md`.
+Shared architectural principles (standalone-first, pixel-canonical
+representation, parse-by-name, never silently coerce missing data,
+colorblind-safe palette, sourced interpretive claims, service + API
+split, AI-readiness) apply across every version.
+
+| Version | Pass | Primary outcome | Spec ref |
+| --- | --- | --- | --- |
+| **v0.22.0** | A | Parser + ingestion + basic viewer (time-series chart + core stats + basic calibration plot). **Shipped.** | §3, §5.2 subset, §5.3 time-series + cal |
+| v0.23.0 | B | Scatter plot + unit toggle + drift / oscillation metrics + settle detection + INFO event display + warnings drawer polish | §5.2 rest, §5.3 scatter, §5.6, §5.7 |
+| v0.24.0 | C | Interaction polish: manual range, exclude drag, lock scale, copy stats, reveal-in-finder, recent-files history | §5.5 |
+| v0.25.0 | D | FFT + unguided RA reconstruction + rig picker + worm-period markers | §6.1, §6.2, §6.5 |
+| v0.26.0 | E | Guiding Assistant section handling + AO / Mount toggle | §6.3, §6.4 |
+| v0.27.0 | F | Diagnostic engine — confident tier (7 rules) + two-tier scaffolding | §7.1, §7.2 |
+| v0.28.0 | G | Diagnostic engine — speculative tier (6 rules) + equipment-aware + diagnostic settings | §7.3, §7.4, §7.5 |
+| v0.29.0 | H | Multi-log comparison + trends + recently-analyzed history + first SQLite persistence tier | §8.1, §8.2, §8.5 |
+| v0.30.0 | I | HTML report export + catalog integration (when imaging-core lands) | §8.3, §8.4 |
+
+Roadmap beyond v0.30.0 (§9): debug-log parsing, live JSON-RPC event
+monitoring, AI-powered session analysis, deterministic parameter
+recommendations. Each gets its own spec when prioritized.
+
+### Design decisions locked in for the arc (2026-04-23 Q&A)
+
+- **Version granularity:** fine — three versions for spec-phase-v1,
+  same rhythm through spec-v2, v3, v4.
+- **Persistence:** none until v0.29.0. Parse-on-demand with an
+  in-process TTL cache through Pass G. The first SQLite tables land
+  when multi-log comparison actually needs cross-session queries.
+- **Rig association:** no picker until v0.25.0 (first version that
+  consumes rig context). Manual selection first; auto-suggest from
+  header strings layered later only if ambiguous matches prove rare.
+- **File ingestion UX:** absolute filesystem paths (matches image
+  viewer). No copy-to-APP_DIR. Drag-and-drop polish deferred, lands
+  whenever it's useful.
+
+### License note
+
+PHDLogViewer (the reference tool) is GPLv3; NightCrate is MIT. Any
+algorithm we cross-reference against PHDLogViewer's source (notably
+the unguided-RA-reconstruction math in v0.25.0) is reimplemented
+clean-room — describe the algorithm in prose, then implement from the
+prose. Algorithms themselves aren't copyrightable; specific code
+expression is.
 
 ---
 
