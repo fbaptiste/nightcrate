@@ -206,7 +206,10 @@ export default function GuideLogsPage() {
             >
               {selected.section.kind === "guiding" ? (
                 <Stack spacing={2}>
-                  <TimeSeriesChart samples={selected.section.samples} />
+                  <TimeSeriesChart
+                    samples={selected.section.samples}
+                    events={selected.section.events}
+                  />
                   <StatsPanel metrics={selected.metrics} kind="guiding" />
                 </Stack>
               ) : (

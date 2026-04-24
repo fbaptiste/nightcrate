@@ -25,6 +25,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import type { LogSection } from "@/api/guideLogs";
 import PaginationActions from "@/components/common/PaginationActions";
+import { formatWallClock } from "@/lib/guideLogFormat";
 import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 import { PHASE_COLORS } from "./CalibrationPlot";
 
@@ -152,6 +153,8 @@ export default function SectionDataTab({ section }: Props) {
     return hasOkRow ? [NO_ERROR, ...sorted] : sorted;
   }, [guidingRows]);
 
+  const sectionStartIso = section.start_time;
+
   const guidingColumns = useMemo<GridColDef<GuidingRow>[]>(
     () => [
       { field: "frame", headerName: "Frame", width: 80 },
@@ -160,6 +163,17 @@ export default function SectionDataTab({ section }: Props) {
         headerName: "Time (s)",
         width: 90,
         valueFormatter: (v: number) => v.toFixed(2),
+      },
+      {
+        field: "wall_clock",
+        headerName: "Clock",
+        width: 90,
+        // Wall-clock is monotonic with Time(s) within a section — no
+        // sort/filter UX value, and filtering on a continuous time
+        // value doesn't help anyway.
+        sortable: false,
+        filterable: false,
+        valueGetter: (_v, row) => formatWallClock(sectionStartIso, row.time_seconds),
       },
       {
         field: "mount_kind",
@@ -252,7 +266,7 @@ export default function SectionDataTab({ section }: Props) {
         },
       },
     ],
-    [errorOptions],
+    [errorOptions, sectionStartIso],
   );
 
   const calibrationColumns = useMemo<GridColDef<CalibrationRow>[]>(
@@ -378,9 +392,17 @@ function EventsList({ section }: { section: LogSection }) {
           >
             <Typography
               variant="caption"
-              sx={{ fontFamily: "monospace", minWidth: 64, color: "text.secondary" }}
+              sx={{ fontFamily: "monospace", minWidth: 78, color: "text.secondary" }}
             >
-              {e.time_seconds != null ? `${e.time_seconds.toFixed(1)}s` : "—"}
+              {e.time_seconds != null
+                ? formatWallClock(section.start_time, e.time_seconds)
+                : "—"}
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{ fontFamily: "monospace", minWidth: 60, color: "text.secondary" }}
+            >
+              {e.time_seconds != null ? `${e.time_seconds.toFixed(1)}s` : ""}
             </Typography>
             <Chip
               label={e.kind}

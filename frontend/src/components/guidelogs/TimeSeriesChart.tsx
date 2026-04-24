@@ -19,11 +19,14 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { useTheme } from "@mui/material/styles";
-import type { GuidingSample } from "@/api/guideLogs";
+import type { GuidingSample, LogEvent } from "@/api/guideLogs";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {
   samples: GuidingSample[];
+  /** Section's INFO events — only ``dither`` events are rendered as
+   *  markers on the chart. Pass-through from the parsed section. */
+  events?: LogEvent[];
   height?: number;
 }
 
@@ -52,7 +55,7 @@ interface HoverInfo {
   starMass: number | null;
 }
 
-export default function TimeSeriesChart({ samples, height = 360 }: Props) {
+export default function TimeSeriesChart({ samples, events = [], height = 360 }: Props) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -311,6 +314,17 @@ export default function TimeSeriesChart({ samples, height = 360 }: Props) {
             Dec
           </Typography>
         </Stack>
+        {events.some((e) => e.kind === "dither") && (
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            {/* Inline triangle mirror of the on-chart dither marker. */}
+            <svg width={12} height={10} style={{ display: "block" }}>
+              <path d="M 1,1 L 11,1 L 6,9 Z" fill={COLOR_RA} />
+            </svg>
+            <Typography variant="caption" sx={{ color: COLOR_RA }}>
+              Dither
+            </Typography>
+          </Stack>
+        )}
         <Box sx={{ flex: 1 }} />
         <Button
           size="small"
@@ -399,6 +413,31 @@ export default function TimeSeriesChart({ samples, height = 360 }: Props) {
           stroke={COLOR_DEC}
           strokeWidth={1.25}
         />
+
+        {/* Dither markers — small downward triangles in the main panel's
+            top margin, one per dither event. Skipped when the event's
+            time is outside the current zoom domain. */}
+        {events
+          .filter((e) => e.kind === "dither" && e.time_seconds != null)
+          .map((e) => {
+            const cx = xScale(e.time_seconds as number);
+            if (cx < MARGIN.left - 4 || cx > MARGIN.left + innerW + 4) return null;
+            const topY = MARGIN.top - 9;
+            const apexY = MARGIN.top - 1;
+            const dx = e.parsed_fields.dx ?? "?";
+            const dy = e.parsed_fields.dy ?? "?";
+            return (
+              <path
+                key={`dither-${e.time_seconds}`}
+                d={`M ${cx - 5},${topY} L ${cx + 5},${topY} L ${cx},${apexY} Z`}
+                fill={COLOR_RA}
+                stroke={COLOR_RA}
+                strokeWidth={0.5}
+              >
+                <title>{`Dither at ${(e.time_seconds as number).toFixed(1)}s · Δx=${dx}, Δy=${dy} px`}</title>
+              </path>
+            );
+          })}
 
         {/* SNR panel */}
         <line
