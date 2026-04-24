@@ -87,11 +87,13 @@ export default function Phd2AnalyzerPage() {
   // forward clicks through this so the chart pans / zooms to the
   // event time without drilling d3 through props.
   const chartRef = useRef<TimeSeriesChartHandle | null>(null);
-  // User-drawn selection + exclusion bands. Selection is a single
-  // window (Shift-drag). Exclusions accumulate via successive
-  // Shift+Alt-drags (short drag or "Clear exclusions" wipes all).
-  // All reset on section change alongside viewport.
-  const [selection, setSelection] = useState<[number, number] | null>(null);
+  // User-drawn selection + exclusion bands — both multi-additive.
+  // Shift-drag appends a selection (teal band), Shift+Alt-drag
+  // appends an exclusion (hatched-grey band). Net sample set =
+  // union(selections) − union(exclusions). Removed via the per-zone
+  // × button on the chart or the "Clear all" toolbar action. All
+  // reset on section change alongside viewport.
+  const [selections, setSelections] = useState<Array<[number, number]>>([]);
   const [exclusions, setExclusions] = useState<Array<[number, number]>>([]);
   // Recent files history — localStorage-backed, displayed on the
   // empty-state landing when no log is currently loaded.
@@ -131,7 +133,7 @@ export default function Phd2AnalyzerPage() {
   // before the chart fires its initial event.
   useEffect(() => {
     setViewport(null);
-    setSelection(null);
+    setSelections([]);
     setExclusions([]);
   }, [selectedIndex]);
 
@@ -162,17 +164,19 @@ export default function Phd2AnalyzerPage() {
   }, [selected, includeSettle]);
 
   // Sample subset driving the Selection / Viewport Summary panel.
-  // Selection (Shift-drag) wins over the zoom-driven viewport when
-  // present; exclusion (Shift+Alt-drag) subtracts samples on top of
-  // whichever base set is active. Guiding sections only — calibration
-  // has no chart so there's no viewport to speak of.
+  // Base set = union of all selections (Shift-drag) when any exist;
+  // else the zoom-driven viewport; else the full section. Then
+  // subtract union of exclusions (Shift+Alt-drag). Guiding sections
+  // only — calibration has no chart so there's no viewport to speak
+  // of.
   const viewportSamples = useMemo(() => {
     if (!selected || selected.section.kind !== "guiding") return null;
     const base = (() => {
-      if (selection) {
-        const [t0, t1] = selection;
-        return selected.section.samples.filter(
-          (s) => s.time_seconds >= t0 && s.time_seconds <= t1,
+      if (selections.length > 0) {
+        return selected.section.samples.filter((s) =>
+          selections.some(
+            ([t0, t1]) => s.time_seconds >= t0 && s.time_seconds <= t1,
+          ),
         );
       }
       if (viewport) {
@@ -190,7 +194,7 @@ export default function Phd2AnalyzerPage() {
           ([e0, e1]) => s.time_seconds >= e0 && s.time_seconds <= e1,
         ),
     );
-  }, [selected, viewport, selection, exclusions]);
+  }, [selected, viewport, selections, exclusions]);
 
   const viewportMetrics = useMemo(() => {
     if (!viewportSamples || !selected) return null;
@@ -466,13 +470,10 @@ export default function Phd2AnalyzerPage() {
                     onViewportChange={setViewport}
                     settleIntervals={settleIntervals}
                     showSettleShading={!includeSettle}
-                    selection={selection}
+                    selections={selections}
                     exclusions={exclusions}
-                    onSelectionChange={setSelection}
-                    onExclusionAdd={(range) =>
-                      setExclusions((prev) => [...prev, range])
-                    }
-                    onExclusionsClear={() => setExclusions([])}
+                    onSelectionsChange={setSelections}
+                    onExclusionsChange={setExclusions}
                   />
                   <FormControlLabel
                     control={
@@ -500,9 +501,13 @@ export default function Phd2AnalyzerPage() {
                     <StatsPanel
                       metrics={viewportMetrics}
                       kind="guiding"
-                      title={selection ? "Selection summary" : "Viewport summary"}
+                      title={
+                        selections.length > 0
+                          ? "Selection summary"
+                          : "Viewport summary"
+                      }
                       subtitle={formatSubtitle(
-                        selection,
+                        selections,
                         exclusions,
                         viewport,
                         viewportSamples.length,
@@ -595,11 +600,11 @@ function basename(path: string): string {
 }
 
 /** Build the subtitle for the Selection / Viewport summary panel.
- *  The panel title is "Selection summary" when a user-drawn selection
- *  band exists, otherwise "Viewport summary"; the subtitle describes
- *  the active window + any exclusions subtracting from it. */
+ *  The panel title is "Selection summary" when any user-drawn
+ *  selection exists, otherwise "Viewport summary"; the subtitle
+ *  describes the active window + any exclusions subtracting from it. */
 function formatSubtitle(
-  selection: [number, number] | null,
+  selections: Array<[number, number]>,
   exclusions: Array<[number, number]>,
   viewport: [number, number] | null,
   visibleCount: number,
@@ -609,11 +614,20 @@ function formatSubtitle(
   const fmtRange = ([t0, t1]: [number, number]) =>
     `${formatWallClock(startIso, t0)} → ${formatWallClock(startIso, t1)}`;
   const parts: string[] = [];
-  if (selection) {
-    parts.push(fmtRange(selection));
-    parts.push(`${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`);
+  if (selections.length === 1) {
+    parts.push(fmtRange(selections[0]));
+    parts.push(
+      `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`,
+    );
+  } else if (selections.length > 1) {
+    parts.push(`${selections.length} selections`);
+    parts.push(
+      `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`,
+    );
   } else if (viewport) {
-    parts.push(`${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames visible`);
+    parts.push(
+      `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames visible`,
+    );
   } else {
     parts.push("All frames visible");
   }
