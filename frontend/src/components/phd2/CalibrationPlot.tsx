@@ -15,7 +15,7 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
-import type { CalibrationPhase } from "@/api/guideLogs";
+import type { CalibrationPhase } from "@/api/phd2";
 import { RIG_BLUE, RIG_BLUE_LIGHT, RIG_ORANGE, RIG_ORANGE_LIGHT, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {

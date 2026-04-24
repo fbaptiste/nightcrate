@@ -15,7 +15,7 @@
  *   dependency — that renders only the rows inside the viewport plus a
  *   small overscan buffer.
  * - Row-level className hook for conditional tinting (e.g. DROP frames
- *   in the Guide Logs data tab).
+ *   in the PHD2 Analyzer data tab).
  *
  * Deliberately NOT implemented (would bloat this for marginal value):
  *   column drag-reorder, column show/hide menu, manual resize handles,

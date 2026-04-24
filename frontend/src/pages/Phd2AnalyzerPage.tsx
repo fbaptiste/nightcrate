@@ -20,21 +20,21 @@ import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
-import { parseGuideLog, type ParseResponse } from "@/api/guideLogs";
+import { parseGuideLog, type ParseResponse } from "@/api/phd2";
 import { setActivity } from "@/api/client";
 import { FileBrowser } from "@/components/fits/FileBrowser";
-import SectionNavigator from "@/components/guidelogs/SectionNavigator";
-import StatsPanel from "@/components/guidelogs/StatsPanel";
-import TimeSeriesChart from "@/components/guidelogs/TimeSeriesChart";
-import CalibrationPlot from "@/components/guidelogs/CalibrationPlot";
-import SectionDataTab from "@/components/guidelogs/SectionDataTab";
-import WarningsDrawer from "@/components/guidelogs/WarningsDrawer";
+import SectionNavigator from "@/components/phd2/SectionNavigator";
+import StatsPanel from "@/components/phd2/StatsPanel";
+import TimeSeriesChart from "@/components/phd2/TimeSeriesChart";
+import CalibrationPlot from "@/components/phd2/CalibrationPlot";
+import SectionDataTab from "@/components/phd2/SectionDataTab";
+import WarningsDrawer from "@/components/phd2/WarningsDrawer";
 
 // Stable reference — consumers of FileBrowser should pass a stable array
 // for ``accept`` so the browser's useEffect deps don't churn on each render.
 const GUIDE_LOG_ACCEPT = [".txt"];
 
-export default function GuideLogsPage() {
+export default function Phd2AnalyzerPage() {
   const [pathInput, setPathInput] = useState("");
   const [activePath, setActivePath] = useState<string>("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -45,7 +45,7 @@ export default function GuideLogsPage() {
   const [tab, setTab] = useState(0);
 
   useEffect(() => {
-    setActivity("Guide Logs");
+    setActivity("PHD2 Analyzer");
   }, []);
 
   const parseMutation = useMutation({
@@ -82,7 +82,7 @@ export default function GuideLogsPage() {
       <Paper elevation={0} sx={{ p: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
         <Stack direction="row" spacing={1.5} alignItems="center">
           <Typography variant="h6" sx={{ mr: 2 }}>
-            Guide Logs
+            PHD2 Analyzer
           </Typography>
           <Button
             variant="outlined"

@@ -1,5 +1,5 @@
 /**
- * Data tab for the Guide Logs section view.
+ * Data tab for the PHD2 Analyzer section view.
  *
  * Renders a DataTable over the parsed rows of the currently-selected
  * section — per-frame ``GuidingSample`` rows for guiding sections, or
@@ -15,13 +15,13 @@ import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import type { LogSection } from "@/api/guideLogs";
+import type { LogSection } from "@/api/phd2";
 import { DataTable } from "@/components/common/DataTable";
 import type {
   DataTableColumn,
   DataTableFilter,
 } from "@/components/common/DataTable";
-import { formatWallClock } from "@/lib/guideLogFormat";
+import { formatWallClock } from "@/lib/phd2Format";
 import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 import { PHASE_COLORS } from "./CalibrationPlot";
 
@@ -304,7 +304,7 @@ export default function SectionDataTab({ section }: Props) {
           flexDirection: "column",
           // DROP-frame rows get a subtle tint so the user can spot
           // errors at a glance without needing a red/green signal.
-          "& .guidelogs-drop-row": {
+          "& .phd2-drop-row": {
             bgcolor: "action.hover",
           },
         }}
@@ -314,7 +314,7 @@ export default function SectionDataTab({ section }: Props) {
             rows={guidingRows}
             columns={guidingColumns}
             filters={guidingFilters}
-            getRowClassName={(r) => (r.mount_kind === "DROP" ? "guidelogs-drop-row" : undefined)}
+            getRowClassName={(r) => (r.mount_kind === "DROP" ? "phd2-drop-row" : undefined)}
             initialSort={{ field: "frame", direction: "asc" }}
             defaultViewMode="scroll"
             defaultPageSize={100}

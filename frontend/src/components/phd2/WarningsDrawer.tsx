@@ -13,7 +13,7 @@ import Collapse from "@mui/material/Collapse";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
-import type { ParseWarning } from "@/api/guideLogs";
+import type { ParseWarning } from "@/api/phd2";
 
 interface Props {
   warnings: ParseWarning[];

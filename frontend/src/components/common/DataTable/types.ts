@@ -4,7 +4,7 @@
  * Kept intentionally minimal: columns, filters, sort, view mode. The
  * feature set targets "scan + sort + filter + paginate a list of rows" —
  * the 80% case that MUI X DataGrid's Community tier handles fine but
- * whose 100-row pageSize cap blocks our Guide Logs Data tab with ~7 500
+ * whose 100-row pageSize cap blocks our PHD2 Analyzer Data tab with ~7 500
  * rows. Advanced features MUI X offers (column drag-reorder, show/hide
  * menus, manual resize handles, detail panels) are deliberately out of
  * scope.

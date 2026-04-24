@@ -14,7 +14,7 @@ import RigsPage from "@/pages/RigsPage";
 import CalculatorsPage from "@/pages/CalculatorsPage";
 import DsoCatalogPage from "@/pages/DsoCatalogPage";
 import PlannerPage from "@/pages/PlannerPage";
-import GuideLogsPage from "@/pages/GuideLogsPage";
+import Phd2AnalyzerPage from "@/pages/Phd2AnalyzerPage";
 import WeatherPage from "./pages/WeatherPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
@@ -38,7 +38,7 @@ const router = createBrowserRouter([
       { path: "calculators/:calcId", element: <CalculatorsPage /> },
       { path: "catalog/dso", element: <DsoCatalogPage /> },
       { path: "planner", element: <PlannerPage /> },
-      { path: "guide-logs", element: <GuideLogsPage /> },
+      { path: "phd2-analyzer", element: <Phd2AnalyzerPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "api-docs", element: <ApiDocsPage /> },

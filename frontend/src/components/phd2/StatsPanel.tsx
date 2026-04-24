@@ -9,7 +9,7 @@
 import Box from "@mui/material/Box";
 import Grid from "@mui/material/Grid";
 import Typography from "@mui/material/Typography";
-import type { SectionMetrics } from "@/api/guideLogs";
+import type { SectionMetrics } from "@/api/phd2";
 
 interface Props {
   metrics: SectionMetrics;

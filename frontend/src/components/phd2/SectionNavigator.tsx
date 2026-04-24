@@ -11,7 +11,7 @@ import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import type { SectionWithMetrics } from "@/api/guideLogs";
+import type { SectionWithMetrics } from "@/api/phd2";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {

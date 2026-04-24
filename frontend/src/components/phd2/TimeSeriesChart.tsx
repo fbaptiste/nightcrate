@@ -19,8 +19,8 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { useTheme } from "@mui/material/styles";
-import type { GuidingSample, LogEvent } from "@/api/guideLogs";
-import { formatWallClock } from "@/lib/guideLogFormat";
+import type { GuidingSample, LogEvent } from "@/api/phd2";
+import { formatWallClock } from "@/lib/phd2Format";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {

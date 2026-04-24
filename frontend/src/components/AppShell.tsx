@@ -80,7 +80,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
   { to: "/planner", label: "Planner", icon: <StarsIcon /> },
   { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
-  { to: "/guide-logs", label: "Guide Logs", icon: <ShowChartIcon /> },
+  { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },
