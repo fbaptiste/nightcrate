@@ -20,6 +20,7 @@ import Typography from "@mui/material/Typography";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { useTheme } from "@mui/material/styles";
 import type { GuidingSample, LogEvent } from "@/api/guideLogs";
+import { formatWallClock } from "@/lib/guideLogFormat";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {
@@ -27,6 +28,10 @@ interface Props {
   /** Section's INFO events — only ``dither`` events are rendered as
    *  markers on the chart. Pass-through from the parsed section. */
   events?: LogEvent[];
+  /** Section start timestamp (naive ISO local) — used to render
+   *  X-axis tick labels + cursor tooltip as wall-clock HH:MM:SS
+   *  instead of elapsed seconds. */
+  startIso?: string;
   height?: number;
 }
 
@@ -55,7 +60,12 @@ interface HoverInfo {
   starMass: number | null;
 }
 
-export default function TimeSeriesChart({ samples, events = [], height = 360 }: Props) {
+export default function TimeSeriesChart({
+  samples,
+  events = [],
+  startIso,
+  height = 360,
+}: Props) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -492,21 +502,23 @@ export default function TimeSeriesChart({ samples, events = [], height = 360 }: 
           x={MARGIN.left + 4}
           y={mainY0 + 10}
           fill={textColor}
-          fillOpacity={0.55}
-          fontSize={10}
+          fillOpacity={0.7}
+          fontSize={11}
+          fontWeight={600}
           textAnchor="start"
         >
-          px
+          Guide error (px)
         </text>
         <text
           x={MARGIN.left + 4}
           y={corrY0 + 10}
           fill={textColor}
-          fillOpacity={0.55}
-          fontSize={10}
+          fillOpacity={0.7}
+          fontSize={11}
+          fontWeight={600}
           textAnchor="start"
         >
-          ms
+          Guide pulses (ms) · above = W/N, below = E/S
         </text>
         {snrTicks.map((t) => (
           <text
@@ -525,11 +537,12 @@ export default function TimeSeriesChart({ samples, events = [], height = 360 }: 
           x={MARGIN.left + 4}
           y={snrY0 + 10}
           fill={textColor}
-          fillOpacity={0.55}
-          fontSize={10}
+          fillOpacity={0.7}
+          fontSize={11}
+          fontWeight={600}
           textAnchor="start"
         >
-          SNR
+          Star SNR
         </text>
         {massTicks.map((t) => (
           <text
@@ -548,11 +561,12 @@ export default function TimeSeriesChart({ samples, events = [], height = 360 }: 
           x={MARGIN.left + 4}
           y={massY0 + 10}
           fill={textColor}
-          fillOpacity={0.55}
-          fontSize={10}
+          fillOpacity={0.7}
+          fontSize={11}
+          fontWeight={600}
           textAnchor="start"
         >
-          mass
+          Star mass (ADU)
         </text>
 
         {/* X-axis bottom */}
@@ -579,7 +593,7 @@ export default function TimeSeriesChart({ samples, events = [], height = 360 }: 
               fontSize={10}
               textAnchor="middle"
             >
-              {formatElapsed(t)}
+              {formatXTick(t, startIso)}
             </text>
           </g>
         ))}
@@ -590,7 +604,7 @@ export default function TimeSeriesChart({ samples, events = [], height = 360 }: 
           fontSize={10}
           textAnchor="middle"
         >
-          elapsed (s)
+          {startIso ? "time (local)" : "elapsed (s)"}
         </text>
 
         {/* Crosshair */}
@@ -625,7 +639,9 @@ export default function TimeSeriesChart({ samples, events = [], height = 360 }: 
           }}
         >
           <Typography variant="caption" sx={{ display: "block", fontWeight: 600 }}>
-            Frame {hover.frame ?? "?"} · {hover.time.toFixed(2)} s
+            Frame {hover.frame ?? "?"} ·{" "}
+            {startIso ? `${formatWallClock(startIso, hover.time)} · ` : ""}
+            {hover.time.toFixed(2)} s
           </Typography>
           <Typography variant="caption" sx={{ display: "block", color: COLOR_RA }}>
             RA: {formatPx(hover.raRaw)} px
@@ -658,4 +674,14 @@ function formatElapsed(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds - m * 60);
   return `${m}m${String(s).padStart(2, "0")}`;
+}
+
+function formatXTick(elapsedSec: number, startIso: string | undefined): string {
+  // Wall-clock "HH:MM" when we have a section start; else the compact
+  // elapsed-minutes form (for charts without a known anchor).
+  if (!startIso) return formatElapsed(elapsedSec);
+  const start = new Date(startIso);
+  if (Number.isNaN(start.getTime())) return formatElapsed(elapsedSec);
+  const dt = new Date(start.getTime() + elapsedSec * 1000);
+  return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
 }

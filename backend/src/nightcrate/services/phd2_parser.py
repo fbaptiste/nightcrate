@@ -381,6 +381,12 @@ def _parse_section(
     end_time: datetime | None = None
     events: list[LogEvent] = []
     sample_lines: list[str] = []
+    # Running anchor for INFO events. PHD2 emits INFO lines inline with
+    # data rows; an event's wall-clock is "sometime between the last
+    # data row before it and the next one". We anchor each event to the
+    # preceding sample's Time column (or 0.0 when no sample has arrived
+    # yet — e.g., "Settling started" right after section begin).
+    last_sample_time: float | None = 0.0 if kind == "guiding" else None
 
     for line in data_lines:
         if not line.strip():
@@ -396,8 +402,14 @@ def _parse_section(
             sample_lines.append(line)
             continue
         if m := _RE_INFO.match(line):
-            events.append(_classify_info_event(m.group("message")))
+            events.append(_classify_info_event(m.group("message"), time_seconds=last_sample_time))
             continue
+        # Data row — peek at the Time column to advance the anchor so
+        # subsequent INFO lines are dated correctly.
+        if kind == "guiding":
+            peeked = _peek_sample_time_seconds(line)
+            if peeked is not None:
+                last_sample_time = peeked
         sample_lines.append(line)
 
     samples: list[GuidingSample] = []
@@ -419,10 +431,6 @@ def _parse_section(
             section_index=index,
             warnings=warnings,
         )
-
-    # Attach per-sample time anchor to events that were emitted before any
-    # sample (they get `time_seconds = None` — nothing to anchor to yet).
-    events = _anchor_events(events, samples)
 
     if error_count > 0:
         warnings.append(
@@ -881,8 +889,16 @@ def _parse_calibration_body(
 # ── INFO event classification ─────────────────────────────────────────────────
 
 
-def _classify_info_event(raw_message: str) -> LogEvent:
+def _classify_info_event(
+    raw_message: str,
+    time_seconds: float | None = None,
+) -> LogEvent:
     """Map an INFO line to a closed-vocabulary `EventKind`.
+
+    ``time_seconds`` is the wall-clock anchor — the Time column of the
+    most-recent sample line before this INFO line. Passed in by the
+    section walker so event ordering + timing reflects the log's real
+    interleaving.
 
     Unmatched patterns fall through as the generic `info` kind — the raw
     message is retained regardless of classification so a future PHD2 version
@@ -908,35 +924,27 @@ def _classify_info_event(raw_message: str) -> LogEvent:
             parsed_fields["x"] = m.group("x")
             parsed_fields["y"] = m.group("y")
 
-    return LogEvent(kind=kind, raw_message=message, parsed_fields=parsed_fields)  # type: ignore[arg-type]
+    return LogEvent(  # type: ignore[arg-type]
+        kind=kind,
+        raw_message=message,
+        parsed_fields=parsed_fields,
+        time_seconds=time_seconds,
+    )
 
 
-def _anchor_events(
-    events: list[LogEvent],
-    samples: list[GuidingSample],
-) -> list[LogEvent]:
-    """Assign `time_seconds` to events in file order.
+def _peek_sample_time_seconds(line: str) -> float | None:
+    """Quickly extract the Time column from a guiding-CSV data row.
 
-    PHD2 emits INFO lines inline with samples, so an event's timestamp is
-    "sometime between the surrounding samples." For v0.22.0 we assign the
-    timestamp of the next sample the event preceded. Events before any sample
-    get ``time_seconds = None``; events after the last sample get the last
-    sample's timestamp (good enough until Pass B adds precise interleaving).
+    Used by the section walker to keep the running event-anchor time up
+    to date without parsing the full row. Tolerant of locale-corrupted
+    rows (where Time is split into two tokens; this peek grabs only the
+    integer part, which is close enough to anchor events to the right
+    second).
     """
-    if not samples:
-        return events
-
-    # In the current implementation events and samples are separated during
-    # section parsing, so we can't perfectly reconstruct interleaving. This
-    # is acceptable for v0.22.0 — the warnings chip + events list get an
-    # approximate anchor, and Pass B reworks this with line-ordered walking.
-    last_time = samples[-1].time_seconds
-    return [
-        LogEvent(
-            time_seconds=e.time_seconds if e.time_seconds is not None else last_time,
-            kind=e.kind,
-            raw_message=e.raw_message,
-            parsed_fields=e.parsed_fields,
-        )
-        for e in events
-    ]
+    tokens = _tokenize_csv_line(line)
+    if len(tokens) < 2:
+        return None
+    try:
+        return float(tokens[1])
+    except ValueError:
+        return None

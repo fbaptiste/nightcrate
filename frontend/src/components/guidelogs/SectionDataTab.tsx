@@ -16,12 +16,14 @@
  * with ``valueOptions`` so the user gets a dropdown of the actual
  * values present instead of a free-text string filter.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import type { LogSection } from "@/api/guideLogs";
 import PaginationActions from "@/components/common/PaginationActions";
@@ -95,7 +97,13 @@ interface CalibrationRow {
 
 // ── Main component ───────────────────────────────────────────────────────────
 
+type ViewMode = "paginated" | "scroll";
+
 export default function SectionDataTab({ section }: Props) {
+  // Paginated vs scroll presentation of the guiding DataGrid. Persists
+  // across tab switches and section changes within a session.
+  const [viewMode, setViewMode] = useState<ViewMode>("paginated");
+
   const guidingRows = useMemo<GuidingRow[]>(() => {
     if (section.kind !== "guiding") return [];
     return section.samples.map((s) => ({
@@ -306,8 +314,26 @@ export default function SectionDataTab({ section }: Props) {
     [],
   );
 
+  const isGuiding = section.kind === "guiding";
+
   return (
     <Stack spacing={2} sx={{ height: "100%", minHeight: 0 }}>
+      {isGuiding && (
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
+          <Typography variant="caption" color="text.secondary">
+            View
+          </Typography>
+          <ViewModeToggle
+            value={viewMode}
+            onChange={(v) => setViewMode(v)}
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+            {viewMode === "paginated"
+              ? `${guidingRows.length.toLocaleString()} rows`
+              : `${guidingRows.length.toLocaleString()} rows, virtualized scroll`}
+          </Typography>
+        </Stack>
+      )}
       <Paper
         variant="outlined"
         sx={{
@@ -322,22 +348,47 @@ export default function SectionDataTab({ section }: Props) {
           },
         }}
       >
-        {section.kind === "guiding" ? (
+        {isGuiding ? (
           <DataGrid
+            // Key forces a remount between paginated and scroll modes so
+            // the internal page-size state doesn't leak across.
+            key={viewMode}
             rows={guidingRows}
             columns={guidingColumns}
             density="compact"
             disableRowSelectionOnClick
-            initialState={{
-              pagination: { paginationModel: { pageSize: 100 } },
-            }}
-            pageSizeOptions={[25, 50, 100]}
-            slotProps={{
-              basePagination: {
-                ActionsComponent: PaginationActions,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              } as any,
-            }}
+            {...(viewMode === "paginated"
+              ? {
+                  initialState: {
+                    pagination: { paginationModel: { pageSize: 100 } },
+                  },
+                  pageSizeOptions: [25, 50, 100],
+                  slotProps: {
+                    basePagination: {
+                      ActionsComponent: PaginationActions,
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    } as any,
+                  },
+                }
+              : {
+                  // Scroll mode: hide the paginator; render all rows in
+                  // a single page. MUI DataGrid's internal virtualization
+                  // keeps DOM cost constant regardless of row count, so
+                  // a 7 500-row guiding section scrolls smoothly with no
+                  // backend round-trips. (All rows are already in memory
+                  // from the initial parse — a "true" prefetch-from-DB
+                  // model belongs to v0.29.0 when SQLite persistence
+                  // lands.)
+                  hideFooterPagination: true,
+                  initialState: {
+                    pagination: {
+                      paginationModel: {
+                        pageSize: Math.max(1, guidingRows.length),
+                      },
+                    },
+                  },
+                  pageSizeOptions: [Math.max(1, guidingRows.length)],
+                })}
             getRowClassName={(params) =>
               params.row.mount_kind === "DROP" ? "guidelogs-drop-row" : ""
             }
@@ -357,6 +408,31 @@ export default function SectionDataTab({ section }: Props) {
       </Paper>
       <EventsList section={section} />
     </Stack>
+  );
+}
+
+// ── View-mode toggle ─────────────────────────────────────────────────────────
+
+function ViewModeToggle({
+  value,
+  onChange,
+}: {
+  value: ViewMode;
+  onChange: (v: ViewMode) => void;
+}) {
+  return (
+    <ToggleButtonGroup
+      value={value}
+      exclusive
+      size="small"
+      onChange={(_, v) => {
+        if (v) onChange(v as ViewMode);
+      }}
+      sx={{ "& .MuiToggleButton-root": { py: 0.25, px: 1, fontSize: 12 } }}
+    >
+      <ToggleButton value="paginated">Paginated</ToggleButton>
+      <ToggleButton value="scroll">Scroll</ToggleButton>
+    </ToggleButtonGroup>
   );
 }
 

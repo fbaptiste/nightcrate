@@ -209,6 +209,7 @@ export default function GuideLogsPage() {
                   <TimeSeriesChart
                     samples={selected.section.samples}
                     events={selected.section.events}
+                    startIso={selected.section.start_time}
                   />
                   <StatsPanel metrics={selected.metrics} kind="guiding" />
                 </Stack>
