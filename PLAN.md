@@ -3764,21 +3764,35 @@ interaction-polish bundle that was deferred from Pass A + B.
 
 ### Manual range selection + exclusion (spec §5.5)
 
-- [x] Shift+drag on the time-series chart creates a **selection**
-      band — translucent teal, visible across zoom/pan. Stats
-      recompute over the samples inside.
-- [x] Shift+Alt+drag creates an **exclusion** band — hatched grey
-      (distinct from solid-grey settle shading). Samples inside are
-      subtracted from the active summary subset.
+- [x] **Multi-additive selections** — Shift+drag appends a teal
+      band to the selections list; successive drags accumulate.
+- [x] **Multi-additive exclusions** — Shift+Alt+drag appends a
+      hatched-grey band to the exclusions list. Distinct hatch-
+      pattern `<defs>` fill separates them from solid-grey settle
+      shading.
+- [x] Net sample set = **union(selections) − union(exclusions)**.
+      Empty selections falls back to the zoom-driven viewport, then
+      to the full section.
 - [x] d3.zoom's `.filter` excludes shift-keyed mousedowns so the
-      new gesture doesn't fight with existing pan.
-- [x] Tiny drag (< 0.25 s) treats as click-to-clear.
-- [x] "Clear selection" + "Clear exclusion" buttons appear in the
-      chart toolbar when the respective band is active.
-- [x] Selection + exclusion reset on section change.
+      new gestures don't fight with existing pan. Cross-drag
+      ``xScaleRef`` captures the live scale so shift-drag + scroll-
+      zoom simultaneously doesn't drift the inversion.
+- [x] **Live preview** — a brighter ``pendingSelection`` /
+      ``pendingExclusion`` rect follows the cursor during drag;
+      committed on mouseup (or discarded if < 0.25 s drag).
+- [x] **Per-zone × close buttons** — rendered OUTSIDE the main-
+      panel clipPath so they stay clickable even when the band is
+      clipped by zoom. Teal × for selections, neutral × for
+      exclusions; offset vertically so ×s on overlapping right
+      edges don't collide.
+- [x] **Toolbar actions** — **Include in view**, **Exclude in
+      view** (disabled when not zoomed), **Clear all (N)** (count
+      badge when zones present), and the existing **Reset X zoom**.
+- [x] All zones reset on section change.
 - [x] Viewport Summary panel folds into **Selection Summary** when
-      a selection exists; subtitle shows the wall-clock range +
-      frame count + exclusion detail.
+      any selection exists; subtitle shows the wall-clock range
+      (1 selection) / "N selections" (multi), plus any exclusion
+      detail.
 
 ### Copy stats to clipboard (spec §5.5)
 

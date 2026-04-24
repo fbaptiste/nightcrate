@@ -613,21 +613,14 @@ function formatSubtitle(
 ): string {
   const fmtRange = ([t0, t1]: [number, number]) =>
     `${formatWallClock(startIso, t0)} → ${formatWallClock(startIso, t1)}`;
+  const framesLabel = `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`;
   const parts: string[] = [];
   if (selections.length === 1) {
-    parts.push(fmtRange(selections[0]));
-    parts.push(
-      `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`,
-    );
+    parts.push(fmtRange(selections[0]), framesLabel);
   } else if (selections.length > 1) {
-    parts.push(`${selections.length} selections`);
-    parts.push(
-      `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`,
-    );
+    parts.push(`${selections.length} selections`, framesLabel);
   } else if (viewport) {
-    parts.push(
-      `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames visible`,
-    );
+    parts.push(`${framesLabel} visible`);
   } else {
     parts.push("All frames visible");
   }

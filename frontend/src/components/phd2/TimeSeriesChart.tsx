@@ -890,19 +890,14 @@ function TimeSeriesChartInner(
     anchorTime: number;
   } | null>(null);
 
-  // Keep a ref to the current ``xScale`` so the drag handlers below
-  // read the up-to-date scale even when the chart re-renders mid-drag
-  // (e.g. the user wheel-zooms while holding shift). Without this, the
-  // onMove / onUp closures would capture the xScale from mousedown
-  // time and drift after any zoom/pan state change.
-  const xScaleRef = useRef(xScale);
-  xScaleRef.current = xScale;
-  // Same pattern for selections / exclusions arrays — append-on-drag
-  // computes `[...current, newRange]`, which needs the latest value.
-  const selectionsRef = useRef(selections);
-  selectionsRef.current = selections;
-  const exclusionsRef = useRef(exclusions);
-  exclusionsRef.current = exclusions;
+  // Keep refs to values the drag handlers below need at their latest
+  // value — the onMove / onUp closures below capture these refs on
+  // mousedown, so without the live sync they'd drift after any re-
+  // render (wheel-zoom mid-drag, append-on-drag needing the fresh
+  // array, etc.).
+  const xScaleRef = useLatestRef(xScale);
+  const selectionsRef = useLatestRef(selections);
+  const exclusionsRef = useLatestRef(exclusions);
 
   const handleSelectionMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!e.shiftKey) return;
@@ -1507,83 +1502,39 @@ function TimeSeriesChartInner(
             main-panel clipPath so it can't paint over the axis tick
             columns; the × close button that follows is rendered
             OUTSIDE the clipPath so it stays clickable even when the
-            band is clipped. */}
-        {(selections.length > 0 || pendingSelection) && (
-          <g clipPath={`url(#${clipMain})`}>
-            {selections.map(([t0, t1], i) => (
-              <rect
-                key={`sel-${i}`}
-                x={xScale(t0)}
-                y={mainY0}
-                width={Math.max(1, xScale(t1) - xScale(t0))}
-                height={mainH}
-                fill={RIG_TEAL}
-                fillOpacity={0.14}
-                stroke={RIG_TEAL}
-                strokeOpacity={0.7}
-                strokeWidth={1}
-                strokeDasharray="2 2"
-                pointerEvents="none"
-              />
-            ))}
-            {pendingSelection && (
-              <rect
-                key="sel-pending"
-                x={xScale(pendingSelection[0])}
-                y={mainY0}
-                width={Math.max(
-                  1,
-                  xScale(pendingSelection[1]) - xScale(pendingSelection[0]),
-                )}
-                height={mainH}
-                fill={RIG_TEAL}
-                fillOpacity={0.2}
-                stroke={RIG_TEAL}
-                strokeOpacity={0.9}
-                strokeWidth={1}
-                strokeDasharray="2 2"
-                pointerEvents="none"
-              />
-            )}
-          </g>
-        )}
-        {(exclusions.length > 0 || pendingExclusion) && (
-          <g clipPath={`url(#${clipMain})`}>
-            {exclusions.map(([t0, t1], i) => (
-              <rect
-                key={`excl-${i}`}
-                x={xScale(t0)}
-                y={mainY0}
-                width={Math.max(1, xScale(t1) - xScale(t0))}
-                height={mainH}
-                fill={`url(#${excludePatternId})`}
-                stroke={axisColor}
-                strokeOpacity={0.5}
-                strokeWidth={1}
-                strokeDasharray="4 3"
-                pointerEvents="none"
-              />
-            ))}
-            {pendingExclusion && (
-              <rect
-                key="excl-pending"
-                x={xScale(pendingExclusion[0])}
-                y={mainY0}
-                width={Math.max(
-                  1,
-                  xScale(pendingExclusion[1]) - xScale(pendingExclusion[0]),
-                )}
-                height={mainH}
-                fill={`url(#${excludePatternId})`}
-                stroke={axisColor}
-                strokeOpacity={0.8}
-                strokeWidth={1}
-                strokeDasharray="4 3"
-                pointerEvents="none"
-              />
-            )}
-          </g>
-        )}
+            band is clipped. Committed bands render at lower opacity
+            than the live-preview pending band so a drag-in-progress
+            reads as the focused element. */}
+        <ZoneBands
+          keyPrefix="sel"
+          clipId={clipMain}
+          zones={selections}
+          pending={pendingSelection}
+          xScale={xScale}
+          y={mainY0}
+          height={mainH}
+          fill={RIG_TEAL}
+          committedFillOpacity={0.14}
+          pendingFillOpacity={0.2}
+          stroke={RIG_TEAL}
+          committedStrokeOpacity={0.7}
+          pendingStrokeOpacity={0.9}
+          strokeDasharray="2 2"
+        />
+        <ZoneBands
+          keyPrefix="excl"
+          clipId={clipMain}
+          zones={exclusions}
+          pending={pendingExclusion}
+          xScale={xScale}
+          y={mainY0}
+          height={mainH}
+          fill={`url(#${excludePatternId})`}
+          stroke={axisColor}
+          committedStrokeOpacity={0.5}
+          pendingStrokeOpacity={0.8}
+          strokeDasharray="4 3"
+        />
 
         {/* Per-zone × close buttons — rendered OUTSIDE the main clip
             so they remain visible (and clickable) even when the zone
@@ -2239,6 +2190,90 @@ function formatMassTick(t: number): string {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Mirror a reactive value into a ref that the latest render always
+ *  writes to. Read ``.current`` inside imperative handlers (e.g. drag
+ *  ``mousemove`` / ``mouseup``) that were registered once but need to
+ *  see the freshest React value instead of the one closed over at
+ *  registration time. */
+function useLatestRef<T>(value: T): React.MutableRefObject<T> {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
+
+/** Renders the committed + pending rectangles for one user-drawn zone
+ *  family (selections or exclusions). Styling differs between families
+ *  but the geometry, clipPath wrapping, and committed-vs-pending
+ *  opacity split are identical; this component owns that shared
+ *  shape. Returns ``null`` when there's nothing to render so the
+ *  parent SVG doesn't accumulate empty ``<g>`` nodes. */
+function ZoneBands({
+  keyPrefix,
+  clipId,
+  zones,
+  pending,
+  xScale,
+  y,
+  height,
+  fill,
+  committedFillOpacity,
+  pendingFillOpacity,
+  stroke,
+  committedStrokeOpacity,
+  pendingStrokeOpacity,
+  strokeDasharray,
+}: {
+  keyPrefix: string;
+  clipId: string;
+  zones: Array<[number, number]>;
+  pending: [number, number] | null;
+  xScale: d3.ScaleLinear<number, number>;
+  y: number;
+  height: number;
+  fill: string;
+  /** Optional: set for the selection family (teal fill, ~15–20 % alpha).
+   *  Leave undefined for the exclusion family — the hatched pattern
+   *  already encodes its own alpha. */
+  committedFillOpacity?: number;
+  pendingFillOpacity?: number;
+  stroke: string;
+  committedStrokeOpacity: number;
+  pendingStrokeOpacity: number;
+  strokeDasharray: string;
+}) {
+  if (zones.length === 0 && !pending) return null;
+  const renderRect = (
+    range: [number, number],
+    key: string,
+    fillOpacity: number | undefined,
+    strokeOpacity: number,
+  ) => (
+    <rect
+      key={key}
+      x={xScale(range[0])}
+      y={y}
+      width={Math.max(1, xScale(range[1]) - xScale(range[0]))}
+      height={height}
+      fill={fill}
+      fillOpacity={fillOpacity}
+      stroke={stroke}
+      strokeOpacity={strokeOpacity}
+      strokeWidth={1}
+      strokeDasharray={strokeDasharray}
+      pointerEvents="none"
+    />
+  );
+  return (
+    <g clipPath={`url(#${clipId})`}>
+      {zones.map((range, i) =>
+        renderRect(range, `${keyPrefix}-${i}`, committedFillOpacity, committedStrokeOpacity),
+      )}
+      {pending &&
+        renderRect(pending, `${keyPrefix}-pending`, pendingFillOpacity, pendingStrokeOpacity)}
+    </g>
+  );
 }
 
 /** Small circular × close button anchored at ``(cx, cy)`` in SVG

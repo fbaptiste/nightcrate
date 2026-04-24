@@ -6,7 +6,7 @@
 
 **NightCrate version:** 0.24.0
 
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-23
 
 **Last full repo snapshot:** 2026-04-19
 
@@ -281,7 +281,7 @@ First pass of a nine-version arc that delivers a PHD2 guide-log analyzer, aiming
 
 v0.23.0 Pass B added: drift + oscillation metrics on both Section + Viewport Summary panels; a ScatterPlot component (dx vs dy with 1σ / 2σ dispersion ellipse + centroid); a collapsible EventList that pans the chart to a clicked event via a new `scrollToTime` imperative handle on TimeSeriesChart.
 
-v0.24.0 Pass C added: Shift-drag selection + Shift+Alt-drag exclusion bands on the chart with click-to-clear and a Selection Summary fold-in on the Viewport Summary panel; copy-stats-to-clipboard icon on the StatsPanel header (TSV via `navigator.clipboard` + transient Snackbar); recent-files history (`lib/phd2RecentFiles.ts`) on the empty-state landing, localStorage-backed, 10-entry cap.
+v0.24.0 Pass C added: multi-additive range zones on the chart — Shift-drag accumulates selection bands (teal), Shift+Alt-drag accumulates exclusion bands (hatched grey); the viewport metric panel shows union(selections) − union(exclusions) and its title folds to "Selection Summary" when any selection exists. Per-zone × close buttons render outside the main-panel clipPath at the top-right of each band. Toolbar actions: Include in view / Exclude in view (adopt the current X-zoom domain as a new zone) and Clear all (wipe both zone sets); the older single-zone "Clear" buttons are gone. Drag-time correctness relies on a `useLatestRef` hook that snapshots `xScale` / `selections` / `exclusions` each render so mid-drag zoom + pan doesn't leak stale pixel↔time mappings into the committed zone. Plus: copy-stats-to-clipboard icon on the StatsPanel header (TSV via `navigator.clipboard` + transient Snackbar); recent-files history (`lib/phd2RecentFiles.ts`) on the empty-state landing, localStorage-backed, 10-entry cap.
 - **Route:** `/phd2-analyzer` (top-level, nav entry auto-appended for users with saved nav orders)
 - **Sample log:** `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`
 
