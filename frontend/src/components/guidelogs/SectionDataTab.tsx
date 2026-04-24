@@ -16,8 +16,12 @@
  * with ``valueOptions`` so the user gets a dropdown of the actual
  * values present instead of a free-text string filter.
  */
-import { useMemo, useState } from "react";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { useEffect, useMemo, useState } from "react";
+import {
+  DataGrid,
+  type GridColDef,
+  type GridPaginationModel,
+} from "@mui/x-data-grid";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Paper from "@mui/material/Paper";
@@ -99,10 +103,25 @@ interface CalibrationRow {
 
 type ViewMode = "paginated" | "scroll";
 
+// Defaults for the guiding DataGrid's pagination state. The Scroll
+// view's pageSize is set dynamically based on row count in an effect
+// below so the whole section fits in one virtualized page.
+const DEFAULT_PAGE_SIZE = 100;
+
 export default function SectionDataTab({ section }: Props) {
-  // Paginated vs scroll presentation of the guiding DataGrid. Persists
-  // across tab switches and section changes within a session.
-  const [viewMode, setViewMode] = useState<ViewMode>("paginated");
+  // Paginated vs scroll presentation of the guiding DataGrid. Scroll
+  // is the default — users want to scan the full section by default;
+  // pagination is the explicit opt-in for page-at-a-time analysis.
+  const [viewMode, setViewMode] = useState<ViewMode>("scroll");
+  // Controlled pagination. Using controlled state (rather than MUI's
+  // internal `initialState`) lets us switch pageSize between modes
+  // *without* remounting the grid — the aria-hidden warning Fred
+  // hit was caused by the previous `key={viewMode}` remount while
+  // focus sat on an unrelated button.
+  const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({
+    page: 0,
+    pageSize: DEFAULT_PAGE_SIZE,
+  });
 
   const guidingRows = useMemo<GuidingRow[]>(() => {
     if (section.kind !== "guiding") return [];
@@ -143,6 +162,21 @@ export default function SectionDataTab({ section }: Props) {
       })),
     );
   }, [section]);
+
+  // Sync paginationModel when the view mode changes or a new section
+  // is selected. Scroll mode fits every row on one virtualized page so
+  // the DataGrid's own row virtualization handles scroll performance;
+  // Paginated mode resets back to page 0 with the default page size.
+  useEffect(() => {
+    if (viewMode === "scroll") {
+      setPaginationModel({
+        page: 0,
+        pageSize: Math.max(1, guidingRows.length),
+      });
+    } else {
+      setPaginationModel({ page: 0, pageSize: DEFAULT_PAGE_SIZE });
+    }
+  }, [viewMode, guidingRows.length]);
 
   // Data-driven filter options for the Error column: unique descriptions
   // that actually appear in this section, plus a "no error" entry when
@@ -350,45 +384,28 @@ export default function SectionDataTab({ section }: Props) {
       >
         {isGuiding ? (
           <DataGrid
-            // Key forces a remount between paginated and scroll modes so
-            // the internal page-size state doesn't leak across.
-            key={viewMode}
             rows={guidingRows}
             columns={guidingColumns}
             density="compact"
             disableRowSelectionOnClick
-            {...(viewMode === "paginated"
-              ? {
-                  initialState: {
-                    pagination: { paginationModel: { pageSize: 100 } },
-                  },
-                  pageSizeOptions: [25, 50, 100],
-                  slotProps: {
+            paginationModel={paginationModel}
+            onPaginationModelChange={setPaginationModel}
+            pageSizeOptions={
+              viewMode === "paginated"
+                ? [25, 50, 100]
+                : [Math.max(1, guidingRows.length)]
+            }
+            hideFooterPagination={viewMode === "scroll"}
+            slotProps={
+              viewMode === "paginated"
+                ? {
                     basePagination: {
                       ActionsComponent: PaginationActions,
                       // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     } as any,
-                  },
-                }
-              : {
-                  // Scroll mode: hide the paginator; render all rows in
-                  // a single page. MUI DataGrid's internal virtualization
-                  // keeps DOM cost constant regardless of row count, so
-                  // a 7 500-row guiding section scrolls smoothly with no
-                  // backend round-trips. (All rows are already in memory
-                  // from the initial parse — a "true" prefetch-from-DB
-                  // model belongs to v0.29.0 when SQLite persistence
-                  // lands.)
-                  hideFooterPagination: true,
-                  initialState: {
-                    pagination: {
-                      paginationModel: {
-                        pageSize: Math.max(1, guidingRows.length),
-                      },
-                    },
-                  },
-                  pageSizeOptions: [Math.max(1, guidingRows.length)],
-                })}
+                  }
+                : undefined
+            }
             getRowClassName={(params) =>
               params.row.mount_kind === "DROP" ? "guidelogs-drop-row" : ""
             }
@@ -430,8 +447,8 @@ function ViewModeToggle({
       }}
       sx={{ "& .MuiToggleButton-root": { py: 0.25, px: 1, fontSize: 12 } }}
     >
-      <ToggleButton value="paginated">Paginated</ToggleButton>
       <ToggleButton value="scroll">Scroll</ToggleButton>
+      <ToggleButton value="paginated">Paginated</ToggleButton>
     </ToggleButtonGroup>
   );
 }
