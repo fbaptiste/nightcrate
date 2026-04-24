@@ -80,6 +80,19 @@ export function computeGuidingMetrics(
     ? decRaw.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
     : null;
 
+  // Drift + oscillation on the same stats-sample subset as RMS/peak.
+  // Pairs are (time_seconds, value) — nulls filtered out per axis.
+  const raPairs: Array<[number, number]> = [];
+  const decPairs: Array<[number, number]> = [];
+  for (const s of statsSamples) {
+    if (s.ra_raw_px !== null) raPairs.push([s.time_seconds, s.ra_raw_px]);
+    if (s.dec_raw_px !== null) decPairs.push([s.time_seconds, s.dec_raw_px]);
+  }
+  const driftRa = slopePerMinute(raPairs);
+  const driftDec = slopePerMinute(decPairs);
+  const oscRa = oscillationRate(raRaw);
+  const oscDec = oscillationRate(decRaw);
+
   const duration =
     samples.length >= 2
       ? samples[samples.length - 1].time_seconds - samples[0].time_seconds
@@ -91,6 +104,10 @@ export function computeGuidingMetrics(
     rms_total_px: rmsTotal,
     peak_ra_px: peakRa,
     peak_dec_px: peakDec,
+    drift_ra_px_per_min: driftRa,
+    drift_dec_px_per_min: driftDec,
+    oscillation_ra: oscRa,
+    oscillation_dec: oscDec,
     frame_count_total: samples.length,
     frame_count_error: statsSamples.reduce(
       (n, s) => (s.error_code !== 0 ? n + 1 : n),
@@ -184,4 +201,41 @@ function median(values: number[]): number {
   return sorted.length % 2 === 0
     ? (sorted[mid - 1] + sorted[mid]) / 2
     : sorted[mid];
+}
+
+/** Least-squares slope of value vs time in units per MINUTE. Mirrors
+ *  the backend ``_slope_per_minute`` helper. Returns null on <2 pairs
+ *  or when all x values are identical. */
+function slopePerMinute(pairs: Array<[number, number]>): number | null {
+  if (pairs.length < 2) return null;
+  let sx = 0;
+  let sy = 0;
+  for (const [x, y] of pairs) {
+    sx += x;
+    sy += y;
+  }
+  const mx = sx / pairs.length;
+  const my = sy / pairs.length;
+  let num = 0;
+  let den = 0;
+  for (const [x, y] of pairs) {
+    const dx = x - mx;
+    num += dx * (y - my);
+    den += dx * dx;
+  }
+  if (den === 0) return null;
+  return (num / den) * 60;
+}
+
+/** Fraction of consecutive value pairs whose signs differ. Zero-valued
+ *  samples are skipped (no sign). Returns null when fewer than two
+ *  non-zero values exist. */
+function oscillationRate(values: number[]): number | null {
+  const nonZero = values.filter((v) => v !== 0);
+  if (nonZero.length < 2) return null;
+  let flips = 0;
+  for (let i = 1; i < nonZero.length; i++) {
+    if (nonZero[i - 1] > 0 !== nonZero[i] > 0) flips += 1;
+  }
+  return flips / (nonZero.length - 1);
 }

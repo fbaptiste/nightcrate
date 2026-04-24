@@ -5,7 +5,7 @@
  * guiding graph + top-line stats. No persistence, no catalog linkage, no
  * interpretation — just a solid viewer anchored on a correct parser.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
@@ -29,6 +29,9 @@ import Tooltip from "@mui/material/Tooltip";
 import { parseGuideLog, type ParseResponse } from "@/api/phd2";
 import { setActivity } from "@/api/client";
 import { computeGuidingMetrics, computeSettleIntervals } from "@/lib/phd2GuidingMetrics";
+import ScatterPlot from "@/components/phd2/ScatterPlot";
+import EventList from "@/components/phd2/EventList";
+import type { TimeSeriesChartHandle } from "@/components/phd2/TimeSeriesChart";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import SectionNavigator from "@/components/phd2/SectionNavigator";
 import StatsPanel from "@/components/phd2/StatsPanel";
@@ -69,6 +72,10 @@ export default function Phd2AnalyzerPage() {
   // the pre-v0.22.0 "include everything" behaviour AND hides the
   // settle shading on the chart.
   const [includeSettle, setIncludeSettle] = useState(false);
+  // Imperative handle for the time-series chart — EventList rows
+  // forward clicks through this so the chart pans / zooms to the
+  // event time without drilling d3 through props.
+  const chartRef = useRef<TimeSeriesChartHandle | null>(null);
 
   useEffect(() => {
     setActivity("PHD2 Analyzer");
@@ -326,6 +333,7 @@ export default function Phd2AnalyzerPage() {
               {selected.section.kind === "guiding" ? (
                 <Stack spacing={2}>
                   <TimeSeriesChart
+                    ref={chartRef}
                     samples={selected.section.samples}
                     events={selected.section.events}
                     startIso={selected.section.start_time}
@@ -376,6 +384,34 @@ export default function Phd2AnalyzerPage() {
                       collapsible
                     />
                   )}
+                  <ScatterPlot
+                    samples={
+                      includeSettle
+                        ? selected.section.samples
+                        : selected.section.samples.filter(
+                            (s) =>
+                              !settleIntervals.some(
+                                ([t0, t1]) =>
+                                  s.time_seconds >= t0 && s.time_seconds <= t1,
+                              ),
+                          )
+                    }
+                    arcsecScale={selected.metrics.arcsec_scale}
+                    subtitle={
+                      includeSettle
+                        ? "All frames included"
+                        : `Settle frames excluded`
+                    }
+                  />
+                  <EventList
+                    events={selected.section.events}
+                    startIso={selected.section.start_time}
+                    onEventClick={(e) => {
+                      if (e.time_seconds != null) {
+                        chartRef.current?.scrollToTime(e.time_seconds);
+                      }
+                    }}
+                  />
                 </Stack>
               ) : (
                 <Stack spacing={2}>

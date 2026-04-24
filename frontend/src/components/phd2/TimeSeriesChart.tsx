@@ -20,7 +20,15 @@
  * never visually interpolate to zero (the parser's quiet-correctness
  * contract).
  */
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -139,16 +147,36 @@ interface HoverInfo {
  *  (dither triangle or non-dither dot). */
 const EVENT_SNAP_PX = 8;
 
-export default function TimeSeriesChart({
-  samples,
-  events = [],
-  startIso,
-  arcsecScale,
-  height = 440,
-  onViewportChange,
-  settleIntervals = [],
-  showSettleShading = true,
-}: Props) {
+/** Imperative handle exposed via ``ref``. Used by the EventList
+ *  click-to-jump flow on ``pages/Phd2AnalyzerPage.tsx`` so the chart
+ *  can pan / zoom to a specific section-time without the parent
+ *  having to drive d3 directly. */
+export interface TimeSeriesChartHandle {
+  /** Centre the view on ``time_seconds`` (section-relative). If the
+   *  chart is un-zoomed, applies a default ``SCROLL_TO_ZOOM_SECONDS``
+   *  window around the target; otherwise preserves the current zoom
+   *  level and just pans. */
+  scrollToTime(timeSeconds: number): void;
+}
+
+/** Default window width (seconds) applied when scrollToTime is called
+ *  on an un-zoomed chart — small enough that the event is visually
+ *  distinct, wide enough to keep surrounding context. */
+const SCROLL_TO_ZOOM_SECONDS = 60;
+
+function TimeSeriesChartInner(
+  {
+    samples,
+    events = [],
+    startIso,
+    arcsecScale,
+    height = 440,
+    onViewportChange,
+    settleIntervals = [],
+    showSettleShading = true,
+  }: Props,
+  ref: React.Ref<TimeSeriesChartHandle>,
+) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   // useId() guarantees unique clipPath ids across multiple instances
@@ -665,6 +693,47 @@ export default function TimeSeriesChart({
   }
 
   const handleReset = resetZoom;
+
+  // Imperative handle — exposed so the EventList on the parent page
+  // can pan / zoom the chart to a clicked event without drilling d3
+  // through props. Preserves current zoom when already zoomed;
+  // applies a default ~60 s window otherwise.
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToTime: (timeSeconds: number) => {
+        const svg = svgRef.current;
+        const behavior = zoomBehaviorRef.current;
+        if (!svg || !behavior) return;
+        if (samples.length < 2) return;
+        const [t0, t1] = [
+          samples[0].time_seconds,
+          samples[samples.length - 1].time_seconds,
+        ];
+        const fullSpan = Math.max(1e-6, t1 - t0);
+        const base = d3
+          .scaleLinear()
+          .domain([t0, t1])
+          .range([MARGIN.left, MARGIN.left + innerW]);
+        // Pick a zoom level: keep current k when already zoomed, else
+        // derive one from the default scroll window.
+        const currentK =
+          zoomX !== null
+            ? fullSpan / Math.max(1e-6, zoomX[1] - zoomX[0])
+            : Math.max(1, fullSpan / SCROLL_TO_ZOOM_SECONDS);
+        const transform = d3.zoomIdentity.scale(currentK);
+        // Apply scale first so translateTo interprets the target in
+        // the correct coord frame, then recenter on the target time.
+        d3.select(svg).call(behavior.transform, transform);
+        behavior.translateTo(d3.select(svg), base(timeSeconds), 0);
+      },
+    }),
+    // Rebuild the handle when any of these change so the closed-over
+    // values stay current. ``zoomX`` inclusion means a subsequent
+    // click preserves the new zoom level from the first click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [samples, innerW, zoomX],
+  );
 
   if (samples.length === 0) {
     return (
@@ -1620,6 +1689,11 @@ export default function TimeSeriesChart({
     </Stack>
   );
 }
+
+const TimeSeriesChart = forwardRef<TimeSeriesChartHandle, Props>(
+  TimeSeriesChartInner,
+);
+export default TimeSeriesChart;
 
 // ── Sub-panel scale toggle ───────────────────────────────────────────────────
 

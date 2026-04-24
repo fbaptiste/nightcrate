@@ -331,3 +331,144 @@ class TestSettleExclusion:
         assert metrics.frame_count_in_settle == 0
         assert metrics.frame_count_in_stats == 2
         assert metrics.rms_ra_px == pytest.approx(1.0)
+
+
+class TestDrift:
+    def test_pinned_slope_in_units_per_minute(self):
+        """Linear ramp: +2 px over 1 minute = +2 px/min slope.
+
+        Times at 0, 60, 120 seconds (= 0, 1, 2 minutes), values at
+        0, 2, 4 → regression slope exactly 2 per minute.
+        """
+        samples = [
+            _sample(1, 0.0, 0.0, 0.0),
+            _sample(2, 60.0, 2.0, -1.0),
+            _sample(3, 120.0, 4.0, -2.0),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.drift_ra_px_per_min == pytest.approx(2.0)
+        # Dec: 0, -1, -2 → slope = -1 per minute.
+        assert metrics.drift_dec_px_per_min == pytest.approx(-1.0)
+
+    def test_flat_data_has_zero_drift(self):
+        """All values identical → slope is zero."""
+        samples = [
+            _sample(1, 0.0, 0.5, 0.5),
+            _sample(2, 30.0, 0.5, 0.5),
+            _sample(3, 60.0, 0.5, 0.5),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.drift_ra_px_per_min == pytest.approx(0.0)
+        assert metrics.drift_dec_px_per_min == pytest.approx(0.0)
+
+    def test_drift_excludes_settle_samples(self):
+        """Samples inside a settle window must not skew the regression."""
+        samples = [
+            _sample(1, 0.0, 0.0, 0.0),
+            _sample(2, 60.0, 2.0, 0.0),
+            # Big spike inside settle — ignored.
+            _sample(3, 90.0, 50.0, 0.0),
+            _sample(4, 120.0, 4.0, 0.0),
+        ]
+        events = [_settle_begin(70.0), _settle_end(100.0)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        # Fitted to [(0, 0), (60, 2), (120, 4)] — slope +2 px/min.
+        assert metrics.drift_ra_px_per_min == pytest.approx(2.0)
+
+    def test_drift_none_on_single_sample(self):
+        """<2 pairs → drift is undefined."""
+        samples = [_sample(1, 0.0, 1.0, 1.0)]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.drift_ra_px_per_min is None
+        assert metrics.drift_dec_px_per_min is None
+
+    def test_drift_none_on_identical_timestamps(self):
+        """Degenerate case: all samples at the same time_seconds — no slope."""
+        samples = [
+            _sample(1, 5.0, 0.0, 0.0),
+            _sample(2, 5.0, 1.0, 1.0),
+            _sample(3, 5.0, 2.0, 2.0),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.drift_ra_px_per_min is None
+        assert metrics.drift_dec_px_per_min is None
+
+
+class TestOscillation:
+    def test_full_alternation_is_one(self):
+        """Sign flips every step → oscillation = 1.0."""
+        samples = [
+            _sample(1, 1.0, 1.0, 0.5),
+            _sample(2, 2.0, -1.0, -0.5),
+            _sample(3, 3.0, 1.0, 0.5),
+            _sample(4, 4.0, -1.0, -0.5),
+            _sample(5, 5.0, 1.0, 0.5),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        # 4 pairs, all flip → 4/4 = 1.0 for both axes.
+        assert metrics.oscillation_ra == pytest.approx(1.0)
+        assert metrics.oscillation_dec == pytest.approx(1.0)
+
+    def test_no_flips_is_zero(self):
+        """All same sign → oscillation = 0.0."""
+        samples = [
+            _sample(1, 1.0, 0.5, -0.5),
+            _sample(2, 2.0, 0.6, -0.6),
+            _sample(3, 3.0, 0.4, -0.4),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.oscillation_ra == pytest.approx(0.0)
+        assert metrics.oscillation_dec == pytest.approx(0.0)
+
+    def test_partial_oscillation(self):
+        """RA sequence [1, 2, -1, 1] → one flip pair at 2→-1 and
+        another at -1→1 = 2 flips out of 3 pairs = 2/3."""
+        samples = [
+            _sample(1, 1.0, 1.0, 0.0),
+            _sample(2, 2.0, 2.0, 0.0),
+            _sample(3, 3.0, -1.0, 0.0),
+            _sample(4, 4.0, 1.0, 0.0),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.oscillation_ra == pytest.approx(2.0 / 3.0)
+
+    def test_zero_values_are_skipped(self):
+        """Zero RA values aren't flips — they have no sign. Sequence
+        [1, 0, 2, -1]: zero is skipped, leaving [1, 2, -1] → 1 flip /
+        2 pairs = 0.5."""
+        samples = [
+            _sample(1, 1.0, 1.0, 0.0),
+            _sample(2, 2.0, 0.0, 0.0),
+            _sample(3, 3.0, 2.0, 0.0),
+            _sample(4, 4.0, -1.0, 0.0),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.oscillation_ra == pytest.approx(0.5)
+
+    def test_oscillation_none_when_all_zero_or_single(self):
+        """All zero RA → no valid pairs → None."""
+        samples = [
+            _sample(1, 1.0, 0.0, 1.0),
+            _sample(2, 2.0, 0.0, -1.0),
+            _sample(3, 3.0, 0.0, 1.0),
+        ]
+        metrics = compute_section_metrics(_make_guiding_section(samples))
+        assert metrics.oscillation_ra is None
+        # Dec flips every step still works.
+        assert metrics.oscillation_dec == pytest.approx(1.0)
+
+    def test_oscillation_excludes_settle_samples(self):
+        """Settle window is filtered before computing oscillation."""
+        samples = [
+            _sample(1, 1.0, 1.0, 0.0),
+            _sample(2, 2.0, 1.0, 0.0),
+            # Inside settle — a wild alternating pair ignored.
+            _sample(3, 3.0, -10.0, 0.0),
+            _sample(4, 4.0, 10.0, 0.0),
+            _sample(5, 5.0, 1.0, 0.0),
+        ]
+        events = [_settle_begin(2.5), _settle_end(4.5)]
+        metrics = compute_section_metrics(_make_guiding_section(samples, events=events))
+        # Kept pairs: (1,1), (1,1), (1,1)... only (1,1,1) remains with
+        # settle filter → 0 flips.
+        assert metrics.oscillation_ra == pytest.approx(0.0)

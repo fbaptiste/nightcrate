@@ -1,15 +1,19 @@
-"""PHD2 guide-log metrics — v0.22.0 scope.
+"""PHD2 guide-log metrics.
 
-Pure functions over the parsed data model. v0.22.0 computes the top-line
-summary metrics (RMS, peak, frame count, duration, SNR, star mass) **with
-settle-window exclusion** — samples inside ``settle_begin``/``settle_end``
-windows drop out of every quality metric so dither excursions don't
-inflate the numbers (matches PHD2 / PHDLogViewer convention). Drift and
-oscillation metrics arrive in v0.23.0 (Pass B).
+Pure functions over the parsed data model. Computes the top-line summary
+metrics (RMS, peak, drift, oscillation, frame count, duration, SNR, star
+mass) **with settle-window exclusion** — samples inside
+``settle_begin``/``settle_end`` windows drop out of every quality
+metric so dither excursions don't inflate the numbers (matches PHD2 /
+PHDLogViewer convention).
 
-All distances are in guide-camera pixels. `arcsec_scale` is surfaced so the
-display layer can render dual-unit labels without re-reading the section
-header.
+- RMS + peak — v0.22.0 Pass A.
+- Settle-window exclusion — v0.22.0 Pass A polish round.
+- Drift + oscillation — v0.23.0 Pass B.
+
+All distances are in guide-camera pixels. `arcsec_scale` is surfaced so
+the display layer can render dual-unit labels without re-reading the
+section header.
 """
 
 from __future__ import annotations
@@ -32,6 +36,19 @@ class SectionMetrics(BaseModel):
     rms_total_px: float | None
     peak_ra_px: float | None
     peak_dec_px: float | None
+    # Drift: least-squares slope of ``ra_raw_px`` / ``dec_raw_px`` vs
+    # time, reported in px per minute. Sign-preserving — positive Dec
+    # drift means the star is drifting north on the camera. ``None``
+    # when fewer than two non-null values contributed.
+    drift_ra_px_per_min: float | None
+    drift_dec_px_per_min: float | None
+    # Oscillation: fraction [0, 1] of consecutive stats-sample pairs
+    # whose raw-distance sign flipped (zero-valued samples are skipped
+    # — zero has no sign). Rates near 0.5 suggest chasing seeing, near
+    # 0.3 are typical of good guiding. ``None`` when fewer than two
+    # non-null values contributed.
+    oscillation_ra: float | None
+    oscillation_dec: float | None
     frame_count_total: int
     frame_count_error: int
     # Samples that fell inside a settle window (bracketed by
@@ -73,6 +90,10 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
             rms_total_px=None,
             peak_ra_px=None,
             peak_dec_px=None,
+            drift_ra_px_per_min=None,
+            drift_dec_px_per_min=None,
+            oscillation_ra=None,
+            oscillation_dec=None,
             frame_count_total=len(section.samples),
             frame_count_error=sum(1 for s in section.samples if s.error_code != 0),
             frame_count_in_settle=0,
@@ -116,12 +137,27 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
     # rare and would be a parser anomaly.
     in_stats_count = len(ra_raw)
 
+    # Drift + oscillation over the same stats_samples subset. Computed
+    # as (time_seconds, value) pairs so both axes can share the same
+    # regression helper — skips rows where either time or value is
+    # null / missing.
+    ra_pairs = [(s.time_seconds, s.ra_raw_px) for s in stats_samples if s.ra_raw_px is not None]
+    dec_pairs = [(s.time_seconds, s.dec_raw_px) for s in stats_samples if s.dec_raw_px is not None]
+    drift_ra = _slope_per_minute(ra_pairs)
+    drift_dec = _slope_per_minute(dec_pairs)
+    oscillation_ra = _oscillation_rate(ra_raw)
+    oscillation_dec = _oscillation_rate(dec_raw)
+
     return SectionMetrics(
         rms_ra_px=rms_ra,
         rms_dec_px=rms_dec,
         rms_total_px=rms_total,
         peak_ra_px=peak_ra,
         peak_dec_px=peak_dec,
+        drift_ra_px_per_min=drift_ra,
+        drift_dec_px_per_min=drift_dec,
+        oscillation_ra=oscillation_ra,
+        oscillation_dec=oscillation_dec,
         frame_count_total=len(section.samples),
         frame_count_error=sum(1 for s in stats_samples if s.error_code != 0),
         frame_count_in_settle=in_settle_count,
@@ -196,6 +232,46 @@ def _rms(values: list[float]) -> float | None:
     if not values:
         return None
     return math.sqrt(sum(v * v for v in values) / len(values))
+
+
+def _slope_per_minute(pairs: list[tuple[float, float]]) -> float | None:
+    """Least-squares slope of ``value`` against ``time_seconds``,
+    returned in **units per minute** (raw slope × 60).
+
+    Requires at least two pairs with differing x values; otherwise
+    returns ``None``. No scipy dependency — the closed-form
+    ``Σ(x−x̄)(y−ȳ) / Σ(x−x̄)²`` is sufficient and numerically
+    stable enough for the sample counts we see in practice.
+    """
+    if len(pairs) < 2:
+        return None
+    n = len(pairs)
+    mx = sum(p[0] for p in pairs) / n
+    my = sum(p[1] for p in pairs) / n
+    num = sum((p[0] - mx) * (p[1] - my) for p in pairs)
+    den = sum((p[0] - mx) ** 2 for p in pairs)
+    if den == 0:
+        # All x values identical — regression undefined.
+        return None
+    slope_per_sec = num / den
+    return slope_per_sec * 60.0
+
+
+def _oscillation_rate(values: list[float]) -> float | None:
+    """Fraction of consecutive value pairs whose signs differ.
+
+    Zero-valued samples are skipped (a zero has no sign, so counting
+    it as a flip would inflate the rate on low-SNR sections). Returns
+    ``None`` when fewer than two non-zero values are present.
+    """
+    nonzero = [v for v in values if v != 0]
+    if len(nonzero) < 2:
+        return None
+    flips = 0
+    for a, b in zip(nonzero, nonzero[1:], strict=False):
+        if (a > 0) != (b > 0):
+            flips += 1
+    return flips / (len(nonzero) - 1)
 
 
 def _duration_seconds(section: LogSection) -> float:

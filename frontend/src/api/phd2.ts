@@ -142,6 +142,10 @@ export interface SectionMetrics {
   rms_total_px: number | null;
   peak_ra_px: number | null;
   peak_dec_px: number | null;
+  drift_ra_px_per_min: number | null;
+  drift_dec_px_per_min: number | null;
+  oscillation_ra: number | null;
+  oscillation_dec: number | null;
   frame_count_total: number;
   frame_count_error: number;
   frame_count_in_settle: number;

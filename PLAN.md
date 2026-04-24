@@ -35,6 +35,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.21.0 — Target Planner Scoring Algorithm](#v0210--target-planner-scoring-algorithm) ✅
 - [v0.21.1 — Scoring Polish + Planner UX + External Refs Extension](#v0211--scoring-polish--planner-ux--external-refs-extension) ✅
 - [v0.22.0 — PHD2 Guide-Log Analyzer Pass A (Parser + Viewer Skeleton)](#v0220--phd2-guide-log-analyzer-pass-a-parser--viewer-skeleton) ✅
+- [v0.23.0 — PHD2 Pass B (Drift + Oscillation + Scatter + Event List)](#v0230--phd2-pass-b-drift--oscillation--scatter--event-list) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -3675,6 +3676,80 @@ See the PHD2 Analyzer Roadmap appendix for the full arc. Highlights:
 - Diagnostic engine → Pass F (v0.27.0) + Pass G (v0.28.0).
 - Multi-log comparison + persistence → Pass H (v0.29.0).
 - HTML report + catalog integration → Pass I (v0.30.0).
+
+---
+
+## v0.23.0 — PHD2 Pass B (Drift + Oscillation + Scatter + Event List)
+
+**Status:** Done
+**Branch:** `v0.23.0/phd2-pass-b`
+
+Second pass of the nine-version PHD2 arc. Most of the original Pass B
+appendix scope (settle detection, settle exclusion, unit toggle,
+event markers, warnings polish) actually landed during the v0.22.0
+Pass A post-landing polish round; v0.23.0 finishes off the remaining
+Pass B items per spec §5.2 / §5.3 / §5.6:
+
+### Metrics (spec §5.2 rest)
+
+- [x] `drift_ra_px_per_min`, `drift_dec_px_per_min` — least-squares
+      slope of `ra_raw_px` / `dec_raw_px` vs time, sign-preserving.
+      Pure-Python closed-form regression; no scipy.
+- [x] `oscillation_ra`, `oscillation_dec` — fraction [0, 1] of
+      consecutive-pair sign flips over the stats-sample subset;
+      zero-valued samples skipped (no sign).
+- [x] Both compute over the same settle-filtered `stats_samples` as
+      RMS/peak.
+- [x] StatsPanel renders two new rows per metric per panel (Section
+      Summary + Viewport Summary). Drift dual-unit when pixel scale
+      is declared; oscillation as a percentage.
+
+### Scatter plot (spec §5.3)
+
+- [x] New `components/phd2/ScatterPlot.tsx` — D3 SVG scatter of
+      `(dx, dy)`, one point per non-null sample.
+- [x] 1σ + 2σ dispersion ellipses from a closed-form 2×2 covariance
+      eigen-decomposition; orange centroid marker (filled + ring) so
+      an off-origin offset — indicating calibration drift — is easy
+      to read at a glance.
+- [x] Square data area; axes symmetric around zero; dual-unit tick
+      axis labels when pixel scale is known.
+- [x] Collapsible, right-hand info strip with centroid coordinates,
+      1σ axis lengths, and principal angle.
+- [x] Settle-filtered by default (matches the Section Summary
+      behaviour); the include-settle toggle flips both.
+
+### INFO event list (spec §5.6)
+
+- [x] New `components/phd2/EventList.tsx` — collapsible list of
+      anchored events with a friendly kind chip, wall-clock time
+      (falls back to elapsed seconds when the section lacks a start
+      ISO), and the raw message / parsed Δx/Δy for dither.
+- [x] Click a row → `scrollToTime(time_seconds)` imperative handle
+      on the time-series chart. Preserves the chart's current zoom
+      when already zoomed in; applies a ~60 s window otherwise so
+      the event is visually distinct.
+- [x] TimeSeriesChart switched to `forwardRef` + `useImperativeHandle`
+      to expose the handle without drilling d3 through props.
+
+### Tests
+
+- [x] 11 new PHD2 metrics tests (`TestDrift`, `TestOscillation`):
+      pinned slope values, flat-data zero case, settle exclusion,
+      single-sample `None` guard, identical-timestamps `None`,
+      zero-value skipping, all-zero-axis `None`. Total suite:
+      **1939 passed, 3 skipped** (up from 1928 at v0.22.0).
+
+### Out of scope (→ v0.24.0 Pass C)
+
+- Manual range selection on the chart (drag-to-select + exclude-drag).
+- Lock-scale across sections.
+- Copy stats to clipboard.
+- Reveal-in-finder.
+- Recent-files history.
+
+These are interaction-polish items (spec §5.5) that would double
+this pass's scope.
 
 ---
 
