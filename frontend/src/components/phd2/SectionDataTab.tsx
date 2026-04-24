@@ -91,6 +91,39 @@ const PHASE_OPTIONS: readonly string[] = [
 // ── Main component ───────────────────────────────────────────────────────────
 
 export default function SectionDataTab({ section }: Props) {
+  // Events are anchored per-frame in the parser — an event's time_seconds
+  // matches the time of the sample row immediately before it. Build a
+  // lookup from frame → events so the DataTable can render an expand
+  // chip on rows that have associated events.
+  const eventsByFrame = useMemo(() => {
+    const map = new Map<number, typeof section.events>();
+    if (section.kind !== "guiding") return map;
+    // Group events by the frame whose time matches the event's anchor.
+    // `_peek_sample_time_seconds` rounds to 0 decimals for locale-recovered
+    // rows, so we match within 0.01s tolerance to be safe.
+    const framesByTime = new Map<number, number>();
+    for (const s of section.samples) {
+      // Round to 2 decimals — matches parser's precision.
+      framesByTime.set(Math.round(s.time_seconds * 100), s.frame);
+    }
+    for (const e of section.events) {
+      if (e.time_seconds == null) continue;
+      const key = Math.round(e.time_seconds * 100);
+      // Try exact match first, then search a small window.
+      let frame = framesByTime.get(key);
+      if (frame == null) {
+        for (let delta = 1; delta <= 3 && frame == null; delta++) {
+          frame = framesByTime.get(key - delta) ?? framesByTime.get(key + delta);
+        }
+      }
+      if (frame == null) continue;
+      const list = map.get(frame) ?? [];
+      list.push(e);
+      map.set(frame, list);
+    }
+    return map;
+  }, [section]);
+
   const guidingRows = useMemo<GuidingRow[]>(() => {
     if (section.kind !== "guiding") return [];
     return section.samples.map((s) => ({
@@ -143,7 +176,50 @@ export default function SectionDataTab({ section }: Props) {
 
   const guidingColumns = useMemo<DataTableColumn<GuidingRow>[]>(
     () => [
-      { field: "frame", headerName: "Frame", width: 70, align: "right" },
+      {
+        field: "frame",
+        headerName: "Frame",
+        width: 110,
+        // Keep the default right-align for the number; expand chip
+        // floats on the left of the cell via a flex row.
+        renderCell: (row, api) => {
+          const events = eventsByFrame.get(row.frame);
+          return (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ width: "100%", justifyContent: "flex-end" }}
+            >
+              {events && events.length > 0 && (
+                <Chip
+                  label={events.length}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    api.toggleExpand();
+                  }}
+                  sx={{
+                    height: 18,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    bgcolor: api.isExpanded ? "primary.main" : "primary.light",
+                    color: "#ffffff",
+                    "& .MuiChip-label": { px: 0.75 },
+                  }}
+                />
+              )}
+              <Typography
+                component="span"
+                sx={{ fontFamily: "inherit", fontSize: "inherit" }}
+              >
+                {row.frame}
+              </Typography>
+            </Stack>
+          );
+        },
+      },
       {
         field: "time_seconds",
         headerName: "Time (s)",
@@ -213,7 +289,7 @@ export default function SectionDataTab({ section }: Props) {
         // value is already that string.
       },
     ],
-    [],
+    [eventsByFrame],
   );
 
   const calibrationColumns = useMemo<DataTableColumn<CalibrationRow>[]>(
@@ -320,6 +396,49 @@ export default function SectionDataTab({ section }: Props) {
             defaultViewMode="scroll"
             defaultPageSize={100}
             pageSizeOptions={[25, 50, 100, 250]}
+            isExpandable={(r) => (eventsByFrame.get(r.frame)?.length ?? 0) > 0}
+            expandedHeight={(r) =>
+              24 + (eventsByFrame.get(r.frame)?.length ?? 0) * 24
+            }
+            renderExpanded={(r) => {
+              const events = eventsByFrame.get(r.frame) ?? [];
+              if (events.length === 0) return null;
+              return (
+                <Stack spacing={0.5}>
+                  {events.map((e, i) => (
+                    <Stack
+                      key={i}
+                      direction="row"
+                      spacing={1}
+                      alignItems="center"
+                      sx={{ fontSize: 12 }}
+                    >
+                      <Chip
+                        label={e.kind}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontSize: 10, height: 18, minWidth: 110 }}
+                      />
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          fontFamily: "monospace",
+                          color: "text.secondary",
+                          minWidth: 72,
+                        }}
+                      >
+                        {e.time_seconds != null
+                          ? formatWallClock(section.start_time, e.time_seconds)
+                          : "—"}
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: "text.primary", flex: 1 }}>
+                        {e.raw_message}
+                      </Typography>
+                    </Stack>
+                  ))}
+                </Stack>
+              );
+            }}
           />
         ) : (
           <DataTable

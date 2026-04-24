@@ -120,17 +120,21 @@ export default function TimeSeriesChart({
     const maxAbs =
       Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : autoMaxAbs * 1.1;
 
-    // Pulse axis range — use the 98th-percentile pulse width (not the
-    // absolute max) so a single outlier doesn't blow the scale out to
-    // ±6000 ms. Floor at 500 ms so low-activity sections still render
-    // their bars proportionally, and typical PHD2 sessions with Max
-    // RA/Dec duration at 500 ms still have room.
-    const durations = samples.flatMap((s) =>
+    // Pulse axis range — scoped to the samples in the current X zoom so
+    // panning to a quieter region shrinks the scale (and vice versa).
+    // Uses the max pulse in the visible range (floored at 100 ms) so
+    // outliers in the visible range are seen at full height, matching
+    // the user's explicit request.
+    const visibleSamples = zoomX
+      ? samples.filter(
+          (s) => s.time_seconds >= zoomX[0] && s.time_seconds <= zoomX[1],
+        )
+      : samples;
+    const visibleDurations = visibleSamples.flatMap((s) =>
       [s.ra_duration_ms ?? 0, s.dec_duration_ms ?? 0].filter((v) => v > 0),
     );
-    const sortedDur = [...durations].sort((a, b) => a - b);
-    const p98Idx = Math.max(0, Math.floor(sortedDur.length * 0.98) - 1);
-    const durMax = Math.max(500, sortedDur[p98Idx] ?? 500);
+    const maxDur = visibleDurations.length ? d3.max(visibleDurations) ?? 100 : 100;
+    const durMax = Math.max(100, maxDur);
 
     const snrs = samples.map((s) => s.snr).filter((v): v is number => v !== null);
     const snrMax = snrs.length ? Math.max(10, d3.max(snrs) ?? 10) : 10;
@@ -237,7 +241,16 @@ export default function TimeSeriesChart({
   // orange). Fill opacity is low so the trace remains the dominant signal.
   const pulseBars = useMemo(() => {
     if (samples.length < 2) return { ra: [], dec: [] };
-    const barW = Math.max(1, Math.min(3, (innerW / samples.length) * 0.35));
+    // Bar width scales with the number of VISIBLE samples after zoom
+    // (not the full sample count). A session zoomed in to 200 samples
+    // gets wider bars than the full 7 500-sample view; at full zoom
+    // the floor of 3 px keeps bars readable even when 7 500 samples
+    // share 1 200 px.
+    const visibleCount = zoomX
+      ? samples.filter((s) => s.time_seconds >= zoomX[0] && s.time_seconds <= zoomX[1]).length
+      : samples.length;
+    const nSamples = Math.max(1, visibleCount);
+    const barW = Math.max(3, Math.min(10, (innerW / nSamples) * 0.6));
     const ra: Array<{ x: number; y: number; h: number }> = [];
     const dec: Array<{ x: number; y: number; h: number }> = [];
     for (const s of samples) {
@@ -266,7 +279,7 @@ export default function TimeSeriesChart({
       }
     }
     return { ra, dec, barW };
-  }, [samples, xScale, yPulseScale, innerW]);
+  }, [samples, xScale, yPulseScale, innerW, zoomX]);
 
   const gridColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
   const axisColor = isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.6)";
@@ -439,7 +452,7 @@ export default function TimeSeriesChart({
             width={pulseBars.barW}
             height={b.h}
             fill={COLOR_RA}
-            opacity={0.35}
+            opacity={0.6}
           />
         ))}
         {pulseBars.dec.map((b, i) => (
@@ -450,7 +463,7 @@ export default function TimeSeriesChart({
             width={pulseBars.barW}
             height={b.h}
             fill={COLOR_DEC}
-            opacity={0.35}
+            opacity={0.6}
           />
         ))}
 

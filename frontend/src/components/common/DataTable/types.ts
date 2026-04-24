@@ -12,6 +12,17 @@
 
 import type React from "react";
 
+/** Per-cell render API passed as the second argument to ``renderCell``.
+ *
+ *  The expand/collapse bits are meaningful only when the table is
+ *  configured with ``renderExpanded`` — a cell renderer that wants to
+ *  place an expansion chip (e.g. alongside a row id) can call
+ *  ``toggleExpand()`` or read ``isExpanded`` here. */
+export interface DataTableCellApi {
+  isExpanded: boolean;
+  toggleExpand: () => void;
+}
+
 /** One column definition. Generic over the row type so valueGetter + renderCell
  *  stay type-safe at the call site. `field` doesn't have to be a key of Row —
  *  computed columns with a `valueGetter` can use any string id. */
@@ -33,13 +44,16 @@ export interface DataTableColumn<Row> {
   /** Pulls the sortable / filterable value from a row. Default: `row[field]`. */
   valueGetter?: (row: Row) => unknown;
   /** Custom cell rendering. Default: the formatted valueGetter result. */
-  renderCell?: (row: Row) => React.ReactNode;
+  renderCell?: (row: Row, api: DataTableCellApi) => React.ReactNode;
   /** Simple string formatter applied to the valueGetter result when
    *  renderCell is not provided. Falls back to the raw value. */
   format?: (value: unknown) => string;
 }
 
-/** One filter control rendered above the grid. */
+/** One filter control rendered above the grid. Multi-select: the user
+ *  picks zero or more values; an empty selection means "no filter on this
+ *  column", a non-empty selection keeps rows whose ``valueGetter`` result
+ *  is in the selected set. */
 export interface DataTableFilter<Row> {
   /** Stable filter id. */
   field: string;
@@ -50,7 +64,7 @@ export interface DataTableFilter<Row> {
    *  either way). */
   options: readonly string[] | ((rows: readonly Row[]) => readonly string[]);
   /** Pulls the comparison string from a row. The filter matches when
-   *  `valueGetter(row) === selected_option`. */
+   *  ``valueGetter(row)`` is one of the selected values. */
   valueGetter: (row: Row) => string;
 }
 
