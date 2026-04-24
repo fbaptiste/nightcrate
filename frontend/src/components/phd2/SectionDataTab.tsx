@@ -295,11 +295,12 @@ export default function SectionDataTab({ section }: Props) {
   );
 
   return (
-    <Stack spacing={2} sx={{ height: "100%", minHeight: 0 }}>
+    <Stack spacing={2} sx={{ height: "100%", minHeight: 0, minWidth: 0 }}>
       <Box
         sx={{
           flex: 1,
           minHeight: 0,
+          minWidth: 0,
           display: "flex",
           flexDirection: "column",
           // DROP-frame rows get a subtle tint so the user can spot

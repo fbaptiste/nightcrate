@@ -213,7 +213,12 @@ export default function DataTable<Row extends { id: string | number }>({
   const currentPage = Math.min(page, lastPage);
 
   return (
-    <Stack spacing={1.5} sx={{ height: "100%", minHeight: 0 }}>
+    // ``minWidth: 0`` is the classic flex fix: without it the grid's
+    // min-content width (sum of column widths) propagates up through
+    // the flex chain and pushes the toolbar right side (filters +
+    // toggle) past the viewport edge when the grid is wider than its
+    // container.
+    <Stack spacing={1.5} sx={{ height: "100%", minHeight: 0, minWidth: 0 }}>
       {(filters.length > 0 || showViewModeToggle || toolbarEnd) && (
         <Stack
           direction="row"
@@ -276,6 +281,8 @@ export default function DataTable<Row extends { id: string | number }>({
         sx={{
           flex: 1,
           minHeight: 0,
+          // Also prevents horizontal-overflow creep up the flex chain.
+          minWidth: 0,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",

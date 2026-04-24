@@ -120,10 +120,17 @@ export default function TimeSeriesChart({
     const maxAbs =
       Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : autoMaxAbs * 1.1;
 
+    // Pulse axis range — use the 98th-percentile pulse width (not the
+    // absolute max) so a single outlier doesn't blow the scale out to
+    // ±6000 ms. Floor at 500 ms so low-activity sections still render
+    // their bars proportionally, and typical PHD2 sessions with Max
+    // RA/Dec duration at 500 ms still have room.
     const durations = samples.flatMap((s) =>
       [s.ra_duration_ms ?? 0, s.dec_duration_ms ?? 0].filter((v) => v > 0),
     );
-    const durMax = durations.length ? d3.max(durations) ?? 500 : 500;
+    const sortedDur = [...durations].sort((a, b) => a - b);
+    const p98Idx = Math.max(0, Math.floor(sortedDur.length * 0.98) - 1);
+    const durMax = Math.max(500, sortedDur[p98Idx] ?? 500);
 
     const snrs = samples.map((s) => s.snr).filter((v): v is number => v !== null);
     const snrMax = snrs.length ? Math.max(10, d3.max(snrs) ?? 10) : 10;
@@ -357,14 +364,14 @@ export default function TimeSeriesChart({
         )}
         <Box sx={{ flex: 1 }} />
         <TextField
-          label="Y max (px)"
+          label="Y max"
           size="small"
           value={yMaxInput}
           onChange={(e) => setYMaxInput(e.target.value)}
           placeholder="auto"
           inputProps={{
             inputMode: "decimal",
-            style: { width: 52, textAlign: "right" },
+            style: { width: 48, textAlign: "right" },
           }}
           sx={{ "& .MuiInputBase-root": { fontSize: 12 } }}
         />
@@ -625,26 +632,33 @@ export default function TimeSeriesChart({
           y2={massY0 + massH}
           stroke={axisColor}
         />
-        {xScale.ticks(8).map((t) => (
-          <g key={`xt-${t}`}>
-            <line
-              x1={xScale(t)}
-              x2={xScale(t)}
-              y1={massY0 + massH}
-              y2={massY0 + massH + 4}
-              stroke={axisColor}
-            />
-            <text
-              x={xScale(t)}
-              y={massY0 + massH + 16}
-              fill={textColor}
-              fontSize={10}
-              textAnchor="middle"
-            >
-              {formatXTick(t, startIso)}
-            </text>
-          </g>
-        ))}
+        {(() => {
+          const [t0, t1] = xScale.domain() as [number, number];
+          const domainSpan = t1 - t0;
+          // Fewer ticks for short (<1 min) sections so labels don't
+          // overlap, more for wider ranges.
+          const tickCount = domainSpan < 60 ? 5 : 8;
+          return xScale.ticks(tickCount).map((t) => (
+            <g key={`xt-${t}`}>
+              <line
+                x1={xScale(t)}
+                x2={xScale(t)}
+                y1={massY0 + massH}
+                y2={massY0 + massH + 4}
+                stroke={axisColor}
+              />
+              <text
+                x={xScale(t)}
+                y={massY0 + massH + 16}
+                fill={textColor}
+                fontSize={10}
+                textAnchor="middle"
+              >
+                {formatXTick(t, startIso, domainSpan)}
+              </text>
+            </g>
+          ));
+        })()}
         <text
           x={MARGIN.left + innerW / 2}
           y={height - 6}
@@ -717,7 +731,14 @@ function formatPx(v: number | null): string {
   return v.toFixed(3);
 }
 
-function formatXTick(elapsedSec: number, startIso: string | undefined): string {
+function formatXTick(
+  elapsedSec: number,
+  startIso: string | undefined,
+  domainSpanSec: number,
+): string {
+  // Short sections (≤ 5 min visible) get HH:MM:SS so seconds aren't
+  // lost; longer views show HH:MM so the bar doesn't cram.
+  const showSeconds = domainSpanSec <= 300;
   if (!startIso) {
     if (elapsedSec < 60) return `${Math.round(elapsedSec)}s`;
     const m = Math.floor(elapsedSec / 60);
@@ -727,5 +748,11 @@ function formatXTick(elapsedSec: number, startIso: string | undefined): string {
   const start = new Date(startIso);
   if (Number.isNaN(start.getTime())) return `${Math.round(elapsedSec)}s`;
   const dt = new Date(start.getTime() + elapsedSec * 1000);
-  return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  if (showSeconds) {
+    const ss = String(dt.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  }
+  return `${hh}:${mm}`;
 }

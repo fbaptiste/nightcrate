@@ -81,7 +81,10 @@ export default function Phd2AnalyzerPage() {
       {/* Toolbar */}
       <Paper elevation={0} sx={{ p: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
         <Stack direction="row" spacing={1.5} alignItems="center">
-          <Typography variant="h6" sx={{ mr: 2 }}>
+          <Typography
+            variant="h6"
+            sx={{ mr: 2, whiteSpace: "nowrap", flexShrink: 0 }}
+          >
             PHD2 Analyzer
           </Typography>
           <Button
@@ -185,8 +188,10 @@ export default function Phd2AnalyzerPage() {
               onSelect={setSelectedIndex}
             />
           </Box>
-          {/* Right — section view with tabs */}
-          <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          {/* Right — section view with tabs. ``minWidth: 0`` is needed
+              everywhere down the flex chain so the DataTable's wide
+              grid doesn't push the tab's filter toolbar off-screen. */}
+          <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }}>
             <Tabs
               value={tab}
               onChange={(_, v) => setTab(v)}
@@ -229,6 +234,7 @@ export default function Phd2AnalyzerPage() {
                 display: tab === 1 ? "flex" : "none",
                 flexDirection: "column",
                 minHeight: 0,
+                minWidth: 0,
               }}
             >
               <SectionDataTab

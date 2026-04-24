@@ -1,0 +1,489 @@
+- generic [ref=e3]:
+  - generic [ref=e5]:
+    - button "Collapse sidebar" [ref=e7] [cursor=pointer]:
+      - img [ref=e8]
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - heading "NightCrate" [level=6] [ref=e13]
+        - generic [ref=e14]: v0.22.0
+      - generic [ref=e15]: Fred
+    - separator [ref=e16]
+    - list [ref=e17]:
+      - listitem [ref=e18]:
+        - link "Home" [ref=e19] [cursor=pointer]:
+          - /url: /
+          - button "Home" [ref=e20]:
+            - img [ref=e22]
+            - generic [ref=e25]: Home
+      - button "Weather" [ref=e26]:
+        - link "Weather" [ref=e27] [cursor=pointer]:
+          - /url: /weather
+          - button "Weather" [ref=e28]:
+            - img [ref=e30]
+            - img [ref=e33]
+            - generic [ref=e36]: Weather
+      - button "Planner" [ref=e37]:
+        - link "Planner" [ref=e38] [cursor=pointer]:
+          - /url: /planner
+          - button "Planner" [ref=e39]:
+            - img [ref=e41]
+            - img [ref=e44]
+            - generic [ref=e47]: Planner
+      - button "Rigs" [ref=e48]:
+        - link "Rigs" [ref=e49] [cursor=pointer]:
+          - /url: /rigs
+          - button "Rigs" [ref=e50]:
+            - img [ref=e52]
+            - img [ref=e55]
+            - generic [ref=e58]: Rigs
+      - button "Locations" [ref=e59]:
+        - link "Locations" [ref=e60] [cursor=pointer]:
+          - /url: /locations
+          - button "Locations" [ref=e61]:
+            - img [ref=e63]
+            - img [ref=e66]
+            - generic [ref=e69]: Locations
+      - button "Image Viewer" [ref=e70]:
+        - link "Image Viewer" [ref=e71] [cursor=pointer]:
+          - /url: /image-viewer
+          - button "Image Viewer" [ref=e72]:
+            - img [ref=e74]
+            - img [ref=e77]
+            - generic [ref=e80]: Image Viewer
+      - button "Calculators" [ref=e81]:
+        - link "Calculators" [ref=e82] [cursor=pointer]:
+          - /url: /calculators
+          - button "Calculators" [ref=e83]:
+            - img [ref=e85]
+            - img [ref=e88]
+            - generic [ref=e92]: Calculators
+      - button "Equipment" [ref=e93]:
+        - link "Equipment" [ref=e94] [cursor=pointer]:
+          - /url: /equipment
+          - button "Equipment" [ref=e95]:
+            - img [ref=e97]
+            - img [ref=e100]
+            - generic [ref=e103]: Equipment
+      - button "DSO Catalog" [ref=e104]:
+        - link "DSO Catalog" [ref=e105] [cursor=pointer]:
+          - /url: /catalog/dso
+          - button "DSO Catalog" [ref=e106]:
+            - img [ref=e108]
+            - img [ref=e111]
+            - generic [ref=e114]: DSO Catalog
+      - button "Settings" [ref=e115]:
+        - link "Settings" [ref=e116] [cursor=pointer]:
+          - /url: /settings
+          - button "Settings" [ref=e117]:
+            - img [ref=e119]
+            - img [ref=e122]
+            - generic [ref=e125]: Settings
+      - button "Admin" [ref=e126]:
+        - link "Admin" [ref=e127] [cursor=pointer]:
+          - /url: /admin
+          - button "Admin" [ref=e128]:
+            - img [ref=e130]
+            - img [ref=e133]
+            - generic [ref=e137]: Admin
+      - button "API Docs" [ref=e138]:
+        - link "API Docs" [ref=e139] [cursor=pointer]:
+          - /url: /api-docs
+          - button "API Docs" [ref=e140]:
+            - img [ref=e142]
+            - img [ref=e145]
+            - generic [ref=e148]: API Docs
+      - button "PHD2 Analyzer" [ref=e149]:
+        - link "PHD2 Analyzer" [ref=e150] [cursor=pointer]:
+          - /url: /phd2-analyzer
+          - button "PHD2 Analyzer" [ref=e151]:
+            - img [ref=e153]
+            - img [ref=e156]
+            - generic [ref=e159]: PHD2 Analyzer
+      - status [ref=e160]
+    - generic [ref=e162]:
+      - 'button "Theme: System" [ref=e163] [cursor=pointer]':
+        - img [ref=e164]
+      - button "Activity Console" [ref=e166] [cursor=pointer]:
+        - img [ref=e167]
+  - main [ref=e169]:
+    - generic [ref=e170]:
+      - generic [ref=e172]:
+        - heading "PHD2 Analyzer" [level=6] [ref=e173]
+        - button "Browse" [ref=e174] [cursor=pointer]:
+          - img [ref=e176]
+          - text: Browse
+        - generic [ref=e179]:
+          - textbox "Path to PHD2_GuideLog_*.txt (or archive.zip::log.txt)" [ref=e180]: /Users/fbaptiste/dev/nightcrate/sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt
+          - group
+        - button "Open" [ref=e185] [cursor=pointer]: Open
+        - separator [ref=e186]
+        - generic [ref=e188]: PHD2 —
+        - generic [ref=e190]: Log v2.5
+        - generic [ref=e192]: 3 sections
+        - button "1 warning" [ref=e194] [cursor=pointer]:
+          - img [ref=e195]
+          - generic [ref=e198]: 1 warning
+      - generic [ref=e199]:
+        - generic [ref=e201]:
+          - text: Sections
+          - list [ref=e202]:
+            - button "Calibration 19:33 — x 85.1° · y -6.3°" [ref=e203] [cursor=pointer]:
+              - generic [ref=e204]:
+                - generic [ref=e205]:
+                  - generic [ref=e207]: Calibration
+                  - paragraph [ref=e208]: 19:33
+                  - generic [ref=e209]: —
+                - generic [ref=e210]: x 85.1° · y -6.3°
+            - button "Guiding 19:35 13s 13 frames · RMS 1.20″" [ref=e211] [cursor=pointer]:
+              - generic [ref=e212]:
+                - generic [ref=e213]:
+                  - generic [ref=e215]: Guiding
+                  - paragraph [ref=e216]: 19:35
+                  - generic [ref=e217]: 13s
+                - generic [ref=e218]: 13 frames · RMS 1.20″
+            - button "Guiding 19:38 2h18 7512 frames · RMS 1.57″ · 11 errors" [ref=e219] [cursor=pointer]:
+              - generic [ref=e220]:
+                - generic [ref=e221]:
+                  - generic [ref=e223]: Guiding
+                  - paragraph [ref=e224]: 19:38
+                  - generic [ref=e225]: 2h18
+                - generic [ref=e226]: 7512 frames · RMS 1.57″ · 11 errors
+        - generic [ref=e227]:
+          - tablist [ref=e230]:
+            - tab "Graph" [ref=e231] [cursor=pointer]
+            - tab "Data" [active] [selected] [ref=e232] [cursor=pointer]: Data
+          - generic [ref=e3682]:
+            - generic [ref=e3684]:
+              - generic [ref=e3685]:
+                - generic [ref=e3686]:
+                  - generic [ref=e3687]: Type
+                  - generic [ref=e3688]:
+                    - combobox "Type" [ref=e3689] [cursor=pointer]
+                    - textbox: __all__
+                    - img
+                    - group
+                - generic [ref=e3691]:
+                  - generic [ref=e3692]: Error
+                  - generic [ref=e3693]:
+                    - combobox "Error" [ref=e3694] [cursor=pointer]
+                    - textbox: __all__
+                    - img
+                    - group
+                - group [ref=e3696]:
+                  - button "Scroll" [pressed] [ref=e3697] [cursor=pointer]
+                  - button "Paginated" [ref=e3698] [cursor=pointer]
+              - generic [ref=e3699]:
+                - generic [ref=e3701]:
+                  - row "Frame Time (s) Clock Type dx (px) dy (px) RA raw (px) Dec raw (px) RA guide (px) Dec guide (px) RA pulse Dec pulse SNR Mass Error" [ref=e3702]:
+                    - columnheader "Frame" [ref=e3703] [cursor=pointer]
+                    - columnheader "Time (s)" [ref=e3707] [cursor=pointer]
+                    - columnheader "Clock" [ref=e3709]
+                    - columnheader "Type" [ref=e3711] [cursor=pointer]
+                    - columnheader "dx (px)" [ref=e3713] [cursor=pointer]
+                    - columnheader "dy (px)" [ref=e3715] [cursor=pointer]
+                    - columnheader "RA raw (px)" [ref=e3717] [cursor=pointer]
+                    - columnheader "Dec raw (px)" [ref=e3719] [cursor=pointer]
+                    - columnheader "RA guide (px)" [ref=e3721] [cursor=pointer]
+                    - columnheader "Dec guide (px)" [ref=e3723] [cursor=pointer]
+                    - columnheader "RA pulse" [ref=e3725]
+                    - columnheader "Dec pulse" [ref=e3727]
+                    - columnheader "SNR" [ref=e3729] [cursor=pointer]
+                    - columnheader "Mass" [ref=e3731] [cursor=pointer]
+                    - columnheader "Error" [ref=e3733]
+                  - generic [ref=e3736]:
+                    - row "1 1.31 19:38:24 Mount 0.535 -0.025 0.021 0.535 0.000 0.535 — 165 ms S 21.84 1,081 —" [ref=e3737]
+                    - row "2 2.49 19:38:25 Mount 0.056 0.385 0.389 0.032 0.350 0.000 282 ms W — 19.56 881 —" [ref=e3755]
+                    - row "3 3.38 19:38:26 Mount -0.237 -0.105 -0.125 -0.230 -0.078 0.000 63 ms E — 22.00 1,131 —" [ref=e3773]
+                    - row "4 4.62 19:38:27 Mount 0.180 -0.239 -0.223 0.194 -0.208 0.194 168 ms E 60 ms S 22.45 1,171 —" [ref=e3791]
+                    - row "5 5.70 19:38:28 Mount 0.046 -0.280 -0.275 0.063 -0.268 0.000 217 ms E — 21.90 1,112 —" [ref=e3809]
+                    - row "6 6.79 19:38:29 Mount 0.145 0.264 0.276 0.128 0.221 0.128 179 ms W 39 ms S 18.12 793 —" [ref=e3827]
+                    - row "7 7.67 19:38:30 Mount 0.051 -0.092 -0.087 0.056 0.000 0.000 — — 21.60 1,082 —" [ref=e3845]
+                    - row "8 8.80 19:38:31 Mount 0.187 -0.059 -0.043 0.190 0.000 0.190 — 58 ms S 22.35 1,153 —" [ref=e3863]
+                    - row "9 9.84 19:38:32 Mount -0.035 -0.002 -0.005 -0.035 0.000 0.000 — — 20.89 1,014 —" [ref=e3881]
+                    - row "10 10.93 19:38:33 Mount 0.039 0.030 0.034 0.037 0.000 0.000 — — 21.34 1,051 —" [ref=e3899]
+                    - row "11 12.02 19:38:35 Mount -0.135 -0.018 -0.030 -0.134 0.000 0.000 — — 22.86 1,201 —" [ref=e3917]
+                    - row "12 13.18 19:38:36 Mount -0.146 -0.097 -0.109 -0.140 -0.098 0.000 79 ms E — 21.44 1,037 —" [ref=e3935]
+                    - row "13 14.47 19:38:37 Mount -0.520 -0.120 -0.164 -0.511 -0.157 -0.511 127 ms E 157 ms N 22.21 1,132 —" [ref=e3953]
+                    - row "14 15.53 19:38:38 Mount -0.337 0.252 0.222 -0.352 0.184 -0.352 149 ms W 108 ms N 19.80 931 —" [ref=e3971]
+                    - row "15 16.37 19:38:39 Mount 0.166 0.040 0.054 0.163 0.000 0.000 — — 20.16 950 —" [ref=e3989]
+                    - row "16 17.51 19:38:40 Mount -0.195 0.072 0.055 -0.199 0.000 -0.199 — 61 ms N 21.06 996 —" [ref=e4007]
+                    - row "17 18.55 19:38:41 Mount 0.004 -0.035 -0.035 0.006 0.000 0.000 — — 21.38 1,056 —" [ref=e4025]
+                    - row "18 19.64 19:38:42 Mount -0.018 -0.072 -0.073 -0.013 0.000 0.000 — — 22.38 1,149 —" [ref=e4043]
+                    - row "19 20.89 19:38:43 Mount 0.070 -0.228 -0.221 0.084 -0.199 0.000 161 ms E — 21.57 1,061 —" [ref=e4061]
+                    - row "20 21.80 19:38:44 Mount 0.015 0.004 0.005 0.015 0.000 0.000 — — 21.93 1,098 —" [ref=e4079]
+                    - row "21 22.92 19:38:45 Mount -0.001 0.027 0.027 -0.002 0.000 0.000 — — 21.26 1,026 —" [ref=e4097]
+                    - row "22 23.99 19:38:46 Mount 0.059 -0.023 -0.018 0.061 0.000 0.000 — — 22.07 1,117 —" [ref=e4444]
+                - generic [ref=e4116]: 7,512 rows · virtualized scroll
+            - generic [ref=e4117]:
+              - generic [ref=e4118]: Events (54)
+              - generic [ref=e4119]:
+                - generic [ref=e4120]:
+                  - generic [ref=e4121]: 19:38:23
+                  - generic [ref=e4122]: 0.0s
+                  - generic [ref=e4124]: settle_begin
+                  - paragraph [ref=e4125]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4126]:
+                  - generic [ref=e4127]: 19:38:33
+                  - generic [ref=e4128]: 10.9s
+                  - generic [ref=e4130]: settle_end
+                  - paragraph [ref=e4131]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4132]:
+                  - generic [ref=e4133]: 19:48:37
+                  - generic [ref=e4134]: 614.1s
+                  - generic [ref=e4136]: lock_position_set
+                  - paragraph [ref=e4137]: SET LOCK POSITION, new lock pos = 727.073, 597.574
+                - generic [ref=e4138]:
+                  - generic [ref=e4139]: 19:48:37
+                  - generic [ref=e4140]: 614.1s
+                  - generic [ref=e4142]: dither
+                  - paragraph [ref=e4143]: DITHER by 5.050, -3.863, new lock pos = 723.658, 602.937
+                - generic [ref=e4144]:
+                  - generic [ref=e4145]: 19:48:37
+                  - generic [ref=e4146]: 614.1s
+                  - generic [ref=e4148]: settle_begin
+                  - paragraph [ref=e4149]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4150]:
+                  - generic [ref=e4151]: 19:48:54
+                  - generic [ref=e4152]: 631.5s
+                  - generic [ref=e4154]: settle_end
+                  - paragraph [ref=e4155]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4156]:
+                  - generic [ref=e4157]: 19:58:56
+                  - generic [ref=e4158]: 1233.5s
+                  - generic [ref=e4160]: lock_position_set
+                  - paragraph [ref=e4161]: SET LOCK POSITION, new lock pos = 723.658, 602.937
+                - generic [ref=e4162]:
+                  - generic [ref=e4163]: 19:58:56
+                  - generic [ref=e4164]: 1233.5s
+                  - generic [ref=e4166]: dither
+                  - paragraph [ref=e4167]: DITHER by -0.273, -1.703, new lock pos = 721.938, 602.811
+                - generic [ref=e4168]:
+                  - generic [ref=e4169]: 19:58:56
+                  - generic [ref=e4170]: 1233.5s
+                  - generic [ref=e4172]: settle_begin
+                  - paragraph [ref=e4173]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4174]:
+                  - generic [ref=e4175]: 19:59:18
+                  - generic [ref=e4176]: 1255.5s
+                  - generic [ref=e4178]: settle_end
+                  - paragraph [ref=e4179]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4180]:
+                  - generic [ref=e4181]: 20:09:21
+                  - generic [ref=e4182]: 1858.5s
+                  - generic [ref=e4184]: lock_position_set
+                  - paragraph [ref=e4185]: SET LOCK POSITION, new lock pos = 721.938, 602.811
+                - generic [ref=e4186]:
+                  - generic [ref=e4187]: 20:09:21
+                  - generic [ref=e4188]: 1858.5s
+                  - generic [ref=e4190]: dither
+                  - paragraph [ref=e4191]: DITHER by -3.506, -8.616, new lock pos = 713.053, 600.057
+                - generic [ref=e4192]:
+                  - generic [ref=e4193]: 20:09:21
+                  - generic [ref=e4194]: 1858.5s
+                  - generic [ref=e4196]: settle_begin
+                  - paragraph [ref=e4197]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4198]:
+                  - generic [ref=e4199]: 20:09:39
+                  - generic [ref=e4200]: 1876.1s
+                  - generic [ref=e4202]: settle_end
+                  - paragraph [ref=e4203]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4204]:
+                  - generic [ref=e4205]: 20:19:42
+                  - generic [ref=e4206]: 2479.0s
+                  - generic [ref=e4208]: lock_position_set
+                  - paragraph [ref=e4209]: SET LOCK POSITION, new lock pos = 713.053, 600.057
+                - generic [ref=e4210]:
+                  - generic [ref=e4211]: 20:19:42
+                  - generic [ref=e4212]: 2479.0s
+                  - generic [ref=e4214]: dither
+                  - paragraph [ref=e4215]: DITHER by -0.776, -3.017, new lock pos = 709.980, 599.543
+                - generic [ref=e4216]:
+                  - generic [ref=e4217]: 20:19:42
+                  - generic [ref=e4218]: 2479.0s
+                  - generic [ref=e4220]: settle_begin
+                  - paragraph [ref=e4221]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4222]:
+                  - generic [ref=e4223]: 20:20:01
+                  - generic [ref=e4224]: 2498.8s
+                  - generic [ref=e4226]: settle_end
+                  - paragraph [ref=e4227]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4228]:
+                  - generic [ref=e4229]: 20:30:04
+                  - generic [ref=e4230]: 3101.8s
+                  - generic [ref=e4232]: lock_position_set
+                  - paragraph [ref=e4233]: SET LOCK POSITION, new lock pos = 709.980, 599.543
+                - generic [ref=e4234]:
+                  - generic [ref=e4235]: 20:30:04
+                  - generic [ref=e4236]: 3101.8s
+                  - generic [ref=e4238]: dither
+                  - paragraph [ref=e4239]: DITHER by -9.311, -0.613, new lock pos = 708.570, 590.319
+                - generic [ref=e4240]:
+                  - generic [ref=e4241]: 20:30:04
+                  - generic [ref=e4242]: 3101.8s
+                  - generic [ref=e4244]: settle_begin
+                  - paragraph [ref=e4245]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4246]:
+                  - generic [ref=e4247]: 20:30:24
+                  - generic [ref=e4248]: 3121.3s
+                  - generic [ref=e4250]: settle_end
+                  - paragraph [ref=e4251]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4252]:
+                  - generic [ref=e4253]: 20:40:27
+                  - generic [ref=e4254]: 3724.6s
+                  - generic [ref=e4256]: lock_position_set
+                  - paragraph [ref=e4257]: SET LOCK POSITION, new lock pos = 708.570, 590.319
+                - generic [ref=e4258]:
+                  - generic [ref=e4259]: 20:40:27
+                  - generic [ref=e4260]: 3724.6s
+                  - generic [ref=e4262]: dither
+                  - paragraph [ref=e4263]: DITHER by -8.724, 5.953, new lock pos = 713.753, 581.116
+                - generic [ref=e4264]:
+                  - generic [ref=e4265]: 20:40:27
+                  - generic [ref=e4266]: 3724.6s
+                  - generic [ref=e4268]: settle_begin
+                  - paragraph [ref=e4269]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4270]:
+                  - generic [ref=e4271]: 20:40:59
+                  - generic [ref=e4272]: 3756.2s
+                  - generic [ref=e4274]: settle_end
+                  - paragraph [ref=e4275]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4276]:
+                  - generic [ref=e4277]: 20:51:02
+                  - generic [ref=e4278]: 4359.3s
+                  - generic [ref=e4280]: lock_position_set
+                  - paragraph [ref=e4281]: SET LOCK POSITION, new lock pos = 713.753, 581.116
+                - generic [ref=e4282]:
+                  - generic [ref=e4283]: 20:51:02
+                  - generic [ref=e4284]: 4359.3s
+                  - generic [ref=e4286]: dither
+                  - paragraph [ref=e4287]: DITHER by -3.033, 9.127, new lock pos = 722.586, 577.311
+                - generic [ref=e4288]:
+                  - generic [ref=e4289]: 20:51:02
+                  - generic [ref=e4290]: 4359.3s
+                  - generic [ref=e4292]: settle_begin
+                  - paragraph [ref=e4293]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4294]:
+                  - generic [ref=e4295]: 20:51:28
+                  - generic [ref=e4296]: 4385.4s
+                  - generic [ref=e4298]: settle_end
+                  - paragraph [ref=e4299]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4300]:
+                  - generic [ref=e4301]: 21:01:31
+                  - generic [ref=e4302]: 4988.5s
+                  - generic [ref=e4304]: lock_position_set
+                  - paragraph [ref=e4305]: SET LOCK POSITION, new lock pos = 722.586, 577.311
+                - generic [ref=e4306]:
+                  - generic [ref=e4307]: 21:01:31
+                  - generic [ref=e4308]: 4988.5s
+                  - generic [ref=e4310]: dither
+                  - paragraph [ref=e4311]: DITHER by 3.984, 3.491, new lock pos = 726.406, 580.981
+                - generic [ref=e4312]:
+                  - generic [ref=e4313]: 21:01:31
+                  - generic [ref=e4314]: 4988.5s
+                  - generic [ref=e4316]: settle_begin
+                  - paragraph [ref=e4317]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4318]:
+                  - generic [ref=e4319]: 21:01:57
+                  - generic [ref=e4320]: 5014.6s
+                  - generic [ref=e4322]: settle_end
+                  - paragraph [ref=e4323]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4324]:
+                  - generic [ref=e4325]: 21:12:00
+                  - generic [ref=e4326]: 5617.9s
+                  - generic [ref=e4328]: lock_position_set
+                  - paragraph [ref=e4329]: SET LOCK POSITION, new lock pos = 726.406, 580.981
+                - generic [ref=e4330]:
+                  - generic [ref=e4331]: 21:12:00
+                  - generic [ref=e4332]: 5617.9s
+                  - generic [ref=e4334]: dither
+                  - paragraph [ref=e4335]: DITHER by -3.922, 5.028, new lock pos = 731.079, 576.642
+                - generic [ref=e4336]:
+                  - generic [ref=e4337]: 21:12:00
+                  - generic [ref=e4338]: 5617.9s
+                  - generic [ref=e4340]: settle_begin
+                  - paragraph [ref=e4341]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4342]:
+                  - generic [ref=e4343]: 21:12:26
+                  - generic [ref=e4344]: 5643.9s
+                  - generic [ref=e4346]: settle_end
+                  - paragraph [ref=e4347]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4348]:
+                  - generic [ref=e4349]: 21:22:29
+                  - generic [ref=e4350]: 6246.9s
+                  - generic [ref=e4352]: lock_position_set
+                  - paragraph [ref=e4353]: SET LOCK POSITION, new lock pos = 731.079, 576.642
+                - generic [ref=e4354]:
+                  - generic [ref=e4355]: 21:22:29
+                  - generic [ref=e4356]: 6246.9s
+                  - generic [ref=e4358]: dither
+                  - paragraph [ref=e4359]: DITHER by 7.639, 8.261, new lock pos = 739.965, 583.544
+                - generic [ref=e4360]:
+                  - generic [ref=e4361]: 21:22:29
+                  - generic [ref=e4362]: 6246.9s
+                  - generic [ref=e4364]: settle_begin
+                  - paragraph [ref=e4365]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4366]:
+                  - generic [ref=e4367]: 21:23:00
+                  - generic [ref=e4368]: 6277.5s
+                  - generic [ref=e4370]: settle_end
+                  - paragraph [ref=e4371]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4372]:
+                  - generic [ref=e4373]: 21:33:03
+                  - generic [ref=e4374]: 6880.6s
+                  - generic [ref=e4376]: lock_position_set
+                  - paragraph [ref=e4377]: SET LOCK POSITION, new lock pos = 739.965, 583.544
+                - generic [ref=e4378]:
+                  - generic [ref=e4379]: 21:33:03
+                  - generic [ref=e4380]: 6880.6s
+                  - generic [ref=e4382]: dither
+                  - paragraph [ref=e4383]: DITHER by 3.423, 7.129, new lock pos = 747.361, 586.343
+                - generic [ref=e4384]:
+                  - generic [ref=e4385]: 21:33:03
+                  - generic [ref=e4386]: 6880.6s
+                  - generic [ref=e4388]: settle_begin
+                  - paragraph [ref=e4389]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4390]:
+                  - generic [ref=e4391]: 21:33:30
+                  - generic [ref=e4392]: 6907.7s
+                  - generic [ref=e4394]: settle_end
+                  - paragraph [ref=e4395]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4396]:
+                  - generic [ref=e4397]: 21:43:33
+                  - generic [ref=e4398]: 7510.9s
+                  - generic [ref=e4400]: lock_position_set
+                  - paragraph [ref=e4401]: SET LOCK POSITION, new lock pos = 747.361, 586.343
+                - generic [ref=e4402]:
+                  - generic [ref=e4403]: 21:43:33
+                  - generic [ref=e4404]: 7510.9s
+                  - generic [ref=e4406]: dither
+                  - paragraph [ref=e4407]: DITHER by 9.693, -7.109, new lock pos = 741.110, 596.610
+                - generic [ref=e4408]:
+                  - generic [ref=e4409]: 21:43:33
+                  - generic [ref=e4410]: 7510.9s
+                  - generic [ref=e4412]: settle_begin
+                  - paragraph [ref=e4413]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4414]:
+                  - generic [ref=e4415]: 21:43:55
+                  - generic [ref=e4416]: 7532.6s
+                  - generic [ref=e4418]: settle_end
+                  - paragraph [ref=e4419]: SETTLING STATE CHANGE, Settling complete
+                - generic [ref=e4420]:
+                  - generic [ref=e4421]: 21:53:58
+                  - generic [ref=e4422]: 8135.9s
+                  - generic [ref=e4424]: lock_position_set
+                  - paragraph [ref=e4425]: SET LOCK POSITION, new lock pos = 741.110, 596.610
+                - generic [ref=e4426]:
+                  - generic [ref=e4427]: 21:53:58
+                  - generic [ref=e4428]: 8135.9s
+                  - generic [ref=e4430]: dither
+                  - paragraph [ref=e4431]: DITHER by -7.963, 3.815, new lock pos = 744.228, 588.350
+                - generic [ref=e4432]:
+                  - generic [ref=e4433]: 21:53:58
+                  - generic [ref=e4434]: 8135.9s
+                  - generic [ref=e4436]: settle_begin
+                  - paragraph [ref=e4437]: SETTLING STATE CHANGE, Settling started
+                - generic [ref=e4438]:
+                  - generic [ref=e4439]: 21:54:26
+                  - generic [ref=e4440]: 8163.1s
+                  - generic [ref=e4442]: settle_end
+                  - paragraph [ref=e4443]: SETTLING STATE CHANGE, Settling complete
