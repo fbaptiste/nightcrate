@@ -81,6 +81,17 @@ interface Props<Row extends { id: string | number }> {
   /** Height of the expanded area (px), added below the normal row.
    *  Can be a function of the row for dynamic sizing. Default 120. */
   expandedHeight?: number | ((row: Row) => number);
+  /** When set to a non-null value, DataTable scrolls that row into
+   *  view (Scroll mode) or jumps to its page (Paginated mode) and
+   *  expands it. The parent typically sets this in response to a
+   *  user action (e.g. "click an event in a sidebar → reveal its
+   *  frame") and can clear it via ``onRowScrolledTo`` once it fires.
+   *  Forcing a new value even when the id is the same triggers a
+   *  fresh scroll — so use a ``{ id, nonce }`` pattern if you need
+   *  repeat-click behaviour. */
+  scrollToRowId?: string | number | null;
+  /** Optional ack — fired after a scrollToRowId request resolves. */
+  onRowScrolledTo?: (id: string | number) => void;
 }
 
 export default function DataTable<Row extends { id: string | number }>({
@@ -99,6 +110,8 @@ export default function DataTable<Row extends { id: string | number }>({
   renderExpanded,
   isExpandable,
   expandedHeight = 120,
+  scrollToRowId = null,
+  onRowScrolledTo,
 }: Props<Row>) {
   const [viewMode, setViewMode] = useState<DataTableViewMode>(defaultViewMode);
   const [pageSize, setPageSize] = useState<number>(
@@ -259,6 +272,49 @@ export default function DataTable<Row extends { id: string | number }>({
       return next;
     });
   }, []);
+
+  // ── External scroll-to-row + auto-expand ──────────────────────────────────
+
+  // Two-phase: first effect flips the row into the expanded set (which
+  // triggers a rowLayout recompute); the second effect fires once the
+  // new layout is in place and finally scrolls. ``pendingScrollRef``
+  // survives across renders so we don't re-scroll on every layout
+  // change.
+  const pendingScrollRef = useRef<string | number | null>(null);
+
+  useEffect(() => {
+    if (scrollToRowId == null) return;
+    const row = sortedRows.find((r) => r.id === scrollToRowId);
+    if (!row) return;
+    pendingScrollRef.current = scrollToRowId;
+    // Paginated mode: jump to the page containing this row too.
+    if (viewMode === "paginated") {
+      const idx = sortedRows.findIndex((r) => r.id === scrollToRowId);
+      if (idx >= 0) setPage(Math.floor(idx / pageSize));
+    }
+    const canExpand = !!renderExpanded && (!isExpandable || isExpandable(row));
+    if (canExpand) {
+      setExpandedIds((prev) => {
+        if (prev.has(scrollToRowId)) return prev;
+        const next = new Set(prev);
+        next.add(scrollToRowId);
+        return next;
+      });
+    }
+  }, [scrollToRowId, sortedRows, viewMode, pageSize, renderExpanded, isExpandable]);
+
+  useEffect(() => {
+    const target = pendingScrollRef.current;
+    if (target == null) return;
+    const idx = visibleRows.findIndex((r) => r.id === target);
+    if (idx < 0) return;
+    const pos = rowLayout.positions[idx];
+    if (!pos || !scrollRef.current) return;
+    // Leave a bit of header + one row worth of context at the top.
+    scrollRef.current.scrollTop = Math.max(0, pos.y - rowHeight * 2);
+    pendingScrollRef.current = null;
+    onRowScrolledTo?.(target);
+  }, [rowLayout, visibleRows, rowHeight, onRowScrolledTo]);
 
   // ── Filter options resolution ──────────────────────────────────────────────
 

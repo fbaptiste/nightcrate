@@ -10,7 +10,7 @@
  * Filter controls (Type / Error for guiding, Phase for calibration)
  * live above the grid in the DataTable's filter bar.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
@@ -31,14 +31,17 @@ interface Props {
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
-const fmt3 = (v: unknown) => (v == null ? "—" : (v as number).toFixed(3));
-const fmt2 = (v: unknown) => (v == null ? "—" : (v as number).toFixed(2));
-const fmtInt = (v: unknown) =>
-  v == null ? "—" : (v as number).toLocaleString();
+// Null → empty cell convention across every numeric column. The
+// em-dash signalled "missing" but cluttered the grid; blank reads as
+// missing just as clearly and keeps the eye on the data that IS there.
+const fmt3 = (v: unknown) => (v == null ? "" : (v as number).toFixed(3));
+const fmt2 = (v: unknown) => (v == null ? "" : (v as number).toFixed(2));
+const fmtInt = (v: unknown) => (v == null ? "" : (v as number).toLocaleString());
 
-// Sentinel filter value for non-error rows — kept as the literal em-dash
-// so what the user sees in the cell matches the filter-dropdown entry.
-const NO_ERROR = "—";
+// Sentinel filter-key for rows without an error. Intentionally empty
+// so the Error cell and filter dropdown both stay blank for non-error
+// rows — the filter options surface only real error descriptions.
+const NO_ERROR = "";
 
 // ── Row types ────────────────────────────────────────────────────────────────
 
@@ -91,6 +94,10 @@ const PHASE_OPTIONS: readonly string[] = [
 // ── Main component ───────────────────────────────────────────────────────────
 
 export default function SectionDataTab({ section }: Props) {
+  // Frame number to scroll to + auto-expand; set by EventsList clicks,
+  // cleared by DataTable once the scroll completes.
+  const [scrollTarget, setScrollTarget] = useState<number | null>(null);
+
   // Events are anchored per-frame in the parser — an event's time_seconds
   // matches the time of the sample row immediately before it. Build a
   // lookup from frame → events so the DataTable can render an expand
@@ -141,11 +148,11 @@ export default function SectionDataTab({ section }: Props) {
       ra_pulse:
         s.ra_duration_ms != null && s.ra_duration_ms > 0
           ? `${s.ra_duration_ms} ms ${s.ra_direction ?? ""}`.trim()
-          : "—",
+          : "",
       dec_pulse:
         s.dec_duration_ms != null && s.dec_duration_ms > 0
           ? `${s.dec_duration_ms} ms ${s.dec_direction ?? ""}`.trim()
-          : "—",
+          : "",
       snr: s.snr,
       star_mass: s.star_mass,
       error_code: s.error_code,
@@ -342,15 +349,15 @@ export default function SectionDataTab({ section }: Props) {
       {
         field: "error_label",
         label: "Error",
+        // Only actual error descriptions in the filter dropdown —
+        // no "no error" sentinel, since filtering to non-error rows
+        // isn't a common use-case and the sentinel clutters the list.
         options: (rows) => {
           const set = new Set<string>();
-          let hasOk = false;
           for (const r of rows as GuidingRow[]) {
-            if (r.error_code === 0) hasOk = true;
-            else set.add(r.error_label);
+            if (r.error_code !== 0) set.add(r.error_label);
           }
-          const arr = Array.from(set).sort();
-          return hasOk ? [NO_ERROR, ...arr] : arr;
+          return Array.from(set).sort();
         },
         valueGetter: (r) => r.error_label,
       },
@@ -400,6 +407,8 @@ export default function SectionDataTab({ section }: Props) {
             expandedHeight={(r) =>
               24 + (eventsByFrame.get(r.frame)?.length ?? 0) * 24
             }
+            scrollToRowId={scrollTarget}
+            onRowScrolledTo={() => setScrollTarget(null)}
             renderExpanded={(r) => {
               const events = eventsByFrame.get(r.frame) ?? [];
               if (events.length === 0) return null;
@@ -450,14 +459,24 @@ export default function SectionDataTab({ section }: Props) {
           />
         )}
       </Box>
-      <EventsList section={section} />
+      <EventsList
+        section={section}
+        eventsByFrame={eventsByFrame}
+        onEventClick={section.kind === "guiding" ? setScrollTarget : undefined}
+      />
     </Stack>
   );
 }
 
 // ── Events list (secondary panel) ────────────────────────────────────────────
 
-function EventsList({ section }: { section: LogSection }) {
+interface EventsListProps {
+  section: LogSection;
+  eventsByFrame: Map<number, LogSection["events"]>;
+  onEventClick?: (frame: number) => void;
+}
+
+function EventsList({ section, eventsByFrame, onEventClick }: EventsListProps) {
   if (section.events.length === 0) {
     return (
       <Box sx={{ flexShrink: 0 }}>
@@ -471,45 +490,74 @@ function EventsList({ section }: { section: LogSection }) {
     );
   }
 
+  // Reverse lookup: each event → its frame (by reference identity).
+  const frameByEvent = new Map<LogSection["events"][number], number>();
+  for (const [frame, evs] of eventsByFrame.entries()) {
+    for (const ev of evs) frameByEvent.set(ev, frame);
+  }
+
   return (
     <Box sx={{ flexShrink: 0 }}>
       <Typography variant="overline" color="text.secondary">
         Events ({section.events.length})
       </Typography>
-      <Stack spacing={0.5} sx={{ maxHeight: 200, overflow: "auto", pr: 1 }}>
-        {section.events.map((e, i) => (
-          <Stack
-            key={i}
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            sx={{ fontSize: 12 }}
-          >
-            <Typography
-              variant="caption"
-              sx={{ fontFamily: "monospace", minWidth: 78, color: "text.secondary" }}
+      <Stack spacing={0.25} sx={{ maxHeight: 200, overflow: "auto", pr: 1 }}>
+        {section.events.map((e, i) => {
+          const frame = frameByEvent.get(e);
+          const clickable = onEventClick != null && frame != null;
+          return (
+            <Stack
+              key={i}
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              onClick={clickable ? () => onEventClick!(frame!) : undefined}
+              sx={{
+                fontSize: 12,
+                py: 0.25,
+                borderRadius: 0.5,
+                cursor: clickable ? "pointer" : "default",
+                "&:hover": clickable ? { bgcolor: "action.hover" } : undefined,
+              }}
             >
-              {e.time_seconds != null
-                ? formatWallClock(section.start_time, e.time_seconds)
-                : "—"}
-            </Typography>
-            <Typography
-              variant="caption"
-              sx={{ fontFamily: "monospace", minWidth: 60, color: "text.secondary" }}
-            >
-              {e.time_seconds != null ? `${e.time_seconds.toFixed(1)}s` : ""}
-            </Typography>
-            <Chip
-              label={e.kind}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: 10, height: 18 }}
-            />
-            <Typography variant="body2" sx={{ color: "text.secondary", flex: 1 }}>
-              {e.raw_message}
-            </Typography>
-          </Stack>
-        ))}
+              <Typography
+                variant="caption"
+                sx={{ fontFamily: "monospace", minWidth: 78, color: "text.secondary" }}
+              >
+                {e.time_seconds != null
+                  ? formatWallClock(section.start_time, e.time_seconds)
+                  : ""}
+              </Typography>
+              <Typography
+                variant="caption"
+                sx={{ fontFamily: "monospace", minWidth: 60, color: "text.secondary" }}
+              >
+                {e.time_seconds != null ? `${e.time_seconds.toFixed(1)}s` : ""}
+              </Typography>
+              <Chip
+                label={e.kind}
+                size="small"
+                variant="outlined"
+                sx={{ fontSize: 10, height: 18 }}
+              />
+              <Typography variant="body2" sx={{ color: "text.secondary", flex: 1 }}>
+                {e.raw_message}
+              </Typography>
+              {frame != null && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontFamily: "monospace",
+                    color: "text.secondary",
+                    fontSize: 10,
+                  }}
+                >
+                  #{frame}
+                </Typography>
+              )}
+            </Stack>
+          );
+        })}
       </Stack>
     </Box>
   );

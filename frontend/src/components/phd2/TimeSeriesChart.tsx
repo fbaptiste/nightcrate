@@ -65,7 +65,13 @@ interface HoverInfo {
   decDirection: "N" | "S" | null;
   snr: number | null;
   starMass: number | null;
+  /** Non-null when the cursor magnetically snapped to a dither marker
+   *  — crosshair paints blue + the tooltip shows Δx/Δy from the event. */
+  dither: LogEvent | null;
 }
+
+/** Pixel radius within which the cursor snaps to a dither marker. */
+const DITHER_SNAP_PX = 8;
 
 export default function TimeSeriesChart({
   samples,
@@ -299,12 +305,31 @@ export default function TimeSeriesChart({
       setHover(null);
       return;
     }
-    const t = xScale.invert(mx);
+
+    // Magnetic snap to dither markers — when the cursor is within
+    // DITHER_SNAP_PX of a dither's X, grab that dither. Lets Fred
+    // read each dither's Δx/Δy cleanly without pixel-perfect mousing.
+    let snapDither: LogEvent | null = null;
+    let snapTime: number | null = null;
+    let bestDist = DITHER_SNAP_PX + 0.5;
+    for (const ev of events) {
+      if (ev.kind !== "dither" || ev.time_seconds == null) continue;
+      const ex = xScale(ev.time_seconds);
+      if (ex < MARGIN.left || ex > MARGIN.left + innerW) continue;
+      const d = Math.abs(mx - ex);
+      if (d < bestDist) {
+        snapDither = ev;
+        snapTime = ev.time_seconds;
+        bestDist = d;
+      }
+    }
+
+    const t = snapTime ?? xScale.invert(mx);
     const bisector = d3.bisector((s: GuidingSample) => s.time_seconds).center;
     const idx = bisector(samples, t);
     const s = samples[Math.max(0, Math.min(samples.length - 1, idx))];
     setHover({
-      xPx: xScale(s.time_seconds),
+      xPx: snapTime !== null ? xScale(snapTime) : xScale(s.time_seconds),
       time: s.time_seconds,
       frame: s.frame,
       raRaw: s.ra_raw_px,
@@ -315,6 +340,7 @@ export default function TimeSeriesChart({
       decDirection: s.dec_direction,
       snr: s.snr,
       starMass: s.star_mass,
+      dither: snapDither,
     });
   }
 
@@ -682,7 +708,7 @@ export default function TimeSeriesChart({
           {startIso ? "time (local)" : "elapsed (s)"}
         </text>
 
-        {/* Crosshair */}
+        {/* Crosshair — paints solid blue when snapped to a dither. */}
         {hover && (
           <g pointerEvents="none">
             <line
@@ -690,9 +716,9 @@ export default function TimeSeriesChart({
               x2={hover.xPx}
               y1={MARGIN.top}
               y2={massY0 + massH}
-              stroke={axisColor}
-              strokeDasharray="3 3"
-              opacity={0.7}
+              stroke={hover.dither ? COLOR_RA : axisColor}
+              strokeDasharray={hover.dither ? undefined : "3 3"}
+              opacity={hover.dither ? 0.85 : 0.7}
             />
           </g>
         )}
@@ -733,6 +759,23 @@ export default function TimeSeriesChart({
           <Typography variant="caption" sx={{ display: "block" }}>
             SNR: {hover.snr?.toFixed(1) ?? "—"} · mass: {hover.starMass ?? "—"}
           </Typography>
+          {hover.dither && (
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                mt: 0.5,
+                pt: 0.5,
+                borderTop: 1,
+                borderColor: "divider",
+                color: COLOR_RA,
+                fontWeight: 600,
+              }}
+            >
+              Dither · Δx={hover.dither.parsed_fields.dx ?? "?"}, Δy=
+              {hover.dither.parsed_fields.dy ?? "?"} px
+            </Typography>
+          )}
         </Box>
       )}
     </Box>
