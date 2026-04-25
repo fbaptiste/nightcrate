@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.25.0
+**NightCrate version:** 0.26.0
 
 **Last updated:** 2026-04-25
 
@@ -269,15 +269,15 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ---
 
-### PHD2 Guide-Log Analyzer (Passes A + B + C + D-1)
+### PHD2 Guide-Log Analyzer (Passes A + B + C + D-1 + D-2)
 
-**Status:** `[in progress]` (Passes A–D-1 shipped; six more passes planned through v0.34.0 + roadmap tail)
+**Status:** `[in progress]` (Passes A–D-2 shipped; five more passes planned through v0.34.0 + roadmap tail)
 
 First pass of a ten-version arc that delivers a PHD2 guide-log analyzer, aiming to replace the community's "post log to the PHD2 Google Group and wait for expert" workflow with an in-app parser + charts + (eventually, in v0.31.0) an automated diagnostic engine. Functional spec: `docs/nightcrate-phd2-analyzer-spec-v4.md`. v0.22.0 delivers a format-tolerant parser (handles ASIAIR's blank app-version field, irregular header key separators, 18-vs-19-column row arity, DROP frames, locale-decimal recovery, backward timestamp jumps), a D3 time-series chart with RA/Dec traces + correction bars + SNR/mass sub-panels + crosshair cursor + row-packed vertical-line event markers, a five-phase calibration plot with derived angle/rate/parity, per-section + viewport summary panels (collapsible), and a warnings hover-tooltip. Settle-window exclusion in the quality metrics (originally Pass B scope) was pulled forward during the polish round because inflated Peak/RMS numbers from dither excursions were actively misleading. Standalone-first (spec §4.1) — no persistence yet (in-process TTL cache only); catalog integration lands in v0.34.0.
 
 - **API:** `/api/phd2/parse` (POST), `/api/phd2/cache/stats` (GET), `/api/phd2/cache/clear` (POST)
 - **Backend services:** `services/phd2_parser.py`, `services/phd2_metrics.py` (with `_settle_intervals` state-machine), `services/phd2_models.py`
-- **Frontend:** `pages/Phd2AnalyzerPage.tsx`, `components/phd2/{TimeSeriesChart,CalibrationPlot,ScatterPlot,StatsPanel,EventList,WarningsDrawer,SectionNavigator,SectionInfoPanel,SectionDataTab}.tsx`, `lib/phd2GuidingMetrics.ts` (client-side metrics helper for Viewport / Selection Summary + toggle-aware recompute), `api/phd2.ts`
+- **Frontend:** `pages/Phd2AnalyzerPage.tsx`, `components/phd2/{TimeSeriesChart,CalibrationPlot,ScatterPlot,FftChart,RigSelectBar,StatsPanel,EventList,WarningsDrawer,SectionNavigator,SectionInfoPanel,SectionDataTab}.tsx`, `lib/phd2GuidingMetrics.ts` (client-side metrics helper for Viewport / Selection Summary + toggle-aware recompute), `lib/phd2RecentFiles.ts` (per-log rig persistence), `api/phd2.ts`
 
 v0.23.0 Pass B added: drift + oscillation metrics on both Section + Viewport Summary panels; a ScatterPlot component (dx vs dy with 1σ / 2σ dispersion ellipse + centroid); a collapsible EventList that pans the chart to a clicked event via a new `scrollToTime` imperative handle on TimeSeriesChart.
 
@@ -287,13 +287,15 @@ v0.25.0 Pass D-1 — **Metric Foundation** (PHDLogViewer-aligned). Backend `phd2
 - **Route:** `/phd2-analyzer` (top-level, nav entry auto-appended for users with saved nav orders)
 - **Sample log:** `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`
 
+v0.26.0 Pass D-2 — **Spectrum Conformance + Worm Markers** (spec v4 §6.1, §6.6). New backend service `services/phd2_fft.py` ports PHDLogViewer's `AnalysisWin.cpp` FFT pipeline end-to-end: filter → MIN_ENTRIES=12 + IQR/median > 0.20 cadence guard + constant-data guard (each surfaces as a structured `skip_reason`) → least-squares drift subtraction → Akima spline resample (`scipy.interpolate.Akima1DInterpolator`, scipy added as a backend dep) → Hamming window → `numpy.fft.rfft` → 4/N amplitude scale → MAD-σ peak detection (`median + 3·1.4826·MAD`) with ±5% dedup, top-5 cap. Worm-period markers via `_build_worm_marker`: rig with worm-drive mount + `worm_period_seconds` set → vertical marker + matching-peak chip; otherwise heuristic fallback (largest peak in [300, 800] s above 0.5″) labelled "uncertain". Migration `0024.mount_worm_period.sql` adds `mount.worm_period_seconds REAL` and rebuilds `rig_summary` to expose `mount_drive_type` + `mount_worm_period_seconds`. New `RigSelectBar` toolbar component persists per-log via `phd2RecentFiles.selectedRigId`. New **Spectrum** tab (now index 1, between Guiding and Dispersion; Data shifted to index 3) renders the `FftChart`: log-log axes, top-5 peak dots (subtle white outline), seeing-band shading at < 5 s, X-axis -30° tick rotation, panel clipPath so log-scale values below the Y floor stay contained, always-on hover hairline that snaps horizontally to peaks within ±8 px (snap is X-only — the user's mental model is "the line is near the peak"), tooltip with full Period / Amplitude / Peak-to-peak / RMS readout when snapped + nearest-bin per-trace amplitudes when free, fixed vertical anchor so the tooltip doesn't bounce on snap, content-aware auto-resize. Cache key extended with `rig_id` so rig variants don't pollute each other.
+
 Incidental fix with broader reach: `_moon_rise_set` in `services/astronomy.py` was widened from the sun's 24 h noon-to-noon grid to a dedicated 48 h midnight-anchored window. The **Tonight at-a-glance calculator** now reports actual moonrise times even when the moon rose earlier in the day.
 
 ---
 
 ## Schema state
 
-Current migration: **0016** (DSO augmentation columns). 16 migrations total (`0001`–`0016`).
+Current migration: **0024** (mount worm period + `rig_summary` view rebuild). 24 migrations total (`0001`–`0024`).
 
 - **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
 - **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 from nightcrate.services.phd2_metrics import SectionMetrics
@@ -9,30 +11,69 @@ from nightcrate.services.phd2_models import LogSection, ParsedLog
 
 
 class ParseRequest(BaseModel):
-    """Request body for ``POST /api/phd2/parse``."""
-
     model_config = ConfigDict(extra="forbid")
 
     path: str
+    rig_id: int | None = None
 
 
-class SectionWithMetrics(BaseModel):
-    """Per-section bundle: raw parsed section + computed top-line metrics.
+class FftPeak(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    Kept as a wrapper (rather than merging metrics onto `LogSection`) so the
-    service layer's data model stays purely parser-shaped — v3+ diagnostics
-    will wrap similarly without muddying the parse output.
+    period_s: float
+    amplitude_arcsec: float
+    peak_to_peak_arcsec: float
+    rms_arcsec: float
+
+
+class FftResult(BaseModel):
+    """Per-trace FFT output for one guiding section.
+
+    ``skip_reason`` is non-null when an §6.1 guard aborted the FFT
+    (too-short / non-uniform cadence / constant data); the chart
+    renders the reason instead of a degenerate plot.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    period_s: list[float]
+    amplitude_arcsec: list[float]
+    peaks: list[FftPeak]
+    skip_reason: str | None = None
+
+
+WormMarkerSource = Literal["mount", "heuristic"]
+
+
+class WormMarker(BaseModel):
+    """Spectrum-overlay annotation pointing at the worm-gear period."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period_s: float
+    source: WormMarkerSource
+    label: str
+    mount_name: str | None = None
+    matched_peak: FftPeak | None = None
+
+
+class SectionAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fft_ra: FftResult | None = None
+    fft_dec: FftResult | None = None
+    worm_marker: WormMarker | None = None
+
+
+class SectionWithMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     section: LogSection
     metrics: SectionMetrics
+    analysis: SectionAnalysis = SectionAnalysis()
 
 
 class ParseResponse(BaseModel):
-    """Response body for ``POST /api/phd2/parse``."""
-
     model_config = ConfigDict(extra="forbid")
 
     log: ParsedLog
@@ -40,8 +81,6 @@ class ParseResponse(BaseModel):
 
 
 class CacheStatsResponse(BaseModel):
-    """Response body for ``GET /api/phd2/cache/stats``."""
-
     model_config = ConfigDict(extra="forbid")
 
     entries: int

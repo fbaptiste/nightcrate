@@ -288,6 +288,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "drive_type",
             "notes",
             "source_url",
+            "worm_period_seconds",
         ),
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
