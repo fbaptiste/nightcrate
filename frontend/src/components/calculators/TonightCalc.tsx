@@ -264,12 +264,12 @@ export default function TonightCalc() {
       </Grid>
 
       {/* Moon + Imaging quality — content-sized cards in a wrapping
-          row so each Paper hugs its content instead of stretching to
-          50% of the page width. */}
+          row so each Paper hugs its content width. ``stretch`` makes
+          them match the taller card's height for a tidy row. */}
       <Stack
         direction="row"
         spacing={2}
-        alignItems="flex-start"
+        alignItems="stretch"
         flexWrap="wrap"
         useFlexGap
       >
