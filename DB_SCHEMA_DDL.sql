@@ -1,4 +1,4 @@
--- NightCrate version: 0.25.0
+-- NightCrate version: 0.26.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -518,6 +518,7 @@ CREATE TABLE IF NOT EXISTS mount (
     goto_capable INTEGER NOT NULL DEFAULT 1 CHECK (goto_capable IN (0, 1)),
     periodic_error_arcsec REAL,
     drive_type TEXT,
+    worm_period_seconds REAL,
     notes TEXT,
     source_url TEXT,
     is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0, 1)),
@@ -1053,6 +1054,8 @@ SELECT
     -- Mount
     r.mount_id,
     m.model_name AS mount_name,
+    m.drive_type AS mount_drive_type,
+    m.worm_period_seconds AS mount_worm_period_seconds,
     -- Filter wheel
     r.filter_wheel_id,
     fw.model_name AS filter_wheel_name,

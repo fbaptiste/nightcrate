@@ -235,6 +235,28 @@ class ParsedLog(BaseModel):
     warnings: list[ParseWarning] = []
 
 
+class FftPeak(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    period_s: float
+    amplitude_arcsec: float
+    peak_to_peak_arcsec: float
+    rms_arcsec: float
+
+
+class FftResult(BaseModel):
+    """Per-trace FFT output. ``skip_reason`` is non-null when an §6.1 guard
+    aborted the FFT — the chart renders the reason instead of a degenerate
+    plot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period_s: list[float]
+    amplitude_arcsec: list[float]
+    peaks: list[FftPeak]
+    skip_reason: str | None = None
+
+
 class Phd2DebugLogRejected(ValueError):
     """Raised when a file is a PHD2 debug log rather than a guide log.
 

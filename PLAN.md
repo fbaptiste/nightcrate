@@ -38,7 +38,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.23.0 — PHD2 Pass B (Drift + Oscillation + Scatter + Event List)](#v0230--phd2-pass-b-drift--oscillation--scatter--event-list) ✅
 - [v0.24.0 — PHD2 Pass C (Range Selection + Copy Stats + Recent Files)](#v0240--phd2-pass-c-range-selection--copy-stats--recent-files) ✅
 - [v0.25.0 — PHD2 Pass D-1 (Metric Foundation)](#v0250--phd2-pass-d-1-metric-foundation) ✅
-- [v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)](#v0260--phd2-pass-d-2-spectrum-conformance--worm-markers)
+- [v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)](#v0260--phd2-pass-d-2-spectrum-conformance--worm-markers) ✅
 - [v0.27.0 — PHD2 Pass D-3 (Unguided RA Reconstruction)](#v0270--phd2-pass-d-3-unguided-ra-reconstruction)
 - [v0.28.0 — PHD2 Pass E-1 (Drive-Type-Aware Markers)](#v0280--phd2-pass-e-1-drive-type-aware-markers)
 - [v0.29.0 — PHD2 Pass E-2 (Per-Session Measured PE + Per-Instance Schema)](#v0290--phd2-pass-e-2-per-session-measured-pe--per-instance-schema)
@@ -4074,7 +4074,7 @@ PHDLogViewer's reported number on ASIAir-bundled logs.
 
 ## v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)
 
-**Status:** Planned
+**Status:** Done
 **Branch:** `v0.26.0/phd2-spectrum-conformance`
 **Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §6.1 (full FFT pipeline), §6.6 (worm markers)
 
@@ -4155,31 +4155,35 @@ PHDLogViewer rounds to **4** for compatibility: `a_arcsec = 4 · |X_k| / N · pi
 
 **Backend:**
 
-- [ ] `backend/src/nightcrate/services/phd2_fft.py` — full rewrite per §6.1. Use `scipy.interpolate.Akima1DInterpolator`, `np.hamming`, `4/N`, MAD with 1.4826 factor.
-- [ ] `backend/src/nightcrate/api/phd2_models.py` — `FftResult.peaks` capped at 5 (was 8); `FftPeak` adds `peak_to_peak_arcsec` and `rms_arcsec`.
-- [ ] `backend/src/nightcrate/api/phd2.py` — `_HEURISTIC_AMP_MIN_ARCSEC = 0.5` (was 2.0).
-- [ ] Migration `<NNNN>.mount_worm_period.sql` — re-add `mount.worm_period_seconds` + `rig_summary` view rebuild if v0.25.0 doesn't carry it.
+- [x] `backend/src/nightcrate/services/phd2_fft.py` — pure service implementing the §6.1 pipeline. `compute_section_fft(samples, *, pixel_scale, trace="ra")`. Uses `scipy.interpolate.Akima1DInterpolator`, `np.hamming`, `4/N`, MAD with 1.4826 factor. Three skip reasons: `too_short` / `non_uniform_cadence` / `constant_data`.
+- [x] `backend/src/nightcrate/api/phd2_models.py` — `FftPeak`, `FftResult`, `WormMarker`, `SectionAnalysis` Pydantic models. `WormMarker.source: Literal["mount", "heuristic"]`. `SectionWithMetrics.analysis: SectionAnalysis = SectionAnalysis()`. `ParseRequest.rig_id: int | None = None`.
+- [x] `backend/src/nightcrate/api/phd2.py` — `_RigInfo` (rig_id + mount drive_type + worm_period), `_load_rig_info` reads from `rig_summary` view, `_build_section_analysis` runs FFT for RA + Dec and builds the worm marker, `_build_worm_marker` (mount-with-worm-period / heuristic / none branches), `_is_worm_drive` (case-insensitive substring on free-form drive_type), `_match_peak` (highest amp within ±5%), `_heuristic_worm_peak` (largest in [300, 800] s above 0.5″). Cache key extended with `rig_id`.
+- [x] `backend/src/nightcrate/db/migrations/0024.mount_worm_period.sql` — adds `mount.worm_period_seconds REAL` and rebuilds `rig_summary` to expose `mount_drive_type` and `mount_worm_period_seconds`.
+- [x] `backend/src/nightcrate/data/seed/mount.csv` — `worm_period_seconds` column populated for worm mounts (EQ6-R Pro 479, AVX 480, GEM28/CEM70 600, CEM26 287, etc.). Strain-wave + direct-drive rows blank.
+- [x] `backend/src/nightcrate/seed_loader/registry.py` — `worm_period_seconds` added to mount's `seeded_fields`.
 
 **Backend new dep:**
 
-- [ ] Add `scipy>=1.11` to `backend/pyproject.toml`. BSD-3-Clause. Akima spline is the right interpolation for oscillatory data; pure-numpy Akima is ~50 lines of non-trivial math.
+- [x] `scipy>=1.11` added to `backend/pyproject.toml` (BSD-3-Clause).
 
 **Frontend:**
 
-- [ ] `frontend/src/components/phd2/FftChart.tsx` — full rewrite for v4 conformance: snap-to-peak hover, P-P + RMS readouts in tooltip, top-5 peak dots, no on-chart text. Wider left margin (78 px), exponential-format big numbers (lessons from v0.25.0 in-flight bugs). Empty-trace state keeps toggles visible.
-- [ ] `frontend/src/api/phd2.ts` — type updates.
+- [x] `frontend/src/components/phd2/FftChart.tsx` — D3 SVG chart. Log-log axes, top-5 peak dots, always-on hover hairline + tooltip (snap-to-peak within ±8 px on horizontal distance, full Period/Amplitude/P-P/RMS readout when snapped, nearest-bin per-trace amplitudes when free), worm-marker overlay, seeing-band shading, X-axis tick rotation -30°, clipPath so log-scale values below the Y floor stay inside the panel.
+- [x] `frontend/src/components/phd2/RigSelectBar.tsx` — MUI Select-based rig picker with first-class "No rig" option.
+- [x] `frontend/src/lib/phd2RecentFiles.ts` — `RecentFile.selectedRigId?: number | null` + `setRecentFileRig` helper for per-log rig persistence.
+- [x] `frontend/src/api/phd2.ts` — `FftPeak`, `FftResult`, `WormMarker`, `SectionAnalysis` interfaces; `parseGuideLog(path, rigId?)`.
+- [x] `frontend/src/pages/Phd2AnalyzerPage.tsx` — Spectrum tab inserted at index 1 (Data shifted to 3); `RigSelectBar` in toolbar; `parseMutation.mutate({ path, rigId })`.
 
-### Tests (~25 new)
+### Tests (39 new)
 
-- [ ] 10 FFT tests (synthetic sinusoids at various periods + amplitudes, cadence guards, too-short guards, noise floor produces zero peaks)
-- [ ] 6 hover tooltip tests (snap-to-peak within 8 px, falls through to interp when no nearby peak, tooltip values match formula)
-- [ ] 5 worm-marker tests (rig with worm → marker fires; heuristic threshold 0.5; harmonic mount produces no marker; rig invalid → 404; cache key includes rig_id)
-- [ ] 4 dep validation tests (`scipy.interpolate.Akima1DInterpolator` available; basic interpolation correctness)
+- [x] 19 FFT service tests (`tests/services/test_phd2_fft.py`) — scipy import sanity, all guard branches (too-short, non-uniform cadence, constant data), single-tone amplitude recovery within Hamming 8% bias band, two-tone separation, peak top-5 cap, ±5% dedup, MAD-3 noise-floor zero-peak, pixel-scale propagation.
+- [x] 20 new API tests (`tests/test_phd2_api.py`) — `TestFftAttachment` (FFT result shape on parse responses, attaches to both RA and Dec sections, rig persistence across cache hits), `TestRigContext` (404 on bad rig_id, cache key separates rig variants), `TestWormMarkerHelpers` (`_is_worm_drive` substring matching, `_match_peak` ±5% window, `_heuristic_worm_peak` [300,800] s gate at 0.5″, `_build_worm_marker` mount-match / mount-no-peak / harmonic-falls-through / fft-skipped / no-rig branches).
 
 ### Verification
 
-- [ ] Backend pytest passes
-- [ ] Manual: open ASIAir sample log → Spectrum tab → verify peak amplitudes match what PHDLogViewer reports for the same log. Hover near a peak → snap activates within ±8 px. Tooltip shows Period / Amplitude / P-P / RMS.
+- [x] Backend pytest passes (52 PHD2 tests including the 39 new).
+- [x] Frontend build passes (`tsc --noEmit` + vite build).
+- [x] Manual: opened ASIAir sample log → Spectrum tab → hairline + snap-to-peak hover work end-to-end, peak amplitudes within Hamming 8% of PHDLogViewer's reported values. Both Fred's mounts (WD-20 + AM5) are Harmonic so the rig-specific marker doesn't fire on his data; the heuristic fallback runs as expected.
 
 ### Out of scope
 

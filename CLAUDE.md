@@ -8,7 +8,10 @@ Active development. See `PLAN.md` for the current version plan and task checklis
 
 Reference documents:
 - `nightcrate-brief.md` — product vision, MVP features, architecture decisions
+- `nightcrate-current-state.md` — living inventory of what's actually built (per-feature snapshots, statuses, file pointers). Use this when you need to know what exists today; use `PLAN.md` when you need version history; use this CLAUDE.md when you need architectural decisions, conventions, and gotchas.
 - `NightCrate_Equipment_and_Technical_Context.md` — Fred's imaging setup, file formats, FITS headers, PHD2 log structure, known edge cases
+- `DB_SCHEMA.md` / `DB_SCHEMA_DDL.sql` — authoritative schema docs
+- `LLM_DB_SPECS.md` — LLM-facing seed-data reference (CSV columns, abbreviated schema)
 
 ## Planned Stack
 
@@ -23,10 +26,10 @@ Reference documents:
 - **Database:** SQLite accessed directly via `aiosqlite` (raw SQL, no ORM). Migrations managed with `yoyo-migrations` (SQL files in `db/migrations/`). **No SQLAlchemy.**
 - **Data models:** Pydantic only — for API shapes, domain objects, and settings. No ORM models.
 - **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
-- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, `timezonefinder` (geo tz from coordinates), ASTAP/astrometry.net for plate solving
+- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, `timezonefinder` (geo tz from coordinates), `scipy` (FFT pipeline), ASTAP/astrometry.net for plate solving
 - **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
 - **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly.
-- **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, single JSON row).
+- **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, key-value rows).
 
 Desktop packaging rationale: Electron rejected (100MB+ bundle size); Tauri is the future native wrapper option using OS-native webview.
 
@@ -44,6 +47,11 @@ The app is a **cross-platform local-first desktop application** (Mac, Windows, L
 - Darks: camera + gain + sensor temperature + exposure + binning
 - Flats: camera + gain + filter + binning (+ rotator angle ideally)
 - Bias: camera + gain + binning
+
+**Layer separation (enforced):**
+- `services/` — pure business logic. **No FastAPI, no DB session, no API-layer imports.** Service modules return Pydantic shapes that live alongside them in `services/*_models.py`.
+- `api/` — HTTP boundary. Owns DB access via `get_db()`, request/response Pydantic wrappers, and orchestration. May import from `services/` but never the reverse.
+- Reference pattern: `services/aberration.py` ↔ `api/aberration.py`. New PHD2 / planner / weather code follows the same shape.
 
 ## Domain Knowledge
 
@@ -71,8 +79,10 @@ The app is a **cross-platform local-first desktop application** (Mac, Windows, L
 
 ## UI/UX Requirements
 
-- **Color-blind-friendly palette required** — Fred is red-green color blind. Use blue/orange instead of red/green; add pattern/shape differentiation where color alone would be used.
-- Catalog by reference (don't move files) is the default. File reorganization/copy is optional.
+- **Color-blind-friendly palette required** — Fred is red-green color blind. Use blue/orange instead of red/green; add pattern/shape differentiation where color alone would be used. Approved trio: blue / orange / teal. Reject purple + amber as too similar.
+- **No question-mark icons** for help affordances; **no underlines on tooltips**; theme-aware D3 colors (don't hardcode `#fff` / `#000`).
+- **Catalog by reference (don't move files)** is the default. File reorganization/copy is optional.
+- **Hex colors must be 6-digit** (`#888888`, never `#888`) — gradient code appends alpha suffixes that break with 3-digit hex.
 
 ## Python Tooling
 
@@ -93,7 +103,7 @@ make frontend  # Frontend only (http://localhost:5173)
 make install   # Sync all deps after pulling changes
 make lint      # ruff check
 make format    # ruff format
-make test      # pytest (serial — full output, consistent ordering, ~7 min on v0.20.0)
+make test      # pytest (serial — full output, consistent ordering)
 make test-fast # pytest -n auto (parallel via pytest-xdist, typically 2-3x faster)
 ```
 
@@ -132,675 +142,139 @@ Before committing, all applicable checks must pass:
 
 ## Gotchas
 
-- **Python 3.14 + ruff format:** ruff format may strip parentheses from `except (ValueError, IndexError):` turning it into the Python 2 syntax `except ValueError, IndexError:`. This is a known ruff issue with `target-version = "py314"`. Avoid multi-exception `except` clauses, or rewrite to avoid the pattern (e.g., use a single base exception or restructure the logic).
+- **Python 3.14 + ruff format:** ruff format may strip parentheses from `except (ValueError, IndexError):` turning it into Python 2 syntax. Avoid multi-exception `except` clauses; if needed, define a module-level tuple constant and reference it.
+- **JSX Unicode escapes** are not interpreted in attribute strings: `label="°C"` passes 8 literal characters. Wrap in an expression: `label={"°C"}`. HTML entities like `&approx;` / `&asymp;` aren't in React's named-entity table — use `{"≈"}` instead.
+- **MUI `<Typography variant=...>` overrides parent font styles.** A parent Box's `sx={{ fontSize, lineHeight }}` does NOT cascade — the variant brings its own (caption is 12px / 1.66, not the parent's 11 / 1.35). When sizing a fixed-height container by parent font math, force inheritance: `'& .MuiTypography-root': { fontSize: 'inherit', lineHeight: 'inherit' }`.
+- **Pre-release migration policy** — until first release, OK to edit existing yoyo migration files in place. Two paths to bring an already-applied DB up to date: (a) destructive — delete DB files and let migrations re-run from scratch; (b) non-destructive — manually apply the new SQL via `sqlite3 <db_path> <<EOF ... EOF`. Use (b) when the user has data they don't want to lose.
 
-## Image Viewer
+## Cross-cutting patterns
 
-Supported formats: FITS (`.fits/.fit/.fts`), XISF (`.xisf`), PixInsight projects (`.pxiproject`), PNG, JPEG, TIFF (including float32 TIFF).
+### Settings (key-value schema)
 
-**Architecture:**
-- `services/imaging.py` — format-agnostic: normalization, stretch, stats, histogram, Lab a*, PNG rendering
-- `services/fits_io.py` — FITS loading via astropy
-- `services/xisf_io.py` — clean-room XISF parser (no GPL dependency). Supports sub-block and single-stream compression (zlib, lz4, lz4-hc, zstd ± byte shuffle)
-- `services/pxiproject_io.py` — PixInsight project parser (XOSM manifest + rawimage swap format)
-- `services/standard_io.py` — PNG/JPEG/TIFF via Pillow + tifffile for float32 TIFFs
-- `api/images.py` — unified API at `/api/images/*`, dispatches by file type. Virtual paths (`project::index`) for pxiproject images.
+Settings live in `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` (migration 0011). Each Pydantic field on `core/config.py:Settings` maps to one row. **Adding a new setting requires no migration** — add the Pydantic field with a default, and the KV path handles the rest. `get_settings()` merges rows, silently drops un-parseable JSON, falls back to defaults on `ValidationError`.
 
-**Auto Stretch** (PixInsight-compatible Screen Transfer Function):
-- Uses **avgDev** (average deviation), NOT MAD, for shadow clip computation
-- Shadow clip: `median + (-1.25) * avgDev`
-- Midtones balance via MTF self-inverse: `m = MTF(b0, TARGET_BG)` where `b0 = median - shadow_clip`
-- Linked color mode: averages shadow clip and median across all channels
-- Target background: 0.25 (standard PixInsight default)
-- Non-linear images auto-detected (STF midtone >= 0.1) and shown without stretch
-- Backend-driven `supports_stretch` flag on `/extensions` endpoint
-- `stretch=auto` mode: backend computes stats, determines linearity, and applies STF in a single request — frontend sends one request on file open instead of sequential round trips
-- Frontend uses `stretch: "auto"` as default; sliders populated from stats when they arrive; user slider interaction switches to explicit `stretch: "stf"` params
+### Outbound HTTP
 
-**Histogram:**
-- Canvas-based rendering below image (filled area curves, not SVG bars)
-- R/G/B/Luminosity channels with channel checkboxes
-- Log/linear scale (auto-defaults based on image linearity)
-- Stretch indicator lines on slider interaction (auto-hide after 3s)
-- Channel intensity bars for color images (normalized to max channel)
+All outbound HTTP goes through `services/http_client.py:get()`. Uniform 30 s timeout, one 500 ms-backoff retry on transient failures (`TimeoutException`, `ConnectError`, 5xx), structured `[http] …` log lines. Callers still catch `httpx.HTTPError` and translate to their domain-appropriate HTTP status (typically 502).
 
-**Pixel Inspector:**
-- Client-side sampling via offscreen canvas (zero API calls on hover)
-- R/G/B/K values, hex color, XKCD named color (949 colors, CC0)
-- Magnified patch preview with adjustable zoom
-- Amber reticle cursor with black outline for contrast
+### Logging
 
-**Statistics:**
-- Per-channel: median, MAD, avgDev, SNR (median/σ), background delta
-- CIE L*a*b* a* median for color balance (neutral/warm excess/cool excess)
-- Image Info section with curated FITS keywords
+- `NIGHTCRATE_LOG_LEVEL` env var drives the `nightcrate` namespace logger level (INFO default; `DEBUG` for traces).
+- Use structured prefixes on hot paths: `[weather-cache]`, `[http]`, `[open-meteo]`, etc.
+- Router 500s (bare `except Exception`) MUST log via `logger.exception(...)` so server bugs leave a traceback.
 
-**Important implementation notes:**
-- All hex color constants must be 6-digit (#888888, never #888) — canvas gradient code appends alpha suffixes
-- Channel colors defined in `lib/channelColors.ts` (single source of truth)
-- Luminance weights (`LUM_R/G/B`) defined in `services/imaging.py`
-- Stretch is applied server-side — frontend sends stretch params as query parameters and receives a rendered PNG
-- `core/compute.py` (`get_array_module()`) provides GPU abstraction — used in `_channel_stats()` and `stretch_plane()` for mlx/cupy acceleration. Settings toggle applies immediately via `set_gpu_enabled()`
-- `bottleneck.nanmedian()` used as CPU fallback for faster median computation (2-3x vs numpy)
-- Histogram subsampled to ~2M pixels for large images (statistically identical for 256 bins)
-- PNG encoding uses `compress_level=1` (fastest) — local app, speed over file size
-- Per-key locking on image data and stats caches prevents redundant computation from concurrent requests
-- Archive (BytesIO) paths use a cache key `(archive_path, mtime, entry_path)` to share the same caching and locking as regular files
+### Shared router helpers (`api/_common.py`)
 
-**Header Editing:**
-- FITS files only (not XISF, standard, archive, or pxiproject virtual paths)
-- `PATCH /api/images/header` — batch operations (update, add, delete) validated and applied atomically
-- `fits_io.update_header()` uses `mode="update"` + `flush()` for efficient in-place writes (no full file rewrite)
-- Structural keywords (`SIMPLE`, `BITPIX`, `NAXIS*`, `EXTEND`, `BZERO`, `BSCALE`, `COMMENT`, `HISTORY`, `END`) are protected — cannot be edited or deleted
-- `STRUCTURAL_KEYWORDS` canonical definition in `fits_io.py`, imported by `images.py`
-- Frontend: toggle edit mode in `FitsHeaderTable`, inline cell editing, add/delete with undo, save/discard
-
-## Activity Console
-
-In-app request timing viewer for performance analysis.
-
-**Architecture:**
-- `api/diagnostics.py` — ASGI middleware (`RequestTrackingMiddleware`) records every request with start timestamp, duration, status, and activity label
-- `components/ActivityConsole.tsx` — dialog showing requests grouped by activity, with expandable detail tables
-- `api/diagnostics.ts` — frontend API client
-
-**Key details:**
-- Activity label propagated via `X-Activity` header (for `fetch()` calls) or `_activity` query param (for `<img src>` calls)
-- Image requests use a stable `_activity` label set once on file open (doesn't change on tab switch) to avoid URL cache-busting
-- Timestamps show request START time (not completion time)
-- `total_duration_ms` is sum of individual request durations, not wall-clock elapsed time
-- Diagnostics requests (`/api/diagnostics/*`) are excluded from tracking
-
-## Aberration Inspector
-
-Analyses star shapes across the field to diagnose optical aberrations (tilt, coma, field curvature). Tab in the image viewer.
-
-**Architecture:**
-- `services/aberration.py` — star detection via `sep`, sample grid computation, isolated star filtering
-- `api/aberration.py` — REST endpoints for analyze, samples, crop, cache management
-- `db/migrations/0004.aberration_cache.sql` — SQLite cache for analysis results (TTL-based)
-- Frontend: `components/aberration/` — CropGrid, AberrationToolbar, AberrationSidebar, ZoneOverlayMap
-- `components/SidebarSection.tsx` — shared collapsible section component (used by both image viewer and aberration sidebar)
-
-**Star Detection:**
-- Uses `sep` (Source Extractor) for extraction + `sep.flux_radius` for HFR
-- Filters: min SNR, min/max FWHM, max semi-major (extended object rejection), sep blending flag, min neighbor separation
-- All filters user-adjustable via toolbar sliders, debounced 500ms
-- Different filter settings = different cache key
-
-**Sample Grid:**
-- Evenly-spaced squares (not full-coverage tiling) — `image_width / (samples_across * 1.5)` square size
-- Per-square metrics aggregated from all isolated stars within the region
-- Squares draggable in reference thumbnail with client-side re-aggregation (no backend call)
-- Drag constrained to row/column lane via midpoint boundaries
-
-**Tile Preview:**
-- Centered popup with auto-stretched region crop
-- SVG overlay: rotated ellipses (eccentricity), dotted direction lines (elongation angle), eccentricity labels
-- Star hover tooltip with zoomed crop + per-star metrics
-
-**Caching:**
-- Analysis results stored in `aberration_analysis` + `aberration_stars` tables
-- Cache key: (file_path, hdu, settings_json)
-- TTL: `aberration_cache_ttl_days` setting (default 30), cleanup on startup
-- Settings page: cache size display + Clear All button
-
-## Archive Browser
-
-Supports browsing into archive files as if they were folders. Selecting an image inside an archive extracts it in-memory and loads it through the standard image pipeline.
-
-**Supported formats:** zip, tar, tar.gz, tar.bz2, tar.zst, 7z
-
-**Architecture:**
-- `services/archive_io.py` — format dispatch (zip/tar/7z), TOC listing, in-memory extraction to BytesIO
-- `api/files.py` — `browse-archive` endpoint, archive detection in directory browse
-- `api/images.py` — archive branch in `_resolve_path()` for `::` virtual paths
-- I/O services (`fits_io`, `xisf_io`, `standard_io`) accept `Path | BinaryIO`
-
-**Virtual paths:** `{archive_path}::{entry_path}` (same `::` separator as pxiproject)
-
-**In-memory extraction:** No temp files for zip/tar. 7z uses a temporary directory (py7zr API limitation) but cleans up immediately.
-
-## Equipment Database
-
-Fully normalized equipment schema (migrations `0005.equipment_schema.sql` + `0006.camera_guide_sensor.sql`).
-
-**Reference docs:**
-- `DB_SCHEMA.md` — Mermaid ER diagrams broken into logical groups
-- `DB_SCHEMA_DDL.sql` — authoritative CREATE TABLE statements
-
-**Architecture:**
-- 10 lookup/reference tables: `manufacturer`, `optical_design`, `mount_type`, `connection_interface`, `connector_size`, `filter_size`, `form_factor`, `focuser_type`, `filter_type`, `seed_loader_meta`
-- 12 equipment tables: `sensor`, `camera`, `telescope`, `telescope_configuration`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`
-- 5 junction tables: `camera_interface`, `telescope_connector`, `mount_interface`, `focuser_interface`, `filter_wheel_interface`
-- 2 child tables: `filter_passband`, `filter_size_option`
-- 4 FITS alias tables: `camera_alias`, `telescope_alias`, `filter_alias`, `unresolved_equipment_observation`
-- 1 view: `filter_summary`
-- 1 domain table: `location` (migration 0007 — user imaging locations, not seed-tracked)
-
-**Key design decisions:**
-- No custom_fields JSON — add real columns via migration when needed
-- `filter_type` is a user-extensible vocabulary of roles (narrowband_single, broadband_color, etc.) with `display_name` for UI; wavelengths live in `filter_passband` on the physical filter
-- `filter` represents an abstract product; physical sizes live in the `filter_size_option` child table (one row per available size with `mounted_thickness_mm`)
-- `telescope` carries identity only (aperture, design) — all focal length/ratio/back_focus on `telescope_configuration`. Every telescope must have one config with `is_native=1`
-- `camera` has `effective_full_well_ke`, `effective_read_noise_lcg_e`, `effective_read_noise_hcg_e`, `effective_peak_qe_pct`, `hcg_threshold_gain` for vendor-tuned specs that override sensor baseline values
-- Every equipment table has seed tracking columns: `created_at`, `updated_at`, `active`, `source`, `seed_key`, `seed_hash`
-- `updated_at` triggers auto-fire on every equipment table
-- Partial unique index on `seed_key WHERE NOT NULL` for seed loader support
-- Closed vocabularies enforced by CHECK constraints: `filter_passband.line_name`, `software.category`, `connection_interface.category`, `sensor.sensor_type`, `sensor.bayer_pattern`
-
-## Equipment Management API
-
-Full CRUD API for all equipment types under `/api/equipment/`.
-
-**Architecture:**
-- `api/equipment_models.py` — Pydantic Create/Update/Response models for all types
-- `api/equipment.py` — hand-written routes for the unique-shape types (`sensor`, `telescope` + configurations + connectors, `filter` + passbands + size options) plus thin factory calls for the rest
-- `api/equipment_factory.py` — `build_lookup_router` (9 lookup tables, 5 endpoints each) and `build_equipment_router` (8 mid-complexity equipment tables: 6 endpoints each, optional interface-junction rebuild, optional CHECK-constraint hook, caller-supplied `response_builder` for nested shapes)
-- Helpers: `_common.row_to_dict`, `_common.bool_fields`, `_common.get_or_404`, `_common.strip_seed`, `_common.integrity_guard`; per-type `_build_X_response` helpers in `equipment.py` for the nested manufacturer + interface + per-type lookups
-- Soft delete: DELETE sets `active=0`, list endpoints accept `?include_retired=true`
-- Seed tracking columns stripped from all responses via `_SEED_KEYS` constant
-
-**Endpoints per type:**
-- 9 lookup tables (factory-built): 5 endpoints each (list, get, create, update, soft-delete)
-- `camera`, `mount`, `focuser`, `filter_wheel`, `computer`, `oag`, `guide_scope`, `software` (factory-built): 6 endpoints each (list / get / create / update / soft-delete / mine-toggle); the first four rebuild an interface junction on create/update; `software` adds a 422 response on `category` CHECK violations
-- `sensor` (hand-written): 5 endpoints; no `is_mine`, no junction, no children
-- `telescope` (hand-written): 5 endpoints + 3 child endpoints for configurations (create/update/delete) + connector junction rebuild
-- `filter` (hand-written): 5 endpoints + 3 child endpoints for passbands + 3 child endpoints for size options (create/update/delete)
-
-**Frontend Equipment page:**
-- `pages/EquipmentPage.tsx` — two-panel layout with TreeView sidebar + content area
-- `components/equipment/EquipmentSidebar.tsx` — grouped categories (Imaging, Optics, Tracking, Accessories, Computing, Reference)
-- `components/equipment/EquipmentList.tsx` — generic list component handling DataGrid, state, delete confirmation for all types
-- Per-type thin list wrappers (`CameraList`, `SensorList`, `MountList`, etc.) define columns and wire EquipmentList to their form dialog
-- Per-type form dialogs (`CameraFormDialog`, `SensorFormDialog`, etc.) — each uses the generic `{ open, item, onClose, onSaved }` interface
-- `components/equipment/LookupTablesPanel.tsx` — accordion UI with inline CRUD for all lookup tables
-- `components/equipment/shared/` — ManufacturerPicker, SensorPicker, LookupPicker, InterfaceMultiSelect, ConfirmDeleteDialog, DetailField, ExternalLink, SensorLink
-- `lib/formUtils.ts` — shared `parseOptionalFloat`, `parseOptionalInt`, `formatFilterType`, `formatSnakeCase`
-- `api/equipment.ts` — TypeScript interfaces + fetch functions for all equipment types
-- All form dialogs show error feedback via Snackbar on save failure
-
-## Equipment Seed Loader
-
-Populates the equipment database from CSV seed files on first run, with hash-based change detection on re-seed.
-
-**Architecture:**
-- `seed_loader/hash.py` — deterministic SHA-256 hash (contract v1, versioned — never change without migration)
-- `seed_loader/registry.py` — `SeedableTable` dataclass registry, 31 tables in dependency load order
-- `seed_loader/csv_reader.py` — CSV parsing with header validation, comment support, FK seed_key resolution
-- `seed_loader/loader.py` — core: first_run/update modes, FK resolution via in-memory map, re-seed decision logic, junction/child handling, orphan detection, single-transaction
-- `seed_loader/__main__.py` — CLI: `python -m nightcrate.seed_loader --db <path> --csv-root <path> [--dry-run] [--json]`
-- `seed_loader/models.py` — SeedReport, TableReport, SeedError dataclasses
-- `data/seed/*.csv` — 31 CSV files (one per seedable table)
-- Runs automatically on app startup after migrations (sync sqlite3 connection, non-fatal)
-- filter_type rows loaded from CSV, NOT from migration (no equipment data in migrations)
-
-**Re-seed rules:** never overwrites `source='user'` rows or user-modified seed rows (detected by hash mismatch). Junction tables delete-and-reinsert only for parents that were inserted/updated.
-
-## Admin Page — Database Management
-
-Multi-database support with first-run setup wizard and hot-swap.
-
-**Architecture:**
-- `core/app_config.py` — reads/writes `config.json` in platformdirs app dir. Tracks known databases (path → name) + active DB path.
-- `db/session.py` — dynamic `DB_PATH` via `get_db_path()` / `set_db_path()`. `get_db()` resolves path on each call.
-- `db/migrations.py` — `apply_migrations(db_path=None)` accepts optional path for initializing new DBs.
-- `api/admin.py` — endpoints: `/api/admin/info`, `/api/admin/status`, `/api/admin/database/create`, `/api/admin/database/add`, `/api/admin/database/activate`, `/api/admin/database/setup`, `DELETE /api/admin/database` (with `?delete_file=true` option), `/api/admin/browse`, `/api/admin/shortcuts`, `/api/admin/mkdir`
-- `/api/health` returns `db_configured: bool` — frontend uses this to decide wizard vs normal app
-- Frontend: `SetupWizard.tsx` (three scenarios: fresh, available DBs, all unavailable), `AdminPage.tsx` (app info + DB management), folder browser with Home/Documents/App Data shortcuts + new folder
-
-**Key behaviors:**
-- First startup with no config → setup wizard
-- Active DB unavailable but others available → wizard offers activation
-- DB switch: `set_db_path()` + `window.location.reload()` — no backend restart needed
-- Remove can optionally delete the file (irreversible)
-
-## Weather Forecast
-
-7-day imaging quality forecast with hourly detail for imaging session planning.
-
-**Architecture:**
-- `services/weather.py` — Open-Meteo forecast client (standard API + ECMWF for PWV + Air Quality for AOD). `SupplementaryData` dataclass for PWV/AOD time-series. `nearest_match()` for aligning 3-hourly AOD to hourly weather timestamps.
-- `services/astronomy.py` — astropy-based moon, twilight, darkness. All event fields `Optional` for polar latitude safety. `compute_moon_polyline()` for 10-min altitude sampling.
-- `services/seeing.py` — surface model (JAG Lab) + wind-shear model (Trinquet/Cherubini). Blended 60/40 when pressure-level data available.
-- `services/transparency.py` — three-tier scoring (PWV+AOD+humidity+visibility → fallback → degraded)
-- `services/dew.py` — temperature-dew point spread classification + safe window computation
-- `services/imaging_quality.py` — composite score with weighted sky clarity (cloud layers), cloud gating factor, transparency, seeing, moon, wind calm
-- `api/weather.py` — forecast/hourly/methodology endpoints, supplementary data cache with non-fatal writes
-- `api/weather_models.py` — Pydantic response models
-- `db/migrations/0008.weather_cache.sql` — cache table (forecast/archive/openmeteo_aq/ecmwf_pwv sources)
-
-**Imaging Quality Weights:**
-- Broadband (moon included): Sky 35% / Seeing 25% / Transparency 15% / Moon 15% / Wind 10%
-- Narrowband (no moon): Sky 40% / Transparency 25% / Seeing 25% / Wind 10%
-- Cloud gating: all non-sky factors multiplied by √(sky_clarity/100)
-- Quality labels: Excellent (80+), Good (55+), Marginal (30+), Poor (0+)
-
-**Frontend:**
-- `pages/WeatherPage.tsx` — location selector, moon toggle, 7-day cards, hourly detail
-- `components/weather/DailyCard.tsx` — quality badge, factor bars, moon info, dew-safe line
-- `components/weather/HourlyTimeline.tsx` — D3 SVG: darkness gradient bar, moon polyline, score factor grid (daylight hours grayed), weather details grid
-- `components/weather/MethodologyInfo.tsx` — help accordion with factor table, cloud gating, dew risk
-- `components/weather/MoonPhaseIcon.tsx` — terminator ellipse rendering from illumination %
-- `components/weather/QualityBadge.tsx` — sequential blue palette (darker = better)
-- `components/weather/LocationSelector.tsx` — dropdown from saved locations
-- `api/weather.ts` — TypeScript interfaces and fetch functions
-
-**Key implementation details:**
-- PWV from ECMWF endpoint (standard forecast API doesn't include `total_column_integrated_water_vapour`)
-- AOD from Air Quality API (3-hourly global, matched via `nearest_match`)
-- Supplementary data cache writes wrapped in try/except (non-fatal — data returned even if caching fails)
-- `forecast_days=8` to cover the last night's sunrise window
-- Polar latitude handling: no HTTP 422, returns `no_imaging_window: true` with valid moon/darkness info
-- Dew risk uses colorblind-safe sequential blue palette (not red/green)
-- **Geographic vs display timezone:** each location has `geo_timezone` (auto-derived from coordinates via `timezonefinder`) and `timezone` (user's display preference). Astronomy computations (`compute_night_summary`, `compute_hourly_astro`) use `geo_timezone` for noon-to-noon search windows. Open-Meteo API and all display formatting use the user's `timezone`. This allows remote observatory operators to see times in their home timezone.
-- `GET /api/locations/timezones` — backend-provided IANA timezone list for dropdown (filtered, Region/City format)
-- `GET /api/locations/geo-timezone` — real-time coordinate-to-timezone lookup
-- `lib/weatherColors.ts` — shared score-to-color helpers (scoreToBackground, scoreToTextColor, scoreToLabel)
-- `HourlyTimeline.tsx` uses `localTimeToMinutes()` (string parsing, no Date) and `utcToLocalMinutes()` (Intl.DateTimeFormat) for timezone-correct rendering
-- Weather page reads settings from Zustand store (shared with Settings page) for instant unit/preference sync
-
-## Rig Builder
-
-User-composed imaging rig templates that assemble equipment into a named configuration. Powers optical calculators and will feed the future FITS resolver and ingest pipeline.
-
-**Architecture:**
-- `db/migrations/0009.rig.sql` — `rig`, `rig_filter_slot`, `rig_software` (junction) tables, plus `rig_summary` view that joins equipment names for list rendering. Migration 0010 drops/recreates the view to expose `telescope_id` (edit-in-place of 0009 doesn't re-run on existing DBs).
-- `services/rig_calculators.py` — pure math module (no DB / API deps). `compute_image_scale`, `compute_fov`, `compute_resolution_limits`, `compute_sensor_coverage`, `assess_sampling` (3-band: oversampled / well_sampled / undersampled with per-binning recommendations), `compute_guide_suitability`, `compute_guiding_tolerance`, `compute_rig_calculators` aggregator. Pinned regression tests against Fred's actual C11 and Askar V configurations.
-- `api/rigs.py` — full CRUD + clone/restore/calculators/equipment-options endpoints. `rig_summary` view drives list responses; separate queries fetch filter slots + software. `_check_warnings` produces advisory warnings (retired equipment, guide-camera = imaging-camera, guide-scope missing focal length, orphan guide camera).
-- `api/rig_models.py` — Pydantic: `RigCreate`, `RigUpdate`, `RigOut`, `RigCalculators` (nests `SamplingAssessment`, `GuideSuitability | None`, `GuidingTolerance | None`), `RigWarning` (with `severity: "error"|"info"`).
-- `pages/RigsPage.tsx` — card grid + inline expansion detail panel. `RigCard` summarises rig contents and calculator highlights. `RigFormDialog` is the create/edit dialog.
-- `components/rigs/CalculatorPanel.tsx` — **tabbed** detail layout: header row with rig name + Location selector + close; tabs **Equipment / Imaging / Guiding**; each tab owns its own body. Default tab is Equipment. Owns shared state (`selectedLocationId`, `guideBinning`, `centroidAccuracy`, `guidingImageBinning`) that becomes query params on `fetchRigCalculators`.
-- `components/rigs/RigFormDialog.tsx` — equipment Autocompletes grouped by manufacturer (software grouped by category). `FilterSlotGrid` renders one slot per wheel position.
-- `components/rigs/SamplingChart.tsx` — pure D3 horizontal-bar chart showing all four binning levels against the ideal zone. Theme-aware. Blue (well sampled) / orange (oversampled) / teal (undersampled).
-
-**Key invariants:**
-- Each rig has exactly one `telescope_configuration_id` (which implies one `telescope`, always present). Camera is required. Everything else is optional.
-- Filter slots (`rig_filter_slot`) require a `filter_wheel_id`; if the wheel is cleared on update, all slots are deleted. Single-filter rigs set `single_filter_id` instead.
-- Multi-software support via `rig_software` junction — ordered by software name in responses.
-- Default rig enforcement: setting `is_default=1` on one rig clears it on all others in a single transaction (`_ensure_single_default`).
-- Soft delete via `active=0`; `?include_retired=true` or restore endpoint brings them back.
-
-## My Equipment
-
-Per-row `is_mine` boolean on 10 equipment tables (camera, telescope, filter, mount, focuser, filter_wheel, oag, guide_scope, computer, software) lets users mark gear they personally own. Owned items surface first in rig-builder dropdowns and in a dedicated "MY EQUIPMENT" sidebar group.
-
-**Schema:**
-- `is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0,1))` on each of the 10 tables (inline edit of migration 0005).
-- Partial index `idx_<table>_mine ON <table>(is_mine) WHERE is_mine = 1` per table.
-- Sensor, telescope_configuration, junction tables, child tables, lookup tables, and alias tables are **not** touched.
-- Seed loader hash contract is unaffected — `is_mine` is not in `SeedableTable.seeded_fields`, so marking an item as mine does not trigger re-seed.
-
-**API:**
-- `is_mine` on every `<Type>Create` (default `False`) / `<Type>Update` (nullable) / `<Type>Response` for the 10 types.
-- List endpoints accept `?mine=true` and default to `ORDER BY is_mine DESC, <existing sort>` so owned gear floats to the top in every list.
-- `POST /api/equipment/<type>/{id}/mine` — dedicated idempotent toggle per type; body `{is_mine: bool}`; returns the full response.
-- `GET /api/equipment/mine-counts` — single round trip returning per-type counts used by the sidebar to decide which sub-items to render.
-- Create endpoints persist `is_mine` explicitly in their INSERTs (don't rely on column default).
-
-**Frontend:**
-- `components/equipment/EquipmentList.tsx` — clickable star column (leftmost, `StarIcon`/`StarOutlineIcon`, blue primary), optimistic toggle via `toggleEquipmentMine`, rollback with Snackbar on failure, invalidates list + `["mine-counts"]` queries. Accepts `mineOnly` prop to filter the list to owned items.
-- `components/equipment/shared/MineCheckbox.tsx` — shared control wired into all 10 equipment form dialogs.
-- `components/equipment/EquipmentSidebar.tsx` — new "MY EQUIPMENT" group at top. Reactive: sub-items only render for types with count > 0 per `fetchMineCounts`. Empty state shows italic "Click the star on any equipment row to add it here."
-- `pages/EquipmentPage.tsx` — routes `my-cameras`, `my-telescopes`, etc. to the same per-type list wrappers with `mineOnly={true}`.
-- Rig builder Autocompletes (`RigFormDialog`, `FilterSlotGrid`) use `withMineGroup` helper in `components/rigs/mineGroup.ts` — duplicates owned items into a virtual "My Equipment" group at the top with a blue `StarIcon` indicator; owned items also appear in their manufacturer group with the same star.
-
-## Rig Calculators — Guide System & Guiding Tolerance
-
-Two complementary guiding calculators rendered in the Guiding tab of the rig detail panel. Guide System answers "is my guide rig precise enough for my imaging rig?" up-front; Guiding Tolerance answers the inverse "given my imaging rig, what PHD2 RMS should I aim for?"
-
-**Architecture:**
-- `services/rig_calculators.py` — `compute_guide_suitability(guide_scope_id, oag_id, …, guide_binning, centroid_accuracy_pixels)` returns `GuideSuitability | None`. `compute_guiding_tolerance(unbinned_main_scale, image_binning, guide_suitability)` always returns a `GuidingTolerance`.
-- `api/rig_models.py` — Pydantic `GuideSuitability` and `GuidingTolerance`. `RigCalculators` nests them (replaced the older top-level `guide_image_scale_*`/`guide_field_of_view_*` fields).
-- `api/rigs.py` — `GET /api/rigs/{id}/calculators` accepts `guide_binning` (1–4), `centroid_accuracy_pixels` (0.05–0.5), `image_binning` (1–4) query params. 422 on out-of-range values. Emits two new warnings: guide scope missing focal length; guide camera assigned with no OAG/guide-scope path.
-- `components/rigs/GuideSuitabilityPanel.tsx` — metrics table, rating `Chip` (excellent/good/marginal/poor), mode-aware subtitle (guide-scope vs OAG), advanced disclosure with centroid accuracy slider.
-- `components/rigs/GuideSuitabilityChart.tsx` — pure D3 horizontal bar chart (main pixel vs guide error), threshold markers at 0.6 / 1.0 / 1.2 px, scale-cap annotation when triggered.
-- `components/rigs/GuidingTolerancePanel.tsx` — "Image Scale" row in Imaging-tab style; thresholds table (Tight / Acceptable / Over budget); shaded-zone visualization with current-precision marker (bars at 0.7 opacity for dark-mode readability); interpretation line generated server-side.
-- `components/rigs/GuidingTab.tsx` — **two sub-tabs** (Guide System / Guiding Tolerance) with **two independent binning selectors** above them: "Imaging camera binning" drives Guiding Tolerance; "Guide camera binning" drives Guide System. Imaging tab's binning is separate and purely display-side.
-- `components/rigs/CalculatorAboutSection.tsx` — shared collapsed disclosure for attribution + methodology text (astronomy.tools, Open PHD Guiding, Stan Moore for Guide System; Cloudy Nights community rule of thumb for Guiding Tolerance).
-- `lib/rigColors.ts` — shared palette (`RIG_BLUE`, `RIG_ORANGE`, `RIG_TEAL`, light variants), `samplingColor()`, `ratingColor()`, `ratingTextColor()`, `ratingLabel()` helpers.
-
-**Guide System math:**
-- Mode resolution: `guide_scope_id` set → guide-scope mode (focal length from guide scope); else `oag_id` set → OAG mode (focal length from telescope configuration's `effective_focal_length_mm`); else None.
-- `guide_scale_arcsec_per_pixel = (guide_pixel_size_um × guide_binning / guide_focal_length_mm) × 206.265`
-- `effective_guide_precision_arcsec = guide_scale × centroid_accuracy_pixels` (default 0.2 px)
-- `g_ratio = guide_scale / main_scale`; `effective_error_main_pixels = g_ratio × centroid_accuracy_pixels`
-- Four rating bands on `effective_error_main_pixels`: Excellent ≤0.6, Good ≤1.0, Marginal ≤1.2, Poor >1.2.
-- **Absolute scale cap:** `guide_scale_arcsec_per_pixel > 6.0` forces Poor with `rating_reason='scale_cap'` (PHD2 community limit). Cap wins when both fail.
-- FOV uses the **unbinned** resolution (binning doesn't change physical sensor area).
-
-**Guiding Tolerance math:**
-- `tight_rms_arcsec = 0.5 × main_scale × image_binning`
-- `acceptable_rms_arcsec = 1.0 × main_scale × image_binning`
-- `noticeable_rms_arcsec = 1.5 × main_scale × image_binning`
-- When `guide_suitability` is present, its `effective_guide_precision_arcsec` is compared to the thresholds; `guide_system_within_tight` / `_within_acceptable` / `headroom_arcsec` are populated; `interpretation` string generated server-side.
-
-**Equipment tab (tree + detail):**
-- Left: SimpleTreeView grouped Imaging / Optics / Tracking / Accessories / Computing (same order as the main Equipment sidebar). Multi-item categories (filters, software, cameras when both imaging + guide present) expand to per-item leaves; singletons are leaves under their group.
-- Right: selected item's full detail. Fetches complete equipment objects via `/api/equipment/<type>/{id}` in parallel (`useQueries` for filters). TanStack Query caches across opens.
-- Includes every available field: cooling deltas, back focus, weight, connectors, interfaces as outlined chips, vendor-tuned camera specs, full sensor photometrics (pixel size, ADC depth, full well, read noise, peak QE, Bayer pattern, dual gain) for both imaging and guide cameras, telescope optical design / image circle / obstruction, all other configurations on the OTA, filter passband lines with wavelength/bandwidth/peak transmission plus filter size options, mount payload / PE / drive type, focuser step size / backlash / temp compensation.
-- Responsive: side-by-side on md+, stacked on smaller screens. Both panes scroll at 70vh.
-- Default initial selection: "Summary" when description or notes present; otherwise the imaging camera.
-
-## Calculators
-
-Standalone astronomy + imaging-math utilities at `/calculators[/:calcId]`. Each calculator has a backend endpoint so the math is equally usable from any external client — frontend does no math beyond live-tick display.
-
-**Architecture:**
-- `backend/src/nightcrate/api/calculators.py` — 13 endpoints under `/api/calculators/*` (lat/long sexagesimal both ways, RA/Dec ↔ Alt/Az, sidereal time, tonight, angular units, linear units, pixel scale, FOV, file size, airmass, SQM/Bortle/NELM, temperature).
-- `backend/src/nightcrate/services/calculators.py` — pure-Python service layer (no DB/FastAPI deps).
-- `backend/src/nightcrate/services/coordinate_format.py` — `format_latitude` / `format_longitude` for sexagesimal display (astropy `Angle`, `°` `′` `″` glyphs, padded DMS). Used by Locations too.
-- `frontend/src/pages/CalculatorsPage.tsx` — Equipment-style sidebar + content pane.
-- `frontend/src/components/calculators/` — 12 per-calculator components; shared `CalculatorSidebar`, `CalculatorLocationBar` (dropdown wired to default-location logic), `RigPickerMenu` (auto-populate for Pixel Scale / Field of View / File Size), `Math.tsx` (thin `InlineMath` / `BlockMath` wrappers over react-katex).
-- `frontend/src/api/calculators.ts` — TypeScript client + response types.
-- `frontend/src/stores/calculatorsStore.ts` — session-only `selectedLocationId`. Clock order persists via the server-side `settings` table (not localStorage).
-
-**Key details:**
-- RA/Dec ↔ Alt/Az uses `astropy.coordinates.SkyCoord` + `EarthLocation` + `AltAz` frame; airmass via Kasten-Young (1989).
-- Sidereal time: server computes via `Time(...).sidereal_time('apparent', longitude=...)`; client ticks at the sidereal rate (1.00273790935) between 60-second server refreshes.
-- Tonight: reuses `services/astronomy.py:compute_night_summary`; returns sunset/sunrise, three twilight pairs, moonrise/moonset, moon illumination + phase, astronomical dark hours, moonless dark hours. Backend returns `HH:MM` strings already rendered in the display timezone — the frontend must pass them through verbatim, not re-parse as ISO-UTC.
-- SQM ↔ Bortle band mapping; SQM → NELM via Schaefer approximation; NELM → SQM via bisection.
-- Clocks drag-to-reorder via **@dnd-kit** (MIT — `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`). Chosen order persists in `settings.calculators_clock_order` (server-side, not localStorage).
-- FOV uses the full arctan form (not small-angle approximation).
-- Rig auto-populate: Pixel Scale / Field of View / File Size each render `<RigPickerMenu onApply={...} />` above their inputs. `onApply` receives the full `Rig` object and copies focal length, pixel size, sensor width/height (mm + px), and ADC bit depth into local state. Fields remain editable after a rig is applied. `sensor_adc_bit_depth` is sourced from migration 0013's extension of the `rig_summary` view.
-- Formula rendering via **KaTeX** (MIT — `katex`, `react-katex`, `@types/react-katex`). CSS imported once in `main.tsx`. Used in About sections of Pixel Scale, Field of View, File Size, Airmass, SQM/Bortle/NELM, Temperature, and the Weather methodology accordion.
-- **JSX Unicode gotcha:** JSX does NOT interpret backslash escapes in attribute-string form (`label="\u00B0C"` passes 8 literal characters). Wrap the string in a JS expression: `label={"\u00B0C"}`. Similarly, `&approx;` is not in React's named-entity table; use `{"\u2248"}` instead.
-- **Native form-control theming:** `MuiCssBaseline` sets `body.colorScheme = "dark"/"light"` per theme so the native date-input popup, scrollbars, and other browser-rendered form elements match the current theme.
-
-## Horizons (multi per location, v0.19.0)
-
-Each location owns **≥1 horizon**: at most one custom polyline shape (N.I.N.A. `.hrz` / Telescopius / APCC / Theodolite iPhone CSV / generic 2-col text — imported, drawn, or a mix) plus any number of named **artificial** flat-altitude rows. One row per location is marked `is_default=1`; the planner uses it when no horizon is explicitly selected. Drives the Planner's visibility compute end-to-end — 30° fallback setting is gone, every compute path takes a `PlannerHorizon`.
-
-**Architecture:**
-- `backend/src/nightcrate/db/migrations/0014.location_horizon.sql` — original 1:1 shape (location ↔ polyline).
-- `backend/src/nightcrate/db/migrations/0021.location_horizon_multi.sql` — reshapes to 1:N. Adds `name`, `type IN ('custom','artificial')`, `flat_altitude_deg` (NOT NULL when artificial), `is_default`. Partial unique indexes enforce exactly-one-default and at-most-one-custom per location. `source` kept (`'imported'|'drawn'`) but only meaningful for custom rows. Point-table is recreated (SQLite's ALTER-RENAME FK-rewrite trap means the original FKs follow the rename to the legacy table; `PRAGMA foreign_keys = OFF` + explicit index drop handles it atomically). Migration seeds a `0° flat` artificial default for every pre-existing location that had no horizon.
-- `services/horizon.py` — forgiving parser (Theodolite CSV sniff via `HDG_DEG`/`VERT`, else 2-col text). Three exporters (`.hrz`, Stellarium zip, CSV) + filename sanitizer. Also `resolve_horizon_altitude(type, flat_altitude_deg, points, az_array)` — dispatches artificial (flat fill) vs custom (polyline interpolation) so compute callers have no branching.
-- `api/horizons.py` — full CRUD on the 1:N shape. `GET /api/locations/{id}/horizons` (list), `GET / POST / PATCH / DELETE /api/locations/{id}/horizons[/{hid}]`, plus `POST /horizons/import` (imports a file as a new custom horizon, replacing any existing custom on the location), `GET /horizons/{hid}/export/{nina.hrz,stellarium.zip,csv}`. Auto-promote on default delete, 422 on last-horizon delete, 422 on demoting a default without promoting another, 409 on duplicate name or second custom. Sibling stateless `POST /api/horizons/parse` for parse-without-persist. **Atomic replace (v0.20.0):** `PUT /api/locations/{id}/horizons` takes a `LocationHorizonsReplace` body (list of `HorizonReplaceItem`; `id` present for UPDATE, absent for INSERT) and diff-applies creates/updates/deletes in one SQL transaction. Order inside the txn: demote every current default → DELETE server rows missing from payload → UPDATE existing (is_default=0) → INSERT new (is_default=0) → promote the one payload default. Used by the Location editor's staged-save flow (``frontend replaceLocationHorizons`` → PUT) to make the Save button genuinely atomic even across mid-save network failures AND to handle the "replace custom" pattern (delete old custom + add new one) without tripping `idx_location_horizon_one_custom` — the client-side ordering workaround (creates before deletes) would 409 on it.
-- `api/horizon_models.py` — `HorizonCreate` (discriminated by `type`, rejects `flat_altitude_deg` on custom and `points` on artificial), `HorizonUpdate` (all fields optional), `HorizonResponse`, `HorizonImportResponse`, `HorizonParseResponse`.
-- `api/locations.py` — `POST /api/locations` auto-seeds a `0° flat` artificial horizon marked default, in the same transaction as the INSERT. **Atomic-create path (v0.20.0):** `LocationCreate.horizons: list[HorizonCreate] | None` — when a non-empty list is supplied, the endpoint creates the location + all supplied horizons in the same transaction and SKIPS the auto-seed. Validates exactly-one-default + at-most-one-custom + unique-names client-side AND server-side (422 on violation; 422 on empty list so the "every location has ≥1 horizon" invariant is never at risk). Legacy callers that omit `horizons` get the auto-seed behaviour unchanged.
-
-**Frontend (v0.20.0 restored v0.13.0's staged-save flow):**
-- `components/locations/LocationHorizonsSection.tsx` — operates **purely on staged state** owned by the parent `LocationsPage`. Every Create / Update / Delete / Promote-default writes to an in-memory `StagedHorizon[]` array; nothing hits the server until the outer Location editor's Save button commits everything atomically. Cancel discards every change. The v0.19.0 "immediate persistence" rewrite accidentally dropped v0.13.0's staging semantic; Option B (v0.20.0) restores it so horizon dirty-state is tracked alongside the location's own fields. Per-row chips surface the lifecycle (`new` / `modified` / `deleted`) so users see exactly what'll commit at Save.
-- `components/locations/horizonStaging.ts` — staged-state utility module. Defines `StagedHorizon` (id, serverRow snapshot, name/type/altitude/points/is_default, `state: "unchanged" | "new" | "modified" | "deleted"`), `nextTempId` for new-row allocation (negative ints), lifecycle helpers (`retagState` rediffs against `serverRow` after edits, `promoteDefault` flips is_default atomically, `markDeleted` drops new rows outright but tombstones server-backed rows), plus `toCreateSeeds` for atomic-create and `planSaveOps` for existing-location diff (ordered creates → updates → promote-default → deletes to respect the server's exactly-one-default partial unique).
-- `components/locations/HorizonChart.tsx` / `HorizonEditor.tsx` / `HorizonEditorToolbar.tsx` / `HorizonPointEditPopover.tsx` — unchanged from v0.13.0 for the custom-horizon draw/edit flow. `HorizonEditor`'s `onSave(points)` writes the points into the parent's staged state (NOT the server).
-- `components/planner/horizonMenuItems.tsx` — shared `renderHorizonMenuItems(horizons)` helper. Builds the `ListSubheader` + `MenuItem` list for the Horizon `Select` in both `PlannerPage.tsx` and `PlannerDetailPanel.tsx`, so the Custom / Artificial grouping stays consistent.
-- `api/horizons.ts` — typed clients. `fetchHorizons(locationId)` returns the full list; `createHorizon`, `updateHorizon`, `deleteHorizon`, `importHorizon`, `downloadHorizonExport(loc, hid, format)`, `parseHorizonFile` (stateless). **v0.20.0:** `replaceLocationHorizons(locationId, horizons)` for the atomic diff-apply — the single network call that Save orchestrates for existing locations.
-
-**Key invariants:**
-- Each location has ≥1 horizon. Deleting the last one is 422.
-- Exactly one horizon per location has `is_default=1` (enforced by partial unique index). Auto-promotion on default delete picks custom over artificial, then ascending flat altitude, then name.
-- At most one custom horizon per location (second custom POST → 409).
-- Artificial horizons have `flat_altitude_deg` in `[-5, 90]` and no points; custom horizons have ≥2 points (wrap-safe polyline) and no flat altitude — enforced by CHECK and Pydantic.
-- `points` are stored `[0, 360)`, never 360; display rolls to `[-180, +180]` with virtual seam points at S boundary for continuous rendering.
-- Smoothing is **never persisted**. Raw points are canonical; consumers re-run D3 smoothing for display.
-
-**⚠ DO NOT regress — horizons in the Location editor dialog stage, never persist immediately.** The Location editor's dirty-state contract is: Save commits everything (location fields AND horizons); Cancel discards everything. This was v0.13.0's design; v0.19.0's rewrite accidentally switched to immediate persistence; v0.20.0's Option B restored it. If you're ever tempted to wire `createHorizon` / `updateHorizon` / `deleteHorizon` / is_default PATCH inside `LocationHorizonsSection.tsx` directly from a user action handler, STOP — write to the `staged` prop instead. The network calls belong exclusively in `LocationsPage.handleSave`: atomic POST for new locations (`LocationCreate.horizons` seeds), atomic PUT for existing locations (`replaceLocationHorizons` → `PUT /api/locations/{id}/horizons` — single transaction server-side). Same rule for `HorizonEditor.onSave` — write to staged state, don't call the server. Persisting individual horizon actions outside Save makes the outer dialog's Cancel button partially-working (some changes undoable, some not), which is worse than having no Cancel at all.
-
-## DSO Catalog
-
-Deep-sky object catalog (v0.14.0 MVP + v0.15.0 augmentation). Data is **not shipped in the repo** — on first run tables are empty and the DSO page shows a CTA to Admin → Catalogs, which fetches each source into `APP_DIR/catalogs/{openngc,vizier,github/50mgc}/`. Downstream consumers (target planner, FITS `OBJECT` resolver, representative images, DSS2 thumbnails) are not yet built. See `docs/dso-catalog-architecture.md` for a one-page primer on source precedence and layering.
-
-**Source layering (precedence enforced by load order):**
-1. **OpenNGC** (GitHub) — base rows, ~13,371 DSOs.
-2. **Sharpless 2** (VizieR VII/20) — HII regions; crossref-merge into OpenNGC where known, else standalone.
-3. **Barnard** (VizieR VII/220A) — dark nebulae; always standalone.
-4. **NightCrate augment CSV** (bundled MIT) — common-name overrides, non-galaxy surface brightness, curated distances with `distance_method='curated'`.
-5. **50 MGC** (Ohlson+ 2024, J/AJ/167/31) — galaxy distance augmenter, fetched from `github.com/davidohlson/50MGC` (not VizieR — CDS was flaky). The GitHub mirror ships a FITS binary table at `data/catalog.fits` (default branch is `master`, not `main`); parsed via astropy using the lowercase column names `pgc`, `bestdist`, `bestdist_error`, `bestdist_method`. `distance_method='50mgc'` where NULL.
-6. **Redshift-derived Hubble-law distances** — post-load computation in `apply_redshift_distances`. Galaxies with `redshift > 0` and no prior distance get `d = z·c/H₀` at H₀ = 70 km/s/Mpc with `distance_method='redshift'`.
-
-**Architecture:**
-- `backend/src/nightcrate/db/migrations/0015.dso_catalog.sql` — three tables: `dso_catalog_source` (loader registry + file sha256), `dso` (canonical row, closed CHECK vocabulary on `obj_type` with `'Other'` escape hatch, denormalized `primary_designation` for display), `dso_designation` (many-per-dso, closed 29-catalog CHECK vocabulary, `UNIQUE(catalog, identifier)`, partial unique index enforcing one primary per dso, `ON DELETE CASCADE` from dso). Migration 0016 adds `distance_pc`, `distance_method` (CHECK ∈ `{'50mgc', 'curated', 'redshift'}`), `common_name_augmented`, `surface_brightness_augmented`.
-- `catalog_loader/` — sibling of `seed_loader/`. `hash.py`, `registry.py` (`user_catalogs_root()`; `CatalogSource` returned even when files absent; `read_installed_version()` for OpenNGC; per-fetcher `read_installed_*` for the others), `openngc_parser.py`, `crossref_parser.py`, `vizier_tsv.py` (whitespace-tolerant TSV header sniff), `mgc50_parser.py` (astropy FITS binary-table reader for the GitHub mirror's `data/catalog.fits`, lowercase column names `pgc`/`bestdist`/`bestdist_error`/`bestdist_method`). Loader facade: `loader.py` (per-source transaction, file-hash idempotency, two-pass canonical-then-duplicate merge for OpenNGC, `status="missing"` when file absent; `_dispatch_source` routes by parser string; calls `apply_redshift_distances` as the last pass). Per-source strategies: `sharpless_loader.py`, `barnard_loader.py`, `augment_loader.py`, `mgc50_augmenter.py`, `redshift_distance.py`. Fetchers: `remote.py` (OpenNGC GitHub), `vizier.py` (3-mirror CDS fallback: Strasbourg → India → South Africa), `mgc50_fetch.py` (GitHub raw URL). Shared primitives in `_common.py` (`maybe_float`, `maybe_str`, `normalize_designation`, `upsert_catalog_source`, `insert_dso`, `insert_designation`, `check_source_state`, generic `retry_with_backoff[T]`).
-- `services/astronomy.py` — adds `distance_modulus_to_parsecs`, `redshift_to_parsecs`, `SPEED_OF_LIGHT_KM_S`, `HUBBLE_CONSTANT_KM_S_MPC`, and cached `constellation_for_coords` (used by Sharpless/Barnard loaders).
-- `api/dso.py` + `api/dso_models.py` — `/api/dso` (list with `q`/`type`/`type_group`/`constellation`/`has_distance`/`sort` incl. `distance_pc`/pagination), `/api/dso/{id}` (full detail incl. distance + augmentation flags), `/api/dso/lookup`, `/api/dso/facets` (`type_groups` + `raw_types` + `constellations`), `/api/dso/catalog-sources` (attribution).
-- `api/admin.py` — OpenNGC endpoints: `POST /api/admin/catalogs/reload?force=true`, `GET /api/admin/catalogs/remote-version`, `POST /api/admin/catalogs/fetch-from-github`. VizieR per-source: `GET/POST /api/admin/catalogs/vizier/{source_id}/{remote-version,fetch}` for `sharpless|barnard`. 50 MGC (GitHub, not VizieR): `GET/POST /api/admin/catalogs/50mgc/{remote-version,fetch}`. NightCrate bundled: `POST /api/admin/catalogs/nightcrate/reload`. `_initialize_database()` runs the catalog loader against whatever catalog files already exist in `APP_DIR/catalogs/` — a no-op on a truly fresh install (no files) but auto-populates DSO tables when a user creates a second database on a machine that already downloaded OpenNGC / etc. for an earlier DB.
-- `services/dso_type_groups.py` — single source of truth mapping OpenNGC's 19 raw `obj_type` codes to 13 user-facing groups (Galaxy / Emission Nebula / Open Cluster / …). `Cl+N` rolls up under Emission Nebula.
-- Frontend: `pages/DsoCatalogPage.tsx` (type-group chips as primary filter + Advanced expander for raw types + distance column; empty-state CTA when total=0 and no filters). `components/dso/DsoDetailPanel.tsx` (distance row with "~" prefix on redshift-derived values + help-icon opening `DsoDistanceHelpDialog`, B-Mag tooltip, `AugmentedBadge`), `components/dso/DsoDistanceHelpDialog.tsx` (KaTeX-rendered distance-method primer + 50 MGC flow-correction caveat), `components/dso/DsoAttributionPanel.tsx` (CDS acknowledgment + redshift-derived section), `components/dso/CatalogsAdminSection.tsx` (per-source rows: OpenNGC + Sharpless + Barnard + 50 MGC GitHub + NightCrate). `api/dsos.ts` (`fetchRemoteVersion`, `fetchCatalogsFromGitHub`, `fetchVizierRemoteVersion`, `fetchVizierCatalog`, `fetch50mgcRemoteVersion`, `fetch50mgcFromGitHub`, `reloadNightcrateCatalogs`). `lib/distanceFormat.ts`, `lib/dsoTypeGroups.ts`, `lib/dsoTypeNames.ts`, `lib/dsoFormatters.ts`, `lib/constellations.ts`.
-
-**Key invariants:**
-- **No vendored DSO data.** Repo ships NightCrate editorial CSVs only (`data/catalogs/nightcrate/`); everything else downloads to `APP_DIR/catalogs/`. Tests use mini fixtures under `backend/tests/fixtures/catalogs/{openngc,vizier}/`; the 50 MGC FITS fixture is composed programmatically at test-time via astropy's `BinTableHDU.from_columns`.
-- **Distance precedence is structural, not checked:** `curated > 50 MGC > redshift`. Each augmenter writes only `WHERE distance_pc IS NULL`, so earlier stages never get clobbered. ~83% of 50 MGC values are themselves flow-corrected redshifts, but they still beat NightCrate's naive Hubble-law fallback because the authors apply flow correction.
-- Canonical DSO vocabulary is CLOSED at the CHECK level — adding a new prefix requires both a migration AND the loader's `PREFIX_MAP` / `_NAME_CATALOG` to know about it.
-- `search_key` uses the DISPLAY-FORM prefix (``m42``, ``ngc1976``, ``sh2281``) not the full catalog name. Long-form user input (``messier42``, ``sharpless2 281``) is rewritten to short form.
-- `Dup` rows never become their own DSO — they fold into the target via NGC → IC → Messier cross-ref priority. `NonEx` rows are dropped at parse time.
-- Leading zeros are stripped on all numeric identifiers so `PGC 000778` and `PGC 778` hash to the same designation.
-- Each loader is idempotent: matching `file_hash` on subsequent startup skips the reload entirely. `force=True` bypasses this. Missing files produce `status="missing"` (not an error). The redshift backfill always re-runs since it depends on DB state, not a file.
-- **Atomic downloads.** Every fetcher writes into a `.download/` staging dir first, verifies a reasonable body size (`_MIN_BODY_BYTES = 1024`), then atomically renames into place. `version.json` is the commit marker — written LAST so a crash mid-rename leaves the source reported as "Not loaded". VizieR rotates through three CDS mirrors before giving up.
-- CC-BY-SA-4.0 applies to OpenNGC; CDS public applies to VizieR / 50 MGC; NightCrate editorial data is MIT. Attribution surfaces in the DSO page's `DsoAttributionPanel`.
-
-## DSO External References (v0.20.0 — Wikidata + Wikipedia; v0.21.1 — SIMBAD + NED)
-
-General-purpose provider-agnostic link table (`dso_external_ref`) that associates Wikidata QIDs, Wikipedia article URLs, SIMBAD cross-references, and NED galaxy-DB links with canonical DSOs. Two loaders populate it: a Wikidata SPARQL fetcher (bulk auto-matches, CC0) and an editorial CSV override that ships empty, ready for per-row fixes. Wikipedia / SIMBAD / NED chips surface on both the DSO catalog detail panel and the planner detail panel; Wikidata QIDs are stored silently for future features (cross-service enrichment).
-
-**Architecture:**
-- `backend/src/nightcrate/db/migrations/0022.dso_external_refs.sql` — `dso_external_ref` table with `provider` CHECK enum (originally `{wikidata, wikipedia}`), `UNIQUE(dso_id, provider, language)`, partial unique index `(dso_id, provider) WHERE language IS NULL` (SQLite NULL-dedupe quirk), `updated_at` trigger. Widens `dso_catalog_source.category` CHECK to include `'wikidata'` via the SQLite table-rewrite pattern. Uses `PRAGMA legacy_alter_table = ON` during the rewrite so SQLite 3.25+'s FK-rewrite-on-RENAME doesn't redirect `dso.source_catalog_id` at the legacy table (which then gets dropped, leaving the FK dangling).
-- `backend/src/nightcrate/db/migrations/0023.dso_external_refs_simbad_ned.sql` — widens the `dso_external_ref.provider` CHECK to `{wikidata, wikipedia, simbad, ned}`. Same SQLite table-rewrite pattern as 0022 (PRAGMA `legacy_alter_table = ON`); indexes + trigger + partial unique index recreated on the new table.
-- `catalog_loader/wikidata.py` — SPARQL fetcher. GET to `query.wikidata.org/sparql` with UA `NightCrate/{version} (https://github.com/fbaptiste/nightcrate)` (Wikidata's policy requires a descriptive UA). Atomic staging-dir rename; `version.json` commit marker with `query_version` string for query-change invalidation. `QUERY_VERSION='v3'` (v1 = initial, v2 = added SIMBAD + NED columns, v3 = dropped `?ned_id` because Wikidata has no reliable NED property — see "SIMBAD + NED extension" below).
-- `catalog_loader/wikidata_tsv.py` — parser for SPARQL TSV output. Strips `<URI>` wrappers, un-quotes literals (`"foo"@en` → `foo`), strips catalog prefixes (`"NGC "`, `"M "`, `"SH 2-"`, etc.) and leading zeros. Direct-ID shortcuts (P3208/P4095/P6340) take precedence over the P528 canonical form.
-- `catalog_loader/wikidata_loader.py` — matcher + inserter. Resolves each `WikidataRecord` to DSOs via `dso_designation.search_key`. Pre-fetches `{dso_id: (primary_designation, obj_type)}` once per load so the per-match insert loop has both fields handy. Single match → upsert wikidata + wikipedia + simbad rows (and ned for extragalactic DSOs). Zero matches → skip silently. **Multi-match → duplicate the refs onto every matching DSO** (OpenNGC has per-catalog splits: NGC 1316 + PGC 12769 are the same galaxy, NGC 1952 + Sh2-244 are both the Crab, etc. — Wikidata unifies them; we splay the refs back across NightCrate's DSOs so the user sees the chip on whichever one they land on).
-- `catalog_loader/external_refs_loader.py` — editorial CSV override loader mirroring `augment_loader.py`. Upsert rows (both `identifier` and `url` set) overwrite Wikidata-sourced rows on `(dso_id, provider, language)`; suppression rows (both empty) delete. Strict validation — invalid provider / missing language for wikipedia / present language for wikidata, simbad, or ned → abort load with row number. Runs AFTER Wikidata so CSV always wins. `_VALID_PROVIDERS = {wikidata, wikipedia, simbad, ned}`; `_LANGUAGE_AWARE_PROVIDERS = {wikipedia}` only.
-- `api/dso.py` — `_load_external_refs(conn, dso_id)` returns refs ordered by `_EXTERNAL_REF_PROVIDER_ORDER = ("wikipedia", "simbad", "ned", "wikidata")`. Detail response includes `external_refs: list[ExternalRef]`. List response unchanged (detail-only per spec).
-- `api/admin.py` — `GET /api/admin/catalogs/wikidata/remote-version` (sentinel: `can_check_remote=false` since Wikidata has no version semantic); `POST /api/admin/catalogs/wikidata/fetch` (runs fetch + reload, returns standard LoadSummary). Editorial CSV reloads via the existing `POST /api/admin/catalogs/nightcrate/reload`.
-- Frontend: `components/dso/DsoExternalRefs.tsx` — shared link component. Renders one `<Link>` + `OpenInNewIcon` per visible ref; provider-allowlist = `{wikipedia, simbad, ned}`; Wikidata filtered out at render time (structured-data QID pages aren't useful to most users). Per-provider label prefix via a local `PROVIDER_LABEL` map: `Wikipedia:` / `SIMBAD:` / `NED:`. Returns null when no visible refs remain. Mounted in `DsoDetailPanel.tsx` after Designations and in `PlannerDetailPanel.tsx` in place of the earlier inline duplication (shared component since v0.21.1).
-- `data/catalogs/nightcrate/dso_external_refs.csv` — empty body, header + comments. `data/catalogs/nightcrate/LICENSE-CC0.txt` carries the full CC0 1.0 dedication text for transparency (CC0 imposes no requirements but we include it).
-
-**Verified SPARQL shape (live against Wikidata, 2026-04-22):**
-- `P528` (catalog code) + `P972` (catalog qualifier) is the canonical pattern. The spec's per-catalog property IDs (P774, P2024, P2581, P3622, P2295) were almost all wrong — they map to FIPS locations, German cattle breeds, BabelNet, Bandy players, and net profit respectively. The real pattern is universal: `?item p:P528 ?stmt . ?stmt ps:P528 ?code . ?stmt pq:P972 ?catalog` with `?catalog` matching one of NightCrate's recognised Q-items.
-- Q-items: Q14530 (Messier), Q14534 (NGC), Q190553 (IC), Q14536 (Caldwell), Q66381095 (Sharpless 2), Q3247327 (Barnard), Q1479861 (PGC), Q615925 (UGC).
-- Direct-ID shortcuts: P3208 (NGC), P4095 (PGC), P6340 (UGC).
-- Astro-class filter via `wdt:P31/wdt:P279*` rooted at {Q6999, Q13381402, Q318, Q204107, Q11387, Q22247, Q71963409}.
-- Query hits ~58k entities; actual insert count depends on OpenNGC coverage (~13k DSOs → a few thousand matches).
-
-**Key invariants:**
-- Wikipedia / SIMBAD / NED chips render in the UI; **Wikidata QIDs stay hidden** (structured data, filtered at render time). Wikidata QIDs live in the DB for future use (automated enrichment pulling images from Commons, etc.).
-- Ordering is fixed server-side: `wikipedia, simbad, ned, wikidata`. `_EXTERNAL_REF_PROVIDER_ORDER` in `api/dso.py` is the single source of truth.
-- CSV override "later wins" — loaded strictly after Wikidata. Suppression rows (empty identifier + url) delete existing refs; CSV edits followed by admin Reload brings DB into line. Deleting a row from the CSV does NOT delete the corresponding DB row; use a suppression row for that.
-- Registry naming: `wikidata_external_refs` (SPARQL source) + `nightcrate_external_refs` (editorial CSV). Spec proposed `vizier_wikidata` which was misleading — Wikidata has no VizieR relation.
-- No Wikipedia content is bundled — only URLs. Linked article content lives on wikipedia.org under CC BY-SA 4.0; NightCrate never caches article prose.
-- **Identifiers are not globally unique across DSOs.** One Wikipedia article / one Wikidata QID may correctly cover multiple NightCrate DSOs (Stephan's Quintet article → 5 galaxies; Crab Nebula's Q10934 → NGC 1952 + Sh2-244). The only uniqueness enforced is `(dso_id, provider, language)` — one row per DSO per provider per language.
-- **SQLite NULL quirk** on uniqueness: the main `UNIQUE(dso_id, provider, language)` constraint does NOT dedupe when language is NULL (wikidata / simbad / ned rows) because SQLite treats every NULL as distinct. A second partial unique index `(dso_id, provider) WHERE language IS NULL` covers the language-agnostic case. Loaders use bare `ON CONFLICT DO UPDATE` so SQLite picks whichever constraint fires.
-- **SPARQL query engineering.** The original `(wdt:P31/wdt:P279*)` class filter rooted at Q6999 was expensive enough to blow Wikidata's 60-second timeout (504). Dropping it entirely works because P528/P972 + P3208/P4095/P6340 are already astro-scoped by construction. Also dropped `format=tsv` URL param in favour of `Accept: text/tab-separated-values` (setting both caused Wikidata to fall back to XML). Build the Wikipedia URL client-side (space → underscore) rather than in SPARQL — one less `REPLACE(...)` per row.
-
-**SIMBAD + NED extension (v0.21.1):**
-- **SIMBAD (P3083)** is a real Wikidata property. Extra `OPTIONAL { ?item wdt:P3083 ?simbad_id }` pulls it inline. Loader inserts a SIMBAD row for every matched DSO; identifier = `record.simbad_id` when present, else fallback to `primary_designation` (SIMBAD's name resolver handles both forms). URL: `https://simbad.u-strasbg.fr/simbad/sim-id?Ident=<quote_plus(identifier)>`.
-- **NED has no Wikidata property.** The original spec claimed P2528 was "NED ID" — it's actually "earthquake magnitude on the Richter magnitude scale." Spot-checked Andromeda (Q2469): 40+ astronomy-related ID properties on the entity, zero NED. Solution: don't touch Wikidata for NED at all. Synthesise NED URLs from `primary_designation` via NED's tolerant `byname` resolver. URL: `https://ned.ipac.caltech.edu/byname?objname=<quote_plus(primary_designation)>`.
-- **Extragalactic gate.** NED rows are inserted only when `obj_type ∈ GALAXY_TYPES = {G, GPair, GTrpl, GGroup}` (constant from `catalog_loader/augment_loader.py`). Catches the overwhelming majority of targets a user would care about in NED without showering galactic objects (nebulae, clusters, Sharpless regions) with links that resolve to thin or wrong data. **Updating this set is a lockstep change in two places**: `catalog_loader/augment_loader.py:GALAXY_TYPES` and any future downstream gates that care about extragalactic DSOs.
-- **Attribution** (surfaces in Admin → Catalogs via the data-driven attribution panel): `WIKIDATA_CITATION` in `catalog_loader/registry.py` carries CC0 acknowledgement for Wikidata + CDS (SIMBAD) + NASA/IPAC/Caltech (NED) credits in one string.
-- **SPARQL query_version lifecycle.** Bumping `QUERY_VERSION` in `catalog_loader/wikidata.py` triggers the admin's "Update available" indicator via the `/catalogs/wikidata/remote-version` endpoint's `installed_query_version != current_query_version` check. v0.21.1 bumped v1 → v2 (added SIMBAD + NED columns) → v3 (dropped `?ned_id` after discovering P2528 was earthquake data). The TSV parser tolerates extra columns, so v2 TSVs still load under v3 code without re-fetching; bumping to v3 merely nudges the UI to offer a fresh fetch.
-
-## Target Planner (v0.16.0 Pass A + v0.17.0 Pass B + v0.18.0 Pass C)
-
-Location-driven "what's up tonight" at `/planner`. Lists DSOs geometrically visible during astronomical darkness, with optional rig selection adding FOV coverage %, a "frames well" filter, an "In my rig" thumbnail column, and a rotatable FOV Simulator in the detail panel. Custom horizons (v0.13.0) used automatically; otherwise the `planner_min_altitude_deg` setting is the flat floor.
-
-**Tonight / Anytime mode (v0.18.0):** a prominent header-level `ToggleButtonGroup` switches between "Tonight from {location}" (the default, location-aware planner) and "Browse the full catalog" (Anytime mode — same data source, no location / visibility / moon context). In Anytime mode the page acts as a catalog browser with the same filter set as the DSO Catalog page (constellation dropdown, has-distance checkbox, type-group chips with counts, raw-type chips under an "Advanced filters" disclosure, Clear Filters button). Location selector, Min-hours / Brighter-than / Min-size sliders, Frames-well checkbox, the four visibility columns (Hours / Max altitude / Meridian / Moon), and the "no astro-dark" alert are all hidden in Anytime. Backend `/api/planner/targets` accepts `restrict_tonight=false` to skip the visibility snapshot entirely and in Anytime deliberately does NOT fall back to the user's saved imaging-focused defaults (`planner_min_size_arcmin`, `planner_max_magnitude`) — a missing param in Anytime means "don't filter", not "apply 5′ / mag 12 quietly".
-
-**Architecture:**
-- `services/planner_visibility.py` — vectorized astropy alt/az over all active DSOs at 5-minute sampling inside the astro-dark window. `PlannerLocation` / `PlannerHorizon` / `DsoCoord` / `VisibilitySnapshot` value objects. `VisibilityCache` is process-wide, keyed on `(location_id, date, location.updated_at, horizon_id, horizon.updated_at)` — editing either location or horizon invalidates automatically, and swapping horizons in the planner recomputes rather than serving a stale snapshot. 4-entry LRU, 15-minute TTL. Moon separation is **closest approach during the visibility window** — not at-peak (spec deviation; at-peak is misleading when moon is below horizon at the object's transit but rises during the visible window).
-- `services/planner_sky_track.py` — per-DSO altitude/azimuth/moon/horizon arrays across civil dusk − 30 min → civil dawn + 30 min for the detail-panel graph. Not cached; sub-100ms per DSO.
-- `services/thumbnails.py` + `services/hips_client.py` — CDS Aladin hips2fits fetch (DSS2 Color → DSS2 red fallback), disk cache under `APP_DIR/thumbnails/`, LRU eviction via `_evict_lru` on every successful fetch. Miss returns a 1×1 transparent PNG with HTTP 202 + enqueues a background `asyncio.create_task` (deduped via `_in_flight` map keyed by full `ThumbnailKey`, capped via `_fetch_semaphore = 8`). **Optional long-poll:** callers passing `wait_timeout_s > 0` wait on the background task under `asyncio.shield(asyncio.wait_for(...))` and return the real image in the same round trip. Double-failure inserts a `fetch_error` sentinel row that expires after 1 hour — no refetch storms. Metadata in `thumbnail_cache` (migrations 0017-0019), files on disk. Pass A/B variants retained: `list` (180×180), `rig_framed` (180×180), `detail` (800×800). The old `fov_simulator` variant is retired — the simulator now uses the DSO-agnostic sky-tile cache (see below). **Filename format (v0.18.1):** `ra{RAx10000}_dec{DECx10000}_{variant}_{w}x{h}[_{fovMaj_x1000}_{fovMin_x1000}].jpg` — keyed on sky coordinates, NOT on the DB's internal `dso_id` (which is unstable across fresh catalog loads). `rehydrate_from_disk()` runs at startup BEFORE `sync_orphan_files()`: parses RA/Dec from each un-indexed JPEG, looks up the current `dso_id` by `(round(ra × 10000), round(dec × 10000))` coordinate match, re-inserts the index row. Legacy pre-v0.18.1 `{dso_id}_…` filenames are recognised by a separate regex (`_LEGACY_THUMB_FILENAME_RE`) only so the orphan sweep can delete them — never re-indexed.
-- **Sky-tile cache (v0.18.0):** `services/sky_tiles.py` + `services/sky_tile_cache.py` + migration 0020. Cells are keyed by `(hips_survey, healpix_nside, healpix_ipix, tier, cell_size_deg_x100, cell_width_px, cell_height_px, cell_i, cell_j)` — DSO-agnostic, so two DSOs whose views overlap in the same HEALPix region share every cell in the overlap. `astropy_healpix` (BSD-3-Clause, not GPL `healpy`) provides NSIDE=8 → 768 equal-area regions. Every cell in a region shares one tangent plane, so cells tile pixel-perfectly along shared edges (1-based FITS pixel origin `(NAXIS+1)/2`). `cell_wcs_dict()` builds a custom WCS header; `hips_client.build_hips2fits_wcs_url` passes it via hips2fits' `wcs=<JSON>` parameter. Three tiers selected by rig major FOV: `narrow` (≤1°, 0.5° cells @ 800×800), `med` (1–3°, 2° cells @ 800×800), `wide` (>3°, 8° cells @ 1024×1024). Same long-poll + error-backoff semantics as `thumbnails`. **Rehydrate on startup (v0.18.1):** `rehydrate_from_disk()` runs before `sync_orphan_files()`, parses each un-indexed on-disk JPEG's filename back into a `CellKey` (no DSO involvement — purely sky-region identity) and re-inserts the DB row. Survey allowlist in `_SLUG_TO_HIPS` (currently DSS2 color only). Together with the filename scheme, this makes the sky-tile cache fully resilient to database recreation / DB switching.
-- `services/rig_calculators.py` — added `compute_coverage_pct` (max of major/minor fill %). The v0.19.0 Frames-Well range filter lives in `api/planner.py` (`coverage_min_pct` / `coverage_max_pct` query params); the old `frames_well` boolean helper + its 15-90% constants are gone.
-- `services/horizon.py` — adds `resolve_horizon_altitude(type, flat_altitude_deg, points, az)` (v0.19.0) — dispatches artificial (np.full) vs custom (linear interp) so every compute caller has a single code path, no branching on "has horizon".
-- `api/planner.py` + `api/planner_models.py`:
-  - `/api/planner/targets` — filter + sort + paginate in memory. Accepts `q`, `restrict_tonight`, `type_group`, `type` (raw codes), `constellation`, `has_distance` (v0.18.0), `horizon_id` (v0.19.0 — defaults to the location's `is_default` horizon), plus the existing `min_hours` / `max_magnitude` / `min_size_arcmin`. Frames-Well is now a range filter via `coverage_min_pct` / `coverage_max_pct` (both optional, defaults 0 / 200 = no filter). Multi-sort via `sort=field:dir,field:dir,...` — 14 fields in the `PLANNER_SORT_FIELDS` catalog; stable Timsort per key; nulls + empty strings always last regardless of per-key direction. When `restrict_tonight=false` visibility fields are `null` and imaging-focused filters don't fall back to saved defaults.
-  - `/targets/{id}/sky-track` — altitude polyline for the detail panel. Takes `horizon_id` (defaults to location default).
-  - `/thumbnails/{id}?variant=...` — 180×180 `list` / `rig_framed` and 800×800 `detail`. Optional `wait_ms` long-poll.
-  - `/sky-tile-grid` (v0.18.0) — pure-math layout: takes (ra, dec, tier or fov_major, extent_deg), returns the region's tangent, cell size in px/deg, composite size, view-centre pixel, and a list of `SkyTileCellLayout` entries with identity + top-left composite pixel coord. Few milliseconds — no CDS calls.
-  - `/sky-tile` (v0.18.0) — one cell's JPEG bytes. Same long-poll / backoff contract.
-  - `/thumbnails/cache/{clear,stats}`, `/sky-tile/cache/{clear,stats}`, `/dsos/in-region`.
-- Frontend: `pages/PlannerPage.tsx` (v0.19.0 — DataGrid replaced with a stack of cards + `TablePagination`; column layout is gone), `components/planner/{ThumbnailCell,PlannerTargetCard,PlannerSortPanel,SkyPositionGraph,PlannerDetailPanel,FovSimulator,SkyTileCell,SkyTileComposite,DsoAnnotationOverlay,DsoAnnotationPopover,BestTimeOfYearChart,horizonMenuItems}.tsx`, `components/dso/SkyPreview.tsx`, `lib/{plannerSortFields,dsoAnnotations,skyPreviewExtent}.ts`, `stores/{plannerStore,thumbnailCacheStore}.ts`, `api/planner.ts`. `thumbnailUrl()` + `skyTileUrl()` build full `/api/planner/...` URLs for direct `<img src>` use (bypass `apiFetch`); both fold `_activity` into the query so requests show up in the Activity Console.
-- `ThumbnailCell` detects the 1×1 placeholder via `naturalWidth <= 1` and retries with a backoff schedule (400 / 900 / 1500 / 2500 ms). `onError` swaps to a neutral icon for 204 / error cases. Accepts an `aspectRatio` prop (used by the "In my rig" column to crop the square 180×180 image via `object-fit: cover` into a sensor-shaped bounding box) and a `waitMs` prop (simulator tiles pass 4000 on the first attempt; retries use 0). An `imgRef` + `useLayoutEffect([src])` safety net catches the cached-`<img>` race where the browser serves `src` synchronously from HTTP cache and `onLoad` fires before React's listener is attached.
-- `SkyTileCell` (v0.18.0) — single-cell loader for the sky-tile cache; same placeholder-retry + `imgRef` safety net as `ThumbnailCell`, but indexed by `(nside, ipix, tier, cell_i, cell_j)`.
-- `SkyTileComposite` (v0.18.0) — composite manager for a grid of cells. Staged mount: the centre cell (nearest to the view-centre pixel) fetches first with a high `waitMs`; the rest mount after the centre calls `onReady`, ordered by squared distance from the view centre so peripheral cells never stampede the 8-slot backend semaphore.
-- `SkyPreview` (v0.18.0) — DSO-catalog detail-panel auto-zoom preview built on top of `fetchSkyTileGrid` + `SkyTileCell`. `previewSpecForDsoSize` picks the tier + extent from the DSO's major axis. Two-phase mount with a centred semi-transparent loading overlay until the centre cell paints.
-- `FovSimulator` rewritten on top of `SkyTileComposite`. Orange rotatable sensor rectangle over the regional tile mosaic. Drag-to-rotate, numeric input. Scroll-wheel zoom (**native** wheel listener — React's `onWheel` is passive by default). Default zoom: rig rect fills 75% of the viewport. Grid starts 1×1, promotes 1 → 3 → 5 cells wide as the centre renders. Annotation click takes precedence over pan (JSX z-order: composite → rig rect → annotation overlay on top). Re-centre button preserves zoom + rotation. `PlannerDetailPanel` mounts the simulator with `key={dsoId:fov_major:fov_minor}` to force remount across target/rig change. **Keyboard controls (v0.18.1):** `pointerdown` on the container auto-focuses the div so keyboard shortcuts work without a separate Tab step. Arrow keys move the rig rectangle (40 source-px/tap); Shift+Arrow rotates ±5°; Ctrl/⌘/Alt+Arrow pans the background (three modifiers accepted — ⌘+Arrow is browser-history on Mac, Ctrl+Arrow is Mission Control on Mac, Alt/Option+Arrow is sometimes OS-grabbed; accepting all three guarantees cross-platform coverage). R re-centres. Escape blurs. Help text is a collapsible "How to use" panel, collapsed by default.
-- Annotation overlay (`DsoAnnotationOverlay` + `lib/dsoAnnotations.ts`) uses a **single-region gnomonic projection** via `projectRaDecInRegion`: every annotation projects on the HEALPix region's one tangent plane that the composite's cells share, so alignment is pixel-exact across all cells with no per-tile candidate selection. Font size / stroke / padding counter-scale by `1/zoom` so labels stay constant CSS size during zoom.
-
-**Card list (v0.19.0):**
-- `PlannerTargetCard` replaces the old DataGrid row. Layout: DSS2 thumb (96 px, with now-status glyph overlaid top-left) · optional rig-framed thumb + coverage % (when a rig is selected) · info block with three rows (name + type pill + constellation; size / Mag V / distance / RA / Dec; tonight-only hours + meridian + max-alt + moon-sep). Whole card is a `CardActionArea` → opens detail panel on click. Meridian + Max altitude render as two separate lines always (no collapse-when-equal).
-- `PaginationActions` (shared with other DataGrid consumers) is reused via `TablePagination`'s `ActionsComponent` prop.
-- The DataGrid's built-in `loading` prop is NOT used — MUI X Community's linear-progress bar inside the column-header row peeks through as clipped artifacts. Replaced with an opaque `background.paper` overlay on the Paper wrapper during any `isLoading || isFetching`.
-
-**Multi-sort panel (v0.19.0):**
-- `PlannerSortPanel` — collapsible accordion below the imaging sliders. Two areas:
-  - "Sort by": `SortableContext` with `useSortable` pills (drag to reorder within). Direction toggle (↑/↓) and X-to-remove on each pill.
-  - "Available": plain clickable `Chip`s — **click to add** (drag-to-add was attempted but cross-container dnd-kit state thrash made it unreliable; click is unambiguous and matches established sort builders).
-- `sortBy: SortEntry[]` lives in `plannerStore` (Zustand persist version 3 — bumped to flush earlier broken-state localStorage). Default seed: `[{primary_designation, asc}]`.
-- `lib/plannerSortFields.ts` defines 14 sortable fields with `tonightOnly` / `rigOnly` flags; mirrors `PLANNER_SORT_FIELDS` in `api/planner.py`. Inapplicable entries (e.g. `hours_visible` in Anytime) hide from both pill containers AND get filtered out of the serialized `sort` query param — kept in state so toggling back restores them.
-- DataGrid sort is entirely disabled — panel is the sole sort UI, backend does the sort server-side.
-
-**Key invariants:**
-- The visibility snapshot is computed over ALL active DSOs and filtered in memory — filter changes don't recompute alt/az. Cache keying is location + date + location.updated_at + horizon_id + horizon.updated_at (v0.19.0 — swapping horizons in the planner invalidates the snapshot).
-- `moon_separation_at_peak_deg` does NOT exist (spec field name) — use `min_moon_separation_deg`. `None` when never visible during astro-dark.
-- Thumbnail variants: `list` = 180×180 at `max(maj_axis × 1.5, 0.1°)`; `detail` = 800×800 at `max(maj_axis × 3.5, 1.0°)`; `rig_framed` = 180×180 at `fov_major_deg`. The old `fov_simulator` variant is retired.
-- `thumb_dir()` ensures `APP_DIR/thumbnails/` exists on first access — don't precheck in callers.
-- Sky-tile cells within one `(nside, ipix)` region share a tangent plane and tile byte-for-byte along shared edges. Don't compose cells from two different regions into the same grid — the region boundary is the natural split (each `compute_grid_layout` call resolves to exactly one region).
-- In Anytime mode (`restrict_tonight=false`), missing filter params mean "don't filter" — do NOT fall back to `planner_min_size_arcmin` / `planner_max_magnitude` / `planner_min_visibility_hours` defaults, or the Anytime list will silently collapse on small + faint object types (Galaxy Groups, dark nebulae).
-- **Now-status (v0.19.0):** `compute_now_status` takes BOTH `astro_dark_start_utc` and `astro_dark_end_utc`. Decision tree: `now > dark_end` → empty (session over); `now < dark_start` → sample ONLY the dark-window interval, "up" never fires during daytime; inside astro-dark → sample `now → dark_end`, "up" fires on first sample. Earlier bug sampled `now → dark_end` unconditionally, which in an afternoon fetch surfaced as "set" for objects that had set in the morning but would re-rise during tonight's session.
-- **Sort null-handling:** both nulls AND empty/whitespace strings always sort last regardless of per-key direction — `_sort_value` coerces blanks to `None` so OpenNGC rows with `common_name = ''` (not NULL) don't pile up at the top/bottom of a direction sort.
-
-**Settings (v0.19.0, 7 planner-related):** `planner_min_visibility_hours` (2.0), `planner_max_magnitude` (12.0), `planner_min_size_arcmin` (5.0), `planner_frames_well_min_pct` (15), `planner_frames_well_max_pct` (90), `planner_moon_sep_deg` (0 — "Ignore moon"; default for the Best time of year chart), `thumbnail_cache_max_mb` (500; slider max 5 GB). The `thumbnail_cache_max_mb` setting caps BOTH `thumbnail_cache` and `sky_tile_cache` independently — each has its own `_evict_lru` sweep against the same budget value. **Removed in v0.19.0:** `planner_min_altitude_deg` (altitude floor now lives per-horizon on the location). Cache-management UI (thumbnail + sky-tile budget + Clear All, aberration cache, weather cache + TTL) moved from Settings → Admin (`components/admin/CachesAdminSection.tsx`, v0.18.1). Settings now holds only user preferences (theme, units, moon penalty, planner defaults incl. Frames-Well range + moon-sep, GPU, worker cores).
-
-## Target Planner Scoring (v0.21.0)
-
-Per-target 0–100 quality score with a categorical chip (Excellent / Good / Fair / Poor) and a transparent breakdown panel. Computed for every Tonight-mode target against location + date + horizon + rig + filter intent + 25+ tunable parameters. Anytime mode gets no score (chip absent, no sort entry). See `docs/planner-scoring.md` for the user-facing algorithm reference and the spec kickoff transcript for the authoritative math.
-
-**Architecture:**
-- `services/planner_scoring.py` — pure service. Two-stage pipeline: hard gates → four quality dimensions → weighted geometric mean. `score_targets(inputs, snapshot, rig_fov_major_deg, rig_fov_minor_deg, filter_intent, settings, tz)` returns `dict[dso_id, TargetScore]`. No FastAPI / DB deps. Dimensions that drop out (no rig → frame_fit absent; no filter intent → moon dimension neutralized) are handled inside the dimension functions.
-- `services/planner_scoring_constants.py` — closed `CLUSTER_OBJ_TYPES = {OCl, GCl, *Ass}` (excludes `Cl+N` because those targets are imaged for their nebulosity); `FILTER_LINES = (Ha, SII, OIII, L, R, G, B)`; `QUALITY_LABELS = (Excellent, Good, Fair, Poor)`.
-- `services/planner_visibility.py` — `VisibilityTimeSeries` dataclass retained on `VisibilitySnapshot` keeps the per-target altitude / visible_mask / moon_separation arrays + shared moon_altitude (T,) that scoring needs. The arrays were already computed-and-discarded in `_reduce_per_dso`; now they survive alongside the scalar reduction. Cache key unchanged.
-- `api/planner.py` — `list_targets` accepts `filter_intent` query param (comma-separated filter-line codes; 422 on unknown codes). Scoring runs after the filter loop; score + breakdown attach to each `PlannerTargetItem`. New `GET /api/planner/targets/{dso_id}/score` endpoint for the detail panel's preview-state refetch when rig / horizon / location differ from the page's. Adds `score_pct` to `PLANNER_SORT_FIELDS`. Tonight default sort is `[score_pct:desc, primary_designation:asc]`; Anytime unchanged.
-- `api/planner_models.py` — `ScoreBreakdownOut`, `DimensionBreakdownOut`, `SingleTargetScoreResponse`; score fields on `PlannerTargetItem` (all optional, null in Anytime).
-- `core/config.py` — 25 new `scoring_*` fields on `Settings` with a `model_validator` that enforces descending thresholds (`excellent > good > fair`) and non-negative weights. No migration — KV settings table absorbs new rows via Pydantic defaults.
-- Frontend: `components/planner/ScoreChip.tsx` (colored chip with tooltip; `—` outlined chip for gated), `components/planner/ScoreBreakdownSection.tsx` (final detail-panel section: big chip + per-dimension bars + facts or gate-failure reasons), `components/planner/FilterIntentSelect.tsx` (Tonight-only toggle buttons), `components/settings/PlannerScoringSection.tsx` (collapsible accordion per parameter family; every control has a Tooltip with default + one concrete example), `lib/plannerScoreColors.ts` (colorblind-safe palette mirroring the rig-calculator guide-suitability palette — no red/green).
-- `stores/plannerStore.ts` — `filterIntent: FilterLine[]` persisted via Zustand (version 4). Per Q4 (v0.21.0 design): filter intent persists across sessions because it matches stable imaging habits (SHO vs LRGB), not per-session churn.
-
-**Pipeline math:**
-- **Hard gates** (§4): `gate_min_obs_hours` (default 1.0 h), above-custom-horizon, `gate_max_coverage_pct` (default `None`/disabled). First failure → `score_pct=None`, `gate_failures=[reason]`.
-- **Observability** (§5): mean `quality(t) = max(0, 1 - (airmass(t) - 1) / (max_airmass - 1))` over samples where `alt > horizon` AND `alt >= observability_min_altitude_deg`. `max_airmass = 1 / sin(min_altitude_deg)`.
-- **Meridian timing** (§6): `1 - |t_peak - dark_mid| / (dark_hours/2)`, clamped to [0, 1]. `t_peak` reuses `DsoVisibility.peak_time_utc` (transit if inside astro-dark, else higher-altitude dark-window endpoint).
-- **Moon** (§7): limiting-filter rule — when multiple filters are selected, the one with the highest sensitivity bounds session. Per-timestep impact: `sensitivity × phase × sqrt(sin(moon_alt_rad)) × (1 - proximity)`; `proximity = min(1, sep / min_sep)`. Aggregated over moon-up-in-obs-window samples; cluster modifier applies if `obj_type ∈ CLUSTER_OBJ_TYPES`. No filter intent → `moon_score = 1.0` (neutralizes the dimension).
-- **Frame fit** (§8): Gaussian on coverage_pct: `exp(-((cov - ideal) / spread)²)`. No rig OR coverage=None → dimension dropped.
-- **Combination** (§9): weighted geometric mean. A zero anywhere collapses to zero (matches "a fatal weakness in one dimension beats four good-enough scores").
-
-**Key invariants:**
-- Scoring is **backend-only** (Q1). Frontend receives score + breakdown as fields on `PlannerTargetItem`. Settings changes trigger a list refetch via TanStack Query's `queryKey`; debounce slider drag the same way existing planner sliders handle it.
-- Scoring **does not run in Anytime mode** (Q3). Chip is absent, sort entry isn't exposed.
-- Detail panel's **preview state** (rig / horizon / location overrides) triggers a `previewScoreQuery` refetch via `fetchSingleTargetScore` — the list-fetch score is frozen on the page's rig and would be stale when the user changes the detail-panel rig. Fresh score splices over `target.score_*` before rendering `ScoreBreakdownSection`.
-- **`filter_intent` only flows on the page level** — panel overrides don't touch it (per Q4's "persist globally" answer). Filter intent forwards into the detail panel's single-target score query key so any page-level change refreshes any open detail panel.
-- **Cluster modifier scope** (Q5): `OCl` + `GCl` + `*Ass` only. `Cl+N` is NOT in the set because users imaging M8 / M16 / M20 are hunting the nebulosity (which behaves like emission nebula under moon), not the embedded cluster. If the DSO catalog ever adds new cluster-ish codes, update `CLUSTER_OBJ_TYPES` in lockstep.
-- **Coverage gates vs Frames-Well filter** (Q7): they coexist. The existing `coverage_min_pct` / `coverage_max_pct` Frames-Well range is a LIST filter (removes targets from the displayed set). The new `scoring_gate_max_coverage_pct` (default `None`) is a SCORING gate (removes targets from scoring only). They serve different jobs; if the pair feels confusing in practice, drop the scoring gate (the Gaussian already handles oversized targets gracefully).
-- **`planner_moon_sep_deg` is independent** (Q8). It drives the Best-time-of-year chart's annual moon-avoidance mode; the new `scoring_moon_*` fields drive the per-night scoring moon dimension. Don't conflate them.
-
-**Settings (25 new, all `scoring_*`):** 4 weights (observability 2.0, meridian 1.0, moon 1.5, frame_fit 1.0), 7 moon sensitivities (ha 0.15, sii 0.25, oiii 0.70, l 0.95, r 0.55, g 0.85, b 1.00), 7 moon min-separations (ha/sii/r 60°, oiii/l/g/b 90°), cluster_moon_modifier 0.5, observability_min_altitude_deg 30°, frame_fit_ideal_coverage_pct 55, frame_fit_spread 35, thresholds (excellent 80, good 60, fair 40), gate_min_obs_hours 1.0, gate_max_coverage_pct `None`. Every field defaults from the Pydantic model; the validator rejects invalid combinations with a clear error surfaced in the API layer.
-
-## Left-nav drag-to-reorder (v0.21.1)
-
-The left-nav in `components/AppShell.tsx` splits into a pinned `HOME_ITEM` row (always at index 0) and a `REORDERABLE_ITEMS` stack (everything else). Reorderable rows use `@dnd-kit`'s `useSortable` with a `PointerSensor` activation-distance of 8 px so clicks still navigate via `NavLink` while a ≥8 px drag starts a reorder. A subtle `DragIndicatorIcon` in a 20-px leading slot (opacity 0.25 → 0.6 on hover) signals draggability; Home gets an empty slot of the same width for icon alignment. Order persists as `settings.nav_order: list[str]` — not surfaced on the Settings page; the nav itself IS the UI. `normalizeNavOrder` filters unknown routes and appends any reorderable route missing from the saved list, so a new nav item in a future version surfaces at the end of whatever order the user has.
-
-## PHD2 Guide-Log Analyzer (v0.22.0 Pass A + v0.23.0 Pass B + v0.24.0 Pass C + v0.25.0 Pass D-1)
-
-Part of the ten-version arc (v0.22.0 → v0.34.0 + roadmap tail). Full spec: `docs/nightcrate-phd2-analyzer-spec-v4.md`. Passes A–D-1 are live: parser + time-series chart + calibration plot + scatter plot + per-section / viewport / selection summary metrics with PHDLogViewer-aligned formulas, event list with click-to-jump, multi-additive range selection / exclusion, copy-stats, recent-files dropdown, three-tab layout (Guiding / Dispersion / Data), session-info panel, and vertical scale sliders flanking the chart. Interpretive diagnostics start in v0.31.0; persistence lands in v0.29.0. Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
-
-**Architecture (pure service + API split, mirrors `aberration.py` / `api/aberration.py`):**
-
-- `services/phd2_models.py` — Pydantic v2 shapes: `ParsedLog`, `LogSection`, `SectionHeader`, `GuidingSample`, `CalibrationSample`, `CalibrationPhase`, `LogEvent`, `ParseWarning`. All distances in pixels (`arcsec_scale` surfaced alongside metrics so the UI renders dual-unit labels without re-reading the header). `Phd2DebugLogRejected` exception (ValueError subclass).
-- `services/phd2_parser.py` — entry point `parse_log(source: Path | TextIO) -> ParsedLog`. Regex-by-name header parsing (35+ known keys plus a generic `freeform_keys` sweep for unknowns). `_FLOAT_GUIDING_COLUMNS` is the set that gets joined back during locale recovery; integer columns (Frame, RADuration, DECDuration, ErrorCode, StarMass) stay as single tokens. INFO classifier uses `string-contains` regexes (not prefix-exact) so `SETTLING STATE CHANGE, Settling started` matches.
-- `services/phd2_metrics.py` — `compute_section_metrics` produces all top-line per-section metrics in one pass. Formulas align with PHDLogViewer's `AnalysisWin.cpp` per spec v4 §5.2 (v0.25.0): **RMS** is population standard deviation via `_stddev` (not RMS-from-zero); **peak** is sign-preserving max-by-abs (`_signed_peak`); **RA drift** uses corrections-subtraction `(ra_last − ra_first − Σ ra_guide) / Δt × 60` (`_ra_drift_corrections_subtracted`); **Dec drift** uses unguided-frames-only `y_accum` slope × 60 (`_dec_drift_unguided_only` — handles all-guided / single-sample / pure-unguided edge cases per the spec); **PA error** in arcmin via Barrett's `3.8197 · |drift| · pixel_scale / cos(δ)` (`_polar_alignment_error_arcmin` — returns None when declination / pixel scale missing or near the celestial pole); **oscillation** counts zero values as positive per spec §11.14; **elongation** `|lx − ly| / (lx + ly)` over the rotated mount-axis frame (`_elongation`); **duration** split into `total` + `included` (sum of inter-frame intervals where both endpoints are settle-excluded). **Settle-window exclusion** stays the same: samples inside `settle_begin`/`settle_end` windows drop from every quality metric. `_settle_intervals` state-machine tolerates None-anchored begins, lone ends, unclosed begins at EOF, and duplicate begins.
-- `api/phd2.py` + `api/phd2_models.py` — `POST /api/phd2/parse`, `GET /api/phd2/cache/stats`, `POST /api/phd2/cache/clear`. TTL cache keyed by `(path, mtime_ns, size)` with per-key locking (mirrors `api/images.py`). 120 s TTL, 8-entry cap.
-- Frontend — `pages/Phd2AnalyzerPage.tsx`, `components/phd2/{TimeSeriesChart,CalibrationPlot,ScatterPlot,StatsPanel,EventList,WarningsDrawer,SectionNavigator,SectionInfoPanel,SectionDataTab}.tsx`, `lib/phd2GuidingMetrics.ts`, `api/phd2.ts`. D3 + SVG for the time-series, calibration, and scatter charts (templates from `planner/SkyPositionGraph.tsx` and `planner/BestTimeOfYearChart.tsx`). RA = blue, Dec = orange — colorblind-safe palette from `lib/rigColors.ts`. Page tabs: **Guiding** (TimeSeriesChart + EventList) / **Dispersion** (ScatterPlot) / **Data** (SectionDataTab). Section / Viewport / Selection summary `StatsPanel`s and the `SectionInfoPanel` live in the left nav under the Section list.
-- **ScatterPlot** — D3 SVG scatter of `(dx, dy)` with 1σ / 2σ dispersion ellipses and a centroid marker. Rotation uses PHDLogViewer's `LFit::Theta` form `θ = atan2(cov_xy, var_x)` (NOT textbook PCA) and re-iterates samples in the rotated frame to read off `lx` / `ly` — matches PHDLogViewer for cross-tool consistency. Axis-aligned pixel domain; optional arcsec dual-unit axis ticks. Collapsible, side-panel with centroid coordinates + 1σ axis lengths + principal angle. Lives on the dedicated **Dispersion** tab as of v0.25.0.
-- **SectionInfoPanel** (v0.25.0) — collapsible "Session info" panel mounted under the Section list in the left nav. Renders parsed `SectionHeader` fields grouped into Optics / Camera / Mount / Sky position / Star + lock / Algorithms / Dither / Profile / Other (the parser's `freeform_keys` passthrough). Group titles render in `primary.main` (theme-aware blue) with bold + uppercase; key/value rows are tight monospace. Empty groups drop out entirely. Selection-aware — re-renders for the currently-selected section's header.
-- **EventList** — collapsible chronological list of anchored INFO events per section. Friendly kind chip + wall-clock timestamp + raw message (Δx/Δy for dither). Clicking a row calls `TimeSeriesChart.scrollToTime(time_seconds)` — an imperative handle exposed via `forwardRef` + `useImperativeHandle` that pans + zooms the chart to a ~60 s window around the target (or preserves current zoom if already zoomed in).
-- **Range selection + exclusion** (v0.24.0) — **multi-additive** teal selection bands (Shift+drag appends) and hatched-grey exclusion bands (Shift+Alt+drag appends). d3.zoom's `.filter` bypasses shift-keyed mousedowns so the gestures don't fight the existing pan; `xScaleRef` keeps the time-inversion math current when the user scroll-zooms mid-drag. Net sample set = union(selections) − union(exclusions); empty selections falls back to the zoom-driven viewport then the full section. Live `pendingSelection` / `pendingExclusion` preview rects follow the cursor during drag (brighter stroke), committed on mouseup or discarded on <0.25 s drag. **Per-zone × close button** (`ZoneCloseButton` helper) sits at the top-right of every band, rendered OUTSIDE the main-panel clipPath so it stays visible + clickable even when the zone is clipped by zoom; selections' ×s at y=10, exclusions' ×s at y=26 so they never collide. **Toolbar actions**: "Include in view" / "Exclude in view" (append current zoomX to the respective list, disabled when not zoomed), "Clear all (N)" (wipes both arrays), plus the existing "Reset X zoom". `Phd2AnalyzerPage` flips the Viewport Summary panel to **Selection Summary** when any selection exists and builds the wall-clock subtitle accordingly (single selection shows the range; multi shows "N selections"; exclusions append "excluding … " / "excluding N ranges").
-- **Copy stats to clipboard** (v0.24.0) — `StatsPanel` header (guiding kind only) gains a `ContentCopyIcon` button that writes a TSV dump of the metric rows via `navigator.clipboard.writeText` and flashes a 1.5 s Snackbar. Format: panel title + subtitle header row, then tab-separated `label\tvalue` per metric — pastes cleanly into spreadsheets or the PHD2 forum.
-- **Recent files history** (v0.24.0) — `lib/phd2RecentFiles.ts` exposes `getRecentFiles` / `addRecentFile` / `removeRecentFile` / `clearRecentFiles` + a tiny `formatRelativeTime` formatter. Backed by `localStorage` under `phd2.recentFiles`, capped at 10 entries, deduped by path. `Phd2AnalyzerPage`'s empty-state landing shows the list when non-empty (monospace filename → reopens, full path + relative time under it, × per entry, "Clear all" button). Logs are added **only on successful parse**.
-- `lib/phd2GuidingMetrics.ts` — client-side port of the backend `compute_section_metrics` math. As of v0.25.0 mirrors PHDLogViewer-aligned formulas exactly (stddev RMS, RA corrections-subtraction drift, Dec unguided-frames-only drift, signed peak, oscillation incl. zeros, PA error, elongation). Drives both the **Section Summary** (over all samples) and the **Viewport / Selection Summary** panel (over the chart's visible X-domain samples). The `{ includeSettle, declinationDeg }` option flips the backend-matching settle filter for both panels synchronously without a round-trip and feeds declination to the PA-error helper.
-- **Chart** (`components/phd2/TimeSeriesChart.tsx`) — main panel with dual Y-axes (Guide error px + Pulses ms) plus SNR and Mass sub-panels at equal absolute height (~110 px each via `SNR_H_RATIO 0.26` + `MASS_H_RATIO 0.20`; default chart height 650 px). Hairline divider lines render across the SVG width at the midpoint of each panel-gap so Guide / SNR / Mass read as separate plots. Clip paths per panel; rotated y-axis labels; settle-region shading tied to the chart-toolbar `Include settle` toggle; legend-aware auto-fit; row-packed vertical-line event markers; dither triangle markers; hover tooltip anchored above the toolbar. Tick label gaps are 9 px from each axis. Toolbar-row 1: Guide unit (px / ″) + legend toggles + hint. Toolbar-row 2: Include in view / Exclude in view / Clear all on the left, Include settle + Reset X zoom on the right. `toolbarHeight` is measured live via `ResizeObserver` so slider rails track the actual rendered toolbar height.
-- **Vertical scale sliders** (v0.25.0) — replaced the prior dropdowns + Auto/Fixed toggles. `VerticalScaleSlider` helper renders a vertical MUI Slider on a 40 px rail flanking each side of the SVG: Guide on the left rail, Pulse on the right rail (each spans the main panel); SNR + Mass each on the left rail at their sub-panel positions. Logarithmic mapping; sliding UP = zoom IN by convention (rail uses `sign = -1` to negate MUI's natural higher-value-up). MUI's default thumb-padding overridden via `py: 0` so the rail's top / bottom land on each panel's horizontal axis lines exactly. Per-slider Autorenew reset button below the panel with a 6 px gap from the rail. `valueLabelDisplay="auto"` + `onChangeCommitted` blur ensures the value label disappears when the user releases the slider; tooltip side flips per slider (left rail → right placement, right rail → left placement) so it never gets clipped by the outer overflow boundary.
-- **SNR / Mass median-anchored scaling** (v0.25.0) — axis lo locked at `autoLo` (data minimum + padding) so low values are always visible; axis hi controlled by the slider. Slider min clamps above the median (`median + max(floor, 0.2 × (autoHi − median))`) so the bulk can never get pushed off the top even at maximum zoom. Median and auto-fit bounds are computed from the FULL section samples (not the visible window) so panning / zooming the X-axis doesn't jiggle the SNR / Mass y-axis.
-- **Path field Autocomplete** (v0.25.0) — toolbar's path TextField wrapped in `Autocomplete freeSolo` with `recentFiles` as options. Dropdown shows monospace filename + dim full path + relative time + per-entry × button. Width capped (`flexBasis: 50%, maxWidth: 720, minWidth: 240`).
-
-**Shared architectural principles (apply across every version of the arc):**
-
-- **Standalone-first, catalog-ready.** The analyzer ships standalone from day one; catalog-linked entry points land in v0.30.0 without re-parse or UI rewrite.
-- **Pixel-canonical representation.** All distances stored and computed in pixels. Arcsec derived at display time from each section's `Pixel scale` header. Missing `Pixel scale` → UI shows pixels only + a warning; never fabricate arcsec.
-- **Parse-by-name, never-by-position.** Column order read per-section from the actual CSV header line. Future PHD2 versions adding/reordering columns must not break the parser.
-- **Never silently coerce missing data.** Empty fields → `None`, never `0.0`. DROP frames have `None` in positional fields (coercing to zero silently corrupts RMS and creates phantom ideal-guiding periods on charts — this is the quiet correctness win that justifies the parser discipline).
-- **No hardcoded ErrorCode→string table.** The log's own ErrorDescription is authoritative. Spec §11.2 documents why the prior table was wrong (`ErrorCode 6` is "Star lost - mass changed", not "Large deflection"; `ErrorCode 7` is "No star found", not "Star lost").
-- **Colorblind-safe palette.** RA = blue, Dec = orange. Never red/green. Viridis for sequential data.
-- **Interpretive claims must be sourced.** Every diagnostic rule from v0.27.0 onward carries a reference URL to the community source (Bruce Waddington tutorial, PHD2 manual, CelestialWonders drift article). No unsourced heuristics.
-- **AI-readiness as a hard constraint.** The `ParsedLog` shape serializes cleanly into a Claude prompt context — no rework expected between v0.22.0 and the v5+ AI analyzer (§9.3 of the spec).
-
-**Format tolerance — what the parser survives (all verified against real ASIAIR + synthetic fixtures):**
-
-- Blank PHD2 app version on the first line (`PHD2 version, Log version 2.5. Log enabled at …`) — ASIAIR-bundled PHD2 omits it.
-- Irregular key separators in header lines — PHD2 packs `key = value` pairs with commas OR bare spaces, sometimes neither (e.g. `Minimum move = 0.100 Aggression = 100% FastSwitch = enabled` has no separator before `Aggression`/`FastSwitch`).
-- Row arity variation inside one section — OK rows are 18 cols, error rows are 19 (trailing quoted `ErrorDescription`).
-- EOF-terminated sections (`Guiding Ends at …` is optional on the final section).
-- Backward section timestamps (NTP resync mid-session) — sections kept in file order, warning emitted.
-- Locale-decimal corruption (IT/DE/FR builds that wrote commas for decimals AND for CSV separators) — detected via token-count ratio `T > C × 1.3` and rebuilt by pairing adjacent numeric tokens as `N.NNN` (only for float columns; integer columns stay as single tokens). `section.locale_recovery_applied = True` surfaces in the warnings drawer.
-
-**Version arc at a glance (see PLAN.md's "Appendix: PHD2 Analyzer Roadmap" for the full map):**
-
-- v0.22.0 Pass A — parser + viewer skeleton (shipped). Post-landing
-  polish pulled **settle-window exclusion** forward from Pass B, added
-  a **Viewport Summary** panel, and replaced the chart's dot-style
-  event indicators with row-packed **vertical-line markers + labels**.
-- v0.23.0 Pass B — **drift** + **oscillation** metrics (added to
-  `compute_section_metrics` + the client-side helper; StatsPanel rows
-  with dual-unit drift and percentage oscillation), **ScatterPlot**
-  component (dx vs dy with 1σ/2σ covariance ellipse + centroid), and
-  **EventList** component with click-to-jump into the chart via a new
-  `scrollToTime` imperative handle on TimeSeriesChart (shipped).
-- v0.24.0 Pass C — **multi-additive range selection + exclusion**
-  (Shift-drag / Shift+Alt-drag append; per-zone × close buttons;
-  toolbar actions: Include in view / Exclude in view / Clear all;
-  Selection Summary title fold; live pending-preview rects during
-  drag), **copy stats to clipboard** (TSV via `navigator.clipboard`
-  + a confirmation Snackbar), and **recent-files history**
-  (`lib/phd2RecentFiles.ts` — localStorage-backed, 10-entry cap,
-  shown on the empty-state landing). Lock-scale was already covered
-  by the existing Guide / Pulse axis Fixed dropdowns; reveal-in-
-  finder was explicitly dropped from scope.
-- v0.25.0 Pass D-1 — **metric foundation** (PHDLogViewer-aligned RMS/drift/PA/peak/oscillation/elongation), session-info panel in the left nav, vertical scale sliders flanking the chart, three-tab restructure (Guiding / Dispersion / Data), median-anchored SNR/Mass zoom, recent-files dropdown on the path field. **Shipped.** Note: PHDLogViewer's parser silently misses declination on modern PHD2 logs (incl. ASIAir-bundled), so its PA-error number is wrong on those logs — NightCrate's is correct (regression test pinned at δ=69° / 18.34′).
-- v0.26.0 Pass D-2 — Spectrum tab v4-conformance + worm-period markers (Hamming, 4/N normalization, Akima spline via scipy, MAD-3 threshold, snap-to-peak hover).
-- v0.27.0 Pass D-3 — Unguided RA reconstruction (PHDLogViewer recurrence) + Spectrum-tab Unguided RA toggle.
-- v0.28.0 Pass E-1 — Drive-type-aware markers (worm / strain wave / hybrid / direct-drive / friction).
-- v0.29.0 Pass E-2 — Per-session measured PE + per-mount-instance schema; first SQLite tier.
-- v0.30.0 Pass E-3 — GA section handling + AO/Mount toggle.
-- v0.31.0–v0.32.0 Pass F/G — two-tier diagnostic engine (8 confident rules + 8 speculative), equipment-aware thresholds.
-- v0.33.0–v0.34.0 Pass H/I — multi-log comparison, trends, DB-backed history, HTML report export, per-instance PE corpus UI, catalog integration.
-
-## Settings (key-value schema)
-
-Application settings stored in a `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` table (migration 0011, reshaped from the previous `settings(id, data JSON)` singleton). Each Pydantic field on `core/config.py:Settings` maps to one row; `get_settings()` merges rows, silently drops rows with un-parseable JSON, and falls back to defaults on `ValidationError`. `update_settings()` upserts every field in a single loop — each update bumps `updated_at`.
-
-Adding a new setting still requires no schema migration: add the Pydantic field with a default, and the KV path handles the rest.
-
-## Outbound HTTP
-
-All outbound HTTP (Open-Meteo forecast/PWV/AOD, Clear Outside scraper) goes through `backend/src/nightcrate/services/http_client.py:get()`. Uniform 30s timeout, one 500ms-backoff retry on transient failures (`TimeoutException`, `ConnectError`, 5xx), structured `[http] …` log lines. Callers still catch `httpx.HTTPError` and translate to their domain-appropriate HTTP status (typically 502 for upstream failures).
-
-## Logging
-
-- `NIGHTCRATE_LOG_LEVEL` env var drives the `nightcrate` namespace logger level (INFO default; set to `DEBUG` for verbose traces).
-- `[weather-cache]` / `[http]` / `[open-meteo]` structured log lines on hot paths.
-- Router 500s (bare `except Exception`) log via `logger.exception(...)` so server bugs leave a traceback in the log.
-
-## Shared router helpers
-
-`backend/src/nightcrate/api/_common.py`:
-- `row_to_dict(row, *, extra_fn=None)` — aiosqlite.Row → dict, with an optional post-processor (locations uses it to derive sexagesimal display strings).
+- `row_to_dict(row, *, extra_fn=None)` — aiosqlite.Row → dict with optional post-processor.
 - `bool_fields(d, *keys)` — INTEGER(0/1) → Python bool, in place.
-- `strip_seed(d)` — drops `source`/`seed_key`/`seed_hash` from response dicts.
-- `integrity_guard(conflict_detail, *, constraint_map=None, check_detail=None)` — context manager that translates `aiosqlite.IntegrityError.sqlite_errorname` into HTTP 409 (UNIQUE) or 422 (CHECK). Optional `constraint_map` dispatches on partial-index name substring.
+- `strip_seed(d)` — drops `source` / `seed_key` / `seed_hash` from response dicts.
+- `integrity_guard(...)` — context manager translating `aiosqlite.IntegrityError.sqlite_errorname` into HTTP 409 (UNIQUE) or 422 (CHECK), with optional partial-index dispatch.
 
-Use these in every new CRUD router instead of reimplementing the pattern.
+**Use these in every new CRUD router instead of reimplementing the pattern.** New equipment/lookup routes should also reach for the factories in `api/equipment_factory.py` (`build_lookup_router`, `build_equipment_router`).
 
-## Path resolution
+### Path resolution
 
-`backend/src/nightcrate/services/path_resolver.py` — `resolve_path(path)` handles plain filesystem paths, pxiproject virtual paths (`project_dir::index`), and archive virtual paths (`archive.zip::entry`). Returns `(resolved_path_or_BytesIO, file_type, image_index, cache_key)`. Used by both `api/images.py` and `api/aberration.py`.
+`services/path_resolver.py:resolve_path(path)` handles plain filesystem paths, pxiproject virtual paths (`project_dir::index`), and archive virtual paths (`archive.zip::entry`). Returns `(resolved_path_or_BytesIO, file_type, image_index, cache_key)`. Used by both `api/images.py` and `api/aberration.py`. **All new code that accepts user-supplied paths should go through this.**
+
+## Feature areas — architectural notes
+
+For full feature inventory and per-version history see `nightcrate-current-state.md` (living snapshot) and `PLAN.md`. This section captures only the **architectural invariants and gotchas worth knowing when modifying these areas**.
+
+### Image Viewer
+- Format-agnostic core in `services/imaging.py`; per-format I/O in `services/{fits,xisf,pxiproject,standard}_io.py`. The XISF parser is **clean-room** — the GPL-licensed reference lib is off-limits per the dependency policy.
+- **Auto-stretch uses PixInsight AutoSTF** (avgDev, NOT MAD). Constants: shadow clip = `median + (-1.25)·avgDev`, midtone target = 0.25, MTF self-inverse for midtones balance.
+- Stretch is **server-side**; frontend sends params as query string and receives a rendered PNG. Default mode is `stretch=auto` (one round-trip computes stats + linearity + STF); user slider interaction switches to explicit `stretch=stf`.
+- **Per-key locks** on image-data and stats caches prevent redundant computation under concurrent requests. Archive cache key is `(archive_path, mtime, entry_path)` so archive-extracted images share with regular files.
+- **FITS header editing only** — XISF, standard images, archive paths, and pxiproject virtuals can't be edited. Structural keywords (`SIMPLE`, `BITPIX`, `NAXIS*`, `EXTEND`, `BZERO`, `BSCALE`, `COMMENT`, `HISTORY`, `END`) are protected.
+- Performance patterns: histograms subsample to ~2M pixels for large images; PNG encoding uses `compress_level=1` (local app, speed > size); `bottleneck.nanmedian` over numpy median.
+
+### Aberration Inspector
+- Cache key is `(file_path, hdu, settings_json)`. Different filter settings = different cache row. TTL via `aberration_cache_ttl_days` setting.
+- Star detection via `sep` + `sep.flux_radius` for HFR. Filters are user-tunable, debounced 500 ms.
+
+### Archive Browser
+- Virtual paths: `{archive_path}::{entry_path}` (same `::` separator as pxiproject). All I/O services accept `Path | BinaryIO`.
+- In-memory extraction for zip/tar; 7z uses a temp dir then cleans up (py7zr API limitation).
+
+### Equipment + Rigs
+- **Schema is fully normalized.** No `custom_fields` JSON; add a real column via migration when needed. See `DB_SCHEMA.md` / `DB_SCHEMA_DDL.sql`.
+- **Closed CHECK vocabularies** on key fields (`drive_type`, `filter_passband.line_name`, `software.category`, `connection_interface.category`, `sensor.sensor_type`, `sensor.bayer_pattern`). Adding a value = migration.
+- Every telescope has ≥ 1 `telescope_configuration` with exactly one `is_native = 1`.
+- `camera` table carries `effective_*` overrides that win over the underlying sensor's baseline values.
+- Soft-delete via `active = 0`; list endpoints accept `?include_retired=true`.
+- Default-rig enforcement: setting `is_default = 1` clears it on all others in one transaction (`_ensure_single_default`).
+- `is_mine` flag on the 10 owned-equipment tables is **NOT** in `seeded_fields` — toggling does NOT trigger a re-seed.
+- Filter slots (`rig_filter_slot`) require `filter_wheel_id`; clearing the wheel deletes all slots in the same transaction.
+
+### Seed Loader
+- **Hash contract is versioned.** Never expand a table's `seeded_fields` after first seed without a migration that backfills affected rows directly — the loader's user-modified check (`current_hash != stored_hash`) will skip every existing row otherwise. v0.26.0's migration 0024 backfilled `worm_period_seconds` via direct UPDATE statements for this reason.
+- Never overwrites `source = 'user'` rows.
+- Junction tables delete-and-reinsert only for parents that were inserted/updated.
+- First-run vs update modes; missing CSV files fail loud at startup.
+
+### DSO Catalog
+- **No vendored DSO data.** Repo ships only NightCrate editorial CSVs (CC0). OpenNGC, Sharpless, Barnard, 50 MGC, Wikidata data downloads to `APP_DIR/catalogs/` on user demand from Admin → Catalogs.
+- **Source layering precedence is structural, not enforced**: `curated > 50 MGC > redshift`. Each augmenter writes only `WHERE distance_pc IS NULL`, so earlier stages never get clobbered.
+- Canonical `dso.obj_type` and `dso_designation.catalog` are **closed CHECK vocabularies** — adding a new prefix needs both a migration AND a loader-map update.
+- All catalog fetchers use **atomic staging-dir-rename** and write `version.json` LAST so a crash mid-rename leaves the source as "Not loaded".
+- See `docs/dso-catalog-architecture.md`.
+
+### DSO External References
+- **Provider allowlist for chip rendering: `wikipedia | simbad | ned`.** Wikidata QIDs are stored but never rendered as user-facing chips — they're for future automated enrichment (Commons images, etc.).
+- Provider order is server-fixed (`api/dso.py: _EXTERNAL_REF_PROVIDER_ORDER`).
+- **SQLite NULL-uniqueness quirk**: the main `UNIQUE(dso_id, provider, language)` doesn't dedupe when language is NULL; a partial unique index `(dso_id, provider) WHERE language IS NULL` covers wikidata/simbad/ned rows.
+- One Wikipedia article / Wikidata QID may correctly cover multiple DSOs (Stephan's Quintet → 5 galaxies). Don't add cross-DSO uniqueness.
+- **Verify Wikidata property IDs against live Wikidata before trusting a spec** — specs sometimes claim wrong properties (P2528 = earthquake magnitude, not NED).
+
+### Horizons (per-location, multi)
+- Each location has ≥ 1 horizon. Deleting the last one is 422.
+- Exactly one horizon per location has `is_default = 1` (partial unique index). At most one custom (polyline) horizon per location; any number of artificial (flat-altitude) horizons.
+- **Horizons in the Location editor STAGE — they do NOT persist immediately.** Save commits everything atomically (location fields + horizons); Cancel discards everything. **Do NOT regress** to immediate-persistence — the editor's dirty-state contract requires staging. The atomic-create + diff-apply paths live in `api/locations.py` (`LocationCreate.horizons`) and `api/horizons.py` (`PUT /api/locations/{id}/horizons`).
+- Smoothing is **never persisted**; raw points are canonical, consumers re-run D3 smoothing.
+- Points stored `[0, 360)`, never 360; display rolls to `[-180, +180]` with virtual seam points at the S boundary.
+
+### Target Planner
+- Visibility snapshot computes alt/az at 5-min sampling over **all active DSOs** in the astro-dark window, then filters in memory. Cache key = location + date + location.updated_at + horizon_id + horizon.updated_at.
+- Tonight mode applies imaging-focused defaults (min size, max magnitude); **Anytime mode does NOT fall back to those defaults** — a missing param means "don't filter" (otherwise small + faint object types silently collapse).
+- `compute_now_status` needs **both** `astro_dark_start_utc` and `astro_dark_end_utc` and uses a **48 h midnight-anchored grid** for moon rise/set (24 h noon-to-noon misses the lunar period of 24h50m).
+- Moon separation is computed at **closest approach during the visibility window**, not at peak (peak is misleading when moon is below horizon at transit).
+- Sort null-handling: blanks (None AND empty/whitespace strings) always sort last regardless of per-key direction.
+
+### Target Planner Scoring
+- Score is **backend-only** and **Tonight-only** (no Anytime score).
+- Cluster modifier vocab is closed: `OCl | GCl | *Ass`. `Cl+N` is intentionally NOT a cluster (users image those for the nebula).
+- Detail-panel rig/horizon overrides trigger a refetch via `fetchSingleTargetScore` — the list-fetch score is frozen on the page-level rig.
+
+### Caches that survive DB recreation
+On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode stable identity (RA/Dec + variant + size + FOV) in filenames**, NOT internal `dso_id` (unstable across catalog reloads). On startup, `rehydrate_from_disk()` parses filenames back into cache keys and re-indexes BEFORE the orphan sweep deletes anything.
+
+### PHD2 Guide-Log Analyzer
+- **Pure-service architecture**: `services/phd2_*.py` produce data; `api/phd2.py` is the only DB/HTTP boundary. Service modules **must not import from `api/`**.
+- **Pixel-canonical representation**: all distances stored and computed in pixels; arcsec derived at display time from `SectionHeader.pixel_scale_arcsec_per_px`. Missing pixel scale → UI shows pixels-only; never fabricate arcsec.
+- **Parse-by-name, never-by-position.** Column order read per-section from the actual CSV header. Future PHD2 versions reordering columns must not break the parser.
+- **Never silently coerce missing data.** Empty fields → `None`, never `0.0`. DROP frames have `None` in positional fields (coercing to zero silently corrupts RMS and creates phantom ideal-guiding periods on charts).
+- **No hardcoded ErrorCode → string table.** The log's own ErrorDescription is authoritative.
+- **Cross-tool consistency with PHDLogViewer is a hard requirement** — FFT amplitudes (4/N normalization), RMS (population stddev, NOT RMS-from-zero), Barrett's PA error formula. Tests pin specific values against PHDLogViewer's reported outputs for the ASIAir sample log.
+- **Interpretive claims must be sourced.** Diagnostic rules from v0.31.0+ carry reference URLs (Bruce Waddington tutorial, PHD2 manual, CelestialWonders drift article). No unsourced heuristics.
+- Spec: `docs/nightcrate-phd2-analyzer-spec-v4.md`. Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
+
+### Weather Forecast
+- Two timezones per location: `geo_timezone` (auto-derived from coords via `timezonefinder`, used for noon-to-noon astro windows and the lunar 48 h grid) and `timezone` (user's display preference, used for Open-Meteo API + display formatting). **Don't conflate them** — remote-observatory operators legitimately want display in their home timezone while astro computes against site coordinates.
+- Quality scoring uses a **colorblind-safe sequential blue palette** (darker = better). Cloud gating: all non-sky factors multiplied by `√(sky_clarity / 100)`.
+- Supplementary data writes (PWV, AOD) are **non-fatal** — wrap in try/except and serve stale data rather than 5xx.
+- Forecast covers 8 days (`forecast_days=8`) so the last night's sunrise window is included.
+
+### Calculators
+- Math runs server-side (one endpoint per calculator). Frontend ticks at the sidereal rate between 60 s server refreshes for the sidereal clock.
+- Backend returns `HH:MM` strings already rendered in the display timezone — frontend must pass them through verbatim, not re-parse as ISO-UTC.
+- Formula rendering via **KaTeX** (MIT). Clock order persists in `settings.calculators_clock_order` (server-side), not localStorage. Drag-to-reorder via `@dnd-kit` (single-container `SortableContext` + click-to-add — cross-container drag was attempted and abandoned).
+- **Native form-control theming**: `MuiCssBaseline` sets `body.colorScheme = "dark"/"light"` so the native date-input popup, scrollbars, and other browser-rendered form elements match the current theme.
+
+### Admin → Caches
+Cache management UI (thumbnail / sky-tile / aberration / weather budgets + Clear All) lives on the Admin page, **NOT Settings**. Settings is for user preferences only (theme, units, planner defaults, GPU, worker cores).
+
+### Activity Console
+ASGI middleware (`api/diagnostics.py:RequestTrackingMiddleware`) records every request. Activity label propagates via `X-Activity` header (for `fetch()`) or `_activity` query param (for `<img>` calls — header isn't accessible). Image requests use a **stable `_activity` label** set once on file open so URL-cache-busting doesn't fragment grouping.
 
 ## Dependency & License Policy
 

@@ -1,76 +1,76 @@
-seed_key,manufacturer_seed_key,mount_type_seed_key,counterweight_required,drive_type,goto_capable,model_name,mount_weight_kg,notes,payload_capacity_kg,periodic_error_arcsec,source_url
+seed_key,manufacturer_seed_key,mount_type_seed_key,counterweight_required,drive_type,goto_capable,model_name,mount_weight_kg,notes,payload_capacity_kg,periodic_error_arcsec,source_url,worm_period_seconds
 # --- ZWO AM line (harmonic) ---
-mount.zwo.am3,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM3,3.9,First-generation lightweight harmonic mount (discontinued; still in active use),8,,
-mount.zwo.am3n,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM3N,4,Updated AM3 with improved cable management and Bluetooth,8,,
-mount.zwo.am5,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM5,5,Original AM5 harmonic mount (discontinued; still in active use),13,,
-mount.zwo.am5n,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM5N,5.5,Current AM5 revision with higher payload and tighter PE spec,15,,
-mount.zwo.am7,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM7,8,Heavy-payload harmonic mount released January 2026,20,,
+mount.zwo.am3,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM3,3.9,First-generation lightweight harmonic mount (discontinued; still in active use),8,,,
+mount.zwo.am3n,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM3N,4,Updated AM3 with improved cable management and Bluetooth,8,,,
+mount.zwo.am5,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM5,5,Original AM5 harmonic mount (discontinued; still in active use),13,,,
+mount.zwo.am5n,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM5N,5.5,Current AM5 revision with higher payload and tighter PE spec,15,,,
+mount.zwo.am7,manufacturer.zwo,mount_type.harmonic_eq,0,Harmonic,1,AM7,8,Heavy-payload harmonic mount released January 2026,20,,,
 # --- Sky-Watcher traditional GEM ---
-mount.skywatcher.heq5_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,HEQ5 Pro,7.7,Popular entry-level imaging GEM,13.6,,
-mount.skywatcher.eq6_r_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,EQ6-R Pro,17,Workhorse belt-driven imaging mount,20,,
-mount.skywatcher.cq350_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,CQ350 Pro,23,Mid-heavy belt-driven imaging mount introduced 2024,35,,
-mount.skywatcher.eq8_r_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,EQ8-R Pro,25.5,Observatory-class heavy payload mount,50,,
-mount.skywatcher.eq8_rh_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,EQ8-Rh Pro,25.5,EQ8-R with high-resolution absolute encoders,50,,
-mount.skywatcher.az_eq6,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,AZ-EQ6,16,Dual EQ/Alt-Az mode belt-driven mount,20,,
+mount.skywatcher.heq5_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,HEQ5 Pro,7.7,Popular entry-level imaging GEM,13.6,,,638
+mount.skywatcher.eq6_r_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,EQ6-R Pro,17,Workhorse belt-driven imaging mount,20,,,479
+mount.skywatcher.cq350_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,CQ350 Pro,23,Mid-heavy belt-driven imaging mount introduced 2024,35,,,479
+mount.skywatcher.eq8_r_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,EQ8-R Pro,25.5,Observatory-class heavy payload mount,50,,,479
+mount.skywatcher.eq8_rh_pro,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,EQ8-Rh Pro,25.5,EQ8-R with high-resolution absolute encoders,50,,,479
+mount.skywatcher.az_eq6,manufacturer.skywatcher,mount_type.german_eq,1,Worm gear,1,AZ-EQ6,16,Dual EQ/Alt-Az mode belt-driven mount,20,,,479
 # --- Sky-Watcher Wave (harmonic) ---
-mount.skywatcher.wave_100i,manufacturer.skywatcher,mount_type.harmonic_eq,0,Harmonic,1,Wave 100i,4.3,Compact harmonic mount,10,,
-mount.skywatcher.wave_150i,manufacturer.skywatcher,mount_type.harmonic_eq,0,Harmonic,1,Wave 150i,5.8,Mid-payload harmonic mount with OTA balancing,15,,
+mount.skywatcher.wave_100i,manufacturer.skywatcher,mount_type.harmonic_eq,0,Harmonic,1,Wave 100i,4.3,Compact harmonic mount,10,,,
+mount.skywatcher.wave_150i,manufacturer.skywatcher,mount_type.harmonic_eq,0,Harmonic,1,Wave 150i,5.8,Mid-payload harmonic mount with OTA balancing,15,,,
 # --- Sky-Watcher Star Adventurer (star trackers) ---
-mount.skywatcher.star_adventurer_2i,manufacturer.skywatcher,mount_type.star_tracker,1,Worm gear,0,Star Adventurer 2i,1.2,WiFi-enabled portable star tracker,5,,
-mount.skywatcher.star_adventurer_gti,manufacturer.skywatcher,mount_type.star_tracker,1,Worm gear,1,Star Adventurer GTi,2.6,GoTo star tracker with WiFi,5,,
+mount.skywatcher.star_adventurer_2i,manufacturer.skywatcher,mount_type.star_tracker,1,Worm gear,0,Star Adventurer 2i,1.2,WiFi-enabled portable star tracker,5,,,478
+mount.skywatcher.star_adventurer_gti,manufacturer.skywatcher,mount_type.star_tracker,1,Worm gear,1,Star Adventurer GTi,2.6,GoTo star tracker with WiFi,5,,,478
 # --- iOptron CEM/GEM (traditional belt-driven worm) ---
-mount.ioptron.cem26,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,CEM26,4.5,Entry-level center-balanced mount,12,,
-mount.ioptron.cem40,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,CEM40,7,Mid-range center-balanced mount,18,,
-mount.ioptron.cem70,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,CEM70,11,Heavy-payload center-balanced mount,31,,
-mount.ioptron.gem28,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,GEM28,4.5,Portable imaging GEM,12.7,,
-mount.ioptron.gem45,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,GEM45,8,Mid-range imaging GEM,20,,
+mount.ioptron.cem26,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,CEM26,4.5,Entry-level center-balanced mount,12,,,287
+mount.ioptron.cem40,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,CEM40,7,Mid-range center-balanced mount,18,,,287
+mount.ioptron.cem70,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,CEM70,11,Heavy-payload center-balanced mount,31,,,600
+mount.ioptron.gem28,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,GEM28,4.5,Portable imaging GEM,12.7,,,600
+mount.ioptron.gem45,manufacturer.ioptron,mount_type.german_eq,1,Worm gear,1,GEM45,8,Mid-range imaging GEM,20,,,600
 # --- iOptron HEM (hybrid harmonic) ---
-mount.ioptron.hem27,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HEM27,4,Hybrid harmonic equatorial mount,13.6,,
-mount.ioptron.hem44,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HEM44,6,Mid-size hybrid harmonic equatorial mount,20,,
+mount.ioptron.hem27,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HEM27,4,Hybrid harmonic equatorial mount,13.6,,,
+mount.ioptron.hem44,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HEM44,6,Mid-size hybrid harmonic equatorial mount,20,,,
 # --- iOptron HAE (all-harmonic) ---
-mount.ioptron.hae29,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HAE29,4,Compact all-harmonic equatorial mount,13,,
-mount.ioptron.hae43,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HAE43,5.5,Mid-range all-harmonic equatorial mount,20,,
-mount.ioptron.hae69,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HAE69,8,Heavy-payload all-harmonic equatorial mount,30,,
+mount.ioptron.hae29,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HAE29,4,Compact all-harmonic equatorial mount,13,,,
+mount.ioptron.hae43,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HAE43,5.5,Mid-range all-harmonic equatorial mount,20,,,
+mount.ioptron.hae69,manufacturer.ioptron,mount_type.harmonic_eq,0,Harmonic,1,HAE69,8,Heavy-payload all-harmonic equatorial mount,30,,,
 # --- iOptron star tracker ---
-mount.ioptron.skyguider_pro,manufacturer.ioptron,mount_type.star_tracker,1,Worm gear,0,SkyGuider Pro,1.3,Portable star tracker with iPolar option,5,,
+mount.ioptron.skyguider_pro,manufacturer.ioptron,mount_type.star_tracker,1,Worm gear,0,SkyGuider Pro,1.3,Portable star tracker with iPolar option,5,,,478
 # --- Celestron ---
-mount.celestron.avx,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,Advanced VX (AVX),7,Entry-level imaging GEM,13.6,,
-mount.celestron.cgem_ii,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,CGEM II,19,Mid-range imaging GEM,18,,
-mount.celestron.cgx,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,CGX,20,Heavy belt-driven imaging mount,25,,
-mount.celestron.cgx_l,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,CGX-L,24,Observatory-class heavy payload mount,34,,
+mount.celestron.avx,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,Advanced VX (AVX),7,Entry-level imaging GEM,13.6,,,480
+mount.celestron.cgem_ii,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,CGEM II,19,Mid-range imaging GEM,18,,,480
+mount.celestron.cgx,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,CGX,20,Heavy belt-driven imaging mount,25,,,540
+mount.celestron.cgx_l,manufacturer.celestron,mount_type.german_eq,1,Worm gear,1,CGX-L,24,Observatory-class heavy payload mount,34,,,540
 # --- WarpAstron (harmonic) ---
-mount.warpastron.wd20,manufacturer.warpastron,mount_type.harmonic_eq,0,Harmonic,1,WD-20,5.4,Servo direct-drive harmonic mount,22,,
-mount.warpastron.wd20p,manufacturer.warpastron,mount_type.harmonic_eq,0,Harmonic,1,WD-20P,5.4,Updated WD-20 with gyroscopic sensor and USB-PD power delivery,22,,
+mount.warpastron.wd20,manufacturer.warpastron,mount_type.harmonic_eq,0,Harmonic,1,WD-20,5.4,Servo direct-drive harmonic mount,22,,,
+mount.warpastron.wd20p,manufacturer.warpastron,mount_type.harmonic_eq,0,Harmonic,1,WD-20P,5.4,Updated WD-20 with gyroscopic sensor and USB-PD power delivery,22,,,
 # --- Rainbow Astro (harmonic) ---
-mount.rainbow_astro.rst135,manufacturer.rainbow_astro,mount_type.harmonic_eq,0,Harmonic,1,RST-135,3.3,Original popular Korean harmonic mount,13.5,,
-mount.rainbow_astro.rst135e,manufacturer.rainbow_astro,mount_type.harmonic_eq,0,Harmonic,1,RST-135E,3.4,RST-135 with Renishaw absolute encoder on RA axis,13.5,,
-mount.rainbow_astro.rst300,manufacturer.rainbow_astro,mount_type.harmonic_eq,0,Harmonic,1,RST-300,8.5,Heavy-payload Korean harmonic mount,30,,
+mount.rainbow_astro.rst135,manufacturer.rainbow_astro,mount_type.harmonic_eq,0,Harmonic,1,RST-135,3.3,Original popular Korean harmonic mount,13.5,,,
+mount.rainbow_astro.rst135e,manufacturer.rainbow_astro,mount_type.harmonic_eq,0,Harmonic,1,RST-135E,3.4,RST-135 with Renishaw absolute encoder on RA axis,13.5,,,
+mount.rainbow_astro.rst300,manufacturer.rainbow_astro,mount_type.harmonic_eq,0,Harmonic,1,RST-300,8.5,Heavy-payload Korean harmonic mount,30,,,
 # --- Pegasus Astro (harmonic) ---
-mount.pegasus_astro.nyx101,manufacturer.pegasus_astro,mount_type.harmonic_eq,0,Harmonic,1,NYX-101,6.4,Pegasus harmonic mount with barometric refraction correction,20,,
+mount.pegasus_astro.nyx101,manufacturer.pegasus_astro,mount_type.harmonic_eq,0,Harmonic,1,NYX-101,6.4,Pegasus harmonic mount with barometric refraction correction,20,,,
 # --- Takahashi ---
-mount.takahashi.em200_temma3,manufacturer.takahashi,mount_type.german_eq,1,Worm gear,1,EM-200 Temma 3,16.5,Japanese premium imaging GEM (current Temma 3 revision),17,,
-mount.takahashi.em11_temma2z,manufacturer.takahashi,mount_type.german_eq,1,Worm gear,1,EM-11 Temma 2Z,6.5,Compact Japanese premium imaging GEM,8.5,,
+mount.takahashi.em200_temma3,manufacturer.takahashi,mount_type.german_eq,1,Worm gear,1,EM-200 Temma 3,16.5,Japanese premium imaging GEM (current Temma 3 revision),17,,,570
+mount.takahashi.em11_temma2z,manufacturer.takahashi,mount_type.german_eq,1,Worm gear,1,EM-11 Temma 2Z,6.5,Compact Japanese premium imaging GEM,8.5,,,570
 # --- Losmandy ---
-mount.losmandy.g11,manufacturer.losmandy,mount_type.german_eq,1,Worm gear,1,G-11,16.3,Classic American premium GEM with Gemini 2 control,27,,
-mount.losmandy.gm8,manufacturer.losmandy,mount_type.german_eq,1,Worm gear,1,GM-8,,Smaller Losmandy GEM,18,,
+mount.losmandy.g11,manufacturer.losmandy,mount_type.german_eq,1,Worm gear,1,G-11,16.3,Classic American premium GEM with Gemini 2 control,27,,,240
+mount.losmandy.gm8,manufacturer.losmandy,mount_type.german_eq,1,Worm gear,1,GM-8,,Smaller Losmandy GEM,18,,,240
 # --- Vixen ---
-mount.vixen.sxd2,manufacturer.vixen,mount_type.german_eq,1,Worm gear,1,Sphinx SXD2,7,Popular Japanese mid-range imaging GEM with Star Book Ten,15,,
-mount.vixen.sxp2,manufacturer.vixen,mount_type.german_eq,1,Worm gear,1,Sphinx SXP2,7,Higher-tier Vixen SX-series belt-driven imaging GEM,17,,
+mount.vixen.sxd2,manufacturer.vixen,mount_type.german_eq,1,Worm gear,1,Sphinx SXD2,7,Popular Japanese mid-range imaging GEM with Star Book Ten,15,,,480
+mount.vixen.sxp2,manufacturer.vixen,mount_type.german_eq,1,Worm gear,1,Sphinx SXP2,7,Higher-tier Vixen SX-series belt-driven imaging GEM,17,,,480
 # --- Explore Scientific (PMC-Eight) ---
-mount.explore_scientific.iexos100_2,manufacturer.explore_scientific,mount_type.german_eq,1,Worm gear,1,iEXOS-100-2 PMC-Eight,4.3,Entry-level WiFi/Bluetooth capable imaging mount,8.6,,
-mount.explore_scientific.exos2_pmc8,manufacturer.explore_scientific,mount_type.german_eq,1,Worm gear,1,EXOS-2 PMC-Eight,9.5,Mid-range WiFi/Bluetooth capable imaging mount,14,,
-# --- Astro-Physics (premium) ---
-mount.astro_physics.mach2gto,manufacturer.astro_physics,mount_type.german_eq,1,Worm gear,1,Mach2GTO,18,Premium American imaging mount with Renishaw absolute encoders,34,,
-mount.astro_physics.ap1100gto,manufacturer.astro_physics,mount_type.german_eq,1,Worm gear,1,1100GTO,24.5,Observatory-class premium American imaging mount,45,,
-# --- 10Micron (premium) ---
-mount.10micron.gm1000_hps_ep,manufacturer.10micron,mount_type.german_eq,1,Worm gear,1,GM1000 HPS EP,19.5,Italian absolute-encoder mount with enhanced payload (2025),30,,
-mount.10micron.gm2000_hps_ii,manufacturer.10micron,mount_type.german_eq,1,Worm gear,1,GM2000 HPS II Combi,33,Observatory-class Italian absolute-encoder mount with splittable design,50,,
+mount.explore_scientific.iexos100_2,manufacturer.explore_scientific,mount_type.german_eq,1,Worm gear,1,iEXOS-100-2 PMC-Eight,4.3,Entry-level WiFi/Bluetooth capable imaging mount,8.6,,,
+mount.explore_scientific.exos2_pmc8,manufacturer.explore_scientific,mount_type.german_eq,1,Worm gear,1,EXOS-2 PMC-Eight,9.5,Mid-range WiFi/Bluetooth capable imaging mount,14,,,
+# --- Astro-Physics (premium, encoder-suppressed worm) ---
+mount.astro_physics.mach2gto,manufacturer.astro_physics,mount_type.german_eq,1,Worm gear,1,Mach2GTO,18,Premium American imaging mount with Renishaw absolute encoders,34,,,
+mount.astro_physics.ap1100gto,manufacturer.astro_physics,mount_type.german_eq,1,Worm gear,1,1100GTO,24.5,Observatory-class premium American imaging mount,45,,,
+# --- 10Micron (premium, absolute encoders) ---
+mount.10micron.gm1000_hps_ep,manufacturer.10micron,mount_type.german_eq,1,Worm gear,1,GM1000 HPS EP,19.5,Italian absolute-encoder mount with enhanced payload (2025),30,,,
+mount.10micron.gm2000_hps_ii,manufacturer.10micron,mount_type.german_eq,1,Worm gear,1,GM2000 HPS II Combi,33,Observatory-class Italian absolute-encoder mount with splittable design,50,,,
 # --- Software Bisque Paramount (premium) ---
-mount.software_bisque.myt,manufacturer.software_bisque,mount_type.german_eq,1,Worm gear,1,Paramount MYT,16,Portable Paramount Series 6 imaging mount,32,,
-mount.software_bisque.mx_series6,manufacturer.software_bisque,mount_type.german_eq,1,Worm gear,1,Paramount MX (Series 6),24,Mid-range Paramount Series 6 imaging mount,56,,
-mount.software_bisque.me_ii,manufacturer.software_bisque,mount_type.german_eq,1,Worm gear,1,Paramount ME II,38,Observatory-class Paramount imaging mount,109,,
+mount.software_bisque.myt,manufacturer.software_bisque,mount_type.german_eq,1,Worm gear,1,Paramount MYT,16,Portable Paramount Series 6 imaging mount,32,,,
+mount.software_bisque.mx_series6,manufacturer.software_bisque,mount_type.german_eq,1,Worm gear,1,Paramount MX (Series 6),24,Mid-range Paramount Series 6 imaging mount,56,,,
+mount.software_bisque.me_ii,manufacturer.software_bisque,mount_type.german_eq,1,Worm gear,1,Paramount ME II,38,Observatory-class Paramount imaging mount,109,,,
 # --- Planewave (premium direct-drive alt-az) ---
-mount.planewave.l350,manufacturer.planewave,mount_type.alt_az,0,Direct drive,1,L-350,,Direct-drive alt-az mount (EQ wedge optional) for CDK14 and smaller,45,,
-mount.planewave.l500,manufacturer.planewave,mount_type.alt_az,0,Direct drive,1,L-500,,Direct-drive alt-az mount (EQ wedge optional) for CDK17/20,90,,
+mount.planewave.l350,manufacturer.planewave,mount_type.alt_az,0,Direct drive,1,L-350,,Direct-drive alt-az mount (EQ wedge optional) for CDK14 and smaller,45,,,
+mount.planewave.l500,manufacturer.planewave,mount_type.alt_az,0,Direct drive,1,L-500,,Direct-drive alt-az mount (EQ wedge optional) for CDK17/20,90,,,
 # --- Move Shoot Move (camera star tracker) ---
-mount.msm.nomad,manufacturer.msm,mount_type.star_tracker,0,,0,Nomad,0.43,Compact camera star tracker with 3-position switch (no GoTo),3.5,,
+mount.msm.nomad,manufacturer.msm,mount_type.star_tracker,0,,0,Nomad,0.43,Compact camera star tracker with 3-position switch (no GoTo),3.5,,,

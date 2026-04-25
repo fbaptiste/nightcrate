@@ -1,12 +1,7 @@
 /**
- * PHD2 Guide-Log Analyzer page.
- *
- * Standalone-first (spec §4.1): user picks a path via Browse / paste /
- * recent-files dropdown, hits Open, gets the parsed log rendered across
- * three tabs (Guiding / Dispersion / Data). The left nav holds the
- * section list, ``SectionInfoPanel`` (parsed header fields), and the
- * Section + Viewport / Selection summary panels. Catalog integration
- * lands in v0.34.0; interpretive diagnostics start in v0.31.0.
+ * PHD2 Guide-Log Analyzer page — standalone log viewer with Guiding /
+ * Spectrum / Dispersion / Data tabs. Rig context drives the spectrum
+ * tab's worm-period overlay and persists per-log via phd2RecentFiles.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
@@ -33,12 +28,15 @@ import { setActivity } from "@/api/client";
 import { computeGuidingMetrics, computeSettleIntervals } from "@/lib/phd2GuidingMetrics";
 import ScatterPlot from "@/components/phd2/ScatterPlot";
 import EventList from "@/components/phd2/EventList";
+import FftChart from "@/components/phd2/FftChart";
+import RigSelectBar from "@/components/phd2/RigSelectBar";
 import type { TimeSeriesChartHandle } from "@/components/phd2/TimeSeriesChart";
 import {
   addRecentFile,
   formatRelativeTime,
   getRecentFiles,
   removeRecentFile,
+  setRecentFileRig,
   type RecentFile,
 } from "@/lib/phd2RecentFiles";
 import CloseIcon from "@mui/icons-material/Close";
@@ -62,9 +60,9 @@ export default function Phd2AnalyzerPage() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
-  // Section-view tab: 0 = Guiding, 1 = Dispersion, 2 = Data. Tab state
-  // is page-level so switching sections keeps the user on the same tab.
+  // 0 = Guiding, 1 = Spectrum, 2 = Dispersion, 3 = Data.
   const [tab, setTab] = useState(0);
+  const [rigId, setRigId] = useState<number | null>(null);
   // Lazy-mount the Data tab. The heavy DataTable useMemo pass (14
   // columns × 7 500 rows) was competing for the first render with the
   // chart — pulses appeared to "come in later" because the chart's
@@ -107,11 +105,11 @@ export default function Phd2AnalyzerPage() {
   }, []);
 
   const parseMutation = useMutation({
-    mutationFn: (path: string) => {
+    mutationFn: ({ path, rigId }: { path: string; rigId: number | null }) => {
       setActivity(`Parse log ${path.split("/").pop() ?? "file"}`);
-      return parseGuideLog(path);
+      return parseGuideLog(path, rigId);
     },
-    onSuccess: (data, path) => {
+    onSuccess: (data, { path }) => {
       setParsed(data);
       // Select the first guiding section if present; else the first section.
       const firstGuiding = data.sections.find((s) => s.section.kind === "guiding");
@@ -218,10 +216,23 @@ export default function Phd2AnalyzerPage() {
     if (!trimmed) return;
     setActivePath(trimmed);
     setPathInput(trimmed);
-    parseMutation.mutate(trimmed);
+    const remembered =
+      recentFiles.find((e) => e.path === trimmed)?.selectedRigId ?? null;
+    setRigId(remembered);
+    parseMutation.mutate({ path: trimmed, rigId: remembered });
   };
 
   const handleOpen = () => openPath(pathInput);
+
+  // Backend cache key includes rig_id so changing the rig re-runs
+  // worm-marker logic without re-parsing the (immutable) log.
+  const handleRigChange = (next: number | null) => {
+    setRigId(next);
+    if (activePath) {
+      setRecentFiles(setRecentFileRig(activePath, next));
+      parseMutation.mutate({ path: activePath, rigId: next });
+    }
+  };
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -382,6 +393,8 @@ export default function Phd2AnalyzerPage() {
               <Chip label={`Log v${parsed.log.log_version}`} size="small" variant="outlined" />
               <Chip label={`${parsed.sections.length} sections`} size="small" variant="outlined" />
               <WarningsDrawer warnings={parsed.log.warnings} />
+              <Box sx={{ flex: 1 }} />
+              <RigSelectBar rigId={rigId} onChange={handleRigChange} />
             </>
           )}
         </Stack>
@@ -518,11 +531,12 @@ export default function Phd2AnalyzerPage() {
               value={tab}
               onChange={(_, v) => {
                 setTab(v);
-                if (v === 2) setDataVisited(true);
+                if (v === 3) setDataVisited(true);
               }}
               sx={{ px: 2, borderBottom: 1, borderColor: "divider", minHeight: 40 }}
             >
               <Tab label="Guiding" sx={{ minHeight: 40 }} />
+              <Tab label="Spectrum" sx={{ minHeight: 40 }} />
               <Tab label="Dispersion" sx={{ minHeight: 40 }} />
               <Tab label="Data" sx={{ minHeight: 40 }} />
             </Tabs>
@@ -569,6 +583,30 @@ export default function Phd2AnalyzerPage() {
                 </Stack>
               )}
             </Box>
+            {/* Spectrum panel — FFT of RA / Dec with worm-period overlay. */}
+            <Box
+              sx={{
+                flex: 1,
+                overflow: "auto",
+                p: 2,
+                display: tab === 1 ? "block" : "none",
+              }}
+            >
+              {selected.section.kind === "guiding" ? (
+                <FftChart
+                  fftRa={selected.analysis.fft_ra}
+                  fftDec={selected.analysis.fft_dec}
+                  wormMarker={selected.analysis.worm_marker}
+                  durationSeconds={selected.metrics.duration_total_seconds}
+                />
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Spectrum analysis is only available for guiding
+                  sections — calibration runs don't carry the
+                  uniformly-sampled tracking data the FFT needs.
+                </Typography>
+              )}
+            </Box>
             {/* Dispersion panel — extracted to its own tab so the
                 guiding view stays focused on the time series. */}
             <Box
@@ -576,7 +614,7 @@ export default function Phd2AnalyzerPage() {
                 flex: 1,
                 overflow: "auto",
                 p: 2,
-                display: tab === 1 ? "block" : "none",
+                display: tab === 2 ? "block" : "none",
               }}
             >
               {selected.section.kind === "guiding" && (
@@ -607,7 +645,7 @@ export default function Phd2AnalyzerPage() {
               sx={{
                 flex: 1,
                 p: 2,
-                display: tab === 2 ? "flex" : "none",
+                display: tab === 3 ? "flex" : "none",
                 flexDirection: "column",
                 minHeight: 0,
                 minWidth: 0,
@@ -627,19 +665,13 @@ export default function Phd2AnalyzerPage() {
   );
 }
 
-/** Last filesystem path segment. Handles both ``/`` and ``\`` so
- *  Windows-style paths render cleanly on macOS too (archive virtual
- *  paths like ``file.zip::entry.txt`` keep the ``::`` suffix since
- *  it's part of the filename from the user's perspective). */
+/** Last path segment; handles both / and \ for cross-platform paths. */
 function basename(path: string): string {
   const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return idx >= 0 ? path.slice(idx + 1) : path;
 }
 
-/** Build the subtitle for the Selection / Viewport summary panel.
- *  The panel title is "Selection summary" when any user-drawn
- *  selection exists, otherwise "Viewport summary"; the subtitle
- *  describes the active window + any exclusions subtracting from it. */
+
 function formatSubtitle(
   selections: Array<[number, number]>,
   exclusions: Array<[number, number]>,

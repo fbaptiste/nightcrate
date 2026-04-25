@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.25.0
+**NightCrate version:** 0.26.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -365,6 +365,7 @@ erDiagram
         INTEGER goto_capable "boolean, default 1"
         REAL periodic_error_arcsec
         TEXT drive_type
+        REAL worm_period_seconds
         TEXT notes
     }
 

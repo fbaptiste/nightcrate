@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.25.0
+**NightCrate version:** 0.26.0
 
 ## Overview
 
@@ -81,7 +81,8 @@ CREATE TABLE filter_size_option (filter_id FK, filter_size_id FK,
 
 CREATE TABLE mount (manufacturer_id FK, mount_type_id FK nullable, model_name TEXT,
     payload_capacity_kg REAL, mount_weight_kg REAL, counterweight_required BOOL,
-    goto_capable BOOL, periodic_error_arcsec REAL, drive_type TEXT, notes TEXT);
+    goto_capable BOOL, periodic_error_arcsec REAL, drive_type TEXT,
+    worm_period_seconds REAL, notes TEXT);
 -- junction: mount_interface (mount_id, interface_id → connection_interface)
 
 CREATE TABLE focuser (manufacturer_id FK, focuser_type_id FK nullable, model_name TEXT,
@@ -206,7 +207,7 @@ Header: `seed_key,form_factor_seed_key,manufacturer_seed_key,model_name,notes`
 Seed_keys: `computer.zwo.asiair`, `computer.zwo.asiair_mini`, `computer.zwo.asiair_pro`, `computer.zwo.asiair_plus_32gb`, `computer.zwo.asiair_plus_256gb`, `computer.primalucelab.eagle3`, `computer.primalucelab.eagle4_s`, `computer.primalucelab.eagle4`, `computer.primalucelab.eagle4_pro`, `computer.primalucelab.eagle5_s`, `computer.primalucelab.eagle5`, `computer.primalucelab.eagle5_pro`, `computer.stellarmate.plus`, `computer.stellarmate.pro`, `computer.stellarmate.x`, `computer.touptek.stellavita`
 
 ### mount.csv (54 rows)
-Header: `seed_key,manufacturer_seed_key,mount_type_seed_key,counterweight_required,drive_type,goto_capable,model_name,mount_weight_kg,notes,payload_capacity_kg,periodic_error_arcsec`
+Header: `seed_key,manufacturer_seed_key,mount_type_seed_key,counterweight_required,drive_type,goto_capable,model_name,mount_weight_kg,notes,payload_capacity_kg,periodic_error_arcsec,worm_period_seconds`
 
 Seed_keys: `mount.zwo.am3`, `mount.zwo.am3n`, `mount.zwo.am5`, `mount.zwo.am5n`, `mount.zwo.am7`, `mount.skywatcher.heq5_pro`, `mount.skywatcher.eq6_r_pro`, `mount.skywatcher.cq350_pro`, `mount.skywatcher.eq8_r_pro`, `mount.skywatcher.eq8_rh_pro`, `mount.skywatcher.az_eq6`, `mount.skywatcher.wave_100i`, `mount.skywatcher.wave_150i`, `mount.skywatcher.star_adventurer_2i`, `mount.skywatcher.star_adventurer_gti`, `mount.ioptron.cem26`, `mount.ioptron.cem40`, `mount.ioptron.cem70`, `mount.ioptron.gem28`, `mount.ioptron.gem45`, `mount.ioptron.hem27`, `mount.ioptron.hem44`, `mount.ioptron.hae29`, `mount.ioptron.hae43`, `mount.ioptron.hae69`, `mount.ioptron.skyguider_pro`, `mount.celestron.avx`, `mount.celestron.cgem_ii`, `mount.celestron.cgx`, `mount.celestron.cgx_l`, `mount.warpastron.wd20`, `mount.warpastron.wd20p`, `mount.rainbow_astro.rst135`, `mount.rainbow_astro.rst135e`, `mount.rainbow_astro.rst300`, `mount.pegasus_astro.nyx101`, `mount.takahashi.em200_temma3`, `mount.takahashi.em11_temma2z`, `mount.losmandy.g11`, `mount.losmandy.gm8`, `mount.vixen.sxd2`, `mount.vixen.sxp2`, `mount.explore_scientific.iexos100_2`, `mount.explore_scientific.exos2_pmc8`, `mount.astro_physics.mach2gto`, `mount.astro_physics.ap1100gto`, `mount.10micron.gm1000_hps_ep`, `mount.10micron.gm2000_hps_ii`, `mount.software_bisque.myt`, `mount.software_bisque.mx_series6`, `mount.software_bisque.me_ii`, `mount.planewave.l350`, `mount.planewave.l500`, `mount.msm.nomad`
 
