@@ -262,13 +262,6 @@ export default function TonightCalc() {
               <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
                 {headlines.moonless}
               </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: "block", mt: 0.5 }}
-              >
-                Moonless astro dark hours
-              </Typography>
             </Box>
           </Stack>
         </Paper>
