@@ -37,7 +37,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.22.0 — PHD2 Guide-Log Analyzer Pass A (Parser + Viewer Skeleton)](#v0220--phd2-guide-log-analyzer-pass-a-parser--viewer-skeleton) ✅
 - [v0.23.0 — PHD2 Pass B (Drift + Oscillation + Scatter + Event List)](#v0230--phd2-pass-b-drift--oscillation--scatter--event-list) ✅
 - [v0.24.0 — PHD2 Pass C (Range Selection + Copy Stats + Recent Files)](#v0240--phd2-pass-c-range-selection--copy-stats--recent-files) ✅
-- [v0.25.0 — PHD2 Pass D-1 (Metric Foundation)](#v0250--phd2-pass-d-1-metric-foundation)
+- [v0.25.0 — PHD2 Pass D-1 (Metric Foundation)](#v0250--phd2-pass-d-1-metric-foundation) ✅
 - [v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)](#v0260--phd2-pass-d-2-spectrum-conformance--worm-markers)
 - [v0.27.0 — PHD2 Pass D-3 (Unguided RA Reconstruction)](#v0270--phd2-pass-d-3-unguided-ra-reconstruction)
 - [v0.28.0 — PHD2 Pass E-1 (Drive-Type-Aware Markers)](#v0280--phd2-pass-e-1-drive-type-aware-markers)
@@ -3849,7 +3849,7 @@ interaction-polish bundle that was deferred from Pass A + B.
 
 ## v0.25.0 — PHD2 Pass D-1 (Metric Foundation)
 
-**Status:** Planned
+**Status:** ✅ Done
 **Branch:** `v0.25.0/phd2-metric-foundation`
 **Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §5.2.1 – §5.2.8
 
@@ -4007,28 +4007,61 @@ Edge cases:
 
 **Backend:**
 
-- [ ] `backend/src/nightcrate/services/phd2_metrics.py` — replace `_rms`, `_slope_per_minute`, add `_dec_drift_unguided_only` + `_polar_alignment_error_arcmin`. Update `compute_section_metrics` to use the new helpers.
-- [ ] `backend/src/nightcrate/api/phd2_models.py` — add `polar_alignment_error_arcmin: float | None` field to `SectionMetrics`. Add `duration_total_seconds` / `duration_included_seconds`.
+- [x] `backend/src/nightcrate/services/phd2_metrics.py` — replaced `_rms` with `_stddev`, added `_ra_drift_corrections_subtracted`, `_dec_drift_unguided_only`, `_polar_alignment_error_arcmin`, `_signed_peak`, `_elongation`. `_oscillation_rate` rewritten to treat zeros as positive per spec §11.14.
+- [x] `backend/src/nightcrate/api/phd2_models.py` — `SectionMetrics` gained `polar_alignment_error_arcmin`, `elongation`, `duration_total_seconds`, `duration_included_seconds`; legacy `duration_seconds` removed.
 
 **Frontend:**
 
-- [ ] `frontend/src/lib/phd2GuidingMetrics.ts` — port the new RMS, drift, PA formulas to TypeScript so the Viewport/Selection Summary panels recompute correctly client-side without a backend round trip.
-- [ ] `frontend/src/api/phd2.ts` — type updates.
-- [ ] `frontend/src/components/phd2/StatsPanel.tsx` — add a "PA error" row (degree symbol + arcmin). Display "—" when None.
-- [ ] `frontend/src/components/phd2/ScatterPlot.tsx` — replace PCA eigen-decomposition with PHDLogViewer's `θ = atan2(covxy, varx)` rotation. Re-iterate for `lx` / `ly`.
+- [x] `frontend/src/lib/phd2GuidingMetrics.ts` — full TS port of the PHDLogViewer-aligned formulas (stddev RMS, RA corrections-subtraction drift, Dec unguided-frames-only drift, signed peak, oscillation incl. zeros, PA error, elongation).
+- [x] `frontend/src/api/phd2.ts` — `SectionMetrics` interface updated with the new fields.
+- [x] `frontend/src/components/phd2/StatsPanel.tsx` — added "PA error" row (`1.23′`) + "Elongation" row. Frames row split onto multiple lines via `whiteSpace: pre-line`.
+- [x] `frontend/src/components/phd2/ScatterPlot.tsx` — switched to PHDLogViewer's `θ = atan2(covxy, varx)` form with re-iteration for `lx` / `ly`.
 
-### Tests (~15 new + many regression updates)
+### Tests (~30 new + regression updates)
 
-- [ ] `test_phd2_metrics.py` — update every existing pinned-value test for RMS / drift / oscillation. The new RMS values will be smaller (typically 5-30%) depending on each section's mean offset. Re-derive expected values by hand.
-- [ ] `test_phd2_metrics_pa.py` (new) — 8 tests for PA error: known declination + known drift → expected PA value. Edge cases: declination None, drift None, very-low-declination cos-correction.
-- [ ] `test_phd2_metrics_dec_drift_unguided_only.py` (new) — 5 tests: all-guided section returns 0; alternating guided/unguided pattern returns the right slope; pure-drift no-guide section matches the simple least-squares slope.
-- [ ] `test_scatter_ellipse_rotation_atan2_form.py` (new) — verify rotation matches PHDLogViewer's form for a synthetic dataset.
+- [x] `tests/services/test_phd2_metrics.py` — every pinned-value test for RMS / drift / oscillation re-derived by hand. Six new test classes: `TestRmsAsStandardDeviation`, `TestSignedPeak`, `TestRaDriftCorrectionsSubtraction`, `TestDecDriftUnguidedFramesOnly`, `TestPolarAlignmentError` (incl. high-declination regression anchor at δ=69° pinned at 18.34′ — see PHDLogViewer parser-bug callout below), `TestElongation`, `TestOscillationZerosTreatedAsPositive`. Final tally: **57 metric tests** (up from ~22 in v0.24.0).
+- [x] PA-error coverage: 9 cases — celestial equator, mid-declination, negative declination, missing declination / pixel scale / drift, near-pole guard, **regression anchor at δ=69° pinned at 18.34′** (locks in the discrepancy with PHDLogViewer's broken parser).
+- [x] Dec-drift coverage: 5 cases — pure unguided collapses to least-squares slope, all-guided returns 0 (matches PHDLogViewer's `LFit::B()`), alternating guided/unguided uses only the unguided deltas, single-sample undefined, all-zero stays at 0.
+- [x] Elongation coverage: 6 cases — circular dispersion → 0, axis-aligned line → 1, zero dispersion → 1.0 defensive, single-sample → null, one-axis-null skipped, settle-window respected.
 
 ### Verification
 
-- [ ] `cd backend && uv run pytest tests/services/test_phd2_metrics.py` — all updated tests pass
-- [ ] Full backend suite passes (~10 fewer than v0.24.0's count because old-algorithm tests are removed; new tests added)
-- [ ] Manual: open the ASIAir sample log, verify RMS RA / RMS Dec match the values PHDLogViewer reports for the same log. Verify a new "PA error" row appears in the section summary.
+- [x] Targeted: `uv run pytest tests/services/test_phd2_metrics.py tests/services/test_phd2_parser.py tests/test_phd2_api.py -n auto` → all pass.
+- [x] Full backend suite (`uv run pytest -n auto`) green at finalize-session.
+- [x] Manual cross-tool check on ASIAir sample log: NightCrate RMS RA / RMS Dec match PHDLogViewer's. PA error row renders for δ=69° guiding section with the 18.34′ value (PHDLogViewer's 6.5′ is wrong on this log — see below).
+
+### Beyond-plan UI work shipped on this branch
+
+The original v0.25.0 plan was backend-only. UI iteration during the
+session added:
+
+- [x] **`SectionInfoPanel`** (new component) — collapsible "Session info" panel under the Section list in the left nav. Surfaces parsed `SectionHeader` fields grouped into Optics / Camera / Mount / Sky position / Star + lock / Algorithms / Dither / Profile / Other (freeform passthrough). Group titles render in `primary.main` with bold + uppercase + letter spacing for emphasis.
+- [x] **Section + Viewport summaries moved into the left nav** below the Session info panel. Both default-collapsed; selection-aware via the existing `viewportMetrics` / `sectionMetrics` recompute. Right pane simplified to chart + scatter + events only.
+- [x] **Tab restructure** — "Graph" renamed to "Guiding"; new **Dispersion** tab between Guiding and Data hosting the `ScatterPlot`. Data tab moved to index 2.
+- [x] **Vertical scale sliders flank the chart** — replaced the four dropdowns / toggles (Guide axis, Pulse axis, SNR scale, Mass scale) with vertical MUI sliders on a 40 px rail each side of the SVG. Logarithmic mapping; UP = zoom in convention; per-slider reset button at the panel bottom; value-label tooltip flips to whichever side faces the chart so it never clips the left nav. Slider track aligns exactly with each panel's top / bottom horizontal axis line via `py: 0` override of MUI's default thumb padding.
+- [x] **Toolbar reorg** — Guide unit (`px / ″`) toggle moved to the top of the legend row; "Include settle frames in stats" moved into the action-button row beside Reset X zoom; selection-action buttons (Include in view / Exclude in view / Clear all) split onto their own row with tooltips. `toolbarHeight` is measured via `ResizeObserver` so the slider rails track the actual rendered toolbar height rather than a stale constant.
+- [x] **Panel-divider hairlines** at the midpoint of each gap between Guide / SNR / Mass. Default chart height bumped 440 → 650 px so SNR + Mass now render at the **same absolute height** (~110 px each).
+- [x] **SNR / Mass median-anchored zoom** — axis lo locked at `autoLo` so the data minimum is always visible at the bottom; axis hi controlled by the slider. Slider min clamps above the median (`median + max(floor, 0.2 × (autoHi − median))`) so the bulk can never get pushed off the top. Y-axis is computed from full-section samples (not visible window) so X-zoom doesn't jiggle the SNR / Mass scale.
+- [x] **Path field UX** — replaced plain TextField with `Autocomplete freeSolo` populated from `recentFiles`; dropdown shows filename / full path / relative time with a × per entry. Empty-state body copy rewritten. Field width capped (`flexBasis: 50%, maxWidth: 720, minWidth: 240`) so wide windows don't stretch it pointlessly.
+- [x] **Slider tooltip auto-dismiss** — `onChangeCommitted` blurs the focused element so the value label disappears the moment the user releases the slider (was sticking visible while the thumb retained focus).
+
+### PHDLogViewer parser-bug callout (worth flagging downstream)
+
+PHDLogViewer's `logparser.cpp` only reads declination from a line
+that starts with `"RA = "` followed by `" hr, Dec = "`. Modern PHD2
+logs (specifically ASIAir-bundled) emit a standalone `"Dec = N deg"`
+line that PHDLogViewer's parser doesn't match — `session.declination`
+stays at the constructor default 0.0, so `cos(δ) = 1` and the PA-error
+formula effectively drops the cos correction. PHDLogViewer's reported
+`6.5′` for the ASIAir sample log is wrong; NightCrate's `18.34′` at
+δ=69° is the mathematically correct value. The new
+`test_pa_pinned_at_high_declination_69` regression anchor pins the
+correct number so a future refactor can't quietly drift back to the
+no-cos form.
+
+When v0.31.0 ships the diagnostic engine, the
+`polar_alignment_from_dec_drift` rule should NOT be expected to match
+PHDLogViewer's reported number on ASIAir-bundled logs.
 
 ### Out of scope
 

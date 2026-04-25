@@ -206,7 +206,13 @@ export default function StatsPanel({
             <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
               {item.label}
             </Typography>
-            <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "pre-line",
+              }}
+            >
               {item.value}
             </Typography>
           </Grid>
@@ -229,24 +235,25 @@ export default function StatsPanel({
   );
 }
 
-/** Render the frames-row value with an optional "N total · M in stats ·
- *  K in settle" decomposition when settle exclusion actually removed
- *  frames. Falls back to "N total · K error" and "N" for the simpler
- *  cases. */
+/** Render the frames-row value as a multi-line breakdown when settle
+ *  exclusion or errors removed frames; falls back to the tidy
+ *  single-number form when nothing special happened.
+ *
+ *  Newline-separated rather than ``·``-separated so the narrow
+ *  left-nav column can render each part on its own line via
+ *  ``whiteSpace: pre-line``. */
 function formatFrameCount(metrics: SectionMetrics): string {
-  const t = metrics.frame_count_total.toLocaleString();
-  const parts: string[] = [`${t} total`];
+  const total = metrics.frame_count_total.toLocaleString();
+  const lines: string[] = [`${total} total`];
   if (metrics.frame_count_in_settle > 0) {
-    parts.push(`${metrics.frame_count_in_stats.toLocaleString()} in stats`);
-    parts.push(`${metrics.frame_count_in_settle.toLocaleString()} in settle`);
+    lines.push(`${metrics.frame_count_in_stats.toLocaleString()} in stats`);
+    lines.push(`${metrics.frame_count_in_settle.toLocaleString()} in settle`);
   }
   if (metrics.frame_count_error > 0) {
-    parts.push(`${metrics.frame_count_error.toLocaleString()} error`);
+    lines.push(`${metrics.frame_count_error.toLocaleString()} error`);
   }
-  // When nothing special happened — no settle, no errors — fall back
-  // to the tidy single-number form.
-  if (parts.length === 1) return metrics.frame_count_total.toLocaleString();
-  return parts.join(" · ");
+  if (lines.length === 1) return total;
+  return lines.join("\n");
 }
 
 function formatDuration(seconds: number): string {
