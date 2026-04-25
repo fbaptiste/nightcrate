@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
-import Grid from "@mui/material/Grid";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
@@ -15,6 +14,12 @@ import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
 import QualityBadge from "@/components/weather/QualityBadge";
 
 const DASH = "—";
+
+/** Uniform card height across every Paper on the page, picked to fit
+ *  the tallest natural content (the headline-durations panel) with a
+ *  small buffer. All five cards (imaging quality, headlines, evening,
+ *  morning, moon) use this so the page reads as a tidy grid. */
+const CARD_HEIGHT = 152;
 
 /** Concise descriptions of each lunar phase for the moon-phase tooltip.
  *  Keyed lowercase so backend casing variations match. */
@@ -167,7 +172,12 @@ export default function TonightCalc() {
       >
         <Paper
           variant="outlined"
-          sx={{ p: 2.5, display: "flex", flexDirection: "column" }}
+          sx={{
+            p: 2.5,
+            height: CARD_HEIGHT,
+            display: "flex",
+            flexDirection: "column",
+          }}
         >
           <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
             Imaging quality
@@ -189,7 +199,7 @@ export default function TonightCalc() {
                 <QualityBadge
                   score={tonightForecast.imaging_quality}
                   label={tonightForecast.imaging_quality_label}
-                  size="large"
+                  size="medium"
                   showLabel
                   tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. See the Weather page for the full breakdown.`}
                 />
@@ -206,7 +216,7 @@ export default function TonightCalc() {
           </Box>
         </Paper>
 
-        <Paper variant="outlined" sx={{ p: 2.5 }}>
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
           <Stack
             direction={{ xs: "column", sm: "row" }}
             spacing={4}
@@ -262,120 +272,120 @@ export default function TonightCalc() {
             </Box>
           </Stack>
         </Paper>
-      </Stack>
 
-      {/* Evening + Morning — 2-col grid, kept as the user likes them.
-          Cells inside use a row Stack with content-sized cells +
-          consistent gap so the times sit close together rather than
-          stretched 25% each across the panel. */}
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Paper variant="outlined" sx={{ p: 2.5, height: "100%" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-              Evening
-            </Typography>
-            <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
-              <TransitionCell label="Sunset" time={data?.sunset ?? DASH} />
-              <TransitionCell
-                label="Civil twilight end"
-                time={data?.civil_twilight_end ?? DASH}
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Moon
+          </Typography>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={3}
+            alignItems={{ xs: "flex-start", sm: "center" }}
+          >
+            <Stack direction="row" spacing={2} alignItems="center">
+              <MoonPhaseIcon
+                phaseName={data?.moon_phase_name ?? "new"}
+                illuminationPct={data?.moon_illumination_pct ?? 0}
+                sx={{ fontSize: 56 }}
               />
-              <TransitionCell
-                label="Nautical twilight end"
-                time={data?.nautical_twilight_end ?? DASH}
-              />
-              <TransitionCell
-                label="Astronomical twilight end"
-                time={data?.astronomical_twilight_end ?? DASH}
-              />
-            </Stack>
-          </Paper>
-        </Grid>
-
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Paper variant="outlined" sx={{ p: 2.5, height: "100%" }}>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-              Morning
-            </Typography>
-            <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
-              <TransitionCell
-                label="Astronomical twilight start"
-                time={data?.astronomical_twilight_start ?? DASH}
-              />
-              <TransitionCell
-                label="Nautical twilight start"
-                time={data?.nautical_twilight_start ?? DASH}
-              />
-              <TransitionCell
-                label="Civil twilight start"
-                time={data?.civil_twilight_start ?? DASH}
-              />
-              <TransitionCell label="Sunrise" time={data?.sunrise ?? DASH} />
-            </Stack>
-          </Paper>
-        </Grid>
-      </Grid>
-
-      {/* Moon — content-sized, on its own row now that imaging
-          quality is up top. */}
-      <Paper variant="outlined" sx={{ p: 2.5, alignSelf: "flex-start" }}>
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-          Moon
-        </Typography>
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={3}
-          alignItems={{ xs: "flex-start", sm: "center" }}
-        >
-          <Stack direction="row" spacing={2} alignItems="center">
-            <MoonPhaseIcon
-              phaseName={data?.moon_phase_name ?? "new"}
-              illuminationPct={data?.moon_illumination_pct ?? 0}
-              sx={{ fontSize: 56 }}
-            />
-            <Box>
-              <Typography
-                variant="h6"
-                sx={{ fontFamily: "monospace", lineHeight: 1.2 }}
-              >
-                {data ? `${Math.round(data.moon_illumination_pct)}%` : DASH}
-              </Typography>
-              <Tooltip
-                title={moonPhaseDescription(data?.moon_phase_name)}
-                placement="bottom-start"
-                arrow
-              >
+              <Box>
                 <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ cursor: "help", display: "inline-block" }}
+                  variant="h6"
+                  sx={{ fontFamily: "monospace", lineHeight: 1.2 }}
                 >
-                  {data?.moon_phase_name ?? DASH}
+                  {data ? `${Math.round(data.moon_illumination_pct)}%` : DASH}
                 </Typography>
-              </Tooltip>
+                <Tooltip
+                  title={moonPhaseDescription(data?.moon_phase_name)}
+                  placement="bottom-start"
+                  arrow
+                >
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ cursor: "help", display: "inline-block" }}
+                  >
+                    {data?.moon_phase_name ?? DASH}
+                  </Typography>
+                </Tooltip>
+              </Box>
+            </Stack>
+
+            <Box sx={{ display: "flex", gap: 4 }}>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Moonrise
+                </Typography>
+                <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
+                  {data?.moonrise ?? DASH}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Moonset
+                </Typography>
+                <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
+                  {data?.moonset ?? DASH}
+                </Typography>
+              </Box>
             </Box>
           </Stack>
+        </Paper>
+      </Stack>
 
-          <Box sx={{ display: "flex", gap: 4 }}>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Moonrise
-              </Typography>
-              <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                {data?.moonrise ?? DASH}
-              </Typography>
-            </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Moonset
-              </Typography>
-              <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                {data?.moonset ?? DASH}
-              </Typography>
-            </Box>
-          </Box>
-        </Stack>
-      </Paper>
+      {/* Evening + Morning — content-sized row, both cards hug their
+          content width (no forced 50% slot) and share CARD_HEIGHT
+          with the rest of the page. */}
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="stretch"
+        flexWrap="wrap"
+        useFlexGap
+      >
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Evening
+          </Typography>
+          <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
+            <TransitionCell label="Sunset" time={data?.sunset ?? DASH} />
+            <TransitionCell
+              label="Civil twilight end"
+              time={data?.civil_twilight_end ?? DASH}
+            />
+            <TransitionCell
+              label="Nautical twilight end"
+              time={data?.nautical_twilight_end ?? DASH}
+            />
+            <TransitionCell
+              label="Astronomical twilight end"
+              time={data?.astronomical_twilight_end ?? DASH}
+            />
+          </Stack>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Morning
+          </Typography>
+          <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
+            <TransitionCell
+              label="Astronomical twilight start"
+              time={data?.astronomical_twilight_start ?? DASH}
+            />
+            <TransitionCell
+              label="Nautical twilight start"
+              time={data?.nautical_twilight_start ?? DASH}
+            />
+            <TransitionCell
+              label="Civil twilight start"
+              time={data?.civil_twilight_start ?? DASH}
+            />
+            <TransitionCell label="Sunrise" time={data?.sunrise ?? DASH} />
+          </Stack>
+        </Paper>
+      </Stack>
+
 
       {isLoading && (
         <Typography variant="body2" color="text.secondary">
