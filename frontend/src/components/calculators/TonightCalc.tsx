@@ -155,73 +155,126 @@ export default function TonightCalc() {
         )}
       </Stack>
 
-      {/* Headline durations — both metrics side by side, content-sized
-          (not flex-stretched) so they sit close together on the left. */}
-      <Paper variant="outlined" sx={{ p: 2.5, alignSelf: "flex-start" }}>
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={4}
-          alignItems="flex-start"
-          divider={
-            <Box
-              sx={{
-                display: { xs: "none", sm: "block" },
-                width: "1px",
-                alignSelf: "stretch",
-                bgcolor: "divider",
-              }}
-            />
-          }
+      {/* Top row: Imaging quality first, then the combined headline
+          durations panel (astro dark + dark with moon down). Both
+          content-sized + equal-height. */}
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="stretch"
+        flexWrap="wrap"
+        useFlexGap
+      >
+        <Paper
+          variant="outlined"
+          sx={{ p: 2.5, display: "flex", flexDirection: "column" }}
         >
-          <Box>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
-            >
-              Astronomical dark
-            </Typography>
-            <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
-              {headlines.astronomical}
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ display: "block", mt: 0.5 }}
-            >
-              Sun &gt; 18&deg; below the horizon
-            </Typography>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Imaging quality
+          </Typography>
+          <Box
+            sx={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {tonightForecast ? (
+              tonightForecast.no_imaging_window ? (
+                <Typography variant="body2" color="text.secondary">
+                  No imaging window for this date.
+                </Typography>
+              ) : (
+                <QualityBadge
+                  score={tonightForecast.imaging_quality}
+                  label={tonightForecast.imaging_quality_label}
+                  size="large"
+                  showLabel
+                  tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. See the Weather page for the full breakdown.`}
+                />
+              )
+            ) : forecast ? (
+              <Typography variant="body2" color="text.secondary">
+                No forecast data for this date — outside the 7-day window.
+              </Typography>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Loading forecast&hellip;
+              </Typography>
+            )}
           </Box>
-          <Box>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
-            >
-              Dark with moon down
-            </Typography>
-            <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
-              {headlines.moonless}
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ display: "block", mt: 0.5 }}
-            >
-              Astronomical dark with the moon also below the horizon
-            </Typography>
-          </Box>
-        </Stack>
-      </Paper>
+        </Paper>
 
-      {/* Evening + Morning — 2-col grid, kept as the user likes them. */}
+        <Paper variant="outlined" sx={{ p: 2.5 }}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={4}
+            alignItems="flex-start"
+            divider={
+              <Box
+                sx={{
+                  display: { xs: "none", sm: "block" },
+                  width: "1px",
+                  alignSelf: "stretch",
+                  bgcolor: "divider",
+                }}
+              />
+            }
+          >
+            <Box>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
+              >
+                Astronomical dark
+              </Typography>
+              <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                {headlines.astronomical}
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                Sun &gt; 18&deg; below the horizon
+              </Typography>
+            </Box>
+            <Box>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
+              >
+                Dark with moon down
+              </Typography>
+              <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                {headlines.moonless}
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                Astronomical dark with the moon also below the horizon
+              </Typography>
+            </Box>
+          </Stack>
+        </Paper>
+      </Stack>
+
+      {/* Evening + Morning — 2-col grid, kept as the user likes them.
+          Cells inside use a row Stack with content-sized cells +
+          consistent gap so the times sit close together rather than
+          stretched 25% each across the panel. */}
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Paper variant="outlined" sx={{ p: 2.5, height: "100%" }}>
             <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
               Evening
             </Typography>
-            <Grid container spacing={2}>
+            <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
               <TransitionCell label="Sunset" time={data?.sunset ?? DASH} />
               <TransitionCell
                 label="Civil twilight end"
@@ -235,7 +288,7 @@ export default function TonightCalc() {
                 label="Astronomical twilight end"
                 time={data?.astronomical_twilight_end ?? DASH}
               />
-            </Grid>
+            </Stack>
           </Paper>
         </Grid>
 
@@ -244,7 +297,7 @@ export default function TonightCalc() {
             <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
               Morning
             </Typography>
-            <Grid container spacing={2}>
+            <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
               <TransitionCell
                 label="Astronomical twilight start"
                 time={data?.astronomical_twilight_start ?? DASH}
@@ -258,109 +311,71 @@ export default function TonightCalc() {
                 time={data?.civil_twilight_start ?? DASH}
               />
               <TransitionCell label="Sunrise" time={data?.sunrise ?? DASH} />
-            </Grid>
+            </Stack>
           </Paper>
         </Grid>
       </Grid>
 
-      {/* Moon + Imaging quality — content-sized cards in a wrapping
-          row so each Paper hugs its content width. ``stretch`` makes
-          them match the taller card's height for a tidy row. */}
-      <Stack
-        direction="row"
-        spacing={2}
-        alignItems="stretch"
-        flexWrap="wrap"
-        useFlexGap
-      >
-        <Paper variant="outlined" sx={{ p: 2.5 }}>
-          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-            Moon
-          </Typography>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={3}
-            alignItems={{ xs: "flex-start", sm: "center" }}
-          >
-            <Stack direction="row" spacing={2} alignItems="center">
-              <MoonPhaseIcon
-                phaseName={data?.moon_phase_name ?? "new"}
-                illuminationPct={data?.moon_illumination_pct ?? 0}
-                sx={{ fontSize: 56 }}
-              />
-              <Box>
+      {/* Moon — content-sized, on its own row now that imaging
+          quality is up top. */}
+      <Paper variant="outlined" sx={{ p: 2.5, alignSelf: "flex-start" }}>
+        <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+          Moon
+        </Typography>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={3}
+          alignItems={{ xs: "flex-start", sm: "center" }}
+        >
+          <Stack direction="row" spacing={2} alignItems="center">
+            <MoonPhaseIcon
+              phaseName={data?.moon_phase_name ?? "new"}
+              illuminationPct={data?.moon_illumination_pct ?? 0}
+              sx={{ fontSize: 56 }}
+            />
+            <Box>
+              <Typography
+                variant="h6"
+                sx={{ fontFamily: "monospace", lineHeight: 1.2 }}
+              >
+                {data ? `${Math.round(data.moon_illumination_pct)}%` : DASH}
+              </Typography>
+              <Tooltip
+                title={moonPhaseDescription(data?.moon_phase_name)}
+                placement="bottom-start"
+                arrow
+              >
                 <Typography
-                  variant="h6"
-                  sx={{ fontFamily: "monospace", lineHeight: 1.2 }}
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ cursor: "help", display: "inline-block" }}
                 >
-                  {data ? `${Math.round(data.moon_illumination_pct)}%` : DASH}
+                  {data?.moon_phase_name ?? DASH}
                 </Typography>
-                <Tooltip
-                  title={moonPhaseDescription(data?.moon_phase_name)}
-                  placement="bottom-start"
-                  arrow
-                >
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ cursor: "help", display: "inline-block" }}
-                  >
-                    {data?.moon_phase_name ?? DASH}
-                  </Typography>
-                </Tooltip>
-              </Box>
-            </Stack>
-
-            <Box sx={{ display: "flex", gap: 4 }}>
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  Moonrise
-                </Typography>
-                <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                  {data?.moonrise ?? DASH}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  Moonset
-                </Typography>
-                <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                  {data?.moonset ?? DASH}
-                </Typography>
-              </Box>
+              </Tooltip>
             </Box>
           </Stack>
-        </Paper>
 
-        <Paper variant="outlined" sx={{ p: 2.5 }}>
-          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-            Imaging quality
-          </Typography>
-          {tonightForecast ? (
-            tonightForecast.no_imaging_window ? (
-              <Typography variant="body2" color="text.secondary">
-                No imaging window for this date.
+          <Box sx={{ display: "flex", gap: 4 }}>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                Moonrise
               </Typography>
-            ) : (
-              <QualityBadge
-                score={tonightForecast.imaging_quality}
-                label={tonightForecast.imaging_quality_label}
-                size="large"
-                showLabel
-                tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. See the Weather page for the full breakdown.`}
-              />
-            )
-          ) : forecast ? (
-            <Typography variant="body2" color="text.secondary">
-              No forecast data for this date — outside the 7-day window.
-            </Typography>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              Loading forecast&hellip;
-            </Typography>
-          )}
-        </Paper>
-      </Stack>
+              <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
+                {data?.moonrise ?? DASH}
+              </Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                Moonset
+              </Typography>
+              <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
+                {data?.moonset ?? DASH}
+              </Typography>
+            </Box>
+          </Box>
+        </Stack>
+      </Paper>
 
       {isLoading && (
         <Typography variant="body2" color="text.secondary">
@@ -406,7 +421,7 @@ export default function TonightCalc() {
 
 function TransitionCell({ label, time }: { label: string; time: string }) {
   return (
-    <Grid size={{ xs: 6, sm: 3 }}>
+    <Box>
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
@@ -416,6 +431,6 @@ function TransitionCell({ label, time }: { label: string; time: string }) {
       >
         {time}
       </Typography>
-    </Grid>
+    </Box>
   );
 }
