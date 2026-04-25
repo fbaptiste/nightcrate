@@ -28,6 +28,7 @@ import PlaceIcon from "@mui/icons-material/Place";
 import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
 import StarsIcon from "@mui/icons-material/Stars";
+import NightsStayIcon from "@mui/icons-material/NightsStay";
 import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
@@ -75,6 +76,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
   { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
+  { to: "/tonight", label: "Tonight", icon: <NightsStayIcon /> },
   { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },

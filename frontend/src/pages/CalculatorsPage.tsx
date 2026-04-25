@@ -10,7 +10,6 @@ import CalculatorLocationBar from "@/components/calculators/CalculatorLocationBa
 import LatLongCalc from "@/components/calculators/LatLongCalc";
 import RaDecAltAzCalc from "@/components/calculators/RaDecAltAzCalc";
 import ClocksCalc from "@/components/calculators/ClocksCalc";
-import TonightCalc from "@/components/calculators/TonightCalc";
 import AngularUnitsCalc from "@/components/calculators/AngularUnitsCalc";
 import LinearUnitsCalc from "@/components/calculators/LinearUnitsCalc";
 import PixelScaleCalc from "@/components/calculators/PixelScaleCalc";
@@ -30,8 +29,6 @@ function renderCalculator(calcId: string) {
       return <RaDecAltAzCalc />;
     case "clocks":
       return <ClocksCalc />;
-    case "tonight":
-      return <TonightCalc />;
     case "angular-units":
       return <AngularUnitsCalc />;
     case "linear-units":

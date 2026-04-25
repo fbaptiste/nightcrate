@@ -12,6 +12,7 @@ import { AdminPage } from "@/pages/AdminPage";
 import LocationsPage from "@/pages/LocationsPage";
 import RigsPage from "@/pages/RigsPage";
 import CalculatorsPage from "@/pages/CalculatorsPage";
+import TonightPage from "@/pages/TonightPage";
 import DsoCatalogPage from "@/pages/DsoCatalogPage";
 import PlannerPage from "@/pages/PlannerPage";
 import Phd2AnalyzerPage from "@/pages/Phd2AnalyzerPage";
@@ -36,6 +37,7 @@ const router = createBrowserRouter([
       { path: "weather", element: <WeatherPage /> },
       { path: "calculators", element: <CalculatorsPage /> },
       { path: "calculators/:calcId", element: <CalculatorsPage /> },
+      { path: "tonight", element: <TonightPage /> },
       { path: "catalog/dso", element: <DsoCatalogPage /> },
       { path: "planner", element: <PlannerPage /> },
       { path: "phd2-analyzer", element: <Phd2AnalyzerPage /> },

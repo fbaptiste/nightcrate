@@ -155,10 +155,23 @@ export default function TonightCalc() {
         )}
       </Stack>
 
-      {/* Headline durations — already a 2-col responsive grid. */}
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Paper variant="outlined" sx={{ p: 2.5 }}>
+      {/* Headline durations — both metrics side by side in one panel
+          to avoid the wide-screen empty-space problem. */}
+      <Paper variant="outlined" sx={{ p: 2.5 }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={4}
+          divider={
+            <Box
+              sx={{
+                display: { xs: "none", sm: "block" },
+                width: "1px",
+                bgcolor: "divider",
+              }}
+            />
+          }
+        >
+          <Box sx={{ flex: 1 }}>
             <Typography
               variant="caption"
               color="text.secondary"
@@ -166,10 +179,7 @@ export default function TonightCalc() {
             >
               Astronomical dark
             </Typography>
-            <Typography
-              variant="h4"
-              sx={{ fontFamily: "monospace", mt: 0.5 }}
-            >
+            <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
               {headlines.astronomical}
             </Typography>
             <Typography
@@ -179,10 +189,8 @@ export default function TonightCalc() {
             >
               Sun &gt; 18&deg; below the horizon
             </Typography>
-          </Paper>
-        </Grid>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Paper variant="outlined" sx={{ p: 2.5 }}>
+          </Box>
+          <Box sx={{ flex: 1 }}>
             <Typography
               variant="caption"
               color="text.secondary"
@@ -190,10 +198,7 @@ export default function TonightCalc() {
             >
               Dark with moon down
             </Typography>
-            <Typography
-              variant="h4"
-              sx={{ fontFamily: "monospace", mt: 0.5 }}
-            >
+            <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
               {headlines.moonless}
             </Typography>
             <Typography
@@ -203,9 +208,9 @@ export default function TonightCalc() {
             >
               Astronomical dark with the moon also below the horizon
             </Typography>
-          </Paper>
-        </Grid>
-      </Grid>
+          </Box>
+        </Stack>
+      </Paper>
 
       {/* Detail panels — Evening, Morning, Moon, Imaging quality, all
           half-width on md+, stacked on small screens. */}
