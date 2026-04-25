@@ -1,9 +1,12 @@
 /**
- * PHD2 Guide-Log Analyzer — v0.22.0 Pass A.
+ * PHD2 Guide-Log Analyzer page.
  *
- * Standalone-first (spec §4.1): user pastes a path, hits Open, sees the
- * guiding graph + top-line stats. No persistence, no catalog linkage, no
- * interpretation — just a solid viewer anchored on a correct parser.
+ * Standalone-first (spec §4.1): user picks a path via Browse / paste /
+ * recent-files dropdown, hits Open, gets the parsed log rendered across
+ * three tabs (Guiding / Dispersion / Data). The left nav holds the
+ * section list, ``SectionInfoPanel`` (parsed header fields), and the
+ * Section + Viewport / Selection summary panels. Catalog integration
+ * lands in v0.34.0; interpretive diagnostics start in v0.31.0.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";

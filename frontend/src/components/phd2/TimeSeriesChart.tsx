@@ -92,9 +92,11 @@ interface Props {
    *  ``onSelectionsChange``. */
   onExclusionsChange?: (next: Array<[number, number]>) => void;
   /** Page-level "include settle in stats" toggle, threaded into the
-   *  chart so the toggle UI sits adjacent to the action buttons it
-   *  affects (selection / exclusion ranges) instead of floating
-   *  between the chart and the next page section. */
+   *  chart so the toggle UI sits in the chart toolbar alongside the
+   *  X-zoom controls. Drives the Section + Viewport / Selection
+   *  summary metrics filter and the chart's settle-region shading
+   *  (via ``showSettleShading``); does not modify selection or
+   *  exclusion gestures. */
   includeSettle?: boolean;
   onIncludeSettleChange?: (v: boolean) => void;
 }
