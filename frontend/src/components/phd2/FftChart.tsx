@@ -176,10 +176,18 @@ export default function FftChart({
   const xTicks = xScale.ticks(6);
   const yTicks = yScale.ticks(5);
 
-  const skippedReason =
-    fftRa?.skip_reason && fftDec?.skip_reason
-      ? (fftRa.skip_reason ?? fftDec.skip_reason)
-      : null;
+  // Show the "spectrum unavailable" overlay only when every currently-
+  // visible trace was skipped. In practice both traces share the same
+  // input guards so they tend to skip together, but the constant-data
+  // guard is per-trace — toggling RA off when only RA was skipped
+  // should reveal the still-valid Dec trace.
+  const skippedReason = (() => {
+    const visible: (string | null)[] = [];
+    if (showRa) visible.push(fftRa?.skip_reason ?? null);
+    if (showDec) visible.push(fftDec?.skip_reason ?? null);
+    if (visible.length === 0 || visible.some((r) => r === null)) return null;
+    return visible[0];
+  })();
 
   const wormPx = wormMarker ? xScale(wormMarker.period_s) : null;
   const wormInDomain =

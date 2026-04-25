@@ -7,8 +7,7 @@ from typing import Literal
 import numpy as np
 from scipy.interpolate import Akima1DInterpolator  # type: ignore[import-untyped]
 
-from nightcrate.api.phd2_models import FftPeak, FftResult
-from nightcrate.services.phd2_models import GuidingSample
+from nightcrate.services.phd2_models import FftPeak, FftResult, GuidingSample
 
 # PHDLogViewer's `AnalysisWin.cpp` line ~258 — refuses to run on
 # sections shorter than 12 frames. Below that the FFT bins are

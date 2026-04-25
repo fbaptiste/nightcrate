@@ -7,7 +7,19 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from nightcrate.services.phd2_metrics import SectionMetrics
-from nightcrate.services.phd2_models import LogSection, ParsedLog
+from nightcrate.services.phd2_models import FftPeak, FftResult, LogSection, ParsedLog
+
+__all__ = [
+    "CacheStatsResponse",
+    "FftPeak",
+    "FftResult",
+    "ParseRequest",
+    "ParseResponse",
+    "SectionAnalysis",
+    "SectionWithMetrics",
+    "WormMarker",
+    "WormMarkerSource",
+]
 
 
 class ParseRequest(BaseModel):
@@ -15,31 +27,6 @@ class ParseRequest(BaseModel):
 
     path: str
     rig_id: int | None = None
-
-
-class FftPeak(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    period_s: float
-    amplitude_arcsec: float
-    peak_to_peak_arcsec: float
-    rms_arcsec: float
-
-
-class FftResult(BaseModel):
-    """Per-trace FFT output for one guiding section.
-
-    ``skip_reason`` is non-null when an §6.1 guard aborted the FFT
-    (too-short / non-uniform cadence / constant data); the chart
-    renders the reason instead of a degenerate plot.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    period_s: list[float]
-    amplitude_arcsec: list[float]
-    peaks: list[FftPeak]
-    skip_reason: str | None = None
 
 
 WormMarkerSource = Literal["mount", "heuristic"]

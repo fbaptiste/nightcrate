@@ -15,6 +15,51 @@
 
 ALTER TABLE mount ADD COLUMN worm_period_seconds REAL;
 
+-- Backfill known worm-period values for existing seed-tracked rows so they
+-- aren't stuck at NULL on already-running databases. Adding a new column
+-- to mount's ``seeded_fields`` (registry.py) means the seed loader's
+-- "user-modified" hash check would otherwise refuse to update rows that
+-- predate the field — every existing seed row's stored ``seed_hash`` was
+-- computed before this column existed, so ``current_hash != seed_hash``
+-- on the next run and the loader skips the row. Patching the values
+-- directly in this migration sidesteps that path and brings existing
+-- worm-drive rows in line with the CSV in lockstep with the schema
+-- change. Strain-wave + direct-drive rows stay NULL (rig-aware support
+-- ships in v0.28.0).
+UPDATE mount SET worm_period_seconds = 638 WHERE seed_key = 'mount.skywatcher.heq5_pro';
+UPDATE mount SET worm_period_seconds = 479 WHERE seed_key = 'mount.skywatcher.eq6_r_pro';
+UPDATE mount SET worm_period_seconds = 479 WHERE seed_key = 'mount.skywatcher.cq350_pro';
+UPDATE mount SET worm_period_seconds = 479 WHERE seed_key = 'mount.skywatcher.eq8_r_pro';
+UPDATE mount SET worm_period_seconds = 479 WHERE seed_key = 'mount.skywatcher.eq8_rh_pro';
+UPDATE mount SET worm_period_seconds = 479 WHERE seed_key = 'mount.skywatcher.az_eq6';
+UPDATE mount SET worm_period_seconds = 478 WHERE seed_key = 'mount.skywatcher.star_adventurer_2i';
+UPDATE mount SET worm_period_seconds = 478 WHERE seed_key = 'mount.skywatcher.star_adventurer_gti';
+UPDATE mount SET worm_period_seconds = 287 WHERE seed_key = 'mount.ioptron.cem26';
+UPDATE mount SET worm_period_seconds = 287 WHERE seed_key = 'mount.ioptron.cem40';
+UPDATE mount SET worm_period_seconds = 600 WHERE seed_key = 'mount.ioptron.cem70';
+UPDATE mount SET worm_period_seconds = 600 WHERE seed_key = 'mount.ioptron.gem28';
+UPDATE mount SET worm_period_seconds = 600 WHERE seed_key = 'mount.ioptron.gem45';
+UPDATE mount SET worm_period_seconds = 478 WHERE seed_key = 'mount.ioptron.skyguider_pro';
+UPDATE mount SET worm_period_seconds = 480 WHERE seed_key = 'mount.celestron.avx';
+UPDATE mount SET worm_period_seconds = 480 WHERE seed_key = 'mount.celestron.cgem_ii';
+UPDATE mount SET worm_period_seconds = 540 WHERE seed_key = 'mount.celestron.cgx';
+UPDATE mount SET worm_period_seconds = 540 WHERE seed_key = 'mount.celestron.cgx_l';
+UPDATE mount SET worm_period_seconds = 570 WHERE seed_key = 'mount.takahashi.em200_temma3';
+UPDATE mount SET worm_period_seconds = 570 WHERE seed_key = 'mount.takahashi.em11_temma2z';
+UPDATE mount SET worm_period_seconds = 240 WHERE seed_key = 'mount.losmandy.g11';
+UPDATE mount SET worm_period_seconds = 240 WHERE seed_key = 'mount.losmandy.gm8';
+UPDATE mount SET worm_period_seconds = 480 WHERE seed_key = 'mount.vixen.sxd2';
+UPDATE mount SET worm_period_seconds = 480 WHERE seed_key = 'mount.vixen.sxp2';
+
+-- The seed loader's "user-modified" check will continue to skip these
+-- rows on subsequent runs (existing ``seed_hash`` predates the new
+-- field, so it can't match the recomputed hash). That's acceptable
+-- pre-release: future CSV edits on these specific mounts won't
+-- propagate via the loader, but a fresh DB rebuild picks up the right
+-- values via the normal seed path. After first release, schema-evolving
+-- the seed contract will need a versioned-hash strategy in the loader
+-- itself.
+
 DROP VIEW IF EXISTS rig_summary;
 
 CREATE VIEW rig_summary AS
