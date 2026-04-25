@@ -18,10 +18,10 @@ export const CALCULATOR_GROUPS: CalcGroup[] = [
     id: "group-coords",
     label: "Coordinates & Time",
     items: [
+      { id: "tonight", label: "Tonight at a Glance", aware: true },
       { id: "lat-long", label: "Lat/Long Converter" },
       { id: "radec-altaz", label: "RA/Dec \u2194 Alt/Az", aware: true },
       { id: "clocks", label: "Clocks", aware: true },
-      { id: "tonight", label: "Tonight at a Glance", aware: true },
     ],
   },
   {

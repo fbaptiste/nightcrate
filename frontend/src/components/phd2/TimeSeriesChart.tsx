@@ -338,19 +338,15 @@ function TimeSeriesChartInner(
     const tmin = times.length ? times[0] : 0;
     const tmax = times.length ? times[times.length - 1] : 1;
 
-    // Auto / manual left-axis range. Auto re-fits per-zoom using only
-    // the visible samples so panning into a quieter region zooms in
-    // on small deflections. Manual (user-picked ±N px) clamps to that
-    // fixed range; data outside the range clips at the panel edges.
-    const visibleSamples = zoomX
-      ? samples.filter(
-          (s) => s.time_seconds >= zoomX[0] && s.time_seconds <= zoomX[1],
-        )
-      : samples;
+    // Auto / manual left-axis range. Auto fits over the FULL section
+    // (not the visible window) so the y-axis stays put as the user
+    // pans across the X-axis — matching the SNR + Mass sub-panels'
+    // behaviour. Manual (user-picked ±N px) clamps to that fixed
+    // range; data outside the range clips at the panel edges.
     // Auto fit only honours the AXES the user has left visible via the
-    // legend — hiding RA or Dec should narrow the auto range instead
-    // of holding it open for a series the user can't see.
-    const distVals = visibleSamples.flatMap((s) => {
+    // legend — hiding RA or Dec narrows the auto range instead of
+    // holding it open for a series the user can't see.
+    const distVals = samples.flatMap((s) => {
       const out: number[] = [];
       if (visibility.ra && s.ra_raw_px !== null) out.push(s.ra_raw_px);
       if (visibility.dec && s.dec_raw_px !== null) out.push(s.dec_raw_px);
@@ -369,11 +365,10 @@ function TimeSeriesChartInner(
         ? guideAxisMax
         : autoMaxAbs * 1.1;
 
-    // Pulse axis range — scoped to visible samples so panning / zooming
-    // always reflects the in-view data. Auto uses the visible max + 10 %
-    // headroom (mirroring the guide-axis auto behaviour) with a 50 ms
+    // Pulse axis range — fits the FULL section so panning doesn't
+    // re-fit. Auto = full-section max + 10 % headroom with a 50 ms
     // floor so a quiet all-zero region still renders a usable scale.
-    const visibleDurations = visibleSamples.flatMap((s) => {
+    const pulseDurations = samples.flatMap((s) => {
       const out: number[] = [];
       if (visibility.raPulse && (s.ra_duration_ms ?? 0) > 0) {
         out.push(s.ra_duration_ms as number);
@@ -383,10 +378,10 @@ function TimeSeriesChartInner(
       }
       return out;
     });
-    const visibleDurMax = visibleDurations.length
-      ? (d3.max(visibleDurations) ?? 0)
+    const pulseDurMax = pulseDurations.length
+      ? (d3.max(pulseDurations) ?? 0)
       : 0;
-    const autoDurMax = Math.max(50, visibleDurMax * 1.1);
+    const autoDurMax = Math.max(50, pulseDurMax * 1.1);
     const durMax =
       pulseAxisMax !== null && pulseAxisMax > 0 ? pulseAxisMax : autoDurMax;
 
@@ -1360,12 +1355,12 @@ function TimeSeriesChartInner(
 
               <Box sx={{ opacity: 0.7 }}>error:</Box>
               <Box sx={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {formatPxOrBlank(hover.raRaw)}
+                {hover.raRaw == null ? "" : formatGuidePx(hover.raRaw)}
               </Box>
               <Box sx={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {formatPxOrBlank(hover.decRaw)}
+                {hover.decRaw == null ? "" : formatGuidePx(hover.decRaw)}
               </Box>
-              <Box sx={{ opacity: 0.7 }}>px</Box>
+              <Box sx={{ opacity: 0.7 }}>{guideAxisUnitLabel}</Box>
 
               <Box sx={{ opacity: 0.7 }}>pulse:</Box>
               <Box sx={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
@@ -1377,7 +1372,7 @@ function TimeSeriesChartInner(
               <Box sx={{ opacity: 0.7 }}>ms</Box>
             </Box>
             <Typography variant="caption" sx={{ display: "block", mt: 0.25 }}>
-              SNR: {hover.snr != null ? hover.snr.toFixed(1) : ""} · mass:{" "}
+              SNR: {hover.snr != null ? hover.snr.toFixed(1) : ""} · Mass:{" "}
               {hover.starMass != null ? hover.starMass : ""}
             </Typography>
             {/* Events block intentionally omitted — event info is now
@@ -2592,11 +2587,6 @@ function formatMassShort(v: number): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(0)}k`;
   return Math.round(v).toString();
-}
-
-function formatPxOrBlank(v: number | null): string {
-  if (v === null || v === undefined) return "";
-  return v.toFixed(3);
 }
 
 function formatPulseOrBlank(
