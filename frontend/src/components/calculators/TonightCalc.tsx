@@ -267,7 +267,7 @@ export default function TonightCalc() {
                 color="text.secondary"
                 sx={{ display: "block", mt: 0.5 }}
               >
-                Astronomical dark with the moon also below the horizon
+                Moonless astro dark hours
               </Typography>
             </Box>
           </Stack>
