@@ -342,22 +342,13 @@ export default function TonightCalc() {
                 No imaging window for this date.
               </Typography>
             ) : (
-              <Stack direction="row" spacing={3} alignItems="center">
-                <QualityBadge
-                  score={tonightForecast.imaging_quality}
-                  label={tonightForecast.imaging_quality_label}
-                  size="large"
-                  showLabel
-                />
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ maxWidth: 280 }}
-                >
-                  Composite of sky clarity, transparency, seeing, moon, and
-                  wind for {tonightForecast.date} at {location?.name ?? "this location"}.
-                </Typography>
-              </Stack>
+              <QualityBadge
+                score={tonightForecast.imaging_quality}
+                label={tonightForecast.imaging_quality_label}
+                size="large"
+                showLabel
+                tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. See the Weather page for the full breakdown.`}
+              />
             )
           ) : forecast ? (
             <Typography variant="body2" color="text.secondary">
