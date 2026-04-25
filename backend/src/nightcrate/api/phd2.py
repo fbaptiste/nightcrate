@@ -23,7 +23,7 @@ from nightcrate.api.phd2_models import (
 )
 from nightcrate.db.session import get_db
 from nightcrate.services import archive_io
-from nightcrate.services.phd2_fft import compute_section_fft
+from nightcrate.services.phd2_fft import compute_section_fft, compute_unguided_fft
 from nightcrate.services.phd2_metrics import (
     _in_any_interval,
     _settle_intervals,
@@ -31,6 +31,7 @@ from nightcrate.services.phd2_metrics import (
 )
 from nightcrate.services.phd2_models import LogSection
 from nightcrate.services.phd2_parser import parse_log
+from nightcrate.services.phd2_unguided import reconstruct_unguided_ra
 
 logger = logging.getLogger(__name__)
 
@@ -172,10 +173,34 @@ def _build_section_analysis(section: LogSection, rig_info: _RigInfo | None) -> S
     pixel_scale = section.header.pixel_scale_arcsec_per_px
     fft_ra = compute_section_fft(stats_samples, pixel_scale=pixel_scale, trace="ra")
     fft_dec = compute_section_fft(stats_samples, pixel_scale=pixel_scale, trace="dec")
+    # Unguided trace runs over the FULL section (chart overlay shows the raw
+    # cumulative drift); the spectrum filters to settle-excluded samples.
+    unguided_ra_px = reconstruct_unguided_ra(section)
+    fft_unguided = compute_unguided_fft(
+        stats_samples,
+        _filter_unguided_to_stats(section, stats_samples, unguided_ra_px),
+        pixel_scale=pixel_scale,
+    )
     # Dec rarely shows clean worm signatures because of asymmetric
     # Dec correction patterns — RA drives the worm marker.
     worm_marker = _build_worm_marker(rig_info, fft_ra)
-    return SectionAnalysis(fft_ra=fft_ra, fft_dec=fft_dec, worm_marker=worm_marker)
+    return SectionAnalysis(
+        fft_ra=fft_ra,
+        fft_dec=fft_dec,
+        unguided_ra_px=unguided_ra_px,
+        fft_unguided=fft_unguided,
+        worm_marker=worm_marker,
+    )
+
+
+def _filter_unguided_to_stats(
+    section: LogSection,
+    stats_samples,
+    unguided_ra_px: list[float | None],
+) -> list[float | None]:
+    """Project unguided values onto the settle-excluded sample subset (O(N))."""
+    stats_ids = {id(s) for s in stats_samples}
+    return [unguided_ra_px[i] for i, s in enumerate(section.samples) if id(s) in stats_ids]
 
 
 def _stats_samples(section: LogSection):

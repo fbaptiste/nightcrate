@@ -188,6 +188,11 @@ export interface SectionAnalysis {
   fft_ra: FftResult | null;
   fft_dec: FftResult | null;
   worm_marker: WormMarker | null;
+  /** Cumulative unguided RA (px), aligned 1:1 with section.samples; null at
+   *  DROP-frame indices (spec v4 §6.2). */
+  unguided_ra_px: Array<number | null> | null;
+  /** Spectrum of the drift-subtracted unguided RA trace (spec v4 §6.1.8). */
+  fft_unguided: FftResult | null;
 }
 
 export interface SectionWithMetrics {

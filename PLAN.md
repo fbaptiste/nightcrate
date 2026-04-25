@@ -39,7 +39,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.24.0 — PHD2 Pass C (Range Selection + Copy Stats + Recent Files)](#v0240--phd2-pass-c-range-selection--copy-stats--recent-files) ✅
 - [v0.25.0 — PHD2 Pass D-1 (Metric Foundation)](#v0250--phd2-pass-d-1-metric-foundation) ✅
 - [v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)](#v0260--phd2-pass-d-2-spectrum-conformance--worm-markers) ✅
-- [v0.27.0 — PHD2 Pass D-3 (Unguided RA Reconstruction)](#v0270--phd2-pass-d-3-unguided-ra-reconstruction)
+- [v0.27.0 — PHD2 Pass D-3 (Unguided RA Reconstruction)](#v0270--phd2-pass-d-3-unguided-ra-reconstruction) ✅
 - [v0.28.0 — PHD2 Pass E-1 (Drive-Type-Aware Markers)](#v0280--phd2-pass-e-1-drive-type-aware-markers)
 - [v0.29.0 — PHD2 Pass E-2 (Per-Session Measured PE + Per-Instance Schema)](#v0290--phd2-pass-e-2-per-session-measured-pe--per-instance-schema)
 - [v0.30.0 — PHD2 Pass E-3 (GA + AO/Mount Toggle)](#v0300--phd2-pass-e-3-ga--aomount-toggle)
@@ -4196,7 +4196,7 @@ PHDLogViewer rounds to **4** for compatibility: `a_arcsec = 4 · |X_k| / N · pi
 
 ## v0.27.0 — PHD2 Pass D-3 (Unguided RA Reconstruction)
 
-**Status:** Planned
+**Status:** Done
 **Branch:** `v0.27.0/phd2-unguided-ra`
 **Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §6.2 (algorithm), §6.1.8 (Spectrum-tab Unguided toggle paired with overlay)
 
@@ -4275,34 +4275,29 @@ Solving: `drift_during = raraw_next − raraw_prev − raguide_prev = move`. So 
 
 **Backend:**
 
-- [ ] `backend/src/nightcrate/services/phd2_unguided.py` — rewrite per §6.2 algorithm (~80 lines).
-- [ ] `backend/src/nightcrate/api/phd2.py` — extend `_build_section_analysis` to include `unguided_ra_px` + `fft_unguided`.
-- [ ] `backend/src/nightcrate/api/phd2_models.py` — extend `SectionAnalysis`.
+- [x] `backend/src/nightcrate/services/phd2_unguided.py` — `reconstruct_unguided_ra(section, *, undo_corrections=True)` per §6.2. ~40 lines.
+- [x] `backend/src/nightcrate/services/phd2_fft.py` — added `compute_unguided_fft(samples, unguided_ra_px, *, pixel_scale)` and refactored the existing pipeline body into `_compute_fft_for_series` so RA / Dec / Unguided variants all share the same Hamming + Akima + MAD path.
+- [x] `backend/src/nightcrate/api/phd2.py` — extended `_build_section_analysis` to compute the unguided trace over the FULL section (chart overlay) and the FFT over the settle-excluded subset (spectrum). Added `_filter_unguided_to_stats` helper.
+- [x] `backend/src/nightcrate/api/phd2_models.py` — `SectionAnalysis` gains `unguided_ra_px: list[float | None] | None` and `fft_unguided: FftResult | None`.
 
 **Frontend:**
 
-- [ ] `frontend/src/components/phd2/TimeSeriesChart.tsx` — add unguided RA overlay (~70 LOC). Visibility key, legend chip, rendered path, tooltip row.
-- [ ] `frontend/src/components/phd2/FftChart.tsx` — add Unguided RA trace toggle alongside RA / Dec.
-- [ ] `frontend/src/pages/Phd2AnalyzerPage.tsx` — pass `selected.analysis.unguided_ra_px` to TimeSeriesChart.
-- [ ] `frontend/src/api/phd2.ts` — type updates.
+- [x] `frontend/src/components/phd2/TimeSeriesChart.tsx` — `unguidedRa` prop, `raUnguided: false` visibility key, teal dashed third path inside the main panel using `xScale` + `yDistScale` and a `.defined()` predicate that breaks the line on `null`, legend chip with `disabled` support when prop is null, conditional tooltip row showing the unguided value in the toolbar's selected unit (px / ″).
+- [x] `frontend/src/components/phd2/FftChart.tsx` — `fftUnguided` prop, `showUnguided` state (off by default), teal dashed trace + peak dots, three-state `TraceKind` union with `TRACE_COLOR` / `TRACE_PEAK_LABEL` lookup tables (replaces the would-be triple ternary), free-cursor tooltip's third row, snapped-peak tooltip with three colour variants, skip-reason logic accounts for the unguided trace.
+- [x] `frontend/src/pages/Phd2AnalyzerPage.tsx` — wired `selected.analysis.unguided_ra_px` and `selected.analysis.fft_unguided` to the two charts.
+- [x] `frontend/src/api/phd2.ts` — `SectionAnalysis` interface extended with `unguided_ra_px` and `fft_unguided`.
 
-### Tests (~10 new)
+### Tests (12 new)
 
-- [ ] `test_phd2_unguided.py` — full rewrite. 8 tests:
-  - Zero corrections + zero drift → flat trace at 0
-  - Constant drift + zero corrections → linear trace
-  - Perfect correction + constant drift → recovers drift via raguide accumulation
-  - DROP frame skips without breaking recurrence (output is None at that index; `prev_*` carry forward unchanged; the next valid frame's `move` correctly spans the gap)
-  - **AO frames accumulate alongside Mount frames** with valid `ra_raw_px` and `ra_guide_px` — they are NOT treated like DROP (CD-review correction)
-  - Missing `ra_guide_px` → falls back to 0
-  - `undo_corrections=False` produces raw-position-anchored-at-zero trace
-  - Mixed Mount + AO + DROP within one section
-- [ ] `test_phd2_api.py` — 2 tests for `fft_unguided` in `SectionAnalysis` (presence + correct length).
+- [x] `tests/services/test_phd2_unguided.py` (NEW) — 10 tests: zero-drift-zero-corrections flat trace, constant-drift linear trace, perfect-correction recovers drift via raguide accumulation, DROP frame emits None without breaking recurrence (`prev_*` carry forward; next valid frame's `move` spans the gap), **AO frames accumulate alongside Mount frames** with valid star data (NOT treated like DROP), missing `ra_guide_px` falls back to 0, `undo_corrections=False` produces raw-position-anchored-at-zero trace, mixed Mount + AO + DROP within one section, empty section returns empty list, output-length-matches-samples-length invariant.
+- [x] `tests/test_phd2_api.py:TestUnguidedAttachment` (NEW) — 2 tests asserting `unguided_ra_px` is present on guiding sections, aligned 1:1 with `samples`, and that `fft_unguided` follows the same shape contract as `fft_ra` / `fft_dec` (period_s + amplitude_arcsec same length, peaks list, skip_reason handling).
+- [x] Existing `TestFftAttachment::test_calibration_section_has_empty_analysis` extended to assert `unguided_ra_px` and `fft_unguided` are both `None` on calibration sections.
 
 ### Verification
 
-- [ ] Backend pytest passes
-- [ ] Manual: open ASIAir sample log → Graph tab → toggle Unguided RA → teal trace appears. Switch to Spectrum tab → toggle Unguided RA → second trace appears.
+- [x] Backend pytest passes (2013 passed, 3 skipped — 12 new tests since v0.26.0's 2001).
+- [x] Frontend build clean (`tsc --noEmit` + vite build).
+- [x] Manual (Playwright + screenshots): opened the ASIAIR sample log, switched to the 2h18 guiding section, toggled "Unguided RA" on the time-series chart → teal dashed cumulative-drift trace renders across the full width, breaks cleanly across DROP gaps, panning preserves the trace, Y-axis auto-scale honours the new trace's range. Switched to the Spectrum tab, toggled "Unguided RA" → teal dashed spectrum trace appears at higher amplitudes than RA / Dec (expected — the unguided signal carries the drift the corrections were suppressing); peak dots render in teal; legend chip enables / disables the trace cleanly.
 
 ### Out of scope
 

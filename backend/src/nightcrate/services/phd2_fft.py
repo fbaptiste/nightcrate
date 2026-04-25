@@ -60,7 +60,6 @@ def compute_section_fft(
     """Compute the FFT spectrum for one trace of one guiding section."""
     if not samples:
         return None
-
     times: list[float] = []
     values: list[float] = []
     for s in samples:
@@ -69,7 +68,38 @@ def compute_section_fft(
             continue
         times.append(s.time_seconds)
         values.append(v)
+    return _compute_fft_for_series(times, values, pixel_scale=pixel_scale)
 
+
+def compute_unguided_fft(
+    samples: list[GuidingSample],
+    unguided_ra_px: list[float | None],
+    *,
+    pixel_scale: float | None,
+) -> FftResult | None:
+    """FFT spectrum of the unguided RA reconstruction (spec v4 §6.1.8).
+
+    ``samples`` and ``unguided_ra_px`` must be aligned 1:1; DROP-frame indices
+    (value is ``None``) are filtered before the standard §6.1 pipeline runs.
+    """
+    if not samples:
+        return None
+    times: list[float] = []
+    values: list[float] = []
+    for s, v in zip(samples, unguided_ra_px, strict=True):
+        if v is None:
+            continue
+        times.append(s.time_seconds)
+        values.append(v)
+    return _compute_fft_for_series(times, values, pixel_scale=pixel_scale)
+
+
+def _compute_fft_for_series(
+    times: list[float],
+    values: list[float],
+    *,
+    pixel_scale: float | None,
+) -> FftResult | None:
     if len(times) < MIN_ENTRIES:
         return _skip("too_short")
 

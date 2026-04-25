@@ -50,6 +50,10 @@ class SectionAnalysis(BaseModel):
     fft_ra: FftResult | None = None
     fft_dec: FftResult | None = None
     worm_marker: WormMarker | None = None
+    # Aligned 1:1 with section.samples; None at DROP-frame indices (spec v4 §6.2).
+    unguided_ra_px: list[float | None] | None = None
+    # Spectrum of the drift-subtracted unguided RA trace (spec v4 §6.1.8).
+    fft_unguided: FftResult | None = None
 
 
 class SectionWithMetrics(BaseModel):

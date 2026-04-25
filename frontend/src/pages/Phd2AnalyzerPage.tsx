@@ -566,6 +566,7 @@ export default function Phd2AnalyzerPage() {
                     onExclusionsChange={setExclusions}
                     includeSettle={includeSettle}
                     onIncludeSettleChange={setIncludeSettle}
+                    unguidedRa={selected.analysis.unguided_ra_px}
                   />
                   <EventList
                     events={selected.section.events}
@@ -596,6 +597,7 @@ export default function Phd2AnalyzerPage() {
                 <FftChart
                   fftRa={selected.analysis.fft_ra}
                   fftDec={selected.analysis.fft_dec}
+                  fftUnguided={selected.analysis.fft_unguided}
                   wormMarker={selected.analysis.worm_marker}
                   durationSeconds={selected.metrics.duration_total_seconds}
                 />

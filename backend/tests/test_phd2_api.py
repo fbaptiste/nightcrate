@@ -199,6 +199,39 @@ class TestFftAttachment:
         assert analysis["fft_ra"] is None
         assert analysis["fft_dec"] is None
         assert analysis["worm_marker"] is None
+        assert analysis["unguided_ra_px"] is None
+        assert analysis["fft_unguided"] is None
+
+
+class TestUnguidedAttachment:
+    async def test_guiding_section_has_unguided_trace(self, client: AsyncClient):
+        resp = await client.post("/api/phd2/parse", json={"path": str(SAMPLE)})
+        assert resp.status_code == 200
+        data = resp.json()
+        guiding = data["sections"][1]
+        analysis = guiding["analysis"]
+        # Trace is aligned 1:1 with section.samples — same length as
+        # the parsed sample array.
+        assert analysis["unguided_ra_px"] is not None
+        assert len(analysis["unguided_ra_px"]) == len(guiding["section"]["samples"])
+        # Anchored at the first valid frame's raraw (prev_raraw=0,
+        # move = raraw - 0 - 0). Sanity-check it's a finite number.
+        first_valid = next((v for v in analysis["unguided_ra_px"] if v is not None), None)
+        assert first_valid is not None
+        assert isinstance(first_valid, int | float)
+
+    async def test_guiding_section_has_fft_unguided(self, client: AsyncClient):
+        resp = await client.post("/api/phd2/parse", json={"path": str(SAMPLE)})
+        data = resp.json()
+        guiding = data["sections"][1]
+        analysis = guiding["analysis"]
+        assert analysis["fft_unguided"] is not None
+        fft = analysis["fft_unguided"]
+        if fft["skip_reason"] is None:
+            assert len(fft["period_s"]) == len(fft["amplitude_arcsec"])
+            assert isinstance(fft["peaks"], list)
+        else:
+            assert fft["peaks"] == []
 
 
 class TestRigContext:

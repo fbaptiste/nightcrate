@@ -99,10 +99,14 @@ interface Props {
    *  exclusion gestures. */
   includeSettle?: boolean;
   onIncludeSettleChange?: (v: boolean) => void;
+  /** Cumulative unguided RA drift (px), aligned 1:1 with ``samples``; null at
+   *  DROP-frame indices. When null/absent the legend chip is disabled. */
+  unguidedRa?: Array<number | null> | null;
 }
 
 const COLOR_RA = RIG_BLUE;
 const COLOR_DEC = RIG_ORANGE;
+const COLOR_UNGUIDED = RIG_TEAL;
 
 // ``top`` reserves space above the main panel for two vertically-
 // separated rows: the existing dither-triangle strip (0–13 px) and the
@@ -151,6 +155,7 @@ interface HoverInfo {
   frame: number | null;
   raRaw: number | null;
   decRaw: number | null;
+  raUnguided: number | null;
   raDuration: number | null;
   raDirection: "W" | "E" | null;
   decDuration: number | null;
@@ -200,6 +205,7 @@ function TimeSeriesChartInner(
     onExclusionsChange,
     includeSettle,
     onIncludeSettleChange,
+    unguidedRa = null,
   }: Props,
   ref: React.Ref<TimeSeriesChartHandle>,
 ) {
@@ -236,6 +242,7 @@ function TimeSeriesChartInner(
   const [visibility, setVisibility] = useState({
     ra: true,
     dec: true,
+    raUnguided: false,
     raPulse: true,
     decPulse: true,
     dither: true,
@@ -578,6 +585,24 @@ function TimeSeriesChartInner(
         .y((s) => yDistScale(s.dec_raw_px ?? 0)),
     [xScale, yDistScale],
   );
+  // Pair each sample with its unguided value so d3.line's .defined() can break
+  // the line at DROP-frame indices (null values) via the second tuple element.
+  const unguidedPairs = useMemo<Array<[GuidingSample, number | null]>>(() => {
+    if (!unguidedRa) return [];
+    const n = Math.min(samples.length, unguidedRa.length);
+    const out: Array<[GuidingSample, number | null]> = new Array(n);
+    for (let i = 0; i < n; i++) out[i] = [samples[i], unguidedRa[i]];
+    return out;
+  }, [samples, unguidedRa]);
+  const unguidedLine = useMemo(
+    () =>
+      d3
+        .line<[GuidingSample, number | null]>()
+        .defined(([, v]) => v !== null)
+        .x(([s]) => xScale(s.time_seconds))
+        .y(([, v]) => yDistScale((v ?? 0) as number)),
+    [xScale, yDistScale],
+  );
   const snrLine = useMemo(
     () =>
       d3
@@ -786,13 +811,15 @@ function TimeSeriesChartInner(
     const t = snapTime ?? xScale.invert(mx);
     const bisector = d3.bisector((s: GuidingSample) => s.time_seconds).center;
     const idx = bisector(samples, t);
-    const s = samples[Math.max(0, Math.min(samples.length - 1, idx))];
+    const sIdx = Math.max(0, Math.min(samples.length - 1, idx));
+    const s = samples[sIdx];
     setHover({
       xPx: snapTime !== null ? xScale(snapTime) : xScale(s.time_seconds),
       time: s.time_seconds,
       frame: s.frame,
       raRaw: s.ra_raw_px,
       decRaw: s.dec_raw_px,
+      raUnguided: unguidedRa ? (unguidedRa[sIdx] ?? null) : null,
       raDuration: s.ra_duration_ms,
       raDirection: s.ra_direction,
       decDuration: s.dec_duration_ms,
@@ -1154,6 +1181,16 @@ function TimeSeriesChartInner(
           onToggle={() => setVisibility((v) => ({ ...v, dec: !v.dec }))}
         />
         <LegendToggle
+          label="Unguided RA"
+          color={COLOR_UNGUIDED}
+          shape="line"
+          active={visibility.raUnguided}
+          disabled={!unguidedRa}
+          onToggle={() =>
+            setVisibility((v) => ({ ...v, raUnguided: !v.raUnguided }))
+          }
+        />
+        <LegendToggle
           label="RA pulse"
           color={COLOR_RA}
           shape="bar"
@@ -1361,6 +1398,23 @@ function TimeSeriesChartInner(
                 {hover.decRaw == null ? "" : formatGuidePx(hover.decRaw)}
               </Box>
               <Box sx={{ opacity: 0.7 }}>{guideAxisUnitLabel}</Box>
+
+              {visibility.raUnguided && unguidedRa && (
+                <>
+                  <Box sx={{ opacity: 0.7 }}>unguided:</Box>
+                  <Box
+                    sx={{
+                      textAlign: "right",
+                      fontVariantNumeric: "tabular-nums",
+                      color: COLOR_UNGUIDED,
+                    }}
+                  >
+                    {hover.raUnguided == null ? "" : formatGuidePx(hover.raUnguided)}
+                  </Box>
+                  <span />
+                  <Box sx={{ opacity: 0.7 }}>{guideAxisUnitLabel}</Box>
+                </>
+              )}
 
               <Box sx={{ opacity: 0.7 }}>pulse:</Box>
               <Box sx={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
@@ -1683,6 +1737,16 @@ function TimeSeriesChartInner(
               fill="none"
               stroke={COLOR_DEC}
               strokeWidth={1.3}
+            />
+          )}
+          {visibility.raUnguided && unguidedRa && (
+            <path
+              d={unguidedLine(unguidedPairs) ?? undefined}
+              fill="none"
+              stroke={COLOR_UNGUIDED}
+              strokeWidth={1.3}
+              strokeDasharray="4 3"
+              opacity={0.85}
             />
           )}
         </g>
@@ -2243,26 +2307,35 @@ interface LegendToggleProps {
   shape: "line" | "bar" | "triangle";
   active: boolean;
   onToggle: () => void;
+  /** Non-interactive low-opacity rendering when the underlying series is null. */
+  disabled?: boolean;
 }
 
 /** Clickable legend chip — swatch + label. Clicking toggles the series
  *  on/off. The "off" state greys out the swatch and strikes through the
  *  label so users can see at a glance which series are hidden. */
-function LegendToggle({ label, color, shape, active, onToggle }: LegendToggleProps) {
+function LegendToggle({
+  label,
+  color,
+  shape,
+  active,
+  onToggle,
+  disabled = false,
+}: LegendToggleProps) {
   return (
     <Stack
       direction="row"
       spacing={0.5}
       alignItems="center"
-      onClick={onToggle}
+      onClick={disabled ? undefined : onToggle}
       sx={{
-        cursor: "pointer",
+        cursor: disabled ? "default" : "pointer",
         userSelect: "none",
         px: 0.75,
         py: 0.25,
         borderRadius: 1,
-        opacity: active ? 1 : 0.4,
-        "&:hover": { bgcolor: "action.hover" },
+        opacity: disabled ? 0.3 : active ? 1 : 0.4,
+        "&:hover": disabled ? undefined : { bgcolor: "action.hover" },
       }}
     >
       {shape === "line" && <Box sx={{ width: 14, height: 2, bgcolor: color }} />}

@@ -13,11 +13,14 @@ import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 
 import type { FftPeak, FftResult, WormMarker } from "@/api/phd2";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {
   fftRa: FftResult | null;
   fftDec: FftResult | null;
+  /** Spectrum of the drift-subtracted unguided RA trace (spec v4 §6.1.8); when
+   *  null the toggle is hidden. */
+  fftUnguided?: FftResult | null;
   wormMarker: WormMarker | null;
   /** Section duration (s); the X-axis upper edge clamps to duration / 2. */
   durationSeconds: number;
@@ -31,6 +34,21 @@ const SNAP_RADIUS_PX = 8;
 
 const COLOR_RA = RIG_BLUE;
 const COLOR_DEC = RIG_ORANGE;
+const COLOR_UNGUIDED = RIG_TEAL;
+
+type TraceKind = "ra" | "dec" | "unguided";
+
+const TRACE_COLOR: Record<TraceKind, string> = {
+  ra: COLOR_RA,
+  dec: COLOR_DEC,
+  unguided: COLOR_UNGUIDED,
+};
+
+const TRACE_PEAK_LABEL: Record<TraceKind, string> = {
+  ra: "RA peak",
+  dec: "Dec peak",
+  unguided: "Unguided RA peak",
+};
 
 interface HoverState {
   /** When true, the hairline locks to a peak's period and the tooltip
@@ -40,12 +58,14 @@ interface HoverState {
   period: number;
   raAmp: number | null;
   decAmp: number | null;
-  matchedPeak: { trace: "ra" | "dec"; peak: FftPeak } | null;
+  unguidedAmp: number | null;
+  matchedPeak: { trace: TraceKind; peak: FftPeak } | null;
 }
 
 export default function FftChart({
   fftRa,
   fftDec,
+  fftUnguided = null,
   wormMarker,
   durationSeconds,
   height = 360,
@@ -58,6 +78,9 @@ export default function FftChart({
   const [hover, setHover] = useState<HoverState | null>(null);
   const [showRa, setShowRa] = useState(true);
   const [showDec, setShowDec] = useState(true);
+  // Defaults off: the unguided trace is for diagnosing mount PE without
+  // the algorithm's corrections layered on (spec v4 §6.1.8) — niche read.
+  const [showUnguided, setShowUnguided] = useState(false);
 
   useEffect(() => {
     if (!wrapperRef.current) return;
@@ -82,6 +105,13 @@ export default function FftChart({
     if (showDec && fftDec?.skip_reason === null && fftDec.amplitude_arcsec.length) {
       visibleAmps.push(...fftDec.amplitude_arcsec);
     }
+    if (
+      showUnguided &&
+      fftUnguided?.skip_reason === null &&
+      fftUnguided.amplitude_arcsec.length
+    ) {
+      visibleAmps.push(...fftUnguided.amplitude_arcsec);
+    }
     const max = visibleAmps.length > 0 ? Math.max(...visibleAmps) : 1;
     const ampMin = Math.max(max / 10000, 0.001);
     const ampMaxScaled = max * 1.1;
@@ -91,7 +121,17 @@ export default function FftChart({
       .domain([ampMin, ampMaxScaled])
       .range([MARGIN.top + innerH, MARGIN.top]);
     return { xScale: x, yScale: y, ampMax: ampMaxScaled };
-  }, [fftRa, fftDec, durationSeconds, innerW, innerH, showRa, showDec]);
+  }, [
+    fftRa,
+    fftDec,
+    fftUnguided,
+    durationSeconds,
+    innerW,
+    innerH,
+    showRa,
+    showDec,
+    showUnguided,
+  ]);
 
   const traceLine = useMemo(
     () =>
@@ -113,13 +153,20 @@ export default function FftChart({
 
   const raPath = useMemo(() => buildPath(fftRa, traceLine), [fftRa, traceLine]);
   const decPath = useMemo(() => buildPath(fftDec, traceLine), [fftDec, traceLine]);
+  const unguidedPath = useMemo(
+    () => buildPath(fftUnguided, traceLine),
+    [fftUnguided, traceLine],
+  );
 
-  const visiblePeaks: { trace: "ra" | "dec"; peak: FftPeak }[] = [];
+  const visiblePeaks: { trace: TraceKind; peak: FftPeak }[] = [];
   if (showRa && fftRa && !fftRa.skip_reason) {
     for (const p of fftRa.peaks) visiblePeaks.push({ trace: "ra", peak: p });
   }
   if (showDec && fftDec && !fftDec.skip_reason) {
     for (const p of fftDec.peaks) visiblePeaks.push({ trace: "dec", peak: p });
+  }
+  if (showUnguided && fftUnguided && !fftUnguided.skip_reason) {
+    for (const p of fftUnguided.peaks) visiblePeaks.push({ trace: "unguided", peak: p });
   }
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -138,7 +185,7 @@ export default function FftChart({
     }
     // Snap is horizontal-only — user's mental model is "the line is
     // near the peak", not "the cursor is near the dot".
-    let best: { dist: number; trace: "ra" | "dec"; peak: FftPeak } | null = null;
+    let best: { dist: number; trace: TraceKind; peak: FftPeak } | null = null;
     for (const { trace, peak } of visiblePeaks) {
       const dist = Math.abs(xScale(peak.period_s) - mx);
       if (dist <= SNAP_RADIUS_PX && (best === null || dist < best.dist)) {
@@ -153,6 +200,7 @@ export default function FftChart({
         period,
         raAmp: showRa ? lookupAmpAt(fftRa, period) : null,
         decAmp: showDec ? lookupAmpAt(fftDec, period) : null,
+        unguidedAmp: showUnguided ? lookupAmpAt(fftUnguided, period) : null,
         matchedPeak: { trace: best.trace, peak: best.peak },
       });
     } else {
@@ -163,6 +211,7 @@ export default function FftChart({
         period,
         raAmp: showRa ? lookupAmpAt(fftRa, period) : null,
         decAmp: showDec ? lookupAmpAt(fftDec, period) : null,
+        unguidedAmp: showUnguided ? lookupAmpAt(fftUnguided, period) : null,
         matchedPeak: null,
       });
     }
@@ -185,6 +234,7 @@ export default function FftChart({
     const visible: (string | null)[] = [];
     if (showRa) visible.push(fftRa?.skip_reason ?? null);
     if (showDec) visible.push(fftDec?.skip_reason ?? null);
+    if (showUnguided) visible.push(fftUnguided?.skip_reason ?? null);
     if (visible.length === 0 || visible.some((r) => r === null)) return null;
     return visible[0];
   })();
@@ -208,6 +258,14 @@ export default function FftChart({
           active={showDec}
           onToggle={() => setShowDec((v) => !v)}
         />
+        {fftUnguided && (
+          <LegendChip
+            label="Unguided RA"
+            color={COLOR_UNGUIDED}
+            active={showUnguided}
+            onToggle={() => setShowUnguided((v) => !v)}
+          />
+        )}
         {wormMarker && (
           <Chip
             size="small"
@@ -308,6 +366,16 @@ export default function FftChart({
               {showDec && decPath && (
                 <path d={decPath} fill="none" stroke={COLOR_DEC} strokeWidth={1.4} opacity={0.85} />
               )}
+              {showUnguided && unguidedPath && (
+                <path
+                  d={unguidedPath}
+                  fill="none"
+                  stroke={COLOR_UNGUIDED}
+                  strokeWidth={1.4}
+                  strokeDasharray="4 3"
+                  opacity={0.85}
+                />
+              )}
 
               {visiblePeaks.map(({ trace, peak }, i) => (
                 <circle
@@ -315,7 +383,7 @@ export default function FftChart({
                   cx={xScale(peak.period_s)}
                   cy={yScale(peak.amplitude_arcsec)}
                   r={3.5}
-                  fill={trace === "ra" ? COLOR_RA : COLOR_DEC}
+                  fill={TRACE_COLOR[trace]}
                   stroke="white"
                   strokeWidth={0.5}
                   strokeOpacity={0.5}
@@ -391,7 +459,8 @@ export default function FftChart({
                 ? 5
                 : 1 +
                   (hover.raAmp !== null ? 1 : 0) +
-                  (hover.decAmp !== null ? 1 : 0);
+                  (hover.decAmp !== null ? 1 : 0) +
+                  (hover.unguidedAmp !== null ? 1 : 0);
               // 18 px per line (11 px font × 1.35) + 24 px padding.
               const tooltipH = lineCount * 18 + 24;
               // Anchor at a fixed vertical position regardless of snap
@@ -447,10 +516,10 @@ export default function FftChart({
                             sx={{
                               fontWeight: 600,
                               display: "block",
-                              color: hover.matchedPeak.trace === "ra" ? COLOR_RA : COLOR_DEC,
+                              color: TRACE_COLOR[hover.matchedPeak.trace],
                             }}
                           >
-                            {hover.matchedPeak.trace === "ra" ? "RA peak" : "Dec peak"}
+                            {TRACE_PEAK_LABEL[hover.matchedPeak.trace]}
                           </Typography>
                           <Typography variant="caption" sx={{ display: "block" }}>
                             Period: {formatPeriodVerbose(hover.period)}
@@ -484,6 +553,14 @@ export default function FftChart({
                               sx={{ display: "block", color: COLOR_DEC }}
                             >
                               Dec: {hover.decAmp.toFixed(3)}″
+                            </Typography>
+                          )}
+                          {hover.unguidedAmp !== null && (
+                            <Typography
+                              variant="caption"
+                              sx={{ display: "block", color: COLOR_UNGUIDED }}
+                            >
+                              Unguided: {hover.unguidedAmp.toFixed(3)}″
                             </Typography>
                           )}
                         </>
