@@ -45,6 +45,7 @@ import Link from "@mui/material/Link";
 import { formatWallClock } from "@/lib/phd2Format";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import SectionNavigator from "@/components/phd2/SectionNavigator";
+import SectionInfoPanel from "@/components/phd2/SectionInfoPanel";
 import StatsPanel from "@/components/phd2/StatsPanel";
 import TimeSeriesChart from "@/components/phd2/TimeSeriesChart";
 import CalibrationPlot from "@/components/phd2/CalibrationPlot";
@@ -159,7 +160,10 @@ export default function Phd2AnalyzerPage() {
       selected.section.samples,
       selected.section.events,
       selected.metrics.arcsec_scale,
-      { includeSettle },
+      {
+        includeSettle,
+        declinationDeg: selected.section.header.declination_deg,
+      },
     );
   }, [selected, includeSettle]);
 
@@ -202,7 +206,10 @@ export default function Phd2AnalyzerPage() {
       viewportSamples,
       selected.section.events,
       selected.metrics.arcsec_scale,
-      { includeSettle },
+      {
+        includeSettle,
+        declinationDeg: selected.section.header.declination_deg,
+      },
     );
   }, [viewportSamples, selected, includeSettle]);
 
@@ -432,6 +439,46 @@ export default function Phd2AnalyzerPage() {
                   selectedIndex={selectedIndex}
                   onSelect={setSelectedIndex}
                 />
+                {selected && (
+                  <>
+                    <SectionInfoPanel header={selected.section.header} />
+                    <Box sx={{ mt: 1.5 }}>
+                      <StatsPanel
+                        metrics={
+                          selected.section.kind === "guiding" && sectionMetrics
+                            ? sectionMetrics
+                            : selected.metrics
+                        }
+                        kind={selected.section.kind}
+                        collapsible
+                        defaultExpanded
+                      />
+                    </Box>
+                    {viewportMetrics && viewportSamples && (
+                      <Box sx={{ mt: 1.5 }}>
+                        <StatsPanel
+                          metrics={viewportMetrics}
+                          kind="guiding"
+                          title={
+                            selections.length > 0
+                              ? "Selection summary"
+                              : "Viewport summary"
+                          }
+                          subtitle={formatSubtitle(
+                            selections,
+                            exclusions,
+                            viewport,
+                            viewportSamples.length,
+                            selected.section.samples.length,
+                            selected.section.start_time,
+                          )}
+                          collapsible
+                          defaultExpanded
+                        />
+                      </Box>
+                    )}
+                  </>
+                )}
               </Box>
             )}
           </Box>
@@ -486,44 +533,9 @@ export default function Phd2AnalyzerPage() {
                     label={
                       <Typography variant="body2">
                         Include settle frames in stats
-                        <Typography
-                          component="span"
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ ml: 1 }}
-                        >
-                          Off by default
-                        </Typography>
                       </Typography>
                     }
                   />
-                  {viewportMetrics && viewportSamples && (
-                    <StatsPanel
-                      metrics={viewportMetrics}
-                      kind="guiding"
-                      title={
-                        selections.length > 0
-                          ? "Selection summary"
-                          : "Viewport summary"
-                      }
-                      subtitle={formatSubtitle(
-                        selections,
-                        exclusions,
-                        viewport,
-                        viewportSamples.length,
-                        selected.section.samples.length,
-                        selected.section.start_time,
-                      )}
-                      collapsible
-                    />
-                  )}
-                  {sectionMetrics && (
-                    <StatsPanel
-                      metrics={sectionMetrics}
-                      kind="guiding"
-                      collapsible
-                    />
-                  )}
                   <ScatterPlot
                     samples={
                       includeSettle
@@ -556,11 +568,6 @@ export default function Phd2AnalyzerPage() {
               ) : (
                 <Stack spacing={2}>
                   <CalibrationPlot phases={selected.section.calibration_phases} />
-                  <StatsPanel
-                    metrics={selected.metrics}
-                    kind="calibration"
-                    collapsible
-                  />
                 </Stack>
               )}
             </Box>

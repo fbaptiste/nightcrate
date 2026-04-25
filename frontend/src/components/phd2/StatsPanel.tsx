@@ -136,6 +136,10 @@ export default function StatsPanel({
     if (frac === null) return "—";
     return `${(frac * 100).toFixed(1)}%`;
   };
+  const renderPaError = (arcmin: number | null): string => {
+    if (arcmin === null) return "—";
+    return `${arcmin.toFixed(2)}′`;
+  };
 
   const items: Array<{ label: string; value: string }> = [
     { label: "RMS total", value: renderDist(metrics.rms_total_px) },
@@ -145,11 +149,16 @@ export default function StatsPanel({
     { label: "Peak Dec", value: renderDist(metrics.peak_dec_px) },
     { label: "Drift RA", value: renderDrift(metrics.drift_ra_px_per_min) },
     { label: "Drift Dec", value: renderDrift(metrics.drift_dec_px_per_min) },
+    {
+      label: "PA error",
+      value: renderPaError(metrics.polar_alignment_error_arcmin),
+    },
     { label: "Osc RA", value: renderOscillation(metrics.oscillation_ra) },
     { label: "Osc Dec", value: renderOscillation(metrics.oscillation_dec) },
+    { label: "Elongation", value: renderOscillation(metrics.elongation) },
     {
       label: "Duration",
-      value: formatDuration(metrics.duration_seconds),
+      value: formatDuration(metrics.duration_total_seconds),
     },
     {
       label: "Frames",

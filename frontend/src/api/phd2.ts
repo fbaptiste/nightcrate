@@ -144,13 +144,16 @@ export interface SectionMetrics {
   peak_dec_px: number | null;
   drift_ra_px_per_min: number | null;
   drift_dec_px_per_min: number | null;
+  polar_alignment_error_arcmin: number | null;
   oscillation_ra: number | null;
   oscillation_dec: number | null;
+  elongation: number | null;
   frame_count_total: number;
   frame_count_error: number;
   frame_count_in_settle: number;
   frame_count_in_stats: number;
-  duration_seconds: number;
+  duration_total_seconds: number;
+  duration_included_seconds: number;
   mean_snr: number | null;
   median_snr: number | null;
   mean_star_mass: number | null;
