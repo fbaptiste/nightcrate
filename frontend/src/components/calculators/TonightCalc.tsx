@@ -20,23 +20,23 @@ const DASH = "—";
  *  Keyed lowercase so backend casing variations match. */
 const MOON_PHASE_DESCRIPTIONS: Record<string, string> = {
   "new moon":
-    "The Moon sits roughly between Earth and the Sun, so its lit side faces away from us — the Moon is not visible.",
+    "Not visible from Earth; the Moon is between Earth and the Sun with its lit side facing away.",
   "waxing crescent":
-    "Less than half lit and growing — a thin sliver on the right (Northern Hemisphere) heading toward first quarter.",
+    "Less than half lit and growing; a thin sliver visible after sunset, between new moon and first quarter.",
   "first quarter":
-    "Half-lit on the right — the Moon has completed a quarter of its orbit since new moon.",
+    "Half lit (right side in the Northern Hemisphere) and growing; the Moon is one-quarter of the way through its cycle.",
   "waxing gibbous":
-    "More than half lit and growing — between first quarter and full.",
+    "More than half lit and growing; between first quarter and full moon.",
   "full moon":
-    "Fully illuminated — Earth sits roughly between the Moon and the Sun.",
+    "Fully illuminated; Earth sits between the Sun and Moon, with the lit face pointing toward us.",
   "waning gibbous":
-    "More than half lit and shrinking — between full and last quarter.",
+    "More than half lit and shrinking; between full moon and last quarter.",
   "last quarter":
-    "Half-lit on the left — the Moon has completed three-quarters of its orbit since new moon.",
+    "Half lit (left side in the Northern Hemisphere) and shrinking; also called third quarter, the Moon is three-quarters through its cycle.",
   "third quarter":
-    "Half-lit on the left — the Moon has completed three-quarters of its orbit since new moon.",
+    "Half lit (left side in the Northern Hemisphere) and shrinking; also called third quarter, the Moon is three-quarters through its cycle.",
   "waning crescent":
-    "Less than half lit and shrinking — a thin sliver on the left fading toward new moon.",
+    "Less than half lit and shrinking; a thin sliver visible before sunrise, between last quarter and new moon.",
 };
 
 function moonPhaseDescription(name: string | null | undefined): string {
