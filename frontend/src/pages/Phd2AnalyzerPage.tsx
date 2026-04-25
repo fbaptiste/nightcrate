@@ -1,13 +1,17 @@
 /**
- * PHD2 Guide-Log Analyzer — v0.22.0 Pass A.
+ * PHD2 Guide-Log Analyzer page.
  *
- * Standalone-first (spec §4.1): user pastes a path, hits Open, sees the
- * guiding graph + top-line stats. No persistence, no catalog linkage, no
- * interpretation — just a solid viewer anchored on a correct parser.
+ * Standalone-first (spec §4.1): user picks a path via Browse / paste /
+ * recent-files dropdown, hits Open, gets the parsed log rendered across
+ * three tabs (Guiding / Dispersion / Data). The left nav holds the
+ * section list, ``SectionInfoPanel`` (parsed header fields), and the
+ * Section + Viewport / Selection summary panels. Catalog integration
+ * lands in v0.34.0; interpretive diagnostics start in v0.31.0.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
+import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -22,9 +26,7 @@ import Typography from "@mui/material/Typography";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
-import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
-import Switch from "@mui/material/Switch";
 import Tooltip from "@mui/material/Tooltip";
 import { parseGuideLog, type ParseResponse } from "@/api/phd2";
 import { setActivity } from "@/api/client";
@@ -34,17 +36,16 @@ import EventList from "@/components/phd2/EventList";
 import type { TimeSeriesChartHandle } from "@/components/phd2/TimeSeriesChart";
 import {
   addRecentFile,
-  clearRecentFiles,
   formatRelativeTime,
   getRecentFiles,
   removeRecentFile,
   type RecentFile,
 } from "@/lib/phd2RecentFiles";
 import CloseIcon from "@mui/icons-material/Close";
-import Link from "@mui/material/Link";
 import { formatWallClock } from "@/lib/phd2Format";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import SectionNavigator from "@/components/phd2/SectionNavigator";
+import SectionInfoPanel from "@/components/phd2/SectionInfoPanel";
 import StatsPanel from "@/components/phd2/StatsPanel";
 import TimeSeriesChart from "@/components/phd2/TimeSeriesChart";
 import CalibrationPlot from "@/components/phd2/CalibrationPlot";
@@ -61,8 +62,8 @@ export default function Phd2AnalyzerPage() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
-  // Section-view tab: 0 = Graph, 1 = Data. Tab state is page-level so
-  // switching sections keeps the user on the same tab.
+  // Section-view tab: 0 = Guiding, 1 = Dispersion, 2 = Data. Tab state
+  // is page-level so switching sections keeps the user on the same tab.
   const [tab, setTab] = useState(0);
   // Lazy-mount the Data tab. The heavy DataTable useMemo pass (14
   // columns × 7 500 rows) was competing for the first render with the
@@ -159,7 +160,10 @@ export default function Phd2AnalyzerPage() {
       selected.section.samples,
       selected.section.events,
       selected.metrics.arcsec_scale,
-      { includeSettle },
+      {
+        includeSettle,
+        declinationDeg: selected.section.header.declination_deg,
+      },
     );
   }, [selected, includeSettle]);
 
@@ -202,7 +206,10 @@ export default function Phd2AnalyzerPage() {
       viewportSamples,
       selected.section.events,
       selected.metrics.arcsec_scale,
-      { includeSettle },
+      {
+        includeSettle,
+        declinationDeg: selected.section.header.declination_deg,
+      },
     );
   }, [viewportSamples, selected, includeSettle]);
 
@@ -236,16 +243,122 @@ export default function Phd2AnalyzerPage() {
           >
             Browse
           </Button>
-          <TextField
-            size="small"
-            fullWidth
-            placeholder="Path to PHD2_GuideLog_*.txt (or archive.zip::log.txt)"
-            value={pathInput}
-            onChange={(e) => setPathInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleOpen();
+          <Autocomplete
+            freeSolo
+            forcePopupIcon
+            clearOnBlur={false}
+            blurOnSelect
+            options={recentFiles}
+            getOptionLabel={(opt) =>
+              typeof opt === "string" ? opt : opt.path
+            }
+            filterOptions={(options) => options}
+            inputValue={pathInput}
+            onInputChange={(_, value, reason) => {
+              if (reason !== "reset") setPathInput(value);
             }}
-            inputProps={{ style: { fontFamily: "monospace", fontSize: "0.8rem" } }}
+            onChange={(_, value) => {
+              if (!value) return;
+              const path = typeof value === "string" ? value : value.path;
+              if (path) openPath(path);
+            }}
+            sx={{
+              // Path field aims for ~50% of toolbar width but yields
+              // gracefully on narrow viewports so the Open button
+              // never gets pushed off-screen. Doesn't grow past 720
+              // px even on ultra-wide windows — past that the field
+              // becomes unwieldy without adding any utility.
+              flexBasis: "50%",
+              flexGrow: 0,
+              flexShrink: 1,
+              minWidth: 240,
+              maxWidth: 720,
+              "& .MuiInputBase-root": { height: 32, py: 0 },
+            }}
+            slotProps={{ listbox: { style: { maxHeight: 360 } } }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                size="small"
+                placeholder="Path to PHD2_GuideLog_*.txt (or archive.zip::log.txt)"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleOpen();
+                }}
+                inputProps={{
+                  ...params.inputProps,
+                  style: { fontFamily: "monospace", fontSize: "0.8rem" },
+                }}
+              />
+            )}
+            renderOption={(props, option) => {
+              const item =
+                typeof option === "string"
+                  ? { path: option, openedAt: "" }
+                  : option;
+              const { key, ...rest } = props as { key?: string } & Record<
+                string,
+                unknown
+              >;
+              return (
+                <li {...rest} key={key ?? item.path}>
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="baseline"
+                    sx={{ width: "100%", minWidth: 0 }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography
+                        sx={{
+                          fontFamily: "monospace",
+                          fontSize: "0.75rem",
+                          fontWeight: 500,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {basename(item.path)}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          fontFamily: "monospace",
+                          fontSize: "0.65rem",
+                          display: "block",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {item.path}
+                      </Typography>
+                    </Box>
+                    {item.openedAt && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ flexShrink: 0, minWidth: 80, textAlign: "right" }}
+                      >
+                        {formatRelativeTime(item.openedAt)}
+                      </Typography>
+                    )}
+                    <IconButton
+                      size="small"
+                      aria-label={`Remove ${item.path} from recent logs`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRecentFiles(removeRecentFile(item.path));
+                      }}
+                      sx={{ ml: 0.5 }}
+                    >
+                      <CloseIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
+                  </Stack>
+                </li>
+              );
+            }}
           />
           <Button
             variant="contained"
@@ -290,94 +403,16 @@ export default function Phd2AnalyzerPage() {
       {!parseMutation.isPending && !parsed && !parseMutation.isError && (
         <Box sx={{ p: 4 }}>
           <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 640 }}>
-            Paste the absolute path to a PHD2 guide log (filename pattern{" "}
-            <code>PHD2_GuideLog_*.txt</code>) and press Open. The analyzer parses
-            the file in-process — nothing is uploaded or persisted.
+            Open a PHD2 guide log to start —{" "}
+            <Typography component="span" variant="body2" sx={{ fontWeight: 500 }}>
+              Browse
+            </Typography>{" "}
+            to pick a file from disk, paste an absolute path into the field
+            (filename pattern <code>PHD2_GuideLog_*.txt</code>), or open the
+            path field's dropdown to pick a previously-analysed log. The
+            analyzer parses the file in-process; nothing is uploaded or
+            persisted.
           </Typography>
-          {recentFiles.length > 0 && (
-            <Box sx={{ mt: 3, maxWidth: 720 }}>
-              <Stack
-                direction="row"
-                alignItems="center"
-                justifyContent="space-between"
-                sx={{ mb: 1 }}
-              >
-                <Typography variant="subtitle2">Recent logs</Typography>
-                <Button
-                  size="small"
-                  onClick={() => {
-                    clearRecentFiles();
-                    setRecentFiles([]);
-                  }}
-                >
-                  Clear all
-                </Button>
-              </Stack>
-              <Stack spacing={0.5}>
-                {recentFiles.map((entry) => (
-                  <Stack
-                    key={entry.path}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={{
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.5,
-                      "&:hover": { bgcolor: "action.hover" },
-                    }}
-                  >
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Link
-                        component="button"
-                        variant="body2"
-                        onClick={() => openPath(entry.path)}
-                        sx={{
-                          fontFamily: "monospace",
-                          textAlign: "left",
-                          display: "block",
-                          width: "100%",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {basename(entry.path)}
-                      </Link>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{
-                          display: "block",
-                          fontFamily: "monospace",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                        title={entry.path}
-                      >
-                        {entry.path}
-                      </Typography>
-                    </Box>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ flexShrink: 0, minWidth: 96, textAlign: "right" }}
-                    >
-                      {formatRelativeTime(entry.openedAt)}
-                    </Typography>
-                    <IconButton
-                      size="small"
-                      aria-label={`Remove ${entry.path} from recent logs`}
-                      onClick={() => setRecentFiles(removeRecentFile(entry.path))}
-                    >
-                      <CloseIcon sx={{ fontSize: 16 }} />
-                    </IconButton>
-                  </Stack>
-                ))}
-              </Stack>
-            </Box>
-          )}
         </Box>
       )}
 
@@ -432,6 +467,46 @@ export default function Phd2AnalyzerPage() {
                   selectedIndex={selectedIndex}
                   onSelect={setSelectedIndex}
                 />
+                {selected && (
+                  <>
+                    <SectionInfoPanel header={selected.section.header} />
+                    <Box sx={{ mt: 1.5 }}>
+                      <StatsPanel
+                        metrics={
+                          selected.section.kind === "guiding" && sectionMetrics
+                            ? sectionMetrics
+                            : selected.metrics
+                        }
+                        kind={selected.section.kind}
+                        collapsible
+                        defaultExpanded={false}
+                      />
+                    </Box>
+                    {viewportMetrics && viewportSamples && (
+                      <Box sx={{ mt: 1.5 }}>
+                        <StatsPanel
+                          metrics={viewportMetrics}
+                          kind="guiding"
+                          title={
+                            selections.length > 0
+                              ? "Selection summary"
+                              : "Viewport summary"
+                          }
+                          subtitle={formatSubtitle(
+                            selections,
+                            exclusions,
+                            viewport,
+                            viewportSamples.length,
+                            selected.section.samples.length,
+                            selected.section.start_time,
+                          )}
+                          collapsible
+                          defaultExpanded={false}
+                        />
+                      </Box>
+                    )}
+                  </>
+                )}
               </Box>
             )}
           </Box>
@@ -443,14 +518,15 @@ export default function Phd2AnalyzerPage() {
               value={tab}
               onChange={(_, v) => {
                 setTab(v);
-                if (v === 1) setDataVisited(true);
+                if (v === 2) setDataVisited(true);
               }}
               sx={{ px: 2, borderBottom: 1, borderColor: "divider", minHeight: 40 }}
             >
-              <Tab label="Graph" sx={{ minHeight: 40 }} />
+              <Tab label="Guiding" sx={{ minHeight: 40 }} />
+              <Tab label="Dispersion" sx={{ minHeight: 40 }} />
               <Tab label="Data" sx={{ minHeight: 40 }} />
             </Tabs>
-            {/* Graph panel — display-toggle so chart state (zoom) is preserved */}
+            {/* Guiding panel — display-toggle so chart state (zoom) is preserved */}
             <Box
               sx={{
                 flex: 1,
@@ -474,74 +550,8 @@ export default function Phd2AnalyzerPage() {
                     exclusions={exclusions}
                     onSelectionsChange={setSelections}
                     onExclusionsChange={setExclusions}
-                  />
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        size="small"
-                        checked={includeSettle}
-                        onChange={(e) => setIncludeSettle(e.target.checked)}
-                      />
-                    }
-                    label={
-                      <Typography variant="body2">
-                        Include settle frames in stats
-                        <Typography
-                          component="span"
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ ml: 1 }}
-                        >
-                          Off by default
-                        </Typography>
-                      </Typography>
-                    }
-                  />
-                  {viewportMetrics && viewportSamples && (
-                    <StatsPanel
-                      metrics={viewportMetrics}
-                      kind="guiding"
-                      title={
-                        selections.length > 0
-                          ? "Selection summary"
-                          : "Viewport summary"
-                      }
-                      subtitle={formatSubtitle(
-                        selections,
-                        exclusions,
-                        viewport,
-                        viewportSamples.length,
-                        selected.section.samples.length,
-                        selected.section.start_time,
-                      )}
-                      collapsible
-                    />
-                  )}
-                  {sectionMetrics && (
-                    <StatsPanel
-                      metrics={sectionMetrics}
-                      kind="guiding"
-                      collapsible
-                    />
-                  )}
-                  <ScatterPlot
-                    samples={
-                      includeSettle
-                        ? selected.section.samples
-                        : selected.section.samples.filter(
-                            (s) =>
-                              !settleIntervals.some(
-                                ([t0, t1]) =>
-                                  s.time_seconds >= t0 && s.time_seconds <= t1,
-                              ),
-                          )
-                    }
-                    arcsecScale={selected.metrics.arcsec_scale}
-                    subtitle={
-                      includeSettle
-                        ? "All frames included"
-                        : `Settle frames excluded`
-                    }
+                    includeSettle={includeSettle}
+                    onIncludeSettleChange={setIncludeSettle}
                   />
                   <EventList
                     events={selected.section.events}
@@ -556,12 +566,39 @@ export default function Phd2AnalyzerPage() {
               ) : (
                 <Stack spacing={2}>
                   <CalibrationPlot phases={selected.section.calibration_phases} />
-                  <StatsPanel
-                    metrics={selected.metrics}
-                    kind="calibration"
-                    collapsible
-                  />
                 </Stack>
+              )}
+            </Box>
+            {/* Dispersion panel — extracted to its own tab so the
+                guiding view stays focused on the time series. */}
+            <Box
+              sx={{
+                flex: 1,
+                overflow: "auto",
+                p: 2,
+                display: tab === 1 ? "block" : "none",
+              }}
+            >
+              {selected.section.kind === "guiding" && (
+                <ScatterPlot
+                  samples={
+                    includeSettle
+                      ? selected.section.samples
+                      : selected.section.samples.filter(
+                          (s) =>
+                            !settleIntervals.some(
+                              ([t0, t1]) =>
+                                s.time_seconds >= t0 && s.time_seconds <= t1,
+                            ),
+                        )
+                  }
+                  arcsecScale={selected.metrics.arcsec_scale}
+                  subtitle={
+                    includeSettle
+                      ? "All frames included"
+                      : `Settle frames excluded`
+                  }
+                />
               )}
             </Box>
             {/* Data panel — keyed by section index so the DataGrid resets
@@ -570,7 +607,7 @@ export default function Phd2AnalyzerPage() {
               sx={{
                 flex: 1,
                 p: 2,
-                display: tab === 1 ? "flex" : "none",
+                display: tab === 2 ? "flex" : "none",
                 flexDirection: "column",
                 minHeight: 0,
                 minWidth: 0,

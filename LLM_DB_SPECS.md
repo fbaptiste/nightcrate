@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.22.0
+**NightCrate version:** 0.25.0
 
 ## Overview
 

@@ -37,6 +37,17 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.22.0 — PHD2 Guide-Log Analyzer Pass A (Parser + Viewer Skeleton)](#v0220--phd2-guide-log-analyzer-pass-a-parser--viewer-skeleton) ✅
 - [v0.23.0 — PHD2 Pass B (Drift + Oscillation + Scatter + Event List)](#v0230--phd2-pass-b-drift--oscillation--scatter--event-list) ✅
 - [v0.24.0 — PHD2 Pass C (Range Selection + Copy Stats + Recent Files)](#v0240--phd2-pass-c-range-selection--copy-stats--recent-files) ✅
+- [v0.25.0 — PHD2 Pass D-1 (Metric Foundation)](#v0250--phd2-pass-d-1-metric-foundation) ✅
+- [v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)](#v0260--phd2-pass-d-2-spectrum-conformance--worm-markers)
+- [v0.27.0 — PHD2 Pass D-3 (Unguided RA Reconstruction)](#v0270--phd2-pass-d-3-unguided-ra-reconstruction)
+- [v0.28.0 — PHD2 Pass E-1 (Drive-Type-Aware Markers)](#v0280--phd2-pass-e-1-drive-type-aware-markers)
+- [v0.29.0 — PHD2 Pass E-2 (Per-Session Measured PE + Per-Instance Schema)](#v0290--phd2-pass-e-2-per-session-measured-pe--per-instance-schema)
+- [v0.30.0 — PHD2 Pass E-3 (GA + AO/Mount Toggle)](#v0300--phd2-pass-e-3-ga--aomount-toggle)
+- [v0.31.0 — PHD2 Pass F (Diagnostic Engine: Confident Tier)](#v0310--phd2-pass-f-diagnostic-engine-confident-tier)
+- [v0.32.0 — PHD2 Pass G (Diagnostic Engine: Speculative Tier + Equipment-Aware)](#v0320--phd2-pass-g-diagnostic-engine-speculative-tier--equipment-aware)
+- [v0.33.0 — PHD2 Pass H (Multi-Log + Trends + DB-Backed History)](#v0330--phd2-pass-h-multi-log--trends--db-backed-history)
+- [v0.34.0 — PHD2 Pass I (HTML Report + Per-Instance PE Corpus + Catalog Integration)](#v0340--phd2-pass-i-html-report--per-instance-pe-corpus--catalog-integration)
+- [v0.35.0+ — PHD2 Roadmap Tail (Debug Logs, Live Monitoring, AI Analysis, Recommendations)](#v0350--phd2-roadmap-tail-debug-logs-live-monitoring-ai-analysis-recommendations)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -3836,6 +3847,1025 @@ interaction-polish bundle that was deferred from Pass A + B.
 
 ---
 
+## v0.25.0 — PHD2 Pass D-1 (Metric Foundation)
+
+**Status:** ✅ Done
+**Branch:** `v0.25.0/phd2-metric-foundation`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §5.2.1 – §5.2.8
+
+### Goal
+
+Replace v0.22.0's metric formulas with PHDLogViewer's exact formulas so NightCrate's reported numbers (RMS, drift, PA error, scatter ellipse rotation, peak, oscillation, frame counts) match PHDLogViewer's for the same log. Foundational: every subsequent version (FFT, diagnostics, trends) consumes these metrics, so getting them aligned to the reference tool first avoids re-justifying differences later.
+
+### Why it stands on its own
+
+Corrected metrics are immediately user-visible — the Section Summary panel's RMS, drift, and oscillation rows all update. PA error becomes a new visible metric. Users who cross-reference NightCrate against PHDLogViewer will see matching numbers post-merge.
+
+### Scope
+
+#### §5.2.1 — RMS as standard deviation
+
+PHDLogViewer's `LFit::varx` is the **population variance** (West-incremental form). RMS is therefore standard deviation:
+
+$$\text{RMS}_{\text{RA}} = \sqrt{\frac{1}{N}\sum_{i=1}^{N}(x_i - \bar{x})^2}$$
+
+NOT RMS-from-zero `sqrt(mean(x²))`. The two differ when there's a systematic offset — sustained Dec drift, calibration centroid offset.
+
+#### §5.2.3 — RA drift via corrections-subtraction
+
+PHDLogViewer's algorithm (`AnalysisWin.cpp` lines ~135-160):
+
+```
+ra0, t0 = first included frame's (raraw, dt)
+ra1, t1 = last included frame's (raraw, dt)
+sum = Σ e.raguide for e where e.included ∧ e.radur ≠ 0  (signed)
+RaDrift_px_per_sec = (ra1 − ra0 − sum) / (t1 − t0)
+drift_ra_px_per_min = RaDrift_px_per_sec × 60
+```
+
+Total raw position change = total mount drift + total guide correction. Least-squares slope (current code) undershoots the true mount drift when the algorithm successfully damped the drift. Note `e.included` (not the stricter `Include(e)`) when summing corrections — DROP frames with valid RAGuideDistance values still contribute.
+
+#### §5.2.4 — Dec drift via unguided-frames-only accumulation
+
+Dec is typically guided in only one direction. PHDLogViewer accumulates Dec position changes only across frames where the previous frame was unguided (`decdur == 0`):
+
+```
+y_accum = 0
+prev_y = first_included.decraw
+prev_guided = (first_included.decdur != 0)
+LFit fit ; fit.data(first_included.dt, 0)
+
+for each subsequent included frame:
+    if not prev_guided:
+        y_accum += (decraw − prev_y)
+        fit.data(this.dt, y_accum)
+    prev_y = decraw
+    prev_guided = (decdur != 0)
+
+DecDrift_px_per_sec = fit.B()
+drift_dec_px_per_min = DecDrift × 60
+```
+
+#### §5.2.6 — PA error as per-section metric
+
+Formula per `AnalysisWin.cpp` line ~166:
+
+$$\alpha_{\text{arcmin}} = \frac{3.8197 \cdot |drift_{dec\_px/min}| \cdot pixel\_scale}{\cos(\delta)}$$
+
+Pre-conditions: section is guiding, `declination_deg` known, `drift_dec_px_per_min` computable, `pixel_scale` known. When any pre-condition fails, PA error = `None`; UI shows "PA error: not available" rather than coercing to a number.
+
+#### §5.2.7 — Scatter ellipse rotation (Theta = atan2(covxy, varx))
+
+PHDLogViewer's `LFit::Theta` (line ~95) uses:
+
+$$\theta = \text{atan2}(\text{cov}_{xy}, \text{var}_x)$$
+
+NOT the textbook PCA rotation `θ = ½ × atan2(2·covxy, varx − vary)`. After computing θ, axes are computed by re-iterating samples (`AnalysisWin.cpp` lines ~210-240):
+
+```cpp
+double cost = cos(theta), sint = sin(theta);
+LFit fitxy;
+for each included frame:
+    double dr = e.raraw − avg_ra;
+    double dd = e.decraw − avg_dec;
+    fitxy.data(dr * cost + dd * sint, dd * cost − dr * sint);
+lx = sqrt(fitxy.varx);   // sigma along major axis
+ly = sqrt(fitxy.vary);   // sigma along minor axis
+elongation = (lx + ly > 1e-6) ? abs(lx − ly) / (lx + ly) : 1.0
+```
+
+NightCrate adopts this form for cross-tool consistency even though it's not textbook PCA.
+
+#### §5.2.2 — Peak (sign-preserving max-by-abs)
+
+Per `AnalysisWin.cpp` line ~196: `if (fabs(e.raraw) > fabs(peak_r)) peak_r = e.raraw;`. Current code uses `max((abs(v) for v in ra_raw), default=None)` — drops the sign. Fix:
+
+```python
+def _signed_peak(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return max(values, key=abs)
+```
+
+#### §5.2.5 — Oscillation (count zero values as positive)
+
+Spec §11.14: *"Frames where x_i = 0 (which is rare) are conventionally treated as positive for this calculation."* Current code skips zeros; spec says treat as positive. Fix:
+
+```python
+def _oscillation_rate(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    signs = [1 if v >= 0 else -1 for v in values]
+    flips = sum(1 for a, b in zip(signs, signs[1:], strict=False) if a != b)
+    return flips / (len(values) - 1)
+```
+
+#### §5.2.8 — Frame counts and duration breakdown
+
+Add `duration_total_seconds` and `duration_included_seconds` fields to `SectionMetrics`. Backend computes both at parse time (using the in_settle filter for `included`); user-exclusions are layered on top client-side via the existing `phd2GuidingMetrics.ts` helper.
+
+### Math derivations
+
+#### §M1 — RMS as population variance via West-incremental update
+
+PHDLogViewer's `LFit::data` method computes streaming population mean and variance:
+
+```
+n_new = n + 1
+delta = x − μ_old
+μ_new = μ_old + delta / n_new
+var_new = (n × var_old + delta × (x − μ_new)) / n_new
+```
+
+Population variance (1/N denominator), NOT sample variance (1/(N-1)). `RMS = sqrt(var)` is therefore standard deviation.
+
+For series `[1, 2, 3]`: RMS-from-zero ≈ 2.16; standard deviation ≈ 0.82. PHDLogViewer reports the smaller; NightCrate currently reports the larger. This is the difference users will see post-v0.25.0.
+
+#### §M2 — Polar alignment formula reconciliation
+
+The 3.8197 constant comes from converting Barrett's arcsec/min-form derivation to px/min input.
+
+**Source distinction.** Two independent sources arrive at the same relationship:
+
+- **Barrett** (celestialwonders.com) — cited directly in PHDLogViewer's `AnalysisWin.cpp` line 166. Small-angle geometry of a polar-misaligned mount tracking through a sidereal day.
+- **Starry Nights** (starrynights.us) — derives the same relationship empirically with a 0.262 arcsec/min/arcmin coefficient at the celestial equator.
+
+Both produce the same number to within rounding: `3.8197 = 60 / 15.71 ≈ 1 / 0.262`. NightCrate uses PHDLogViewer's exact 3.8197 constant for cross-tool consistency, citing Barrett's derivation per PHDLogViewer's source-code attribution.
+
+Form (px/min): `α_arcmin = 3.8197 × drift_px_per_min × pixel_scale / cos(δ)`
+
+#### §M3 — Dec-drift unguided-frames-only accumulation
+
+`y_accum` accumulates Dec position changes only when the previous frame was unguided (decdur == 0). Those frames reflect actual sky drift over the inter-frame interval. Frames where the previous frame was guided are skipped because the inter-frame change is dominated by the guide pulse.
+
+Edge cases:
+- First included frame: `y_accum = 0`, `fit.data(first.dt, 0)`.
+- Single included frame OR all-guided frames: `fit.B()` returns 0 (matches PHDLogViewer).
+- Sections with no Dec guiding at all: every frame has `decdur == 0`, so every change is accumulated — equivalent to a least-squares slope of `decraw` vs `t`.
+
+### Files to modify
+
+**Backend:**
+
+- [x] `backend/src/nightcrate/services/phd2_metrics.py` — replaced `_rms` with `_stddev`, added `_ra_drift_corrections_subtracted`, `_dec_drift_unguided_only`, `_polar_alignment_error_arcmin`, `_signed_peak`, `_elongation`. `_oscillation_rate` rewritten to treat zeros as positive per spec §11.14.
+- [x] `backend/src/nightcrate/api/phd2_models.py` — `SectionMetrics` gained `polar_alignment_error_arcmin`, `elongation`, `duration_total_seconds`, `duration_included_seconds`; legacy `duration_seconds` removed.
+
+**Frontend:**
+
+- [x] `frontend/src/lib/phd2GuidingMetrics.ts` — full TS port of the PHDLogViewer-aligned formulas (stddev RMS, RA corrections-subtraction drift, Dec unguided-frames-only drift, signed peak, oscillation incl. zeros, PA error, elongation).
+- [x] `frontend/src/api/phd2.ts` — `SectionMetrics` interface updated with the new fields.
+- [x] `frontend/src/components/phd2/StatsPanel.tsx` — added "PA error" row (`1.23′`) + "Elongation" row. Frames row split onto multiple lines via `whiteSpace: pre-line`.
+- [x] `frontend/src/components/phd2/ScatterPlot.tsx` — switched to PHDLogViewer's `θ = atan2(covxy, varx)` form with re-iteration for `lx` / `ly`.
+
+### Tests (~30 new + regression updates)
+
+- [x] `tests/services/test_phd2_metrics.py` — every pinned-value test for RMS / drift / oscillation re-derived by hand. Six new test classes: `TestRmsAsStandardDeviation`, `TestSignedPeak`, `TestRaDriftCorrectionsSubtraction`, `TestDecDriftUnguidedFramesOnly`, `TestPolarAlignmentError` (incl. high-declination regression anchor at δ=69° pinned at 18.34′ — see PHDLogViewer parser-bug callout below), `TestElongation`, `TestOscillationZerosTreatedAsPositive`. Final tally: **57 metric tests** (up from ~22 in v0.24.0).
+- [x] PA-error coverage: 9 cases — celestial equator, mid-declination, negative declination, missing declination / pixel scale / drift, near-pole guard, **regression anchor at δ=69° pinned at 18.34′** (locks in the discrepancy with PHDLogViewer's broken parser).
+- [x] Dec-drift coverage: 5 cases — pure unguided collapses to least-squares slope, all-guided returns 0 (matches PHDLogViewer's `LFit::B()`), alternating guided/unguided uses only the unguided deltas, single-sample undefined, all-zero stays at 0.
+- [x] Elongation coverage: 6 cases — circular dispersion → 0, axis-aligned line → 1, zero dispersion → 1.0 defensive, single-sample → null, one-axis-null skipped, settle-window respected.
+
+### Verification
+
+- [x] Targeted: `uv run pytest tests/services/test_phd2_metrics.py tests/services/test_phd2_parser.py tests/test_phd2_api.py -n auto` → all pass.
+- [x] Full backend suite (`uv run pytest -n auto`) green at finalize-session.
+- [x] Manual cross-tool check on ASIAir sample log: NightCrate RMS RA / RMS Dec match PHDLogViewer's. PA error row renders for δ=69° guiding section with the 18.34′ value (PHDLogViewer's 6.5′ is wrong on this log — see below).
+
+### Beyond-plan UI work shipped on this branch
+
+The original v0.25.0 plan was backend-only. UI iteration during the
+session added:
+
+- [x] **`SectionInfoPanel`** (new component) — collapsible "Session info" panel under the Section list in the left nav. Surfaces parsed `SectionHeader` fields grouped into Optics / Camera / Mount / Sky position / Star + lock / Algorithms / Dither / Profile / Other (freeform passthrough). Group titles render in `primary.main` with bold + uppercase + letter spacing for emphasis.
+- [x] **Section + Viewport summaries moved into the left nav** below the Session info panel. Both default-collapsed; selection-aware via the existing `viewportMetrics` / `sectionMetrics` recompute. Right pane simplified to chart + scatter + events only.
+- [x] **Tab restructure** — "Graph" renamed to "Guiding"; new **Dispersion** tab between Guiding and Data hosting the `ScatterPlot`. Data tab moved to index 2.
+- [x] **Vertical scale sliders flank the chart** — replaced the four dropdowns / toggles (Guide axis, Pulse axis, SNR scale, Mass scale) with vertical MUI sliders on a 40 px rail each side of the SVG. Logarithmic mapping; UP = zoom in convention; per-slider reset button at the panel bottom; value-label tooltip flips to whichever side faces the chart so it never clips the left nav. Slider track aligns exactly with each panel's top / bottom horizontal axis line via `py: 0` override of MUI's default thumb padding.
+- [x] **Toolbar reorg** — Guide unit (`px / ″`) toggle moved to the top of the legend row; "Include settle frames in stats" moved into the action-button row beside Reset X zoom; selection-action buttons (Include in view / Exclude in view / Clear all) split onto their own row with tooltips. `toolbarHeight` is measured via `ResizeObserver` so the slider rails track the actual rendered toolbar height rather than a stale constant.
+- [x] **Panel-divider hairlines** at the midpoint of each gap between Guide / SNR / Mass. Default chart height bumped 440 → 650 px so SNR + Mass now render at the **same absolute height** (~110 px each).
+- [x] **SNR / Mass median-anchored zoom** — axis lo locked at `autoLo` so the data minimum is always visible at the bottom; axis hi controlled by the slider. Slider min clamps above the median (`median + max(floor, 0.2 × (autoHi − median))`) so the bulk can never get pushed off the top. Y-axis is computed from full-section samples (not visible window) so X-zoom doesn't jiggle the SNR / Mass scale.
+- [x] **Path field UX** — replaced plain TextField with `Autocomplete freeSolo` populated from `recentFiles`; dropdown shows filename / full path / relative time with a × per entry. Empty-state body copy rewritten. Field width capped (`flexBasis: 50%, maxWidth: 720, minWidth: 240`) so wide windows don't stretch it pointlessly.
+- [x] **Slider tooltip auto-dismiss** — `onChangeCommitted` blurs the focused element so the value label disappears the moment the user releases the slider (was sticking visible while the thumb retained focus).
+
+### PHDLogViewer parser-bug callout (worth flagging downstream)
+
+PHDLogViewer's `logparser.cpp` only reads declination from a line
+that starts with `"RA = "` followed by `" hr, Dec = "`. Modern PHD2
+logs (specifically ASIAir-bundled) emit a standalone `"Dec = N deg"`
+line that PHDLogViewer's parser doesn't match — `session.declination`
+stays at the constructor default 0.0, so `cos(δ) = 1` and the PA-error
+formula effectively drops the cos correction. PHDLogViewer's reported
+`6.5′` for the ASIAir sample log is wrong; NightCrate's `18.34′` at
+δ=69° is the mathematically correct value. The new
+`test_pa_pinned_at_high_declination_69` regression anchor pins the
+correct number so a future refactor can't quietly drift back to the
+no-cos form.
+
+When v0.31.0 ships the diagnostic engine, the
+`polar_alignment_from_dec_drift` rule should NOT be expected to match
+PHDLogViewer's reported number on ASIAir-bundled logs.
+
+### Out of scope
+
+- Spectrum tab work → v0.26.0
+- Unguided RA → v0.27.0
+- Strain wave markers → v0.28.0
+- Per-instance schema → v0.29.0
+
+---
+
+## v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)
+
+**Status:** Planned
+**Branch:** `v0.26.0/phd2-spectrum-conformance`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §6.1 (full FFT pipeline), §6.6 (worm markers)
+
+### Goal
+
+Implement the Spectrum tab strictly per spec v4 §6.1, with worm-period markers per §6.6. After this version, NightCrate's spectrum view matches PHDLogViewer's spectrum view's reported values for the same log: same Hamming window, same `4/N` normalization, same Akima interpolation, same MAD-3 threshold, same snap-to-peak hover, same Period/Amplitude/P-P/RMS readouts.
+
+### Why it stands on its own
+
+The Spectrum tab is a self-contained view. Worm markers add diagnostic value when a rig is selected, fall back to a heuristic otherwise. Users with worm-mount rigs immediately benefit. Strain-wave-mount users see the heuristic fallback; better support ships in v0.28.0.
+
+### Scope
+
+#### §6.1 — Full FFT pipeline (verified port)
+
+Pre-FFT pipeline (12 steps):
+
+1. **Filter** to `included == true ∧ StarWasFound(err) ∧ ¬in_settle ∧ ¬user_excluded`. Selection-aware: FFT recomputes on shift-drag selection / shift+alt-drag exclusion changes.
+2. **Minimum 12 entries** (`MIN_ENTRIES` per `AnalysisWin.cpp` line ~258). Skip + warn if fewer.
+3. **Cadence check.** `IQR(dt) / median(dt) > 0.20` → skip + warn ("frequency analysis disabled — sample cadence varies > 20%"). IQR-over-median is robust against DROP-frame gaps.
+4. **Drift subtraction** via least-squares linear fit. Drift slope `b` is preserved separately; FFT input is `x_i − (a + b·t_i)`.
+5. **Akima spline interpolation** to uniform cadence via `scipy.interpolate.Akima1DInterpolator`. Adds scipy as a backend dependency.
+6. **Hamming window** (NOT Hann). `w_i = 0.54 − 0.46 · cos(2π·i / (N − 1))`. NumPy: `np.hamming(n_uniform)`.
+7. **FFT** via `numpy.fft.rfft` on the windowed series.
+8. **Bin → period** mapping. `f_k = k / (N · Δt)`, `p_k = N · Δt / k`. Skip DC (k=0) and the symmetric upper half. PHDLogViewer keeps `nfft = N/2 − 1` bins.
+9. **Amplitude normalization** `4/N` (per `AnalysisWin.cpp` line ~395 `double scale = 4. / (double) n;`). Then `amp_arcsec = amp_pixels × pixel_scale`.
+10. **Display Y axis: log scale.** Lower bound: `max(amp_max / 10000, 0.001 arcsec)`. Upper: `amp_max × 1.1`.
+11. **Display X axis: log scale, period in seconds.** Range: 5 s to roughly half the section duration.
+12. **Seeing-band shading** at < 5 s with "atmospheric seeing" label.
+
+Peak detection (§6.1.6):
+
+- Threshold: `median(amp) + 3 × 1.4826 × MAD(amp)`. The 1.4826 factor scales MAD to be sigma-equivalent for normal data.
+- Find local maxima above threshold.
+- Deduplicate within ±5 % period (keep higher amplitude).
+- Cap at top 5 by amplitude across all visible traces (NOT per-trace).
+- Display: dot markers only, **no on-chart text labels**.
+
+Hover tooltip (§6.1.7):
+
+- Snap-to-peak within ±8 pixels of cursor (matches `OnMove` handler at `AnalysisWin.cpp` lines ~860-890).
+- Tooltip readouts (per `AnalysisWin.cpp` line ~895):
+  - **Period**: formatted naturally — "23.4 s", "1m 17s", "11m 28s"
+  - **Amplitude**: `a` arcsec
+  - **Peak-to-peak**: `2 · a` arcsec
+  - **RMS**: `(√2 / 2) · a` ≈ `0.7071 · a` arcsec
+- All four readouts visible; per-visible-trace.
+
+#### §6.6 — Worm-period markers
+
+Per-rig worm period via `mount.worm_period_seconds`. Re-add migration if v0.25.0 didn't carry it forward.
+
+When `mount.drive_type == 'worm'` AND `worm_period_seconds` is set:
+- Vertical dashed line at the worm period.
+- If a detected peak falls within ±5% of the worm period: callout chip "Worm-period peak: 0.42″ amp @ 479 s (mount: <name>)".
+
+Heuristic fallback (no rig OR no worm period known):
+- Largest peak in [300, 800] s with amplitude > **0.5 arcsec** (NOT 2.0 — v3.1 corrected this).
+- Labeled "likely worm-period peak (uncertain without mount identification)".
+
+Worm-period seed values per spec v4 §6.6 table.
+
+### Math derivations
+
+#### §M1 — Hamming amplitude normalization 4/N
+
+For a discrete sinusoid `x_i = A · cos(2π · k₀ · i / N)` windowed by Hamming `w_i = 0.54 − 0.46 · cos(2π·i / (N−1))`:
+
+Hamming coherent gain `G_c = mean(w_i) ≈ 0.54`. Windowed FFT magnitude at the tone's bin: `|X_{k_0}| ≈ A · N · G_c / 2`. Solving for A: `A ≈ 2 · |X| / (N · G_c) ≈ 3.7 · |X| / N`.
+
+PHDLogViewer rounds to **4** for compatibility: `a_arcsec = 4 · |X_k| / N · pixel_scale`. Over-estimates true peak amplitude by ~8% but **NightCrate must match PHDLogViewer's value** so cross-tool comparisons line up.
+
+#### §M2 — MAD-based peak threshold
+
+`MAD(x) = median(|x_i − median(x)|)`. For normal data, `σ ≈ 1.4826 · MAD`. 3-sigma-equivalent threshold: `median(a) + 3 · 1.4826 · MAD(a)`. Robust against outliers; produces zero false peaks on a flat noise spectrum.
+
+### Files to modify
+
+**Backend:**
+
+- [ ] `backend/src/nightcrate/services/phd2_fft.py` — full rewrite per §6.1. Use `scipy.interpolate.Akima1DInterpolator`, `np.hamming`, `4/N`, MAD with 1.4826 factor.
+- [ ] `backend/src/nightcrate/api/phd2_models.py` — `FftResult.peaks` capped at 5 (was 8); `FftPeak` adds `peak_to_peak_arcsec` and `rms_arcsec`.
+- [ ] `backend/src/nightcrate/api/phd2.py` — `_HEURISTIC_AMP_MIN_ARCSEC = 0.5` (was 2.0).
+- [ ] Migration `<NNNN>.mount_worm_period.sql` — re-add `mount.worm_period_seconds` + `rig_summary` view rebuild if v0.25.0 doesn't carry it.
+
+**Backend new dep:**
+
+- [ ] Add `scipy>=1.11` to `backend/pyproject.toml`. BSD-3-Clause. Akima spline is the right interpolation for oscillatory data; pure-numpy Akima is ~50 lines of non-trivial math.
+
+**Frontend:**
+
+- [ ] `frontend/src/components/phd2/FftChart.tsx` — full rewrite for v4 conformance: snap-to-peak hover, P-P + RMS readouts in tooltip, top-5 peak dots, no on-chart text. Wider left margin (78 px), exponential-format big numbers (lessons from v0.25.0 in-flight bugs). Empty-trace state keeps toggles visible.
+- [ ] `frontend/src/api/phd2.ts` — type updates.
+
+### Tests (~25 new)
+
+- [ ] 10 FFT tests (synthetic sinusoids at various periods + amplitudes, cadence guards, too-short guards, noise floor produces zero peaks)
+- [ ] 6 hover tooltip tests (snap-to-peak within 8 px, falls through to interp when no nearby peak, tooltip values match formula)
+- [ ] 5 worm-marker tests (rig with worm → marker fires; heuristic threshold 0.5; harmonic mount produces no marker; rig invalid → 404; cache key includes rig_id)
+- [ ] 4 dep validation tests (`scipy.interpolate.Akima1DInterpolator` available; basic interpolation correctness)
+
+### Verification
+
+- [ ] Backend pytest passes
+- [ ] Manual: open ASIAir sample log → Spectrum tab → verify peak amplitudes match what PHDLogViewer reports for the same log. Hover near a peak → snap activates within ±8 px. Tooltip shows Period / Amplitude / P-P / RMS.
+
+### Out of scope
+
+- Unguided RA → v0.27.0
+- Strain wave markers + drive_type vocab → v0.28.0
+- Measured PE structured output → v0.29.0
+- GA section handling → v0.30.0
+
+---
+
+## v0.27.0 — PHD2 Pass D-3 (Unguided RA Reconstruction)
+
+**Status:** Planned
+**Branch:** `v0.27.0/phd2-unguided-ra`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §6.2 (algorithm), §6.1.8 (Spectrum-tab Unguided toggle paired with overlay)
+
+### Goal
+
+Ship the unguided RA reconstruction as paired surfaces: a toggleable overlay on the time-series chart AND a toggleable trace on the Spectrum tab. The two ship together because the spectrum view alone is hard to interpret without seeing the time-domain unguided trace alongside.
+
+### Why it stands on its own
+
+Unguided RA is the killer feature for mount tuning — it shows what the mount's native PE looks like without the algorithm's corrections layered on. Users tuning their mount immediately benefit. The §6.2 algorithm is a verified port of PHDLogViewer's `AnalysisWin.cpp::GARun::Analyze`, so the math is settled.
+
+### Scope
+
+#### §6.2 — PHDLogViewer recurrence algorithm
+
+```python
+def reconstruct_unguided_ra(section, undo_corrections=True):
+    out = []
+    rapos = 0.0
+    prev_raraw = 0.0
+    prev_raguide = 0.0
+    for s in section.samples:
+        # Match PHDLogViewer's Include() = e.included && StarWasFound(e.err).
+        # NOT mount-kind-restricted — AO frames with valid star data
+        # accumulate normally.
+        if s.ra_raw_px is None or s.error_code != 0:
+            out.append(None)
+            continue
+        raraw = s.ra_raw_px
+        raguide = s.ra_guide_px or 0.0
+        move = raraw - prev_raraw - prev_raguide
+        rapos += move
+        out.append(rapos)
+        prev_raraw = raraw
+        prev_raguide = raguide if undo_corrections else 0.0
+    return out
+```
+
+**Filter scope (post-CD-review).** PHDLogViewer's `Include()` predicate is mount-kind-agnostic (`AnalysisWin.cpp` line ~106: `return e.included && StarWasFound(e.err);`). AO frames with valid star data should accumulate; the AO's correction is captured in `ra_guide_px` exactly like a Mount pulse. Both contribute to the cumulative correction the recurrence backs out. The corrected filter keeps only the null-data check (`ra_raw_px is None`) and the star-found check (`error_code != 0`).
+
+#### Time-series overlay
+
+In `TimeSeriesChart.tsx`:
+- New `unguidedRa: Array<number | null> | null` prop.
+- New `raUnguided: false` visibility key.
+- Legend chip "Unguided RA" in teal, disabled when prop is null.
+- Third path inside the existing main panel using `xScale` + `yDistScale`. `defined((_, i) => unguidedRa[i] !== null)` so the line breaks across DROP/AO frames.
+- Tooltip row appended.
+- **No drift subtraction** for the time-series overlay.
+
+#### Spectrum-tab Unguided RA toggle
+
+In `FftChart.tsx`:
+- New trace toggle "Unguided RA" alongside RA / Dec, off by default.
+- When on: backend computes the FFT of the drift-subtracted unguided RA trace and surfaces as `analysis.fft_unguided`.
+- Drift is subtracted before windowing so polar-alignment-induced drift doesn't dominate the low-frequency end.
+
+### Math derivation
+
+#### §M1 — Sign convention proof for the recurrence
+
+PHD2's `RAGuideDistance` represents the algorithm's *desired change* in star position. Between consecutive frames:
+
+$$\text{raraw}_{\text{next}} = \text{raraw}_{\text{prev}} + \text{raguide}_{\text{prev}} + \text{drift}_{\text{during}}$$
+
+Solving: `drift_during = raraw_next − raraw_prev − raguide_prev = move`. So `rapos = Σ move_i` accumulates the unguided drift trajectory.
+
+**Why simpler than the v3 algorithm.** v3 used `RADuration × xRate × sign(direction)`, requiring special handling for min-move frames, clipped pulses, parity, DROP frames. The PHDLogViewer recurrence handles all of these implicitly because RAGuideDistance is already the signed pixel-space output:
+- Min-move: `ra_guide_px = 0` → recurrence skips naturally.
+- Clipped pulses: PHDLogViewer's algorithm output reflects the clipped value; the next raraw measurement reflects what the mount actually did.
+- DROP frames: filtered by `error_code != 0` AND `ra_raw_px is None`; `prev_*` don't update; the next valid frame's `move` correctly spans the gap.
+- AO frames: accumulate alongside Mount frames; the unguided trace shows what would have happened with NEITHER source of correction applied.
+- Parity: RAGuideDistance is signed in the same sense as RARawDistance.
+
+### Files to modify
+
+**Backend:**
+
+- [ ] `backend/src/nightcrate/services/phd2_unguided.py` — rewrite per §6.2 algorithm (~80 lines).
+- [ ] `backend/src/nightcrate/api/phd2.py` — extend `_build_section_analysis` to include `unguided_ra_px` + `fft_unguided`.
+- [ ] `backend/src/nightcrate/api/phd2_models.py` — extend `SectionAnalysis`.
+
+**Frontend:**
+
+- [ ] `frontend/src/components/phd2/TimeSeriesChart.tsx` — add unguided RA overlay (~70 LOC). Visibility key, legend chip, rendered path, tooltip row.
+- [ ] `frontend/src/components/phd2/FftChart.tsx` — add Unguided RA trace toggle alongside RA / Dec.
+- [ ] `frontend/src/pages/Phd2AnalyzerPage.tsx` — pass `selected.analysis.unguided_ra_px` to TimeSeriesChart.
+- [ ] `frontend/src/api/phd2.ts` — type updates.
+
+### Tests (~10 new)
+
+- [ ] `test_phd2_unguided.py` — full rewrite. 8 tests:
+  - Zero corrections + zero drift → flat trace at 0
+  - Constant drift + zero corrections → linear trace
+  - Perfect correction + constant drift → recovers drift via raguide accumulation
+  - DROP frame skips without breaking recurrence (output is None at that index; `prev_*` carry forward unchanged; the next valid frame's `move` correctly spans the gap)
+  - **AO frames accumulate alongside Mount frames** with valid `ra_raw_px` and `ra_guide_px` — they are NOT treated like DROP (CD-review correction)
+  - Missing `ra_guide_px` → falls back to 0
+  - `undo_corrections=False` produces raw-position-anchored-at-zero trace
+  - Mixed Mount + AO + DROP within one section
+- [ ] `test_phd2_api.py` — 2 tests for `fft_unguided` in `SectionAnalysis` (presence + correct length).
+
+### Verification
+
+- [ ] Backend pytest passes
+- [ ] Manual: open ASIAir sample log → Graph tab → toggle Unguided RA → teal trace appears. Switch to Spectrum tab → toggle Unguided RA → second trace appears.
+
+### Out of scope
+
+- Drive_type vocabulary + strain wave markers → v0.28.0
+- Per-session measured PE structured output → v0.29.0
+
+---
+
+## v0.28.0 — PHD2 Pass E-1 (Drive-Type-Aware Markers)
+
+**Status:** Planned
+**Branch:** `v0.28.0/phd2-drive-types`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §6.7 (strain wave + hybrid mounts), §6.6 (integration point)
+
+### Goal
+
+Replace v0.26.0's worm-only marker model with a drive-type-aware `PeMarker` that handles worm, strain wave, hybrid (RA strain wave + Dec worm), direct-drive-encoder, and friction mounts. Strain-wave-mount users (ZWO AM5, Rainbow Astro RST-135, iOptron HEM-series, Pegasus NYX) finally get rig-aware diagnostics.
+
+### Why it stands on its own
+
+Strain wave mounts are mainstream — ZWO AM5 alone is one of the most popular mounts sold in 2024-2026. v0.26.0's worm-only marker model is silently wrong for them (heuristic fallback fires in the wrong period range). v0.28.0 fixes this and adds proper support.
+
+### Scope
+
+#### Schema migration
+
+New migration: `<NNNN>.mount_drive_type_strain_wave.sql`.
+
+**Pre-migration verification step.** Before writing the migration, run `SELECT DISTINCT drive_type FROM mount;` against the live database to confirm the actual freeform strings present. Currently expected from the seed CSV:
+- `'Worm gear'` → `'worm'`
+- `'Harmonic'` → `'strain_wave'`
+- `'Direct drive'` → `'direct_drive_encoder'` (Planewave L-series)
+- empty / null → `'unknown'`
+
+Any unmapped values must be explicitly handled — migration fails loudly rather than silently degrading to `'unknown'`.
+
+- Add CHECK constraint: `CHECK (drive_type IN ('worm', 'strain_wave', 'strain_wave_with_encoder', 'hybrid_strain_wave_ra', 'hybrid_strain_wave_ra_with_encoder', 'direct_drive_encoder', 'friction', 'unknown'))`.
+- Add `dominant_period_s`, `expected_period_band_min_s`, `expected_period_band_max_s` REAL columns (NULL when unknown).
+- Add `dec_worm_period_s` for hybrid mounts (HEM27 = 600 s inherited from GEM28).
+- Rebuild `rig_summary` view to expose all four new columns (prefixed `mount_dominant_period_s` etc.).
+
+#### Strain wave seed data (per v4 §6.7 table)
+
+| Mount | drive_type | dominant_period_s | band_min, band_max | dec_worm |
+|---|---|---|---|---|
+| ZWO AM3 | strain_wave | 288 | 180, 360 | — |
+| ZWO AM5 | strain_wave | 288 | 180, 360 | — |
+| ZWO AM5N | strain_wave | 288 | 180, 360 | — |
+| Rainbow Astro RST-135 | strain_wave | 430 | 300, 600 | — |
+| Rainbow Astro RST-135E | strain_wave_with_encoder | 430 | 300, 600 | — |
+| iOptron HEM27 | hybrid_strain_wave_ra | 360 | 250, 480 | 600 |
+| iOptron HEM27EC | hybrid_strain_wave_ra_with_encoder | 360 | 250, 480 | 600 |
+| iOptron HEM44 | hybrid_strain_wave_ra | NULL | 250, 600 | 600 |
+| iOptron HEM44EC | hybrid_strain_wave_ra_with_encoder | NULL | 250, 600 | 600 |
+| iOptron HAE29 | strain_wave | NULL | 250, 600 | — |
+| iOptron HAE43 | strain_wave | NULL | 250, 600 | — |
+| iOptron HAE69 | strain_wave | NULL | 250, 600 | — |
+| Pegasus Astro NYX-101 | strain_wave | 430 | 350, 500 | — |
+| Sky-Watcher Wave 100i | strain_wave | NULL | 200, 500 | — |
+| Sky-Watcher Wave 150i | strain_wave | NULL | 200, 500 | — |
+
+Per CD-review correction: the seed CSV writes **one row per mount model**. HAE29/43/69 are separate physical mounts with different load capacities; SW Wave 100i and 150i are similarly distinct. Period values are placeholder NULL until community measurements arrive.
+
+#### Backend `_build_pe_marker` (renamed from `_build_worm_marker`)
+
+Branches on `drive_type`:
+
+```python
+if drive_type == 'worm' and worm_period_seconds:
+    return _worm_marker(...)
+elif drive_type in ('strain_wave', 'strain_wave_with_encoder'):
+    return _strain_wave_marker(dominant_period_s, expected_band)
+elif drive_type in ('hybrid_strain_wave_ra', 'hybrid_strain_wave_ra_with_encoder'):
+    return PeMarker(
+        ra_marker=_strain_wave_marker(...),
+        dec_marker=_worm_marker(period=dec_worm_period_s),
+    )
+elif drive_type == 'direct_drive_encoder':
+    return None  # no markers
+else:  # unknown or no rig
+    return _heuristic_marker(...)
+```
+
+Strain wave marker variant: vertical line at `dominant_period_s` if known + shaded band over `[band_min, band_max]` if known. Both if both known. Callout chip when a peak falls within the band.
+
+Encoder variants get the same band but with reduced amplitude expectation (display only — rule logic doesn't change).
+
+#### PeMarker model
+
+```python
+class PeMarker(BaseModel):
+    kind: Literal['worm_point', 'strain_wave_band', 'hybrid', 'heuristic']
+    period_s: float | None
+    label: str
+    source: Literal['mount', 'heuristic']
+    matched_peak: FftPeak | None
+    band_min_s: float | None
+    band_max_s: float | None
+    ra_marker: PeMarker | None
+    dec_marker: PeMarker | None
+```
+
+#### Frontend
+
+- `FftChart.tsx` — render the band variant as a translucent SVG `<rect>` covering `[band_min, band_max]` × full chart height. Render the dominant period as a sharper vertical line on top. Hybrid mounts render two markers (one per RA/Dec spectrum).
+- `RigSelectBar.tsx` — chip hint text adapts to drive_type:
+  - "EQ6-R Pro worm 479 s"
+  - "AM5 strain wave ~288 s (band 180-360 s)"
+  - "HEM27 hybrid: RA strain wave ~360 s + Dec worm 600 s"
+  - "HEM44 strain wave (period unknown — measure)"
+
+### Files to modify
+
+- [ ] Migration `<NNNN>.mount_drive_type_strain_wave.sql`
+- [ ] Seed CSV update with the 15 strain wave / hybrid rows
+- [ ] `backend/src/nightcrate/api/phd2.py` — `_build_pe_marker` replaces `_build_worm_marker`
+- [ ] `backend/src/nightcrate/api/phd2_models.py` — `PeMarker` replaces `WormMarker`
+- [ ] `frontend/src/components/phd2/FftChart.tsx` — band marker rendering
+- [ ] `frontend/src/components/phd2/RigSelectBar.tsx` — drive-type-aware chip text
+
+### Tests (~20 new)
+
+- [ ] 6 strain wave marker tests (dominant + band, dominant only, band only, neither known)
+- [ ] 4 hybrid mount tests (HEM27 produces two markers; RA strain wave + Dec worm both present; band on RA, point on Dec)
+- [ ] 4 direct-drive tests (no marker fires)
+- [ ] 2 encoder variant tests (RST-135E gets reduced amplitude expectation)
+- [ ] 4 schema migration regression tests (existing worm seeds still load; new strain wave seeds backfill correctly)
+
+### Verification
+
+- [ ] Backend pytest passes
+- [ ] Manual: pick AM5 rig → strain wave band marker on Spectrum tab. Pick HEM27 → two markers (RA strain wave band, Dec worm point). Pick L-500 → no marker.
+
+### Out of scope
+
+- Per-session measured PE structured output → v0.29.0
+- Override-with-measured behavior → v0.29.0
+
+---
+
+## v0.29.0 — PHD2 Pass E-2 (Per-Session Measured PE + Per-Instance Schema)
+
+**Status:** Planned
+**Branch:** `v0.29.0/phd2-measured-pe`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §6.4 (per-session measured PE), §6.8 (per-instance schema)
+
+### Goal
+
+Make measured PE a first-class structured output (not just an on-chart thing users eyeball), and introduce the per-mount-instance distinction (one user can own two AM5s; their measurements should attach to the specific physical mount, not just the model). Foundational schema work that v0.34.0's per-instance corpus UI builds on.
+
+### Why it stands on its own
+
+The Measured PE panel is immediately user-visible: every guiding section gets a structured PE measurement with confidence indicator + comparison to manufacturer default. The override behavior (use measured period instead of seed default when ≥3 stable measurements exist) makes the v0.28.0 spectrum markers smarter for users with history.
+
+### Scope
+
+#### Per-instance schema migration
+
+v4 §6.8 distinguishes mount **model** (manufacturer's gear) from mount **instance** (the specific physical mount the user owns).
+
+```sql
+CREATE TABLE mount_instance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mount_id INTEGER NOT NULL REFERENCES mount(id),
+    nickname TEXT NOT NULL,
+    serial_number TEXT,
+    purchase_date TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Add `mount_instance_id INTEGER REFERENCES mount_instance(id)` to the `rig` table. Migration backfills: each existing rig with a mount auto-creates one instance with nickname = mount model name + " (auto)".
+
+Update `rig_summary` view to expose `mount_instance_id`, `mount_instance_nickname`.
+
+#### Measured PE persistence
+
+```sql
+CREATE TABLE phd2_measured_pe (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    log_file_path TEXT NOT NULL,
+    log_file_mtime_ns INTEGER NOT NULL,
+    log_file_size INTEGER NOT NULL,
+    section_index INTEGER NOT NULL,
+    measured_at TEXT NOT NULL DEFAULT (datetime('now')),
+    rig_id INTEGER REFERENCES rig(id),
+    mount_instance_id INTEGER REFERENCES mount_instance(id),
+    pe_period_s REAL,
+    pe_amplitude_arcsec REAL,
+    pe_peak_to_peak_arcsec REAL,
+    pe_rms_arcsec REAL,
+    pe_dominant_peak_confidence TEXT
+        CHECK (pe_dominant_peak_confidence IN ('high', 'medium', 'low')),
+    pe_section_duration_min REAL,
+    pe_section_duration_vs_period_ratio REAL,
+    pe_secondary_peaks_json TEXT,
+    pe_shape_category TEXT
+        CHECK (pe_shape_category IN ('sinusoidal', 'asymmetric', 'multi-harmonic')),
+    pe_measurement_at_declination REAL,
+    pe_measurement_pier_side TEXT,
+    pe_measurement_payload_kg REAL,
+    is_guiding_assistant INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (log_file_path, log_file_mtime_ns, log_file_size, section_index, rig_id)
+);
+```
+
+Indexes: `(mount_instance_id, measured_at)`, `(rig_id, measured_at)`, `(log_file_path)`.
+
+#### Backend service `services/phd2_measured_pe.py`
+
+```python
+def measure_section_pe(
+    section: LogSection,
+    fft_unguided: FftResult,
+    arcsec_scale: float | None,
+) -> MeasuredPe | None:
+    """Compute structured measured PE per v4 §6.4.1.
+
+    Returns None when:
+    - Unguided FFT unavailable
+    - No dominant peak detected
+    - Dominant peak below confidence threshold
+    """
+```
+
+Persisted automatically (idempotent on UNIQUE) when the section is guiding AND the rig has a worm/strain_wave/hybrid mount OR is a Guiding Assistant section OR Unguided RA toggle is on.
+
+#### Override behavior (§6.4.3)
+
+When `mount_instance_id` is set and has ≥ 3 prior measurements with stable period (CV < 5%), use the per-instance measured period for the spectrum marker — overriding the manufacturer default from §6.7 seed data. Both shown on chart (manufacturer as faint secondary marker, measured as primary).
+
+#### Frontend Measured PE panel
+
+In `Phd2AnalyzerPage.tsx`, new "Measured PE" panel under the Section Summary on the Graph tab. Shows:
+
+- Period (with confidence indicator: dot color)
+- Amplitude / Peak-to-peak / RMS
+- Section-duration-to-period ratio (warn icon if < 2)
+- Shape category
+- "Measured 295 s / manufacturer 288 s — well within expected range"
+- "Measured 295 s / your AM5 #1's average 293 s ± 4 s over 8 sessions" (when per-instance history exists)
+
+Mount Instance management UI in Settings or Equipment area: view / create / edit / delete instances. Rig form gets a `mount_instance` dropdown.
+
+### Files to modify
+
+- [ ] `backend/src/nightcrate/db/migrations/<NNNN>.mount_instance.sql`
+- [ ] `backend/src/nightcrate/db/migrations/<NNNN+1>.phd2_measured_pe.sql`
+- [ ] `backend/src/nightcrate/services/phd2_measured_pe.py` (new)
+- [ ] `backend/src/nightcrate/api/phd2_models.py` — add `MeasuredPe`, attach to `SectionAnalysis`
+- [ ] `backend/src/nightcrate/api/phd2.py` — measure + persist
+- [ ] `backend/src/nightcrate/api/equipment_models.py` — `MountInstance` Pydantic models
+- [ ] `backend/src/nightcrate/api/equipment.py` — `MountInstance` CRUD
+- [ ] `frontend/src/pages/MountInstancesPage.tsx` (new)
+- [ ] `frontend/src/components/equipment/MountInstanceFormDialog.tsx`
+- [ ] `frontend/src/components/phd2/MeasuredPePanel.tsx`
+- [ ] `frontend/src/components/rigs/RigFormDialog.tsx` — add mount_instance picker
+
+### Tests (~25 new)
+
+- [ ] 8 measured PE service tests (synthetic spectra → expected measurements; confidence levels; secondary peaks; shape category)
+- [ ] 6 mount_instance schema tests (backfill correctness, CRUD, cascade behavior)
+- [ ] 4 override behavior tests (≥3 stable → measured used; otherwise manufacturer default; both markers visible)
+- [ ] 4 measured-pe persistence tests (idempotency on UNIQUE; per-rig query; per-instance query)
+- [ ] 3 UI tests (panel renders correctly, history appears when available)
+
+### Verification
+
+- [ ] Backend pytest passes
+- [ ] Manual: open ASIAir sample log → Measured PE panel shows period/amplitude/P-P/RMS for the guiding section. Open the same log a second time → no duplicate row in `phd2_measured_pe` (idempotent).
+
+### Out of scope
+
+- Per-instance corpus UI (history scatter, drift-over-time alert) → v0.34.0
+- Diagnostic engine consumption of measured PE → v0.31.0 (`guiding_pe_suppression_low` rule)
+
+---
+
+## v0.30.0 — PHD2 Pass E-3 (GA + AO/Mount Toggle)
+
+**Status:** Planned
+**Branch:** `v0.30.0/phd2-ga-ao`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §6.3, §6.5
+
+### Goal
+
+Round out v2-phase parity with PHDLogViewer: detect Guiding Assistant sections and render a dedicated panel; add AO vs Mount corrections toggle when AO frames are present.
+
+### Why it stands on its own
+
+GA sections currently render with the standard guiding-section view, which misses the GA-specific outputs (unguided RMS, polar alignment estimate, backlash). Users running GA get a much better view post-v0.30.0. AO toggle is mainstream for SX AO and similar adaptive-optics setups.
+
+### Scope
+
+#### §6.3 — GA detection + panel
+
+Detection (`is_guiding_assistant_section`). A section is GA when **either** condition holds (per spec v4 §6.3 — CD-review correction; earlier draft used AND, which is strictly more restrictive):
+
+1. `Guiding Output Disabled` and `Guiding Output Enabled` INFO events bracketing the section, **OR**
+2. `RADuration == 0 ∧ DECDuration == 0` for ≥ 90 % of frames in the section.
+
+PHDLogViewer doesn't auto-detect GA at all (the user picks the "Analyze GA" menu item explicitly), so this is a NightCrate-specific design decision; spec's permissive OR is the right choice for an auto-detector.
+
+GA panel:
+- **Unguided RMS RA / Dec / Total** — using §5.2.1 RMS formula on the raw distance series. No drift subtraction.
+- **Estimated polar alignment error** — using §5.2.6 PA formula.
+- **Measured Dec backlash** if a backlash sub-sequence is detected. Read directly from PHD2's GA-emitted INFO line if logged; otherwise compute from pulse-displacement asymmetry.
+- **Drift-corrected RA trace** with §6.2 unguided reconstruction.
+- **Dedicated FFT** on the unguided RA trace with wider period range (`[5, min(duration/2, 3600)]` instead of the standard `[5, min(duration/2, 1800)]`). Input to §6.4 measured PE for GA sections.
+
+#### §6.5 — AO/Mount toggle
+
+When a section contains both `mount = "Mount"` and `mount = "AO"` samples:
+- Three-state toggle in TimeSeriesChart: "Mount only" (default) / "AO only" / "Both"
+- Filter chart input data accordingly
+- Stats panel shows separate "Mount-corrected RMS" / "AO-corrected RMS" rows
+- Spectrum tab respects the toggle (computes FFT on the active subset)
+
+### Files to modify
+
+- [ ] `backend/src/nightcrate/services/phd2_ga.py` (new) — `is_guiding_assistant_section`, backlash sub-sequence detector
+- [ ] `backend/src/nightcrate/api/phd2.py` — GA section detection in section-analysis path
+- [ ] `frontend/src/components/phd2/GuidingAssistantPanel.tsx` (new)
+- [ ] `frontend/src/components/phd2/TimeSeriesChart.tsx` — AO/Mount toggle
+- [ ] `frontend/src/components/phd2/StatsPanel.tsx` — AO-corrected vs mount-corrected rows
+- [ ] `frontend/src/pages/Phd2AnalyzerPage.tsx` — special-case routing for GA
+
+### Tests (~15 new)
+
+- [ ] 4 GA detection tests (positive/negative cases, edge cases with one stray pulse)
+- [ ] 3 backlash sub-sequence detection tests
+- [ ] 6 AO/Mount toggle tests
+- [ ] 2 GA panel display tests
+
+### Verification
+
+- [ ] Backend pytest passes
+- [ ] Manual: open a real GA log → GA panel renders. Open AO log → toggle works.
+
+---
+
+## v0.31.0 — PHD2 Pass F (Diagnostic Engine: Confident Tier)
+
+**Status:** Planned
+**Branch:** `v0.31.0/phd2-diagnostics-confident`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §7.1, §7.2 (8 confident rules), §7.5 (settings)
+
+### Goal
+
+Ship the diagnostic engine with eight confident-tier rules. After this version, problematic logs surface 1-3 confident findings within 5 seconds of loading, replacing the "post log to forum, wait for expert" workflow for common cases.
+
+### Why it stands on its own
+
+The diagnostic engine is the primary v3-phase NightCrate differentiator. Confident-tier rules are the highest-value subset — they fire only when the signature has a single canonical explanation. Speculative rules ship in v0.32.0; confident rules alone are immediately useful.
+
+### Scope
+
+#### Engine scaffolding (§7.1)
+
+- `services/phd2_diagnostics.py` (new) — `Rule` Protocol, `Finding` dataclass, `run_diagnostics(section, metrics, settings)`.
+- **Tier-override hook on the Rule Protocol.** Every rule has an optional method `tier_override(evidence) -> Literal['confident', 'speculative'] | None`. Default returns `None` (use the rule's class-level default tier). Used by `out_of_band_spectrum_peaks` in v0.32.0 to elevate direct-drive-encoder peaks to confident tier even though the rule's default is speculative. Bake into v0.31.0's Protocol so v0.32.0 doesn't need to retrofit.
+
+#### Eight confident rules (§7.2)
+
+1. **`polar_alignment_from_dec_drift`** — uses §5.2.6 PA formula (post-v0.25.0).
+2. **`dec_backlash_overshoot_pattern`** — 5+3+2× signature, ≥3 sequences threshold.
+3. **`snr_drop_preceded_star_lost`** — 30 s SNR comparison.
+4. **`sustained_dec_direction_pulses`** — ≥90% in one direction over ≥15 min.
+5. **`star_saturation`** — ≥5% saturated/mass-change frames.
+6. **`calibration_axes_not_orthogonal`** — direction-agnostic distance from perpendicular. Per CD review: the spec's literal `|x_angle − y_angle − 90°| > 5°` form fails for axes oriented 270° apart. Two angles representing axes (lines, not vectors) are perpendicular when `|x − y| ≡ 90° (mod 180°)`. The correct modulus-aware form:
+
+   ```python
+   def deviation_from_orthogonal_deg(x_angle: float, y_angle: float) -> float:
+       diff_mod_180 = abs(x_angle - y_angle) % 180.0
+       line_angle = min(diff_mod_180, 180.0 - diff_mod_180)
+       return abs(line_angle - 90.0)
+   ```
+
+   Rule fires when `deviation_from_orthogonal_deg > 5`. Verified against edge cases:
+   - `x=0, y=90`: diff=90, fold=90, deviation=0 ✓ (perpendicular)
+   - `x=0, y=270`: diff=270, mod=90, fold=90, deviation=0 ✓ (perpendicular, despite 270° representation)
+   - `x=0, y=0`: deviation=90 ✓ (parallel)
+   - `x=0, y=180`: deviation=90 ✓ (anti-parallel, treated as parallel)
+7. **`chasing_seeing_ra`** — three-way AND on oscillation + pulse + exposure.
+8. **`guiding_pe_suppression_low`** (NEW per v4 §7.2) — compares raw RA spectrum amplitude vs unguided RA spectrum amplitude at the dominant PE period (uses v0.27.0 unguided FFT + v0.29.0 measured PE):
+   ```
+   suppression_ratio = 1 - (raw_RA_amp_at_pe_period / unguided_RA_amp_at_pe_period)
+   ```
+   Fires when `pe_amplitude_arcsec ≥ 1.5` AND `suppression_ratio < 0.5`. Answers "is my guiding actually working?"
+
+#### Settings (§7.5)
+
+- `phd2_diagnostics_speculative_enabled: bool` (false initially — speculative rules ship in v0.32.0)
+- Per-rule enable/disable bitmap
+
+#### FindingsPanel UI
+
+- New `components/phd2/FindingsPanel.tsx` — collapsible card per finding with tier-colored chip, category icon, summary, expandable explanation, evidence table, reference link, actionable line.
+- Mount under the rig-select-bar in Spectrum + Graph tabs.
+- Suppression: "Dismiss this finding" button stores rule_id in localStorage.
+
+### Tests (~30 new)
+
+- [ ] 8 rule-fires tests (one per rule, hand-crafted signature)
+- [ ] 8 rule-doesn't-fire-when-precondition-fails tests
+- [ ] 8 rule-doesn't-fire-when-signature-absent tests
+- [ ] 4 reference-rule false-positive tests against ASIAir sample
+- [ ] 2 settings tests
+
+---
+
+## v0.32.0 — PHD2 Pass G (Diagnostic Engine: Speculative Tier + Equipment-Aware)
+
+**Status:** Planned
+**Branch:** `v0.32.0/phd2-diagnostics-speculative`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §7.3, §7.4
+
+### Goal
+
+Round out the diagnostic engine with **eight** speculative-tier rules (including the drive-type-aware `out_of_band_spectrum_peaks` and the new `strain_wave_load_balancing_recommendation`) plus rig-context-aware threshold scaling.
+
+### Scope
+
+Per v4 §7.3, the eight speculative rules:
+
+1. **`gradual_rms_trend`** — slope > 0.005 arcsec/min over ≥30 min.
+
+2. **`out_of_band_spectrum_peaks`** — drive-type-aware. Replaces the v3-era ambiguous notation with explicit per-band predicates (CD-review correction).
+
+   For **worm mounts**:
+
+   ```
+   in_band(p) := any of:
+       |p − worm|     / worm     ≤ 0.05    # fundamental ±5%
+       |p − worm/2|   / (worm/2) ≤ 0.05    # 2nd harmonic ±5%
+       |p − worm/3|   / (worm/3) ≤ 0.05    # 3rd harmonic ±5%
+       |p − worm/4|   / (worm/4) ≤ 0.05    # 4th harmonic ±5%
+
+   fires for peaks where:
+       amp > 0.5″
+       AND p ≥ 5 s        (excludes seeing band)
+       AND ¬in_band(p)    (outside worm fundamental + first 3 harmonics)
+   ```
+
+   Summary: *"Periodic error at N seconds, M arcsec amplitude — outside the expected mechanical band for this worm-driven mount."* Suggests gearbox, belt, or motor anomalies.
+
+   For **strain wave mounts**: same shape but with:
+   - Higher amplitude threshold: **1.0 arcsec** (strain wave is intrinsically richer broadband content)
+   - In-band predicate centered on `dominant_period_s` ± 50 % (or `expected_period_band_s` if `dominant_period_s` unknown)
+   - **Softer language**: *"A periodic component at N seconds, M arcsec amplitude is not in this mount's typical period band. This may be a load-dependent strain wave variation rather than a fault."* Do NOT suggest mechanical fault — strain wave PE varying with load is documented behaviour.
+
+   For **hybrid mounts**: apply the strain wave rule to the RA spectrum, the worm rule (with `dec_worm_period_s`) to the Dec spectrum.
+
+   For **direct_drive_encoder mounts**: any peak > 1.0″ at p ≥ 5 s is anomalous. **Confident tier override** via the Rule Protocol's `tier_override(evidence)` method. Summary: *"Periodic error detected — encoder-class mounts should not show discrete spectrum peaks at this amplitude."*
+
+   For **unknown drive type**: fallback uses 100–800 s as the broad expected band, plus the seeing-band exclusion. Speculative tier with explicit "identify the mount in equipment for a more confident diagnosis" actionable.
+
+3. **`strain_wave_load_balancing_recommendation`** (NEW per v4 §7.3) — fires when strain wave PE amp > 1.5× manufacturer default; suggests balance/orientation check.
+4. **`snr_variability`** — SNR std > 30% mean + lag-1 autocorr > 0.4.
+5. **`possible_differential_flexure`** — guide-scope-only; both-axis sustained drift varying with pointing.
+6. **`dec_oscillation_with_backlash_compensation`** — Dec osc > 0.4 + `Backlash comp = enabled`.
+7. **`low_snr_throughout`** — mean SNR < 10 without star loss.
+8. **`high_rms_vs_rig_expected`** — requires rig context; `rms_total_arcsec > 3 × rig.effective_guide_precision_arcsec`.
+
+#### Equipment-aware threshold scaling (§7.4)
+
+When rig context present:
+- `polar_alignment` threshold scales with `rig.effective_guide_precision_arcsec`
+- `chasing_seeing_ra` oscillation threshold loosens for oversampled rigs
+- `out_of_band` amplitude floor adjusts to rig's expected guide precision
+- Strain-wave-specific rules become available
+
+### Tests (~25 new)
+
+- [ ] 8 speculative rule fires tests
+- [ ] 8 doesn't-fire-when-not-applicable tests
+- [ ] 4 equipment-aware threshold tests
+- [ ] 4 settings-tunable threshold tests
+- [ ] 1 dismiss-finding UX test
+
+---
+
+## v0.33.0 — PHD2 Pass H (Multi-Log + Trends + DB-Backed History)
+
+**Status:** Planned
+**Branch:** `v0.33.0/phd2-multi-log`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §8.1, §8.2, §8.5
+
+### Goal
+
+Move from one-log-at-a-time to session-over-time analysis. Users with N logs see RMS trending, configuration drift, persistent vs one-off diagnostics.
+
+### Scope
+
+#### Second SQLite tier
+
+New tables `phd2_analysis`, `phd2_analysis_section`, `phd2_analysis_finding` for persisting derived metrics + findings per parse (per-frame samples remain re-parseable; only derived data is stored).
+
+#### Multi-log comparison view
+
+New `/phd2-analyzer/compare` route. Select 2-20 logs from Recent.
+
+- Side-by-side stats table (sortable)
+- Trend chart (RMS Total vs date)
+- Diagnostic-cooccurrence heatmap (rule_id × session)
+- Configuration drift panel
+
+#### DB-backed Recently Analyzed
+
+Replaces v0.24.0's localStorage list for catalog users; adds rig filter, date range, finding filter.
+
+#### Multi-section finding correlation
+
+Findings firing across multiple sessions get a "persistent" banner with N/M sessions count.
+
+### Tests (~30 new)
+
+---
+
+## v0.34.0 — PHD2 Pass I (HTML Report + Per-Instance PE Corpus + Catalog Integration)
+
+**Status:** Planned
+**Branch:** `v0.34.0/phd2-report-corpus`
+**Spec ref:** `docs/nightcrate-phd2-analyzer-spec-v4.md` §8.3, §8.4, §8.6
+
+### Goal
+
+Three cohesive features: self-contained HTML report (the killer feature for forum sharing), per-mount-instance PE history view (the payoff of v0.29.0's per-instance schema), and catalog integration (when imaging-core lands).
+
+### Scope
+
+#### §8.3 — HTML report export
+
+`services/phd2_report.py` renders self-contained HTML (inline CSS, inline SVG charts, no external refs). Frontend "Export report" button.
+
+#### §8.6 — Per-instance PE corpus UI
+
+Mount Instance detail page shows:
+- PE history scatter (period + amplitude over time, with rolling median + 1σ band)
+- Drift-over-time alert (if trailing 30-day median shifted > 5% from prior 30-day median)
+- "Compared to manufacturer default" panel
+- Filter dimensions: declination, payload, pier side
+- Optional "share with NightCrate community" button (manual, contributes anonymized data back to seed gaps for HEM44/HAE-series/SW Wave i)
+
+#### §8.4 — Catalog integration
+
+Conditional on imaging-core schema landing. Auto-association of guide-log sections with overlapping imaging sessions; per-session "Guiding" tab; per-sub-frame `potentially_affected` annotation.
+
+### Tests (~30 new)
+
+---
+
+## v0.35.0+ — PHD2 Roadmap Tail (Debug Logs, Live Monitoring, AI Analysis, Recommendations)
+
+**Status:** Planned (roadmap; each gets its own spec when prioritized)
+
+Per spec v4 §9, the post-MVP features are listed but not planned in detail:
+
+- **v0.35.0** PHD2 Debug log parsing (§9.1)
+- **v0.36.0** Live JSON-RPC monitoring (§9.2)
+- **v0.37.0** AI-powered session analysis (§9.3) — paid feature
+- **v0.38.0** Parameter recommendations (§9.4) — deferred until AI analyzer provides uncertainty vehicle
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.
@@ -5535,8 +6565,12 @@ Extend the same pattern to other equipment types — allow one or more URLs on c
 
 ## Appendix: PHD2 Analyzer Roadmap
 
-The PHD2 guide-log analyzer is planned as a nine-version arc (v0.22.0
-→ v0.30.0). Full spec: `docs/nightcrate-phd2-analyzer-spec-v2.md`.
+The PHD2 guide-log analyzer is planned as a ten-version arc (v0.22.0
+→ v0.34.0) plus a roadmap tail (v0.35.0+). Full spec:
+`docs/nightcrate-phd2-analyzer-spec-v4.md` (source-verified —
+every formula reproduces from PHDLogViewer's `AnalysisWin.cpp` with
+line citations or derives from first principles with cited sources).
+
 Shared architectural principles (standalone-first, pixel-canonical
 representation, parse-by-name, never silently coerce missing data,
 colorblind-safe palette, sourced interpretive claims, service + API
@@ -5545,41 +6579,103 @@ split, AI-readiness) apply across every version.
 | Version | Pass | Primary outcome | Spec ref |
 | --- | --- | --- | --- |
 | **v0.22.0** | A | Parser + ingestion + basic viewer (time-series chart + core stats + basic calibration plot). **Shipped.** | §3, §5.2 subset, §5.3 time-series + cal |
-| v0.23.0 | B | Scatter plot + unit toggle + drift / oscillation metrics + settle detection + INFO event display + warnings drawer polish | §5.2 rest, §5.3 scatter, §5.6, §5.7 |
-| v0.24.0 | C | Interaction polish: manual range, exclude drag, lock scale, copy stats, reveal-in-finder, recent-files history | §5.5 |
-| v0.25.0 | D | FFT + unguided RA reconstruction + rig picker + worm-period markers | §6.1, §6.2, §6.5 |
-| v0.26.0 | E | Guiding Assistant section handling + AO / Mount toggle | §6.3, §6.4 |
-| v0.27.0 | F | Diagnostic engine — confident tier (7 rules) + two-tier scaffolding | §7.1, §7.2 |
-| v0.28.0 | G | Diagnostic engine — speculative tier (6 rules) + equipment-aware + diagnostic settings | §7.3, §7.4, §7.5 |
-| v0.29.0 | H | Multi-log comparison + trends + recently-analyzed history + first SQLite persistence tier | §8.1, §8.2, §8.5 |
-| v0.30.0 | I | HTML report export + catalog integration (when imaging-core lands) | §8.3, §8.4 |
+| **v0.23.0** | B | Scatter plot + unit toggle + drift / oscillation metrics + settle detection + INFO event display + warnings drawer polish. **Shipped.** | §5.2 rest, §5.3 scatter, §5.6, §5.7 |
+| **v0.24.0** | C | Interaction polish: range selection + exclusion + copy stats + recent-files history. **Shipped.** | §5.5 |
+| v0.25.0 | D-1 | **Metric foundation correction** — RMS, drift (RA + Dec), PA error, scatter ellipse rotation all switch to PHDLogViewer's exact formulas. No FFT work. | §5.2 |
+| v0.26.0 | D-2 | **Spectrum tab v4-conformance + worm markers** — Hamming, `4/N`, Akima spline, MAD threshold, snap-to-peak, full P-P/RMS hover readouts. Worm-period markers shipped (per-rig, with heuristic fallback at 0.5″ amp threshold). | §6.1, §6.6 |
+| v0.27.0 | D-3 | **Unguided RA reconstruction** — PHDLogViewer's `move = raraw − prev_raraw − prev_raguide` recurrence. Time-series overlay AND Spectrum-tab Unguided toggle ship together (paired per spec). | §6.2 |
+| v0.28.0 | E-1 | **Drive-type-aware markers** — drive_type vocabulary, strain wave per-mount seed data, hybrid mount support (HEM27/HEM44 = strain wave RA + worm Dec). Replaces v0.26.0's worm-only marker model with `PeMarker`. | §6.7 |
+| v0.29.0 | E-2 | **Per-session measured PE + per-instance schema** — structured measured-PE output per guiding section. Schema separates `mount_model_id` from `mount_instance_id`. First SQLite tier for measured-PE history. Override behavior: ≥ 3 stable measurements supersede manufacturer default for spectrum markers. | §6.4, §6.8 |
+| v0.30.0 | E-3 | **GA section handling + AO/Mount toggle** — completes v2 phase parity with PHDLogViewer. | §6.3, §6.5 |
+| v0.31.0 | F | **Diagnostic engine: confident tier** — engine scaffolding, 8 confident rules (including the new `guiding_pe_suppression_low` that consumes §6.4 measured PE), settings page. | §7.1, §7.2, §7.5 |
+| v0.32.0 | G | **Diagnostic engine: speculative tier + equipment-aware** — 8 speculative rules (drive-type-aware `out_of_band_spectrum_peaks`, new `strain_wave_load_balancing_recommendation`), rig-context-aware threshold scaling. | §7.3, §7.4 |
+| v0.33.0 | H | **Multi-log comparison + trends + DB-backed history** — second SQLite tier, multi-log compare view, trend chart, DB-backed recently-analyzed list. | §8.1, §8.2, §8.5 |
+| v0.34.0 | I | **HTML report + instance PE corpus UI + catalog integration** — self-contained HTML export, per-mount-instance PE history view, catalog integration when imaging-core lands. | §8.3, §8.4, §8.6 |
+| v0.35.0+ | J–M | **Roadmap** — debug logs, live JSON-RPC monitoring, AI session analysis, parameter recommendations. Each gets its own spec when prioritized. | §9 |
 
-Roadmap beyond v0.30.0 (§9): debug-log parsing, live JSON-RPC event
-monitoring, AI-powered session analysis, deterministic parameter
-recommendations. Each gets its own spec when prioritized.
+### Spec v4 changes from v3.1 (CD-review corrections)
+
+v4 is source-verified — every formula either reproduces from
+PHDLogViewer's `AnalysisWin.cpp` (with line citations) or derives
+from first principles with cited sources. v4 also makes one
+substantive functional addition: **PE measurement is a first-class
+output** with a per-section structured payload (§6.4) and
+per-mount-instance accumulation (§8.6).
+
+CD-review found three real bugs and several smaller fixes in the
+initial v4 draft:
+
+- **v0.27.0 unguided RA filter**: dropped the `mount_kind != "Mount"`
+  clause. PHDLogViewer's `Include()` is mount-kind-agnostic; AO
+  frames with valid star data accumulate.
+- **v0.30.0 GA detection**: changed AND → OR. Either explicit
+  `Guiding Output Disabled` events OR ≥ 90% all-zero pulse pattern
+  triggers detection.
+- **v0.31.0 calibration orthogonality formula**: replaced the literal
+  `|x_angle − y_angle − 90°| > 5°` with a modulus-aware form
+  `abs(abs(x − y) % 180 − 90) > 5` (after folding to [0, 90]). The
+  literal form fails for axes oriented 270° apart.
+
+Smaller fixes incorporated:
+
+- v0.25.0 §5.2 scope expanded to include §5.2.2 peak (sign-preserving
+  max-by-abs), §5.2.5 oscillation (treat zero values as positive),
+  and §5.2.8 frame counts + duration breakdown.
+- v0.25.0 §M2 separated Barrett (celestialwonders.com, cited in
+  PHDLogViewer source) from Starry Nights (separate community
+  resource) — both arrive at the same coefficient, but they're
+  independent attributions.
+- v0.28.0 seed table row separation: HAE29/43/69 expanded to three
+  separate rows; SW Wave 100i/150i to two rows. One row per mount
+  model in the seed CSV.
+- v0.28.0 migration: explicit `SELECT DISTINCT drive_type FROM mount`
+  verification step before writing the migration so unmapped
+  freeform values fail loudly rather than silently degrading to
+  `'unknown'`.
+- v0.32.0 `out_of_band_spectrum_peaks`: rewrote the worm-rule
+  notation as explicit `in_band(p)` predicate covering ±5% bands
+  at worm + first three harmonics, plus explicit seeing-band
+  exclusion at < 5 s.
+
+### CD-resolved open questions
+
+The initial v4 draft had five open questions. CD's review resolved
+them all; decisions are baked into the version-specific plans above:
+
+1. **scipy as a backend dependency** (v0.26.0): approved. Pin
+   `scipy>=1.11`, no upper bound. Akima is the right interpolant
+   for oscillatory data; pure-numpy implementation is ~50 lines of
+   non-trivial math.
+2. **MeasuredPe persistence cadence** (v0.29.0): auto-persist
+   (idempotent on the UNIQUE constraint).
+3. **Mount instance backfill on existing rigs** (v0.29.0):
+   auto-create with `(auto)` suffix.
+4. **Tier override pattern** (v0.31.0 / v0.32.0): bake into v0.31.0's
+   Rule Protocol. Every rule gets an optional `tier_override(evidence)`
+   method.
+5. **scipy version pin** (v0.26.0): `scipy>=1.11` no upper bound.
 
 ### Design decisions locked in for the arc (2026-04-23 Q&A)
 
 - **Version granularity:** fine — three versions for spec-phase-v1,
-  same rhythm through spec-v2, v3, v4.
-- **Persistence:** none until v0.29.0. Parse-on-demand with an
-  in-process TTL cache through Pass G. The first SQLite tables land
-  when multi-log comparison actually needs cross-session queries.
-- **Rig association:** no picker until v0.25.0 (first version that
-  consumes rig context). Manual selection first; auto-suggest from
-  header strings layered later only if ambiguous matches prove rare.
+  same rhythm through spec-phase v2 / v3 / v4.
+- **Persistence:** first PHD2-specific SQLite tables land in v0.29.0
+  (per-session measured PE). Parse-on-demand with an in-process TTL
+  cache through Pass D-3.
+- **Rig association:** no picker until v0.26.0 (first version that
+  consumes rig context for worm markers). Manual selection first.
 - **File ingestion UX:** absolute filesystem paths (matches image
-  viewer). No copy-to-APP_DIR. Drag-and-drop polish deferred, lands
-  whenever it's useful.
+  viewer). No copy-to-APP_DIR.
 
 ### License note
 
 PHDLogViewer (the reference tool) is GPLv3; NightCrate is MIT. Any
-algorithm we cross-reference against PHDLogViewer's source (notably
-the unguided-RA-reconstruction math in v0.25.0) is reimplemented
-clean-room — describe the algorithm in prose, then implement from the
-prose. Algorithms themselves aren't copyrightable; specific code
-expression is.
+algorithm we cross-reference against PHDLogViewer's source is
+reimplemented clean-room — describe the algorithm in prose, then
+implement from the prose. Algorithms themselves aren't
+copyrightable; specific code expression is. Spec v4's line citations
+to `AnalysisWin.cpp` describe the algorithm; the NightCrate
+implementation is independently written.
 
 ---
 

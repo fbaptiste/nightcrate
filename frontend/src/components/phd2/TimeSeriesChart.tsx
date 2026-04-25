@@ -11,10 +11,10 @@
  * - Separate SNR + star-mass sub-panels underneath — these aren't in
  *   PHD2's live graph but PHDLogViewer stacks them the same way and
  *   they give useful context for diagnosing lost-star events.
- * - User-adjustable Y range for the left axis: a small numeric input in
- *   the toolbar lets the user clamp the axis to e.g. ±2 px to see
- *   small-scale jitter, at the cost of clipping large excursions. PHD2
- *   allows this as well.
+ * - User-adjustable Y range for every axis: vertical sliders flank
+ *   the chart (guide / SNR / Mass on the left; pulse on the right).
+ *   Each slider drag locks the axis to the chosen ceiling; a reset
+ *   icon below restores auto-fit.
  *
  * Null values break the line — DROP frames and missing fields must
  * never visually interpolate to zero (the parser's quiet-correctness
@@ -33,14 +33,16 @@ import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import IconButton from "@mui/material/IconButton";
+import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
-import FormControl from "@mui/material/FormControl";
-import InputLabel from "@mui/material/InputLabel";
-import MenuItem from "@mui/material/MenuItem";
-import Select from "@mui/material/Select";
+import Switch from "@mui/material/Switch";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import AutorenewIcon from "@mui/icons-material/Autorenew";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import { useTheme } from "@mui/material/styles";
 import type { GuidingSample, LogEvent } from "@/api/phd2";
@@ -89,6 +91,14 @@ interface Props {
   /** Parent's state setter for exclusions. Same contract as
    *  ``onSelectionsChange``. */
   onExclusionsChange?: (next: Array<[number, number]>) => void;
+  /** Page-level "include settle in stats" toggle, threaded into the
+   *  chart so the toggle UI sits in the chart toolbar alongside the
+   *  X-zoom controls. Drives the Section + Viewport / Selection
+   *  summary metrics filter and the chart's settle-region shading
+   *  (via ``showSettleShading``); does not modify selection or
+   *  exclusion gestures. */
+  includeSettle?: boolean;
+  onIncludeSettleChange?: (v: boolean) => void;
 }
 
 const COLOR_RA = RIG_BLUE;
@@ -99,11 +109,10 @@ const COLOR_DEC = RIG_ORANGE;
 // three 14 px event-label rows below it (14–56 px), plus a 3 px gap.
 // The 60 total gives the event-marker system room to stack up to three
 // rows of labels without overlapping the plotted data.
-// ``right`` widened from 56 → 72 so the rotated "Pulses (ms)" axis
-// label doesn't butt into the tick numbers (4-digit pulse values
-// extend further from the axis than single-digit pixel values on
-// the left, which is why the crowding was asymmetric).
-const MARGIN = { top: 60, right: 72, bottom: 40, left: 56 };
+// ``left`` / ``right`` are tight (44 / 56) so the chart's data area
+// extends close to the sliders flanking the SVG. Right is slightly
+// wider than left to accommodate 4-digit pulse-axis tick labels.
+const MARGIN = { top: 60, right: 56, bottom: 40, left: 44 };
 // Event-label strip geometry. Row 0 is the topmost (farthest from
 // chart, longest vertical line); row MAX_ROWS-1 is closest to chart.
 const EVENT_LABELS_START_Y = 14; // just below the dither triangle row
@@ -111,28 +120,23 @@ const EVENT_ROW_HEIGHT = 14;
 const EVENT_MAX_ROWS = 3;
 const EVENT_LABEL_PAD = 4;
 
-// Left-column absolute-positioning constants. The left column sits
-// beside the SVG inside the chart wrapper; each control's top is
-// computed from the in-SVG Y of its corresponding panel plus these
-// offsets.
-const TOOLBAR_HEIGHT_PX = 40;
-// Guide unit toggle sits ``UNIT_TOGGLE_OFFSET`` px ABOVE the Guide axis
-// Select. The toggle itself is ~44 px tall (caption + ToggleButtonGroup).
-// The extra headroom beyond 56 accounts for MUI's floating "Guide axis
-// (px)" label that pokes ~10 px above the outlined border — without the
-// padding, the label sits right on top of the toggle and the optical
-// gap shrinks to ~2 px even though the math said 12.
-const UNIT_TOGGLE_OFFSET = 68;
-const GUIDE_PULSE_GAP_HALF = 6; // half the vertical gap between Guide + Pulse selects
-const GUIDE_PULSE_HALF_H = 40 + GUIDE_PULSE_GAP_HALF; // one Select height + half-gap
-const MAIN_H_RATIO = 0.7;
-const SNR_H_RATIO = 0.14;
-const MASS_H_RATIO = 0.16;
-// Gap below the main panel is slightly wider than the SNR↔Mass gap
-// so the transition from the primary guide trace down to the small
-// diagnostic panels reads as a clear section break.
-const PANEL_GAP_MAIN = 21;
-const PANEL_GAP_SNR = 18;
+// Panel-height ratios chosen so SNR and Mass render at the SAME
+// absolute height (~110 px each at the default chart height) — the
+// user expected the two diagnostic panels to read as a matched pair,
+// not a stretched / shrunken variant. ``MAIN_H_RATIO`` carries the
+// slack so the three ratios sum to 1.0. ``SNR_H_RATIO`` is slightly
+// larger than ``MASS_H_RATIO`` because the snr panel formula
+// subtracts ``PANEL_GAP_SNR`` to leave room for the gap above the
+// mass panel; the visible track works out equal.
+const MAIN_H_RATIO = 0.54;
+const SNR_H_RATIO = 0.26;
+const MASS_H_RATIO = 0.2;
+// Generous panel gaps with an SVG hairline divider at the midpoint
+// of each gap make the guide / SNR / Mass split visually unambiguous
+// — narrower gaps had the three traces blurring into one tall plot.
+const PANEL_GAP_MAIN = 36;
+const PANEL_GAP_SNR = 32;
+const PANEL_DIVIDER_OPACITY = 0.5;
 
 // PHD2 occasionally emits sentinel values in place of missing telemetry
 // (star lost, detection failure). Any SNR above 1 000 or mass above
@@ -186,7 +190,7 @@ function TimeSeriesChartInner(
     events = [],
     startIso,
     arcsecScale,
-    height = 440,
+    height = 650,
     onViewportChange,
     settleIntervals = [],
     showSettleShading = true,
@@ -194,6 +198,8 @@ function TimeSeriesChartInner(
     exclusions = [],
     onSelectionsChange,
     onExclusionsChange,
+    includeSettle,
+    onIncludeSettleChange,
   }: Props,
   ref: React.Ref<TimeSeriesChartHandle>,
 ) {
@@ -207,6 +213,14 @@ function TimeSeriesChartInner(
   const clipMass = `phd2-clip-mass-${uid}`;
   const excludePatternId = `phd2-exclude-hatch-${uid}`;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  // Measured height of the toolbar Stacks above the SVG. The slider
+  // rails position children using ``topOffset = toolbarHeight +
+  // TOOLTIP_H + panelY``; reading the actual rendered height keeps
+  // the slider track aligned with the SVG's panel boundaries even as
+  // toolbar rows are added / removed conditionally (e.g., the
+  // selection-action row only appears when the chart is interactive).
+  const [toolbarHeight, setToolbarHeight] = useState(0);
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Reference to the active d3.zoom behavior attached to the SVG. The
   // scrollbar drag and the Reset-zoom button both program the SAME
@@ -227,20 +241,23 @@ function TimeSeriesChartInner(
     dither: true,
     events: true,
   });
-  // User-adjustable Y ranges for the two main-panel axes. "auto" =
-  // auto-fit the domain to the visible data; a positive-number string
-  // clamps to ±value. The sentinel is a non-empty string so MUI
-  // ``Select`` with a floating label renders "Auto" as the selected
-  // value instead of flashing the empty-value label overlay.
-  const [guideAxisMax, setGuideAxisMax] = useState<string>("auto");
-  const [pulseAxisMax, setPulseAxisMax] = useState<string>("auto");
-  // Sub-panel y-axis scale mode. "fixed" = derive domain from the full
-  // section (current default behaviour: scale stable while zooming).
-  // "auto" = derive domain from the visible samples only, matching the
-  // guide-axis Auto behaviour — the axis tightens when panning into a
-  // calmer stretch.
-  const [snrScaleMode, setSnrScaleMode] = useState<"auto" | "fixed">("auto");
-  const [massScaleMode, setMassScaleMode] = useState<"auto" | "fixed">("auto");
+  // User-adjustable Y ranges for the two main-panel axes. ``null`` =
+  // auto-fit the domain to the visible data on each render (initial
+  // load + section change); a positive number locks the axis to ±value
+  // so the user's slider position survives subsequent zoom / section
+  // changes. First slider drag transitions the state from null → number.
+  // A reset button per slider sets it back to null. State stored in
+  // pixels for guide and milliseconds for pulse — the slider UI handles
+  // arcsec-mode display via valueLabelFormat.
+  const [guideAxisMax, setGuideAxisMax] = useState<number | null>(null);
+  const [pulseAxisMax, setPulseAxisMax] = useState<number | null>(null);
+  // Sub-panel y-axis upper bounds — same null-means-auto-fit pattern
+  // as the guide / pulse axes. Slider drag promotes state from null
+  // to a number; reset returns to null. Lower bound stays at the
+  // auto-fit value (snrDomainWithPadding) regardless — only the
+  // ceiling is user-controllable.
+  const [snrAxisMax, setSnrAxisMax] = useState<number | null>(null);
+  const [massAxisMax, setMassAxisMax] = useState<number | null>(null);
   // Guide-axis display unit. ``arcsec`` requires a known pixel scale
   // from the section header; when absent, the toggle stays disabled
   // and the chart silently stays in pixels.
@@ -275,6 +292,16 @@ function TimeSeriesChartInner(
     return () => obs.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!toolbarRef.current) return;
+    const obs = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect.height ?? 0;
+      setToolbarHeight(h);
+    });
+    obs.observe(toolbarRef.current);
+    return () => obs.disconnect();
+  }, []);
+
   // Data domain extrema (used for the scrollbar + zoom base scale).
   const [tmin, tmax] = useMemo(() => {
     if (samples.length === 0) return [0, 1];
@@ -292,7 +319,21 @@ function TimeSeriesChartInner(
   const massY0 = snrY0 + snrH + PANEL_GAP_SNR;
 
   // Scales.
-  const { xScale, yDistScale, yPulseScale, ySnrScale, yMassScale } = useMemo(() => {
+  const {
+    xScale,
+    yDistScale,
+    yPulseScale,
+    ySnrScale,
+    yMassScale,
+    effectiveGuideMax,
+    effectivePulseMax,
+    effectiveSnrMax,
+    effectiveMassMax,
+    snrHiAuto,
+    snrMedian,
+    massHiAuto,
+    massMedian,
+  } = useMemo(() => {
     const times = samples.map((s) => s.time_seconds);
     const tmin = times.length ? times[0] : 0;
     const tmax = times.length ? times[times.length - 1] : 1;
@@ -323,10 +364,9 @@ function TimeSeriesChartInner(
     const autoMaxAbs = distVals.length
       ? Math.max(0.1, d3.max(distVals.map((v) => Math.abs(v))) ?? 0.1)
       : 1.0;
-    const parsedGuideMax = parseFloat(guideAxisMax);
     const maxAbs =
-      Number.isFinite(parsedGuideMax) && parsedGuideMax > 0
-        ? parsedGuideMax
+      guideAxisMax !== null && guideAxisMax > 0
+        ? guideAxisMax
         : autoMaxAbs * 1.1;
 
     // Pulse axis range — scoped to visible samples so panning / zooming
@@ -347,33 +387,52 @@ function TimeSeriesChartInner(
       ? (d3.max(visibleDurations) ?? 0)
       : 0;
     const autoDurMax = Math.max(50, visibleDurMax * 1.1);
-    const parsedPulseMax = parseFloat(pulseAxisMax);
     const durMax =
-      Number.isFinite(parsedPulseMax) && parsedPulseMax > 0
-        ? parsedPulseMax
-        : autoDurMax;
+      pulseAxisMax !== null && pulseAxisMax > 0 ? pulseAxisMax : autoDurMax;
 
     // SNR + mass are tight-fit around the observed extent so subtle
     // variation is actually readable. Earlier behaviour (``[0, max*1.1]``)
     // squashed the trace to a flat line when the minimum was well above
     // zero (typical — SNR stays in the 15–40 band for a healthy star).
-    // Scale mode picks the sample source: "fixed" uses the full section
-    // (axis stable across pan/zoom), "auto" uses only visible samples
-    // (axis tightens when panning to a quieter stretch).
-    const snrSamples = snrScaleMode === "auto" ? visibleSamples : samples;
-    const massSamples = massScaleMode === "auto" ? visibleSamples : samples;
-    const snrs = snrSamples
+    // Sample source is always the visible window so the axis tightens
+    // when panning into a quieter stretch — matching the guide / pulse
+    // axes' auto-fit behaviour. The user's slider override (when set)
+    // replaces the upper bound with their chosen value.
+    // SNR + Mass sub-panels: axis MIN is locked at the data's
+    // auto-fit lo so the data's lower extreme is always visible.
+    // Axis MAX is the slider value (or auto-fit hi when state is
+    // null). Dragging UP shrinks the upper bound — the data trace
+    // fills more of the panel vertically while the floor stays
+    // anchored. The slider's min value is clamped above the
+    // median (see slider props below) so the bulk can never get
+    // pushed off the top of the panel.
+    //
+    // Sample source is the FULL section, not the visible window —
+    // y-axis zoom stays stable while panning / zooming the X-axis.
+    const snrs = samples
       .map((s) => s.snr)
       .filter(
         (v): v is number => v !== null && v >= 0 && v <= MAX_REASONABLE_SNR,
       );
-    const [snrLo, snrHi] = snrDomainWithPadding(snrs, 2);
-    const masses = massSamples
+    const [snrLoAuto, snrHiAuto] = snrDomainWithPadding(snrs, 2);
+    const snrMedian =
+      snrs.length > 0 ? (d3.median(snrs) ?? snrLoAuto) : snrLoAuto;
+    const snrLo = snrLoAuto;
+    const snrHi =
+      snrAxisMax !== null && snrAxisMax > snrMedian ? snrAxisMax : snrHiAuto;
+    const masses = samples
       .map((s) => s.star_mass)
       .filter(
         (v): v is number => v !== null && v >= 0 && v <= MAX_REASONABLE_MASS,
       );
-    const [massLo, massHi] = snrDomainWithPadding(masses, 100);
+    const [massLoAuto, massHiAuto] = snrDomainWithPadding(masses, 100);
+    const massMedian =
+      masses.length > 0 ? (d3.median(masses) ?? massLoAuto) : massLoAuto;
+    const massLo = massLoAuto;
+    const massHi =
+      massAxisMax !== null && massAxisMax > massMedian
+        ? massAxisMax
+        : massHiAuto;
 
     const domain = zoomX ?? [tmin, tmax];
     return {
@@ -400,6 +459,24 @@ function TimeSeriesChartInner(
         .scaleLinear()
         .domain([massLo, massHi])
         .range([massY0 + massH, massY0]),
+      // Surfaced so the vertical scale sliders can render their
+      // position even when state is null (auto-fit) — the slider's
+      // thumb tracks the effective upper bound regardless of which
+      // branch produced the value. The ``…HiAuto`` companions drive
+      // the sub-panel sliders' dynamic min/max so the auto-fit value
+      // sits at the slider's top (most-zoomed-in) and the slider only
+      // grants zoom-out range from there. Without that, slider min
+      // sat well below the typical SNR / Mass auto value, leaving the
+      // thumb perched at the top and the useful range crammed into
+      // a few pixels.
+      effectiveGuideMax: maxAbs,
+      effectivePulseMax: durMax,
+      effectiveSnrMax: snrHi,
+      effectiveMassMax: massHi,
+      snrHiAuto,
+      snrMedian,
+      massHiAuto,
+      massMedian,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -409,8 +486,8 @@ function TimeSeriesChartInner(
     zoomX,
     guideAxisMax,
     pulseAxisMax,
-    snrScaleMode,
-    massScaleMode,
+    snrAxisMax,
+    massAxisMax,
     visibility.ra,
     visibility.dec,
     visibility.raPulse,
@@ -790,37 +867,6 @@ function TimeSeriesChartInner(
     );
   }
 
-  // Guide axis (left y, px) options: auto + a tight sub-pixel tier
-  // (0.2 / 0.3 / 0.4 / 0.5) for jitter inspection, then integer ranges
-  // from ±1 to ±10 px for broader deflection views.
-  const guideAxisOptions: Array<{ value: string; label: string }> = [
-    { value: "auto", label: "Auto" },
-    { value: "0.2", label: "±0.2 px" },
-    { value: "0.3", label: "±0.3 px" },
-    { value: "0.4", label: "±0.4 px" },
-    { value: "0.5", label: "±0.5 px" },
-    ...Array.from({ length: 10 }, (_, i) => ({
-      value: String(i + 1),
-      label: `±${i + 1} px`,
-    })),
-  ];
-
-  // Pulse axis (right y, ms) options. Based on the sample ASIAIR log:
-  // p75 ≈ 115 ms, p95 ≈ 200 ms, p99 ≈ 500 ms, outliers up to ~8 s on
-  // settle recovery. PHD2's default MaxRADuration / MaxDecDuration is
-  // 1000 ms — the most common clamp. Range choices cover the tight
-  // (jitter inspection) through extreme (settle spikes) cases.
-  const pulseAxisOptions: Array<{ value: string; label: string }> = [
-    { value: "auto", label: "Auto" },
-    { value: "100", label: "±100 ms" },
-    { value: "200", label: "±200 ms" },
-    { value: "300", label: "±300 ms" },
-    { value: "500", label: "±500 ms" },
-    { value: "1000", label: "±1000 ms" },
-    { value: "2000", label: "±2000 ms" },
-    { value: "5000", label: "±5000 ms" },
-  ];
-
   // Scrollbar thumb — represents visible X range within the full data
   // range. Left + width are computed from zoomX vs (tmin, tmax).
   const zoomLeft = zoomX ? zoomX[0] : tmin;
@@ -994,51 +1040,89 @@ function TimeSeriesChartInner(
     : 0;
 
   return (
-    <Stack direction="row" alignItems="flex-start" spacing={1} sx={{ width: "100%" }}>
-      {/* Axis-range column on the left. Each control is absolutely
-          positioned so it aligns with the vertical CENTER of its
-          corresponding panel inside the SVG:
-          - Guide + Pulse dropdowns straddle the main panel's centre.
-          - Guide unit toggle (px / ″) sits just above them.
-          - SNR scale toggle lines up with the SNR sub-panel centre.
-          - Mass scale toggle lines up with the Mass sub-panel centre.
-          TOOLBAR_HEIGHT_PX + TOOLTIP_H give the SVG-top offset inside
-          the wrapper; adding the in-SVG Y yields each control's
-          wrapper-relative top. */}
+    <Stack direction="row" alignItems="flex-start" spacing={0} sx={{ width: "100%" }}>
+      {/* Left axis-controls column — narrow rail holding the guide-
+          axis slider plus the SNR / Mass sliders. The Guide unit
+          (px / ″) toggle floats just inside the toolbar row above
+          all three sliders. The column is intentionally narrow
+          (40 px) so the chart SVG can occupy the rest of the
+          horizontal space; ``spacing={0}`` on the outer Stack keeps
+          the slider's right edge flush with the SVG's left margin. */}
       <Box
         sx={{
           flexShrink: 0,
-          width: 132,
+          width: 40,
           position: "relative",
-          // Match the total wrapper height (toolbar + tooltip + SVG +
-          // scrollbar padding) so absolute children can address any
-          // point from 0 down to the scrollbar.
-          minHeight: `${TOOLBAR_HEIGHT_PX + TOOLTIP_H + height + 24}px`,
+          minHeight: `${toolbarHeight + TOOLTIP_H + height + 24}px`,
         }}
       >
-        {/* Guide unit toggle (px / ″) — placed just above the Guide +
-            Pulse dropdown pair so it reads as belonging to the guide
-            axis specifically. Disabled when the section header didn't
-            declare a pixel scale. */}
-        <Box
-          sx={{
-            position: "absolute",
-            top: `${TOOLBAR_HEIGHT_PX + TOOLTIP_H + MARGIN.top + mainH / 2 - GUIDE_PULSE_HALF_H - UNIT_TOGGLE_OFFSET}px`,
-            left: 0,
-            width: "100%",
-          }}
+        <VerticalScaleSlider
+          value={effectiveGuideMax}
+          isAuto={guideAxisMax === null}
+          min={0.1}
+          max={10}
+          step={0.01}
+          onChange={(v) => setGuideAxisMax(v)}
+          onReset={() => setGuideAxisMax(null)}
+          formatValue={(px) => `±${formatGuidePx(px)} ${guideAxisUnitLabel}`}
+          containerHeight={mainH}
+          topOffset={toolbarHeight + TOOLTIP_H + mainY0}
+        />
+        {/* SNR / Mass sliders: slider value sets the axis upper
+            bound; axis lower bound is locked at the data's auto-fit
+            lo (so min values are always visible at the chart's
+            bottom). Slider max = auto-fit hi (default — reproduces
+            the existing tight auto-fit). Slider min is set so the
+            bulk (median) can never disappear off the top of the
+            panel even at maximum zoom: ``median + 20 % of the
+            median-to-autoHi distance`` keeps the median visible at
+            ~83 % of the panel height when fully zoomed in. */}
+        <VerticalScaleSlider
+          value={effectiveSnrMax}
+          isAuto={snrAxisMax === null}
+          min={snrMedian + Math.max(0.5, (snrHiAuto - snrMedian) * 0.2)}
+          max={snrHiAuto}
+          step={0.01}
+          onChange={(v) => setSnrAxisMax(v)}
+          onReset={() => setSnrAxisMax(null)}
+          formatValue={(v) => `↑ ${v.toFixed(0)}`}
+          containerHeight={snrH}
+          topOffset={toolbarHeight + TOOLTIP_H + snrY0}
+        />
+        <VerticalScaleSlider
+          value={effectiveMassMax}
+          isAuto={massAxisMax === null}
+          min={massMedian + Math.max(50, (massHiAuto - massMedian) * 0.2)}
+          max={massHiAuto}
+          step={0.01}
+          onChange={(v) => setMassAxisMax(v)}
+          onReset={() => setMassAxisMax(null)}
+          formatValue={(v) => `↑ ${formatMassShort(v)}`}
+          containerHeight={massH}
+          topOffset={toolbarHeight + TOOLTIP_H + massY0}
+        />
+      </Box>
+
+      <Box ref={wrapperRef} sx={{ flex: 1, minWidth: 0, position: "relative" }}>
+        <Box ref={toolbarRef}>
+        {/* Toolbar row 1 — Guide unit toggle + legend chips + hint */}
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ pb: 0.5 }} flexWrap="wrap" useFlexGap>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ mr: 1 }}
         >
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ display: "block", mb: 0.25, fontSize: 11 }}
+            sx={{ fontSize: 11 }}
           >
             Guide unit
           </Typography>
           <ToggleButtonGroup
             size="small"
             exclusive
-            fullWidth
             value={effectiveGuideUnit}
             disabled={!canUseArcsec && guideUnit === "px"}
             onChange={(_, v) => {
@@ -1047,8 +1131,10 @@ function TimeSeriesChartInner(
             sx={{
               "& .MuiToggleButton-root": {
                 fontSize: 11,
-                py: 0.25,
+                py: 0.125,
+                px: 1.5,
                 textTransform: "none",
+                minWidth: 36,
               },
             }}
           >
@@ -1057,95 +1143,7 @@ function TimeSeriesChartInner(
               ″
             </ToggleButton>
           </ToggleButtonGroup>
-        </Box>
-        <FormControl
-          size="small"
-          sx={{
-            position: "absolute",
-            top: `${TOOLBAR_HEIGHT_PX + TOOLTIP_H + MARGIN.top + mainH / 2 - GUIDE_PULSE_HALF_H}px`,
-            left: 0,
-            width: "100%",
-          }}
-        >
-          <InputLabel id="phd2-guide-axis-label">Guide axis ({guideAxisUnitLabel})</InputLabel>
-          <Select
-            labelId="phd2-guide-axis-label"
-            label={`Guide axis (${guideAxisUnitLabel})`}
-            value={guideAxisMax}
-            onChange={(e) => setGuideAxisMax(e.target.value)}
-            sx={{ fontSize: 12 }}
-          >
-            {guideAxisOptions.map((o) => (
-              <MenuItem key={o.value} value={o.value}>
-                {o.label}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl
-          size="small"
-          sx={{
-            position: "absolute",
-            top: `${TOOLBAR_HEIGHT_PX + TOOLTIP_H + MARGIN.top + mainH / 2 + GUIDE_PULSE_GAP_HALF}px`,
-            left: 0,
-            width: "100%",
-          }}
-        >
-          <InputLabel id="phd2-pulse-axis-label">Pulse axis (ms)</InputLabel>
-          <Select
-            labelId="phd2-pulse-axis-label"
-            label="Pulse axis (ms)"
-            value={pulseAxisMax}
-            onChange={(e) => setPulseAxisMax(e.target.value)}
-            sx={{ fontSize: 12 }}
-          >
-            {pulseAxisOptions.map((o) => (
-              <MenuItem key={o.value} value={o.value}>
-                {o.label}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        {/* ``top`` places the anchor line exactly at the sub-panel's
-            vertical centre; ``transform: translateY(-50%)`` shifts the
-            toggle up by half its own rendered height so the centre of
-            the caption + ToggleButtonGroup pair lands on that line —
-            robust against MUI rendering-height surprises. */}
-        <Box
-          sx={{
-            position: "absolute",
-            top: `${TOOLBAR_HEIGHT_PX + TOOLTIP_H + snrY0 + snrH / 2}px`,
-            left: 0,
-            width: "100%",
-            transform: "translateY(-50%)",
-          }}
-        >
-          <SubPanelScaleToggle
-            label="SNR scale"
-            value={snrScaleMode}
-            onChange={setSnrScaleMode}
-          />
-        </Box>
-        <Box
-          sx={{
-            position: "absolute",
-            top: `${TOOLBAR_HEIGHT_PX + TOOLTIP_H + massY0 + massH / 2}px`,
-            left: 0,
-            width: "100%",
-            transform: "translateY(-50%)",
-          }}
-        >
-          <SubPanelScaleToggle
-            label="Mass scale"
-            value={massScaleMode}
-            onChange={setMassScaleMode}
-          />
-        </Box>
-      </Box>
-
-      <Box ref={wrapperRef} sx={{ flex: 1, minWidth: 0, position: "relative" }}>
-        {/* Toolbar — legend toggles + hint + reset */}
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ pb: 0.5 }} flexWrap="wrap" useFlexGap>
+        </Stack>
         <LegendToggle
           label="RA"
           color={COLOR_RA}
@@ -1207,52 +1205,108 @@ function TimeSeriesChartInner(
         >
           Scroll to zoom · drag to pan · shift-drag: include · shift+alt-drag: exclude
         </Typography>
+      </Stack>
+
+      {/* Action-button row — moved off the legend row so the wider
+          set of toggle chips never collides with the action buttons
+          even on narrow viewports. Reset X zoom sits on the right
+          end, separated from the include / exclude / clear cluster
+          by ``flex: 1`` so it reads as its own concern. */}
+      <Stack
+        direction="row"
+        spacing={1}
+        alignItems="center"
+        sx={{ pb: 0.5 }}
+        flexWrap="wrap"
+        useFlexGap
+      >
         {onSelectionsChange && (
-          <Button
-            size="small"
-            disabled={zoomX === null}
-            onClick={() => {
-              if (!zoomX) return;
-              onSelectionsChange([...selections, [zoomX[0], zoomX[1]]]);
-            }}
-          >
-            Include in view
-          </Button>
+          <Tooltip title="Append the current zoom window to the Selection Summary's set of included ranges.">
+            <span>
+              <Button
+                size="small"
+                disabled={zoomX === null}
+                onClick={() => {
+                  if (!zoomX) return;
+                  onSelectionsChange([...selections, [zoomX[0], zoomX[1]]]);
+                }}
+              >
+                Include in view
+              </Button>
+            </span>
+          </Tooltip>
         )}
         {onExclusionsChange && (
-          <Button
-            size="small"
-            disabled={zoomX === null}
-            onClick={() => {
-              if (!zoomX) return;
-              onExclusionsChange([...exclusions, [zoomX[0], zoomX[1]]]);
-            }}
-          >
-            Exclude in view
-          </Button>
+          <Tooltip title="Append the current zoom window to the Selection Summary's set of excluded ranges.">
+            <span>
+              <Button
+                size="small"
+                disabled={zoomX === null}
+                onClick={() => {
+                  if (!zoomX) return;
+                  onExclusionsChange([...exclusions, [zoomX[0], zoomX[1]]]);
+                }}
+              >
+                Exclude in view
+              </Button>
+            </span>
+          </Tooltip>
         )}
-        <Button
-          size="small"
-          disabled={selections.length === 0 && exclusions.length === 0}
-          onClick={() => {
-            onSelectionsChange?.([]);
-            onExclusionsChange?.([]);
-          }}
-        >
-          Clear all
-          {selections.length + exclusions.length > 0
-            ? ` (${selections.length + exclusions.length})`
-            : ""}
-        </Button>
-        <Button
-          size="small"
-          startIcon={<RestartAltIcon />}
-          onClick={handleReset}
-          disabled={zoomX === null}
-        >
-          Reset X zoom
-        </Button>
+        <Tooltip title="Remove every selection and exclusion zone, returning the Selection Summary to the full section.">
+          <span>
+            <Button
+              size="small"
+              disabled={selections.length === 0 && exclusions.length === 0}
+              onClick={() => {
+                onSelectionsChange?.([]);
+                onExclusionsChange?.([]);
+              }}
+            >
+              Clear all
+              {selections.length + exclusions.length > 0
+                ? ` (${selections.length + exclusions.length})`
+                : ""}
+            </Button>
+          </span>
+        </Tooltip>
+        <Box sx={{ flex: 1 }} />
+        {onIncludeSettleChange && (
+          <Tooltip title="When on, samples bracketed by Settle started / Settle complete events count toward the Section + Selection summary metrics. Off matches PHDLogViewer's convention.">
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={includeSettle ?? false}
+                  onChange={(e) => onIncludeSettleChange(e.target.checked)}
+                />
+              }
+              label={
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontSize: 11 }}
+                >
+                  Include settle frames in stats
+                </Typography>
+              }
+              sx={{ mr: 0.5, ml: 0 }}
+            />
+          </Tooltip>
+        )}
+        <Tooltip title="Restore the full-section X-axis range — pan and zoom return to the section's start → end.">
+          <span>
+            <Button
+              size="small"
+              startIcon={<RestartAltIcon />}
+              onClick={handleReset}
+              disabled={zoomX === null}
+            >
+              Reset X zoom
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
+      </Box>{/* end toolbarRef */}
 
       {/* Tooltip reservation area — always present so the chart layout
           doesn't jump when the hover tooltip appears / disappears. */}
@@ -1263,12 +1317,12 @@ function TimeSeriesChartInner(
               position: "absolute",
               // Anchor top at the wrapper's origin (the toolbar's top
               // edge). The reservation Box sits below the toolbar, so
-              // ``-TOOLBAR_HEIGHT_PX`` moves the tooltip UP to that
+              // ``-toolbarHeight`` moves the tooltip UP to that
               // point and it extends downward from there — covering
               // the toolbar + the SVG's top-margin ornaments, but
               // never above the chart wrapper (which avoids getting
               // clipped by the outer Tabs container).
-              top: `-${TOOLBAR_HEIGHT_PX}px`,
+              top: `-${toolbarHeight}px`,
               left: tooltipLeft,
               width: TOOLTIP_W,
               p: 1,
@@ -1424,6 +1478,28 @@ function TimeSeriesChartInner(
             width={innerW}
             height={h}
             fill={isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"}
+          />
+        ))}
+
+        {/* Panel-divider hairlines centred in each gap between the
+            three panels. Stretch ACROSS the full SVG width (margin
+            included) so the visual break extends past the data area
+            into the axis-label gutter — without that, the eye reads
+            the dividers as belonging only to the data area and the
+            three plots blur back together near the y-axis labels. */}
+        {[
+          mainY0 + mainH + PANEL_GAP_MAIN / 2,
+          snrY0 + snrH + PANEL_GAP_SNR / 2,
+        ].map((y, i) => (
+          <line
+            key={`panel-divider-${i}`}
+            x1={0}
+            x2={width}
+            y1={y}
+            y2={y}
+            stroke={isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.18)"}
+            strokeWidth={1}
+            opacity={PANEL_DIVIDER_OPACITY}
           />
         ))}
 
@@ -1736,7 +1812,7 @@ function TimeSeriesChartInner(
         {distTicks.map((t) => (
           <text
             key={`yt-${t}`}
-            x={MARGIN.left - 6}
+            x={MARGIN.left - 9}
             y={yDistScale(t)}
             fill={textColor}
             fontSize={10}
@@ -1746,9 +1822,6 @@ function TimeSeriesChartInner(
             {formatGuidePx(t)}
           </text>
         ))}
-        {/* Guide error + Pulses panel titles moved OUT of the SVG to
-            the HTML banner above the chart — they were overlapping
-            the plotted data at small Y ranges. */}
 
         {/* Right-axis ticks (pulse duration, ms). Values rounded to
             integers — pulse durations are inherently integer ms, and
@@ -1758,7 +1831,7 @@ function TimeSeriesChartInner(
         {pulseTicks.map((t) => (
           <text
             key={`pt-${t}`}
-            x={MARGIN.left + innerW + 6}
+            x={MARGIN.left + innerW + 9}
             y={yPulseScale(t)}
             fill={textColor}
             fillOpacity={0.6}
@@ -1789,7 +1862,7 @@ function TimeSeriesChartInner(
         {snrTicks.map((t) => (
           <text
             key={`st-${t}`}
-            x={MARGIN.left - 6}
+            x={MARGIN.left - 9}
             y={ySnrScale(t)}
             fill={textColor}
             fontSize={9}
@@ -1822,7 +1895,7 @@ function TimeSeriesChartInner(
         {massTicks.map((t) => (
           <text
             key={`mt-${t}`}
-            x={MARGIN.left - 6}
+            x={MARGIN.left - 9}
             y={yMassScale(t)}
             fill={textColor}
             fontSize={9}
@@ -1858,7 +1931,7 @@ function TimeSeriesChartInner(
               />
               <text
                 x={xScale(t)}
-                y={massY0 + massH + 16}
+                y={massY0 + massH + 19}
                 fill={textColor}
                 fontSize={10}
                 textAnchor="middle"
@@ -1958,6 +2031,31 @@ function TimeSeriesChartInner(
         )}
       </Box>
       </Box>
+      {/* Right axis-controls column — pulse-axis slider, vertically
+          aligned to the main panel only. Same 40 px width as the left
+          rail so the chart SVG can claim the horizontal middle. */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          width: 40,
+          position: "relative",
+          minHeight: `${toolbarHeight + TOOLTIP_H + height + 24}px`,
+        }}
+      >
+        <VerticalScaleSlider
+          value={effectivePulseMax}
+          isAuto={pulseAxisMax === null}
+          min={50}
+          max={5000}
+          step={0.01}
+          onChange={(v) => setPulseAxisMax(v)}
+          onReset={() => setPulseAxisMax(null)}
+          formatValue={(ms) => `±${Math.round(ms)} ms`}
+          containerHeight={mainH}
+          topOffset={toolbarHeight + TOOLTIP_H + mainY0}
+          tooltipSide="left"
+        />
+      </Box>
     </Stack>
   );
 }
@@ -1967,63 +2065,178 @@ const TimeSeriesChart = forwardRef<TimeSeriesChartHandle, Props>(
 );
 export default TimeSeriesChart;
 
-// ── Sub-panel scale toggle ───────────────────────────────────────────────────
+// ── Vertical scale slider ────────────────────────────────────────────────────
 
-/** Compact Auto/Fixed toggle used for the SNR and Mass sub-panels'
- *  y-axis scale mode. Sits in the left axis-controls column alongside
- *  the Guide / Pulse axis dropdowns. */
-function SubPanelScaleToggle({
-  label,
+/** Vertical scale slider for the guide-axis (left) and pulse-axis
+ *  (right) controls. Logarithmic mapping in slider-space so the
+ *  span (0.1 → 10 px or 50 → 5000 ms) is well-distributed across
+ *  the track instead of compressing the small end into a few pixels.
+ *
+ *  The slider's ``value`` is the ACTUAL scale (px / ms), not the
+ *  log-position — MUI's ``scale`` prop interprets the slider's
+ *  internal-position via the inverse log so the displayed value
+ *  reads naturally. ``isAuto`` dims the slider to signal that the
+ *  position came from the auto-fit logic; the first user drag
+ *  promotes state from null → number and the dim treatment lifts.
+ *
+ *  Reset icon button next to the slider returns state to null
+ *  (auto). Always present — the user can always recover auto
+ *  behaviour without re-loading the section.
+ */
+function VerticalScaleSlider({
   value,
+  isAuto,
+  min,
+  max,
+  step,
   onChange,
+  onReset,
+  formatValue,
+  containerHeight,
+  topOffset,
+  tooltipSide = "right",
 }: {
-  label: string;
-  value: "auto" | "fixed";
-  onChange: (v: "auto" | "fixed") => void;
+  /** Current effective scale value (px or ms). When ``isAuto`` is
+   *  true this comes from the auto-fit logic. */
+  value: number;
+  /** True when state is still null (auto-fit). Slider opacity dims
+   *  to signal the user hasn't taken manual control yet. */
+  isAuto: boolean;
+  /** Domain bounds for the slider. */
+  min: number;
+  max: number;
+  /** Slider step in slider-internal log-position units. */
+  step: number;
+  /** Called when the user drags. Receives the actual scale value
+   *  (already inverse-log mapped). */
+  onChange: (v: number) => void;
+  /** Resets state to null (returns to auto-fit on the next render). */
+  onReset: () => void;
+  /** Format the live value for the slider's tooltip — applies the
+   *  display unit (px or ″ for guide; ms for pulse). */
+  formatValue: (v: number) => string;
+  /** Height of the slider track in pixels — driven by the chart's
+   *  main panel height so the slider visually flanks just that
+   *  panel and not the SNR / Mass sub-panels below. */
+  containerHeight: number;
+  /** Offset from the column's top to the top of the slider track. */
+  topOffset: number;
+  /** Where the slider's value label pops out — ``"right"`` (default)
+   *  is correct for left-rail sliders so the label tooltip extends
+   *  toward the chart and never gets clipped by the left nav's
+   *  overflow boundary. ``"left"`` for right-rail sliders does the
+   *  same on the opposite side. */
+  tooltipSide?: "left" | "right";
 }) {
-  // The caption floats ABOVE the toggle via ``position: absolute`` so
-  // the component's flow-height equals the ToggleButtonGroup alone.
-  // The outer positioning layer can then ``translateY(-50%)`` to
-  // centre the TOGGLE (not the caption+toggle pair) on the panel's
-  // vertical midpoint — the caption drifts above centre, which reads
-  // better than a toggle sitting off-centre.
+  const logMin = Math.log10(min);
+  const logMax = Math.log10(max);
+  const clamped = Math.min(max, Math.max(min, value));
+  // Negate the log mapping so UP on the slider = SMALLER scale value
+  // (= ZOOM IN, tighter axis). MUI's native direction is the opposite;
+  // the negation propagates through min/max bounds, onChange, and
+  // valueLabelFormat as inverse mappings.
+  const sliderPosition = -Math.log10(clamped);
+  const sliderMin = -logMax;
+  const sliderMax = -logMin;
+
+  // ``RESET_GAP`` is the breathing room between the slider's rail
+  // bottom and the reset icon's top edge. ≥ 4 px so the reset never
+  // looks like it's hugging the slider; 6 reads cleanly without
+  // shoving the icon too far below the panel.
+  const RESET_GAP = 6;
+
   return (
-    <Box sx={{ position: "relative" }}>
-      <Typography
-        variant="caption"
-        color="text.secondary"
+    <>
+      <Box
         sx={{
           position: "absolute",
-          bottom: "100%",
+          // The slider Box is sized exactly to the panel. MUI's
+          // default vertical padding is overridden via ``py: 0`` on
+          // the Slider sx so the rail extends the full Box height —
+          // the rail's top / bottom then land exactly on the
+          // panel's top / bottom horizontal axis lines. The thumb
+          // can stick out by half its diameter at the extremes;
+          // that's an intentional visual signal that the slider
+          // controls a value AT the axis edge.
+          top: topOffset,
           left: 0,
-          right: 0,
-          display: "block",
-          mb: 0.25,
-          fontSize: 11,
+          width: 40,
+          height: containerHeight,
+          display: "flex",
+          justifyContent: "center",
+          px: 0.5,
         }}
       >
-        {label}
-      </Typography>
-      <ToggleButtonGroup
-        size="small"
-        exclusive
-        fullWidth
-        value={value}
-        onChange={(_, v) => {
-          if (v) onChange(v as "auto" | "fixed");
-        }}
-        sx={{
-          "& .MuiToggleButton-root": {
-            fontSize: 11,
-            py: 0.25,
-            textTransform: "none",
-          },
-        }}
-      >
-        <ToggleButton value="auto">Auto</ToggleButton>
-        <ToggleButton value="fixed">Fixed</ToggleButton>
-      </ToggleButtonGroup>
-    </Box>
+        <Slider
+          orientation="vertical"
+          min={sliderMin}
+          max={sliderMax}
+          step={step}
+          value={sliderPosition}
+          onChange={(_, v) => onChange(Math.pow(10, -(v as number)))}
+          onChangeCommitted={() => {
+            // MUI's auto value-label stays visible while the thumb
+            // retains focus, which after mouseup feels like a stuck
+            // tooltip. Force blur on commit so the label dismisses
+            // alongside the drag gesture ending.
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
+          }}
+          valueLabelDisplay="auto"
+          valueLabelFormat={(v) => formatValue(Math.pow(10, -v))}
+          size="small"
+          sx={{
+            height: "100%",
+            py: 0,
+            opacity: isAuto ? 0.55 : 1,
+            transition: "opacity 120ms ease",
+            "& .MuiSlider-valueLabel": {
+              fontSize: 10,
+              padding: "2px 4px",
+            },
+            // Position override is scoped to ``.MuiSlider-valueLabelOpen``
+            // so it only fires when the label is meant to be shown.
+            // Targeting ``.MuiSlider-valueLabel`` directly would
+            // overwrite MUI's default ``transform: scale(0)`` that
+            // hides the label off-state, leaving the tooltip visible
+            // on first load before any drag.
+            ...(tooltipSide === "right" && {
+              "& .MuiSlider-valueLabel.MuiSlider-valueLabelOpen": {
+                right: "auto",
+                left: "100%",
+                transform: "translate(8px, -50%) scale(1)",
+                transformOrigin: "left center",
+              },
+            }),
+          }}
+        />
+      </Box>
+      <Tooltip title={isAuto ? "Auto-fit (drag to lock)" : "Reset to auto-fit"}>
+        <span
+          style={{
+            position: "absolute",
+            top: topOffset + containerHeight + RESET_GAP,
+            left: 0,
+            width: 40,
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <IconButton
+            size="small"
+            onClick={onReset}
+            disabled={isAuto}
+            sx={{
+              p: 0.25,
+              opacity: isAuto ? 0.5 : 1,
+            }}
+          >
+            <AutorenewIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </>
   );
 }
 
@@ -2367,6 +2580,18 @@ function labelBounds(
     return { left: centerX - width - pad, right: centerX + pad };
   }
   return { left: centerX - pad, right: centerX + width + pad };
+}
+
+/** Compact human-readable formatter for star-mass values. The full
+ *  numbers run 5–7 digits and don't fit a slider tooltip cleanly;
+ *  ``43k`` / ``1.2M`` / ``8.5M`` is the standard astrophotography
+ *  abbreviation. Sub-1k values (rare — would only appear if the
+ *  user pulled the slider all the way down) render in raw integer
+ *  form. */
+function formatMassShort(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}k`;
+  return Math.round(v).toString();
 }
 
 function formatPxOrBlank(v: number | null): string {

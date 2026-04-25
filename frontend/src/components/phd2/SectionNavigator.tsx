@@ -33,7 +33,7 @@ export default function SectionNavigator({ sections, selectedIndex, onSelect }: 
           const kindColor = s.kind === "guiding" ? RIG_BLUE : RIG_ORANGE;
           const summary = formatSummary(sw);
           const startTime = formatClockTime(s.start_time);
-          const durationLabel = formatDuration(sw.metrics.duration_seconds);
+          const durationLabel = formatDuration(sw.metrics.duration_total_seconds);
           return (
             <ListItemButton
               key={s.index}

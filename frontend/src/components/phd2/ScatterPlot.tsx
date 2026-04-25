@@ -1,14 +1,22 @@
 /**
- * PHD2 dispersion scatter plot — spec §5.3.
+ * PHD2 dispersion scatter plot — spec §5.3 / §5.2.7.
  *
  * X = dx, Y = dy, one point per non-null stats sample. 1σ and 2σ
- * dispersion ellipses derived from the 2×2 covariance matrix
- * eigen-decomposition — ellipse axes may be rotated relative to the
- * pixel axes depending on calibration angle. Centroid marker (mean
- * dx, mean dy) — a visible offset from the origin indicates
- * calibration drift.
+ * dispersion ellipses derived via PHDLogViewer's ``LFit::Theta`` form
+ * (§5.2.7): the ellipse rotation is ``θ = atan2(cov_xy, var_x)`` —
+ * NOT the textbook PCA rotation ``½ · atan2(2·cov_xy, var_x − var_y)``.
+ * After computing θ, the major / minor sigmas are read off by
+ * re-iterating samples in the rotated coordinate frame and computing
+ * the variance along each rotated axis.
  *
- * Follows the collapsible + dual-unit pattern of ``StatsPanel``.
+ * NightCrate adopts PHDLogViewer's form for cross-tool consistency
+ * even though it's not strict PCA — the two forms diverge for
+ * nearly-circular distributions but produce indistinguishable
+ * results for the typical guide-log scatter shape.
+ *
+ * Centroid marker (mean dx, mean dy) — a visible offset from the
+ * origin indicates calibration drift. Follows the collapsible +
+ * dual-unit pattern of ``StatsPanel``.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
@@ -95,15 +103,28 @@ export default function ScatterPlot({
     vxx /= pts.length;
     vyy /= pts.length;
     vxy /= pts.length;
-    // Eigenvalues of [[vxx, vxy], [vxy, vyy]]
-    const trace = vxx + vyy;
-    const det = vxx * vyy - vxy * vxy;
-    const disc = Math.sqrt(Math.max(0, (trace * trace) / 4 - det));
-    const l1 = trace / 2 + disc;
-    const l2 = trace / 2 - disc;
-    const theta = 0.5 * Math.atan2(2 * vxy, vxx - vyy);
-    const rx = Math.sqrt(Math.max(0, l1));
-    const ry = Math.sqrt(Math.max(0, l2));
+    // PHDLogViewer LFit::Theta form (NOT PCA): θ = atan2(cov_xy, var_x).
+    // For cross-tool consistency we use this even though it's not the
+    // textbook principal-component rotation.
+    const theta = Math.atan2(vxy, vxx);
+    // Read major/minor sigmas off the rotated frame by re-iterating
+    // samples (matches AnalysisWin.cpp lines ~210-240).
+    const cost = Math.cos(theta);
+    const sint = Math.sin(theta);
+    let rotVx = 0;
+    let rotVy = 0;
+    for (const p of pts) {
+      const dx = p.x - mx;
+      const dy = p.y - my;
+      const xr = dx * cost + dy * sint;
+      const yr = dy * cost - dx * sint;
+      rotVx += xr * xr;
+      rotVy += yr * yr;
+    }
+    rotVx /= pts.length;
+    rotVy /= pts.length;
+    const rx = Math.sqrt(Math.max(0, rotVx));
+    const ry = Math.sqrt(Math.max(0, rotVy));
 
     // Symmetric data-space domain sized to enclose the 2σ ellipse
     // plus a margin, or the point cloud — whichever is larger.
