@@ -368,7 +368,6 @@ Specs for future work live inline in `PLAN.md` (not as separate files).
 
 - **FITS equipment resolver** — matches FITS header strings (`INSTRUME`, `TELESCOP`, `FILTER`) to equipment DB rows via alias tables. Schema support exists (alias tables, `unresolved_equipment_observation`); the resolver logic and UI are not built. See PLAN.md "FITS Equipment Resolver Spec" section.
 - **Imaging core schema (rigs, projects, sessions, sub frames)** — the entire catalog/ingestion side. Equipment schema landed in v0.8.0–v0.10.0; what remains is the imaging-side schema (`rig`, `project`, `session`, `sub_frame`, calibration matching) and the ingestion pipeline (FITS parsing, N.I.N.A./ASIAIR/PHD2 log import). See PLAN.md "Imaging Core Schema" section.
-- **DSO catalogs** — deep-sky object database for target planning and identification.
 - **Plate solving** — ASTAP/astrometry.net integration for WCS coordinates and image annotation.
 - **Desktop packaging** — Tauri wrapper for native app distribution (currently runs as local web app in browser).
 
