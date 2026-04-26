@@ -48,6 +48,8 @@ def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int, tuple | None]:
 
 
 _solve_semaphore = asyncio.Semaphore(1)
+_solve_progress: str = ""
+_solve_process: asyncio.subprocess.Process | None = None
 
 _KEY_VAL_ERRORS = (KeyError, ValueError)
 
@@ -95,6 +97,18 @@ def resolve_astap_binary(path_str: str) -> Path:
     if not os.access(p, os.X_OK):
         raise ValueError(f"ASTAP path is not executable: {p}")
     return p
+
+
+def get_solve_progress() -> str:
+    return _solve_progress
+
+
+def cancel_solve() -> bool:
+    global _solve_process
+    if _solve_process is not None and _solve_process.returncode is None:
+        _solve_process.kill()
+        return True
+    return False
 
 
 def validate_astap_path(path_str: str) -> dict:
@@ -227,6 +241,99 @@ def _estimate_fov(raw: dict[str, str]) -> float | None:
     return plate_scale_arcsec * naxis2 / 3600.0
 
 
+_MAX_EXTRACT_STARS = 500
+_EXTRACT_DOT_RADIUS = 5
+
+
+def _create_star_map(
+    source: Path | BinaryIO,
+    file_type: str,
+    image_index: int,
+    hdu: int,
+    temp_dir: Path,
+) -> Path:
+    """Detect stars with sep and create a synthetic star map for ASTAP.
+
+    Extracts the brightest stars, renders Gaussian-profile dots on a
+    black background. ASTAP solves this reliably even when the original
+    stretched image fails.
+    """
+    import sep
+
+    if file_type == "pxiproject":
+        data = pxiproject_io.load_image_data(source, image_index)
+    elif file_type == "fits":
+        data = fits_io.load_image_data(source, hdu)
+    elif file_type == "xisf":
+        data = xisf_io.load_image_data(source, hdu)
+    else:
+        data = standard_io.load_image_data(source)
+
+    if data.ndim == 3:
+        mono = np.mean(data, axis=0)
+    else:
+        mono = data
+
+    mono = np.ascontiguousarray(mono, dtype=np.float64)
+    bkg = sep.Background(mono)
+    img_sub = mono - bkg
+
+    sep.set_extract_pixstack(1_000_000)
+    thresh = 5.0
+    objects = None
+    for attempt in range(4):
+        try:
+            objects = sep.extract(img_sub, thresh=thresh, err=bkg.globalrms)
+            break
+        except Exception as exc:
+            if "pixel buffer full" in str(exc) and attempt < 3:
+                thresh *= 2
+            else:
+                raise
+
+    h, w = mono.shape
+    star_map = np.zeros((h, w), dtype=np.float32)
+
+    if objects is not None and len(objects) > 0:
+        if len(objects) > _MAX_EXTRACT_STARS:
+            flux_cutoff = np.sort(objects["flux"])[-_MAX_EXTRACT_STARS]
+            objects = objects[objects["flux"] >= flux_cutoff]
+
+        fluxes = objects["flux"]
+        max_flux = fluxes.max() if fluxes.max() > 0 else 1.0
+        r = _EXTRACT_DOT_RADIUS
+        sigma = r * 1.6
+
+        for i in range(len(objects)):
+            x = int(round(float(objects["x"][i])))
+            y = int(round(float(objects["y"][i])))
+            if 0 <= x < w and 0 <= y < h:
+                brightness = min(1.0, (fluxes[i] / max_flux) * 3.0 + 0.3)
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        d2 = dx * dx + dy * dy
+                        if d2 <= r * r:
+                            ny, nx = y + dy, x + dx
+                            if 0 <= ny < h and 0 <= nx < w:
+                                val = brightness * math.exp(-d2 / sigma)
+                                if val > star_map[ny, nx]:
+                                    star_map[ny, nx] = val
+
+        logger.info(
+            "[plate-solve] star extraction: %d stars, %dx%d star map",
+            len(objects),
+            w,
+            h,
+        )
+    else:
+        logger.warning("[plate-solve] star extraction: no stars detected")
+
+    temp_path = temp_dir / "star_map.fits"
+    hdu_obj = astro_fits.PrimaryHDU(star_map)
+    hdu_obj.writeto(temp_path, overwrite=True)
+    return temp_path
+
+
 def _prepare_image_file(
     source: Path | BinaryIO,
     file_type: str,
@@ -319,7 +426,7 @@ def _build_astap_args(
         else:
             args.extend(["-r", "180"])
 
-        fov_val = fov_hint or hints.get("fov_deg")
+        fov_val = fov_hint if fov_hint is not None else hints.get("fov_deg")
         if fov_val is not None:
             args.extend(["-fov", str(fov_val)])
 
@@ -362,8 +469,11 @@ def _compute_results(
     dec_deg = _safe_float(ini_data.get("CRVAL2"))
 
     cd1_1 = _safe_float(ini_data.get("CD1_1"))
+    cd1_2 = _safe_float(ini_data.get("CD1_2"))
     cd2_1 = _safe_float(ini_data.get("CD2_1"))
     cd2_2 = _safe_float(ini_data.get("CD2_2"))
+    crpix1 = _safe_float(ini_data.get("CRPIX1"))
+    crpix2 = _safe_float(ini_data.get("CRPIX2"))
     crota2 = _safe_float(ini_data.get("CROTA2"))
 
     pixel_scale: float | None = None
@@ -394,6 +504,12 @@ def _compute_results(
         fov_height_arcmin=_round(fov_h, 2),
         image_width=image_width,
         image_height=image_height,
+        cd1_1=cd1_1,
+        cd1_2=cd1_2,
+        cd2_1=cd2_1,
+        cd2_2=cd2_2,
+        crpix1=crpix1,
+        crpix2=crpix2,
         warning=ini_data.get("WARNING"),
     )
 
@@ -439,7 +555,11 @@ async def run_plate_solve(
     astap_binary = resolve_astap_binary(astap_path)
 
     if _solve_semaphore.locked():
-        raise RuntimeError("A plate solve is already in progress.")
+        if cancel_solve():
+            logger.warning("[plate-solve] killed stale ASTAP process before new solve")
+            await asyncio.sleep(0.5)
+        if _solve_semaphore.locked():
+            raise RuntimeError("A plate solve is already in progress.")
     await _solve_semaphore.acquire()
 
     try:
@@ -482,14 +602,24 @@ async def _do_solve(
         tmp_dir = Path(tmp)
         output_base = tmp_dir / "result"
 
-        image_file = await asyncio.to_thread(
-            _prepare_image_file,
-            source,
-            file_type,
-            image_index,
-            hdu,
-            tmp_dir,
-        )
+        if mode == "extract":
+            image_file = await asyncio.to_thread(
+                _create_star_map,
+                source,
+                file_type,
+                image_index,
+                hdu,
+                tmp_dir,
+            )
+        else:
+            image_file = await asyncio.to_thread(
+                _prepare_image_file,
+                source,
+                file_type,
+                image_index,
+                hdu,
+                tmp_dir,
+            )
 
         if width is None or height is None:
             w, h = await asyncio.to_thread(
@@ -501,34 +631,99 @@ async def _do_solve(
             if height is None:
                 height = h
 
+        astap_mode = "auto" if mode == "extract" else mode
+        effective_fov = fov_hint
+        if mode == "extract" and effective_fov is None:
+            effective_fov = 0.0
         args = _build_astap_args(
             astap_binary,
             image_file,
             output_base,
-            mode,
+            astap_mode,
             hints,
             ra_hint,
             dec_hint,
-            fov_hint,
+            effective_fov,
         )
 
-        logger.info("[plate-solve] running: %s", " ".join(args))
-        start = time.monotonic()
+        result, first_elapsed = await _run_astap(
+            args,
+            output_base,
+            timeout,
+            width,
+            height,
+        )
+
+        if not result.solved and result.error_message:
+            msg = result.error_message
+            retryable = "No solution" in msg or "Not enough stars" in msg
+            if retryable:
+                logger.info("[plate-solve] retrying with -speed slow")
+                ini_path = Path(str(output_base) + ".ini")
+                if ini_path.is_file():
+                    ini_path.unlink()
+                remaining = max(30, timeout - int(first_elapsed))
+                result, retry_elapsed = await _run_astap(
+                    [*args, "-speed", "slow"],
+                    output_base,
+                    remaining,
+                    width,
+                    height,
+                )
+                result.solve_time_seconds = round(first_elapsed + retry_elapsed, 1)
+
+        return result
+
+
+async def _run_astap(
+    args: list[str],
+    output_base: Path,
+    timeout: int,
+    width: int | None,
+    height: int | None,
+) -> tuple[PlateSolveResult, float]:
+    """Run ASTAP subprocess and parse result. Returns (result, elapsed_seconds)."""
+    global _solve_progress
+    _solve_progress = "Starting ASTAP..."
+    logger.info("[plate-solve] running: %s", " ".join(args))
+    start = time.monotonic()
+
+    try:
+        global _solve_process
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _solve_process = proc
+        stdout_lines: list[str] = []
+        stderr_data = b""
+
+        async def _read_stdout():
+            assert proc.stdout
+            async for raw_line in proc.stdout:
+                line = raw_line.decode(errors="replace").rstrip()
+                stdout_lines.append(line)
+                if line:
+                    global _solve_progress
+                    _solve_progress = line
+                    logger.debug("[plate-solve] %s", line)
+
+        async def _read_stderr():
+            nonlocal stderr_data
+            assert proc.stderr
+            stderr_data = await proc.stderr.read()
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
+            await asyncio.wait_for(
+                asyncio.gather(_read_stdout(), _read_stderr(), proc.wait()),
                 timeout=timeout,
             )
         except TimeoutError:
             proc.kill()
             await proc.wait()
             elapsed = time.monotonic() - start
+            _solve_progress = ""
             logger.warning("[plate-solve] timed out after %.1fs", elapsed)
             return PlateSolveResult(
                 solved=False,
@@ -536,47 +731,47 @@ async def _do_solve(
                 solve_time_seconds=round(elapsed, 1),
                 image_width=width,
                 image_height=height,
-            )
+            ), elapsed
 
-        elapsed = time.monotonic() - start
-        exit_code = proc.returncode
+    except Exception:
+        _solve_progress = ""
+        raise
 
-        logger.info(
-            "[plate-solve] finished in %.1fs, exit code %d",
-            elapsed,
+    elapsed = time.monotonic() - start
+    exit_code = proc.returncode
+    _solve_progress = ""
+    _solve_process = None
+
+    logger.info("[plate-solve] finished in %.1fs, exit code %d", elapsed, exit_code)
+
+    if stderr_data:
+        logger.debug("[plate-solve] stderr: %s", stderr_data.decode(errors="replace").strip())
+
+    ini_path = Path(str(output_base) + ".ini")
+    if not ini_path.is_file():
+        error_msg = _EXIT_CODE_MESSAGES.get(
             exit_code,
+            f"ASTAP exited with code {exit_code} and no output.",
+        )
+        return PlateSolveResult(
+            solved=False,
+            error_message=error_msg,
+            solve_time_seconds=round(elapsed, 1),
+            image_width=width,
+            image_height=height,
+        ), elapsed
+
+    ini_data = _parse_astap_ini(ini_path)
+    result = _compute_results(ini_data, width, height)
+    result.solve_time_seconds = round(elapsed, 1)
+
+    if not result.solved and not result.error_message:
+        result.error_message = _EXIT_CODE_MESSAGES.get(
+            exit_code,
+            f"ASTAP exited with code {exit_code}.",
         )
 
-        if stdout:
-            logger.debug("[plate-solve] stdout: %s", stdout.decode(errors="replace").strip())
-        if stderr:
-            logger.debug("[plate-solve] stderr: %s", stderr.decode(errors="replace").strip())
-
-        ini_path = Path(str(output_base) + ".ini")
-        if not ini_path.is_file():
-            error_msg = _EXIT_CODE_MESSAGES.get(
-                exit_code,
-                f"ASTAP exited with code {exit_code} and no output.",
-            )
-            return PlateSolveResult(
-                solved=False,
-                error_message=error_msg,
-                solve_time_seconds=round(elapsed, 1),
-                image_width=width,
-                image_height=height,
-            )
-
-        ini_data = _parse_astap_ini(ini_path)
-        result = _compute_results(ini_data, width, height)
-        result.solve_time_seconds = round(elapsed, 1)
-
-        if not result.solved and not result.error_message:
-            result.error_message = _EXIT_CODE_MESSAGES.get(
-                exit_code,
-                f"ASTAP exited with code {exit_code}.",
-            )
-
-        return result
+    return result, elapsed
 
 
 def _get_dimensions_from_file(image_path: Path) -> tuple[int | None, int | None]:

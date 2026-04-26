@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.28.0
+**NightCrate version:** 0.29.0
 
 **Last updated:** 2026-04-25
 
@@ -379,7 +379,7 @@ Specs for future work live inline in `PLAN.md` (not as separate files).
 
 - **FITS equipment resolver** — matches FITS header strings (`INSTRUME`, `TELESCOP`, `FILTER`) to equipment DB rows via alias tables. Schema support exists (alias tables, `unresolved_equipment_observation`); the resolver logic and UI are not built. See PLAN.md "FITS Equipment Resolver Spec" section.
 - **Imaging core schema (rigs, projects, sessions, sub frames)** — the entire catalog/ingestion side. Equipment schema landed in v0.8.0–v0.10.0; what remains is the imaging-side schema (`rig`, `project`, `session`, `sub_frame`, calibration matching) and the ingestion pipeline (FITS parsing, N.I.N.A./ASIAIR/PHD2 log import). See PLAN.md "Imaging Core Schema" section.
-- **WCS overlay / image annotation** — plate solving via ASTAP is implemented (v0.28.0) but the solved coordinates are display-only. No overlay of WCS grid, DSO labels, or star catalogs on the image viewer.
+- **WCS overlay / image annotation** — plate solving via ASTAP is implemented (v0.29.0) but the solved coordinates are display-only. No overlay of WCS grid, DSO labels, or star catalogs on the image viewer.
 - **Desktop packaging** — Tauri wrapper for native app distribution (currently runs as local web app in browser).
 
 Note: the seed loader (v0.10.0) and aberration inspector (v0.5.0) are shipped — they were listed here in an earlier version of this doc but are now implemented.

@@ -41,6 +41,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)](#v0260--phd2-pass-d-2-spectrum-conformance--worm-markers) ✅
 - [v0.27.0 — PHD2 Analyzer Polish + Cleanup](#v0270--phd2-analyzer-polish--cleanup) ✅
 - [v0.28.0 — Plate Solving (ASTAP Integration)](#v0280--plate-solving-astap-integration) ✅
+- [v0.29.0 — Image Annotation (Identify Tab)](#v0290--image-annotation-identify-tab) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4246,6 +4247,37 @@ Integrates ASTAP as an external plate solver invoked via subprocess. Users confi
 - No database persistence of solve results
 - No star database path setting (ASTAP finds its own)
 - No astrometry.net support (ASTAP only)
+
+---
+
+## v0.29.0 — Image Annotation (Identify Tab)
+
+**Status:** Done
+**Branch:** `v0.29.0/image-annotations`
+
+### What it does
+
+"What's in my image?" — a new Identify tab in the Image Viewer that detects WCS from FITS headers (or plate solves via ASTAP), then overlays DSO annotations on the image using astropy WCS pixel projection. Three-panel layout: annotated image (top), detail panel (right), filterable DSO grid (bottom).
+
+### Delivered
+
+- [x] New "Identify" tab (index 2, before Aberration) in Image Viewer
+- [x] WCS detection from FITS headers (CD matrix + CDELT/CROTA forms)
+- [x] `services/image_annotations.py` — WCS detection, build, FOV computation, DSO projection via astropy.wcs
+- [x] `GET /api/plate-solve/detect-wcs` + `GET /api/plate-solve/annotate` endpoints
+- [x] DSO cone search with RA wrap-around near 0h/24h handling
+- [x] SVG annotation overlay — ellipses + labels, colorblind-safe palette, edge-positioned labels
+- [x] Right detail panel — astrometric solution + selected object info (designations, distance, external links)
+- [x] Bottom DSO grid — sortable MUI Table with bi-directional selection sync (click grid ↔ highlight marker)
+- [x] Type group filter chips + min-size slider (client-side filtering)
+- [x] PlateSolveResult extended with raw WCS fields (CD matrix, CRPIX)
+- [x] ASTAP `-speed slow` retry on solve failure
+- [x] ASTAP stdout progress streaming + `GET /progress` + `POST /cancel` endpoints
+- [x] Stale ASTAP process auto-kill before new solve
+- [x] "Extract stars & solve" mode — sep star extraction → synthetic star map for stretched images
+- [x] Target name autocomplete — search DSO catalog for coordinate hints
+- [x] `solvedWcs` cleared on image change
+- [x] 56 backend tests (plate solve + image annotations)
 
 ---
 
