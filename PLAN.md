@@ -42,6 +42,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.27.0 — PHD2 Analyzer Polish + Cleanup](#v0270--phd2-analyzer-polish--cleanup) ✅
 - [v0.28.0 — Plate Solving (ASTAP Integration)](#v0280--plate-solving-astap-integration) ✅
 - [v0.29.0 — Image Annotation (Identify Tab)](#v0290--image-annotation-identify-tab) ✅
+- [v0.29.1 — UI Polish + Bug Fixes](#v0291--ui-polish--bug-fixes) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4278,6 +4279,23 @@ Integrates ASTAP as an external plate solver invoked via subprocess. Users confi
 - [x] Target name autocomplete — search DSO catalog for coordinate hints
 - [x] `solvedWcs` cleared on image change
 - [x] 56 backend tests (plate solve + image annotations)
+
+---
+
+## v0.29.1 — UI Polish + Bug Fixes
+
+**Status:** Done
+**Branch:** `v0.29.1/ui-polish-bugfixes`
+
+### Delivered
+
+- [x] Fix Linear/Non-linear chip label — reads image's actual linearity instead of stretch mode
+- [x] Page state persistence across navigation — persistent pages (Image Viewer, Planner, PHD2, DSO Catalog, Weather) stay mounted via `display: none` instead of unmounting on route change
+- [x] Zustand stores for Image Viewer, PHD2, DSO Catalog, and extended Planner store — key state survives navigation
+- [x] Best Time of Year chart in DSO Catalog detail panel — location/horizon selectors, moon ignored
+- [x] Equipment: global All/Owned toggle at page level; removed My Equipment sidebar section
+- [x] Equipment: Sensors moved to Reference section; star column hidden for sensors
+- [x] Equipment: case-insensitive manufacturer sort in rig dropdowns (iOptron before ZWO)
 
 ---
 

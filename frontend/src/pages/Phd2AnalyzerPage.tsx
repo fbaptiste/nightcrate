@@ -3,6 +3,7 @@
  * Dispersion, and Data tabs.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePhd2Store } from "@/stores/phd2Store";
 import { useMutation } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
@@ -24,7 +25,7 @@ import IconButton from "@mui/material/IconButton";
 import Popover from "@mui/material/Popover";
 import Tooltip from "@mui/material/Tooltip";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import { parseGuideLog, type ParseResponse } from "@/api/phd2";
+import { parseGuideLog } from "@/api/phd2";
 import { setActivity } from "@/api/client";
 import { computeGuidingMetrics, computeSettleIntervals } from "@/lib/phd2GuidingMetrics";
 import ScatterPlot from "@/components/phd2/ScatterPlot";
@@ -59,13 +60,14 @@ const TAB_HELP: Record<number, string> = {
 };
 
 export default function Phd2AnalyzerPage() {
-  const [pathInput, setPathInput] = useState("");
-  const [activePath, setActivePath] = useState<string>("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [parsed, setParsed] = useState<ParseResponse | null>(null);
+  const {
+    activePath, setActivePath,
+    pathInput, setPathInput,
+    selectedIndex, setSelectedIndex,
+    parsed, setParsed,
+    tab, setTab,
+  } = usePhd2Store();
   const [browserOpen, setBrowserOpen] = useState(false);
-  // 0 = Section Info, 1 = Guiding, 2 = Dispersion, 3 = Data.
-  const [tab, setTab] = useState(1);
   // Lazy-mount the Data tab. The heavy DataTable useMemo pass (14
   // columns × 7 500 rows) was competing for the first render with the
   // chart — pulses appeared to "come in later" because the chart's

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useDsoCatalogStore } from "@/stores/dsoCatalogStore";
 import { useQuery } from "@tanstack/react-query";
 import {
   DataGrid,
@@ -46,28 +47,30 @@ import {
   formatSize,
 } from "@/lib/dsoFormatters";
 
-const DEFAULT_PAGE_SIZE = 100;
-
 export default function DsoCatalogPage() {
-  const [query, setQuery] = useState("");
+  const store = useDsoCatalogStore();
+  const [query, setQuery] = [store.query, store.setQuery];
   const debouncedQuery = useDebounce(query, 300);
 
-  const [typeFilter, setTypeFilter] = useState<string[]>([]);
-  const [constellationFilter, setConstellationFilter] = useState<string[]>([]);
-  const [hasDistance, setHasDistance] = useState(false);
-  const [catalogFilter, setCatalogFilter] = useState<string[]>([]);
-  const [pagination, setPagination] = useState<GridPaginationModel>({
-    page: 0,
-    pageSize: DEFAULT_PAGE_SIZE,
-  });
-  const [sortModel, setSortModel] = useState<GridSortModel>([
-    { field: "primary_designation", sort: "asc" },
-  ]);
-  const [detailId, setDetailId] = useState<number | null>(null);
+  const [typeFilter, setTypeFilter] = [store.typeFilter, store.setTypeFilter];
+  const [constellationFilter, setConstellationFilter] = [store.constellationFilter, store.setConstellationFilter];
+  const [hasDistance, setHasDistance] = [store.hasDistance, store.setHasDistance];
+  const [catalogFilter, setCatalogFilter] = [store.catalogFilter, store.setCatalogFilter];
+  const pagination: GridPaginationModel = { page: store.page, pageSize: store.pageSize };
+  const setPagination = (m: GridPaginationModel | ((prev: GridPaginationModel) => GridPaginationModel)) => {
+    const val = typeof m === "function" ? m(pagination) : m;
+    store.setPage(val.page);
+    store.setPageSize(val.pageSize);
+  };
+  const sortModel: GridSortModel = [{ field: store.sortField, sort: store.sortDir }];
+  const setSortModel = (m: GridSortModel) => {
+    if (m.length > 0) { store.setSortField(m[0].field); store.setSortDir((m[0].sort ?? "asc") as "asc" | "desc"); }
+  };
+  const [detailId, setDetailId] = [store.detailId, store.setDetailId];
   const [attributionOpen, setAttributionOpen] = useState(false);
 
-  const sort = sortModel[0]?.field ?? "primary_designation";
-  const sortDir = (sortModel[0]?.sort ?? "asc") as "asc" | "desc";
+  const sort = store.sortField;
+  const sortDir = store.sortDir;
 
   const listParams = {
     q: debouncedQuery || null,

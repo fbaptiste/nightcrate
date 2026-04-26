@@ -33,6 +33,11 @@ import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { ImageViewerPage } from "@/pages/ImageViewerPage";
+import PlannerPage from "@/pages/PlannerPage";
+import Phd2AnalyzerPage from "@/pages/Phd2AnalyzerPage";
+import DsoCatalogPage from "@/pages/DsoCatalogPage";
+import WeatherPage from "@/pages/WeatherPage";
 import {
   DndContext,
   KeyboardSensor,
@@ -314,7 +319,7 @@ export function AppShell() {
       </Drawer>
 
       <Box component="main" sx={{ flexGrow: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        <Outlet />
+        <PersistentPages pathname={pathname} />
       </Box>
 
       <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
@@ -424,5 +429,49 @@ function SortableNavItemRow({ item, navOpen }: { item: NavItem; navOpen: boolean
         )}
       </NavLink>
     </ListItem>
+  );
+}
+
+const PERSISTENT_ROUTES: Record<string, React.ComponentType> = {
+  "/image-viewer": ImageViewerPage,
+  "/planner": PlannerPage,
+  "/phd2-analyzer": Phd2AnalyzerPage,
+  "/catalog/dso": DsoCatalogPage,
+  "/weather": WeatherPage,
+};
+
+const persistentPaths = Object.keys(PERSISTENT_ROUTES);
+
+function PersistentPages({ pathname }: { pathname: string }) {
+  const [mounted, setMounted] = useState<Set<string>>(() => new Set());
+
+  const isOnPersistent = persistentPaths.includes(pathname);
+
+  if (isOnPersistent && !mounted.has(pathname)) {
+    mounted.add(pathname);
+    setMounted(new Set(mounted));
+  }
+
+  return (
+    <>
+      {persistentPaths.map((path) => {
+        if (!mounted.has(path)) return null;
+        const Component = PERSISTENT_ROUTES[path];
+        return (
+          <Box
+            key={path}
+            sx={{
+              display: pathname === path ? "flex" : "none",
+              flexDirection: "column",
+              flexGrow: 1,
+              minHeight: 0,
+            }}
+          >
+            <Component />
+          </Box>
+        );
+      })}
+      {!isOnPersistent && <Outlet />}
+    </>
   );
 }

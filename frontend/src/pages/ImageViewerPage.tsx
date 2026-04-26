@@ -59,12 +59,13 @@ import { PlateSolveDetailPanel } from "@/components/plate-solve/PlateSolveDetail
 import { PlateSolveDialog } from "@/components/plate-solve/PlateSolveDialog";
 import { PlateSolveDsoGrid } from "@/components/plate-solve/PlateSolveDsoGrid";
 import { PlateSolveFilters, applyFilters, DEFAULT_FILTERS, type AnnotationFilters } from "@/components/plate-solve/PlateSolveFilters";
-import { detectWcs, fetchAnnotations, type WcsParams } from "@/api/plateSolve";
+import { detectWcs, fetchAnnotations } from "@/api/plateSolve";
 import { setActivity } from "@/api/client";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
+import { useImageViewerStore } from "@/stores/imageViewerStore";
 import { monoFontFamily } from "@/theme/theme";
 
 const IMAGE_COMMENTARY = [
@@ -190,23 +191,29 @@ function applyAutoStf(
 
 export function ImageViewerPage() {
   const queryClient = useQueryClient();
-  const [inputPath, setInputPath] = useState("");
-  const [activePath, setActivePath] = useState("");
-  const [selectedHdu, setSelectedHdu] = useState(0);
-  const [tab, setTab] = useState(0);
+  const {
+    activePath, setActivePath,
+    inputPath, setInputPath,
+    selectedHdu, setSelectedHdu,
+    tab, setTab,
+    linked, setLinked,
+    perChannel, setPerChannel,
+    appliedLinked, setAppliedLinked,
+    appliedPerChannel, setAppliedPerChannel,
+    isLinked, setIsLinked,
+    solvedWcs, setSolvedWcs,
+    imageActivity, setImageActivity,
+    appliedDefaultsFor, setAppliedDefaultsFor,
+    selectedAnnotationId, setSelectedAnnotationId,
+  } = useImageViewerStore();
   const imageRef = useRef<FitsImageHandle>(null);
   const [currentZoom, setCurrentZoom] = useState(1);
-  // Stable activity label for image requests — set once on file open, doesn't
-  // change on tab switch, so the image URL stays stable for browser caching.
-  const [imageActivity, setImageActivity] = useState("");
 
   // File browser
   const [browserOpen, setBrowserOpen] = useState(false);
   const [plateSolveOpen, setPlateSolveOpen] = useState(false);
 
-  // Plate Solve tab (annotations)
-  const [solvedWcs, setSolvedWcs] = useState<WcsParams | null>(null);
-  const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
+  // Plate Solve tab (annotations) — state lives in the store
   const [annotationFilters, setAnnotationFilters] = useState<AnnotationFilters>(DEFAULT_FILTERS);
 
   // Pixel inspector
@@ -223,14 +230,7 @@ export function ImageViewerPage() {
   // Error notification
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Stretch state — split into "local" (slider display) and "applied" (what FitsImage renders).
-  // Sliders update local state immediately. Apply button commits local → applied.
-  // Toggles (Auto/None, Linked/Unlinked) and Reset apply immediately.
-  const [linked, setLinked] = useState<StretchParams>({ ...DEFAULT_STRETCH });
-  const [perChannel, setPerChannel] = useState<[StretchParams, StretchParams, StretchParams]>(DEFAULT_PER_CHANNEL);
-  const [appliedLinked, setAppliedLinked] = useState<StretchParams>({ ...DEFAULT_STRETCH });
-  const [appliedPerChannel, setAppliedPerChannel] = useState<[StretchParams, StretchParams, StretchParams]>(DEFAULT_PER_CHANNEL);
-  const [isLinked, setIsLinked] = useState(true);
+  // Stretch state lives in the Zustand store (survives navigation)
 
   // Aberration state
   const [samplesAcross, setSamplesAcross] = useState(5);
@@ -343,16 +343,12 @@ export function ImageViewerPage() {
     }
   }, [aberrationQuery.data, customSquares, samplesQuery.data?.squares, selectedSquare]);
 
-  // Auto-apply stretch once when stats first arrive for a new file.
-  // Uses a ref to track which path+hdu combo we've already applied defaults for,
-  // so we don't re-apply when the user manually changes stretch settings.
-  const appliedDefaultsFor = useRef("");
   useEffect(() => {
     if (!statsQuery.data || statsQuery.isFetching) return;
 
     const key = `${activePath}::${selectedHdu}`;
-    if (appliedDefaultsFor.current === key) return;
-    appliedDefaultsFor.current = key;
+    if (appliedDefaultsFor === key) return;
+    setAppliedDefaultsFor(key);
 
     const exts = extensionsQuery.data ?? [];
     const ext = exts.find((h) => h.index === selectedHdu);
@@ -397,7 +393,7 @@ export function ImageViewerPage() {
     setSolvedWcs(null);
     setSelectedAnnotationId(null);
     setAnnotationFilters(DEFAULT_FILTERS);
-    appliedDefaultsFor.current = "";
+    setAppliedDefaultsFor("");
     // For project images, show a readable path in the input
     if (isVirtualPath(path) && displayName) {
       const projPath = path.split("::")[0];
@@ -499,6 +495,12 @@ export function ImageViewerPage() {
         })()
       : activePath.split("/").pop() ?? null
     : null;
+  const isNonLinear = (() => {
+    const ext = extensions.find((h) => h.index === selectedHdu);
+    if (ext?.linear === false) return true;
+    const stf = statsQuery.data?.linked_stf ?? statsQuery.data?.channels[0]?.stf;
+    return stf != null && stf.midtone >= 0.1;
+  })();
   const dateObs = formatDateObs(headerVal("DATE-OBS"));
   const exposure = headerVal("EXPTIME");
   const filter = headerVal("FILTER");
@@ -639,7 +641,7 @@ export function ImageViewerPage() {
                 />
                 {hasStretch && (
                   <Chip
-                    label={linked.stretch === "stf" || linked.stretch === "auto" ? "Linear" : "Non-linear"}
+                    label={isNonLinear ? "Non-linear" : "Linear"}
                     size="small"
                     variant="outlined"
                     sx={{ fontSize: "0.65rem", height: 20 }}

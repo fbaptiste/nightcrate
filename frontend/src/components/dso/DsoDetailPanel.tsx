@@ -16,9 +16,16 @@ import StarIcon from "@mui/icons-material/Star";
 import Dialog from "@mui/material/Dialog";
 import DialogContent from "@mui/material/DialogContent";
 import { useState } from "react";
+import FormControl from "@mui/material/FormControl";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
 import { fetchDso } from "@/api/dsos";
+import { fetchLocations } from "@/api/locations";
+import { fetchHorizons, type Horizon } from "@/api/horizons";
+import { fetchAnnualHours } from "@/api/planner";
 import { DsoExternalRefs } from "@/components/dso/DsoExternalRefs";
 import DsoDistanceHelpDialog from "@/components/dso/DsoDistanceHelpDialog";
+import BestTimeOfYearChart from "@/components/planner/BestTimeOfYearChart";
 import SkyPreview from "@/components/dso/SkyPreview";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance, formatDistanceMethod } from "@/lib/distanceFormat";
@@ -454,7 +461,9 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
             </Box>
           </Stack>
         )}
+        {dsoId != null && <AnnualHoursSection dsoId={dsoId} />}
       </Box>
+
       <DsoDistanceHelpDialog
         open={distanceHelpOpen}
         onClose={() => setDistanceHelpOpen(false)}
@@ -519,5 +528,109 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
         </DialogContent>
       </Dialog>
     </Drawer>
+  );
+}
+
+
+function AnnualHoursSection({ dsoId }: { dsoId: number }) {
+  const [locationId, setLocationId] = useState<number | null>(null);
+  const [horizonId, setHorizonId] = useState<number | null>(null);
+
+  const locationsQuery = useQuery({
+    queryKey: ["locations"],
+    queryFn: fetchLocations,
+    staleTime: 5 * 60_000,
+  });
+
+  const locations = locationsQuery.data ?? [];
+
+  // Auto-select the default location on first load
+  if (locationId == null && locations.length > 0) {
+    const def = locations.find((l: any) => l.is_default) ?? locations[0];
+    setLocationId(def.id);
+  }
+
+  const horizonsQuery = useQuery({
+    queryKey: ["horizons", locationId],
+    queryFn: () => fetchHorizons(locationId as number),
+    enabled: locationId != null,
+    staleTime: 5 * 60_000,
+  });
+
+  const horizons: Horizon[] = horizonsQuery.data ?? [];
+
+  // Auto-select the default horizon when location changes
+  if (horizonId == null && horizons.length > 0) {
+    const def = horizons.find((h) => h.is_default) ?? horizons[0];
+    setHorizonId(def.id);
+  }
+
+  const annualHoursQuery = useQuery({
+    queryKey: ["annual-hours", dsoId, locationId, horizonId],
+    queryFn: () =>
+      fetchAnnualHours(dsoId, locationId!, {
+        horizonId,
+        moonSepDeg: 0,
+      }),
+    enabled: locationId != null,
+    staleTime: 5 * 60_000,
+  });
+
+  return (
+    <Box sx={{ pt: 3, pb: 1, maxWidth: "50%" }}>
+      <Typography variant="subtitle2">
+        Best time of year
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5, display: "block" }}>
+        Hours above horizon during astronomical darkness
+      </Typography>
+      <Stack direction="row" spacing={2} sx={{ mb: 1.5 }}>
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <Select
+            value={locationId ?? ""}
+            onChange={(e) => {
+              setLocationId(Number(e.target.value));
+              setHorizonId(null);
+            }}
+            displayEmpty
+            sx={{ fontSize: "0.8rem" }}
+          >
+            {locations.map((loc: any) => (
+              <MenuItem key={loc.id} value={loc.id} sx={{ fontSize: "0.8rem" }}>
+                {loc.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 140 }}>
+          <Select
+            value={horizonId ?? ""}
+            onChange={(e) => setHorizonId(Number(e.target.value))}
+            displayEmpty
+            disabled={horizons.length === 0}
+            sx={{ fontSize: "0.8rem" }}
+          >
+            {horizons.map((h) => (
+              <MenuItem key={h.id} value={h.id} sx={{ fontSize: "0.8rem" }}>
+                {h.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Stack>
+      {annualHoursQuery.isLoading && (
+        <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+          <CircularProgress size={24} />
+        </Box>
+      )}
+      {annualHoursQuery.data && (
+        <BestTimeOfYearChart track={annualHoursQuery.data} height={180} />
+      )}
+      {!locationId && (
+        <Typography variant="caption" color="text.secondary">
+          Select a location to see visibility chart.
+        </Typography>
+      )}
+    </Box>
   );
 }
