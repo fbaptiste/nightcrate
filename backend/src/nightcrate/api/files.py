@@ -13,16 +13,22 @@ router = APIRouter(prefix="/api/files", tags=["File Browser"])
 PROJECT_EXTENSIONS = {".pxiproject"}
 
 
+_ALL_FILES_SENTINEL: set[str] = {"*"}
+
+
 def _parse_accept(raw: str | None) -> set[str] | None:
     """Parse a comma-separated list of extensions.
 
     ``None`` (no ``accept`` query param) → ``None``, meaning "use the default
-    image-extension set". A non-empty ``accept`` wins even when
-    ``ALL_EXTENSIONS`` also matches — callers that want guide-log-only
-    listings pass ``accept=.txt``.
+    image-extension set". ``"*"`` means "show all files" (no extension
+    filter). A non-empty ``accept`` wins even when ``ALL_EXTENSIONS``
+    also matches — callers that want guide-log-only listings pass
+    ``accept=.txt``.
     """
     if not raw:
         return None
+    if raw.strip() == "*":
+        return _ALL_FILES_SENTINEL
     exts: set[str] = set()
     for token in raw.split(","):
         ext = token.strip().lower()
@@ -116,7 +122,7 @@ async def browse(
         elif entry.is_file():
             if archive_io.is_archive(entry):
                 archives.append({"name": entry.name, "path": str(entry)})
-            elif entry.suffix.lower() in accepted_exts:
+            elif accepted_exts is _ALL_FILES_SENTINEL or entry.suffix.lower() in accepted_exts:
                 try:
                     size = entry.stat().st_size
                 except OSError:
@@ -157,7 +163,7 @@ async def browse_archive(
     files = [e for e in entries if e["type"] == "file"]
 
     accepted_exts = _parse_accept(accept)
-    if accepted_exts is not None:
+    if accepted_exts is not None and accepted_exts is not _ALL_FILES_SENTINEL:
         files = [f for f in files if Path(f["name"]).suffix.lower() in accepted_exts]
 
     if not subdir:

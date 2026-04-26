@@ -26,7 +26,7 @@ Reference documents:
 - **Database:** SQLite accessed directly via `aiosqlite` (raw SQL, no ORM). Migrations managed with `yoyo-migrations` (SQL files in `db/migrations/`). **No SQLAlchemy.**
 - **Data models:** Pydantic only — for API shapes, domain objects, and settings. No ORM models.
 - **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
-- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, `timezonefinder` (geo tz from coordinates), `scipy` (FFT pipeline), ASTAP/astrometry.net for plate solving
+- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, `timezonefinder` (geo tz from coordinates), `scipy` (FFT pipeline). ASTAP integrated as external plate solver (subprocess, not a Python dependency).
 - **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
 - **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly.
 - **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, key-value rows).
@@ -256,6 +256,15 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
 - **No hardcoded ErrorCode → string table.** The log's own ErrorDescription is authoritative.
 - **Three tabs**: Guiding (RA/Dec time-series + pulses + SNR + Mass sub-panels), Dispersion (2-D scatter + 1σ / 2σ ellipses), Data (per-frame table). No spectrum / no unguided RA — both stripped in v0.27.0 cleanup.
 - Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
+
+### Plate Solving
+- **ASTAP via subprocess** — invoked via `asyncio.create_subprocess_exec()`. **Never pass `-update`** (would modify the input file). Output directed to temp dir via `-o`, parsed from the `.ini` sidecar.
+- **macOS `.app` bundle resolution**: `resolve_astap_binary()` navigates `Contents/MacOS/` to find the executable by name (`astap`, `ASTAP`).
+- **Temp file pipeline**: archive/pxiproject images extracted to temp FITS for ASTAP. XISF also converted (ASTAP only handles uncompressed XISF). Regular FITS/TIFF/PNG/JPG passed directly.
+- **Concurrency**: `asyncio.Semaphore(1)` — one solve at a time. Second request gets 409.
+- **Display-only results** — no DB persistence. RA/Dec/pixel scale/rotation/FOV shown in a dialog.
+- **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (`POST /solve`, `POST /validate-path`).
+- **Key frontend:** `components/plate-solve/PlateSolveDialog.tsx`, Settings page `AstapPathSection`.
 
 ### Weather Forecast
 - Two timezones per location: `geo_timezone` (auto-derived from coords via `timezonefinder`, used for noon-to-noon astro windows and the lunar 48 h grid) and `timezone` (user's display preference, used for Open-Meteo API + display formatting). **Don't conflate them** — remote-observatory operators legitimately want display in their home timezone while astro computes against site coordinates.

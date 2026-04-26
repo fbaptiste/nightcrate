@@ -39,3 +39,16 @@ def format_longitude(decimal_deg: float) -> str:
         raise ValueError(f"Longitude out of range [-180, 180]: {decimal_deg}")
     direction = "E" if decimal_deg >= 0 else "W"
     return f"{_format_dms(decimal_deg)} {direction}"
+
+
+def format_ra_hms(ra_deg: float) -> str:
+    """Format Right Ascension in degrees as HHh MMm SS.Ss."""
+    angle = Angle(ra_deg, unit=u.deg)
+    return angle.to_string(unit=u.hourangle, sep=("h ", "m ", "s"), precision=1, pad=True)
+
+
+def format_dec_dms(dec_deg: float) -> str:
+    """Format Declination in degrees as +/-DD° MM′ SS″."""
+    angle = Angle(dec_deg, unit=u.deg)
+    sign = "+" if dec_deg >= 0 else ""
+    return sign + angle.to_string(unit=u.deg, sep=_SEP, precision=1, pad=True)

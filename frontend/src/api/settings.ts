@@ -59,6 +59,7 @@ export interface Settings {
   phd2_panel_heights: Record<string, number>;
   phd2_help_expanded: Record<string, boolean>;
   phd2_recurrence_mode: "boundary_skip" | "verbatim";
+  astap_executable_path: string | null;
 }
 
 export function fetchSettings(): Promise<Settings> {
