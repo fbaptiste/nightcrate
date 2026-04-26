@@ -4183,7 +4183,7 @@ rounds to **4** for compatibility: `a_arcsec = 4 · |X_k| / N · pixel_scale`. O
 
 ## v0.27.0 — PHD2 Analyzer Polish + Cleanup
 
-**Status:** In Progress
+**Status:** Complete
 **Branch:** `v0.27.0/phd2-unguided-ra`
 
 ### What happened
