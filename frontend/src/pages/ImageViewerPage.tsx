@@ -22,6 +22,7 @@ import FitScreenIcon from "@mui/icons-material/FitScreen";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import OneKIcon from "@mui/icons-material/PhotoSizeSelectActual";
+import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 
 import {
   DEFAULT_STRETCH,
@@ -53,6 +54,7 @@ import { HduSelector } from "@/components/fits/HduSelector";
 import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
 import { EasterEggWand } from "@/components/EasterEggWand";
+import { PlateSolveDialog } from "@/components/plate-solve/PlateSolveDialog";
 import { setActivity } from "@/api/client";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
@@ -194,6 +196,7 @@ export function ImageViewerPage() {
 
   // File browser
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [plateSolveOpen, setPlateSolveOpen] = useState(false);
 
   // Pixel inspector
   const [pixelInspectorOn, setPixelInspectorOn] = useState(false);
@@ -463,6 +466,13 @@ export function ImageViewerPage() {
   const dateObs = formatDateObs(headerVal("DATE-OBS"));
   const exposure = headerVal("EXPTIME");
   const filter = headerVal("FILTER");
+  const parseHeaderFloat = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = headerVal(k);
+      if (v) { const n = parseFloat(v); if (!isNaN(n)) return n; }
+    }
+    return null;
+  };
 
   const activePerChannel = (isColor && !isLinked) ? appliedPerChannel : undefined;
 
@@ -532,6 +542,23 @@ export function ImageViewerPage() {
                 selected={selectedHdu}
                 onChange={(i) => { setActivity(`Switch HDU ${i}`); setSelectedHdu(i); setTab(0); }}
               />
+            </>
+          )}
+
+          {hasFile && (
+            <>
+              <Divider orientation="vertical" flexItem />
+              <Tooltip title="Plate Solve" arrow>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setPlateSolveOpen(true)}
+                  startIcon={<TravelExploreIcon sx={{ fontSize: 16 }} />}
+                  sx={{ height: 32 }}
+                >
+                  Plate Solve
+                </Button>
+              </Tooltip>
             </>
           )}
 
@@ -1153,6 +1180,16 @@ export function ImageViewerPage() {
         onClose={() => setBrowserOpen(false)}
         onSelect={(path, displayName) => openFile(path, displayName)}
         activePath={activePath}
+      />
+
+      {/* Plate solve dialog */}
+      <PlateSolveDialog
+        open={plateSolveOpen}
+        onClose={() => setPlateSolveOpen(false)}
+        imagePath={activePath}
+        hdu={selectedHdu}
+        headerRa={parseHeaderFloat("RA", "OBJCTRA", "CRVAL1")}
+        headerDec={parseHeaderFloat("DEC", "OBJCTDEC", "CRVAL2")}
       />
 
       {/* Error notification */}

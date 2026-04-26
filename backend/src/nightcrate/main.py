@@ -30,6 +30,7 @@ from nightcrate.api import (
     locations,
     phd2,
     planner,
+    plate_solve,
     rigs,
     settings,
     weather,
@@ -324,6 +325,15 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Plate Solve",
+        "description": (
+            "Plate solve astronomical images via ASTAP integration. Supports "
+            "near solve (with coordinate hints from FITS headers) and blind "
+            "solve. Works with all NightCrate image sources: filesystem, "
+            "archives, and PixInsight projects."
+        ),
+    },
+    {
         "name": "Settings",
         "description": (
             "Read and update application settings stored in the database. Controls "
@@ -374,6 +384,7 @@ app.include_router(weather.router)
 app.include_router(dso.router)
 app.include_router(planner.router)
 app.include_router(phd2.router)
+app.include_router(plate_solve.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(diagnostics.router)

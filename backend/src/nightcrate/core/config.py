@@ -120,6 +120,7 @@ class Settings(BaseModel):
     # collapsed by default. Set to ``True`` once the user expands
     # the panel and the state should persist.
     phd2_help_expanded: dict[str, bool] = Field(default_factory=dict)
+    astap_executable_path: str | None = None
 
     @model_validator(mode="after")
     def _validate_scoring(self) -> Settings:

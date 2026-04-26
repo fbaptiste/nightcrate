@@ -39,7 +39,8 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.24.0 — PHD2 Pass C (Range Selection + Copy Stats + Recent Files)](#v0240--phd2-pass-c-range-selection--copy-stats--recent-files) ✅
 - [v0.25.0 — PHD2 Pass D-1 (Metric Foundation)](#v0250--phd2-pass-d-1-metric-foundation) ✅
 - [v0.26.0 — PHD2 Pass D-2 (Spectrum Conformance + Worm Markers)](#v0260--phd2-pass-d-2-spectrum-conformance--worm-markers) ✅
-- [v0.27.0 — PHD2 Analyzer Polish + Cleanup](#v0270--phd2-analyzer-polish--cleanup)
+- [v0.27.0 — PHD2 Analyzer Polish + Cleanup](#v0270--phd2-analyzer-polish--cleanup) ✅
+- [v0.28.0 — Plate Solving (ASTAP Integration)](#v0280--plate-solving-astap-integration) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4208,6 +4209,43 @@ v0.26.0 shipped a Spectrum tab (FFT pipeline, worm markers, rig picker) and v0.2
 - D3 zoom constrained to chart interior (axes/labels excluded)
 - Default app nav order reordered by workflow
 - Updated main.py PHD2 feature description
+
+---
+
+## v0.28.0 — Plate Solving (ASTAP Integration)
+
+**Status:** Done
+**Branch:** `v0.28.0/plate-solving`
+
+### What it does
+
+Integrates ASTAP as an external plate solver invoked via subprocess. Users configure the ASTAP executable path in Settings (with macOS `.app` bundle auto-resolution), then plate solve any image from the Image Viewer toolbar. Results (RA, Dec, pixel scale, rotation, FOV) display in a dialog. No database persistence — one-shot tool.
+
+### Delivered
+
+- [x] `astap_executable_path` setting (no migration — KV pattern)
+- [x] Settings page: Plate Solving accordion with Browse + live validation
+- [x] File browser `accept=*` mode for selecting executables (extensionless Unix binaries)
+- [x] macOS `.app` bundle resolution (navigates `Contents/MacOS/` to find the binary)
+- [x] `services/plate_solve.py` — ASTAP subprocess invocation, `.ini` output parsing, result computation
+- [x] `services/plate_solve_models.py` — `PlateSolveRequest` / `PlateSolveResult` Pydantic models
+- [x] `api/plate_solve.py` — `POST /solve`, `POST /validate-path` endpoints
+- [x] Temp file pipeline: archive and pxiproject images extracted to temp FITS for ASTAP
+- [x] XISF images converted to temp FITS (ASTAP only supports uncompressed XISF)
+- [x] Auto/Near/Blind solve modes — auto-detects from FITS header RA/Dec hints
+- [x] `services/coordinate_format.py` — added `format_ra_hms()`, `format_dec_dms()`
+- [x] Image Viewer: Plate Solve button in toolbar + `PlateSolveDialog` component
+- [x] Dialog: mode selector, header hint display, results table, copy-to-clipboard, solve timer
+- [x] Concurrency guard (`asyncio.Semaphore(1)`) — one solve at a time
+- [x] ASTAP exit code mapping to user-friendly error messages
+- [x] 35 backend tests (service unit + API integration)
+
+### Not in scope
+
+- No WCS overlay or annotation on images (future version)
+- No database persistence of solve results
+- No star database path setting (ASTAP finds its own)
+- No astrometry.net support (ASTAP only)
 
 ---
 

@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.27.0
+**NightCrate version:** 0.28.0
 
 **Last updated:** 2026-04-25
 
@@ -293,6 +293,18 @@ v0.27.0 Pass D-3 — **Unguided RA Reconstruction** (spec v4 §6.2 + §6.1.8). N
 
 Incidental fix with broader reach: `_moon_rise_set` in `services/astronomy.py` was widened from the sun's 24 h noon-to-noon grid to a dedicated 48 h midnight-anchored window. The **Tonight at-a-glance calculator** now reports actual moonrise times even when the moon rose earlier in the day.
 
+### Plate Solving (ASTAP)
+
+Plate solving via ASTAP subprocess invocation. User configures the ASTAP executable path in Settings (with macOS `.app` bundle auto-resolution via `Contents/MacOS/`), then plate solves any image from the Image Viewer toolbar. Supports near solve (with RA/Dec hints from FITS headers), blind solve (full sky search), and auto mode (detects hints and chooses). Results (RA, Dec, pixel scale, rotation, FOV) displayed in a dialog — no database persistence.
+
+Handles all NightCrate image sources: filesystem files passed directly to ASTAP; archive and pxiproject images extracted to temp FITS; XISF converted to temp FITS (ASTAP only supports uncompressed XISF). File browser enhanced with `accept=*` mode for selecting extensionless Unix executables.
+
+- **Route:** Image Viewer toolbar button (no dedicated page)
+- **API:** `POST /api/plate-solve/solve` (accepts image path, mode, optional RA/Dec/FOV hints), `POST /api/plate-solve/validate-path` (validates ASTAP executable, resolves `.app` bundles)
+- **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing + temp file pipeline), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (endpoints), `services/coordinate_format.py` (added `format_ra_hms`, `format_dec_dms`)
+- **Key frontend:** `components/plate-solve/PlateSolveDialog.tsx` (mode selector + results table + copy), `pages/SettingsPage.tsx` (`AstapPathSection` with browse + validation), `api/plateSolve.ts`
+- **Settings:** `astap_executable_path` (KV table, no migration)
+
 ---
 
 ## Schema state
@@ -354,7 +366,6 @@ Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`. LLM-fac
 ## Known limitations and rough edges
 
 - **No catalog/ingestion pipeline** — the app can view and inspect images, but doesn't catalog them into projects/sessions/targets. This is the biggest missing piece for real workflow use.
-- **No plate solving integration** — ASTAP and astrometry.net are planned but not wired up. No WCS overlay or object annotation on images.
 - **Equipment exists but isn't connected to images** — FITS alias tables (`camera_alias`, `telescope_alias`, `filter_alias`) exist in the schema but the resolver that matches FITS headers to equipment rows is not built yet.
 - **Weather seeing model is surface-level** — the wind-shear model improves accuracy when pressure-level data is available, but Open-Meteo's pressure-level coverage is limited. Seeing estimates should be treated as rough guidance, not observatory-grade predictions.
 - **Single-chunk frontend bundle** — Vite warns about >500KB bundle. No code splitting yet. Acceptable for a local app but worth addressing if load times become noticeable.
@@ -368,7 +379,7 @@ Specs for future work live inline in `PLAN.md` (not as separate files).
 
 - **FITS equipment resolver** — matches FITS header strings (`INSTRUME`, `TELESCOP`, `FILTER`) to equipment DB rows via alias tables. Schema support exists (alias tables, `unresolved_equipment_observation`); the resolver logic and UI are not built. See PLAN.md "FITS Equipment Resolver Spec" section.
 - **Imaging core schema (rigs, projects, sessions, sub frames)** — the entire catalog/ingestion side. Equipment schema landed in v0.8.0–v0.10.0; what remains is the imaging-side schema (`rig`, `project`, `session`, `sub_frame`, calibration matching) and the ingestion pipeline (FITS parsing, N.I.N.A./ASIAIR/PHD2 log import). See PLAN.md "Imaging Core Schema" section.
-- **Plate solving** — ASTAP/astrometry.net integration for WCS coordinates and image annotation.
+- **WCS overlay / image annotation** — plate solving via ASTAP is implemented (v0.28.0) but the solved coordinates are display-only. No overlay of WCS grid, DSO labels, or star catalogs on the image viewer.
 - **Desktop packaging** — Tauri wrapper for native app distribution (currently runs as local web app in browser).
 
 Note: the seed loader (v0.10.0) and aberration inspector (v0.5.0) are shipped — they were listed here in an earlier version of this doc but are now implemented.

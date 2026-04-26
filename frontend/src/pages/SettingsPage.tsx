@@ -1,7 +1,9 @@
+import { useCallback, useEffect, useState } from "react";
 import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import FormControl from "@mui/material/FormControl";
 import FormHelperText from "@mui/material/FormHelperText";
 import MenuItem from "@mui/material/MenuItem";
@@ -11,9 +13,15 @@ import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import ErrorIcon from "@mui/icons-material/Error";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { PlannerScoringSection } from "@/components/settings/PlannerScoringSection";
+import { FileBrowser } from "@/components/fits/FileBrowser";
+import { validateAstapPath } from "@/api/plateSolve";
+import { monoFontFamily } from "@/theme/theme";
 
 const sectionHeaderSx = {
   textTransform: "uppercase",
@@ -145,6 +153,9 @@ export function SettingsPage() {
             </AccordionDetails>
           </Accordion>
 
+          {/* Plate Solving */}
+          <AstapPathSection />
+
           {/* Target Planner */}
           <Accordion variant="outlined" disableGutters defaultExpanded={false}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -257,5 +268,112 @@ export function SettingsPage() {
       </Stack>
       </Box>
     </Box>
+  );
+}
+
+
+function AstapPathSection() {
+  const { settings, update } = useSettingsStore();
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [validation, setValidation] = useState<{
+    valid: boolean;
+    resolved_path: string | null;
+    error: string | null;
+  } | null>(null);
+  const [validating, setValidating] = useState(false);
+
+  const currentPath = settings?.astap_executable_path ?? "";
+
+  const doValidate = useCallback(async (path: string) => {
+    if (!path) {
+      setValidation(null);
+      return;
+    }
+    setValidating(true);
+    try {
+      const result = await validateAstapPath(path);
+      setValidation(result);
+      if (result.valid && result.resolved_path && result.resolved_path !== path) {
+        update({ astap_executable_path: result.resolved_path });
+      }
+    } catch {
+      setValidation({ valid: false, resolved_path: null, error: "Validation failed" });
+    } finally {
+      setValidating(false);
+    }
+  }, [update]);
+
+  useEffect(() => {
+    if (currentPath) doValidate(currentPath);
+  }, []);
+
+  const handleBrowseSelect = useCallback(
+    (path: string) => {
+      update({ astap_executable_path: path });
+      doValidate(path);
+      setBrowserOpen(false);
+    },
+    [update, doValidate],
+  );
+
+  return (
+    <>
+      <Accordion variant="outlined" disableGutters defaultExpanded={false}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography variant="body2" color="text.secondary" sx={sectionHeaderSx}>
+            Plate Solving
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography variant="body1" gutterBottom>ASTAP Executable</Typography>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <TextField
+              size="small"
+              fullWidth
+              placeholder="Not configured"
+              value={currentPath}
+              onChange={(e) => {
+                update({ astap_executable_path: e.target.value || null });
+                setValidation(null);
+              }}
+              onBlur={() => { if (currentPath) doValidate(currentPath); }}
+              inputProps={{ style: { fontFamily: monoFontFamily, fontSize: "0.75rem" } }}
+            />
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setBrowserOpen(true)}
+              startIcon={<FolderOpenIcon sx={{ fontSize: 16 }} />}
+              sx={{ height: 32, whiteSpace: "nowrap" }}
+            >
+              Browse
+            </Button>
+            {!validating && validation?.valid && (
+              <CheckCircleIcon color="success" fontSize="small" />
+            )}
+            {!validating && validation && !validation.valid && (
+              <ErrorIcon color="error" fontSize="small" />
+            )}
+          </Stack>
+          {validation && !validation.valid && validation.error && (
+            <FormHelperText error>{validation.error}</FormHelperText>
+          )}
+          <FormHelperText>
+            Path to the ASTAP executable. On macOS you can select the .app bundle — the binary
+            inside will be resolved automatically.
+          </FormHelperText>
+        </AccordionDetails>
+      </Accordion>
+
+      <FileBrowser
+        open={browserOpen}
+        onClose={() => setBrowserOpen(false)}
+        onSelect={handleBrowseSelect}
+        activePath={currentPath || undefined}
+        accept={["*"]}
+        title="Select ASTAP Executable"
+        emptyMessage="No files here"
+      />
+    </>
   );
 }
