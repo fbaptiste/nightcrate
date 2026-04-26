@@ -1,6 +1,8 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import { setActivity } from "@/api/client";
 import { EquipmentSidebar } from "@/components/equipment/EquipmentSidebar";
 import { EquipmentPlaceholder } from "@/components/equipment/EquipmentPlaceholder";
@@ -28,59 +30,40 @@ function formatCategoryLabel(category: string): string {
 export function EquipmentPage() {
   const { category = "cameras" } = useParams();
   const navigate = useNavigate();
+  const [ownedOnly, setOwnedOnly] = useState(false);
 
-  // Refine the page-level activity label to include the sub-category so the
-  // Activity Console groups requests like "Equipment — Cameras" separately.
   const lastCategory = useRef<string | null>(null);
   if (lastCategory.current !== category) {
     lastCategory.current = category;
     setActivity(`Equipment — ${formatCategoryLabel(category)}`);
   }
 
+  const hasOwnedToggle = !["sensors", "manufacturers", "lookup-tables"].includes(category);
+
   const content = (() => {
     switch (category) {
       case "cameras":
-        return <CameraList />;
-      case "my-cameras":
-        return <CameraList mineOnly />;
+        return <CameraList mineOnly={ownedOnly} />;
       case "telescopes":
-        return <TelescopeList />;
-      case "my-telescopes":
-        return <TelescopeList mineOnly />;
+        return <TelescopeList mineOnly={ownedOnly} />;
       case "filters":
-        return <FilterList />;
-      case "my-filters":
-        return <FilterList mineOnly />;
+        return <FilterList mineOnly={ownedOnly} />;
       case "sensors":
         return <SensorList />;
       case "mounts":
-        return <MountList />;
-      case "my-mounts":
-        return <MountList mineOnly />;
+        return <MountList mineOnly={ownedOnly} />;
       case "focusers":
-        return <FocuserList />;
-      case "my-focusers":
-        return <FocuserList mineOnly />;
+        return <FocuserList mineOnly={ownedOnly} />;
       case "filter-wheels":
-        return <FilterWheelList />;
-      case "my-filter-wheels":
-        return <FilterWheelList mineOnly />;
+        return <FilterWheelList mineOnly={ownedOnly} />;
       case "oags":
-        return <OagList />;
-      case "my-oags":
-        return <OagList mineOnly />;
+        return <OagList mineOnly={ownedOnly} />;
       case "guide-scopes":
-        return <GuideScopeList />;
-      case "my-guide-scopes":
-        return <GuideScopeList mineOnly />;
+        return <GuideScopeList mineOnly={ownedOnly} />;
       case "computers":
-        return <ComputerList />;
-      case "my-computers":
-        return <ComputerList mineOnly />;
+        return <ComputerList mineOnly={ownedOnly} />;
       case "software":
-        return <SoftwareList />;
-      case "my-software":
-        return <SoftwareList mineOnly />;
+        return <SoftwareList mineOnly={ownedOnly} />;
       case "manufacturers":
         return <ManufacturerList />;
       case "lookup-tables":
@@ -97,6 +80,19 @@ export function EquipmentPage() {
         onSelectCategory={(cat) => navigate(`/equipment/${cat}`)}
       />
       <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
+        {hasOwnedToggle && (
+          <Box sx={{ mb: 1.5 }}>
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={ownedOnly ? "owned" : "all"}
+              onChange={(_, v) => { if (v) setOwnedOnly(v === "owned"); }}
+            >
+              <ToggleButton value="all" sx={{ px: 1.5, py: 0.25, fontSize: "0.75rem" }}>All</ToggleButton>
+              <ToggleButton value="owned" sx={{ px: 1.5, py: 0.25, fontSize: "0.75rem" }}>Owned</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+        )}
         {content}
       </Box>
     </Box>

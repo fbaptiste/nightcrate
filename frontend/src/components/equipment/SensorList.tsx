@@ -37,6 +37,7 @@ export default function SensorList() {
       columns={columns}
       getItemName={(s) => s.model_name}
       FormDialog={SensorFormDialog}
+      hideMineColumn
       renderDetail={(item) => (
         <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, columnGap: 4 }}>
           <DetailField label="Manufacturer" value={item.manufacturer.name} />

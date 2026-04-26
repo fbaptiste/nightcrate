@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AppShell } from "@/components/AppShell";
 import { HomePage } from "@/pages/HomePage";
-import { ImageViewerPage } from "@/pages/ImageViewerPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ApiDocsPage } from "@/pages/ApiDocsPage";
 import { EquipmentPage } from "@/pages/EquipmentPage";
@@ -13,10 +12,6 @@ import LocationsPage from "@/pages/LocationsPage";
 import RigsPage from "@/pages/RigsPage";
 import CalculatorsPage from "@/pages/CalculatorsPage";
 import TonightPage from "@/pages/TonightPage";
-import DsoCatalogPage from "@/pages/DsoCatalogPage";
-import PlannerPage from "@/pages/PlannerPage";
-import Phd2AnalyzerPage from "@/pages/Phd2AnalyzerPage";
-import WeatherPage from "./pages/WeatherPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 import { fetchHealth } from "@/api/admin";
@@ -29,18 +24,18 @@ const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { index: true, element: <HomePage /> },
-      { path: "image-viewer", element: <ImageViewerPage /> },
+      { path: "image-viewer", element: null },
       { path: "equipment", element: <EquipmentPage /> },
       { path: "equipment/:category", element: <EquipmentPage /> },
       { path: "locations", element: <LocationsPage /> },
       { path: "rigs", element: <RigsPage /> },
-      { path: "weather", element: <WeatherPage /> },
+      { path: "weather", element: null },
       { path: "calculators", element: <CalculatorsPage /> },
       { path: "calculators/:calcId", element: <CalculatorsPage /> },
       { path: "tonight", element: <TonightPage /> },
-      { path: "catalog/dso", element: <DsoCatalogPage /> },
-      { path: "planner", element: <PlannerPage /> },
-      { path: "phd2-analyzer", element: <Phd2AnalyzerPage /> },
+      { path: "catalog/dso", element: null },
+      { path: "planner", element: null },
+      { path: "phd2-analyzer", element: null },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "api-docs", element: <ApiDocsPage /> },

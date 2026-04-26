@@ -85,46 +85,51 @@ export default function PlannerPage() {
   const setSortBy = usePlannerStore((s) => s.setSortBy);
   const filterIntent = usePlannerStore((s) => s.filterIntent);
   const setFilterIntent = usePlannerStore((s) => s.setFilterIntent);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [restrictTonight, setRestrictTonight] = useState<boolean>(true);
-  // Collapsible filter bar — session-only (no persist). Defaults open;
-  // collapsing gives the card list more vertical room once the user has
-  // dialled in their filters.
+  const searchQuery = usePlannerStore((s) => s.searchQuery);
+  const setSearchQuery = usePlannerStore((s) => s.setSearchQuery);
+  const restrictTonight = usePlannerStore((s) => s.restrictTonight);
+  const setRestrictTonight = usePlannerStore((s) => s.setRestrictTonight);
+  const typeFilter = usePlannerStore((s) => s.typeFilter);
+  const setTypeFilter = usePlannerStore((s) => s.setTypeFilter);
+  const catalogFilter = usePlannerStore((s) => s.catalogFilter);
+  const setCatalogFilter = usePlannerStore((s) => s.setCatalogFilter);
+  const constellationFilter = usePlannerStore((s) => s.constellationFilter);
+  const setConstellationFilter = usePlannerStore((s) => s.setConstellationFilter);
+  const detailId = usePlannerStore((s) => s.detailId);
+  const setDetailId = usePlannerStore((s) => s.setDetailId);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(true);
-  const [typeFilter, setTypeFilter] = useState<string[]>([]);
-  const [catalogFilter, setCatalogFilter] = useState<string[]>([]);
-  const [constellationFilter, setConstellationFilter] = useState<string[]>([]);
-  // Two-state pattern per slider — UI tracks the ``*Draft`` value
-  // during drag, and only the committed (``minHours`` / ``maxMag``
-  // / ``minSize``) value feeds the query key. Without this split,
-  // every intermediate drag tick re-fires ``/api/planner/targets``
-  // and the grid visibly flashes the relaxed-filter result set.
-  const [minHours, setMinHours] = useState<number>(
-    settings?.planner_min_visibility_hours ?? 2.0,
-  );
+
+  const storeMinHours = usePlannerStore((s) => s.minHours);
+  const storeSetMinHours = usePlannerStore((s) => s.setMinHours);
+  const storeMaxMag = usePlannerStore((s) => s.maxMag);
+  const storeSetMaxMag = usePlannerStore((s) => s.setMaxMag);
+  const storeMinSize = usePlannerStore((s) => s.minSize);
+  const storeSetMinSize = usePlannerStore((s) => s.setMinSize);
+  const storeCoverageRange = usePlannerStore((s) => s.coverageRange);
+  const storeSetCoverageRange = usePlannerStore((s) => s.setCoverageRange);
+
+  const minHours = storeMinHours ?? settings?.planner_min_visibility_hours ?? 2.0;
+  const setMinHours = (v: number) => storeSetMinHours(v);
   const [minHoursDraft, setMinHoursDraft] = useState<number>(minHours);
-  const [maxMag, setMaxMag] = useState<number>(settings?.planner_max_magnitude ?? 12.0);
+  const maxMag = storeMaxMag ?? settings?.planner_max_magnitude ?? 12.0;
+  const setMaxMag = (v: number) => storeSetMaxMag(v);
   const [maxMagDraft, setMaxMagDraft] = useState<number>(maxMag);
-  const [minSize, setMinSize] = useState<number>(settings?.planner_min_size_arcmin ?? 5.0);
+  const minSize = storeMinSize ?? settings?.planner_min_size_arcmin ?? 5.0;
+  const setMinSize = (v: number) => storeSetMinSize(v);
   const [minSizeDraft, setMinSizeDraft] = useState<number>(minSize);
-  // Frames-Well is a dual-thumb coverage range slider. Defaults come
-  // from user settings (``planner_frames_well_min_pct`` /
-  // ``planner_frames_well_max_pct``); setting the range to 0–200
-  // turns filtering off. Two-state commit mirrors the other sliders
-  // so dragging doesn't re-fire the query on every tick.
+
   const framesWellDefault: [number, number] = [
     settings?.planner_frames_well_min_pct ?? 15,
     settings?.planner_frames_well_max_pct ?? 90,
   ];
-  const [coverageRange, setCoverageRange] = useState<[number, number]>(framesWellDefault);
+  const coverageRange = storeCoverageRange ?? framesWellDefault;
+  const setCoverageRange = (v: [number, number]) => storeSetCoverageRange(v);
   const [coverageRangeDraft, setCoverageRangeDraft] =
-    useState<[number, number]>(framesWellDefault);
+    useState<[number, number]>(coverageRange);
   const [pagination, setPagination] = useState<{ page: number; pageSize: number }>({
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
   });
-  const [detailId, setDetailId] = useState<number | null>(null);
-
   const locationsQuery = useQuery({
     queryKey: ["locations"],
     queryFn: fetchLocations,
@@ -345,12 +350,16 @@ export default function PlannerPage() {
           }}
           aria-label="Planner scope"
         >
-          <ToggleButton value="tonight" sx={{ textTransform: "none", px: 2 }}>
-            {locationName ? `Tonight from ${locationName}` : "Tonight"}
-          </ToggleButton>
-          <ToggleButton value="anytime" sx={{ textTransform: "none", px: 2 }}>
-            Browse the full catalog
-          </ToggleButton>
+          <Tooltip title="Objects visible tonight during astronomical darkness from your selected location, filtered by hours, magnitude, size, and scored for imaging quality" arrow>
+            <ToggleButton value="tonight" sx={{ textTransform: "none", px: 2 }}>
+              {locationName ? `Tonight from ${locationName}` : "Tonight"}
+            </ToggleButton>
+          </Tooltip>
+          <Tooltip title="Browse all objects in the DSO catalog regardless of location, date, or visibility — no scoring, no tonight-specific filters" arrow>
+            <ToggleButton value="anytime" sx={{ textTransform: "none", px: 2 }}>
+              Full Catalog
+            </ToggleButton>
+          </Tooltip>
         </ToggleButtonGroup>
         {restrictTonight && data?.dark_window ? (
           <Stack direction="row" alignItems="center" gap={0.5}>

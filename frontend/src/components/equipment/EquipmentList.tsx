@@ -42,6 +42,7 @@ interface EquipmentListProps<T extends { id: number }> {
   /** Optional detail panel rendered below the grid when a row is clicked. */
   renderDetail?: (item: T) => React.ReactNode;
   mineOnly?: boolean;
+  hideMineColumn?: boolean;
   /**
    * Column fields (beyond "manufacturer") whose filter input should be a
    * dropdown populated with the unique displayed values from the current
@@ -67,13 +68,15 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
   getItemName,
   FormDialog,
   renderDetail,
-  mineOnly = false,
+  mineOnly: mineOnlyProp = false,
+  hideMineColumn = false,
   dropdownFilterFields,
 }: EquipmentListProps<T>) {
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
   const [editItem, setEditItem] = useState<T | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<T | null>(null);
+  const mineOnly = mineOnlyProp;
   const [showRetired, setShowRetired] = useState(false);
   const [detailItem, setDetailItem] = useState<T | null>(null);
   const [mineError, setMineError] = useState<string | null>(null);
@@ -317,12 +320,12 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
     return { ...col, type: "singleSelect", valueOptions: opts } as GridColDef<T>;
   });
 
-  const allColumns = [mineColumn, ...augmentedColumns, actionsColumn];
+  const allColumns = [...(hideMineColumn ? [] : [mineColumn]), ...augmentedColumns, actionsColumn];
   const buttonLabel = addLabel ?? deriveAddLabel(title);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+      <Box sx={{ display: "flex", alignItems: "center", mb: 2, gap: 2 }}>
         <Typography variant="h6">
           {title}
         </Typography>
@@ -335,7 +338,6 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
             />
           }
           label={<Typography variant="caption">Show Retired</Typography>}
-          sx={{ ml: 2 }}
         />
         <Box sx={{ flex: 1 }} />
         <Button variant="contained" startIcon={<AddIcon />} onClick={handleAdd}>

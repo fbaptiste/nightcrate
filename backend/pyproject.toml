@@ -1,6 +1,6 @@
 [project]
 name = "nightcrate"
-version = "0.29.0"
+version = "0.29.1"
 description = "Astrophotography session cataloging and analysis"
 requires-python = ">=3.14"
 dependencies = [
