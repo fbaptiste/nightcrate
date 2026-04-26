@@ -22,12 +22,12 @@ import type { SectionMetrics } from "@/api/phd2";
 interface Props {
   metrics: SectionMetrics;
   kind: "calibration" | "guiding";
-  /** Heading above the metrics grid. Defaults to "Section summary"
-   *  for the section-wide panel; the Viewport Summary panel overrides
+  /** Heading above the metrics grid. Defaults to "Section stats"
+   *  for the section-wide panel; the Viewport stats panel overrides
    *  with its own label. */
   title?: string;
   /** Optional second-line caption under the title — used by the
-   *  Viewport Summary to show "N / M frames visible". */
+   *  Viewport stats panel to show "N / M frames visible". */
   subtitle?: string;
   /** When true, the title row becomes a click target with a chevron
    *  that collapses the metrics grid. */
@@ -39,7 +39,7 @@ interface Props {
 export default function StatsPanel({
   metrics,
   kind,
-  title = "Section summary",
+  title = "Section stats",
   subtitle,
   collapsible = false,
   defaultExpanded = true,
@@ -95,7 +95,7 @@ export default function StatsPanel({
     <Typography
       variant="caption"
       color="text.secondary"
-      sx={{ display: "block", mb: isOpen ? 1 : 0, pl: collapsible ? 3 : 0 }}
+      sx={{ display: "block", mb: isOpen ? 1 : 0, pl: collapsible ? 3 : 0, whiteSpace: "pre-line" }}
     >
       {subtitle}
     </Typography>
@@ -141,32 +141,97 @@ export default function StatsPanel({
     return `${arcmin.toFixed(2)}′`;
   };
 
-  const items: Array<{ label: string; value: string }> = [
-    { label: "RMS total", value: renderDist(metrics.rms_total_px) },
-    { label: "RMS RA", value: renderDist(metrics.rms_ra_px) },
-    { label: "RMS Dec", value: renderDist(metrics.rms_dec_px) },
-    { label: "Peak RA", value: renderDist(metrics.peak_ra_px) },
-    { label: "Peak Dec", value: renderDist(metrics.peak_dec_px) },
-    { label: "Drift RA", value: renderDrift(metrics.drift_ra_px_per_min) },
-    { label: "Drift Dec", value: renderDrift(metrics.drift_dec_px_per_min) },
-    {
-      label: "PA error",
-      value: renderPaError(metrics.polar_alignment_error_arcmin),
-    },
-    { label: "Osc RA", value: renderOscillation(metrics.oscillation_ra) },
-    { label: "Osc Dec", value: renderOscillation(metrics.oscillation_dec) },
-    { label: "Elongation", value: renderOscillation(metrics.elongation) },
+  const items: Array<{ label: string; value: string; tooltip?: string; cols: number }> = [
+    // Row 1: overview
     {
       label: "Duration",
       value: formatDuration(metrics.duration_total_seconds),
+      tooltip: "Wall-clock duration from first to last guiding frame.",
+      cols: 6,
     },
     {
       label: "Frames",
       value: formatFrameCount(metrics),
+      tooltip: "Total frames, included in stats, settle frames, and error frames.",
+      cols: 6,
     },
+    // Row 2: alignment quality
+    {
+      label: "PA error",
+      value: renderPaError(metrics.polar_alignment_error_arcmin),
+      tooltip: "Estimated polar alignment error in arcminutes, derived from Dec drift and declination.",
+      cols: 6,
+    },
+    {
+      label: "Elongation",
+      value: renderOscillation(metrics.elongation),
+      tooltip: "How elongated the scatter cloud is — 0 is round, nearer 1 means one axis dominates.",
+      cols: 6,
+    },
+    // Row 3: RMS
+    {
+      label: "RMS Total",
+      value: renderDist(metrics.rms_total_px),
+      tooltip: "Quadrature sum of RMS RA and RMS Dec.",
+      cols: 4,
+    },
+    {
+      label: "RMS RA",
+      value: renderDist(metrics.rms_ra_px),
+      tooltip: "Standard deviation of RA error across included frames.",
+      cols: 4,
+    },
+    {
+      label: "RMS Dec",
+      value: renderDist(metrics.rms_dec_px),
+      tooltip: "Standard deviation of Dec error across included frames.",
+      cols: 4,
+    },
+    // Row 4: peaks
+    {
+      label: "Peak RA",
+      value: renderDist(metrics.peak_ra_px),
+      tooltip: "Worst-case single-frame RA offset, sign preserved.",
+      cols: 6,
+    },
+    {
+      label: "Peak Dec",
+      value: renderDist(metrics.peak_dec_px),
+      tooltip: "Worst-case single-frame Dec offset, sign preserved.",
+      cols: 6,
+    },
+    // Row 5: drift
+    {
+      label: "Drift RA",
+      value: renderDrift(metrics.drift_ra_px_per_min),
+      tooltip: "Long-term linear RA drift the algorithm did not fully cancel.",
+      cols: 6,
+    },
+    {
+      label: "Drift Dec",
+      value: renderDrift(metrics.drift_dec_px_per_min),
+      tooltip: "Long-term linear Dec drift, computed across unguided frames only.",
+      cols: 6,
+    },
+    // Row 6: oscillation
+    {
+      label: "Osc RA",
+      value: renderOscillation(metrics.oscillation_ra),
+      tooltip: "Fraction of frames where RA error flipped sign. High values (>40%) suggest overcorrection.",
+      cols: 6,
+    },
+    {
+      label: "Osc Dec",
+      value: renderOscillation(metrics.oscillation_dec),
+      tooltip: "Fraction of frames where Dec error flipped sign.",
+      cols: 6,
+    },
+    // Row 7: star health
     {
       label: "Mean SNR",
       value: metrics.mean_snr !== null ? metrics.mean_snr.toFixed(2) : "—",
+      tooltip: "Average guide-star signal-to-noise ratio. Below ~5 the centroid gets noisy.",
+      cols: 6,
     },
     {
       label: "Star mass",
@@ -174,6 +239,8 @@ export default function StatsPanel({
         metrics.mean_star_mass !== null
           ? `${Math.round(metrics.mean_star_mass).toLocaleString()} (mean)`
           : "—",
+      tooltip: "Average integrated brightness of the guide star (ADU).",
+      cols: 6,
     },
   ];
 
@@ -200,12 +267,28 @@ export default function StatsPanel({
       {header}
       {subtitleNode}
       <Collapse in={isOpen} unmountOnExit>
-        <Grid container spacing={1}>
+        <Grid container spacing={1} columns={12}>
         {items.map((item) => (
-          <Grid key={item.label} size={{ xs: 6, sm: 4 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-              {item.label}
-            </Typography>
+          <Grid key={item.label} size={item.cols}>
+            {item.tooltip ? (
+              <Tooltip title={item.tooltip} arrow placement="top">
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", cursor: "help" }}
+                >
+                  {item.label}
+                </Typography>
+              </Tooltip>
+            ) : (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block" }}
+              >
+                {item.label}
+              </Typography>
+            )}
             <Typography
               variant="body2"
               sx={{

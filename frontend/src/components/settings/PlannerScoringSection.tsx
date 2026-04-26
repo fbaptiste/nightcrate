@@ -7,8 +7,6 @@ import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
-import Card from "@mui/material/Card";
-import CardContent from "@mui/material/CardContent";
 import FormControl from "@mui/material/FormControl";
 import FormHelperText from "@mui/material/FormHelperText";
 import InputLabel from "@mui/material/InputLabel";
@@ -32,14 +30,13 @@ export function PlannerScoringSection({ settings }: Props) {
   const update = useSettingsStore((s) => s.update);
 
   return (
-    <Card variant="outlined">
-      <CardContent>
+    <Accordion variant="outlined" disableGutters defaultExpanded={false} sx={{ breakInside: "avoid", mb: 1 }}>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Typography
           variant="body2"
           color="text.secondary"
           fontWeight={500}
           sx={{
-            mb: 2,
             textTransform: "uppercase",
             letterSpacing: "0.05em",
             fontSize: "0.7rem",
@@ -47,6 +44,8 @@ export function PlannerScoringSection({ settings }: Props) {
         >
           Planner Scoring
         </Typography>
+      </AccordionSummary>
+      <AccordionDetails>
         <FormHelperText sx={{ mb: 1, ml: 0 }}>
           Tunes the 0-100 quality score on the Planner. See
           <code> docs/planner-scoring.md</code> for the full algorithm.
@@ -358,8 +357,8 @@ export function PlannerScoringSection({ settings }: Props) {
             onChange={(v) => update({ scoring_threshold_fair: v })}
           />
         </ScoringAccordion>
-      </CardContent>
-    </Card>
+      </AccordionDetails>
+    </Accordion>
   );
 }
 

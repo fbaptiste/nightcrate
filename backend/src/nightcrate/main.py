@@ -317,10 +317,10 @@ openapi_tags = [
             "Parse and analyse PHD2 autoguiding logs. Handles format "
             "irregularities (locale-decimal recovery, missing app version, "
             "18-vs-19-column arity) and classifies INFO events into a closed "
-            "vocabulary (settle, dither, alert, pause, etc.). v0.22.0 "
-            "delivers the parser, per-section summary metrics, and the "
-            "basic viewer. Advanced analysis (FFT, unguided reconstruction, "
-            "diagnostics) lands in v0.25.0+."
+            "vocabulary (settle, dither, alert, pause, etc.). Delivers "
+            "the parser, per-section summary metrics, guiding graph "
+            "(RA/Dec time-series + pulses + SNR + Mass), dispersion "
+            "scatter plot, and per-frame data table."
         ),
     },
     {

@@ -254,9 +254,8 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
 - **Parse-by-name, never-by-position.** Column order read per-section from the actual CSV header. Future PHD2 versions reordering columns must not break the parser.
 - **Never silently coerce missing data.** Empty fields → `None`, never `0.0`. DROP frames have `None` in positional fields (coercing to zero silently corrupts RMS and creates phantom ideal-guiding periods on charts).
 - **No hardcoded ErrorCode → string table.** The log's own ErrorDescription is authoritative.
-- **Cross-tool consistency with PHDLogViewer is a hard requirement** — FFT amplitudes (4/N normalization), RMS (population stddev, NOT RMS-from-zero), Barrett's PA error formula. Tests pin specific values against PHDLogViewer's reported outputs for the ASIAir sample log.
-- **Interpretive claims must be sourced.** Diagnostic rules from v0.31.0+ carry reference URLs (Bruce Waddington tutorial, PHD2 manual, CelestialWonders drift article). No unsourced heuristics.
-- Spec: `docs/nightcrate-phd2-analyzer-spec-v4.md`. Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
+- **Three tabs**: Guiding (RA/Dec time-series + pulses + SNR + Mass sub-panels), Dispersion (2-D scatter + 1σ / 2σ ellipses), Data (per-frame table). No spectrum / no unguided RA — both stripped in v0.27.0 cleanup.
+- Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
 
 ### Weather Forecast
 - Two timezones per location: `geo_timezone` (auto-derived from coords via `timezonefinder`, used for noon-to-noon astro windows and the lunar 48 h grid) and `timezone` (user's display preference, used for Open-Meteo API + display formatting). **Don't conflate them** — remote-observatory operators legitimately want display in their home timezone while astro computes against site coordinates.

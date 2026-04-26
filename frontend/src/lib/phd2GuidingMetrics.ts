@@ -1,6 +1,5 @@
 /**
- * Client-side port of the backend PHD2 section-metrics math —
- * PHDLogViewer-aligned (spec v4 §5.2).
+ * Client-side port of the backend PHD2 section-metrics math.
  *
  * Mirrors ``compute_section_metrics`` in
  * ``backend/src/nightcrate/services/phd2_metrics.py``. Used by the
@@ -8,35 +7,32 @@
  * "Include settle in stats" toggle and shift-drag selection /
  * exclusion can recompute without a backend round-trip.
  *
- * v0.25.0 (Pass D-1) switched the formulas from the pre-v3.1 forms
- * to PHDLogViewer's exact algorithms so cross-tool numbers line up:
- *
- * - RMS = population standard deviation (NOT RMS-from-zero).
- * - RA drift = ``(ra_last − ra_first − Σ ra_guide) / Δt`` × 60.
- * - Dec drift = LS slope of unguided-frames-only y_accum × 60.
- * - PA error = ``3.8197 · |drift_dec| · pixel_scale / cos(δ)``.
- * - Peak = sign-preserving max-by-absolute-value.
- * - Oscillation = sign-flip rate, **zero values treated as positive**.
+ * Formulas:
+ *   - RMS = population standard deviation.
+ *   - RA drift = ``(ra_last − ra_first − Σ ra_guide) / Δt`` × 60.
+ *   - Dec drift = LS slope of unguided-frames-only y_accum × 60.
+ *   - PA error = ``3.8197 · |drift_dec| · pixel_scale / cos(δ)``.
+ *   - Peak = sign-preserving max-by-absolute-value.
+ *   - Oscillation = sign-flip rate; zero values treated as positive.
  *
  * Distances stay in pixels; ``arcsec_scale`` is surfaced on the
  * returned metrics so ``StatsPanel`` renders dual-unit labels the
  * same way as for the section-wide metrics.
  *
- * Settle-window exclusion (PHD2 / PHDLogViewer convention):
- *   Samples inside ``settle_begin`` / ``settle_end`` event pairs are
- *   excluded from every quality metric so dither-settle excursions
- *   don't get counted as guiding errors. ``frame_count_total`` and
- *   ``duration_total_seconds`` stay unfiltered so the UI can render
- *   the "N total · M in stats · K in settle" decomposition.
+ * Settle-window exclusion (default behaviour): samples inside
+ * ``settle_begin`` / ``settle_end`` event pairs are excluded from
+ * every quality metric so dither-settle excursions don't get
+ * counted as guiding errors. ``frame_count_total`` and
+ * ``duration_total_seconds`` stay unfiltered so the UI can render
+ * the "N total · M in stats · K in settle" decomposition.
  */
 import type { GuidingSample, LogEvent, SectionMetrics } from "@/api/phd2";
 
 export interface ComputeGuidingMetricsOptions {
   /** When ``true``, disable the settle-window filter so metrics match
-   *  the pre-v0.22.0 "include everything" behaviour. ``frame_count_in_settle``
-   *  is still reported so the UI can show "X frames would have been
-   *  excluded" even in include mode. Default ``false`` — matches PHD2
-   *  and PHDLogViewer. */
+   *  the pre-v0.22.0 "include everything" behaviour.
+   *  ``frame_count_in_settle`` is still reported so the UI can show
+   *  "X frames would have been excluded" even in include mode. */
   includeSettle?: boolean;
   /** Section header's declination in degrees, used by the PA-error
    *  formula. ``null`` when the header didn't declare one — PA error
@@ -198,9 +194,9 @@ function sum(values: number[]): number {
   return s;
 }
 
-/** Population standard deviation — PHDLogViewer's ``LFit::varx`` rooted.
- *  ``sqrt(mean((x − x̄)²))``, NOT ``sqrt(mean(x²))``. Returns null on
- *  empty input; for a single value returns 0. */
+/** Population standard deviation: ``sqrt(mean((x − x̄)²))``, NOT
+ *  ``sqrt(mean(x²))``. Returns null on empty input; for a single
+ *  value returns 0. */
 function stddev(values: number[]): number | null {
   if (values.length === 0) return null;
   const mean = sum(values) / values.length;
@@ -232,8 +228,8 @@ function median(values: number[]): number {
 }
 
 /** Fraction of consecutive value pairs whose signs differ. **Zero
- *  values count as positive** per spec §11.14 (PHDLogViewer's
- *  ``RaOsc`` convention). Returns null when fewer than two values. */
+ *  values count as positive**. Returns null when fewer than two
+ *  values. */
 function oscillationRate(values: number[]): number | null {
   if (values.length < 2) return null;
   let flips = 0;
@@ -246,13 +242,10 @@ function oscillationRate(values: number[]): number | null {
   return flips / (values.length - 1);
 }
 
-/** RA drift in px / minute via PHDLogViewer's corrections-subtraction
- *  algorithm (§5.2.3). Total raw RA change minus total RA guide
- *  correction over the section duration. The Σ runs over all
- *  settle-filtered samples with ``ra_duration_ms != 0`` and a non-null
- *  ``ra_guide_px`` — matching ``e.included ∧ e.radur != 0`` (note
- *  ``e.included``, NOT the stricter ``Include(e)`` — DROP frames with
- *  valid RAGuideDistance values still contribute). */
+/** RA drift in px / minute via the corrections-subtraction algorithm:
+ *  total raw RA change minus total RA guide correction over the
+ *  section duration. The Σ runs over all settle-filtered samples
+ *  with ``ra_duration_ms != 0`` and a non-null ``ra_guide_px``. */
 function raDriftCorrectionsSubtracted(
   statsSamples: GuidingSample[],
 ): number | null {
@@ -274,10 +267,10 @@ function raDriftCorrectionsSubtracted(
   return driftPerSec * 60;
 }
 
-/** Dec drift in px / minute via PHDLogViewer's unguided-frames-only
- *  accumulation algorithm (§5.2.4). Position changes accumulate only
- *  when the previous frame was unguided (``dec_duration_ms == 0``);
- *  the slope of ``y_accum vs t`` is the drift rate. Bypasses the
+/** Dec drift in px / minute via the unguided-frames-only
+ *  accumulation algorithm. Position changes accumulate only when
+ *  the previous frame was unguided (``dec_duration_ms == 0``); the
+ *  slope of ``y_accum vs t`` is the drift rate. Bypasses the
  *  asymmetric-Dec-correction problem that breaks the RA algorithm
  *  for Dec. */
 function decDriftUnguidedOnly(
@@ -314,7 +307,7 @@ function decDriftUnguidedOnly(
     prevGuided = s.dec_duration_ms !== null && s.dec_duration_ms !== 0;
   }
 
-  if (n < 2) return 0; // all-guided — match PHDLogViewer's LFit::B() = 0
+  if (n < 2) return 0; // all-guided — no unguided drift to estimate
   const meanX = sumX / n;
   const denom = sumXX - n * meanX * meanX;
   if (denom === 0) return 0;
@@ -323,13 +316,12 @@ function decDriftUnguidedOnly(
   return (numer / denom) * 60;
 }
 
-/** Scatter-ellipse elongation per PHDLogViewer §5.2.7. Computes
- *  ``|lx − ly| / (lx + ly)`` over the rotated mount-axis frame
- *  (raraw/decraw, centred on per-axis means; rotation
- *  ``θ = atan2(cov_xy, var_x)``). Range [0, 1]: 0 = circular,
- *  1 = degenerate line (or near-zero dispersion — defensive 1.0
- *  matches PHDLogViewer). Null when fewer than two samples have both
- *  axes populated. */
+/** Scatter-ellipse elongation. Computes ``|lx − ly| / (lx + ly)``
+ *  over the rotated mount-axis frame (raraw/decraw, centred on
+ *  per-axis means; rotation ``θ = atan2(cov_xy, var_x)``). Range
+ *  [0, 1]: 0 = circular, 1 = degenerate line (or near-zero
+ *  dispersion — defensive 1.0). Null when fewer than two samples
+ *  have both axes populated. */
 function elongation(statsSamples: GuidingSample[]): number | null {
   const pairs: Array<[number, number]> = [];
   for (const s of statsSamples) {
@@ -380,10 +372,10 @@ function elongation(statsSamples: GuidingSample[]): number | null {
   return Math.abs(lx - ly) / (lx + ly);
 }
 
-/** Polar alignment error in arcminutes — Barrett's formula via
- *  PHDLogViewer (§5.2.6 / §M2): α = 3.8197 · |drift| · pixel_scale /
- *  cos(δ). Returns null when any input is missing or near the
- *  celestial pole where the formula diverges. */
+/** Polar alignment error in arcminutes — Barrett's formula:
+ *  α = 3.8197 · |drift| · pixel_scale / cos(δ). Returns null when
+ *  any input is missing or near the celestial pole where the
+ *  formula diverges. */
 function polarAlignmentErrorArcmin(
   driftDecPxPerMin: number | null,
   declinationDeg: number | null,

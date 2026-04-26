@@ -9,9 +9,6 @@ const MAX_ENTRIES = 10;
 export interface RecentFile {
   path: string;
   openedAt: string;
-  /** Rig the user picked for this log; undefined on entries written
-   *  before v0.26.0 — treated as null. */
-  selectedRigId?: number | null;
 }
 
 export function getRecentFiles(): RecentFile[] {
@@ -20,24 +17,13 @@ export function getRecentFiles(): RecentFile[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (e): e is RecentFile =>
-          typeof e === "object" &&
-          e !== null &&
-          typeof (e as RecentFile).path === "string" &&
-          typeof (e as RecentFile).openedAt === "string",
-      )
-      .map((e) => {
-        const rigId = e.selectedRigId;
-        return {
-          ...e,
-          selectedRigId:
-            typeof rigId === "number" && Number.isInteger(rigId) && rigId > 0
-              ? rigId
-              : null,
-        };
-      });
+    return parsed.filter(
+      (e): e is RecentFile =>
+        typeof e === "object" &&
+        e !== null &&
+        typeof (e as RecentFile).path === "string" &&
+        typeof (e as RecentFile).openedAt === "string",
+    );
   } catch {
     return [];
   }
@@ -46,38 +32,10 @@ export function getRecentFiles(): RecentFile[] {
 export function addRecentFile(path: string): RecentFile[] {
   const now = new Date().toISOString();
   const prev = getRecentFiles();
-  // Carry forward an existing entry's rig so re-opening preserves the choice.
-  const existing = prev.find((e) => e.path === path);
   const filtered = prev.filter((e) => e.path !== path);
-  const next: RecentFile[] = [
-    {
-      path,
-      openedAt: now,
-      selectedRigId: existing?.selectedRigId ?? null,
-    },
-    ...filtered,
-  ].slice(0, MAX_ENTRIES);
-  saveRecentFiles(next);
-  return next;
-}
-
-export function setRecentFileRig(
-  path: string,
-  rigId: number | null,
-): RecentFile[] {
-  const prev = getRecentFiles();
-  const existing = prev.find((e) => e.path === path);
-  if (!existing) {
-    // Pre-record so the rig sticks even if the parse later fails.
-    const next: RecentFile[] = [
-      { path, openedAt: new Date().toISOString(), selectedRigId: rigId },
-      ...prev,
-    ].slice(0, MAX_ENTRIES);
-    saveRecentFiles(next);
-    return next;
-  }
-  const next = prev.map((e) =>
-    e.path === path ? { ...e, selectedRigId: rigId } : e,
+  const next: RecentFile[] = [{ path, openedAt: now }, ...filtered].slice(
+    0,
+    MAX_ENTRIES,
   );
   saveRecentFiles(next);
   return next;

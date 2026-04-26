@@ -41,11 +41,21 @@ const MARGIN = { top: 16, right: 16, bottom: 36, left: 52 };
  *  panel takes whatever horizontal space is left. */
 const MAX_PLOT_WIDTH = 460;
 
+const ALL_DIRECTIONS = ["West", "East", "Backlash", "North", "South"] as const;
+
 export default function CalibrationPlot({ phases, height = 400 }: Props) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(MAX_PLOT_WIDTH);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const toggle = (dir: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(dir)) next.delete(dir);
+      else next.add(dir);
+      return next;
+    });
 
   useEffect(() => {
     if (!wrapperRef.current) return;
@@ -161,28 +171,30 @@ export default function CalibrationPlot({ phases, height = 400 }: Props) {
             stroke={axisColor}
           />
           {/* Phase paths */}
-          {paths.map((p) => (
-            <g key={p.direction}>
-              {p.d && (
-                <path
-                  d={p.d}
-                  fill="none"
-                  stroke={PHASE_COLORS[p.direction]}
-                  strokeWidth={1.5}
-                  opacity={0.9}
-                />
-              )}
-              {p.points.map((pt, i) => (
-                <circle
-                  key={`${p.direction}-${i}`}
-                  cx={pt.cx}
-                  cy={pt.cy}
-                  r={2.5}
-                  fill={PHASE_COLORS[p.direction]}
-                />
-              ))}
-            </g>
-          ))}
+          {paths.map((p) =>
+            hidden.has(p.direction) ? null : (
+              <g key={p.direction}>
+                {p.d && (
+                  <path
+                    d={p.d}
+                    fill="none"
+                    stroke={PHASE_COLORS[p.direction]}
+                    strokeWidth={1.5}
+                    opacity={0.9}
+                  />
+                )}
+                {p.points.map((pt, i) => (
+                  <circle
+                    key={`${p.direction}-${i}`}
+                    cx={pt.cx}
+                    cy={pt.cy}
+                    r={2.5}
+                    fill={PHASE_COLORS[p.direction]}
+                  />
+                ))}
+              </g>
+            ),
+          )}
 
           {/* X ticks */}
           {xTicks.map((t) => (
@@ -238,26 +250,45 @@ export default function CalibrationPlot({ phases, height = 400 }: Props) {
           Calibration geometry
         </Typography>
         <Stack spacing={1.5}>
-          {(["West", "East", "Backlash", "North", "South"] as const).map((dir) => {
+          {ALL_DIRECTIONS.map((dir) => {
             const phase = phases.find((p) => p.direction === dir);
+            if (!phase) return null;
             const color = PHASE_COLORS[dir];
-            const hasMeta = phase?.angle_deg !== undefined && phase?.angle_deg !== null;
+            const isHidden = hidden.has(dir);
+            const hasMeta = phase.angle_deg !== undefined && phase.angle_deg !== null;
             return (
-              <Box key={dir}>
-                <Stack direction="row" spacing={1} alignItems="center">
+              <Box key={dir} sx={{ opacity: isHidden ? 0.4 : 1 }}>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  onClick={() => toggle(dir)}
+                  sx={{
+                    cursor: "pointer",
+                    userSelect: "none",
+                    "&:hover": { opacity: 0.8 },
+                  }}
+                >
                   <Box sx={{ width: 10, height: 10, bgcolor: color, borderRadius: 0.5 }} />
-                  <Typography variant="body2" sx={{ fontWeight: 500, color }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 500,
+                      color,
+                      textDecoration: isHidden ? "line-through" : "none",
+                    }}
+                  >
                     {dir}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    · {phase?.samples.length ?? 0} steps
+                    · {phase.samples.length} steps
                   </Typography>
                 </Stack>
                 {hasMeta && (
                   <Typography variant="caption" sx={{ display: "block", pl: 2.25 }}>
-                    angle {phase!.angle_deg?.toFixed(1)}°, rate{" "}
-                    {phase!.rate_px_per_sec?.toFixed(3)} px/s
-                    {phase!.parity ? `, parity ${phase!.parity}` : ""}
+                    angle {phase.angle_deg?.toFixed(1)}°, rate{" "}
+                    {phase.rate_px_per_sec?.toFixed(3)} px/s
+                    {phase.parity ? `, parity ${phase.parity}` : ""}
                   </Typography>
                 )}
               </Box>

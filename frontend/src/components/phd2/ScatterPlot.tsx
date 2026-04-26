@@ -1,33 +1,30 @@
 /**
- * PHD2 dispersion scatter plot — spec §5.3 / §5.2.7.
+ * PHD2 dispersion scatter plot.
  *
  * X = dx, Y = dy, one point per non-null stats sample. 1σ and 2σ
- * dispersion ellipses derived via PHDLogViewer's ``LFit::Theta`` form
- * (§5.2.7): the ellipse rotation is ``θ = atan2(cov_xy, var_x)`` —
- * NOT the textbook PCA rotation ``½ · atan2(2·cov_xy, var_x − var_y)``.
- * After computing θ, the major / minor sigmas are read off by
- * re-iterating samples in the rotated coordinate frame and computing
- * the variance along each rotated axis.
- *
- * NightCrate adopts PHDLogViewer's form for cross-tool consistency
- * even though it's not strict PCA — the two forms diverge for
- * nearly-circular distributions but produce indistinguishable
- * results for the typical guide-log scatter shape.
+ * dispersion ellipses are drawn around the centroid; the ellipse
+ * rotation uses ``θ = atan2(cov_xy, var_x)`` (close to but not
+ * exactly the textbook PCA rotation — close enough for the typical
+ * guide-log scatter shape, simpler to compute).
  *
  * Centroid marker (mean dx, mean dy) — a visible offset from the
- * origin indicates calibration drift. Follows the collapsible +
- * dual-unit pattern of ``StatsPanel``.
+ * origin indicates calibration drift.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import Collapse from "@mui/material/Collapse";
 import Stack from "@mui/material/Stack";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useTheme } from "@mui/material/styles";
 import type { GuidingSample } from "@/api/phd2";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import { RIG_BLUE } from "@/lib/rigColors";
+
+const ELLIPSE_COLOR = "#4db6ac";
 
 interface Props {
   samples: GuidingSample[];
@@ -40,10 +37,10 @@ interface Props {
 }
 
 const MARGIN = { top: 12, right: 12, bottom: 34, left: 44 };
-// Square data area — dispersion shape is what we're showing, so
-// distortion from a non-square plot would be misleading.
 const DEFAULT_HEIGHT = 380;
 const MAX_PLOT_WIDTH = 460;
+
+type Unit = "px" | "arcsec";
 
 export default function ScatterPlot({
   samples,
@@ -61,6 +58,10 @@ export default function ScatterPlot({
   const [expanded, setExpanded] = useState(defaultExpanded);
   const isOpen = collapsible ? expanded : true;
   const toggle = () => collapsible && setExpanded((v) => !v);
+  const canArcsec = arcsecScale != null && arcsecScale > 0;
+  const [unit, setUnit] = useState<Unit>("px");
+  const scale = unit === "arcsec" && canArcsec ? (arcsecScale as number) : 1;
+  const unitLabel = unit === "arcsec" && canArcsec ? "″" : "px";
 
   useEffect(() => {
     if (!wrapperRef.current) return;
@@ -72,7 +73,6 @@ export default function ScatterPlot({
     return () => obs.disconnect();
   }, []);
 
-  // Points + centroid + covariance, derived once per samples change.
   const stats = useMemo(() => {
     const pts = samples
       .filter(
@@ -103,12 +103,7 @@ export default function ScatterPlot({
     vxx /= pts.length;
     vyy /= pts.length;
     vxy /= pts.length;
-    // PHDLogViewer LFit::Theta form (NOT PCA): θ = atan2(cov_xy, var_x).
-    // For cross-tool consistency we use this even though it's not the
-    // textbook principal-component rotation.
     const theta = Math.atan2(vxy, vxx);
-    // Read major/minor sigmas off the rotated frame by re-iterating
-    // samples (matches AnalysisWin.cpp lines ~210-240).
     const cost = Math.cos(theta);
     const sint = Math.sin(theta);
     let rotVx = 0;
@@ -126,13 +121,12 @@ export default function ScatterPlot({
     const rx = Math.sqrt(Math.max(0, rotVx));
     const ry = Math.sqrt(Math.max(0, rotVy));
 
-    // Symmetric data-space domain sized to enclose the 2σ ellipse
-    // plus a margin, or the point cloud — whichever is larger.
     const pointMax = pts.reduce(
       (m, p) => Math.max(m, Math.abs(p.x), Math.abs(p.y)),
       0,
     );
-    const ellipseMax = 2 * Math.max(rx, ry);
+    const ellipseMax =
+      Math.max(Math.abs(mx), Math.abs(my)) + 2 * Math.max(rx, ry);
     const maxAbs = Math.max(0.1, pointMax, ellipseMax) * 1.1;
 
     return {
@@ -148,14 +142,14 @@ export default function ScatterPlot({
   const side = Math.min(innerW, innerH);
   const padX = (innerW - side) / 2;
 
+  const domainMax = stats.maxAbs * scale;
   const xScale = d3
     .scaleLinear()
-    .domain([-stats.maxAbs, stats.maxAbs])
+    .domain([-domainMax, domainMax])
     .range([MARGIN.left + padX, MARGIN.left + padX + side]);
-  // Y flipped so +dy goes up (matches CalibrationPlot convention).
   const yScale = d3
     .scaleLinear()
-    .domain([-stats.maxAbs, stats.maxAbs])
+    .domain([-domainMax, domainMax])
     .range([MARGIN.top + side, MARGIN.top]);
 
   const gridColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
@@ -164,13 +158,8 @@ export default function ScatterPlot({
   const xTicks = xScale.ticks(5);
   const yTicks = yScale.ticks(5);
 
-  const canArcsec = arcsecScale != null && arcsecScale > 0;
-  const formatTick = (v: number): string => {
-    if (canArcsec) {
-      return `${v.toFixed(1)} (${(v * (arcsecScale as number)).toFixed(2)}″)`;
-    }
-    return v.toFixed(1);
-  };
+  const tickDigits = unit === "arcsec" && canArcsec ? 2 : 1;
+  const formatTick = (v: number) => v.toFixed(tickDigits);
 
   const header = (
     <Stack
@@ -194,7 +183,15 @@ export default function ScatterPlot({
           }}
         />
       )}
-      <Typography variant="subtitle2">{title}</Typography>
+      <Tooltip
+        title="2-D scatter of guide-star positions with 1σ / 2σ dispersion ellipses."
+        arrow
+        placement="top"
+      >
+        <Typography variant="subtitle2" sx={{ cursor: "help" }}>
+          {title}
+        </Typography>
+      </Tooltip>
     </Stack>
   );
 
@@ -208,7 +205,6 @@ export default function ScatterPlot({
     </Typography>
   );
 
-  // Empty-state sentinel — no samples means no scatter, no ellipse.
   if (stats.pts.length === 0) {
     return (
       <Box>
@@ -223,18 +219,19 @@ export default function ScatterPlot({
     );
   }
 
-  const centroidPx = stats.centroid
-    ? { x: xScale(stats.centroid.x), y: yScale(stats.centroid.y) }
+  const centroidSvg = stats.centroid
+    ? {
+        x: xScale(stats.centroid.x * scale),
+        y: yScale(stats.centroid.y * scale),
+      }
     : null;
 
-  // Convert the ellipse radii from data-space to pixel-space. Because
-  // xScale and yScale share the same domain + side, 1 data unit → the
-  // same number of pixels on both axes, so rotation in data-space ==
-  // rotation in pixel-space (no anisotropy to correct for).
-  const pxPerUnit = side / (2 * stats.maxAbs);
+  const pxPerUnit = side / (2 * domainMax);
   const ellipseDeg = stats.ellipse
     ? (-stats.ellipse.theta * 180) / Math.PI
-    : 0; // SVG y-flip → angle sign flip
+    : 0;
+
+  const fmtVal = (v: number) => (v * scale).toFixed(unit === "arcsec" && canArcsec ? 3 : 3);
 
   return (
     <Box>
@@ -252,7 +249,6 @@ export default function ScatterPlot({
             sx={{ width: "100%", maxWidth: MAX_PLOT_WIDTH, flexShrink: 0 }}
           >
             <svg width={width} height={height} style={{ display: "block" }}>
-              {/* Gridlines */}
               {xTicks.map((t) => (
                 <line
                   key={`gx-${t}`}
@@ -273,7 +269,6 @@ export default function ScatterPlot({
                   stroke={gridColor}
                 />
               ))}
-              {/* Zero axes */}
               <line
                 x1={xScale(0)}
                 x2={xScale(0)}
@@ -288,66 +283,96 @@ export default function ScatterPlot({
                 y2={yScale(0)}
                 stroke={axisColor}
               />
-              {/* Scatter points */}
               {stats.pts.map((p, i) => (
                 <circle
                   key={i}
-                  cx={xScale(p.x)}
-                  cy={yScale(p.y)}
+                  cx={xScale(p.x * scale)}
+                  cy={yScale(p.y * scale)}
                   r={1.5}
                   fill={RIG_BLUE}
                   opacity={0.4}
                 />
               ))}
-              {/* 1σ + 2σ ellipses */}
-              {stats.ellipse && centroidPx && (
+              {stats.ellipse && centroidSvg && (
                 <g
-                  transform={`rotate(${ellipseDeg} ${centroidPx.x} ${centroidPx.y})`}
+                  transform={`rotate(${ellipseDeg} ${centroidSvg.x} ${centroidSvg.y})`}
                 >
                   <ellipse
-                    cx={centroidPx.x}
-                    cy={centroidPx.y}
-                    rx={stats.ellipse.rx * pxPerUnit}
-                    ry={stats.ellipse.ry * pxPerUnit}
+                    cx={centroidSvg.x}
+                    cy={centroidSvg.y}
+                    rx={stats.ellipse.rx * scale * pxPerUnit * 2}
+                    ry={stats.ellipse.ry * scale * pxPerUnit * 2}
                     fill="none"
-                    stroke={RIG_BLUE}
+                    stroke={ELLIPSE_COLOR}
                     strokeWidth={1.5}
-                    opacity={0.8}
+                    strokeDasharray="5 4"
                   />
                   <ellipse
-                    cx={centroidPx.x}
-                    cy={centroidPx.y}
-                    rx={stats.ellipse.rx * pxPerUnit * 2}
-                    ry={stats.ellipse.ry * pxPerUnit * 2}
+                    cx={centroidSvg.x}
+                    cy={centroidSvg.y}
+                    rx={stats.ellipse.rx * scale * pxPerUnit}
+                    ry={stats.ellipse.ry * scale * pxPerUnit}
                     fill="none"
-                    stroke={RIG_BLUE}
-                    strokeWidth={1}
-                    strokeDasharray="4 3"
-                    opacity={0.5}
+                    stroke={ELLIPSE_COLOR}
+                    strokeWidth={2}
                   />
                 </g>
               )}
-              {/* Centroid marker */}
-              {centroidPx && (
+              {stats.ellipse && (
+                <g>
+                  <line
+                    x1={MARGIN.left + padX + 8}
+                    x2={MARGIN.left + padX + 24}
+                    y1={MARGIN.top + 14}
+                    y2={MARGIN.top + 14}
+                    stroke={ELLIPSE_COLOR}
+                    strokeWidth={2}
+                  />
+                  <text
+                    x={MARGIN.left + padX + 28}
+                    y={MARGIN.top + 17}
+                    fill={textColor}
+                    fontSize={10}
+                  >
+                    1σ
+                  </text>
+                  <line
+                    x1={MARGIN.left + padX + 8}
+                    x2={MARGIN.left + padX + 24}
+                    y1={MARGIN.top + 30}
+                    y2={MARGIN.top + 30}
+                    stroke={ELLIPSE_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="5 4"
+                  />
+                  <text
+                    x={MARGIN.left + padX + 28}
+                    y={MARGIN.top + 33}
+                    fill={textColor}
+                    fontSize={10}
+                  >
+                    2σ
+                  </text>
+                </g>
+              )}
+              {centroidSvg && (
                 <g>
                   <circle
-                    cx={centroidPx.x}
-                    cy={centroidPx.y}
+                    cx={centroidSvg.x}
+                    cy={centroidSvg.y}
                     r={3}
-                    fill={RIG_ORANGE}
+                    fill={ELLIPSE_COLOR}
                   />
                   <circle
-                    cx={centroidPx.x}
-                    cy={centroidPx.y}
+                    cx={centroidSvg.x}
+                    cy={centroidSvg.y}
                     r={5}
                     fill="none"
-                    stroke={RIG_ORANGE}
-                    strokeWidth={1}
-                    opacity={0.6}
+                    stroke={ELLIPSE_COLOR}
+                    strokeWidth={1.25}
                   />
                 </g>
               )}
-              {/* X ticks */}
               {xTicks.map((t) => (
                 <text
                   key={`xt-${t}`}
@@ -357,10 +382,9 @@ export default function ScatterPlot({
                   fontSize={9}
                   textAnchor="middle"
                 >
-                  {t.toFixed(1)}
+                  {formatTick(t)}
                 </text>
               ))}
-              {/* Y ticks */}
               {yTicks.map((t) => (
                 <text
                   key={`yt-${t}`}
@@ -371,10 +395,9 @@ export default function ScatterPlot({
                   textAnchor="end"
                   dominantBaseline="central"
                 >
-                  {t.toFixed(1)}
+                  {formatTick(t)}
                 </text>
               ))}
-              {/* Axis labels */}
               <text
                 x={(MARGIN.left + padX * 2 + side) / 2}
                 y={height - 4}
@@ -382,7 +405,7 @@ export default function ScatterPlot({
                 fontSize={10}
                 textAnchor="middle"
               >
-                dx (px{canArcsec ? " / ″" : ""})
+                {`dx (${unitLabel})`}
               </text>
               <text
                 transform={`translate(12, ${MARGIN.top + side / 2}) rotate(-90)`}
@@ -390,17 +413,33 @@ export default function ScatterPlot({
                 fontSize={10}
                 textAnchor="middle"
               >
-                dy (px{canArcsec ? " / ″" : ""})
+                {`dy (${unitLabel})`}
               </text>
             </svg>
+            {canArcsec && (
+              <ToggleButtonGroup
+                value={unit}
+                exclusive
+                onChange={(_, v) => { if (v) setUnit(v); }}
+                size="small"
+                sx={{ mt: 0.5 }}
+              >
+                <ToggleButton value="px" sx={{ px: 1.5, py: 0.25, fontSize: 11, textTransform: "none" }}>
+                  px
+                </ToggleButton>
+                <ToggleButton value="arcsec" sx={{ px: 1.5, py: 0.25, fontSize: 11 }}>
+                  {"″"}
+                </ToggleButton>
+              </ToggleButtonGroup>
+            )}
           </Box>
           <Box sx={{ flex: 1, minWidth: 180 }}>
             <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
               Dispersion shape
             </Typography>
             <Typography variant="body2" sx={{ display: "block", fontVariantNumeric: "tabular-nums" }}>
-              Centroid: dx {formatTick(stats.centroid?.x ?? 0)}, dy{" "}
-              {formatTick(stats.centroid?.y ?? 0)}
+              Centroid: dx {fmtVal(stats.centroid?.x ?? 0)}, dy{" "}
+              {fmtVal(stats.centroid?.y ?? 0)} {unitLabel}
             </Typography>
             {stats.ellipse && (
               <>
@@ -408,7 +447,11 @@ export default function ScatterPlot({
                   variant="body2"
                   sx={{ display: "block", fontVariantNumeric: "tabular-nums", mt: 0.5 }}
                 >
-                  1σ axes: {stats.ellipse.rx.toFixed(3)} × {stats.ellipse.ry.toFixed(3)} px
+                  {"1σ axes: "}
+                  {fmtVal(stats.ellipse.rx)}
+                  {" × "}
+                  {fmtVal(stats.ellipse.ry)}
+                  {` ${unitLabel}`}
                 </Typography>
                 <Typography
                   variant="body2"

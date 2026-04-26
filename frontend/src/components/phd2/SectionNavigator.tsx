@@ -32,7 +32,7 @@ export default function SectionNavigator({ sections, selectedIndex, onSelect }: 
           const isSel = s.index === selectedIndex;
           const kindColor = s.kind === "guiding" ? RIG_BLUE : RIG_ORANGE;
           const summary = formatSummary(sw);
-          const startTime = formatClockTime(s.start_time);
+          const startTime = formatDateTime(s.start_time);
           const durationLabel = formatDuration(sw.metrics.duration_total_seconds);
           return (
             <ListItemButton
@@ -79,13 +79,9 @@ export default function SectionNavigator({ sections, selectedIndex, onSelect }: 
 function formatSummary(sw: SectionWithMetrics): string {
   const s = sw.section;
   if (s.kind === "guiding") {
-    const rms = sw.metrics.rms_total_px;
-    const arc = sw.metrics.arcsec_scale;
     const frames = sw.metrics.frame_count_total;
     const errs = sw.metrics.frame_count_error;
-    const rmsLabel =
-      rms === null ? "no RMS" : arc !== null ? `RMS ${(rms * arc).toFixed(2)}″` : `RMS ${rms.toFixed(2)} px`;
-    return errs > 0 ? `${frames} frames · ${rmsLabel} · ${errs} errors` : `${frames} frames · ${rmsLabel}`;
+    return errs > 0 ? `${frames} frames · ${errs} errors` : `${frames} frames`;
   }
   const west = s.calibration_phases.find((p) => p.direction === "West");
   const north = s.calibration_phases.find((p) => p.direction === "North");
@@ -107,8 +103,10 @@ function formatDuration(seconds: number): string {
   return `${h}h${String(m).padStart(2, "0")}`;
 }
 
-function formatClockTime(isoLike: string): string {
-  // Backend sends naive local timestamps; slice the time portion.
-  const t = isoLike.includes("T") ? isoLike.split("T")[1] : isoLike.split(" ")[1];
-  return t ? t.slice(0, 5) : isoLike;
+function formatDateTime(isoLike: string): string {
+  const [datePart, timePart] = isoLike.includes("T")
+    ? isoLike.split("T")
+    : isoLike.split(" ");
+  const time = timePart ? timePart.slice(0, 5) : "";
+  return datePart && time ? `${datePart} ${time}` : isoLike;
 }

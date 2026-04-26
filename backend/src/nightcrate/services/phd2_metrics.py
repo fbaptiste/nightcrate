@@ -1,20 +1,18 @@
-"""PHD2 guide-log metrics — PHDLogViewer-aligned (spec v4 §5.2).
+"""PHD2 guide-log metrics.
 
 Pure functions over the parsed data model. Top-line summary metrics —
 RMS, peak, drift, polar-alignment error, oscillation, frame counts,
-duration, SNR, star mass — computed with settle-window exclusion per
-PHD2 / PHDLogViewer convention (samples bracketed by ``settle_begin`` /
-``settle_end`` events drop out of every quality metric).
+duration, SNR, star mass — computed with settle-window exclusion
+(samples bracketed by ``settle_begin`` / ``settle_end`` events drop
+out of every quality metric).
 
-v0.25.0 (Pass D-1) switched the formulas from NightCrate's pre-v3.1
-forms to PHDLogViewer's exact algorithms so cross-tool numbers line up:
-
-- RMS = population standard deviation (NOT RMS-from-zero) — §M1
-- RA drift = ``(ra_last − ra_first − Σ ra_guide) / Δt`` — §5.2.3 / §M2
-- Dec drift = least-squares slope of unguided-frames-only y_accum — §5.2.4 / §M3
-- PA error = ``3.8197 · |drift_dec| · pixel_scale / cos(δ)`` (Barrett) — §5.2.6
-- Peak = sign-preserving max-by-abs — §5.2.2
-- Oscillation = sign-flip rate, **zero values treated as positive** — §5.2.5
+Formulas:
+  - RMS = population standard deviation (NOT RMS-from-zero).
+  - RA drift = ``(ra_last − ra_first − Σ ra_guide) / Δt``.
+  - Dec drift = least-squares slope of unguided-frames-only y_accum.
+  - PA error = ``3.8197 · |drift_dec| · pixel_scale / cos(δ)`` (Barrett).
+  - Peak = sign-preserving max-by-abs.
+  - Oscillation = sign-flip rate, zero values treated as positive.
 
 All distances are in guide-camera pixels. ``arcsec_scale`` is surfaced
 on the response so the display layer can render dual-unit labels
@@ -39,20 +37,20 @@ class SectionMetrics(BaseModel):
     rms_ra_px: float | None
     rms_dec_px: float | None
     rms_total_px: float | None
-    # Peak is sign-preserving (max-by-abs) per PHDLogViewer §5.2.2 — for
+    # Peak is sign-preserving (max-by-abs) — for
     # ``[+0.3, -0.5, +0.4]``, peak_ra is ``-0.5``, not ``0.5``.
     peak_ra_px: float | None
     peak_dec_px: float | None
-    # RA drift via PHDLogViewer's corrections-subtraction algorithm
-    # (§5.2.3). Total raw position change minus total guide correction
-    # over the section duration, in px / minute. NOT a least-squares
-    # slope of raw position vs time — that systematically undershoots
-    # the true mount drift when the algorithm successfully damped it.
+    # RA drift via the corrections-subtraction algorithm. Total raw
+    # position change minus total guide correction over the section
+    # duration, in px / minute. NOT a least-squares slope of raw
+    # position vs time — that systematically undershoots the true
+    # mount drift when the algorithm successfully damped it.
     drift_ra_px_per_min: float | None
-    # Dec drift via the unguided-frames-only accumulation algorithm
-    # (§5.2.4). Position changes are accumulated only when the previous
-    # frame was unguided (``decdur == 0``); the slope of ``y_accum vs
-    # t`` is the drift rate. Bypasses the asymmetric-Dec-correction
+    # Dec drift via the unguided-frames-only accumulation algorithm.
+    # Position changes are accumulated only when the previous frame
+    # was unguided (``decdur == 0``); the slope of ``y_accum vs t``
+    # is the drift rate. Bypasses the asymmetric-Dec-correction
     # problem that breaks the RA algorithm for Dec.
     drift_dec_px_per_min: float | None
     # Polar alignment error in arcminutes, derived from the Dec drift
@@ -62,24 +60,22 @@ class SectionMetrics(BaseModel):
     # diverges.
     polar_alignment_error_arcmin: float | None
     # Oscillation: fraction [0, 1] of consecutive stats-sample pairs
-    # whose raw-distance sign flipped. **Zero-valued samples are
-    # treated as positive** per spec §11.14, matching PHDLogViewer's
-    # ``RaOsc`` reporting. ``None`` when fewer than two samples.
+    # whose raw-distance sign flipped. Zero-valued samples are
+    # treated as positive. ``None`` when fewer than two samples.
     oscillation_ra: float | None
     oscillation_dec: float | None
-    # Scatter-ellipse elongation per PHDLogViewer §5.2.7 — the ratio
-    # ``|lx − ly| / (lx + ly)`` over the rotated mount-axis frame
-    # (raraw/decraw, centred on per-axis means; rotation
-    # ``θ = atan2(cov_xy, var_x)``). Range [0, 1]: 0 = circular,
-    # 1 = degenerate line (or near-zero dispersion). ``None`` when
-    # fewer than two samples have both axes populated.
+    # Scatter-ellipse elongation: ``|lx − ly| / (lx + ly)`` over the
+    # rotated mount-axis frame (raraw/decraw, centred on per-axis
+    # means; rotation ``θ = atan2(cov_xy, var_x)``). Range [0, 1]:
+    # 0 = circular, 1 = degenerate line (or near-zero dispersion).
+    # ``None`` when fewer than two samples have both axes populated.
     elongation: float | None
     frame_count_total: int
     frame_count_error: int
     # Samples that fell inside a settle window (bracketed by
     # ``settle_begin`` / ``settle_end`` INFO events) — excluded from
-    # every quality metric above per PHD2 / PHDLogViewer convention.
-    # Includes DROP rows that happened to land in the window.
+    # every quality metric above. Includes DROP rows that happened
+    # to land in the window.
     frame_count_in_settle: int
     # Samples that actually contributed to the filtered metrics above:
     # has positional data AND outside every settle window.
@@ -104,12 +100,11 @@ def compute_section_metrics(section: LogSection) -> SectionMetrics:
     """Compute summary metrics for one guiding section.
 
     Samples inside settle windows (bracketed by ``settle_begin`` /
-    ``settle_end`` INFO events) are excluded from every quality metric —
-    RMS, peak, drift, oscillation, SNR, star mass, and the error count —
-    per PHD2 and PHDLogViewer convention. The raw totals
-    (``frame_count_total``, ``duration_total_seconds``) remain unfiltered
-    so the UI can display the decomposition "N total · M in stats · K
-    in settle".
+    ``settle_end`` INFO events) are excluded from every quality
+    metric — RMS, peak, drift, oscillation, SNR, star mass, and the
+    error count. The raw totals (``frame_count_total``,
+    ``duration_total_seconds``) remain unfiltered so the UI can
+    display the decomposition "N total · M in stats · K in settle".
 
     Calibration sections route through this too (returning mostly
     ``None`` + zero counts) so the API response shape stays uniform
@@ -249,7 +244,8 @@ def _in_any_interval(t: float, intervals: list[tuple[float, float]]) -> bool:
     """Closed-interval membership across a (small) list of windows.
 
     A sample exactly on a boundary is treated as in-settle — it's a
-    transition sample and excluding it matches PHDLogViewer.
+    transition sample and excluding it keeps post-dither corrective
+    excursions out of the stats.
     """
     for t0, t1 in intervals:
         if t0 <= t <= t1:
@@ -258,8 +254,8 @@ def _in_any_interval(t: float, intervals: list[tuple[float, float]]) -> bool:
 
 
 def _stddev(values: list[float]) -> float | None:
-    """Population standard deviation — PHDLogViewer's ``LFit::varx``
-    rooted (§M1). ``sqrt(mean((x − x̄)²))``, NOT ``sqrt(mean(x²))``.
+    """Population standard deviation: ``sqrt(mean((x − x̄)²))``,
+    NOT ``sqrt(mean(x²))``.
 
     Returns ``None`` for empty input. For a single value, returns 0.0
     (the variance is zero — sole sample equals the mean).
@@ -272,7 +268,7 @@ def _stddev(values: list[float]) -> float | None:
 
 
 def _signed_peak(values: list[float]) -> float | None:
-    """Sign-preserving max-by-absolute-value (§5.2.2).
+    """Sign-preserving max-by-absolute-value.
 
     For ``[+0.3, -0.5, +0.4]``, returns ``-0.5``. ``None`` when the
     input is empty.
@@ -285,9 +281,8 @@ def _signed_peak(values: list[float]) -> float | None:
 def _oscillation_rate(values: list[float]) -> float | None:
     """Fraction of consecutive value pairs whose signs differ.
 
-    Per spec §11.14, **zero values are treated as positive** for this
-    calculation (matching PHDLogViewer's ``RaOsc`` reporting). Returns
-    ``None`` when fewer than two values are present.
+    Zero values are treated as positive for this calculation.
+    Returns ``None`` when fewer than two values are present.
     """
     if len(values) < 2:
         return None
@@ -297,7 +292,8 @@ def _oscillation_rate(values: list[float]) -> float | None:
 
 
 def _ra_drift_corrections_subtracted(stats_samples: list[GuidingSample]) -> float | None:
-    """RA drift in px / minute — PHDLogViewer §5.2.3.
+    """RA drift in px / minute via the corrections-subtraction
+    algorithm.
 
     Total raw RA change minus total RA guide correction over the
     section duration:
@@ -306,11 +302,11 @@ def _ra_drift_corrections_subtracted(stats_samples: list[GuidingSample]) -> floa
 
         drift_per_sec = (ra_last − ra_first − Σ ra_guide) / Δt
 
-    Where the Σ runs over all settle-filtered samples with
-    ``ra_duration_ms != 0`` and a non-null ``ra_guide_px`` — matching
-    PHDLogViewer's ``e.included ∧ e.radur != 0`` predicate (note
-    ``e.included``, NOT the stricter ``Include(e)`` — DROP frames with
-    valid RAGuideDistance values still contribute to the sum).
+    The Σ runs over all settle-filtered samples with
+    ``ra_duration_ms != 0`` and a non-null ``ra_guide_px``. DROP
+    frames with valid ``RAGuideDistance`` values still contribute to
+    the sum (the guide pulse went out even if the next-frame
+    measurement was rejected).
 
     Returns ``None`` when fewer than two samples have valid
     ``ra_raw_px`` or when the duration is non-positive.
@@ -336,7 +332,8 @@ def _ra_drift_corrections_subtracted(stats_samples: list[GuidingSample]) -> floa
 
 
 def _dec_drift_unguided_only(stats_samples: list[GuidingSample]) -> float | None:
-    """Dec drift in px / minute — PHDLogViewer §5.2.4 / §M3.
+    """Dec drift in px / minute via the unguided-frames-only
+    accumulation algorithm.
 
     Accumulates Dec position changes only when the *previous* frame
     was unguided (``dec_duration_ms == 0``); the slope of ``y_accum
@@ -348,8 +345,8 @@ def _dec_drift_unguided_only(stats_samples: list[GuidingSample]) -> float | None
 
     - Fewer than two samples with valid ``dec_raw_px`` → ``None``.
     - All-guided section (every prev had a Dec pulse): only the seed
-      ``(first.t, 0)`` is in the regression; PHDLogViewer's ``LFit``
-      returns ``0`` in this degenerate case — we match.
+      ``(first.t, 0)`` is in the regression; returns ``0`` in this
+      degenerate case.
     - All-unguided section (no Dec pulses ever): every change is
       accumulated, equivalent to the simple least-squares slope of
       ``decraw`` vs ``t``.
@@ -384,7 +381,7 @@ def _dec_drift_unguided_only(stats_samples: list[GuidingSample]) -> float | None
         prev_guided = s.dec_duration_ms is not None and s.dec_duration_ms != 0
 
     if n < 2:
-        # All-guided section — match PHDLogViewer's LFit::B() = 0.
+        # All-guided section — no unguided drift to estimate.
         return 0.0
     mean_x = sum_x / n
     denom = sum_xx - n * mean_x * mean_x
@@ -396,15 +393,15 @@ def _dec_drift_unguided_only(stats_samples: list[GuidingSample]) -> float | None
 
 
 def _elongation(stats_samples: list[GuidingSample]) -> float | None:
-    """Scatter-ellipse elongation per PHDLogViewer §5.2.7.
+    """Scatter-ellipse elongation.
 
     Computes ``|lx − ly| / (lx + ly)`` where ``lx`` and ``ly`` are the
     sigmas along the principal axes of the (raraw, decraw) dispersion,
-    after rotation by ``θ = atan2(cov_xy, var_x)`` (NOT the textbook
-    PCA form — see §5.2.7 / ``ScatterPlot.tsx`` doc for why).
+    after rotation by ``θ = atan2(cov_xy, var_x)`` (close to but not
+    exactly the textbook PCA form).
 
-    Range ``[0, 1]``: 0 = circular dispersion, 1 = a degenerate line.
-    PHDLogViewer's defensive ``lx + ly < 1e-6 → 1.0`` matches here.
+    Range ``[0, 1]``: 0 = circular dispersion, 1 = a degenerate line
+    (or near-zero dispersion — defensive 1.0).
 
     Returns ``None`` when fewer than two samples have both ``ra_raw_px``
     and ``dec_raw_px`` populated.
@@ -458,17 +455,14 @@ def _polar_alignment_error_arcmin(
     declination_deg: float | None,
     pixel_scale: float | None,
 ) -> float | None:
-    """Polar alignment error in arcminutes — Barrett's formula via
-    PHDLogViewer (§5.2.6 / §M2):
+    """Polar alignment error in arcminutes — Barrett's formula:
 
     .. code-block:: text
 
         α_arcmin = 3.8197 · |drift_dec_px_per_min| · pixel_scale / cos(δ)
 
     The constant 3.8197 ≈ 60 / 15.71 reproduces Barrett's
-    arcsec/min-form derivation for px/min input. Cited at
-    ``AnalysisWin.cpp`` line 166; see celestialwonders.com for the
-    derivation.
+    arcsec/min-form derivation for px/min input.
 
     Returns ``None`` when any input is missing or when ``cos(δ) ≈ 0``
     (near the celestial pole, where the formula diverges).

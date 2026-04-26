@@ -1,16 +1,13 @@
 /**
  * PHD2 time-series chart.
  *
- * Layout follows the PHD2 / PHDLogViewer convention:
- *
  * - One main chart area with *dual y-axes*. Left axis shows the RA/Dec
  *   raw distance (pixels); right axis shows the guide-pulse duration
  *   (milliseconds). Both scales are zero-aligned to the same horizontal
  *   line so a W pulse (positive RA correction) prints above zero along
  *   with any positive star deflection, and an E pulse prints below.
- * - Separate SNR + star-mass sub-panels underneath — these aren't in
- *   PHD2's live graph but PHDLogViewer stacks them the same way and
- *   they give useful context for diagnosing lost-star events.
+ * - Separate SNR + star-mass sub-panels underneath — useful context
+ *   for diagnosing lost-star events.
  * - User-adjustable Y range for every axis: vertical sliders flank
  *   the chart (guide / SNR / Mass on the left; pulse on the right).
  *   Each slider drag locks the axis to the chosen ceiling; a reset
@@ -44,6 +41,10 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AutorenewIcon from "@mui/icons-material/Autorenew";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useTheme } from "@mui/material/styles";
 import type { GuidingSample, LogEvent } from "@/api/phd2";
 import { formatWallClock } from "@/lib/phd2Format";
@@ -131,12 +132,31 @@ const EVENT_LABEL_PAD = 4;
 const MAIN_H_RATIO = 0.54;
 const SNR_H_RATIO = 0.26;
 const MASS_H_RATIO = 0.2;
-// Generous panel gaps with an SVG hairline divider at the midpoint
-// of each gap make the guide / SNR / Mass split visually unambiguous
-// — narrower gaps had the three traces blurring into one tall plot.
+// Generous panel gaps with a theme-aware divider line at the midpoint
+// of each gap make the panel splits visually unambiguous — narrower
+// gaps had the traces blurring into one tall plot. Each divider also
+// doubles as a drag-to-resize handle (see ``handleDividerMouseDown``).
 const PANEL_GAP_MAIN = 36;
 const PANEL_GAP_SNR = 32;
-const PANEL_DIVIDER_OPACITY = 0.5;
+
+// Stable empty-record reference for zustand selectors. Returning a
+// fresh ``{}`` from a selector on every call triggers an infinite
+// render loop (zustand's default Object.is comparator sees a new
+// reference every time → re-render → re-select → re-render).
+const EMPTY_RECORD: Record<string, number> = Object.freeze({});
+
+// Panel identity. ``main`` is the multi-trace guide-error panel; the
+// other three are diagnostic strips with their own y-axis. Hoisted to
+// module scope so the (frozen) ``PANEL_LABEL`` lookup doesn't get
+// reallocated on every render and consumers can use it for tooltips
+// or stub strings without a switch / nested ternary.
+type PanelKey = "main" | "snr" | "mass";
+const PANEL_LABEL: Record<PanelKey, string> = {
+  main: "Guide error",
+  snr: "SNR",
+  mass: "Mass",
+};
+const PANEL_MAX_H = 600;
 
 // PHD2 occasionally emits sentinel values in place of missing telemetry
 // (star lost, detection failure). Any SNR above 1 000 or mass above
@@ -258,6 +278,36 @@ function TimeSeriesChartInner(
   // ceiling is user-controllable.
   const [snrAxisMax, setSnrAxisMax] = useState<number | null>(null);
   const [massAxisMax, setMassAxisMax] = useState<number | null>(null);
+  const updateSettings = useSettingsStore((s) => s.update);
+  // Per-panel collapse toggles (eye icon on the left of each non-main
+  // panel). When false the panel renders as a thin stub showing only
+  // the toggle so the user can always restore it; the chart's overall
+  // height shrinks by the panel's full size minus the stub height.
+  const [panelExpanded, setPanelExpanded] = useState({
+    snr: true,
+    mass: true,
+  });
+  // Persisted panel heights from settings (per-user, drag-to-resize).
+  // Each value is an absolute pixel height for the panel; missing keys
+  // fall back to the ratio-derived default. Values clamp to [default,
+  // 600] so the user can grow but not shrink below the layout's
+  // sensible minimum.
+  const persistedPanelHeights = useSettingsStore(
+    (s) => s.settings?.phd2_panel_heights ?? EMPTY_RECORD,
+  );
+  // In-flight drag override — applied per-panel during mousemove for
+  // smooth feedback without round-tripping every motion event through
+  // settings persistence.
+  const [dragPanelHeights, setDragPanelHeights] = useState<
+    Record<string, number>
+  >({});
+  const dragRef = useRef<{
+    panelKey: PanelKey;
+    startMouseY: number;
+    startHeight: number;
+    minHeight: number;
+    currentHeight: number;
+  } | null>(null);
   // Guide-axis display unit. ``arcsec`` requires a known pixel scale
   // from the section header; when absent, the toggle stays disabled
   // and the chart silently stays in pixels.
@@ -308,15 +358,78 @@ function TimeSeriesChartInner(
     return [samples[0].time_seconds, samples[samples.length - 1].time_seconds];
   }, [samples]);
 
-  // Panel rectangles.
+  // Panel rectangles. Each non-main panel can be collapsed to a thin
+  // ``STUB_H`` strip that shows only the eye-toggle icon (so the user
+  // can always restore it). The chart's overall height is the sum of
+  // visible panel heights + gaps + margins — collapsing a panel
+  // shrinks the total chart.
+  const STUB_H = 22;
   const innerW = Math.max(100, width - MARGIN.left - MARGIN.right);
   const innerH = height - MARGIN.top - MARGIN.bottom;
-  const mainH = innerH * MAIN_H_RATIO - PANEL_GAP_MAIN;
-  const snrH = innerH * SNR_H_RATIO - PANEL_GAP_SNR;
-  const massH = innerH * MASS_H_RATIO;
+  // Default ratio-derived sizes — these are also the minimum heights
+  // for each panel (user can drag to grow, never shrink below).
+  const defaultMainH = innerH * MAIN_H_RATIO - PANEL_GAP_MAIN;
+  const defaultSnrFullH = innerH * SNR_H_RATIO - PANEL_GAP_SNR;
+  const defaultMassFullH = innerH * MASS_H_RATIO;
+
+  // Resolve effective heights = drag override (if mid-drag) || persisted
+  // setting || default. Always clamped to [default, PANEL_MAX_H] —
+  // shrinking below the ratio-derived layout breaks the chart. Drag
+  // override takes precedence so feedback is immediate.
+  const resolvePanelHeight = (key: PanelKey, defaultH: number): number => {
+    const drag = dragPanelHeights[key];
+    const persisted = persistedPanelHeights[key];
+    const candidate = drag ?? persisted ?? defaultH;
+    return Math.max(defaultH, Math.min(PANEL_MAX_H, candidate));
+  };
+  const mainH = resolvePanelHeight("main", defaultMainH);
+  const snrFullH = resolvePanelHeight("snr", defaultSnrFullH);
+  const massFullH = resolvePanelHeight("mass", defaultMassFullH);
+
+  const snrH = panelExpanded.snr ? snrFullH : STUB_H;
+  const massH = panelExpanded.mass ? massFullH : STUB_H;
   const mainY0 = MARGIN.top;
   const snrY0 = mainY0 + mainH + PANEL_GAP_MAIN;
   const massY0 = snrY0 + snrH + PANEL_GAP_SNR;
+  // Effective SVG height — shrinks as panels collapse, grows as the
+  // user drags any panel taller.
+  const effectiveSvgHeight = massY0 + massH + MARGIN.bottom;
+
+  // Divider layout — y-coordinates within the SVG plus the panel each
+  // divider resizes (the panel ABOVE the divider). The Mass-bottom
+  // divider sits just above the SVG bottom edge; dragging it grows
+  // the Mass panel. When a panel is collapsed (panelExpanded[key] =
+  // false), its divider is suppressed since the height-resize would
+  // be invisible.
+  type DividerInfo = {
+    key: PanelKey;
+    y: number;
+    currentHeight: number;
+    minHeight: number;
+  };
+  const dividerLayout: DividerInfo[] = [];
+  dividerLayout.push({
+    key: "main",
+    y: mainY0 + mainH + PANEL_GAP_MAIN / 2,
+    currentHeight: mainH,
+    minHeight: defaultMainH,
+  });
+  if (panelExpanded.snr) {
+    dividerLayout.push({
+      key: "snr",
+      y: snrY0 + snrH + PANEL_GAP_SNR / 2,
+      currentHeight: snrH,
+      minHeight: defaultSnrFullH,
+    });
+  }
+  if (panelExpanded.mass) {
+    dividerLayout.push({
+      key: "mass",
+      y: effectiveSvgHeight - 4,
+      currentHeight: massH,
+      minHeight: defaultMassFullH,
+    });
+  }
 
   // Scales.
   const {
@@ -338,19 +451,15 @@ function TimeSeriesChartInner(
     const tmin = times.length ? times[0] : 0;
     const tmax = times.length ? times[times.length - 1] : 1;
 
-    // Auto / manual left-axis range. Auto re-fits per-zoom using only
-    // the visible samples so panning into a quieter region zooms in
-    // on small deflections. Manual (user-picked ±N px) clamps to that
-    // fixed range; data outside the range clips at the panel edges.
-    const visibleSamples = zoomX
-      ? samples.filter(
-          (s) => s.time_seconds >= zoomX[0] && s.time_seconds <= zoomX[1],
-        )
-      : samples;
+    // Auto / manual left-axis range. Auto fits over the FULL section
+    // (not the visible window) so the y-axis stays put as the user
+    // pans across the X-axis — matching the SNR + Mass sub-panels'
+    // behaviour. Manual (user-picked ±N px) clamps to that fixed
+    // range; data outside the range clips at the panel edges.
     // Auto fit only honours the AXES the user has left visible via the
-    // legend — hiding RA or Dec should narrow the auto range instead
-    // of holding it open for a series the user can't see.
-    const distVals = visibleSamples.flatMap((s) => {
+    // legend — hiding RA or Dec narrows the auto range instead of
+    // holding it open for a series the user can't see.
+    const distVals = samples.flatMap((s) => {
       const out: number[] = [];
       if (visibility.ra && s.ra_raw_px !== null) out.push(s.ra_raw_px);
       if (visibility.dec && s.dec_raw_px !== null) out.push(s.dec_raw_px);
@@ -369,11 +478,10 @@ function TimeSeriesChartInner(
         ? guideAxisMax
         : autoMaxAbs * 1.1;
 
-    // Pulse axis range — scoped to visible samples so panning / zooming
-    // always reflects the in-view data. Auto uses the visible max + 10 %
-    // headroom (mirroring the guide-axis auto behaviour) with a 50 ms
+    // Pulse axis range — fits the FULL section so panning doesn't
+    // re-fit. Auto = full-section max + 10 % headroom with a 50 ms
     // floor so a quiet all-zero region still renders a usable scale.
-    const visibleDurations = visibleSamples.flatMap((s) => {
+    const pulseDurations = samples.flatMap((s) => {
       const out: number[] = [];
       if (visibility.raPulse && (s.ra_duration_ms ?? 0) > 0) {
         out.push(s.ra_duration_ms as number);
@@ -383,10 +491,10 @@ function TimeSeriesChartInner(
       }
       return out;
     });
-    const visibleDurMax = visibleDurations.length
-      ? (d3.max(visibleDurations) ?? 0)
+    const pulseDurMax = pulseDurations.length
+      ? (d3.max(pulseDurations) ?? 0)
       : 0;
-    const autoDurMax = Math.max(50, visibleDurMax * 1.1);
+    const autoDurMax = Math.max(50, pulseDurMax * 1.1);
     const durMax =
       pulseAxisMax !== null && pulseAxisMax > 0 ? pulseAxisMax : autoDurMax;
 
@@ -478,6 +586,9 @@ function TimeSeriesChartInner(
       massHiAuto,
       massMedian,
     };
+    // mainY0 / snrY0 / massY0 are derived from the same inputs the
+    // hook already depends on (height, mainH, etc.), so listing them
+    // here would re-run the memo on a strictly redundant set of deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     samples,
@@ -516,13 +627,13 @@ function TimeSeriesChartInner(
         [MARGIN.left, 0],
         [MARGIN.left + innerW, height],
       ])
-      // Shift-drag is reserved for the selection / exclusion gestures
-      // (Shift → select, Shift+Alt → exclude), so d3.zoom ignores those
-      // events and lets our own mousedown handler take over.
       .filter((e) => {
         const me = e as MouseEvent;
         if (me.type === "mousedown" && me.shiftKey) return false;
-        return !e.ctrlKey && !e.button;
+        if (me.ctrlKey || me.button) return false;
+        const rect = svg.getBoundingClientRect();
+        const x = me.clientX - rect.left;
+        return x >= MARGIN.left && x <= MARGIN.left + innerW;
       })
       .on("zoom", (e) => {
         const rescaled = e.transform.rescaleX(base);
@@ -791,7 +902,8 @@ function TimeSeriesChartInner(
     const t = snapTime ?? xScale.invert(mx);
     const bisector = d3.bisector((s: GuidingSample) => s.time_seconds).center;
     const idx = bisector(samples, t);
-    const s = samples[Math.max(0, Math.min(samples.length - 1, idx))];
+    const sIdx = Math.max(0, Math.min(samples.length - 1, idx));
+    const s = samples[sIdx];
     setHover({
       xPx: snapTime !== null ? xScale(snapTime) : xScale(s.time_seconds),
       time: s.time_seconds,
@@ -921,6 +1033,55 @@ function TimeSeriesChartInner(
     document.addEventListener("mouseup", onUp);
   };
 
+  // ── Panel-divider drag-to-resize ──────────────────────────────────
+  //
+  // Each visible divider has an invisible hit area (ns-resize cursor)
+  // overlaid above the SVG. Mousedown starts a drag; mousemove updates
+  // the in-flight ``dragPanelHeights`` for smooth feedback; mouseup
+  // commits the new height to settings. The PANEL ABOVE the divider
+  // grows; other panels keep their current heights, so the chart
+  // overall grows taller as the user drags down.
+  const handleDividerMouseDown = (
+    panelKey: PanelKey,
+    currentHeight: number,
+    minHeight: number,
+  ) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = {
+      panelKey,
+      startMouseY: e.clientY,
+      startHeight: currentHeight,
+      minHeight,
+      currentHeight,
+    };
+    const onMove = (ev: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const dy = ev.clientY - drag.startMouseY;
+      const next = Math.max(
+        drag.minHeight,
+        Math.min(PANEL_MAX_H, drag.startHeight + dy),
+      );
+      drag.currentHeight = next;
+      setDragPanelHeights((prev) => ({ ...prev, [drag.panelKey]: next }));
+    };
+    const onUp = () => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (!drag) return;
+      setDragPanelHeights({});
+      const next = {
+        ...persistedPanelHeights,
+        [drag.panelKey]: drag.currentHeight,
+      };
+      updateSettings({ phd2_panel_heights: next });
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   // ── Selection / exclusion drag gestures ────────────────────────────
   //
   // Shift+drag → select a time range; the Selection Summary panel
@@ -1041,6 +1202,53 @@ function TimeSeriesChartInner(
 
   return (
     <Stack direction="row" alignItems="flex-start" spacing={0} sx={{ width: "100%" }}>
+      {/* Per-panel collapse toggles — eye icons at the top-left of
+          each non-main panel. Sits to the LEFT of the slider rail so
+          the slider thumb area is unobstructed; always rendered
+          (even when the panel is stubbed) so the user can always
+          restore a hidden panel. */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          width: 28,
+          position: "relative",
+          minHeight: `${toolbarHeight + TOOLTIP_H + effectiveSvgHeight}px`,
+        }}
+      >
+        {(
+          [
+            { key: "snr" as const, y: snrY0 },
+            { key: "mass" as const, y: massY0 },
+          ] as const
+        ).map(({ key, y }) => {
+            const expanded = panelExpanded[key];
+            const label = PANEL_LABEL[key];
+            return (
+              <IconButton
+                key={`eye-${key}`}
+                size="small"
+                onClick={() =>
+                  setPanelExpanded((prev) => ({ ...prev, [key]: !prev[key] }))
+                }
+                title={expanded ? `Collapse ${label}` : `Expand ${label}`}
+                sx={{
+                  position: "absolute",
+                  left: 4,
+                  top: toolbarHeight + TOOLTIP_H + y - 2,
+                  p: 0.25,
+                  color: "text.secondary",
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                {expanded ? (
+                  <VisibilityIcon sx={{ fontSize: 16 }} />
+                ) : (
+                  <VisibilityOffIcon sx={{ fontSize: 16 }} />
+                )}
+              </IconButton>
+            );
+          })}
+      </Box>
       {/* Left axis-controls column — narrow rail holding the guide-
           axis slider plus the SNR / Mass sliders. The Guide unit
           (px / ″) toggle floats just inside the toolbar row above
@@ -1053,7 +1261,7 @@ function TimeSeriesChartInner(
           flexShrink: 0,
           width: 40,
           position: "relative",
-          minHeight: `${toolbarHeight + TOOLTIP_H + height + 24}px`,
+          minHeight: `${toolbarHeight + TOOLTIP_H + effectiveSvgHeight}px`,
         }}
       >
         <VerticalScaleSlider
@@ -1076,31 +1284,37 @@ function TimeSeriesChartInner(
             bulk (median) can never disappear off the top of the
             panel even at maximum zoom: ``median + 20 % of the
             median-to-autoHi distance`` keeps the median visible at
-            ~83 % of the panel height when fully zoomed in. */}
-        <VerticalScaleSlider
-          value={effectiveSnrMax}
-          isAuto={snrAxisMax === null}
-          min={snrMedian + Math.max(0.5, (snrHiAuto - snrMedian) * 0.2)}
-          max={snrHiAuto}
-          step={0.01}
-          onChange={(v) => setSnrAxisMax(v)}
-          onReset={() => setSnrAxisMax(null)}
-          formatValue={(v) => `↑ ${v.toFixed(0)}`}
-          containerHeight={snrH}
-          topOffset={toolbarHeight + TOOLTIP_H + snrY0}
-        />
-        <VerticalScaleSlider
-          value={effectiveMassMax}
-          isAuto={massAxisMax === null}
-          min={massMedian + Math.max(50, (massHiAuto - massMedian) * 0.2)}
-          max={massHiAuto}
-          step={0.01}
-          onChange={(v) => setMassAxisMax(v)}
-          onReset={() => setMassAxisMax(null)}
-          formatValue={(v) => `↑ ${formatMassShort(v)}`}
-          containerHeight={massH}
-          topOffset={toolbarHeight + TOOLTIP_H + massY0}
-        />
+            ~83 % of the panel height when fully zoomed in. Sliders
+            hide entirely when their panel is collapsed — there's
+            nothing meaningful to scale. */}
+        {panelExpanded.snr && (
+          <VerticalScaleSlider
+            value={effectiveSnrMax}
+            isAuto={snrAxisMax === null}
+            min={snrMedian + Math.max(0.5, (snrHiAuto - snrMedian) * 0.2)}
+            max={snrHiAuto}
+            step={0.01}
+            onChange={(v) => setSnrAxisMax(v)}
+            onReset={() => setSnrAxisMax(null)}
+            formatValue={(v) => `↑ ${v.toFixed(0)}`}
+            containerHeight={snrH}
+            topOffset={toolbarHeight + TOOLTIP_H + snrY0}
+          />
+        )}
+        {panelExpanded.mass && (
+          <VerticalScaleSlider
+            value={effectiveMassMax}
+            isAuto={massAxisMax === null}
+            min={massMedian + Math.max(50, (massHiAuto - massMedian) * 0.2)}
+            max={massHiAuto}
+            step={0.01}
+            onChange={(v) => setMassAxisMax(v)}
+            onReset={() => setMassAxisMax(null)}
+            formatValue={(v) => `↑ ${formatMassShort(v)}`}
+            containerHeight={massH}
+            topOffset={toolbarHeight + TOOLTIP_H + massY0}
+          />
+        )}
       </Box>
 
       <Box ref={wrapperRef} sx={{ flex: 1, minWidth: 0, position: "relative" }}>
@@ -1113,13 +1327,18 @@ function TimeSeriesChartInner(
           spacing={0.75}
           sx={{ mr: 1 }}
         >
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontSize: 11 }}
+          <Tooltip
+            title="Switch the guide-error y-axis between pixels and arcseconds. Arcseconds are absolute angular distance on the sky and let you compare across rigs; pixels are direct readouts of what the camera actually saw. The arcsec option is greyed out when the log doesn't include a pixel scale."
+            arrow
           >
-            Guide unit
-          </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: 11, cursor: "help" }}
+            >
+              Guide unit
+            </Typography>
+          </Tooltip>
           <ToggleButtonGroup
             size="small"
             exclusive
@@ -1150,6 +1369,7 @@ function TimeSeriesChartInner(
           shape="line"
           active={visibility.ra}
           onToggle={() => setVisibility((v) => ({ ...v, ra: !v.ra }))}
+          tooltip="How far the guide star drifted left or right of the lock position before guiding corrected it. Lower is tighter."
         />
         <LegendToggle
           label="Dec"
@@ -1157,6 +1377,7 @@ function TimeSeriesChartInner(
           shape="line"
           active={visibility.dec}
           onToggle={() => setVisibility((v) => ({ ...v, dec: !v.dec }))}
+          tooltip="How far the guide star drifted up or down. Polar alignment dominates the long-term Dec drift; mechanical flexure shows up here too."
         />
         <LegendToggle
           label="RA pulse"
@@ -1164,6 +1385,7 @@ function TimeSeriesChartInner(
           shape="bar"
           active={visibility.raPulse}
           onToggle={() => setVisibility((v) => ({ ...v, raPulse: !v.raPulse }))}
+          tooltip="How long PHD2 commanded the mount to slew east or west on each frame. Spikes mean the algorithm is working hard to catch up."
         />
         <LegendToggle
           label="Dec pulse"
@@ -1171,6 +1393,7 @@ function TimeSeriesChartInner(
           shape="bar"
           active={visibility.decPulse}
           onToggle={() => setVisibility((v) => ({ ...v, decPulse: !v.decPulse }))}
+          tooltip="How long PHD2 commanded the mount to slew north or south on each frame."
         />
         {events.some((e) => e.kind === "dither") && (
           <LegendToggle
@@ -1179,6 +1402,7 @@ function TimeSeriesChartInner(
             shape="triangle"
             active={visibility.dither}
             onToggle={() => setVisibility((v) => ({ ...v, dither: !v.dither }))}
+            tooltip="Mark events where PHD2 deliberately shifted the lock position by a small random amount between sub-frames — used to spread sensor defects and make stacking more effective."
           />
         )}
         {events.some((e) => e.kind !== "dither" && e.time_seconds != null) && (
@@ -1188,6 +1412,7 @@ function TimeSeriesChartInner(
             shape="line"
             active={visibility.events}
             onToggle={() => setVisibility((v) => ({ ...v, events: !v.events }))}
+            tooltip="Show non-dither markers — settle windows, lock-position changes, alerts, guiding pause / resume, etc. Hover or click an event marker for details."
           />
         )}
         <Typography
@@ -1220,39 +1445,19 @@ function TimeSeriesChartInner(
         flexWrap="wrap"
         useFlexGap
       >
-        {onSelectionsChange && (
-          <Tooltip title="Append the current zoom window to the Selection Summary's set of included ranges.">
-            <span>
-              <Button
-                size="small"
-                disabled={zoomX === null}
-                onClick={() => {
-                  if (!zoomX) return;
-                  onSelectionsChange([...selections, [zoomX[0], zoomX[1]]]);
-                }}
-              >
-                Include in view
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-        {onExclusionsChange && (
-          <Tooltip title="Append the current zoom window to the Selection Summary's set of excluded ranges.">
-            <span>
-              <Button
-                size="small"
-                disabled={zoomX === null}
-                onClick={() => {
-                  if (!zoomX) return;
-                  onExclusionsChange([...exclusions, [zoomX[0], zoomX[1]]]);
-                }}
-              >
-                Exclude in view
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-        <Tooltip title="Remove every selection and exclusion zone, returning the Selection Summary to the full section.">
+        <Tooltip title="Restore the full-section X-axis range.">
+          <span>
+            <Button
+              size="small"
+              startIcon={<RestartAltIcon />}
+              onClick={handleReset}
+              disabled={zoomX === null}
+            >
+              Reset X zoom
+            </Button>
+          </span>
+        </Tooltip>
+        <Tooltip title="Remove all selection and exclusion zones.">
           <span>
             <Button
               size="small"
@@ -1262,16 +1467,13 @@ function TimeSeriesChartInner(
                 onExclusionsChange?.([]);
               }}
             >
-              Clear all
-              {selections.length + exclusions.length > 0
-                ? ` (${selections.length + exclusions.length})`
-                : ""}
+              Clear all selections
             </Button>
           </span>
         </Tooltip>
         <Box sx={{ flex: 1 }} />
         {onIncludeSettleChange && (
-          <Tooltip title="When on, samples bracketed by Settle started / Settle complete events count toward the Section + Selection summary metrics. Off matches PHDLogViewer's convention.">
+          <Tooltip title="When on, settle frames count toward stats. Off (default) excludes them.">
             <FormControlLabel
               control={
                 <Switch
@@ -1293,18 +1495,6 @@ function TimeSeriesChartInner(
             />
           </Tooltip>
         )}
-        <Tooltip title="Restore the full-section X-axis range — pan and zoom return to the section's start → end.">
-          <span>
-            <Button
-              size="small"
-              startIcon={<RestartAltIcon />}
-              onClick={handleReset}
-              disabled={zoomX === null}
-            >
-              Reset X zoom
-            </Button>
-          </span>
-        </Tooltip>
       </Stack>
       </Box>{/* end toolbarRef */}
 
@@ -1360,12 +1550,12 @@ function TimeSeriesChartInner(
 
               <Box sx={{ opacity: 0.7 }}>error:</Box>
               <Box sx={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {formatPxOrBlank(hover.raRaw)}
+                {hover.raRaw == null ? "" : formatGuidePx(hover.raRaw)}
               </Box>
               <Box sx={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {formatPxOrBlank(hover.decRaw)}
+                {hover.decRaw == null ? "" : formatGuidePx(hover.decRaw)}
               </Box>
-              <Box sx={{ opacity: 0.7 }}>px</Box>
+              <Box sx={{ opacity: 0.7 }}>{guideAxisUnitLabel}</Box>
 
               <Box sx={{ opacity: 0.7 }}>pulse:</Box>
               <Box sx={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
@@ -1377,7 +1567,7 @@ function TimeSeriesChartInner(
               <Box sx={{ opacity: 0.7 }}>ms</Box>
             </Box>
             <Typography variant="caption" sx={{ display: "block", mt: 0.25 }}>
-              SNR: {hover.snr != null ? hover.snr.toFixed(1) : ""} · mass:{" "}
+              SNR: {hover.snr != null ? hover.snr.toFixed(1) : ""} · Mass:{" "}
               {hover.starMass != null ? hover.starMass : ""}
             </Typography>
             {/* Events block intentionally omitted — event info is now
@@ -1408,7 +1598,7 @@ function TimeSeriesChartInner(
       <svg
         ref={svgRef}
         width={width}
-        height={height}
+        height={effectiveSvgHeight}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHover(null)}
         onMouseDown={handleSelectionMouseDown}
@@ -1461,8 +1651,8 @@ function TimeSeriesChartInner(
           </pattern>
         </defs>
 
-        {/* Uniform background tint on all three panels so they read as
-            a family — separates the plotted data area from the outer
+        {/* Uniform background tint on every panel so they read as a
+            family — separates the plotted data area from the outer
             chart wrapper at a glance. */}
         {(
           [
@@ -1481,25 +1671,25 @@ function TimeSeriesChartInner(
           />
         ))}
 
-        {/* Panel-divider hairlines centred in each gap between the
-            three panels. Stretch ACROSS the full SVG width (margin
-            included) so the visual break extends past the data area
-            into the axis-label gutter — without that, the eye reads
-            the dividers as belonging only to the data area and the
-            three plots blur back together near the y-axis labels. */}
-        {[
-          mainY0 + mainH + PANEL_GAP_MAIN / 2,
-          snrY0 + snrH + PANEL_GAP_SNR / 2,
-        ].map((y, i) => (
+        {/* Panel-divider lines — drag-to-resize handles. Each one
+            sits centred in its gap; stretches nearly the full SVG
+            width (with ~12 px padding on each side); coloured at a
+            theme-aware divider tone so it reads as a structural
+            separator rather than a chart axis. The bottom divider
+            (below the Mass panel) lives just above the SVG's bottom
+            edge, below the x-axis labels, and grows the Mass panel
+            when dragged. The matching HTML hit areas sit above the
+            SVG (rendered after </svg>) with cursor: ns-resize. */}
+        {dividerLayout.map(({ key, y }) => (
           <line
-            key={`panel-divider-${i}`}
-            x1={0}
-            x2={width}
+            key={`panel-divider-${key}`}
+            x1={12}
+            x2={Math.max(12, width - 12)}
             y1={y}
             y2={y}
-            stroke={isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.18)"}
-            strokeWidth={1}
-            opacity={PANEL_DIVIDER_OPACITY}
+            stroke={theme.palette.divider}
+            strokeWidth={1.25}
+            opacity={0.85}
           />
         ))}
 
@@ -1545,8 +1735,8 @@ function TimeSeriesChartInner(
 
         {/* Settle-window shading — paints FIRST so pulse bars + traces
             render on top. Signals "these samples are excluded from the
-            guide-quality stats per PHD2 / PHDLogViewer convention".
-            Same translucent grey across all three panels. */}
+            guide-quality stats" (post-dither settle window). Same
+            translucent grey across all three panels. */}
         {showSettleShading && settleIntervals.length > 0 && (
           <>
             {(
@@ -1843,68 +2033,76 @@ function TimeSeriesChartInner(
           </text>
         ))}
         {/* SNR panel */}
-        <line
-          x1={MARGIN.left}
-          x2={MARGIN.left + innerW}
-          y1={snrY0 + snrH}
-          y2={snrY0 + snrH}
-          stroke={axisColor}
-        />
-        <g clipPath={`url(#${clipSnr})`}>
-          <path
-            d={snrLine(samples) ?? undefined}
-            fill="none"
-            stroke={axisColor}
-            strokeWidth={1}
-            opacity={0.7}
-          />
-        </g>
-        {snrTicks.map((t) => (
-          <text
-            key={`st-${t}`}
-            x={MARGIN.left - 9}
-            y={ySnrScale(t)}
-            fill={textColor}
-            fontSize={9}
-            textAnchor="end"
-            dominantBaseline="central"
-          >
-            {/* Round to one decimal — avoids float-precision garbage
-                like "0.000000002" on domain extremes added by
-                ``withDomainExtremes`` and trims "16.908" to "16.9". */}
-            {formatTenth(t)}
-          </text>
-        ))}
+        {panelExpanded.snr && (
+          <>
+            <line
+              x1={MARGIN.left}
+              x2={MARGIN.left + innerW}
+              y1={snrY0 + snrH}
+              y2={snrY0 + snrH}
+              stroke={axisColor}
+            />
+            <g clipPath={`url(#${clipSnr})`}>
+              <path
+                d={snrLine(samples) ?? undefined}
+                fill="none"
+                stroke={axisColor}
+                strokeWidth={1}
+                opacity={0.7}
+              />
+            </g>
+            {snrTicks.map((t) => (
+              <text
+                key={`st-${t}`}
+                x={MARGIN.left - 9}
+                y={ySnrScale(t)}
+                fill={textColor}
+                fontSize={9}
+                textAnchor="end"
+                dominantBaseline="central"
+              >
+                {/* Round to one decimal — avoids float-precision
+                    garbage on domain extremes from ``withDomainExtremes``
+                    and trims "16.908" to "16.9". */}
+                {formatTenth(t)}
+              </text>
+            ))}
+          </>
+        )}
         {/* Mass panel */}
-        <line
-          x1={MARGIN.left}
-          x2={MARGIN.left + innerW}
-          y1={massY0 + massH}
-          y2={massY0 + massH}
-          stroke={axisColor}
-        />
-        <g clipPath={`url(#${clipMass})`}>
-          <path
-            d={massLine(samples) ?? undefined}
-            fill="none"
-            stroke={axisColor}
-            strokeWidth={1}
-            opacity={0.5}
-          />
-        </g>
-        {massTicks.map((t) => (
-          <text
-            key={`mt-${t}`}
-            x={MARGIN.left - 9}
-            y={yMassScale(t)}
-            fill={textColor}
-            fontSize={9}
-            textAnchor="end"
-            dominantBaseline="central"
-          >
-            {formatMassTick(t)}
-          </text>
-        ))}
+        {panelExpanded.mass && (
+          <>
+            <line
+              x1={MARGIN.left}
+              x2={MARGIN.left + innerW}
+              y1={massY0 + massH}
+              y2={massY0 + massH}
+              stroke={axisColor}
+            />
+            <g clipPath={`url(#${clipMass})`}>
+              <path
+                d={massLine(samples) ?? undefined}
+                fill="none"
+                stroke={axisColor}
+                strokeWidth={1}
+                opacity={0.5}
+              />
+            </g>
+            {massTicks.map((t) => (
+              <text
+                key={`mt-${t}`}
+                x={MARGIN.left - 9}
+                y={yMassScale(t)}
+                fill={textColor}
+                fontSize={9}
+                textAnchor="end"
+                dominantBaseline="central"
+              >
+                {formatMassTick(t)}
+              </text>
+            ))}
+          </>
+        )}
 
         {/* X-axis bottom */}
         <line
@@ -1943,7 +2141,7 @@ function TimeSeriesChartInner(
         })()}
         <text
           x={MARGIN.left + innerW / 2}
-          y={height - 6}
+          y={effectiveSvgHeight - 6}
           fill={textColor}
           fontSize={10}
           textAnchor="middle"
@@ -1958,10 +2156,14 @@ function TimeSeriesChartInner(
             10px + 0.85 opacity to read as secondary signal. */}
         {(
           [
-            [14, mainY0 + mainH / 2, `Guide error (${guideAxisUnitLabel})`, 11, 1.0],
+            [10, mainY0 + mainH / 2, `Guide error (${guideAxisUnitLabel})`, 11, 1.0],
             [width - 14, mainY0 + mainH / 2, "Pulses (ms)", 11, 1.0],
-            [14, snrY0 + snrH / 2, "SNR", 10, 0.85],
-            [14, massY0 + massH / 2, "Mass (ADU)", 10, 0.85],
+            ...(panelExpanded.snr
+              ? [[10, snrY0 + snrH / 2, "SNR", 10, 0.85] as const]
+              : []),
+            ...(panelExpanded.mass
+              ? [[10, massY0 + massH / 2, "Mass (ADU)", 10, 0.85] as const]
+              : []),
           ] as const
         ).map(([x, y, label, size, opacity]) => (
           <text
@@ -1976,6 +2178,31 @@ function TimeSeriesChartInner(
             {label}
           </text>
         ))}
+
+        {/* Stub labels — when a panel is collapsed, render the panel
+            name centred in the stub strip so the user can see what
+            they hid without expanding it again. */}
+        {(
+          [
+            { key: "snr" as const, y: snrY0 },
+            { key: "mass" as const, y: massY0 },
+          ] as const
+        )
+          .filter(({ key }) => !panelExpanded[key])
+          .map(({ key, y }) => (
+            <text
+              key={`stub-${key}`}
+              x={MARGIN.left + 8}
+              y={y + STUB_H / 2}
+              fill={textColor}
+              fillOpacity={0.65}
+              fontSize={11}
+              dominantBaseline="central"
+              fontStyle="italic"
+            >
+              {PANEL_LABEL[key]}
+            </text>
+          ))}
 
         {/* Crosshair — paints solid blue when snapped to any event. */}
         {hover && (() => {
@@ -1995,6 +2222,43 @@ function TimeSeriesChartInner(
           );
         })()}
       </svg>
+
+      {/* Panel-divider drag handles — invisible 12 px tall hit areas
+          aligned with each visible SVG divider line. Cursor changes
+          to ns-resize on hover; click-drag grows the panel above.
+          Heights are persisted per-user via the settings store; the
+          minimum is the panel's ratio-derived default (Fred's
+          requirement: never shrink below the layout default). */}
+      {ready &&
+        dividerLayout.map(({ key, y, currentHeight, minHeight }) => (
+          <Tooltip
+            key={`divider-handle-${key}`}
+            title={`Drag down to make the ${PANEL_LABEL[key]} panel taller`}
+            arrow
+            placement="left"
+          >
+            <Box
+              onMouseDown={handleDividerMouseDown(
+                key,
+                currentHeight,
+                minHeight,
+              )}
+              sx={{
+                position: "absolute",
+                left: 12,
+                right: 12,
+                top: toolbarHeight + TOOLTIP_H + y - 6,
+                height: 12,
+                cursor: "ns-resize",
+                zIndex: 5,
+                "&:hover": {
+                  bgcolor: "action.hover",
+                  borderRadius: 0.5,
+                },
+              }}
+            />
+          </Tooltip>
+        ))}
 
       {/* Scrollbar row — thumb width reflects the visible fraction of
           the full data range. Drag to pan; the thumb is only
@@ -2039,7 +2303,7 @@ function TimeSeriesChartInner(
           flexShrink: 0,
           width: 40,
           position: "relative",
-          minHeight: `${toolbarHeight + TOOLTIP_H + height + 24}px`,
+          minHeight: `${toolbarHeight + TOOLTIP_H + effectiveSvgHeight}px`,
         }}
       >
         <VerticalScaleSlider
@@ -2248,13 +2512,24 @@ interface LegendToggleProps {
   shape: "line" | "bar" | "triangle";
   active: boolean;
   onToggle: () => void;
+  /** Plain-language explanation of what the series represents. Renders
+   *  on hover via MUI Tooltip; helps users who aren't fluent in PHD2
+   *  jargon understand what each trace measures. */
+  tooltip?: string;
 }
 
 /** Clickable legend chip — swatch + label. Clicking toggles the series
  *  on/off. The "off" state greys out the swatch and strikes through the
  *  label so users can see at a glance which series are hidden. */
-function LegendToggle({ label, color, shape, active, onToggle }: LegendToggleProps) {
-  return (
+function LegendToggle({
+  label,
+  color,
+  shape,
+  active,
+  onToggle,
+  tooltip,
+}: LegendToggleProps) {
+  const inner = (
     <Stack
       direction="row"
       spacing={0.5}
@@ -2296,6 +2571,13 @@ function LegendToggle({ label, color, shape, active, onToggle }: LegendTogglePro
         {label}
       </Typography>
     </Stack>
+  );
+  return tooltip ? (
+    <Tooltip title={tooltip} arrow disableInteractive>
+      {inner}
+    </Tooltip>
+  ) : (
+    inner
   );
 }
 
@@ -2592,11 +2874,6 @@ function formatMassShort(v: number): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(0)}k`;
   return Math.round(v).toString();
-}
-
-function formatPxOrBlank(v: number | null): string {
-  if (v === null || v === undefined) return "";
-  return v.toFixed(3);
 }
 
 function formatPulseOrBlank(

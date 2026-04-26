@@ -33,9 +33,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const gen = ++saveGeneration;
     try {
       const saved = await saveSettings(updated);
-      // Only apply the response if no newer save has been dispatched
+      // Only apply the response if no newer save has been dispatched.
+      // Merge response over the optimistic state instead of replacing
+      // outright — when the running backend is older than the
+      // frontend (mid-deploy, or a stale --reload), its response can
+      // omit fields the frontend just set. Replacing wholesale would
+      // collapse those fields to ``undefined`` and snap UI controls
+      // back to defaults the moment the user changed them. Spreading
+      // ``saved`` last keeps the server's authoritative values for
+      // every field it returned, while preserving the optimistic
+      // values for fields the server didn't echo back.
       if (gen === saveGeneration) {
-        set({ settings: saved });
+        set({ settings: { ...updated, ...saved } });
       }
     } catch {
       // Only rollback if no newer save has superseded this one

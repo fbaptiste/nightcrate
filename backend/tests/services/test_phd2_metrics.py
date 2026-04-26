@@ -1,16 +1,14 @@
-"""Unit tests for PHD2 metrics computation — PHDLogViewer-aligned (spec v4 §5.2).
+"""Unit tests for PHD2 metrics computation.
 
-Hand-computed values — these are pinned regression tests. v0.25.0 (Pass
-D-1) switched the formulas from the pre-v3.1 forms to PHDLogViewer's
-exact algorithms; expected values reflect the new forms:
+Hand-computed values — these are pinned regression tests. Expected
+values reflect the current formulas:
 
-- RMS = population standard deviation (NOT RMS-from-zero) — §M1
-- RA drift = ``(ra_last − ra_first − Σ ra_guide) / Δt × 60`` — §5.2.3 / §M2
-- Dec drift = LS slope of unguided-frames-only y_accum × 60 — §5.2.4 / §M3
-- PA error = ``3.8197 · |drift_dec| · pixel_scale / cos(δ)`` — §5.2.6
-- Peak = sign-preserving max-by-absolute-value — §5.2.2
-- Oscillation = sign-flip rate, **zero values treated as positive** — §5.2.5
-- Duration = total + included split — §5.2.8
+- RMS = population standard deviation (NOT RMS-from-zero).
+- RA drift = ``(ra_last − ra_first − Σ ra_guide) / Δt × 60``.
+- Dec drift = LS slope of unguided-frames-only y_accum × 60.
+- PA error = ``3.8197 · |drift_dec| · pixel_scale / cos(δ)``.
+- Peak = sign-preserving max-by-absolute-value.
+- Oscillation = sign-flip rate, zero values treated as positive.
 """
 
 from __future__ import annotations
@@ -89,7 +87,7 @@ def _sample(
 
 
 class TestRmsAsStandardDeviation:
-    """RMS = population stddev (PHDLogViewer §M1), NOT RMS-from-zero.
+    """RMS = population stddev (§M1), NOT RMS-from-zero.
 
     For series ``[1, -2, 3]``: mean = 2/3, var = ((1−2/3)² + (−2−2/3)²
     + (3−2/3)²) / 3 = (1/9 + 64/9 + 49/9) / 3 = 38/9. stddev = √(38/9).
@@ -122,7 +120,7 @@ class TestRmsAsStandardDeviation:
         assert metrics.rms_total_px == pytest.approx(5.0)
 
     def test_constant_value_stddev_is_zero(self):
-        """A constant series has zero variance — PHDLogViewer reports
+        """A constant series has zero variance — reference tools report
         stddev as 0, NightCrate matches. (Pre-v0.25.0 this would have
         been the constant value itself via the RMS-from-zero form.)"""
         samples = [
@@ -312,7 +310,7 @@ class TestEmptySection:
 
 
 class TestSettleExclusion:
-    """Per PHD2 / PHDLogViewer convention, samples inside settle windows
+    """Per PHD2 convention, samples inside settle windows
     (bracketed by ``settle_begin`` / ``settle_end`` INFO events) must be
     excluded from every guide-quality metric — not just RMS.
     """
@@ -338,7 +336,7 @@ class TestSettleExclusion:
 
     def test_boundary_sample_is_treated_as_in_settle(self):
         """A sample with time_seconds exactly equal to an interval edge
-        is a transition sample — excluded, to match PHDLogViewer."""
+        is a transition sample — excluded, to match ."""
         samples = [
             _sample(1, 1.0, 2.0, 0.0),
             _sample(2, 2.0, 5.0, 0.0),
@@ -385,7 +383,7 @@ class TestSettleExclusion:
         assert metrics.frame_count_in_settle == 2
         assert metrics.frame_count_in_stats == 1
         # Single-sample stats → stddev = 0 (variance is undefined for
-        # one value; PHDLogViewer/LFit both return 0).
+        # one value; the regression returns 0).
         assert metrics.rms_ra_px == pytest.approx(0.0)
 
     def test_drop_inside_settle_counts_as_in_settle_not_double(self):
@@ -440,7 +438,7 @@ class TestSettleExclusion:
 
 
 class TestRaDriftCorrectionsSubtraction:
-    """RA drift via PHDLogViewer's corrections-subtraction algorithm
+    """RA drift via the corrections-subtraction algorithm
     (§5.2.3 / §M2): ``drift = (ra_last − ra_first − Σ ra_guide) / Δt × 60``.
 
     The Σ runs over all settle-filtered samples with ``ra_duration_ms
@@ -478,7 +476,7 @@ class TestRaDriftCorrectionsSubtraction:
         algorithm's *desired correction*. If the star is being pushed
         positive by the algorithm to counter a -2 drift, ra_guide is
         +2 and the recovered drift is -2. NightCrate matches
-        PHDLogViewer's sign convention; the absolute value is what
+        the standard sign convention; the absolute value is what
         the diagnostic engine uses.
         """
         samples = [
@@ -535,7 +533,7 @@ class TestRaDriftCorrectionsSubtraction:
 
 
 class TestDecDriftUnguidedFramesOnly:
-    """Dec drift via PHDLogViewer's unguided-frames-only accumulation
+    """Dec drift via the unguided-frames-only accumulation
     (§5.2.4 / §M3). y_accum advances only when the *previous* frame
     had no Dec pulse (``dec_duration_ms == 0`` or null); the LS slope
     of (t, y_accum) gives the drift rate.
@@ -552,10 +550,10 @@ class TestDecDriftUnguidedFramesOnly:
         metrics = compute_section_metrics(_make_guiding_section(samples))
         assert metrics.drift_dec_px_per_min == pytest.approx(1.0)
 
-    def test_all_guided_returns_zero_match_phdlogviewer(self):
+    def test_all_guided_returns_zero(self):
         """When every frame's prev was guided (dec_dur != 0),
         only the seed (first.t, 0) lives in the regression — n=1.
-        PHDLogViewer's LFit::B() returns 0 in this degenerate case;
+        returns 0 in this degenerate case;
         NightCrate matches for cross-tool consistency.
         """
         samples = [
@@ -610,7 +608,7 @@ class TestDecDriftUnguidedFramesOnly:
 
 class TestPolarAlignmentError:
     """Polar alignment error in arcminutes — Barrett's formula via
-    PHDLogViewer (§5.2.6 / §M2): ``α = 3.8197 · |drift| · pixel_scale
+    (§5.2.6 / §M2): ``α = 3.8197 · |drift| · pixel_scale
     / cos(δ)``.
     """
 
@@ -717,12 +715,12 @@ class TestPolarAlignmentError:
               = 3.8197 · 0.4344 · 3.96 / 0.3584
               ≈ 18.34 arcmin
 
-        PHDLogViewer reports a much smaller value (~6.5') for the
+        reference tools report a much smaller value (~6.5') for the
         same log, but only because its parser is hardcoded to look
         for ``"RA = ... hr, Dec = ..."`` and silently leaves
         ``session.declination`` at 0.0 when the log uses the
         modern ``"Dec = 69.0 deg"`` standalone line (as ASIAir-
-        bundled PHD2 does). Effectively `cos(0) = 1` in PHDLogViewer
+        bundled PHD2 does). Effectively `cos(0) = 1` in
         for these logs → 6.5 = 18.34 × cos(69°). NightCrate reads
         the declination correctly and applies the proper correction.
 
@@ -759,7 +757,7 @@ class TestPolarAlignmentError:
 
 
 class TestElongation:
-    """Scatter-ellipse elongation per PHDLogViewer §5.2.7. ``|lx − ly|
+    """Scatter-ellipse elongation per the same ``|lx − ly|
     / (lx + ly)`` over the rotated mount-axis frame, range [0, 1].
     """
 
@@ -792,7 +790,7 @@ class TestElongation:
 
     def test_zero_dispersion_returns_one(self):
         """Constant raraw/decraw → lx + ly < 1e-6 → defensive 1.0 per
-        PHDLogViewer (not None — matches the C++ source exactly)."""
+        (not None)."""
         samples = [
             _sample(1, 1.0, 0.5, 0.5),
             _sample(2, 2.0, 0.5, 0.5),
@@ -840,7 +838,7 @@ class TestElongation:
 
 class TestOscillationZerosTreatedAsPositive:
     """Oscillation = sign-flip rate. Per spec §11.14, **zero values
-    are treated as positive** (PHDLogViewer's RaOsc convention).
+    are treated as positive**.
     """
 
     def test_full_alternation_is_one(self):
@@ -882,7 +880,7 @@ class TestOscillationZerosTreatedAsPositive:
         as positive per spec §11.14) → 1 flip out of 3 pairs = 1/3.
 
         The pre-v0.25.0 implementation skipped zeros entirely, which
-        was a deliberate divergence from PHDLogViewer.
+        was a deliberate choice for clarity.
         """
         samples = [
             _sample(1, 1.0, 1.0, 0.0),

@@ -8,7 +8,7 @@ as JSON text so composite types round-trip cleanly.
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from nightcrate.db.session import get_db
 
@@ -109,6 +109,17 @@ class Settings(BaseModel):
     # frame-fit Gaussian handles oversized targets gracefully on its own.
     scoring_gate_min_obs_hours: float = 1.0
     scoring_gate_max_coverage_pct: float | None = None
+    # PHD2 Analyzer — per-panel pixel heights for the resizable
+    # Guiding-tab dividers. Keys: ``"main"``, ``"snr"``, ``"mass"``.
+    # Missing keys → fall back to the ratio-derived default height.
+    # Each value clamps to its panel's default minimum.
+    phd2_panel_heights: dict[str, int] = Field(default_factory=dict)
+    # PHD2 Analyzer — expanded state of the per-tab "What is this
+    # view?" help explainers. Keys: ``"graph"``, ``"dispersion"``,
+    # ``"data"``. Missing key (or value ``False``) → explainer is
+    # collapsed by default. Set to ``True`` once the user expands
+    # the panel and the state should persist.
+    phd2_help_expanded: dict[str, bool] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_scoring(self) -> Settings:

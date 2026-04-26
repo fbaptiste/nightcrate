@@ -55,6 +55,10 @@ export interface Settings {
   scoring_threshold_fair: number;
   scoring_gate_min_obs_hours: number;
   scoring_gate_max_coverage_pct: number | null;
+  phd2_show_polar_drift: boolean;
+  phd2_panel_heights: Record<string, number>;
+  phd2_help_expanded: Record<string, boolean>;
+  phd2_recurrence_mode: "boundary_skip" | "verbatim";
 }
 
 export function fetchSettings(): Promise<Settings> {

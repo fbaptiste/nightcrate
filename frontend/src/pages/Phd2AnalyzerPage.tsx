@@ -1,7 +1,6 @@
 /**
- * PHD2 Guide-Log Analyzer page — standalone log viewer with Guiding /
- * Spectrum / Dispersion / Data tabs. Rig context drives the spectrum
- * tab's worm-period overlay and persists per-log via phd2RecentFiles.
+ * PHD2 Guide-Log Analyzer page — standalone log viewer with Guiding,
+ * Dispersion, and Data tabs.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
@@ -22,25 +21,24 @@ import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import IconButton from "@mui/material/IconButton";
+import Popover from "@mui/material/Popover";
 import Tooltip from "@mui/material/Tooltip";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { parseGuideLog, type ParseResponse } from "@/api/phd2";
 import { setActivity } from "@/api/client";
 import { computeGuidingMetrics, computeSettleIntervals } from "@/lib/phd2GuidingMetrics";
 import ScatterPlot from "@/components/phd2/ScatterPlot";
 import EventList from "@/components/phd2/EventList";
-import FftChart from "@/components/phd2/FftChart";
-import RigSelectBar from "@/components/phd2/RigSelectBar";
 import type { TimeSeriesChartHandle } from "@/components/phd2/TimeSeriesChart";
 import {
   addRecentFile,
   formatRelativeTime,
   getRecentFiles,
   removeRecentFile,
-  setRecentFileRig,
   type RecentFile,
 } from "@/lib/phd2RecentFiles";
 import CloseIcon from "@mui/icons-material/Close";
-import { formatWallClock } from "@/lib/phd2Format";
+
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import SectionNavigator from "@/components/phd2/SectionNavigator";
 import SectionInfoPanel from "@/components/phd2/SectionInfoPanel";
@@ -54,15 +52,20 @@ import WarningsDrawer from "@/components/phd2/WarningsDrawer";
 // for ``accept`` so the browser's useEffect deps don't churn on each render.
 const GUIDE_LOG_ACCEPT = [".txt"];
 
+const TAB_HELP: Record<number, string> = {
+  1: "Guide error panel: RA (blue) and Dec (orange) position error relative to the lock point. Vertical bars show guide pulse durations. SNR and Star Mass panels below track guide-star health. Drag dividers between panels to resize.",
+  2: "2-D scatter of guide-star positions. A round, tight cloud means balanced guiding; an elongated cloud means one axis dominates. The 1σ and 2σ ellipses show dispersion shape. The centroid dot shows the average offset from the lock point.",
+  3: "Per-frame data from the log. Click column headers to sort. Use the filter dropdowns above the grid to narrow by error type or other fields.",
+};
+
 export default function Phd2AnalyzerPage() {
   const [pathInput, setPathInput] = useState("");
   const [activePath, setActivePath] = useState<string>("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
-  // 0 = Guiding, 1 = Spectrum, 2 = Dispersion, 3 = Data.
-  const [tab, setTab] = useState(0);
-  const [rigId, setRigId] = useState<number | null>(null);
+  // 0 = Section Info, 1 = Guiding, 2 = Dispersion, 3 = Data.
+  const [tab, setTab] = useState(1);
   // Lazy-mount the Data tab. The heavy DataTable useMemo pass (14
   // columns × 7 500 rows) was competing for the first render with the
   // chart — pulses appeared to "come in later" because the chart's
@@ -77,11 +80,12 @@ export default function Phd2AnalyzerPage() {
   // TimeSeriesChart via ``onViewportChange``; consumed by the Viewport
   // Summary panel so metrics recompute over just the in-view samples.
   const [viewport, setViewport] = useState<[number, number] | null>(null);
-  // PHD2 / PHDLogViewer default: settle frames are excluded from
-  // guide-quality metrics. ``true`` flips both summary panels back to
-  // the pre-v0.22.0 "include everything" behaviour AND hides the
-  // settle shading on the chart.
+  // PHD2 default: settle frames are excluded from guide-quality
+  // metrics. ``true`` flips both summary panels back to the
+  // pre-v0.22.0 "include everything" behaviour AND hides the settle
+  // shading on the chart.
   const [includeSettle, setIncludeSettle] = useState(false);
+  const [helpAnchor, setHelpAnchor] = useState<Element | null>(null);
   // Imperative handle for the time-series chart — EventList rows
   // forward clicks through this so the chart pans / zooms to the
   // event time without drilling d3 through props.
@@ -105,9 +109,9 @@ export default function Phd2AnalyzerPage() {
   }, []);
 
   const parseMutation = useMutation({
-    mutationFn: ({ path, rigId }: { path: string; rigId: number | null }) => {
+    mutationFn: ({ path }: { path: string }) => {
       setActivity(`Parse log ${path.split("/").pop() ?? "file"}`);
-      return parseGuideLog(path, rigId);
+      return parseGuideLog(path);
     },
     onSuccess: (data, { path }) => {
       setParsed(data);
@@ -134,7 +138,10 @@ export default function Phd2AnalyzerPage() {
     setViewport(null);
     setSelections([]);
     setExclusions([]);
-  }, [selectedIndex]);
+    if (selected && selected.section.kind !== "guiding" && tab === 2) {
+      setTab(1);
+    }
+  }, [selectedIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Settle intervals for the selected guiding section — derived once
   // per section and reused by both the chart shading and the
@@ -216,23 +223,10 @@ export default function Phd2AnalyzerPage() {
     if (!trimmed) return;
     setActivePath(trimmed);
     setPathInput(trimmed);
-    const remembered =
-      recentFiles.find((e) => e.path === trimmed)?.selectedRigId ?? null;
-    setRigId(remembered);
-    parseMutation.mutate({ path: trimmed, rigId: remembered });
+    parseMutation.mutate({ path: trimmed });
   };
 
   const handleOpen = () => openPath(pathInput);
-
-  // Backend cache key includes rig_id so changing the rig re-runs
-  // worm-marker logic without re-parsing the (immutable) log.
-  const handleRigChange = (next: number | null) => {
-    setRigId(next);
-    if (activePath) {
-      setRecentFiles(setRecentFileRig(activePath, next));
-      parseMutation.mutate({ path: activePath, rigId: next });
-    }
-  };
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -394,7 +388,6 @@ export default function Phd2AnalyzerPage() {
               <Chip label={`${parsed.sections.length} sections`} size="small" variant="outlined" />
               <WarningsDrawer warnings={parsed.log.warnings} />
               <Box sx={{ flex: 1 }} />
-              <RigSelectBar rigId={rigId} onChange={handleRigChange} />
             </>
           )}
         </Stack>
@@ -474,53 +467,47 @@ export default function Phd2AnalyzerPage() {
               </Tooltip>
             </Stack>
             {!navCollapsed && (
-              <Box sx={{ overflow: "auto", p: 1, pt: 0 }}>
-                <SectionNavigator
-                  sections={parsed.sections}
-                  selectedIndex={selectedIndex}
-                  onSelect={setSelectedIndex}
-                />
-                {selected && (
+              <>
+                <Box sx={{ flexShrink: 0, p: 1, pt: 0 }}>
+                  <SectionNavigator
+                    sections={parsed.sections}
+                    selectedIndex={selectedIndex}
+                    onSelect={setSelectedIndex}
+                  />
+                </Box>
+                {selected && selected.section.kind === "guiding" && (
                   <>
-                    <SectionInfoPanel header={selected.section.header} />
-                    <Box sx={{ mt: 1.5 }}>
+                    <Divider />
+                    <Box sx={{ overflow: "auto", flex: 1, minHeight: 0, p: 1 }}>
                       <StatsPanel
-                        metrics={
-                          selected.section.kind === "guiding" && sectionMetrics
-                            ? sectionMetrics
-                            : selected.metrics
-                        }
-                        kind={selected.section.kind}
+                        metrics={sectionMetrics ?? selected.metrics}
+                        kind="guiding"
                         collapsible
                         defaultExpanded={false}
                       />
+                      {viewportMetrics && viewportSamples && (
+                        <Box sx={{ mt: 1.5 }}>
+                          <StatsPanel
+                            metrics={viewportMetrics}
+                            kind="guiding"
+                            title={
+                              selections.length > 0
+                                ? "Selection stats"
+                                : "Viewport stats"
+                            }
+                            subtitle={formatSubtitle(
+                              viewportSamples.length,
+                              selected.section.samples.length,
+                            )}
+                            collapsible
+                            defaultExpanded={false}
+                          />
+                        </Box>
+                      )}
                     </Box>
-                    {viewportMetrics && viewportSamples && (
-                      <Box sx={{ mt: 1.5 }}>
-                        <StatsPanel
-                          metrics={viewportMetrics}
-                          kind="guiding"
-                          title={
-                            selections.length > 0
-                              ? "Selection summary"
-                              : "Viewport summary"
-                          }
-                          subtitle={formatSubtitle(
-                            selections,
-                            exclusions,
-                            viewport,
-                            viewportSamples.length,
-                            selected.section.samples.length,
-                            selected.section.start_time,
-                          )}
-                          collapsible
-                          defaultExpanded={false}
-                        />
-                      </Box>
-                    )}
                   </>
                 )}
-              </Box>
+              </>
             )}
           </Box>
           {/* Right — section view with tabs. ``minWidth: 0`` is needed
@@ -531,16 +518,59 @@ export default function Phd2AnalyzerPage() {
               value={tab}
               onChange={(_, v) => {
                 setTab(v);
+                setHelpAnchor(null);
                 if (v === 3) setDataVisited(true);
               }}
               sx={{ px: 2, borderBottom: 1, borderColor: "divider", minHeight: 40 }}
             >
-              <Tab label="Guiding" sx={{ minHeight: 40 }} />
-              <Tab label="Spectrum" sx={{ minHeight: 40 }} />
-              <Tab label="Dispersion" sx={{ minHeight: 40 }} />
-              <Tab label="Data" sx={{ minHeight: 40 }} />
+              <Tooltip title="Per-section equipment, sky, and algorithm metadata." arrow>
+                <Tab label="Section Info" sx={{ minHeight: 40 }} />
+              </Tooltip>
+              {[
+                { label: "Guiding", idx: 1 },
+                { label: "Dispersion", idx: 2, guidingOnly: true },
+                { label: "Data", idx: 3 },
+              ].map(({ label, idx, guidingOnly }) => (
+                <Tab
+                  key={idx}
+                  label={
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
+                      <span>{label}</span>
+                      <InfoOutlinedIcon
+                        sx={{
+                          fontSize: 14,
+                          color: "action.active",
+                          cursor: "pointer",
+                          "&:hover": { color: "primary.main" },
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHelpAnchor(helpAnchor ? null : e.currentTarget);
+                        }}
+                      />
+                    </Stack>
+                  }
+                  sx={{
+                    minHeight: 40,
+                    display: guidingOnly && selected.section.kind !== "guiding" ? "none" : undefined,
+                  }}
+                />
+              ))}
             </Tabs>
-            {/* Guiding panel — display-toggle so chart state (zoom) is preserved */}
+            <Popover
+              open={Boolean(helpAnchor)}
+              anchorEl={helpAnchor}
+              onClose={() => setHelpAnchor(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+              transformOrigin={{ vertical: "top", horizontal: "left" }}
+              slotProps={{ paper: { sx: { maxWidth: 360, p: 2 } } }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                {TAB_HELP[tab]}
+              </Typography>
+            </Popover>
+            {/* Section Info panel — per-section equipment / sky /
+                algorithm metadata from the log header. */}
             <Box
               sx={{
                 flex: 1,
@@ -549,41 +579,13 @@ export default function Phd2AnalyzerPage() {
                 display: tab === 0 ? "block" : "none",
               }}
             >
-              {selected.section.kind === "guiding" ? (
-                <Stack spacing={2}>
-                  <TimeSeriesChart
-                    ref={chartRef}
-                    samples={selected.section.samples}
-                    events={selected.section.events}
-                    startIso={selected.section.start_time}
-                    arcsecScale={selected.metrics.arcsec_scale}
-                    onViewportChange={setViewport}
-                    settleIntervals={settleIntervals}
-                    showSettleShading={!includeSettle}
-                    selections={selections}
-                    exclusions={exclusions}
-                    onSelectionsChange={setSelections}
-                    onExclusionsChange={setExclusions}
-                    includeSettle={includeSettle}
-                    onIncludeSettleChange={setIncludeSettle}
-                  />
-                  <EventList
-                    events={selected.section.events}
-                    startIso={selected.section.start_time}
-                    onEventClick={(e) => {
-                      if (e.time_seconds != null) {
-                        chartRef.current?.scrollToTime(e.time_seconds);
-                      }
-                    }}
-                  />
-                </Stack>
-              ) : (
-                <Stack spacing={2}>
-                  <CalibrationPlot phases={selected.section.calibration_phases} />
-                </Stack>
-              )}
+              <SectionInfoPanel
+                header={selected.section.header}
+                collapsible={false}
+                defaultExpanded
+              />
             </Box>
-            {/* Spectrum panel — FFT of RA / Dec with worm-period overlay. */}
+            {/* Guiding panel — display-toggle so chart state (zoom) is preserved */}
             <Box
               sx={{
                 flex: 1,
@@ -593,18 +595,37 @@ export default function Phd2AnalyzerPage() {
               }}
             >
               {selected.section.kind === "guiding" ? (
-                <FftChart
-                  fftRa={selected.analysis.fft_ra}
-                  fftDec={selected.analysis.fft_dec}
-                  wormMarker={selected.analysis.worm_marker}
-                  durationSeconds={selected.metrics.duration_total_seconds}
-                />
+                <Stack spacing={2}>
+                    <TimeSeriesChart
+                      ref={chartRef}
+                      samples={selected.section.samples}
+                      events={selected.section.events}
+                      startIso={selected.section.start_time}
+                      arcsecScale={selected.metrics.arcsec_scale}
+                      onViewportChange={setViewport}
+                      settleIntervals={settleIntervals}
+                      showSettleShading={!includeSettle}
+                      selections={selections}
+                      exclusions={exclusions}
+                      onSelectionsChange={setSelections}
+                      onExclusionsChange={setExclusions}
+                      includeSettle={includeSettle}
+                      onIncludeSettleChange={setIncludeSettle}
+                    />
+                    <EventList
+                      events={selected.section.events}
+                      startIso={selected.section.start_time}
+                      onEventClick={(e) => {
+                        if (e.time_seconds != null) {
+                          chartRef.current?.scrollToTime(e.time_seconds);
+                        }
+                      }}
+                    />
+                </Stack>
               ) : (
-                <Typography variant="body2" color="text.secondary">
-                  Spectrum analysis is only available for guiding
-                  sections — calibration runs don't carry the
-                  uniformly-sampled tracking data the FFT needs.
-                </Typography>
+                <Stack spacing={2}>
+                  <CalibrationPlot phases={selected.section.calibration_phases} />
+                </Stack>
               )}
             </Box>
             {/* Dispersion panel — extracted to its own tab so the
@@ -618,25 +639,25 @@ export default function Phd2AnalyzerPage() {
               }}
             >
               {selected.section.kind === "guiding" && (
-                <ScatterPlot
-                  samples={
-                    includeSettle
-                      ? selected.section.samples
-                      : selected.section.samples.filter(
-                          (s) =>
-                            !settleIntervals.some(
-                              ([t0, t1]) =>
-                                s.time_seconds >= t0 && s.time_seconds <= t1,
-                            ),
-                        )
-                  }
-                  arcsecScale={selected.metrics.arcsec_scale}
-                  subtitle={
-                    includeSettle
-                      ? "All frames included"
-                      : `Settle frames excluded`
-                  }
-                />
+                  <ScatterPlot
+                    samples={
+                      includeSettle
+                        ? selected.section.samples
+                        : selected.section.samples.filter(
+                            (s) =>
+                              !settleIntervals.some(
+                                ([t0, t1]) =>
+                                  s.time_seconds >= t0 && s.time_seconds <= t1,
+                              ),
+                          )
+                    }
+                    arcsecScale={selected.metrics.arcsec_scale}
+                    subtitle={
+                      includeSettle
+                        ? "All frames included"
+                        : `Settle frames excluded`
+                    }
+                  />
               )}
             </Box>
             {/* Data panel — keyed by section index so the DataGrid resets
@@ -652,10 +673,12 @@ export default function Phd2AnalyzerPage() {
               }}
             >
               {dataVisited && (
-                <SectionDataTab
-                  key={selected.section.index}
-                  section={selected.section}
-                />
+                <Box sx={{ flex: 1, minHeight: 0 }}>
+                  <SectionDataTab
+                    key={selected.section.index}
+                    section={selected.section}
+                  />
+                </Box>
               )}
             </Box>
           </Box>
@@ -673,30 +696,8 @@ function basename(path: string): string {
 
 
 function formatSubtitle(
-  selections: Array<[number, number]>,
-  exclusions: Array<[number, number]>,
-  viewport: [number, number] | null,
   visibleCount: number,
   totalCount: number,
-  startIso: string,
 ): string {
-  const fmtRange = ([t0, t1]: [number, number]) =>
-    `${formatWallClock(startIso, t0)} → ${formatWallClock(startIso, t1)}`;
-  const framesLabel = `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`;
-  const parts: string[] = [];
-  if (selections.length === 1) {
-    parts.push(fmtRange(selections[0]), framesLabel);
-  } else if (selections.length > 1) {
-    parts.push(`${selections.length} selections`, framesLabel);
-  } else if (viewport) {
-    parts.push(`${framesLabel} visible`);
-  } else {
-    parts.push("All frames visible");
-  }
-  if (exclusions.length === 1) {
-    parts.push(`excluding ${fmtRange(exclusions[0])}`);
-  } else if (exclusions.length > 1) {
-    parts.push(`excluding ${exclusions.length} ranges`);
-  }
-  return parts.join(" · ");
+  return `${visibleCount.toLocaleString()} / ${totalCount.toLocaleString()} frames`;
 }

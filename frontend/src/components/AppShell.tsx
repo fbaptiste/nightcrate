@@ -28,6 +28,7 @@ import PlaceIcon from "@mui/icons-material/Place";
 import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
 import StarsIcon from "@mui/icons-material/Stars";
+import NightsStayIcon from "@mui/icons-material/NightsStay";
 import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
@@ -72,15 +73,16 @@ const HOME_ITEM: NavItem = { to: "/", label: "Home", icon: <HomeIcon /> };
  *  saved order (``settings.nav_order``) overrides this; unknown routes
  *  are filtered and newly-added routes appear at the end. */
 const REORDERABLE_ITEMS: NavItem[] = [
-  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
-  { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
+  { to: "/tonight", label: "Tonight", icon: <NightsStayIcon /> },
+  { to: "/planner", label: "Planner", icon: <StarsIcon /> },
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
+  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
+  { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
+  { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
+  { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
+  { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
   { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
   { to: "/equipment", label: "Equipment", icon: <BuildIcon /> },
-  { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
-  { to: "/planner", label: "Planner", icon: <StarsIcon /> },
-  { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
-  { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
   { to: "/admin", label: "Admin", icon: <AdminPanelSettingsIcon /> },
   { to: "/api-docs", label: "API Docs", icon: <CodeIcon /> },

@@ -13,23 +13,13 @@ from fastapi import APIRouter, HTTPException
 
 from nightcrate.api.phd2_models import (
     CacheStatsResponse,
-    FftPeak,
-    FftResult,
     ParseRequest,
     ParseResponse,
     SectionAnalysis,
     SectionWithMetrics,
-    WormMarker,
 )
-from nightcrate.db.session import get_db
 from nightcrate.services import archive_io
-from nightcrate.services.phd2_fft import compute_section_fft
-from nightcrate.services.phd2_metrics import (
-    _in_any_interval,
-    _settle_intervals,
-    compute_section_metrics,
-)
-from nightcrate.services.phd2_models import LogSection
+from nightcrate.services.phd2_metrics import compute_section_metrics
 from nightcrate.services.phd2_parser import parse_log
 
 logger = logging.getLogger(__name__)
@@ -40,26 +30,10 @@ router = APIRouter(prefix="/api/phd2", tags=["PHD2 Guide-Log Analyzer"])
 _CACHE_MAX_ENTRIES = 8
 _CACHE_TTL_SECONDS = 120
 
-# Cache key includes rig_id so changing the selected rig re-runs
-# worm-marker logic without re-parsing the (immutable) log.
-_CacheKey = tuple[str, int, int, int | None]
+_CacheKey = tuple[str, int, int]
 _cache: dict[_CacheKey, tuple[ParseResponse, float]] = {}
 _key_locks: dict[_CacheKey, threading.Lock] = {}
 _cache_lock = threading.Lock()
-
-
-# Spec v4 §6.6 — heuristic worm-marker constraints when rig context
-# is absent. Below 0.5″ the low-frequency end is dominated by
-# polar-alignment / algorithm behaviour, not the worm gear. Worm
-# gears across the imaging market sit in [4, 13] minutes.
-_HEURISTIC_AMP_MIN_ARCSEC = 0.5
-_HEURISTIC_PERIOD_MIN_S = 300.0
-_HEURISTIC_PERIOD_MAX_S = 800.0
-
-# ±5 % absorbs manufacturing variance in published worm periods but
-# keeps a 600 s GEM peak from accidentally matching a 287 s CEM
-# marker.
-_WORM_MATCH_FRAC = 0.05
 
 
 def _resolve_request_path(raw: str) -> tuple[str, int, int, object]:
@@ -85,7 +59,6 @@ def _resolve_request_path(raw: str) -> tuple[str, int, int, object]:
                     detail=f"Entry not found in archive: {entry}",
                 ) from exc
             stream = io.StringIO(buf.getvalue().decode("utf-8", errors="replace"))
-            # parse_log reads source.name as the log file_path.
             stream.name = display  # type: ignore[attr-defined]
             return stream
 
@@ -100,11 +73,7 @@ def _resolve_request_path(raw: str) -> tuple[str, int, int, object]:
     return str(path), stat.st_mtime_ns, stat.st_size, lambda: path
 
 
-def _get_cached_parse(
-    key: _CacheKey,
-    loader,
-    rig_info: _RigInfo | None,
-) -> ParseResponse:
+def _get_cached_parse(key: _CacheKey, loader) -> ParseResponse:
     with _cache_lock:
         entry = _cache.get(key)
         if entry is not None:
@@ -125,7 +94,7 @@ def _get_cached_parse(
                     return val
 
         source = loader()
-        result = _parse_and_build_response(source, rig_info)
+        result = _parse_and_build_response(source)
 
         with _cache_lock:
             while len(_cache) >= _CACHE_MAX_ENTRIES:
@@ -137,154 +106,25 @@ def _get_cached_parse(
     return result
 
 
-class _RigInfo:
-    """Subset of `rig_summary` columns the FFT path needs."""
-
-    __slots__ = ("rig_id", "mount_name", "mount_drive_type", "mount_worm_period_seconds")
-
-    def __init__(
-        self,
-        rig_id: int,
-        mount_name: str | None,
-        mount_drive_type: str | None,
-        mount_worm_period_seconds: float | None,
-    ) -> None:
-        self.rig_id = rig_id
-        self.mount_name = mount_name
-        self.mount_drive_type = mount_drive_type
-        self.mount_worm_period_seconds = mount_worm_period_seconds
-
-
-def _parse_and_build_response(source, rig_info: _RigInfo | None) -> ParseResponse:
+def _parse_and_build_response(source) -> ParseResponse:
     parsed = parse_log(source)
     bundled: list[SectionWithMetrics] = []
     for section in parsed.sections:
         metrics = compute_section_metrics(section)
-        analysis = _build_section_analysis(section, rig_info)
-        bundled.append(SectionWithMetrics(section=section, metrics=metrics, analysis=analysis))
+        bundled.append(
+            SectionWithMetrics(section=section, metrics=metrics, analysis=SectionAnalysis())
+        )
     return ParseResponse(log=parsed, sections=bundled)
-
-
-def _build_section_analysis(section: LogSection, rig_info: _RigInfo | None) -> SectionAnalysis:
-    if section.kind != "guiding":
-        return SectionAnalysis()
-    stats_samples = _stats_samples(section)
-    pixel_scale = section.header.pixel_scale_arcsec_per_px
-    fft_ra = compute_section_fft(stats_samples, pixel_scale=pixel_scale, trace="ra")
-    fft_dec = compute_section_fft(stats_samples, pixel_scale=pixel_scale, trace="dec")
-    # Dec rarely shows clean worm signatures because of asymmetric
-    # Dec correction patterns — RA drives the worm marker.
-    worm_marker = _build_worm_marker(rig_info, fft_ra)
-    return SectionAnalysis(fft_ra=fft_ra, fft_dec=fft_dec, worm_marker=worm_marker)
-
-
-def _stats_samples(section: LogSection):
-    """Mirror the metrics layer's settle-excluded subset."""
-    if not section.samples:
-        return []
-    fallback_end = section.samples[-1].time_seconds
-    intervals = _settle_intervals(section.events, fallback_end)
-    return [s for s in section.samples if not _in_any_interval(s.time_seconds, intervals)]
-
-
-def _build_worm_marker(rig_info: _RigInfo | None, fft_ra: FftResult | None) -> WormMarker | None:
-    if fft_ra is None or fft_ra.skip_reason is not None:
-        return None
-
-    if rig_info is not None and _is_worm_drive(rig_info.mount_drive_type):
-        period = rig_info.mount_worm_period_seconds
-        if period is not None and period > 0:
-            matched = _match_peak(fft_ra.peaks, period)
-            if matched is not None and rig_info.mount_name:
-                label = (
-                    f"Worm-period peak: {matched.amplitude_arcsec:.2f}″ "
-                    f"amp @ {matched.period_s:.0f} s (mount: {rig_info.mount_name})"
-                )
-            elif rig_info.mount_name:
-                label = f"Worm period: {period:.0f} s (mount: {rig_info.mount_name})"
-            else:
-                label = f"Worm period: {period:.0f} s"
-            return WormMarker(
-                period_s=period,
-                source="mount",
-                label=label,
-                mount_name=rig_info.mount_name,
-                matched_peak=matched,
-            )
-
-    candidate = _heuristic_worm_peak(fft_ra.peaks)
-    if candidate is None:
-        return None
-    return WormMarker(
-        period_s=candidate.period_s,
-        source="heuristic",
-        label=(
-            f"Likely worm-period peak: {candidate.amplitude_arcsec:.2f}″ "
-            f"amp @ {candidate.period_s:.0f} s (uncertain — identify the "
-            f"mount in the rig for a confident reading)"
-        ),
-        matched_peak=candidate,
-    )
-
-
-def _is_worm_drive(drive_type: str | None) -> bool:
-    # Case-insensitive substring on the free-form drive_type so
-    # "Worm gear", "worm-driven", etc. all match. Controlled
-    # vocabulary lands in v0.28.0.
-    if drive_type is None:
-        return False
-    return "worm" in drive_type.lower()
-
-
-def _match_peak(peaks: list[FftPeak], target_period: float) -> FftPeak | None:
-    candidates = [
-        p for p in peaks if abs(p.period_s - target_period) / target_period <= _WORM_MATCH_FRAC
-    ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.amplitude_arcsec)
-
-
-def _heuristic_worm_peak(peaks: list[FftPeak]) -> FftPeak | None:
-    candidates = [
-        p
-        for p in peaks
-        if _HEURISTIC_PERIOD_MIN_S <= p.period_s <= _HEURISTIC_PERIOD_MAX_S
-        and p.amplitude_arcsec > _HEURISTIC_AMP_MIN_ARCSEC
-    ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.amplitude_arcsec)
-
-
-async def _load_rig_info(rig_id: int) -> _RigInfo:
-    async with get_db() as db:
-        async with db.execute(
-            "SELECT mount_name, mount_drive_type, mount_worm_period_seconds "
-            "FROM rig_summary WHERE id = ? AND active = 1",
-            (rig_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Rig not found: {rig_id}")
-    mount_name, drive_type, worm_period = row
-    return _RigInfo(
-        rig_id=rig_id,
-        mount_name=mount_name,
-        mount_drive_type=drive_type,
-        mount_worm_period_seconds=worm_period,
-    )
 
 
 @router.post("/parse", response_model=ParseResponse)
 async def parse(request: ParseRequest) -> ParseResponse:
     """Parse a PHD2 guide log at ``request.path`` and return structured data."""
     display, mtime_ns, size, loader = _resolve_request_path(request.path)
-    rig_info = await _load_rig_info(request.rig_id) if request.rig_id is not None else None
-    key: _CacheKey = (display, mtime_ns, size, request.rig_id)
+    key: _CacheKey = (display, mtime_ns, size)
 
     try:
-        return await asyncio.to_thread(_get_cached_parse, key, loader, rig_info)
+        return await asyncio.to_thread(_get_cached_parse, key, loader)
     except HTTPException:
         raise
     except ValueError as exc:
@@ -295,17 +135,18 @@ async def parse(request: ParseRequest) -> ParseResponse:
 
 @router.get("/cache/stats", response_model=CacheStatsResponse)
 async def cache_stats() -> CacheStatsResponse:
+    """Return cache size + configuration for the Admin → Caches view."""
     with _cache_lock:
-        entries = len(_cache)
-    return CacheStatsResponse(
-        entries=entries,
-        max_entries=_CACHE_MAX_ENTRIES,
-        ttl_seconds=_CACHE_TTL_SECONDS,
-    )
+        return CacheStatsResponse(
+            entries=len(_cache),
+            max_entries=_CACHE_MAX_ENTRIES,
+            ttl_seconds=_CACHE_TTL_SECONDS,
+        )
 
 
-@router.post("/cache/clear")
+@router.post("/cache/clear", response_model=dict[str, int])
 async def cache_clear() -> dict[str, int]:
+    """Drop every cached parse — used by the Admin → Caches "Clear" button."""
     with _cache_lock:
         cleared = len(_cache)
         _cache.clear()

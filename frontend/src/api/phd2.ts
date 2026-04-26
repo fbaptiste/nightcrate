@@ -160,35 +160,10 @@ export interface SectionMetrics {
   arcsec_scale: number | null;
 }
 
-export interface FftPeak {
-  period_s: number;
-  amplitude_arcsec: number;
-  peak_to_peak_arcsec: number;
-  rms_arcsec: number;
-}
-
-export interface FftResult {
-  period_s: number[];
-  amplitude_arcsec: number[];
-  peaks: FftPeak[];
-  /** "too_short" | "non_uniform_cadence" | "constant_data" — set
-   *  when an §6.1 guard aborted the FFT. */
-  skip_reason: string | null;
-}
-
-export interface WormMarker {
-  period_s: number;
-  source: "mount" | "heuristic";
-  label: string;
-  mount_name: string | null;
-  matched_peak: FftPeak | null;
-}
-
-export interface SectionAnalysis {
-  fft_ra: FftResult | null;
-  fft_dec: FftResult | null;
-  worm_marker: WormMarker | null;
-}
+// Per-section derived data; reserved for future analytics. Empty
+// today after the v0.27.0 cleanup but kept as an interface so
+// consumer code doesn't have to special-case its absence.
+export type SectionAnalysis = Record<string, never>;
 
 export interface SectionWithMetrics {
   section: LogSection;
@@ -209,16 +184,11 @@ export interface CacheStatsResponse {
 
 // ── Fetcher ──────────────────────────────────────────────────────────────────
 
-export async function parseGuideLog(
-  path: string,
-  rigId?: number | null,
-): Promise<ParseResponse> {
-  const body: { path: string; rig_id?: number } = { path };
-  if (rigId != null) body.rig_id = rigId;
+export async function parseGuideLog(path: string): Promise<ParseResponse> {
   return apiFetch<ParseResponse>("/phd2/parse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ path }),
   });
 }
 

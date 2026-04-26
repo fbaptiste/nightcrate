@@ -2,13 +2,10 @@
  * Per-section header info panel — surfaces parsed equipment / sky /
  * algorithm settings beneath the Section list in the left nav.
  *
- * Mirrors what PHDLogViewer's section preamble shows but presented
- * as grouped key-value rows instead of the raw concatenated
- * ``key = value, key = value`` lines from the log. Each section in a
- * PHD2 log carries its own header (the user can change equipment
- * mid-session), so the panel is selection-aware: switching sections
- * in the navigator re-renders this panel for the newly-selected
- * section.
+ * Each section in a PHD2 log carries its own header (the user can
+ * change equipment mid-session), so the panel is selection-aware:
+ * switching sections in the navigator re-renders this panel for
+ * the newly-selected section.
  *
  * Groups with no populated fields drop out entirely — a calibration-
  * only section that omits guide algorithms simply doesn't render
@@ -29,6 +26,9 @@ import type { SectionHeader } from "@/api/phd2";
 
 interface Props {
   header: SectionHeader;
+  /** When false, the panel renders without a collapse toggle — all
+   *  groups are visible immediately. Default: true (collapsible). */
+  collapsible?: boolean;
   /** Initial expanded state. Default: collapsed (the chart + summary
    *  panels are the primary focus; header is reference data the user
    *  pulls up when troubleshooting). */
@@ -47,12 +47,87 @@ interface InfoGroup {
 
 export default function SectionInfoPanel({
   header,
+  collapsible = true,
   defaultExpanded = false,
 }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   const groups = buildGroups(header);
   if (groups.length === 0) return null;
+
+  const isOpen = collapsible ? expanded : true;
+
+  const groupNode = (g: InfoGroup, fontSize: number) => (
+    <Box key={g.title}>
+      <Typography
+        variant="caption"
+        sx={{
+          display: "block",
+          fontWeight: 700,
+          letterSpacing: 0.6,
+          color: "primary.main",
+          mb: 0.25,
+          textTransform: "uppercase",
+          fontSize: fontSize - 1,
+        }}
+      >
+        {g.title}
+      </Typography>
+      <Stack spacing={0.25}>
+        {g.rows.map((r) => (
+          <Stack
+            key={r.label}
+            direction="row"
+            spacing={1}
+            alignItems="baseline"
+            sx={{ minWidth: 0 }}
+          >
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                flexShrink: 0,
+                minWidth: 92,
+                fontSize,
+              }}
+            >
+              {r.label}
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{
+                fontFamily: "monospace",
+                fontSize,
+                wordBreak: "break-word",
+                flex: 1,
+              }}
+            >
+              {r.value}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
+    </Box>
+  );
+
+  if (!collapsible) {
+    return (
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "max-content max-content max-content",
+          columnGap: 4,
+          rowGap: 2,
+        }}
+      >
+        {groups.map((g) => (
+          <Box key={g.title}>
+            {groupNode(g, 12)}
+          </Box>
+        ))}
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ mt: 1 }}>
@@ -67,68 +142,17 @@ export default function SectionInfoPanel({
           fontSize="small"
           sx={{
             transition: "transform 120ms ease",
-            transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
+            transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)",
             color: "text.secondary",
           }}
         />
         <Typography variant="overline" sx={{ color: "text.secondary" }}>
-          Session info
+          Section info
         </Typography>
       </Stack>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse in={isOpen} unmountOnExit>
         <Stack spacing={1.25} sx={{ pl: 1, pr: 0.5, pt: 0.5 }}>
-          {groups.map((g) => (
-            <Box key={g.title}>
-              <Typography
-                variant="caption"
-                sx={{
-                  display: "block",
-                  fontWeight: 700,
-                  letterSpacing: 0.6,
-                  color: "primary.main",
-                  mb: 0.25,
-                  textTransform: "uppercase",
-                  fontSize: 10,
-                }}
-              >
-                {g.title}
-              </Typography>
-              <Stack spacing={0.25}>
-                {g.rows.map((r) => (
-                  <Stack
-                    key={r.label}
-                    direction="row"
-                    spacing={1}
-                    alignItems="baseline"
-                    sx={{ minWidth: 0 }}
-                  >
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "text.secondary",
-                        flexShrink: 0,
-                        minWidth: 92,
-                        fontSize: 11,
-                      }}
-                    >
-                      {r.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        fontFamily: "monospace",
-                        fontSize: 11,
-                        wordBreak: "break-word",
-                        flex: 1,
-                      }}
-                    >
-                      {r.value}
-                    </Typography>
-                  </Stack>
-                ))}
-              </Stack>
-            </Box>
-          ))}
+          {groups.map((g) => groupNode(g, 11))}
         </Stack>
       </Collapse>
     </Box>

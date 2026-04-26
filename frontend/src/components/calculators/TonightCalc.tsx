@@ -1,17 +1,56 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
-import Grid from "@mui/material/Grid";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { fetchTonight, type TonightResponse } from "@/api/calculators";
+import { fetchForecast, type ForecastResponse } from "@/api/weather";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
 import { useCalculatorLocation } from "@/components/calculators/CalculatorLocationBar";
 import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
+import QualityBadge from "@/components/weather/QualityBadge";
 
-const DASH = "\u2014";
+const DASH = "—";
+
+/** Uniform card height across every Paper on the page, picked to fit
+ *  the tallest natural content (the headline-durations panel) with a
+ *  small buffer. All five cards (imaging quality, headlines, evening,
+ *  morning, moon) use this so the page reads as a tidy grid. */
+const CARD_HEIGHT = 152;
+
+/** Concise descriptions of each lunar phase for the moon-phase tooltip.
+ *  Keyed lowercase so backend casing variations match. */
+const MOON_PHASE_DESCRIPTIONS: Record<string, string> = {
+  "new moon":
+    "Not visible from Earth; the Moon is between Earth and the Sun with its lit side facing away.",
+  "waxing crescent":
+    "Less than half lit and growing; a thin sliver visible after sunset, between new moon and first quarter.",
+  "first quarter":
+    "Half lit (right side in the Northern Hemisphere) and growing; the Moon is one-quarter of the way through its cycle.",
+  "waxing gibbous":
+    "More than half lit and growing; between first quarter and full moon.",
+  "full moon":
+    "Fully illuminated; Earth sits between the Sun and Moon, with the lit face pointing toward us.",
+  "waning gibbous":
+    "More than half lit and shrinking; between full moon and last quarter.",
+  "last quarter":
+    "Half lit (left side in the Northern Hemisphere) and shrinking; also called third quarter, the Moon is three-quarters through its cycle.",
+  "third quarter":
+    "Half lit (left side in the Northern Hemisphere) and shrinking; also called third quarter, the Moon is three-quarters through its cycle.",
+  "waning crescent":
+    "Less than half lit and shrinking; a thin sliver visible before sunrise, between last quarter and new moon.",
+};
+
+function moonPhaseDescription(name: string | null | undefined): string {
+  if (!name) return "";
+  return (
+    MOON_PHASE_DESCRIPTIONS[name.toLowerCase()] ??
+    "Phase of the Moon as seen from Earth — describes how much of the lit hemisphere is currently visible."
+  );
+}
 
 /** Today's date (YYYY-MM-DD) in the given IANA timezone. */
 function todayInTimezone(timezone: string): string {
@@ -44,8 +83,8 @@ function formatDurationHours(hours: number | null | undefined): string {
 }
 
 /**
- * "Tonight at a glance" — darkness totals, twilight/sunrise transitions, and
- * moon info for the selected location and date.
+ * "Tonight at a glance" — darkness totals, twilight/sunrise transitions,
+ * imaging quality, and moon info for the selected location and date.
  */
 export default function TonightCalc() {
   const { locationId, location } = useCalculatorLocation();
@@ -64,6 +103,19 @@ export default function TonightCalc() {
     queryFn: () => fetchTonight(locationId!, date),
     enabled: locationId != null && Boolean(date),
   });
+
+  // Imaging-quality forecast (independent fetch — the weather API runs the
+  // full scoring pipeline; we just pluck the matching day's score).
+  const { data: forecast } = useQuery<ForecastResponse>({
+    queryKey: ["calc-tonight-forecast", locationId],
+    queryFn: () => fetchForecast(locationId!, true),
+    enabled: locationId != null,
+  });
+
+  const tonightForecast = useMemo(
+    () => forecast?.days.find((d) => d.date === date),
+    [forecast, date],
+  );
 
   const tz = data?.timezone ?? timezone;
 
@@ -108,151 +160,225 @@ export default function TonightCalc() {
         )}
       </Stack>
 
-      {/* Headline durations */}
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Paper variant="outlined" sx={{ p: 2.5 }}>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
-            >
-              Astronomical dark
-            </Typography>
-            <Typography
-              variant="h4"
-              sx={{ fontFamily: "monospace", mt: 0.5 }}
-            >
-              {headlines.astronomical}
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ display: "block", mt: 0.5 }}
-            >
-              Sun &gt; 18&deg; below the horizon
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Paper variant="outlined" sx={{ p: 2.5 }}>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
-            >
-              Dark with moon down
-            </Typography>
-            <Typography
-              variant="h4"
-              sx={{ fontFamily: "monospace", mt: 0.5 }}
-            >
-              {headlines.moonless}
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ display: "block", mt: 0.5 }}
-            >
-              Astronomical dark with the moon also below the horizon
-            </Typography>
-          </Paper>
-        </Grid>
-      </Grid>
-
-      {/* Evening transitions */}
-      <Paper variant="outlined" sx={{ p: 2.5 }}>
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-          Evening
-        </Typography>
-        <Grid container spacing={2}>
-          <TransitionCell label="Sunset" time={data?.sunset ?? DASH} />
-          <TransitionCell
-            label="Civil twilight end"
-            time={data?.civil_twilight_end ?? DASH}
-          />
-          <TransitionCell
-            label="Nautical twilight end"
-            time={data?.nautical_twilight_end ?? DASH}
-          />
-          <TransitionCell
-            label="Astronomical twilight end"
-            time={data?.astronomical_twilight_end ?? DASH}
-          />
-        </Grid>
-      </Paper>
-
-      {/* Morning transitions */}
-      <Paper variant="outlined" sx={{ p: 2.5 }}>
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-          Morning
-        </Typography>
-        <Grid container spacing={2}>
-          <TransitionCell
-            label="Astronomical twilight start"
-            time={data?.astronomical_twilight_start ?? DASH}
-          />
-          <TransitionCell
-            label="Nautical twilight start"
-            time={data?.nautical_twilight_start ?? DASH}
-          />
-          <TransitionCell
-            label="Civil twilight start"
-            time={data?.civil_twilight_start ?? DASH}
-          />
-          <TransitionCell label="Sunrise" time={data?.sunrise ?? DASH} />
-        </Grid>
-      </Paper>
-
-      {/* Moon */}
-      <Paper variant="outlined" sx={{ p: 2.5 }}>
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-          Moon
-        </Typography>
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={3}
-          alignItems={{ xs: "flex-start", sm: "center" }}
+      {/* Top row: Imaging quality first, then the combined headline
+          durations panel (astro dark + dark with moon down). Both
+          content-sized + equal-height. */}
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="stretch"
+        flexWrap="wrap"
+        useFlexGap
+      >
+        <Paper
+          variant="outlined"
+          sx={{
+            p: 2.5,
+            height: CARD_HEIGHT,
+            display: "flex",
+            flexDirection: "column",
+          }}
         >
-          <Stack direction="row" spacing={2} alignItems="center">
-            <MoonPhaseIcon
-              phaseName={data?.moon_phase_name ?? "new"}
-              illuminationPct={data?.moon_illumination_pct ?? 0}
-              sx={{ fontSize: 56 }}
-            />
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Imaging quality
+          </Typography>
+          <Box
+            sx={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {tonightForecast ? (
+              tonightForecast.no_imaging_window ? (
+                <Typography variant="body2" color="text.secondary">
+                  No imaging window for this date.
+                </Typography>
+              ) : (
+                <QualityBadge
+                  score={tonightForecast.imaging_quality}
+                  label={tonightForecast.imaging_quality_label}
+                  size="medium"
+                  showLabel
+                  tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. See the Weather page for the full breakdown.`}
+                />
+              )
+            ) : forecast ? (
+              <Typography variant="body2" color="text.secondary">
+                No forecast data for this date — outside the 7-day window.
+              </Typography>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Loading forecast&hellip;
+              </Typography>
+            )}
+          </Box>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={4}
+            alignItems="flex-start"
+            divider={
+              <Box
+                sx={{
+                  display: { xs: "none", sm: "block" },
+                  width: "1px",
+                  alignSelf: "stretch",
+                  bgcolor: "divider",
+                }}
+              />
+            }
+          >
             <Box>
               <Typography
-                variant="h6"
-                sx={{ fontFamily: "monospace", lineHeight: 1.2 }}
+                variant="caption"
+                color="text.secondary"
+                sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
               >
-                {data ? `${Math.round(data.moon_illumination_pct)}%` : DASH}
+                Astronomical dark
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {data?.moon_phase_name ?? DASH}
+              <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                {headlines.astronomical}
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                Sun &gt; 18&deg; below the horizon
+              </Typography>
+            </Box>
+            <Box>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
+              >
+                Dark with moon down
+              </Typography>
+              <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                {headlines.moonless}
               </Typography>
             </Box>
           </Stack>
+        </Paper>
 
-          <Box sx={{ display: "flex", gap: 4 }}>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Moonrise
-              </Typography>
-              <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                {data?.moonrise ?? DASH}
-              </Typography>
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Moon
+          </Typography>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={3}
+            alignItems={{ xs: "flex-start", sm: "center" }}
+          >
+            <Stack direction="row" spacing={2} alignItems="center">
+              <MoonPhaseIcon
+                phaseName={data?.moon_phase_name ?? "new"}
+                illuminationPct={data?.moon_illumination_pct ?? 0}
+                sx={{ fontSize: 56 }}
+              />
+              <Box>
+                <Typography
+                  variant="h6"
+                  sx={{ fontFamily: "monospace", lineHeight: 1.2 }}
+                >
+                  {data ? `${Math.round(data.moon_illumination_pct)}%` : DASH}
+                </Typography>
+                <Tooltip
+                  title={moonPhaseDescription(data?.moon_phase_name)}
+                  placement="bottom-start"
+                  arrow
+                >
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ cursor: "help", display: "inline-block" }}
+                  >
+                    {data?.moon_phase_name ?? DASH}
+                  </Typography>
+                </Tooltip>
+              </Box>
+            </Stack>
+
+            <Box sx={{ display: "flex", gap: 4 }}>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Moonrise
+                </Typography>
+                <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
+                  {data?.moonrise ?? DASH}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Moonset
+                </Typography>
+                <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
+                  {data?.moonset ?? DASH}
+                </Typography>
+              </Box>
             </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Moonset
-              </Typography>
-              <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                {data?.moonset ?? DASH}
-              </Typography>
-            </Box>
-          </Box>
-        </Stack>
-      </Paper>
+          </Stack>
+        </Paper>
+      </Stack>
+
+      {/* Evening + Morning — content-sized row, both cards hug their
+          content width (no forced 50% slot) and share CARD_HEIGHT
+          with the rest of the page. */}
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="stretch"
+        flexWrap="wrap"
+        useFlexGap
+      >
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Evening
+          </Typography>
+          <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
+            <TransitionCell label="Sunset" time={data?.sunset ?? DASH} />
+            <TransitionCell
+              label="Civil twilight end"
+              time={data?.civil_twilight_end ?? DASH}
+            />
+            <TransitionCell
+              label="Nautical twilight end"
+              time={data?.nautical_twilight_end ?? DASH}
+            />
+            <TransitionCell
+              label="Astronomical twilight end"
+              time={data?.astronomical_twilight_end ?? DASH}
+            />
+          </Stack>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Morning
+          </Typography>
+          <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
+            <TransitionCell
+              label="Astronomical twilight start"
+              time={data?.astronomical_twilight_start ?? DASH}
+            />
+            <TransitionCell
+              label="Nautical twilight start"
+              time={data?.nautical_twilight_start ?? DASH}
+            />
+            <TransitionCell
+              label="Civil twilight start"
+              time={data?.civil_twilight_start ?? DASH}
+            />
+            <TransitionCell label="Sunrise" time={data?.sunrise ?? DASH} />
+          </Stack>
+        </Paper>
+      </Stack>
+
 
       {isLoading && (
         <Typography variant="body2" color="text.secondary">
@@ -281,6 +407,12 @@ export default function TonightCalc() {
           imaging time when moon illumination is high.
         </p>
         <p>
+          <strong>Imaging quality</strong> reuses the same composite score the
+          Weather page reports for this date &mdash; sky clarity (cloud
+          layers), transparency, seeing, moon, and wind blended into a single
+          0&ndash;100 number with the same colour palette.
+        </p>
+        <p>
           At polar latitudes any individual event (e.g. sunset) may be{" "}
           <code>null</code> if it doesn&rsquo;t occur on this date; the headline
           durations still reflect the actual amount of darkness in the window.
@@ -292,7 +424,7 @@ export default function TonightCalc() {
 
 function TransitionCell({ label, time }: { label: string; time: string }) {
   return (
-    <Grid size={{ xs: 6, sm: 3 }}>
+    <Box>
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
@@ -302,6 +434,6 @@ function TransitionCell({ label, time }: { label: string; time: string }) {
       >
         {time}
       </Typography>
-    </Grid>
+    </Box>
   );
 }
