@@ -31,6 +31,7 @@ import {
   fetchMetadata,
   fetchRecentFiles,
   fetchStatsAndHistogram,
+  imageUrl,
   isFitsPath,
   isVirtualPath,
   recordRecentFile,
@@ -54,8 +55,13 @@ import { HduSelector } from "@/components/fits/HduSelector";
 import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
 import { EasterEggWand } from "@/components/EasterEggWand";
+import { PlateSolveDetailPanel } from "@/components/plate-solve/PlateSolveDetailPanel";
 import { PlateSolveDialog } from "@/components/plate-solve/PlateSolveDialog";
+import { PlateSolveDsoGrid } from "@/components/plate-solve/PlateSolveDsoGrid";
+import { PlateSolveFilters, applyFilters, DEFAULT_FILTERS, type AnnotationFilters } from "@/components/plate-solve/PlateSolveFilters";
+import { detectWcs, fetchAnnotations, type WcsParams } from "@/api/plateSolve";
 import { setActivity } from "@/api/client";
+import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
@@ -198,6 +204,11 @@ export function ImageViewerPage() {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [plateSolveOpen, setPlateSolveOpen] = useState(false);
 
+  // Plate Solve tab (annotations)
+  const [solvedWcs, setSolvedWcs] = useState<WcsParams | null>(null);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
+  const [annotationFilters, setAnnotationFilters] = useState<AnnotationFilters>(DEFAULT_FILTERS);
+
   // Pixel inspector
   const [pixelInspectorOn, setPixelInspectorOn] = useState(false);
   const [pixelData, setPixelData] = useState<PixelInfo | null>(null);
@@ -275,13 +286,35 @@ export function ImageViewerPage() {
   const aberrationQuery = useQuery({
     queryKey: ["aberration", activePath, selectedHdu, debouncedFilters],
     queryFn: () => analyzeFrame(activePath, selectedHdu, debouncedFilters),
-    enabled: activePath !== "" && tab === 2,
+    enabled: activePath !== "" && tab === 3,
   });
 
   const samplesQuery = useQuery({
     queryKey: ["samples", activePath, selectedHdu, samplesAcross, debouncedFilters],
     queryFn: () => fetchSamples(activePath, selectedHdu, samplesAcross, debouncedFilters),
     enabled: aberrationQuery.data != null,
+  });
+
+  // Plate Solve tab: WCS detection + annotation queries
+  const wcsQuery = useQuery({
+    queryKey: ["detect-wcs", activePath, selectedHdu],
+    queryFn: () => detectWcs(activePath, selectedHdu),
+    enabled: activePath !== "" && tab === 2,
+    staleTime: 60_000,
+  });
+
+  const effectiveWcs = solvedWcs ?? wcsQuery.data;
+
+  const annotationQuery = useQuery({
+    queryKey: ["annotations", activePath, selectedHdu, effectiveWcs ? "wcs" : "none"],
+    queryFn: () => {
+      if (effectiveWcs && !wcsQuery.data) {
+        return fetchAnnotations(activePath, selectedHdu, effectiveWcs);
+      }
+      return fetchAnnotations(activePath, selectedHdu);
+    },
+    enabled: activePath !== "" && tab === 2 && effectiveWcs != null,
+    staleTime: 60_000,
   });
 
   // Reset custom square positions when a fresh grid arrives from the backend
@@ -361,6 +394,9 @@ export function ImageViewerPage() {
     setAppliedPerChannel(DEFAULT_PER_CHANNEL);
     setIsLinked(true);
     setSelectedSquare(null);
+    setSolvedWcs(null);
+    setSelectedAnnotationId(null);
+    setAnnotationFilters(DEFAULT_FILTERS);
     appliedDefaultsFor.current = "";
     // For project images, show a readable path in the input
     if (isVirtualPath(path) && displayName) {
@@ -582,7 +618,7 @@ export function ImageViewerPage() {
               <Tabs
                 value={tab}
                 onChange={(_, v) => {
-                  const labels = ["View image", "View header", "Analyze aberration"];
+                  const labels = ["View image", "View header", "Identify objects", "Analyze aberration"];
                   setActivity(labels[v] ?? `Tab ${v}`);
                   setTab(v);
                 }}
@@ -590,6 +626,7 @@ export function ImageViewerPage() {
               >
                 <Tab label="Image" disabled={!selectedExtInfo?.has_image} />
                 <Tab label="Header" />
+                <Tab label="Identify" disabled={!hasFile || !selectedExtInfo?.has_image} />
                 <Tab label="Aberration" disabled={!hasFile || !selectedExtInfo?.has_image} />
               </Tabs>
               {/* Format and linearity indicators */}
@@ -713,7 +750,7 @@ export function ImageViewerPage() {
             </Box>
 
             {/* Aberration tab content */}
-            <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 2 ? "flex" : "none", flexDirection: "column" }}>
+            <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 3 ? "flex" : "none", flexDirection: "column" }}>
               <AberrationToolbar
                 samplesAcross={samplesAcross}
                 onSamplesChange={(n) => { setSamplesAcross(n); setSelectedSquare(null); }}
@@ -775,6 +812,118 @@ export function ImageViewerPage() {
                 )}
               </Box>
             </Box>
+
+            {/* Plate Solve tab content */}
+            {/* Identify tab content — image always mounted, annotations overlay when ready */}
+            <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 2 ? "flex" : "none", flexDirection: "column" }}>
+              {(() => {
+                const allDsos = annotationQuery.data?.dsos ?? [];
+                const filtered = applyFilters(allDsos, annotationFilters);
+                const typeCounts = new Map<string, number>();
+                for (const d of allDsos) typeCounts.set(d.type_group, (typeCounts.get(d.type_group) ?? 0) + 1);
+                const imgW = annotationQuery.data?.wcs.naxis1 ?? effectiveWcs?.naxis1 ?? 0;
+                const imgH = annotationQuery.data?.wcs.naxis2 ?? effectiveWcs?.naxis2 ?? 0;
+
+                return (
+                  <>
+                    <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                      <Box
+                        component="svg"
+                        viewBox={imgW > 0 ? `0 0 ${imgW} ${imgH}` : undefined}
+                        preserveAspectRatio="xMidYMid meet"
+                        sx={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
+                      >
+                        <image
+                          href={imageUrl(activePath, selectedHdu, appliedLinked, activePerChannel, imageActivity)}
+                          width={imgW || undefined}
+                          height={imgH || undefined}
+                        />
+                        {imgW > 0 && filtered.length > 0 && filtered.map((dso) => {
+                          const isSelected = dso.id === selectedAnnotationId;
+                          const refDim = Math.max(imgW, imgH);
+                          const sw = refDim * (isSelected ? 0.0025 : 0.0015);
+                          const fs = refDim * 0.012;
+                          const ts = refDim * 0.002;
+                          const minR = refDim * 0.004;
+                          const gap = refDim * 0.003;
+                          const color = isSelected ? RIG_ORANGE : RIG_BLUE;
+                          const hasEllipse = dso.ellipse_semi_major_px != null && dso.ellipse_semi_minor_px != null && dso.ellipse_semi_major_px > minR;
+                          const a = hasEllipse ? dso.ellipse_semi_major_px! : dso.ellipse_semi_major_px != null ? Math.max(minR, dso.ellipse_semi_major_px) : minR;
+                          const b = hasEllipse ? dso.ellipse_semi_minor_px! : a;
+                          const theta = (dso.ellipse_angle_deg ?? 0) * Math.PI / 180;
+                          const cosT = Math.cos(theta);
+                          const sinT = Math.sin(theta);
+                          const edgeR = (a * b) / Math.sqrt(b * b * cosT * cosT + a * a * sinT * sinT);
+                          const labelOffset = edgeR + gap;
+                          return (
+                            <g key={dso.id} onClick={(e) => { e.stopPropagation(); setSelectedAnnotationId(dso.id); }} style={{ cursor: "pointer" }}>
+                              {hasEllipse ? (
+                                <ellipse cx={dso.pixel_x} cy={dso.pixel_y} rx={a} ry={b}
+                                  transform={dso.ellipse_angle_deg ? `rotate(${dso.ellipse_angle_deg} ${dso.pixel_x} ${dso.pixel_y})` : undefined}
+                                  fill="transparent" stroke={color} strokeWidth={sw} opacity={isSelected ? 1 : 0.85} />
+                              ) : (
+                                <circle cx={dso.pixel_x} cy={dso.pixel_y} r={a} fill="transparent" stroke={color} strokeWidth={sw} opacity={isSelected ? 1 : 0.85} />
+                              )}
+                              <text x={dso.pixel_x + labelOffset} y={dso.pixel_y + fs * 0.35} fill={color} fontSize={fs} fontWeight={isSelected ? 700 : 500}
+                                stroke="#000000" strokeWidth={ts} paintOrder="stroke">
+                                {dso.common_name ?? dso.primary_designation}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </Box>
+                      {!effectiveWcs && !wcsQuery.isLoading && (
+                        <Box sx={{
+                          position: "absolute", inset: 0,
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                          gap: 2, bgcolor: "rgba(0,0,0,0.6)",
+                        }}>
+                          <Typography color="common.white">
+                            No WCS information found in image headers.
+                          </Typography>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<TravelExploreIcon />}
+                            onClick={() => setPlateSolveOpen(true)}
+                          >
+                            Plate Solve
+                          </Button>
+                        </Box>
+                      )}
+                      {annotationQuery.isLoading && (
+                        <Box sx={{
+                          position: "absolute", top: 8, right: 8,
+                          bgcolor: "background.paper", borderRadius: 1, p: 0.5,
+                          display: "flex", alignItems: "center", gap: 0.5, opacity: 0.9,
+                        }}>
+                          <CircularProgress size={14} />
+                          <Typography variant="caption" color="text.secondary">Loading objects...</Typography>
+                        </Box>
+                      )}
+                    </Box>
+                    {effectiveWcs && (
+                      <>
+                        {allDsos.length > 0 && (
+                          <PlateSolveFilters
+                            filters={annotationFilters}
+                            onChange={setAnnotationFilters}
+                            typeCounts={typeCounts}
+                          />
+                        )}
+                        <Box sx={{ height: 200, flexShrink: 0, overflow: "hidden", borderTop: 1, borderColor: "divider" }}>
+                          <PlateSolveDsoGrid
+                            dsos={filtered}
+                            selectedId={selectedAnnotationId}
+                            onSelect={setSelectedAnnotationId}
+                          />
+                        </Box>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </Box>
           </>
         )}
 
@@ -807,7 +956,7 @@ export function ImageViewerPage() {
       </Box>
 
       {/* Right sidebar — only when an image is open and on the Image or Aberration tab */}
-      {hasFile && selectedExtInfo?.has_image && (tab === 0 || tab === 2) && (
+      {hasFile && selectedExtInfo?.has_image && (tab === 0 || tab === 2 || tab === 3) && (
         <Box
           sx={{
             width: rightSidebarOpen ? 220 : 24,
@@ -1177,6 +1326,13 @@ export function ImageViewerPage() {
           </>
           )}
           {tab === 2 && (
+            <PlateSolveDetailPanel
+              dso={(annotationQuery.data?.dsos ?? []).find((d) => d.id === selectedAnnotationId) ?? null}
+              annotationResult={annotationQuery.data ?? null}
+              wcs={effectiveWcs}
+            />
+          )}
+          {tab === 3 && (
             <AberrationSidebar
               analysis={aberrationQuery.data ?? null}
             />
@@ -1201,6 +1357,16 @@ export function ImageViewerPage() {
         hdu={selectedHdu}
         headerRa={parseHeaderCoord(true, "RA", "OBJCTRA", "CRVAL1")}
         headerDec={parseHeaderCoord(false, "DEC", "OBJCTDEC", "CRVAL2")}
+        onSolved={(res) => {
+          if (res.cd1_1 != null && res.cd1_2 != null && res.cd2_1 != null && res.cd2_2 != null && res.crpix1 != null && res.crpix2 != null && res.ra_deg != null && res.dec_deg != null && res.image_width != null && res.image_height != null) {
+            setSolvedWcs({
+              crval1: res.ra_deg, crval2: res.dec_deg,
+              cd1_1: res.cd1_1, cd1_2: res.cd1_2, cd2_1: res.cd2_1, cd2_2: res.cd2_2,
+              crpix1: res.crpix1, crpix2: res.crpix2,
+              naxis1: res.image_width, naxis2: res.image_height,
+            });
+          }
+        }}
       />
 
       {/* Error notification */}

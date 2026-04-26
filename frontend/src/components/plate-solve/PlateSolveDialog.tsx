@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -17,7 +18,8 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 
-import { plateSolve, type PlateSolveResult } from "@/api/plateSolve";
+import { plateSolve, fetchSolveProgress, cancelSolve, type PlateSolveResult } from "@/api/plateSolve";
+import { fetchDsos, type DsoListItem } from "@/api/dsos";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { monoFontFamily } from "@/theme/theme";
 
@@ -28,9 +30,10 @@ interface Props {
   hdu: number;
   headerRa: number | null;
   headerDec: number | null;
+  onSolved?: (result: PlateSolveResult) => void;
 }
 
-type SolveMode = "auto" | "near" | "blind";
+type SolveMode = "auto" | "near" | "blind" | "extract";
 
 export function PlateSolveDialog({
   open,
@@ -39,14 +42,22 @@ export function PlateSolveDialog({
   hdu,
   headerRa,
   headerDec,
+  onSolved,
 }: Props) {
   const { settings } = useSettingsStore();
   const [mode, setMode] = useState<SolveMode>("auto");
+  const [targetInput, setTargetInput] = useState("");
+  const [targetOptions, setTargetOptions] = useState<DsoListItem[]>([]);
+  const [selectedTarget, setSelectedTarget] = useState<DsoListItem | null>(null);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [solving, setSolving] = useState(false);
   const [result, setResult] = useState<PlateSolveResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [progressMsg, setProgressMsg] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
 
   const configured = !!settings?.astap_executable_path;
@@ -56,34 +67,87 @@ export function PlateSolveDialog({
       setResult(null);
       setError(null);
       setElapsed(0);
+      setProgressMsg("");
       setSolving(false);
+      setTargetInput("");
+      setTargetOptions([]);
+      setSelectedTarget(null);
       abortRef.current = false;
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (progressRef.current) clearInterval(progressRef.current);
+      if (searchTimer.current) clearTimeout(searchTimer.current);
     };
   }, [open]);
+
+  const handleTargetSearch = useCallback((query: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (!query.trim() || query.trim().length < 2) {
+      setTargetOptions([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const result = await fetchDsos({ q: query.trim(), limit: 10 });
+        setTargetOptions(result.items);
+      } catch {
+        setTargetOptions([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current = true;
+    cancelSolve().catch(() => {});
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (progressRef.current) clearInterval(progressRef.current);
+    timerRef.current = null;
+    progressRef.current = null;
+    setSolving(false);
+    setProgressMsg("");
+  }, []);
 
   const handleSolve = useCallback(async () => {
     setSolving(true);
     setResult(null);
     setError(null);
     setElapsed(0);
+    setProgressMsg("Starting ASTAP...");
     abortRef.current = false;
 
     const start = Date.now();
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((Date.now() - start) / 1000));
     }, 1000);
+    const pollProgress = async () => {
+      try {
+        const p = await fetchSolveProgress();
+        if (p.message && !abortRef.current) setProgressMsg(p.message);
+      } catch { /* ignore */ }
+    };
+    pollProgress();
+    progressRef.current = setInterval(pollProgress, 1000);
 
     try {
+      const effectiveRa = selectedTarget?.ra_deg ?? headerRa ?? undefined;
+      const effectiveDec = selectedTarget?.dec_deg ?? headerDec ?? undefined;
       const res = await plateSolve({
         image_path: imagePath,
         hdu,
         mode,
+        ra_hint: effectiveRa,
+        dec_hint: effectiveDec,
         timeout: mode === "blind" ? 300 : 180,
       });
-      if (!abortRef.current) setResult(res);
+      if (!abortRef.current) {
+        setResult(res);
+        if (res.solved && onSolved) onSolved(res);
+      }
     } catch (err: unknown) {
       if (!abortRef.current) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -96,10 +160,13 @@ export function PlateSolveDialog({
       }
     } finally {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (progressRef.current) clearInterval(progressRef.current);
       timerRef.current = null;
+      progressRef.current = null;
       setSolving(false);
+      setProgressMsg("");
     }
-  }, [imagePath, hdu, mode]);
+  }, [imagePath, hdu, mode, selectedTarget, headerRa, headerDec]);
 
   const handleCopy = useCallback(() => {
     if (!result || !result.solved) return;
@@ -115,7 +182,8 @@ export function PlateSolveDialog({
     navigator.clipboard.writeText(lines.join("\n"));
   }, [result]);
 
-  const hasHints = headerRa !== null && headerDec !== null;
+  const hasHeaderHints = headerRa !== null && headerDec !== null;
+  const hasHints = hasHeaderHints || selectedTarget != null;
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
@@ -151,6 +219,11 @@ export function PlateSolveDialog({
             <Typography variant="body2" color="text.secondary">
               Solving{mode === "blind" ? " (blind)" : ""}... {elapsed}s
             </Typography>
+            {progressMsg && (
+              <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 400, textAlign: "center", wordBreak: "break-word" }}>
+                {progressMsg}
+              </Typography>
+            )}
           </Box>
         ) : (
           <Stack spacing={2}>
@@ -164,15 +237,94 @@ export function PlateSolveDialog({
                   onChange={(e) => setMode(e.target.value as SolveMode)}
                 >
                   <MenuItem value="auto">
-                    Auto {hasHints ? "(near solve — header hints available)" : "(blind solve — no hints)"}
+                    Auto {hasHints ? "(near solve — hints available)" : "(blind solve — no hints)"}
                   </MenuItem>
                   <MenuItem value="near">Near solve (use coordinate hints)</MenuItem>
                   <MenuItem value="blind">Blind solve (search entire sky)</MenuItem>
+                  <MenuItem value="extract">Extract stars &amp; solve (for stretched images)</MenuItem>
                 </Select>
               </FormControl>
             </Box>
 
-            {hasHints && (
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                Target (for coordinate hints)
+              </Typography>
+              <Autocomplete
+                size="small"
+                freeSolo
+                options={targetOptions}
+                getOptionLabel={(opt) =>
+                  typeof opt === "string"
+                    ? opt
+                    : opt.common_name
+                      ? `${opt.primary_designation} — ${opt.common_name}`
+                      : opt.primary_designation
+                }
+                filterOptions={(x) => x}
+                inputValue={targetInput}
+                onInputChange={(_, value, reason) => {
+                  if (reason !== "reset") {
+                    setTargetInput(value);
+                    handleTargetSearch(value);
+                  }
+                }}
+                onChange={(_, value) => {
+                  if (value && typeof value !== "string") {
+                    setSelectedTarget(value);
+                    setTargetInput(
+                      value.common_name
+                        ? `${value.primary_designation} — ${value.common_name}`
+                        : value.primary_designation,
+                    );
+                  } else {
+                    setSelectedTarget(null);
+                  }
+                }}
+                loading={searching}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    placeholder="e.g. NGC 4565, M42, Orion"
+                    slotProps={{
+                      input: {
+                        ...params.InputProps,
+                        endAdornment: (
+                          <>
+                            {searching && <CircularProgress size={16} />}
+                            {params.InputProps.endAdornment}
+                          </>
+                        ),
+                      },
+                    }}
+                  />
+                )}
+                renderOption={(props, option) => (
+                  <li {...props} key={option.id}>
+                    <Box>
+                      <Typography sx={{ fontSize: "0.85rem" }}>
+                        {option.primary_designation}
+                        {option.common_name && (
+                          <Typography component="span" color="text.secondary" sx={{ ml: 0.5, fontSize: "0.8rem" }}>
+                            {option.common_name}
+                          </Typography>
+                        )}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {option.obj_type} · RA {option.ra_deg?.toFixed(2)}° Dec {option.dec_deg?.toFixed(2)}°
+                      </Typography>
+                    </Box>
+                  </li>
+                )}
+              />
+              {selectedTarget && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25, display: "block" }}>
+                  RA {selectedTarget.ra_deg?.toFixed(4)}° Dec {selectedTarget.dec_deg?.toFixed(4)}°
+                </Typography>
+              )}
+            </Box>
+
+            {hasHeaderHints && (
               <Box>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                   Coordinate hints from header
@@ -198,15 +350,14 @@ export function PlateSolveDialog({
 
             {!hasHints && mode === "near" && (
               <Alert severity="info" variant="outlined">
-                No RA/Dec found in the image header. Near solve may fail without
-                coordinate hints. Consider using Auto or Blind mode.
+                No coordinate hints available. Enter a target name above, or use Auto / Blind mode.
               </Alert>
             )}
           </Stack>
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} size="small">
+        <Button onClick={solving ? () => { handleCancel(); onClose(); } : onClose} size="small">
           {result ? "Close" : "Cancel"}
         </Button>
         {configured && !solving && !result && (
