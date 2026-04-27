@@ -173,20 +173,17 @@ export default function ThumbnailCell({
     waitMs: version === 1 ? waitMs : 0,
   })}&__v=${version}`;
 
-  // Cached ``<img>`` race: when ``src`` resolves from the browser HTTP
-  // cache, the ``load`` event can fire synchronously at element
-  // creation — before React attaches the onLoad listener — leaving
-  // ``loading`` stuck true and the spinner overlaid on a fully-rendered
-  // image. Checking ``img.complete`` after each ``src`` change catches
-  // that case. ``handleImageResolved`` is idempotent so the parallel
-  // path with the fired onLoad is harmless.
+  // Catch images that resolved from browser cache before React
+  // attached the onLoad listener. Runs on src change AND whenever
+  // loading is still true after a render (covers parent re-renders
+  // that can drop the onLoad event during reconciliation).
   useLayoutEffect(() => {
+    if (!loading) return;
     const img = imgRef.current;
     if (img && img.complete && (img.naturalWidth > 0 || img.naturalHeight > 0)) {
       handleImageResolved(img);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src]);
+  });
 
   const renderWidth = fill ? "100%" : size;
   const renderHeight = fill
@@ -230,7 +227,7 @@ export default function ThumbnailCell({
         width={typeof renderWidth === "number" ? renderWidth : undefined}
         height={typeof renderHeight === "number" ? renderHeight : undefined}
         alt=""
-        loading="lazy"
+        loading="eager"
         style={{
           display: "block",
           width: "100%",

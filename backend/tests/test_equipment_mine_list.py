@@ -52,14 +52,12 @@ async def _get_filter_type_id(client):
 
 
 class TestCameraMineList:
-    async def test_camera_list_orders_mine_first(self, client: AsyncClient):
-        """mine=1 cameras must appear before mine=0 cameras in the default list."""
+    async def test_camera_list_orders_by_name(self, client: AsyncClient):
+        """Cameras sort by model_name regardless of is_mine status."""
         mfr = await _make_manufacturer(client, "MineOrderCamMfg")
         sensor_a = await _make_sensor(client, mfr["id"], "SensorA-ord")
         sensor_b = await _make_sensor(client, mfr["id"], "SensorB-ord")
 
-        # Create non-mine camera first (so insertion order would put it first
-        # if ordering were broken)
         resp = await client.post(
             "/api/equipment/camera",
             json={
@@ -85,20 +83,10 @@ class TestCameraMineList:
         resp = await client.get("/api/equipment/camera")
         assert resp.status_code == 200
         items = resp.json()
-        # Filter to just our two cameras
         ours = [c for c in items if c["model_name"] in {"Zzz NotMine Cam", "Aaa Mine Cam"}]
         assert len(ours) == 2
-
-        # First must be the mine camera
-        assert ours[0]["is_mine"] is True, "Expected mine camera to appear first"
-
-        # No is_mine=0 row should appear before any is_mine=1 row
-        seen_not_mine = False
-        for item in items:
-            if not item["is_mine"]:
-                seen_not_mine = True
-            elif seen_not_mine:
-                pytest.fail("is_mine=1 row appeared after an is_mine=0 row")
+        assert ours[0]["model_name"] == "Aaa Mine Cam"
+        assert ours[1]["model_name"] == "Zzz NotMine Cam"
 
     async def test_camera_list_mine_filter(self, client: AsyncClient):
         """?mine=true returns only cameras with is_mine=true."""
@@ -224,8 +212,8 @@ class TestCameraMineList:
 
 
 class TestTelescopeMineList:
-    async def test_telescope_list_orders_mine_first(self, client: AsyncClient):
-        """mine=1 telescopes must appear before mine=0 telescopes."""
+    async def test_telescope_list_orders_by_name(self, client: AsyncClient):
+        """Telescopes sort by model_name regardless of is_mine status."""
         mfr = await _make_manufacturer(client, "MineScopeMfg")
 
         resp = await client.post(
@@ -255,14 +243,8 @@ class TestTelescopeMineList:
         items = resp.json()
         ours = [t for t in items if t["model_name"] in {"Zzz NotMine Scope", "Aaa Mine Scope"}]
         assert len(ours) == 2
-        assert ours[0]["is_mine"] is True, "Expected mine telescope to appear first"
-
-        seen_not_mine = False
-        for item in items:
-            if not item["is_mine"]:
-                seen_not_mine = True
-            elif seen_not_mine:
-                pytest.fail("is_mine=1 row appeared after an is_mine=0 row")
+        assert ours[0]["model_name"] == "Aaa Mine Scope"
+        assert ours[1]["model_name"] == "Zzz NotMine Scope"
 
 
 # ── Filter regression ─────────────────────────────────────────────────────────

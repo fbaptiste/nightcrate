@@ -159,7 +159,7 @@ def build_equipment_router(
             per type.
         name_column: Identifier column referenced in conflict messages.
             ``"model_name"`` for hardware, ``"name"`` for software.
-        order_by: SQL ORDER BY for list. Default: ``is_mine DESC, <name_column>``.
+        order_by: SQL ORDER BY for list. Default: ``<name_column>``.
         bool_columns: Columns that are Python-bool in Pydantic but INTEGER(0/1)
             in SQL. Values are coerced via ``int(...)`` on INSERT/UPDATE.
         interface_junction: Optional ``(junction_table, fk_column)`` tuple.
@@ -171,7 +171,7 @@ def build_equipment_router(
             detail when a CHECK constraint fires (e.g. ``software.category``).
     """
     if order_by is None:
-        order_by = f"is_mine DESC, {name_column}"
+        order_by = name_column
     if update_conflict_detail is None:
         update_conflict_detail = f"{label} (manufacturer, {name_column}) already exists"
 

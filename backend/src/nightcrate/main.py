@@ -34,6 +34,7 @@ from nightcrate.api import (
     rigs,
     settings,
     weather,
+    wishlist,
 )
 from nightcrate.api.diagnostics import RequestTrackingMiddleware
 from nightcrate.core.app_config import load_config
@@ -387,6 +388,7 @@ app.include_router(phd2.router)
 app.include_router(plate_solve.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
+app.include_router(wishlist.router)
 app.include_router(diagnostics.router)
 
 _VERSION_FILE = Path(__file__).resolve().parents[3] / "VERSION"

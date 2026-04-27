@@ -23,6 +23,7 @@ import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import CardActionArea from "@mui/material/CardActionArea";
 import Chip from "@mui/material/Chip";
+import IconButton from "@mui/material/IconButton";
 import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
@@ -31,6 +32,8 @@ import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import CircleIcon from "@mui/icons-material/Circle";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import StarIcon from "@mui/icons-material/Star";
+import StarBorderIcon from "@mui/icons-material/StarBorder";
 import type { PlannerTargetItem } from "@/api/planner";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
@@ -54,6 +57,8 @@ interface Props {
   /** ``false`` hides the tonight-line entirely (Anytime mode). */
   restrictTonight: boolean;
   onClick: (dsoId: number) => void;
+  isFavorite?: boolean;
+  onToggleFavorite?: (dsoId: number) => void;
 }
 
 function formatLocalTime(iso: string, tz: string): string {
@@ -112,6 +117,8 @@ export default function PlannerTargetCard({
   tz,
   restrictTonight,
   onClick,
+  isFavorite,
+  onToggleFavorite,
 }: Props) {
   const rigAspect =
     rigFovMajorDeg != null && rigFovMinorDeg != null && rigFovMinorDeg > 0
@@ -132,7 +139,26 @@ export default function PlannerTargetCard({
     restrictTonight && (item.score_pct !== null || item.score_breakdown !== null);
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2 }}>
+    <Card variant="outlined" sx={{ borderRadius: 2, position: "relative" }}>
+      {onToggleFavorite && (
+        <IconButton
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(item.dso_id);
+          }}
+          sx={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            zIndex: 1,
+            color: isFavorite ? RIG_ORANGE : "text.disabled",
+          }}
+          aria-label={isFavorite ? "Remove from wishlist" : "Add to wishlist"}
+        >
+          {isFavorite ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
+        </IconButton>
+      )}
       <CardActionArea
         onClick={() => onClick(item.dso_id)}
         sx={{ p: 1.5 }}

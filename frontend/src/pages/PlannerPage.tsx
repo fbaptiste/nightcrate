@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
+import Checkbox from "@mui/material/Checkbox";
 import CircularProgress from "@mui/material/CircularProgress";
 import Collapse from "@mui/material/Collapse";
 import TablePagination from "@mui/material/TablePagination";
@@ -56,6 +57,8 @@ import ConstellationFilter from "@/components/dso/ConstellationFilter";
 import TypeFilter from "@/components/dso/TypeFilter";
 import PlannerTargetCard from "@/components/planner/PlannerTargetCard";
 import PlannerDetailPanel from "@/components/planner/PlannerDetailPanel";
+import WishlistTab from "@/components/planner/WishlistTab";
+import { useFavoriteIds, useAddFavorite, useRemoveFavorite } from "@/api/wishlist";
 
 const DEFAULT_PAGE_SIZE = 100;
 
@@ -87,8 +90,9 @@ export default function PlannerPage() {
   const setFilterIntent = usePlannerStore((s) => s.setFilterIntent);
   const searchQuery = usePlannerStore((s) => s.searchQuery);
   const setSearchQuery = usePlannerStore((s) => s.setSearchQuery);
-  const restrictTonight = usePlannerStore((s) => s.restrictTonight);
-  const setRestrictTonight = usePlannerStore((s) => s.setRestrictTonight);
+  const activeTab = usePlannerStore((s) => s.activeTab);
+  const setActiveTab = usePlannerStore((s) => s.setActiveTab);
+  const restrictTonight = activeTab === "tonight";
   const typeFilter = usePlannerStore((s) => s.typeFilter);
   const setTypeFilter = usePlannerStore((s) => s.setTypeFilter);
   const catalogFilter = usePlannerStore((s) => s.catalogFilter);
@@ -98,6 +102,16 @@ export default function PlannerPage() {
   const detailId = usePlannerStore((s) => s.detailId);
   const setDetailId = usePlannerStore((s) => s.setDetailId);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(true);
+  const { data: favoriteIds } = useFavoriteIds();
+  const addFavorite = useAddFavorite();
+  const removeFav = useRemoveFavorite();
+  const handleToggleFavorite = (dsoId: number) => {
+    if (favoriteIds?.has(dsoId)) {
+      removeFav.mutate(dsoId);
+    } else {
+      addFavorite.mutate(dsoId);
+    }
+  };
 
   const storeMinHours = usePlannerStore((s) => s.minHours);
   const storeSetMinHours = usePlannerStore((s) => s.setMinHours);
@@ -126,6 +140,11 @@ export default function PlannerPage() {
   const setCoverageRange = (v: [number, number]) => storeSetCoverageRange(v);
   const [coverageRangeDraft, setCoverageRangeDraft] =
     useState<[number, number]>(coverageRange);
+  const [filtersSubOpen, setFiltersSubOpen] = useState(true);
+  const [hoursEnabled, setHoursEnabled] = useState(true);
+  const [magEnabled, setMagEnabled] = useState(false);
+  const [sizeEnabled, setSizeEnabled] = useState(false);
+  const [coverageEnabled, setCoverageEnabled] = useState(false);
   const [pagination, setPagination] = useState<{ page: number; pageSize: number }>({
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
@@ -249,15 +268,13 @@ export default function PlannerPage() {
         type: typeFilter,
         catalog: catalogFilter,
         constellation: constellationFilter,
-        min_hours: restrictTonight ? minHours : null,
-        max_magnitude: restrictTonight ? maxMag : null,
-        min_size_arcmin: restrictTonight ? minSize : null,
-        // Only forward the coverage bounds when the range has been
-        // narrowed. 0-200 = full range = no filter.
+        min_hours: restrictTonight && hoursEnabled ? minHours : null,
+        max_magnitude: magEnabled ? maxMag : null,
+        min_size_arcmin: sizeEnabled ? minSize : null,
         coverage_min_pct:
-          restrictTonight && coverageRange[0] > 0 ? coverageRange[0] : null,
+          coverageEnabled && coverageRange[0] > 0 ? coverageRange[0] : null,
         coverage_max_pct:
-          restrictTonight && coverageRange[1] < 200 ? coverageRange[1] : null,
+          coverageEnabled && coverageRange[1] < 200 ? coverageRange[1] : null,
         q: debouncedSearch || null,
         restrict_tonight: restrictTonight,
         limit: pagination.pageSize,
@@ -269,7 +286,7 @@ export default function PlannerPage() {
         filter_intent: restrictTonight ? filterIntent : undefined,
       }),
     // Tonight mode is location-dependent; Anytime runs without one.
-    enabled: !restrictTonight || locationId != null,
+    enabled: !restrictTonight || (locationId != null && horizonId != null),
     placeholderData: (prev) => prev,
   });
 
@@ -342,10 +359,10 @@ export default function PlannerPage() {
         <ToggleButtonGroup
           size="small"
           exclusive
-          value={restrictTonight ? "tonight" : "anytime"}
+          value={activeTab}
           onChange={(_, v) => {
-            if (v === null) return; // can't deselect both
-            setRestrictTonight(v === "tonight");
+            if (v === null) return;
+            setActiveTab(v);
             setPagination((p) => ({ ...p, page: 0 }));
           }}
           aria-label="Planner scope"
@@ -358,6 +375,11 @@ export default function PlannerPage() {
           <Tooltip title="Browse all objects in the DSO catalog regardless of location, date, or visibility — no scoring, no tonight-specific filters" arrow>
             <ToggleButton value="anytime" sx={{ textTransform: "none", px: 2 }}>
               Full Catalog
+            </ToggleButton>
+          </Tooltip>
+          <Tooltip title="Your starred targets — assign locations, rigs, and imaging windows" arrow>
+            <ToggleButton value="wishlist" sx={{ textTransform: "none", px: 2 }}>
+              Wishlist
             </ToggleButton>
           </Tooltip>
         </ToggleButtonGroup>
@@ -380,7 +402,14 @@ export default function PlannerPage() {
         ) : null}
       </Stack>
 
-      {plannerEmptyState !== null ? (
+      {activeTab === "wishlist" ? (
+        <Paper
+          variant="outlined"
+          sx={{ flex: 1, minHeight: 0, overflow: "auto", borderRadius: 2 }}
+        >
+          <WishlistTab />
+        </Paper>
+      ) : plannerEmptyState !== null ? (
         plannerEmptyState === "no-location" ? (
           <Paper
             variant="outlined"
@@ -452,7 +481,7 @@ export default function PlannerPage() {
           wrapped in a ``Collapse`` so the card list can breathe once
           the user has dialled in their filters. Session-only state; a
           reload opens the bar back up. */}
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper variant="outlined" sx={{ px: 2, py: filtersOpen ? 2 : 0.75 }}>
         <Stack
           direction="row"
           alignItems="center"
@@ -463,7 +492,7 @@ export default function PlannerPage() {
           <Stack direction="row" alignItems="center" gap={1}>
             <TuneIcon fontSize="small" sx={{ color: "text.secondary" }} />
             <Typography variant="subtitle2" fontWeight={600}>
-              Filters, sort, rig
+              Settings
             </Typography>
           </Stack>
           <Tooltip
@@ -482,7 +511,112 @@ export default function PlannerPage() {
           </Tooltip>
         </Stack>
         <Collapse in={filtersOpen} unmountOnExit>
-        <Stack direction={{ xs: "column", md: "row" }} gap={2} flexWrap="wrap">
+        {/* Row 1: Location + Horizon + Rig (with FOV) + Filter intent */}
+        <Stack direction="row" gap={2} flexWrap="wrap" alignItems="flex-start">
+          {restrictTonight && (
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel>Location</InputLabel>
+              <Select
+                label="Location"
+                value={locationId ?? ""}
+                onChange={(e) => {
+                  const v = String(e.target.value);
+                  setLocationId(v === "" ? null : Number(v));
+                  setHorizonId(null);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+              >
+                {locationsQuery.data?.map((l) => (
+                  <MenuItem key={l.id} value={l.id}>
+                    {l.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+
+          {restrictTonight && locationId != null && horizons.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>Horizon</InputLabel>
+              <Select
+                label="Horizon"
+                value={horizonId ?? ""}
+                onChange={(e) => {
+                  setHorizonId(Number(e.target.value));
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+              >
+                {renderHorizonMenuItems(horizons)}
+              </Select>
+            </FormControl>
+          )}
+
+          <Box>
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel>Rig</InputLabel>
+              <Select
+                label="Rig"
+                value={rigId ?? ""}
+                onChange={(e) => {
+                  const v = String(e.target.value);
+                  setRigId(v === "" ? null : Number(v));
+                  setCoverageRange(framesWellDefault);
+                  setCoverageRangeDraft(framesWellDefault);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+              >
+                <MenuItem value="">
+                  <em>No rig</em>
+                </MenuItem>
+                {rigsQuery.data?.map((r) => (
+                  <MenuItem key={r.id} value={r.id}>
+                    {r.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {rigFov && (
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
+                FOV: {rigFov}
+              </Typography>
+            )}
+          </Box>
+
+          {restrictTonight && (
+            <FilterIntentSelect
+              value={filterIntent}
+              onChange={(next) => {
+                setFilterIntent(next);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+            />
+          )}
+
+          {catalogFiltersActive && (
+            <Button size="small" variant="text" onClick={clearCatalogFilters} sx={{ mb: 0.5 }}>
+              Clear filters
+            </Button>
+          )}
+        </Stack>
+
+        {/* Filters subsection — collapsible */}
+        <Box sx={{ mt: 2, bgcolor: "action.hover", borderRadius: 1, px: 1.5, py: filtersSubOpen ? 1.5 : 0.5 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{ cursor: "pointer", mb: filtersSubOpen ? 1.5 : 0 }}
+          onClick={() => setFiltersSubOpen((v) => !v)}
+        >
+          <Typography variant="body2" fontWeight={500}>
+            Filters
+          </Typography>
+          <IconButton size="small" aria-label={filtersSubOpen ? "Collapse filters" : "Expand filters"}>
+            {filtersSubOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+          </IconButton>
+        </Stack>
+        <Collapse in={filtersSubOpen} unmountOnExit>
+        <Stack direction="row" gap={2} sx={{ flexWrap: "wrap", alignItems: "flex-start" }}>
           <TextField
             size="small"
             placeholder="Search (M42, NGC 1976, Orion Nebula…)"
@@ -491,7 +625,7 @@ export default function PlannerPage() {
               setSearchQuery(e.target.value);
               setPagination((p) => ({ ...p, page: 0 }));
             }}
-            sx={{ minWidth: 280, flex: { xs: 1, md: "initial" } }}
+            sx={{ width: 280 }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -507,108 +641,7 @@ export default function PlannerPage() {
               ) : null,
             }}
           />
-
-          {restrictTonight && (
-            <FormControl size="small" sx={{ minWidth: 220 }}>
-              <InputLabel>Location</InputLabel>
-              <Select
-                label="Location"
-                value={locationId ?? ""}
-                onChange={(e) => {
-                  const v = String(e.target.value);
-                  setLocationId(v === "" ? null : Number(v));
-                  // Drop the horizon override so the new location's
-                  // default takes over via the effect above.
-                  setHorizonId(null);
-                  setPagination((p) => ({ ...p, page: 0 }));
-                }}
-              >
-                {locationsQuery.data?.map((l) => (
-                  <MenuItem key={l.id} value={l.id}>
-                    {l.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          )}
-
-          {restrictTonight && locationId != null && horizons.length > 0 && (
-            <FormControl size="small" sx={{ minWidth: 200 }}>
-              <InputLabel>Horizon</InputLabel>
-              <Select
-                label="Horizon"
-                value={horizonId ?? ""}
-                onChange={(e) => {
-                  setHorizonId(Number(e.target.value));
-                  setPagination((p) => ({ ...p, page: 0 }));
-                }}
-              >
-                {renderHorizonMenuItems(horizons)}
-              </Select>
-            </FormControl>
-          )}
-
-          <FormControl size="small" sx={{ minWidth: 220 }}>
-            <InputLabel>Rig</InputLabel>
-            <Select
-              label="Rig"
-              value={rigId ?? ""}
-              onChange={(e) => {
-                const v = String(e.target.value);
-                setRigId(v === "" ? null : Number(v));
-                // Reset the coverage-range filter to the user's
-                // configured default when the rig changes — old
-                // bounds won't mean much for a new FOV.
-                setCoverageRange(framesWellDefault);
-                setCoverageRangeDraft(framesWellDefault);
-                setPagination((p) => ({ ...p, page: 0 }));
-              }}
-            >
-              <MenuItem value="">
-                <em>No rig</em>
-              </MenuItem>
-              {rigsQuery.data?.map((r) => (
-                <MenuItem key={r.id} value={r.id}>
-                  {r.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          {restrictTonight && (
-            <FilterIntentSelect
-              value={filterIntent}
-              onChange={(next) => {
-                setFilterIntent(next);
-                setPagination((p) => ({ ...p, page: 0 }));
-              }}
-            />
-          )}
-
-          {catalogFiltersActive && (
-            <Button size="small" variant="text" onClick={clearCatalogFilters}>
-              Clear filters
-            </Button>
-          )}
-
-          {rigFov && (
-            <Typography variant="caption" color="text.secondary" alignSelf="center">
-              FOV: {rigFov}
-            </Typography>
-          )}
-        </Stack>
-
-        {/* Pill filter row — Catalog / Object type / Constellation, same
-            pattern as the DSO Catalog page. Each is a multi-select OR
-            filter. Per-option counts come from the planner's filter-
-            aware facet dicts when present; the full option list
-            (including zero-count entries for the current filter
-            state) comes from ``/api/dso/facets``. Option counts reflect
-            the current state with the chip's own dimension held out, so
-            users can keep adding selections without the picker
-            collapsing to the first choice. */}
-        <Stack direction={{ xs: "column", md: "row" }} gap={2} sx={{ mt: 2, flexWrap: "wrap" }}>
-          <Box sx={{ width: { xs: "100%", md: 320 } }}>
+          <Box sx={{ width: 220 }}>
             <CatalogFilter
               value={catalogFilter}
               onChange={(codes) => {
@@ -621,7 +654,7 @@ export default function PlannerPage() {
               }))}
             />
           </Box>
-          <Box sx={{ width: { xs: "100%", md: 320 } }}>
+          <Box sx={{ width: 220 }}>
             <TypeFilter
               value={typeFilter}
               onChange={(codes) => {
@@ -634,7 +667,7 @@ export default function PlannerPage() {
               }))}
             />
           </Box>
-          <Box sx={{ width: { xs: "100%", md: 320 } }}>
+          <Box sx={{ width: 220 }}>
             <ConstellationFilter
               value={constellationFilter}
               onChange={(codes) => {
@@ -649,23 +682,34 @@ export default function PlannerPage() {
           </Box>
         </Stack>
 
-        {/* Imaging-focused sliders — only meaningful in Tonight mode.
-            In Anytime the page behaves like a catalog browser, so
-            visibility hours / exposure-time-equivalent magnitude cuts
-            / frame size don't belong. */}
-        {restrictTonight && (
-          <Stack
-            direction="row"
-            gap={3}
-            flexWrap="wrap"
-            sx={{ mt: 2, px: 1 }}
-          >
-            <Box sx={{ width: 160 }}>
-              <Typography variant="caption">
-                Min hours visible: {minHoursDraft.toFixed(1)}h
-              </Typography>
+        <Stack
+          direction="row"
+          gap={3}
+          flexWrap="wrap"
+          sx={{ mt: 2 }}
+        >
+          {restrictTonight && (
+            <Box sx={{ width: 180 }}>
+              <Stack direction="row" alignItems="center">
+                <Checkbox
+                  size="small"
+                  checked={hoursEnabled}
+                  onChange={(_, checked) => {
+                    setHoursEnabled(checked);
+                    setPagination((p) => ({ ...p, page: 0 }));
+                  }}
+                  sx={{ p: 0.25, ml: -0.5 }}
+                />
+                <Typography
+                  variant="caption"
+                  sx={{ color: hoursEnabled ? "text.primary" : "text.disabled" }}
+                >
+                  Min hours visible: {minHoursDraft.toFixed(1)}h
+                </Typography>
+              </Stack>
               <Slider
                 size="small"
+                disabled={!hoursEnabled}
                 value={minHoursDraft}
                 min={0}
                 max={12}
@@ -677,78 +721,124 @@ export default function PlannerPage() {
                 }}
               />
             </Box>
-            <Box sx={{ width: 160 }}>
-              <Typography variant="caption">
+          )}
+          <Box sx={{ width: 180 }}>
+            <Stack direction="row" alignItems="center">
+              <Checkbox
+                size="small"
+                checked={magEnabled}
+                onChange={(_, checked) => {
+                  setMagEnabled(checked);
+                  setPagination((p) => ({ ...p, page: 0 }));
+                }}
+                sx={{ p: 0.25 }}
+              />
+              <Typography
+                variant="caption"
+                sx={{ color: magEnabled ? "text.primary" : "text.disabled" }}
+              >
                 Brighter than mag {maxMagDraft.toFixed(1)}
               </Typography>
-              <Slider
+            </Stack>
+            <Slider
+              size="small"
+              disabled={!magEnabled}
+              value={-maxMagDraft}
+              min={-18}
+              max={0}
+              step={0.5}
+              scale={(v) => -v}
+              onChange={(_, v) => setMaxMagDraft(-(v as number))}
+              onChangeCommitted={(_, v) => {
+                setMaxMag(-(v as number));
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+            />
+          </Box>
+          <Box sx={{ width: 180 }}>
+            <Stack direction="row" alignItems="center">
+              <Checkbox
                 size="small"
-                value={maxMagDraft}
-                min={5}
-                max={18}
-                step={0.5}
-                onChange={(_, v) => setMaxMagDraft(v as number)}
-                onChangeCommitted={(_, v) => {
-                  setMaxMag(v as number);
+                checked={sizeEnabled}
+                onChange={(_, checked) => {
+                  setSizeEnabled(checked);
                   setPagination((p) => ({ ...p, page: 0 }));
                 }}
+                sx={{ p: 0.25 }}
               />
-            </Box>
-            <Box sx={{ width: 160 }}>
-              <Typography variant="caption">
+              <Typography
+                variant="caption"
+                sx={{ color: sizeEnabled ? "text.primary" : "text.disabled" }}
+              >
                 Min size: {minSizeDraft.toFixed(0)}'
               </Typography>
+            </Stack>
+            <Slider
+              size="small"
+              disabled={!sizeEnabled}
+              value={minSizeDraft}
+              min={0}
+              max={60}
+              step={1}
+              onChange={(_, v) => setMinSizeDraft(v as number)}
+              onChangeCommitted={(_, v) => {
+                setMinSize(v as number);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+            />
+          </Box>
+          {rigId != null && (
+            <Box sx={{ width: 200 }}>
+              <Tooltip
+                title={
+                  "Percentage of the rig's FOV filled by the DSO's angular size. " +
+                  "Uncheck to disable this filter entirely."
+                }
+                placement="top"
+                arrow
+              >
+                <Stack direction="row" alignItems="center">
+                  <Checkbox
+                    size="small"
+                    checked={coverageEnabled}
+                    onChange={(_, checked) => {
+                      setCoverageEnabled(checked);
+                      setPagination((p) => ({ ...p, page: 0 }));
+                    }}
+                    sx={{ p: 0.25, ml: -0.5 }}
+                  />
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      cursor: "help",
+                      color: coverageEnabled ? "text.primary" : "text.disabled",
+                    }}
+                  >
+                    Size in frame: {coverageRangeDraft[0]}% – {coverageRangeDraft[1]}%
+                  </Typography>
+                </Stack>
+              </Tooltip>
               <Slider
                 size="small"
-                value={minSizeDraft}
+                disabled={!coverageEnabled}
+                value={coverageRangeDraft}
                 min={0}
-                max={60}
-                step={1}
-                onChange={(_, v) => setMinSizeDraft(v as number)}
+                max={200}
+                step={5}
+                disableSwap
+                onChange={(_, v) =>
+                  setCoverageRangeDraft(v as [number, number])
+                }
                 onChangeCommitted={(_, v) => {
-                  setMinSize(v as number);
+                  setCoverageRange(v as [number, number]);
                   setPagination((p) => ({ ...p, page: 0 }));
                 }}
               />
             </Box>
-            {/* Gate on the local ``rigId`` (synchronous dropdown state),
-                not ``rigFov`` which is derived from the last query
-                response — using the response would leave the slider
-                visible for one round-trip after the user deselects
-                the rig. */}
-            {rigId != null && (
-              <Box sx={{ width: 180 }}>
-                <Tooltip
-                  title={
-                    "Percentage of the rig's FOV filled by the DSO's angular size. " +
-                    "Drag either thumb to narrow or widen the band; 0–200% = no filter."
-                  }
-                  placement="top"
-                  arrow
-                >
-                  <Typography variant="caption" sx={{ cursor: "help" }}>
-                    Size in frame: {coverageRangeDraft[0]}% – {coverageRangeDraft[1]}%
-                  </Typography>
-                </Tooltip>
-                <Slider
-                  size="small"
-                  value={coverageRangeDraft}
-                  min={0}
-                  max={200}
-                  step={5}
-                  disableSwap
-                  onChange={(_, v) =>
-                    setCoverageRangeDraft(v as [number, number])
-                  }
-                  onChangeCommitted={(_, v) => {
-                    setCoverageRange(v as [number, number]);
-                    setPagination((p) => ({ ...p, page: 0 }));
-                  }}
-                />
-              </Box>
-            )}
-          </Stack>
-        )}
+          )}
+        </Stack>
+        </Collapse>
+        </Box>
 
         <PlannerSortPanel
           sortBy={sortBy}
@@ -820,6 +910,8 @@ export default function PlannerPage() {
                   tz={tz}
                   restrictTonight={restrictTonight}
                   onClick={setDetailId}
+                  isFavorite={favoriteIds?.has(item.dso_id)}
+                  onToggleFavorite={handleToggleFavorite}
                 />
               ))}
             </Stack>

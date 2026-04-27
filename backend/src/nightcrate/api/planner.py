@@ -797,11 +797,17 @@ async def list_targets(
             continue
 
         mag_v = meta["mag_v"]
-        if mag_v is not None and float(mag_v) > max_mag_eff:
+        if max_magnitude is not None:
+            if mag_v is None or float(mag_v) > max_mag_eff:
+                continue
+        elif mag_v is not None and float(mag_v) > max_mag_eff:
             continue
 
         maj_axis = meta["maj_axis_arcmin"]
-        if min_size_eff > 0 and (maj_axis is None or float(maj_axis) < min_size_eff):
+        if min_size_arcmin is not None:
+            if maj_axis is None or float(maj_axis) < min_size_eff:
+                continue
+        elif min_size_eff > 0 and (maj_axis is None or float(maj_axis) < min_size_eff):
             continue
 
         coverage = (

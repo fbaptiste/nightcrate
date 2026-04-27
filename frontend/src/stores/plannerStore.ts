@@ -3,23 +3,15 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { SortEntry } from "@/lib/plannerSortFields";
 import type { FilterLine } from "@/api/planner";
 
-/** Target Planner selector state.
- *
- *  Persisted in localStorage so refresh keeps the user's last rig +
- *  location + horizon + filter-intent choice, plus their multi-sort
- *  preference. The page validates stored ids against the current
- *  locations / rigs / horizons queries on mount; ids that no longer
- *  resolve fall back to the default (default location / default
- *  horizon / no rig). Sort entries whose field no longer exists are
- *  filtered at serialization time rather than pruned from state —
- *  keeps them alive across Tonight/Anytime toggles. */
+export type PlannerTab = "tonight" | "anytime" | "wishlist";
+
 interface PlannerState {
   selectedLocationId: number | null;
   selectedHorizonId: number | null;
   selectedRigId: number | null;
   sortBy: SortEntry[];
   filterIntent: FilterLine[];
-  restrictTonight: boolean;
+  activeTab: PlannerTab;
   searchQuery: string;
   typeFilter: string[];
   catalogFilter: string[];
@@ -29,12 +21,15 @@ interface PlannerState {
   maxMag: number | null;
   minSize: number | null;
   coverageRange: [number, number] | null;
+  calendarLocationId: number | null;
+  calendarHorizonId: number | null;
+  calendarRigId: number | null;
   setSelectedLocationId: (id: number | null) => void;
   setSelectedHorizonId: (id: number | null) => void;
   setSelectedRigId: (id: number | null) => void;
   setSortBy: (sort: SortEntry[]) => void;
   setFilterIntent: (intent: FilterLine[]) => void;
-  setRestrictTonight: (v: boolean) => void;
+  setActiveTab: (tab: PlannerTab) => void;
   setSearchQuery: (q: string) => void;
   setTypeFilter: (f: string[]) => void;
   setCatalogFilter: (f: string[]) => void;
@@ -44,6 +39,9 @@ interface PlannerState {
   setMaxMag: (v: number | null) => void;
   setMinSize: (v: number | null) => void;
   setCoverageRange: (v: [number, number] | null) => void;
+  setCalendarLocationId: (id: number | null) => void;
+  setCalendarHorizonId: (id: number | null) => void;
+  setCalendarRigId: (id: number | null) => void;
 }
 
 export const usePlannerStore = create<PlannerState>()(
@@ -52,11 +50,9 @@ export const usePlannerStore = create<PlannerState>()(
       selectedLocationId: null,
       selectedHorizonId: null,
       selectedRigId: null,
-      // Tonight mode defaults to score:desc on the backend when
-      // sortBy is empty; in-memory default below covers Anytime.
       sortBy: [{ field: "primary_designation", dir: "asc" }],
       filterIntent: [],
-      restrictTonight: true,
+      activeTab: "tonight" as PlannerTab,
       searchQuery: "",
       typeFilter: [],
       catalogFilter: [],
@@ -66,12 +62,15 @@ export const usePlannerStore = create<PlannerState>()(
       maxMag: null,
       minSize: null,
       coverageRange: null,
+      calendarLocationId: null,
+      calendarHorizonId: null,
+      calendarRigId: null,
       setSelectedLocationId: (id) => set({ selectedLocationId: id }),
       setSelectedHorizonId: (id) => set({ selectedHorizonId: id }),
       setSelectedRigId: (id) => set({ selectedRigId: id }),
       setSortBy: (sort) => set({ sortBy: sort }),
       setFilterIntent: (intent) => set({ filterIntent: intent }),
-      setRestrictTonight: (v) => set({ restrictTonight: v }),
+      setActiveTab: (tab) => set({ activeTab: tab }),
       setSearchQuery: (q) => set({ searchQuery: q }),
       setTypeFilter: (f) => set({ typeFilter: f }),
       setCatalogFilter: (f) => set({ catalogFilter: f }),
@@ -81,16 +80,13 @@ export const usePlannerStore = create<PlannerState>()(
       setMaxMag: (v) => set({ maxMag: v }),
       setMinSize: (v) => set({ minSize: v }),
       setCoverageRange: (v) => set({ coverageRange: v }),
+      setCalendarLocationId: (id) => set({ calendarLocationId: id, calendarHorizonId: null }),
+      setCalendarHorizonId: (id) => set({ calendarHorizonId: id }),
+      setCalendarRigId: (id) => set({ calendarRigId: id }),
     }),
     {
       name: "nightcrate-planner",
       storage: createJSONStorage(() => localStorage),
-      // Bumped when the persisted shape changed incompatibly. v4 adds
-      // ``filterIntent``; older state has every other field so we
-      // carry those forward and default filterIntent to []. Without
-      // an explicit migrate, Zustand discards the entire v3 payload
-      // on mismatch — which would wipe the user's saved
-      // location/horizon/rig/sortBy for no reason.
       partialize: (state) => ({
         selectedLocationId: state.selectedLocationId,
         selectedHorizonId: state.selectedHorizonId,
