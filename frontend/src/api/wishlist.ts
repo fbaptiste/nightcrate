@@ -54,9 +54,16 @@ export interface PlanSummary {
   updated_at: string;
 }
 
+export interface SectionResponse {
+  id: number;
+  name: string;
+  sort_order: number;
+}
+
 export interface FavoriteFullItem {
   dso: FavoriteDsoSummary;
   sort_order: number;
+  section_id: number | null;
   plan_count: number;
   plans: PlanSummary[];
   created_at: string;
@@ -64,6 +71,7 @@ export interface FavoriteFullItem {
 
 export interface FavoritesFullResponse {
   items: FavoriteFullItem[];
+  sections: SectionResponse[];
   total: number;
 }
 
@@ -134,11 +142,57 @@ async function removeFavorite(dsoId: number): Promise<void> {
   await apiFetch<void>(`${PREFIX}/favorites/${dsoId}`, { method: "DELETE" });
 }
 
-async function reorderFavorites(dsoIds: number[]): Promise<FavoriteIdsResponse> {
+export interface ReorderItem {
+  dso_id: number;
+  section_id: number | null;
+  sort_order: number;
+}
+
+async function reorderFavorites(items: ReorderItem[]): Promise<FavoriteIdsResponse> {
   return apiFetch<FavoriteIdsResponse>(`${PREFIX}/favorites/reorder`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dso_ids: dsoIds }),
+    body: JSON.stringify({ items }),
+  });
+}
+
+export async function createSection(name: string): Promise<SectionResponse> {
+  return apiFetch<SectionResponse>(`${PREFIX}/sections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function renameSection(id: number, name: string): Promise<SectionResponse> {
+  return apiFetch<SectionResponse>(`${PREFIX}/sections/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteSection(id: number): Promise<void> {
+  await apiFetch<void>(`${PREFIX}/sections/${id}`, { method: "DELETE" });
+}
+
+export async function reorderSections(sectionIds: number[]): Promise<SectionResponse[]> {
+  return apiFetch<SectionResponse[]>(`${PREFIX}/sections/reorder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ section_ids: sectionIds }),
+  });
+}
+
+export async function moveFavorite(
+  dsoId: number,
+  sectionId: number | null,
+  sortOrder: number = 0,
+): Promise<void> {
+  await apiFetch<void>(`${PREFIX}/favorites/${dsoId}/move`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ section_id: sectionId, sort_order: sortOrder }),
   });
 }
 
@@ -186,6 +240,8 @@ export interface CalendarTargetRow {
   date_ranges: DateRangeOut[];
   notes: string | null;
   monthly_hours: number[];
+  section_id: number | null;
+  section_name: string | null;
 }
 
 export interface MoonPhaseMonth {
@@ -203,6 +259,7 @@ export interface CalendarResponse {
   horizon_name: string;
   months: string[];
   targets: CalendarTargetRow[];
+  sections: SectionResponse[];
   moon_phases: MoonPhaseMonth[];
 }
 
@@ -309,27 +366,35 @@ export function useReorderFavorites() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: reorderFavorites,
-    onMutate: async (dsoIds) => {
-      await qc.cancelQueries({ queryKey: wishlistKeys.favoritesFull });
-      const prev = qc.getQueryData<FavoritesFullResponse>(wishlistKeys.favoritesFull);
-      if (prev) {
-        const byDso = new Map(prev.items.map((i) => [i.dso.dso_id, i]));
-        const reordered: FavoriteFullItem[] = [];
-        for (const id of dsoIds) {
-          const item = byDso.get(id);
-          if (item) reordered.push(item);
-        }
-        qc.setQueryData<FavoritesFullResponse>(wishlistKeys.favoritesFull, {
-          items: reordered,
-          total: reordered.length,
-        });
-      }
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(wishlistKeys.favoritesFull, ctx.prev);
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wishlist", "calendar"] });
     },
   });
+}
+
+export function useSectionMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: wishlistKeys.favoritesFull });
+    qc.invalidateQueries({ queryKey: ["wishlist", "calendar"] });
+  };
+  const create = useMutation({ mutationFn: createSection, onSuccess: invalidate });
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => renameSection(id, name),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({ mutationFn: deleteSection, onSuccess: invalidate });
+  const reorder = useMutation({
+    mutationFn: reorderSections,
+    onSuccess: invalidate,
+  });
+  const move = useMutation({
+    mutationFn: ({ dsoId, sectionId, sortOrder }: {
+      dsoId: number; sectionId: number | null; sortOrder?: number;
+    }) => moveFavorite(dsoId, sectionId, sortOrder),
+    onSuccess: invalidate,
+  });
+  return { create, rename, remove, reorder, move };
 }
 
 export function usePlans(filter?: { locationId?: number; rigId?: number }) {

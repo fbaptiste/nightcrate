@@ -30,16 +30,21 @@ from nightcrate.api.wishlist_models import (
     CalendarResponse,
     CalendarTargetRow,
     CreatePlanRequest,
+    CreateSectionRequest,
     DateRange,
     DateRangeOut,
     FavoriteDsoSummary,
     FavoriteFullItem,
     FavoriteIdsResponse,
     FavoritesFullResponse,
+    MoveFavoriteRequest,
     PlanListResponse,
     PlanResponse,
     PlanSummary,
+    RenameSectionRequest,
     ReorderFavoritesRequest,
+    ReorderSectionsRequest,
+    SectionResponse,
     UpdatePlanRequest,
 )
 from nightcrate.api.wishlist_models import (
@@ -101,6 +106,80 @@ async def _load_date_ranges(conn, plan_ids: list[int]) -> dict[int, list[DateRan
     return result
 
 
+# ── Sections ─────────────────────────────────────────────────────────────────
+
+
+async def _load_sections(conn) -> list[SectionResponse]:
+    cursor = await conn.execute(
+        "SELECT id, name, sort_order FROM wishlist_section ORDER BY sort_order"
+    )
+    return [
+        SectionResponse(id=int(r["id"]), name=r["name"], sort_order=int(r["sort_order"]))
+        for r in await cursor.fetchall()
+    ]
+
+
+@router.get("/sections")
+async def list_sections() -> list[SectionResponse]:
+    async with get_db() as conn:
+        return await _load_sections(conn)
+
+
+@router.post("/sections", status_code=201)
+async def create_section(body: CreateSectionRequest) -> SectionResponse:
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM wishlist_section"
+        )
+        next_order = int((await cursor.fetchone())["next_order"])
+        cursor = await conn.execute(
+            "INSERT INTO wishlist_section (name, sort_order) VALUES (?, ?)",
+            (body.name, next_order),
+        )
+        section_id = cursor.lastrowid
+        await conn.commit()
+        return SectionResponse(id=section_id, name=body.name, sort_order=next_order)
+
+
+@router.put("/sections/{section_id}")
+async def rename_section(section_id: int, body: RenameSectionRequest) -> SectionResponse:
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT id, sort_order FROM wishlist_section WHERE id = ?",
+            (section_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Section not found")
+        await conn.execute(
+            "UPDATE wishlist_section SET name = ? WHERE id = ?",
+            (body.name, section_id),
+        )
+        await conn.commit()
+        return SectionResponse(id=section_id, name=body.name, sort_order=int(row["sort_order"]))
+
+
+@router.delete("/sections/{section_id}", status_code=204)
+async def delete_section(section_id: int) -> None:
+    async with get_db() as conn:
+        await conn.execute("DELETE FROM wishlist_section WHERE id = ?", (section_id,))
+        await conn.commit()
+
+
+@router.put("/sections/reorder")
+async def reorder_sections(
+    body: ReorderSectionsRequest,
+) -> list[SectionResponse]:
+    async with get_db() as conn:
+        for idx, sid in enumerate(body.section_ids):
+            await conn.execute(
+                "UPDATE wishlist_section SET sort_order = ? WHERE id = ?",
+                (idx, sid),
+            )
+        await conn.commit()
+        return await _load_sections(conn)
+
+
 # ── Favorites ────────────────────────────────────────────────────────────────
 
 
@@ -115,9 +194,11 @@ async def list_favorite_ids() -> FavoriteIdsResponse:
 @router.get("/favorites/full")
 async def list_favorites_full() -> FavoritesFullResponse:
     async with get_db() as conn:
+        sections = await _load_sections(conn)
+
         cursor = await conn.execute(
             """
-            SELECT ft.dso_id, ft.sort_order, ft.created_at,
+            SELECT ft.dso_id, ft.sort_order, ft.section_id, ft.created_at,
                    d.primary_designation, d.common_name, d.obj_type,
                    d.constellation, d.ra_deg, d.dec_deg, d.mag_v,
                    d.maj_axis_arcmin
@@ -187,13 +268,14 @@ async def list_favorites_full() -> FavoritesFullResponse:
                     maj_axis_arcmin=r["maj_axis_arcmin"],
                 ),
                 sort_order=int(r["sort_order"]),
+                section_id=int(r["section_id"]) if r["section_id"] is not None else None,
                 plan_count=len(plans),
                 plans=plans,
                 created_at=r["created_at"],
             )
         )
 
-    return FavoritesFullResponse(items=items, total=len(items))
+    return FavoritesFullResponse(items=items, sections=sections, total=len(items))
 
 
 @router.post("/favorites", status_code=200)
@@ -237,14 +319,24 @@ async def remove_favorite(dso_id: int) -> None:
 @router.put("/favorites/reorder")
 async def reorder_favorites(body: ReorderFavoritesRequest) -> FavoriteIdsResponse:
     async with get_db() as conn:
-        for idx, dso_id in enumerate(body.dso_ids):
+        for item in body.items:
             await conn.execute(
-                "UPDATE favorite_target SET sort_order = ? WHERE dso_id = ?",
-                (idx, dso_id),
+                "UPDATE favorite_target SET sort_order = ?, section_id = ? WHERE dso_id = ?",
+                (item.sort_order, item.section_id, item.dso_id),
             )
         await conn.commit()
 
     return await list_favorite_ids()
+
+
+@router.put("/favorites/{dso_id}/move")
+async def move_favorite(dso_id: int, body: MoveFavoriteRequest) -> None:
+    async with get_db() as conn:
+        await conn.execute(
+            "UPDATE favorite_target SET section_id = ?, sort_order = ? WHERE dso_id = ?",
+            (body.section_id, body.sort_order, dso_id),
+        )
+        await conn.commit()
 
 
 # ── Plans ────────────────────────────────────────────────────────────────────
@@ -350,8 +442,12 @@ async def create_plan(body: CreatePlanRequest) -> PlanResponse:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    body.dso_id, body.location_id, body.horizon_id,
-                    body.rig_id, body.moon_sep_deg, body.notes,
+                    body.dso_id,
+                    body.location_id,
+                    body.horizon_id,
+                    body.rig_id,
+                    body.moon_sep_deg,
+                    body.notes,
                 ),
             )
             plan_id = cursor.lastrowid
@@ -558,12 +654,15 @@ async def get_calendar_data(
         plan_cursor = await conn.execute(
             """
             SELECT tp.id AS plan_id, tp.dso_id, tp.notes,
-                   d.primary_designation, d.common_name
+                   d.primary_designation, d.common_name,
+                   ft.section_id, ws.name AS section_name,
+                   COALESCE(ws.sort_order, 999999) AS section_sort
             FROM target_plan tp
             JOIN dso d ON d.id = tp.dso_id
             JOIN favorite_target ft ON ft.dso_id = tp.dso_id
+            LEFT JOIN wishlist_section ws ON ws.id = ft.section_id
             WHERE tp.location_id = ? AND tp.horizon_id = ? AND tp.rig_id = ?
-            ORDER BY ft.sort_order
+            ORDER BY section_sort, ft.sort_order
             """,
             (location_id, horizon_id, rig_id),
         )
@@ -571,10 +670,9 @@ async def get_calendar_data(
 
         all_plan_ids = [int(r["plan_id"]) for r in plan_rows]
         ranges_by_plan = await _load_date_ranges(conn, all_plan_ids)
+        sections = await _load_sections(conn)
 
-    plans_with_ranges = [
-        r for r in plan_rows if ranges_by_plan.get(int(r["plan_id"]))
-    ]
+    plans_with_ranges = [r for r in plan_rows if ranges_by_plan.get(int(r["plan_id"]))]
 
     empty = CalendarResponse(
         location_id=location_id,
@@ -585,6 +683,7 @@ async def get_calendar_data(
         horizon_name="",
         months=[],
         targets=[],
+        sections=[],
         moon_phases=[],
     )
     if not plans_with_ranges:
@@ -602,6 +701,8 @@ async def get_calendar_data(
             date_ranges=ranges_by_plan.get(int(r["plan_id"]), []),
             notes=r["notes"],
             monthly_hours=[],
+            section_id=int(r["section_id"]) if r["section_id"] else None,
+            section_name=r["section_name"],
         )
         for r in plans_with_ranges
     ]
@@ -615,6 +716,7 @@ async def get_calendar_data(
         horizon_name="",
         months=month_labels,
         targets=targets_out,
+        sections=sections,
         moon_phases=[
             MoonPhaseMonthOut(
                 month=mp.month,

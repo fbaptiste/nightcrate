@@ -1,38 +1,43 @@
 /**
  * Wishlist tab content for the Target Planner.
  *
- * Shows all favorited targets in two sections:
- *   - Unassigned (no plans yet) — at the top to nudge planning
- *   - Planned (>= 1 assignment) — grouped by target with inline plans
- *
- * A List / Calendar toggle switches between the list view and the
- * Gantt-style calendar (added in a later phase).
+ * Planned targets are organized into user-created sections with
+ * cross-container drag-and-drop (dnd-kit Multiple Containers pattern).
+ * Items can be dragged between sections or reordered within a section.
+ * Sections themselves can be reordered.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
-  closestCenter,
+  closestCorners,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
   sortableKeyboardCoordinates,
   useSortable,
-  arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import Chip from "@mui/material/Chip";
+import Collapse from "@mui/material/Collapse";
 import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
+import Menu from "@mui/material/Menu";
+import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
@@ -42,15 +47,21 @@ import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import EditIcon from "@mui/icons-material/Edit";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ListIcon from "@mui/icons-material/List";
+import MoveDownIcon from "@mui/icons-material/MoveDown";
 import StarIcon from "@mui/icons-material/Star";
 import {
   useFavoritesFull,
   useRemoveFavorite,
   useDeletePlan,
   useReorderFavorites,
+  useSectionMutations,
   type FavoriteFullItem,
   type PlanSummary,
+  type SectionResponse,
+  type ReorderItem,
 } from "@/api/wishlist";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { displayConstellation } from "@/lib/constellations";
@@ -68,6 +79,50 @@ interface PlanAssignmentEditorState {
   planId: number | null;
 }
 
+const UNSECTIONED_ID = "__unsectioned__";
+
+interface SectionGroup {
+  id: string;
+  name: string;
+  sectionDbId: number | null;
+  items: FavoriteFullItem[];
+}
+
+function isFullyPlanned(i: FavoriteFullItem): boolean {
+  return i.plan_count > 0 && i.plans.some((p) => p.date_ranges.length > 0);
+}
+
+function buildSectionGroups(
+  items: FavoriteFullItem[],
+  sections: SectionResponse[],
+): SectionGroup[] {
+  const planned = items.filter(isFullyPlanned);
+  const bySection = new Map<number | null, FavoriteFullItem[]>();
+  for (const item of planned) {
+    const key = item.section_id;
+    const list = bySection.get(key) ?? [];
+    list.push(item);
+    bySection.set(key, list);
+  }
+  const groups: SectionGroup[] = [];
+  const general = bySection.get(null) ?? [];
+  groups.push({
+    id: UNSECTIONED_ID,
+    name: "General",
+    sectionDbId: null,
+    items: general,
+  });
+  for (const sec of sections) {
+    groups.push({
+      id: `section-${sec.id}`,
+      name: sec.name,
+      sectionDbId: sec.id,
+      items: bySection.get(sec.id) ?? [],
+    });
+  }
+  return groups;
+}
+
 export default function WishlistTab() {
   const [subView, setSubView] = useState<SubView>("list");
   const [editorState, setEditorState] = useState<PlanAssignmentEditorState>({
@@ -79,17 +134,160 @@ export default function WishlistTab() {
   const removeFavorite = useRemoveFavorite();
   const deletePlan = useDeletePlan();
   const reorderFavorites = useReorderFavorites();
+  const sectionMutations = useSectionMutations();
+
+  const items = data?.items ?? [];
+  const sections = data?.sections ?? [];
+  const unassigned = items.filter((i) => !isFullyPlanned(i));
+
+  const [localGroups, setLocalGroups] = useState<SectionGroup[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+
+  const toggleCollapse = useCallback((groupId: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    setLocalGroups(buildSectionGroups(items, sections));
+  }, [items, sections]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const items = data?.items ?? [];
-  const isFullyPlanned = (i: FavoriteFullItem) =>
-    i.plan_count > 0 && i.plans.some((p) => p.date_ranges.length > 0);
-  const unassigned = items.filter((i) => !isFullyPlanned(i));
-  const planned = items.filter(isFullyPlanned);
+  const findContainer = useCallback(
+    (id: string): string | null => {
+      if (id.startsWith("section-") || id === UNSECTIONED_ID) return id;
+      for (const g of localGroups) {
+        if (g.items.some((i) => `item-${i.dso.dso_id}` === id)) return g.id;
+      }
+      return null;
+    },
+    [localGroups],
+  );
+
+  const activeItem = useMemo(() => {
+    if (!activeId || !activeId.startsWith("item-")) return null;
+    const dsoId = Number(activeId.replace("item-", ""));
+    for (const g of localGroups) {
+      const found = g.items.find((i) => i.dso.dso_id === dsoId);
+      if (found) return found;
+    }
+    return null;
+  }, [activeId, localGroups]);
+
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(String(event.active.id));
+  }
+
+  function handleDragOver(event: DragOverEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    const activeIdStr = String(active.id);
+    const overIdStr = String(over.id);
+    if (!activeIdStr.startsWith("item-")) return;
+
+    const activeContainer = findContainer(activeIdStr);
+    let overContainer = findContainer(overIdStr);
+    if (overIdStr.startsWith("section-") || overIdStr === UNSECTIONED_ID) {
+      overContainer = overIdStr;
+    }
+    if (!activeContainer || !overContainer || activeContainer === overContainer) return;
+
+    setLocalGroups((prev) => {
+      const activeGroupIdx = prev.findIndex((g) => g.id === activeContainer);
+      const overGroupIdx = prev.findIndex((g) => g.id === overContainer);
+      if (activeGroupIdx === -1 || overGroupIdx === -1) return prev;
+
+      const activeItems = [...prev[activeGroupIdx].items];
+      const overItems = [...prev[overGroupIdx].items];
+      const itemIdx = activeItems.findIndex((i) => `item-${i.dso.dso_id}` === activeIdStr);
+      if (itemIdx === -1) return prev;
+
+      const [moved] = activeItems.splice(itemIdx, 1);
+      const overItemIdx = overItems.findIndex((i) => `item-${i.dso.dso_id}` === overIdStr);
+      overItems.splice(overItemIdx >= 0 ? overItemIdx : overItems.length, 0, moved);
+
+      const next = [...prev];
+      next[activeGroupIdx] = { ...next[activeGroupIdx], items: activeItems };
+      next[overGroupIdx] = { ...next[overGroupIdx], items: overItems };
+      return next;
+    });
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveId(null);
+    if (!over || active.id === over.id) return;
+
+    const activeIdStr = String(active.id);
+    const overIdStr = String(over.id);
+
+    if (activeIdStr.startsWith("item-")) {
+      const container = findContainer(activeIdStr);
+      const overContainer = findContainer(overIdStr);
+      if (container && container === overContainer) {
+        setLocalGroups((prev) => {
+          const gIdx = prev.findIndex((g) => g.id === container);
+          if (gIdx === -1) return prev;
+          const items = [...prev[gIdx].items];
+          const oldIdx = items.findIndex((i) => `item-${i.dso.dso_id}` === activeIdStr);
+          const newIdx = items.findIndex((i) => `item-${i.dso.dso_id}` === overIdStr);
+          if (oldIdx === -1 || newIdx === -1) return prev;
+          const [moved] = items.splice(oldIdx, 1);
+          items.splice(newIdx, 0, moved);
+          const next = [...prev];
+          next[gIdx] = { ...next[gIdx], items };
+          return next;
+        });
+      }
+      persistOrder();
+    } else if (activeIdStr.startsWith("section-") && overIdStr.startsWith("section-")) {
+      setLocalGroups((prev) => {
+        const oldIdx = prev.findIndex((g) => g.id === activeIdStr);
+        const newIdx = prev.findIndex((g) => g.id === overIdStr);
+        if (oldIdx <= 0 || newIdx <= 0) return prev;
+        const next = [...prev];
+        const [moved] = next.splice(oldIdx, 1);
+        next.splice(newIdx, 0, moved);
+        const ids = next.filter((g) => g.sectionDbId !== null).map((g) => g.sectionDbId!);
+        if (ids.length > 0) sectionMutations.reorder.mutate(ids);
+        return next;
+      });
+    }
+  }
+
+  function persistOrder() {
+    setTimeout(() => {
+      setLocalGroups((current) => {
+        const reorderItems: ReorderItem[] = [];
+        for (const group of current) {
+          for (let i = 0; i < group.items.length; i++) {
+            reorderItems.push({
+              dso_id: group.items[i].dso.dso_id,
+              section_id: group.sectionDbId,
+              sort_order: i,
+            });
+          }
+        }
+        if (reorderItems.length > 0) {
+          reorderFavorites.mutate(reorderItems);
+        }
+        return current;
+      });
+    }, 0);
+  }
+
+  function handleAddSection() {
+    sectionMutations.create.mutate("New Section");
+  }
 
   if (isLoading) {
     return (
@@ -142,6 +340,7 @@ export default function WishlistTab() {
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 1.5, pb: 1.5 }}>
       {subView === "list" ? (
         <Stack gap={2}>
+          {/* Unassigned section — no drag */}
           {unassigned.length > 0 && (
             <>
               <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
@@ -152,52 +351,107 @@ export default function WishlistTab() {
                   <FavoriteCard
                     key={fav.dso.dso_id}
                     item={fav}
+                    sections={sections}
                     onRemoveFavorite={() => removeFavorite.mutate(fav.dso.dso_id)}
                     onAddPlan={() => setEditorState({ open: true, dsoId: fav.dso.dso_id, planId: null })}
                     onEditPlan={(planId) => setEditorState({ open: true, dsoId: fav.dso.dso_id, planId })}
                     onDeletePlan={(planId) => deletePlan.mutate(planId)}
+                    onMoveToSection={(sectionId) => sectionMutations.move.mutate({ dsoId: fav.dso.dso_id, sectionId })}
                   />
                 ))}
               </Stack>
             </>
           )}
 
-          {planned.length > 0 && (
+          {/* Planned sections — cross-container DnD */}
+          {localGroups.length > 0 && (
             <>
               {unassigned.length > 0 && <Divider sx={{ my: 1 }} />}
-              <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
-                Planned ({planned.length})
-              </Typography>
+              <Stack direction="row" justifyContent="space-between" alignItems="center">
+                <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 1.5 }}>
+                  Planned
+                </Typography>
+                <Button
+                  size="small"
+                  startIcon={<AddIcon />}
+                  onClick={handleAddSection}
+                  sx={{ textTransform: "none" }}
+                >
+                  Add Section
+                </Button>
+              </Stack>
+
               <DndContext
                 sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={(event: DragEndEvent) => {
-                  const { active, over } = event;
-                  if (!over || active.id === over.id) return;
-                  const allDsoIds = items.map((i) => i.dso.dso_id);
-                  const oldIdx = allDsoIds.indexOf(Number(active.id));
-                  const newIdx = allDsoIds.indexOf(Number(over.id));
-                  if (oldIdx === -1 || newIdx === -1) return;
-                  reorderFavorites.mutate(arrayMove(allDsoIds, oldIdx, newIdx));
-                }}
+                collisionDetection={closestCorners}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDragEnd={handleDragEnd}
               >
-              <SortableContext
-                items={planned.map((i) => i.dso.dso_id)}
-                strategy={verticalListSortingStrategy}
-              >
-              <Stack gap={1}>
-                {planned.map((fav) => (
-                  <SortableFavoriteCard
-                    key={fav.dso.dso_id}
-                    item={fav}
-                    onRemoveFavorite={() => removeFavorite.mutate(fav.dso.dso_id)}
-                    onAddPlan={() => setEditorState({ open: true, dsoId: fav.dso.dso_id, planId: null })}
-                    onEditPlan={(planId) => setEditorState({ open: true, dsoId: fav.dso.dso_id, planId })}
-                    onDeletePlan={(planId) => deletePlan.mutate(planId)}
-                  />
-                ))}
-              </Stack>
-              </SortableContext>
+                <Stack gap={2}>
+                  {/* General (pinned, not sortable as a section) */}
+                  {localGroups.length > 0 && localGroups[0].id === UNSECTIONED_ID && (
+                    <DroppableSection
+                      key={UNSECTIONED_ID}
+                      group={localGroups[0]}
+                      sections={sections}
+                      collapsed={collapsedSections.has(UNSECTIONED_ID)}
+                      onToggleCollapse={() => toggleCollapse(UNSECTIONED_ID)}
+                      onRename={() => {}}
+                      onDelete={() => {}}
+                      onRemoveFavorite={(dsoId) => removeFavorite.mutate(dsoId)}
+                      onAddPlan={(dsoId) => setEditorState({ open: true, dsoId, planId: null })}
+                      onEditPlan={(dsoId, planId) => setEditorState({ open: true, dsoId, planId })}
+                      onDeletePlan={(planId) => deletePlan.mutate(planId)}
+                      onMoveToSection={(dsoId, sectionId) => sectionMutations.move.mutate({ dsoId, sectionId })}
+                    />
+                  )}
+
+                  {/* Named sections — sortable */}
+                  <SortableContext
+                    items={localGroups.filter((g) => g.sectionDbId !== null).map((g) => g.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {localGroups.filter((g) => g.sectionDbId !== null).map((group) => (
+                      <SortableSection
+                        key={group.id}
+                        group={group}
+                        sections={sections}
+                        collapsed={collapsedSections.has(group.id)}
+                        onToggleCollapse={() => toggleCollapse(group.id)}
+                        onRename={(name) => {
+                          if (group.sectionDbId) sectionMutations.rename.mutate({ id: group.sectionDbId, name });
+                        }}
+                        onDelete={() => {
+                          if (group.sectionDbId) sectionMutations.remove.mutate(group.sectionDbId);
+                        }}
+                        onRemoveFavorite={(dsoId) => removeFavorite.mutate(dsoId)}
+                        onAddPlan={(dsoId) => setEditorState({ open: true, dsoId, planId: null })}
+                        onEditPlan={(dsoId, planId) => setEditorState({ open: true, dsoId, planId })}
+                        onDeletePlan={(planId) => deletePlan.mutate(planId)}
+                        onMoveToSection={(dsoId, sectionId) => sectionMutations.move.mutate({ dsoId, sectionId })}
+                      />
+                    ))}
+                  </SortableContext>
+                </Stack>
+
+                <DragOverlay>
+                  {activeItem && (
+                    <Card variant="outlined" sx={{ borderRadius: 2, p: 1.5, opacity: 0.9 }}>
+                      <Stack direction="row" gap={1} alignItems="center">
+                        <ThumbnailCell dsoId={activeItem.dso.dso_id} size={48} />
+                        <Typography variant="body2" fontWeight={600}>
+                          {activeItem.dso.primary_designation}
+                        </Typography>
+                        {activeItem.dso.common_name && (
+                          <Typography variant="body2" color="text.secondary">
+                            {activeItem.dso.common_name}
+                          </Typography>
+                        )}
+                      </Stack>
+                    </Card>
+                  )}
+                </DragOverlay>
               </DndContext>
             </>
           )}
@@ -235,15 +489,9 @@ export default function WishlistTab() {
 }
 
 
-interface FavoriteCardProps {
-  item: FavoriteFullItem;
-  onRemoveFavorite: () => void;
-  onAddPlan: () => void;
-  onEditPlan: (planId: number) => void;
-  onDeletePlan: (planId: number) => void;
-}
+// ── Droppable Section ───────────────────────────────────────────────────────
 
-function SortableFavoriteCard(props: FavoriteCardProps) {
+function SortableSection(props: Omit<DroppableSectionProps, "sectionDragHandleProps">) {
   const {
     attributes,
     listeners,
@@ -251,7 +499,7 @@ function SortableFavoriteCard(props: FavoriteCardProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: props.item.dso.dso_id });
+  } = useSortable({ id: props.group.id });
 
   return (
     <Box
@@ -262,6 +510,177 @@ function SortableFavoriteCard(props: FavoriteCardProps) {
         opacity: isDragging ? 0.5 : 1,
       }}
     >
+      <DroppableSection {...props} sectionDragHandleProps={{ ...attributes, ...listeners }} />
+    </Box>
+  );
+}
+
+
+interface DroppableSectionProps {
+  group: SectionGroup;
+  sections: SectionResponse[];
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+  onRemoveFavorite: (dsoId: number) => void;
+  onAddPlan: (dsoId: number) => void;
+  onEditPlan: (dsoId: number, planId: number) => void;
+  onDeletePlan: (planId: number) => void;
+  onMoveToSection: (dsoId: number, sectionId: number | null) => void;
+  sectionDragHandleProps?: Record<string, unknown>;
+}
+
+function DroppableSection({
+  group,
+  sections,
+  collapsed,
+  onToggleCollapse,
+  onRename,
+  onDelete,
+  onRemoveFavorite,
+  onAddPlan,
+  onEditPlan,
+  onDeletePlan,
+  onMoveToSection,
+  sectionDragHandleProps,
+}: DroppableSectionProps) {
+  const { setNodeRef, isOver } = useDroppable({ id: group.id });
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(group.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const isUnsectioned = group.sectionDbId === null;
+
+  return (
+    <Box
+      ref={setNodeRef}
+      sx={{
+        borderRadius: 1,
+        border: 1,
+        borderColor: isOver ? "primary.main" : "divider",
+        bgcolor: isOver ? "action.hover" : "transparent",
+        p: 1,
+        minHeight: 40,
+        transition: "border-color 0.15s, background-color 0.15s",
+      }}
+    >
+      <Stack direction="row" alignItems="center" gap={0.5}>
+        {sectionDragHandleProps && collapsed && (
+          <Box {...sectionDragHandleProps} sx={{ cursor: "grab", color: "text.disabled", display: "flex" }}>
+            <DragIndicatorIcon sx={{ fontSize: 18 }} />
+          </Box>
+        )}
+        <IconButton size="small" onClick={onToggleCollapse} sx={{ p: 0.25 }}>
+          {collapsed ? <ExpandMoreIcon sx={{ fontSize: 18 }} /> : <ExpandLessIcon sx={{ fontSize: 18 }} />}
+        </IconButton>
+        {!isUnsectioned && editing ? (
+          <TextField
+            inputRef={inputRef}
+            size="small"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={() => { onRename(editName); setEditing(false); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { onRename(editName); setEditing(false); }
+              if (e.key === "Escape") setEditing(false);
+            }}
+            sx={{ flex: 1 }}
+          />
+        ) : (
+          <Typography
+            variant="subtitle2"
+            sx={{
+              flex: 1,
+              cursor: isUnsectioned ? "default" : "pointer",
+              color: isUnsectioned ? "text.secondary" : "text.primary",
+            }}
+            onClick={() => {
+              if (!isUnsectioned) { setEditName(group.name); setEditing(true); }
+            }}
+          >
+            {group.name}
+            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+              ({group.items.length})
+            </Typography>
+          </Typography>
+        )}
+        {!isUnsectioned && !editing && (
+          <Tooltip title="Delete section" arrow>
+            <IconButton size="small" onClick={onDelete}>
+              <DeleteOutlineIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Stack>
+
+      <Collapse in={!collapsed} unmountOnExit>
+        <SortableContext
+          items={group.items.map((i) => `item-${i.dso.dso_id}`)}
+          strategy={verticalListSortingStrategy}
+        >
+          <Stack gap={1} sx={{ mt: 1 }}>
+            {group.items.map((fav) => (
+              <SortableFavoriteCard
+                key={fav.dso.dso_id}
+                item={fav}
+                sections={sections}
+                onRemoveFavorite={() => onRemoveFavorite(fav.dso.dso_id)}
+                onAddPlan={() => onAddPlan(fav.dso.dso_id)}
+                onEditPlan={(planId) => onEditPlan(fav.dso.dso_id, planId)}
+                onDeletePlan={(planId) => onDeletePlan(planId)}
+                onMoveToSection={(sectionId) => onMoveToSection(fav.dso.dso_id, sectionId)}
+              />
+            ))}
+          </Stack>
+        </SortableContext>
+
+        {group.items.length === 0 && (
+          <Typography variant="caption" color="text.disabled" sx={{ textAlign: "center", display: "block", py: 1 }}>
+            Drop targets here
+          </Typography>
+        )}
+      </Collapse>
+    </Box>
+  );
+}
+
+
+// ── Sortable + plain cards ──────────────────────────────────────────────────
+
+interface FavoriteCardProps {
+  item: FavoriteFullItem;
+  sections: SectionResponse[];
+  onRemoveFavorite: () => void;
+  onAddPlan: () => void;
+  onEditPlan: (planId: number) => void;
+  onDeletePlan: (planId: number) => void;
+  onMoveToSection?: (sectionId: number | null) => void;
+}
+
+function SortableFavoriteCard(props: FavoriteCardProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `item-${props.item.dso.dso_id}` });
+
+  return (
+    <Box
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0 : 1,
+      }}
+    >
       <FavoriteCard {...props} dragHandleProps={{ ...attributes, ...listeners }} />
     </Box>
   );
@@ -270,15 +689,18 @@ function SortableFavoriteCard(props: FavoriteCardProps) {
 
 function FavoriteCard({
   item,
+  sections,
   onRemoveFavorite,
   onAddPlan,
   onEditPlan,
   onDeletePlan,
+  onMoveToSection,
   dragHandleProps,
 }: FavoriteCardProps & {
   dragHandleProps?: Record<string, unknown>;
 }) {
   const { dso, plans } = item;
+  const [moveAnchor, setMoveAnchor] = useState<HTMLElement | null>(null);
 
   return (
     <Card variant="outlined" sx={{ borderRadius: 2, p: 1.5 }}>
@@ -356,20 +778,54 @@ function FavoriteCard({
           </Stack>
         </Stack>
 
-        <Tooltip title="Remove from wishlist" arrow>
-          <IconButton
-            size="small"
-            onClick={onRemoveFavorite}
-            sx={{ color: RIG_ORANGE, flexShrink: 0 }}
-          >
-            <StarIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        <Stack sx={{ flexShrink: 0 }} gap={0.25}>
+          <Tooltip title="Remove from wishlist" arrow>
+            <IconButton
+              size="small"
+              onClick={onRemoveFavorite}
+              sx={{ color: RIG_ORANGE }}
+            >
+              <StarIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          {onMoveToSection && sections.length > 0 && (
+            <>
+              <Tooltip title="Move to section" arrow>
+                <IconButton size="small" onClick={(e) => setMoveAnchor(e.currentTarget)}>
+                  <MoveDownIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+              <Menu
+                anchorEl={moveAnchor}
+                open={Boolean(moveAnchor)}
+                onClose={() => setMoveAnchor(null)}
+              >
+                <MenuItem
+                  onClick={() => { onMoveToSection(null); setMoveAnchor(null); }}
+                  selected={item.section_id === null}
+                >
+                  General
+                </MenuItem>
+                {sections.map((sec) => (
+                  <MenuItem
+                    key={sec.id}
+                    onClick={() => { onMoveToSection(sec.id); setMoveAnchor(null); }}
+                    selected={item.section_id === sec.id}
+                  >
+                    {sec.name}
+                  </MenuItem>
+                ))}
+              </Menu>
+            </>
+          )}
+        </Stack>
       </Stack>
     </Card>
   );
 }
 
+
+// ── Plan row ────────────────────────────────────────────────────────────────
 
 function PlanRow({
   dsoId,

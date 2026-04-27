@@ -18,6 +18,32 @@ class DateRangeOut(BaseModel):
     end_date: str
 
 
+# ── Sections ─────────────────────────────────────────────────────────────────
+
+
+class SectionResponse(BaseModel):
+    id: int
+    name: str
+    sort_order: int
+
+
+class CreateSectionRequest(BaseModel):
+    name: str = "New Section"
+
+
+class RenameSectionRequest(BaseModel):
+    name: str
+
+
+class ReorderSectionsRequest(BaseModel):
+    section_ids: list[int]
+
+
+class MoveFavoriteRequest(BaseModel):
+    section_id: int | None = None
+    sort_order: int = 0
+
+
 # ── Favorites ────────────────────────────────────────────────────────────────
 
 
@@ -59,6 +85,7 @@ class PlanSummary(BaseModel):
 class FavoriteFullItem(BaseModel):
     dso: FavoriteDsoSummary
     sort_order: int
+    section_id: int | None
     plan_count: int
     plans: list[PlanSummary]
     created_at: str
@@ -66,11 +93,18 @@ class FavoriteFullItem(BaseModel):
 
 class FavoritesFullResponse(BaseModel):
     items: list[FavoriteFullItem]
+    sections: list[SectionResponse]
     total: int
 
 
+class ReorderItemIn(BaseModel):
+    dso_id: int
+    section_id: int | None = None
+    sort_order: int = 0
+
+
 class ReorderFavoritesRequest(BaseModel):
-    dso_ids: list[int]
+    items: list[ReorderItemIn]
 
 
 # ── Plans ────────────────────────────────────────────────────────────────────
@@ -130,6 +164,8 @@ class CalendarTargetRow(BaseModel):
     date_ranges: list[DateRangeOut]
     notes: str | None
     monthly_hours: list[float]
+    section_id: int | None = None
+    section_name: str | None = None
 
 
 class MoonPhaseMonth(BaseModel):
@@ -147,4 +183,5 @@ class CalendarResponse(BaseModel):
     horizon_name: str
     months: list[str]
     targets: list[CalendarTargetRow]
+    sections: list[SectionResponse]
     moon_phases: list[MoonPhaseMonth]

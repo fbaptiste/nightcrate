@@ -1,11 +1,20 @@
 -- Target wishlist & planning (v0.30.0)
 -- depends: 0024.mount_worm_period
 
+-- User-created sections for organizing planned targets.
+CREATE TABLE IF NOT EXISTS wishlist_section (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL DEFAULT 'New Section',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Lightweight bookmark: "I'm interested in this DSO."
 CREATE TABLE IF NOT EXISTS favorite_target (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     dso_id     INTEGER NOT NULL UNIQUE REFERENCES dso(id) ON DELETE CASCADE,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    section_id INTEGER REFERENCES wishlist_section(id) ON DELETE SET NULL,
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 

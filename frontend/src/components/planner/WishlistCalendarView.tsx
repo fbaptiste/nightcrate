@@ -26,9 +26,14 @@ import { usePlannerStore } from "@/stores/plannerStore";
 import { RIG_ORANGE } from "@/lib/rigColors";
 
 const MARGIN = { top: 60, right: 10, bottom: 20, left: 120 };
+const SECTION_BAR_W = 24;
 const ROW_HEIGHT = 32;
+const MIN_SECTION_HEIGHT = 80;
+const SECTION_GAP = 12;
 const MIN_HEIGHT = 200;
 const MONTH_COL_MIN_PX = 80;
+
+const SECTION_COLORS = ["#2196f3", "#ff9800", "#4caf50", "#9c27b0", "#00bcd4", "#f44336"];
 const REF_YEAR = 2000;
 
 function toRefDate(iso: string): Date {
@@ -203,15 +208,80 @@ function CalendarChart({
   const fmtLabel = (t: { primary_designation: string; common_name: string | null }) =>
     t.common_name ? `${t.primary_designation} (${t.common_name})` : t.primary_designation;
 
+  const hasSections = data.sections.length > 0 &&
+    data.targets.some((t) => t.section_id != null);
+  const sectionBarW = hasSections ? SECTION_BAR_W : 0;
+
+  const sectionGroups = useMemo(() => {
+    const groups: {
+      id: number | null; name: string; startRow: number; count: number;
+      yStart: number; height: number;
+    }[] = [];
+    let currentId: number | null | undefined = undefined;
+    for (let i = 0; i < data.targets.length; i++) {
+      const t = data.targets[i];
+      if (t.section_id !== currentId) {
+        groups.push({
+          id: t.section_id,
+          name: t.section_name ?? "General",
+          startRow: i,
+          count: 1,
+          yStart: 0,
+          height: 0,
+        });
+        currentId = t.section_id;
+      } else {
+        groups[groups.length - 1].count++;
+      }
+    }
+    if (hasSections) {
+      let yOffset = 0;
+      for (const g of groups) {
+        g.yStart = yOffset;
+        g.height = Math.max(MIN_SECTION_HEIGHT, g.count * ROW_HEIGHT);
+        yOffset += g.height + SECTION_GAP;
+      }
+    }
+    return groups;
+  }, [data.targets, hasSections]);
+
   const maxLabelLen = useMemo(
     () => Math.max(...data.targets.map((t) => fmtLabel(t).length), 6),
     [data.targets],
   );
-  const leftMargin = Math.max(MARGIN.left, maxLabelLen * 7 + 8);
+  const leftMargin = Math.max(MARGIN.left, maxLabelLen * 7 + 8) + sectionBarW;
   const innerW = 12 * MONTH_COL_MIN_PX;
   const svgWidth = leftMargin + innerW + MARGIN.right;
-  const innerH = data.targets.length * ROW_HEIGHT;
+
+  const rowPositions = useMemo(() => {
+    const positions: { y: number; h: number }[] = [];
+    if (!hasSections || sectionGroups.length === 0) {
+      for (let i = 0; i < data.targets.length; i++) {
+        positions.push({ y: i * ROW_HEIGHT, h: ROW_HEIGHT });
+      }
+    } else {
+      for (const sg of sectionGroups) {
+        const rowH = sg.count > 0 ? sg.height / sg.count : ROW_HEIGHT;
+        const contentH = sg.count * rowH;
+        const vPad = (sg.height - contentH) / 2;
+        for (let i = 0; i < sg.count; i++) {
+          positions.push({
+            y: sg.yStart + vPad + i * rowH,
+            h: rowH,
+          });
+        }
+      }
+    }
+    return positions;
+  }, [data.targets.length, hasSections, sectionGroups]);
+
+  const innerH = hasSections && sectionGroups.length > 0
+    ? sectionGroups[sectionGroups.length - 1].yStart + sectionGroups[sectionGroups.length - 1].height
+    : data.targets.length * ROW_HEIGHT;
   const chartHeight = Math.max(MIN_HEIGHT, MARGIN.top + innerH + MARGIN.bottom + 1);
+
+  const rowY = (idx: number) => rowPositions[idx]?.y ?? 0;
+  const rowH = (idx: number) => rowPositions[idx]?.h ?? ROW_HEIGHT;
 
   const monthDates = useMemo(
     () => Array.from({ length: 12 }, (_, i) => new Date(Date.UTC(REF_YEAR, i, 1))),
@@ -225,16 +295,6 @@ function CalendarChart({
   const x = useMemo(
     () => d3.scaleTime().domain([monthDates[0], endDate]).range([0, innerW]),
     [monthDates, endDate, innerW],
-  );
-
-  const y = useMemo(
-    () =>
-      d3
-        .scaleBand<number>()
-        .domain(data.targets.map((_, i) => i))
-        .range([0, innerH])
-        .padding(0.15),
-    [data.targets.length, innerH],
   );
 
   const snapXPositions = useMemo(() => {
@@ -273,7 +333,11 @@ function CalendarChart({
       return;
     }
 
-    const rowIdx = Math.floor(my / ROW_HEIGHT);
+    let rowIdx = -1;
+    for (let i = 0; i < rowPositions.length; i++) {
+      const rp = rowPositions[i];
+      if (my >= rp.y && my < rp.y + rp.h) { rowIdx = i; break; }
+    }
     const target = rowIdx >= 0 && rowIdx < data.targets.length ? data.targets[rowIdx] : null;
 
     let snapX = mx;
@@ -363,9 +427,9 @@ function CalendarChart({
             <rect
               key={`bg-${rowIdx}`}
               x={0}
-              y={y(rowIdx)!}
+              y={rowY(rowIdx)}
               width={innerW}
-              height={y.bandwidth()}
+              height={rowH(rowIdx)}
               fill={rowIdx % 2 === 0 ? "transparent" : (isDark ? "#ffffff06" : "#00000004")}
             />
           ))}
@@ -413,9 +477,10 @@ function CalendarChart({
               target.date_ranges.flatMap((dr: DateRangeOut, rIdx: number) => {
                 const rs = toRefDate(dr.start_date);
                 const re = toRefDate(dr.end_date);
-                const by = y(rowIdx)!;
-                const bh = y.bandwidth();
-                const barProps = { y: by + bh * 0.35, height: bh * 0.3, rx: 2, fill: barColor, opacity: 0.8 };
+                const by = rowY(rowIdx);
+                const bh = rowH(rowIdx);
+                const barThick = 8;
+                const barProps = { y: by + (bh - barThick) / 2, height: barThick, rx: 2, fill: barColor, opacity: 0.8 };
 
                 if (rs <= re) {
                   return [(
@@ -484,8 +549,8 @@ function CalendarChart({
               <line
                 key={`sep-${rowIdx}`}
                 x1={0} x2={innerW}
-                y1={y(rowIdx)! - y.paddingInner() * y.step() / 2}
-                y2={y(rowIdx)! - y.paddingInner() * y.step() / 2}
+                y1={rowY(rowIdx)}
+                y2={rowY(rowIdx)}
                 stroke={isDark ? "#333333" : "#e0e0e0"} strokeWidth={0.5}
               />
             ) : null,
@@ -502,12 +567,44 @@ function CalendarChart({
           )}
         </g>
 
+        {/* Section bars — vertical colored bars with rotated names */}
+        {hasSections && sectionGroups.map((sg, sgIdx) => {
+          const barY = MARGIN.top + 1 + sg.yStart;
+          const barH = sg.height;
+          const color = SECTION_COLORS[sgIdx % SECTION_COLORS.length];
+          return (
+            <g key={`sg-${sg.id ?? "none"}`}>
+              <rect
+                x={2}
+                y={barY}
+                width={sectionBarW - 4}
+                height={barH - 2}
+                rx={3}
+                fill={color}
+                opacity={0.25}
+              />
+              <text
+                x={sectionBarW / 2 + 1}
+                y={barY + barH / 2}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={10}
+                fontWeight={600}
+                fill={color}
+                transform={`rotate(-90, ${sectionBarW / 2 + 1}, ${barY + barH / 2})`}
+              >
+                {sg.name}
+              </text>
+            </g>
+          );
+        })}
+
         {/* Row labels — clickable to open assignment editor */}
         {data.targets.map((target, rowIdx) => (
           <text
             key={`label-${rowIdx}`}
             x={leftMargin - 8}
-            y={MARGIN.top + 1 + y(rowIdx)! + y.bandwidth() / 2}
+            y={MARGIN.top + 1 + rowY(rowIdx) + rowH(rowIdx) / 2}
             textAnchor="end"
             dominantBaseline="middle"
             fontSize={13}

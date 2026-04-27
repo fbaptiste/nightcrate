@@ -248,7 +248,12 @@ class TestFavorites:
         )
         resp = client.put(
             "/api/planner/wishlist/favorites/reorder",
-            json={"dso_ids": [ids["ngc7000_id"], ids["m42_id"]]},
+            json={
+                "items": [
+                    {"dso_id": ids["ngc7000_id"], "sort_order": 0},
+                    {"dso_id": ids["m42_id"], "sort_order": 1},
+                ],
+            },
         )
         assert resp.status_code == 200
         assert resp.json()["dso_ids"] == [ids["ngc7000_id"], ids["m42_id"]]
