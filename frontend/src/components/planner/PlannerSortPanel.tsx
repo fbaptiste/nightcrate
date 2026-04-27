@@ -71,7 +71,7 @@ export default function PlannerSortPanel({
   restrictTonight,
   rigSelected,
 }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -144,11 +144,11 @@ export default function PlannerSortPanel({
       expanded={expanded}
       onChange={(_, next) => setExpanded(next)}
       disableGutters
-      sx={{ mt: 2, mx: 1, boxShadow: "none", border: 1, borderColor: "divider" }}
+      sx={{ mt: 2, boxShadow: "none", bgcolor: "transparent", backgroundImage: "none", "&::before": { display: "none" } }}
     >
       <AccordionSummary
         expandIcon={<ExpandMoreIcon />}
-        sx={{ minHeight: 36, "& .MuiAccordionSummary-content": { my: 0.5 } }}
+        sx={{ minHeight: 36, px: 1, borderRadius: 1, bgcolor: "action.hover", "& .MuiAccordionSummary-content": { my: 0.5 } }}
       >
         <Stack direction="row" alignItems="center" gap={1.5} sx={{ width: "100%" }}>
           <Typography variant="body2" fontWeight={500}>
@@ -161,7 +161,7 @@ export default function PlannerSortPanel({
           )}
         </Stack>
       </AccordionSummary>
-      <AccordionDetails>
+      <AccordionDetails sx={{ px: 0 }}>
         <Stack gap={1.5}>
           <Box>
             <Typography

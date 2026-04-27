@@ -514,7 +514,7 @@ async def list_telescopes(
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = await conn.execute(
-            f"SELECT * FROM telescope {where} ORDER BY is_mine DESC, model_name"  # nosec B608 - table name from internal allow-list, not user input
+            f"SELECT * FROM telescope {where} ORDER BY model_name"  # nosec B608 - table name from internal allow-list, not user input
         )
         results = []
         for r in await rows.fetchall():
@@ -807,7 +807,7 @@ async def list_filters(
         if mine:
             conditions.append("is_mine = 1")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY is_mine DESC, model_name")  # nosec B608 - table name from internal allow-list, not user input
+        rows = await conn.execute(f"SELECT * FROM filter {where} ORDER BY model_name")  # nosec B608 - table name from internal allow-list, not user input
         results = []
         for r in await rows.fetchall():
             results.append(await _build_filter_response(conn, _row_to_dict(r)))
@@ -1401,6 +1401,6 @@ build_equipment_router(
     response_model=SoftwareResponse,
     response_builder=_build_software_response,
     name_column="name",
-    order_by="is_mine DESC, name",
+    order_by="name",
     check_detail_fn=lambda d: f"Invalid category: {d.get('category')}",
 )

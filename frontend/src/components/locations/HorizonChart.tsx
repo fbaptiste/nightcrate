@@ -150,14 +150,7 @@ export default function HorizonChart({
     [originalPoints],
   );
 
-  // Editor is always linear (WYSIWYG); readonly defaults to a centripetal
-  // Catmull-Rom spline but flips to linear when the raw-points overlay
-  // is on (so measurements join with straight segments).
-  const curve = useMemo(
-    () =>
-      mode === "editable" || showRawPoints ? d3.curveLinear : d3.curveCatmullRom.alpha(0.5),
-    [mode, showRawPoints],
-  );
+  const curve = useMemo(() => d3.curveLinear, []);
 
   const makeLine = useCallback(
     (pts: Array<[number, number]>, c: d3.CurveFactory | d3.CurveFactoryLineOnly) =>
@@ -180,7 +173,7 @@ export default function HorizonChart({
   const referenceLinePath = useMemo(
     () =>
       referenceDisplayPoints.length >= 2
-        ? makeLine(referenceDisplayPoints, d3.curveCatmullRom.alpha(0.5))
+        ? makeLine(referenceDisplayPoints, d3.curveLinear)
         : "",
     [referenceDisplayPoints, makeLine],
   );

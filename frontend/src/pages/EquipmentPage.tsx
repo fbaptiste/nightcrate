@@ -79,9 +79,9 @@ export function EquipmentPage() {
         selectedCategory={category}
         onSelectCategory={(cat) => navigate(`/equipment/${cat}`)}
       />
-      <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
+      <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", p: 2 }}>
         {hasOwnedToggle && (
-          <Box sx={{ mb: 1.5 }}>
+          <Box sx={{ mb: 1.5, flexShrink: 0 }}>
             <ToggleButtonGroup
               size="small"
               exclusive
@@ -93,7 +93,9 @@ export function EquipmentPage() {
             </ToggleButtonGroup>
           </Box>
         )}
-        {content}
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          {content}
+        </Box>
       </Box>
     </Box>
   );
