@@ -363,6 +363,16 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
               <IconButton size="small" onClick={addDateRange} aria-label="Add date range">
                 <AddIcon fontSize="small" />
               </IconButton>
+              <Box sx={{ flex: 1 }} />
+              {dateRanges.length > 0 && (
+                <Button
+                  size="small"
+                  onClick={() => setDateRanges([])}
+                  sx={{ textTransform: "none", fontSize: "0.75rem" }}
+                >
+                  Clear all
+                </Button>
+              )}
             </Stack>
             {dateRanges.length === 0 ? (
               <Typography variant="caption" color="text.secondary">
