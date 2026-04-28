@@ -592,7 +592,7 @@ function DroppableSection({
                   disabled={!onMoveUp}
                   sx={{ p: 0.25 }}
                 >
-                  <ArrowCircleUpIcon sx={{ fontSize: 20 }} />
+                  <ArrowCircleUpIcon sx={{ fontSize: 20, color: "warning.main" }} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -604,7 +604,7 @@ function DroppableSection({
                   disabled={!onMoveDown}
                   sx={{ p: 0.25 }}
                 >
-                  <ArrowCircleDownIcon sx={{ fontSize: 20 }} />
+                  <ArrowCircleDownIcon sx={{ fontSize: 20, color: "warning.main" }} />
                 </IconButton>
               </span>
             </Tooltip>
