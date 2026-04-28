@@ -18,7 +18,7 @@ interface Props {
   onMoonCombineChange: (v: "and" | "or") => void;
 }
 
-const selectSx = { fontSize: "0.8rem", mt: "-1px" };
+const selectSx = { fontSize: "0.75rem" };
 
 export default function MoonFilterControls({
   enabled,
@@ -39,14 +39,14 @@ export default function MoonFilterControls({
       flexWrap="wrap"
       sx={{ mt: 1 }}
     >
-      <Stack direction="row" alignItems="center" gap={0.5}>
+      <Stack direction="row" alignItems="baseline" gap={0.5}>
         <Checkbox
           size="small"
           checked={enabled}
           onChange={(_, checked) => onEnabledChange(checked)}
-          sx={{ p: 0.25 }}
+          sx={{ p: 0.25, alignSelf: "center" }}
         />
-        <Typography variant="caption" sx={{ color }}>
+        <Typography sx={{ color, fontSize: "0.75rem" }}>
           Illumination {"≤"}
         </Typography>
         <FormControl
@@ -87,8 +87,8 @@ export default function MoonFilterControls({
         <ToggleButton value="or">OR</ToggleButton>
       </ToggleButtonGroup>
 
-      <Stack direction="row" alignItems="center" gap={0.5}>
-        <Typography variant="caption" sx={{ color }}>
+      <Stack direction="row" alignItems="baseline" gap={0.5}>
+        <Typography sx={{ color, fontSize: "0.75rem" }}>
           Separation {"≥"}
         </Typography>
         <FormControl
