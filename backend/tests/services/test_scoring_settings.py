@@ -67,5 +67,17 @@ def test_defaults_match_spec():
     assert s.scoring_threshold_excellent == 80
     assert s.scoring_threshold_good == 60
     assert s.scoring_threshold_fair == 40
+    assert s.scoring_meridian_buffer_hours == 2.0
     assert s.scoring_gate_min_obs_hours == 1.0
     assert s.scoring_gate_max_coverage_pct is None
+
+
+def test_min_altitude_below_10_rejected():
+    """Below 10° the airmass formula degrades — validation rejects it."""
+    with pytest.raises(ValidationError):
+        Settings(scoring_observability_min_altitude_deg=5.0)
+
+
+def test_min_altitude_at_10_allowed():
+    settings = Settings(scoring_observability_min_altitude_deg=10.0)
+    assert settings.scoring_observability_min_altitude_deg == 10.0

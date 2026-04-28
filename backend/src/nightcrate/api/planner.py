@@ -898,6 +898,7 @@ async def list_targets(
                 coverage_pct=item.coverage_pct,
                 hours_visible=item.hours_visible,
                 peak_time_utc=vis.peak_time_utc if vis is not None else None,
+                transit_time_utc=vis.transit_time_utc if vis is not None else None,
             )
             for item, vis in items
         ]
@@ -1095,6 +1096,7 @@ async def score_single_target(
         coverage_pct=coverage,
         hours_visible=vis.hours_visible if vis is not None else None,
         peak_time_utc=vis.peak_time_utc if vis is not None else None,
+        transit_time_utc=vis.transit_time_utc if vis is not None else None,
     )
 
     scores = score_targets(

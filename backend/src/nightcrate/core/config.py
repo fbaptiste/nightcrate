@@ -101,7 +101,13 @@ class Settings(BaseModel):
     scoring_moon_proximity_weight: float = 0.4
     # Moon-impact multiplier for OCl / GCl / *Ass (cluster) targets.
     scoring_cluster_moon_modifier: float = 0.5
-    # Altitude threshold and max-airmass anchor for the observability curve.
+    # Meridian timing buffer: extends the zero point beyond the dark
+    # window boundary so targets transiting just outside dark aren't
+    # penalised as harshly as those transiting hours outside.
+    scoring_meridian_buffer_hours: float = 2.0
+    # Altitude threshold and max-airmass anchor for the observability
+    # curve. Minimum 10° — below that the airmass formula produces
+    # extreme values and compresses the quality gradient.
     scoring_observability_min_altitude_deg: float = 30.0
     # Frame-fit Gaussian shape.
     scoring_frame_fit_ideal_coverage_pct: float = 55.0
@@ -137,6 +143,11 @@ class Settings(BaseModel):
             raise ValueError(
                 "scoring_threshold_excellent > scoring_threshold_good > "
                 "scoring_threshold_fair must hold"
+            )
+        if self.scoring_observability_min_altitude_deg < 10.0:
+            raise ValueError(
+                "scoring_observability_min_altitude_deg must be >= 10 "
+                "(below 10° the airmass formula produces extreme values)"
             )
         for name in (
             "scoring_weight_observability",
