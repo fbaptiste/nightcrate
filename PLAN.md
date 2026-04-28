@@ -43,6 +43,8 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.28.0 — Plate Solving (ASTAP Integration)](#v0280--plate-solving-astap-integration) ✅
 - [v0.29.0 — Image Annotation (Identify Tab)](#v0290--image-annotation-identify-tab) ✅
 - [v0.29.1 — UI Polish + Bug Fixes](#v0291--ui-polish--bug-fixes) ✅
+- [v0.30.0 — Target Wishlist & Planning](#v0300--target-wishlist--planning) ✅
+- [v0.31.0 — Moon Quality Weighted Visibility](#v0310--moon-quality-weighted-visibility) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4296,6 +4298,59 @@ Integrates ASTAP as an external plate solver invoked via subprocess. Users confi
 - [x] Equipment: global All/Owned toggle at page level; removed My Equipment sidebar section
 - [x] Equipment: Sensors moved to Reference section; star column hidden for sensors
 - [x] Equipment: case-insensitive manufacturer sort in rig dropdowns (iOptron before ZWO)
+
+---
+
+## v0.30.0 — Target Wishlist & Planning
+
+**Status:** Done
+**Branch:** `v0.30.0/target-wishlist-planning`
+
+### Delivered
+
+- [x] Wishlist tab in Target Planner — bookmark DSOs, organize into named sections
+- [x] Plan assignments — location + horizon + rig + date ranges + notes per target
+- [x] Interactive annual chart — shift-drag date range selection, draggable threshold, auto-generate from threshold crossings
+- [x] Calendar view — year-agnostic Gantt-style display of planned imaging windows
+- [x] Cross-container drag-and-drop — dnd-kit Multiple Containers pattern for section management
+- [x] Plan sparklines in the DSO catalog detail panel
+- [x] Date range API with year-agnostic storage (month + day only)
+
+---
+
+## v0.31.0 — Moon Quality Weighted Visibility
+
+**Status:** Done
+**Branch:** `v0.31.0/moon-quality-weighted-visibility`
+
+### Delivered
+
+- [x] Moon illumination/separation filter — checkbox + Illumination ≤ / AND|OR / Separation ≥ controls
+- [x] Dual-curve Best Time of Year chart — raw (blue) + effective (orange) with moon filter
+- [x] Moon phase backdrop — illumination-modulated grey band behind curves
+- [x] Moon max altitude line — subtle dashed line on right y-axis, clamped at 0°
+- [x] Clickable legend toggles — show/hide individual series on both charts
+- [x] Assignment editor — single active curve when filter enabled, auto-generate uses active curve
+- [x] Shared MoonFilterControls component — AND/OR toggle button, used in both detail panel and assignment editor
+- [x] Fix inverted illumination formula — was `(1+cos)` (wrong with elongation), corrected to `(1-cos)`
+- [x] Fix moon filter integration — proper `has_cross_filtered` with `_integrate_filtered_segment`
+- [x] Fix moon impact scoring — two-component model (sky glow 60% + proximity 40%)
+- [x] Fix meridian timing — true transit time + configurable 2h buffer
+- [x] Observability min-altitude validation — reject below 10° at settings level
+- [x] Collapsible detail panel sections — Score (collapsed by default), Sky Position, Best Time of Year
+- [x] Sky position chart — widened to match Best Time of Year, reversed tier order, directional label triangles, toggleable legend
+- [x] Calendar view — section-colored bars, today date label, default dropdowns from is_default items
+- [x] Performance — vectorized min-sep/max-alt aggregation, restored need_moon optimization
+
+### New settings
+
+- `scoring_moon_sky_glow_weight` (default 0.6)
+- `scoring_moon_proximity_weight` (default 0.4)
+- `scoring_meridian_buffer_hours` (default 2.0)
+
+### Test count
+
+- 2054 tests passing (17 new annual-hours + scoring tests)
 
 ---
 

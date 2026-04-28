@@ -251,7 +251,7 @@ def test_illumination_high_at_full_moon_low_at_new_moon():
         FLAT_30,
         2026,
         M42,
-        moon_sep_deg=0.0,
+        moon_sep_deg=60.0,
     )
     illuminations = [(m.date, m.illumination_pct) for m in track.moon_data]
     min_illum = min(illuminations, key=lambda x: x[1])
@@ -299,7 +299,7 @@ def test_min_separation_only_considers_moon_above_horizon():
         FLAT_30,
         2026,
         M42,
-        moon_sep_deg=0.0,
+        moon_sep_deg=60.0,
     )
     for md in track.moon_data:
         if md.min_separation_deg is not None:
