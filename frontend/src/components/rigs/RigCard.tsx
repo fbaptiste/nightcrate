@@ -3,7 +3,6 @@ import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
-import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
@@ -67,19 +66,40 @@ export default function RigCard({
         outline: selected ? 2 : 0,
         outlineColor: "primary.main",
         "&:hover": { boxShadow: 4 },
+        position: "relative",
       }}
       onClick={() => onSelect(rig)}
     >
+      {/* Default star — upper right */}
+      {rig.active && (
+        <Tooltip
+          title={rig.is_default ? "Default rig" : "Set as default"}
+          arrow
+        >
+          <IconButton
+            size="small"
+            onClick={(e) => { e.stopPropagation(); onSetDefault(rig.id); }}
+            sx={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              color: rig.is_default ? "warning.main" : "text.disabled",
+            }}
+          >
+            {rig.is_default ? (
+              <StarIcon fontSize="small" />
+            ) : (
+              <StarOutlineIcon fontSize="small" />
+            )}
+          </IconButton>
+        </Tooltip>
+      )}
+
       <CardContent sx={{ pb: 1 }}>
-        {/* Name + default chip */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-          <Typography variant="h6" fontWeight="bold">
-            {rig.name}
-          </Typography>
-          {rig.is_default && (
-            <Chip label="Default" color="primary" size="small" />
-          )}
-        </Box>
+        {/* Name */}
+        <Typography variant="h6" fontWeight="bold" sx={{ mb: 0.5, pr: 4 }}>
+          {rig.name}
+        </Typography>
 
         {/* OTA line */}
         <Typography variant="body2" color="text.secondary">
@@ -138,24 +158,6 @@ export default function RigCard({
             <ContentCopyIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        {rig.active && (
-          <Tooltip
-            title={rig.is_default ? "Default rig" : "Set as default"}
-            arrow
-          >
-            <IconButton
-              size="small"
-              onClick={() => onSetDefault(rig.id)}
-              sx={{ color: rig.is_default ? "warning.main" : undefined }}
-            >
-              {rig.is_default ? (
-                <StarIcon fontSize="small" />
-              ) : (
-                <StarOutlineIcon fontSize="small" />
-              )}
-            </IconButton>
-          </Tooltip>
-        )}
         {rig.active ? (
           <Tooltip title="Delete" arrow>
             <IconButton size="small" onClick={() => onDelete(rig.id)}>
