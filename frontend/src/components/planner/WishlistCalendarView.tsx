@@ -816,9 +816,8 @@ function SectionBarDiv({
           whiteSpace: "nowrap",
           userSelect: "none",
           flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+          display: "grid",
+          placeItems: "center",
           py: 1,
         }}
       >
