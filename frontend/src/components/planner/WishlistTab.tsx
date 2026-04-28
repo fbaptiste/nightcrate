@@ -588,17 +588,17 @@ function DroppableSection({
               size="small"
               onClick={onMoveUp}
               disabled={!onMoveUp}
-              sx={{ p: 0.125, opacity: onMoveUp ? 0.7 : 0.2 }}
+              sx={{ p: 0.25 }}
             >
-              <KeyboardArrowUpIcon sx={{ fontSize: 16 }} />
+              <KeyboardArrowUpIcon sx={{ fontSize: 20 }} />
             </IconButton>
             <IconButton
               size="small"
               onClick={onMoveDown}
               disabled={!onMoveDown}
-              sx={{ p: 0.125, opacity: onMoveDown ? 0.7 : 0.2 }}
+              sx={{ p: 0.25 }}
             >
-              <KeyboardArrowDownIcon sx={{ fontSize: 16 }} />
+              <KeyboardArrowDownIcon sx={{ fontSize: 20 }} />
             </IconButton>
           </Stack>
         )}
