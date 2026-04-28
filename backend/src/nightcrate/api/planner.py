@@ -1184,6 +1184,8 @@ async def target_sky_track(
 
 # ── Annual hours above threshold (best-time-of-year chart) ───────────────────
 
+_annual_hours_semaphore = asyncio.Semaphore(1)
+
 
 @router.get(
     "/targets/{dso_id}/annual-hours",
@@ -1232,29 +1234,25 @@ async def target_annual_hours(
         # users abroad can see the "wrong" year during the UTC wrap.
         year = datetime.now(ZoneInfo(location.timezone)).year
 
-    # Fan the year out across worker processes. ``max_worker_cores``
-    # is user-configurable (``None`` → ``cpu_count - 1``). Cap at the
-    # number of calendar months so chunk granularity stays sane even
-    # on many-core machines where astropy imports would otherwise
-    # dominate the per-chunk cost.
     settings = await get_settings()
     configured_workers = settings.max_worker_cores
     if configured_workers is None:
         configured_workers = max(1, (os.cpu_count() or 2) - 1)
-    max_workers = max(1, min(int(configured_workers), 12))
+    max_workers = max(1, int(configured_workers))
 
-    track = await asyncio.to_thread(
-        compute_annual_hours,
-        location,
-        horizon,
-        year,
-        (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
-        moon_sep_deg=moon_sep_deg,
-        max_illumination_pct=max_illumination_pct,
-        min_separation_deg=min_separation_deg,
-        moon_combine=moon_combine,
-        max_workers=max_workers,
-    )
+    async with _annual_hours_semaphore:
+        track = await asyncio.to_thread(
+            compute_annual_hours,
+            location,
+            horizon,
+            year,
+            (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
+            moon_sep_deg=moon_sep_deg,
+            max_illumination_pct=max_illumination_pct,
+            min_separation_deg=min_separation_deg,
+            moon_combine=moon_combine,
+            max_workers=max_workers,
+        )
 
     return AnnualHoursResponse(
         dso_id=track.dso_id,

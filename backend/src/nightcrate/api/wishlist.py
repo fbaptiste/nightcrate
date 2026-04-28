@@ -141,6 +141,20 @@ async def create_section(body: CreateSectionRequest) -> SectionResponse:
         return SectionResponse(id=section_id, name=body.name, sort_order=next_order)
 
 
+@router.put("/sections/reorder")
+async def reorder_sections(
+    body: ReorderSectionsRequest,
+) -> list[SectionResponse]:
+    async with get_db() as conn:
+        for idx, sid in enumerate(body.section_ids):
+            await conn.execute(
+                "UPDATE wishlist_section SET sort_order = ? WHERE id = ?",
+                (idx, sid),
+            )
+        await conn.commit()
+        return await _load_sections(conn)
+
+
 @router.put("/sections/{section_id}")
 async def rename_section(section_id: int, body: RenameSectionRequest) -> SectionResponse:
     async with get_db() as conn:
@@ -164,20 +178,6 @@ async def delete_section(section_id: int) -> None:
     async with get_db() as conn:
         await conn.execute("DELETE FROM wishlist_section WHERE id = ?", (section_id,))
         await conn.commit()
-
-
-@router.put("/sections/reorder")
-async def reorder_sections(
-    body: ReorderSectionsRequest,
-) -> list[SectionResponse]:
-    async with get_db() as conn:
-        for idx, sid in enumerate(body.section_ids):
-            await conn.execute(
-                "UPDATE wishlist_section SET sort_order = ? WHERE id = ?",
-                (idx, sid),
-            )
-        await conn.commit()
-        return await _load_sections(conn)
 
 
 # ── Favorites ────────────────────────────────────────────────────────────────
@@ -212,7 +212,10 @@ async def list_favorites_full() -> FavoritesFullResponse:
         cursor = await conn.execute(
             """
             SELECT tp.id, tp.dso_id, tp.location_id, tp.horizon_id,
-                   tp.rig_id, tp.moon_sep_deg, tp.notes,
+                   tp.rig_id, tp.moon_sep_deg,
+                   tp.moon_filter_enabled, tp.max_illumination_pct,
+                   tp.min_separation_deg, tp.moon_combine,
+                   tp.threshold_hours, tp.notes,
                    tp.created_at, tp.updated_at,
                    l.name AS location_name,
                    lh.name AS horizon_name,
@@ -243,6 +246,11 @@ async def list_favorites_full() -> FavoritesFullResponse:
                 rig_id=int(r["rig_id"]),
                 rig_name=r["rig_name"],
                 moon_sep_deg=int(r["moon_sep_deg"]),
+                moon_filter_enabled=bool(r["moon_filter_enabled"]),
+                max_illumination_pct=int(r["max_illumination_pct"]),
+                min_separation_deg=int(r["min_separation_deg"]),
+                moon_combine=r["moon_combine"],
+                threshold_hours=float(r["threshold_hours"]),
                 date_ranges=ranges_by_plan.get(plan_id, []),
                 notes=r["notes"],
                 created_at=r["created_at"],
@@ -374,6 +382,11 @@ async def _resolve_plan_response(conn, plan_row, ranges: list[DateRangeOut]) -> 
         rig_id=int(plan_row["rig_id"]),
         rig_name=rig_row["name"] if rig_row else "(deleted)",
         moon_sep_deg=int(plan_row["moon_sep_deg"]),
+        moon_filter_enabled=bool(plan_row["moon_filter_enabled"]),
+        max_illumination_pct=int(plan_row["max_illumination_pct"]),
+        min_separation_deg=int(plan_row["min_separation_deg"]),
+        moon_combine=plan_row["moon_combine"],
+        threshold_hours=float(plan_row["threshold_hours"]),
         date_ranges=ranges,
         notes=plan_row["notes"],
         created_at=plan_row["created_at"],
@@ -438,8 +451,11 @@ async def create_plan(body: CreatePlanRequest) -> PlanResponse:
             cursor = await conn.execute(
                 """
                 INSERT INTO target_plan
-                    (dso_id, location_id, horizon_id, rig_id, moon_sep_deg, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (dso_id, location_id, horizon_id, rig_id, moon_sep_deg,
+                     moon_filter_enabled, max_illumination_pct,
+                     min_separation_deg, moon_combine, threshold_hours,
+                     notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     body.dso_id,
@@ -447,6 +463,11 @@ async def create_plan(body: CreatePlanRequest) -> PlanResponse:
                     body.horizon_id,
                     body.rig_id,
                     body.moon_sep_deg,
+                    1 if body.moon_filter_enabled else 0,
+                    body.max_illumination_pct,
+                    body.min_separation_deg,
+                    body.moon_combine,
+                    body.threshold_hours,
                     body.notes,
                 ),
             )
@@ -508,6 +529,29 @@ async def update_plan(plan_id: int, body: UpdatePlanRequest) -> PlanResponse:
                 raise HTTPException(status_code=404, detail=f"Rig {body.rig_id} not found")
 
         moon_sep = body.moon_sep_deg if body.moon_sep_deg is not None else existing["moon_sep_deg"]
+        moon_filter_enabled = (
+            body.moon_filter_enabled
+            if body.moon_filter_enabled is not None
+            else bool(existing["moon_filter_enabled"])
+        )
+        max_illum = (
+            body.max_illumination_pct
+            if body.max_illumination_pct is not None
+            else existing["max_illumination_pct"]
+        )
+        min_sep = (
+            body.min_separation_deg
+            if body.min_separation_deg is not None
+            else existing["min_separation_deg"]
+        )
+        moon_combine = (
+            body.moon_combine if body.moon_combine is not None else existing["moon_combine"]
+        )
+        threshold_hours = (
+            body.threshold_hours
+            if body.threshold_hours is not None
+            else existing["threshold_hours"]
+        )
 
         notes = existing["notes"]
         if body.clear_notes:
@@ -522,10 +566,25 @@ async def update_plan(plan_id: int, body: UpdatePlanRequest) -> PlanResponse:
                 """
                 UPDATE target_plan
                 SET location_id = ?, horizon_id = ?, rig_id = ?,
-                    moon_sep_deg = ?, notes = ?
+                    moon_sep_deg = ?, moon_filter_enabled = ?,
+                    max_illumination_pct = ?, min_separation_deg = ?,
+                    moon_combine = ?, threshold_hours = ?,
+                    notes = ?
                 WHERE id = ?
                 """,
-                (location_id, horizon_id, rig_id, moon_sep, notes, plan_id),
+                (
+                    location_id,
+                    horizon_id,
+                    rig_id,
+                    moon_sep,
+                    1 if moon_filter_enabled else 0,
+                    max_illum,
+                    min_sep,
+                    moon_combine,
+                    threshold_hours,
+                    notes,
+                    plan_id,
+                ),
             )
 
             if body.date_ranges is not None:
@@ -596,6 +655,11 @@ async def list_plans(
                 rig_id=int(r["rig_id"]),
                 rig_name=r["rig_name"],
                 moon_sep_deg=int(r["moon_sep_deg"]),
+                moon_filter_enabled=bool(r["moon_filter_enabled"]),
+                max_illumination_pct=int(r["max_illumination_pct"]),
+                min_separation_deg=int(r["min_separation_deg"]),
+                moon_combine=r["moon_combine"],
+                threshold_hours=float(r["threshold_hours"]),
                 date_ranges=ranges_by_plan.get(int(r["id"]), []),
                 notes=r["notes"],
                 created_at=r["created_at"],
@@ -656,7 +720,7 @@ async def get_calendar_data(
             SELECT tp.id AS plan_id, tp.dso_id, tp.notes,
                    d.primary_designation, d.common_name,
                    ft.section_id, ws.name AS section_name,
-                   COALESCE(ws.sort_order, 999999) AS section_sort
+                   COALESCE(ws.sort_order, -1) AS section_sort
             FROM target_plan tp
             JOIN dso d ON d.id = tp.dso_id
             JOIN favorite_target ft ON ft.dso_id = tp.dso_id

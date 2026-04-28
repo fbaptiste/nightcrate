@@ -7,7 +7,22 @@
  * stops at range boundaries.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -17,11 +32,12 @@ import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import { useTheme } from "@mui/material/styles";
 import { fetchLocations, type Location } from "@/api/locations";
 import { fetchHorizons, type Horizon } from "@/api/horizons";
 import { fetchRigs, type Rig } from "@/api/rigs";
-import { useCalendarData, type CalendarResponse, type DateRangeOut } from "@/api/wishlist";
+import { useCalendarData, reorderSections, type CalendarResponse, type DateRangeOut } from "@/api/wishlist";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { RIG_ORANGE } from "@/lib/rigColors";
 
@@ -60,9 +76,17 @@ export default function WishlistCalendarView({
 }: {
   onEditTarget?: (dsoId: number, planId: number) => void;
 }) {
+  const queryClient = useQueryClient();
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+
+  const reorderMut = useMutation({
+    mutationFn: reorderSections,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+    },
+  });
 
   const storeLocationId = usePlannerStore((s) => s.calendarLocationId);
   const storeHorizonId = usePlannerStore((s) => s.calendarHorizonId);
@@ -200,6 +224,7 @@ export default function WishlistCalendarView({
           hover={hover}
           setHover={setHover}
           onEditTarget={onEditTarget}
+          onReorderSections={(ids) => reorderMut.mutate(ids)}
         />
       ) : null}
     </Stack>
@@ -214,6 +239,7 @@ function CalendarChart({
   hover,
   setHover,
   onEditTarget,
+  onReorderSections,
 }: {
   data: CalendarResponse;
   wrapperRef: React.RefObject<HTMLDivElement | null>;
@@ -221,6 +247,7 @@ function CalendarChart({
   hover: HoverInfo | null;
   setHover: (h: HoverInfo | null) => void;
   onEditTarget?: (dsoId: number, planId: number) => void;
+  onReorderSections: (sectionIds: number[]) => void;
 }) {
   const [moonTip, setMoonTip] = useState<{
     x: number; y: number; phase: string; date: string;
@@ -266,11 +293,29 @@ function CalendarChart({
     return groups;
   }, [data.targets, hasSections]);
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+  const namedSectionIds = useMemo(
+    () => sectionGroups.filter((g) => g.id !== null).map((g) => g.id!),
+    [sectionGroups],
+  );
+  const handleSectionDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIdx = namedSectionIds.indexOf(active.id as number);
+    const newIdx = namedSectionIds.indexOf(over.id as number);
+    if (oldIdx === -1 || newIdx === -1) return;
+    const reordered = arrayMove(namedSectionIds, oldIdx, newIdx);
+    onReorderSections(reordered);
+  };
+
   const maxLabelLen = useMemo(
     () => Math.max(...data.targets.map((t) => fmtLabel(t).length), 6),
     [data.targets],
   );
-  const leftMargin = Math.max(MARGIN.left, maxLabelLen * 7 + 8) + sectionBarW;
+  const labelMargin = Math.max(MARGIN.left, maxLabelLen * 7 + 8);
+  const leftMargin = labelMargin;
   const innerW = 12 * MONTH_COL_MIN_PX;
   const svgWidth = leftMargin + innerW + MARGIN.right;
 
@@ -424,8 +469,44 @@ function CalendarChart({
   }, [data.targets.length, hasSections, sectionGroups]);
   const todayX = todayXPx;
 
+  const generalGroup = sectionGroups.find((g) => g.id === null);
+  const namedGroups = sectionGroups.filter((g) => g.id !== null);
+
   return (
-    <Box ref={wrapperRef} sx={{ width: "100%", overflow: "auto", position: "relative" }}>
+    <Box ref={wrapperRef} sx={{ width: "100%", overflow: "auto", display: "flex" }}>
+      {/* HTML section column — drag-to-reorder */}
+      {hasSections && (
+        <Box sx={{ width: sectionBarW, flexShrink: 0 }}>
+          <Box sx={{ height: MARGIN.top + 1 }} />
+          {generalGroup && (
+            <SectionBarDiv
+              group={generalGroup}
+              colorIdx={sectionGroups.indexOf(generalGroup)}
+            />
+          )}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleSectionDragEnd}
+          >
+            <SortableContext
+              items={namedSectionIds}
+              strategy={verticalListSortingStrategy}
+            >
+              {namedGroups.map((sg) => (
+                <SortableSectionBarDiv
+                  key={sg.id!}
+                  group={sg}
+                  colorIdx={sectionGroups.indexOf(sg)}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+        </Box>
+      )}
+
+      {/* Chart column */}
+      <Box sx={{ flex: 1, position: "relative" }}>
       <svg
         width={svgWidth}
         height={chartHeight}
@@ -605,37 +686,6 @@ function CalendarChart({
           )}
         </g>
 
-        {/* Section bars — vertical colored bars with rotated names */}
-        {hasSections && sectionGroups.map((sg, sgIdx) => {
-          const barY = MARGIN.top + 1 + sg.yStart;
-          const barH = sg.height;
-          const color = SECTION_COLORS[sgIdx % SECTION_COLORS.length];
-          return (
-            <g key={`sg-${sg.id ?? "none"}`}>
-              <rect
-                x={2}
-                y={barY}
-                width={sectionBarW - 4}
-                height={barH - 2}
-                rx={3}
-                fill={color}
-                opacity={0.25}
-              />
-              <text
-                x={sectionBarW / 2 + 1}
-                y={barY + barH / 2}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fontSize={10}
-                fontWeight={600}
-                fill={color}
-                transform={`rotate(-90, ${sectionBarW / 2 + 1}, ${barY + barH / 2})`}
-              >
-                {sg.name}
-              </text>
-            </g>
-          );
-        })}
 
         {/* Row labels — clickable to open assignment editor */}
         {data.targets.map((target, rowIdx) => (
@@ -656,6 +706,7 @@ function CalendarChart({
           </text>
         ))}
       </svg>
+
 
       {/* Hover tooltip — above the chart */}
       {hover && (
@@ -714,6 +765,105 @@ function CalendarChart({
           {moonTip.phase} — {moonTip.date}
         </Box>
       )}
+      </Box>
+    </Box>
+  );
+}
+
+
+interface SectionGroup {
+  id: number | null;
+  name: string;
+  startRow: number;
+  count: number;
+  yStart: number;
+  height: number;
+}
+
+function SectionBarDiv({
+  group,
+  colorIdx,
+  draggable,
+}: {
+  group: SectionGroup;
+  colorIdx: number;
+  draggable?: boolean;
+}) {
+  const color = SECTION_COLORS[colorIdx % SECTION_COLORS.length];
+  return (
+    <Box
+      sx={{
+        height: group.height,
+        mb: `${SECTION_GAP}px`,
+        mx: "2px",
+        borderRadius: "3px",
+        bgcolor: `${color}40`,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        pb: 0.25,
+        overflow: "hidden",
+        cursor: draggable ? "grab" : undefined,
+      }}
+    >
+      <Box
+        sx={{
+          writingMode: "vertical-rl",
+          transform: "rotate(180deg)",
+          fontSize: 10,
+          fontWeight: 600,
+          color,
+          whiteSpace: "nowrap",
+          userSelect: "none",
+          flex: 1,
+          display: "grid",
+          placeItems: "center",
+          py: 1,
+        }}
+      >
+        {group.name}
+      </Box>
+      {draggable && (
+        <DragIndicatorIcon sx={{ fontSize: 14, color, flexShrink: 0 }} />
+      )}
+    </Box>
+  );
+}
+
+
+function SortableSectionBarDiv({
+  group,
+  colorIdx,
+}: {
+  group: SectionGroup;
+  colorIdx: number;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: group.id! });
+
+  return (
+    <Box
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        zIndex: isDragging ? 10 : undefined,
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      <SectionBarDiv
+        group={group}
+        colorIdx={colorIdx}
+        draggable
+      />
     </Box>
   );
 }

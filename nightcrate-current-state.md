@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.31.0
+**NightCrate version:** 0.32.0
 
-**Last updated:** 2026-04-27
+**Last updated:** 2026-04-28
 
 **Last full repo snapshot:** 2026-04-19
 

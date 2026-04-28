@@ -46,6 +46,8 @@ import AddIcon from "@mui/icons-material/Add";
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
+import ArrowCircleDownIcon from "@mui/icons-material/ArrowCircleDown";
+import ArrowCircleUpIcon from "@mui/icons-material/ArrowCircleUp";
 import EditIcon from "@mui/icons-material/Edit";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -222,6 +224,17 @@ export default function WishlistTab() {
     });
   }
 
+  function handleMoveSection(sectionDbId: number, direction: "up" | "down") {
+    const namedGroups = localGroups.filter((g) => g.sectionDbId !== null);
+    const idx = namedGroups.findIndex((g) => g.sectionDbId === sectionDbId);
+    if (idx === -1) return;
+    const newIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= namedGroups.length) return;
+    const ids = namedGroups.map((g) => g.sectionDbId!);
+    [ids[idx], ids[newIdx]] = [ids[newIdx], ids[idx]];
+    sectionMutations.reorder.mutate(ids);
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveId(null);
@@ -249,18 +262,6 @@ export default function WishlistTab() {
         });
       }
       persistOrder();
-    } else if (activeIdStr.startsWith("section-") && overIdStr.startsWith("section-")) {
-      setLocalGroups((prev) => {
-        const oldIdx = prev.findIndex((g) => g.id === activeIdStr);
-        const newIdx = prev.findIndex((g) => g.id === overIdStr);
-        if (oldIdx <= 0 || newIdx <= 0) return prev;
-        const next = [...prev];
-        const [moved] = next.splice(oldIdx, 1);
-        next.splice(newIdx, 0, moved);
-        const ids = next.filter((g) => g.sectionDbId !== null).map((g) => g.sectionDbId!);
-        if (ids.length > 0) sectionMutations.reorder.mutate(ids);
-        return next;
-      });
     }
   }
 
@@ -407,13 +408,11 @@ export default function WishlistTab() {
                     />
                   )}
 
-                  {/* Named sections — sortable */}
-                  <SortableContext
-                    items={localGroups.filter((g) => g.sectionDbId !== null).map((g) => g.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {localGroups.filter((g) => g.sectionDbId !== null).map((group) => (
-                      <SortableSection
+                  {/* Named sections — reorder via up/down buttons */}
+                  {(() => {
+                    const named = localGroups.filter((g) => g.sectionDbId !== null);
+                    return named.map((group, idx) => (
+                      <DroppableSection
                         key={group.id}
                         group={group}
                         sections={sections}
@@ -430,9 +429,11 @@ export default function WishlistTab() {
                         onEditPlan={(dsoId, planId) => setEditorState({ open: true, dsoId, planId })}
                         onDeletePlan={(planId) => deletePlan.mutate(planId)}
                         onMoveToSection={(dsoId, sectionId) => sectionMutations.move.mutate({ dsoId, sectionId })}
+                        onMoveUp={idx > 0 ? () => handleMoveSection(group.sectionDbId!, "up") : undefined}
+                        onMoveDown={idx < named.length - 1 ? () => handleMoveSection(group.sectionDbId!, "down") : undefined}
                       />
-                    ))}
-                  </SortableContext>
+                    ));
+                  })()}
                 </Stack>
 
                 <DragOverlay>
@@ -491,31 +492,6 @@ export default function WishlistTab() {
 
 // ── Droppable Section ───────────────────────────────────────────────────────
 
-function SortableSection(props: Omit<DroppableSectionProps, "sectionDragHandleProps">) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: props.group.id });
-
-  return (
-    <Box
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : 1,
-      }}
-    >
-      <DroppableSection {...props} sectionDragHandleProps={{ ...attributes, ...listeners }} />
-    </Box>
-  );
-}
-
-
 interface DroppableSectionProps {
   group: SectionGroup;
   sections: SectionResponse[];
@@ -528,7 +504,8 @@ interface DroppableSectionProps {
   onEditPlan: (dsoId: number, planId: number) => void;
   onDeletePlan: (planId: number) => void;
   onMoveToSection: (dsoId: number, sectionId: number | null) => void;
-  sectionDragHandleProps?: Record<string, unknown>;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }
 
 function DroppableSection({
@@ -543,7 +520,8 @@ function DroppableSection({
   onEditPlan,
   onDeletePlan,
   onMoveToSection,
-  sectionDragHandleProps,
+  onMoveUp,
+  onMoveDown,
 }: DroppableSectionProps) {
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
   const [editing, setEditing] = useState(false);
@@ -570,11 +548,6 @@ function DroppableSection({
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.5}>
-        {sectionDragHandleProps && collapsed && (
-          <Box {...sectionDragHandleProps} sx={{ cursor: "grab", color: "text.disabled", display: "flex" }}>
-            <DragIndicatorIcon sx={{ fontSize: 18 }} />
-          </Box>
-        )}
         <IconButton size="small" onClick={onToggleCollapse} sx={{ p: 0.25 }}>
           {collapsed ? <ExpandMoreIcon sx={{ fontSize: 18 }} /> : <ExpandLessIcon sx={{ fontSize: 18 }} />}
         </IconButton>
@@ -608,6 +581,34 @@ function DroppableSection({
               ({group.items.length})
             </Typography>
           </Typography>
+        )}
+        {(onMoveUp || onMoveDown) && (
+          <Stack direction="row" gap={0}>
+            <Tooltip title="Move section up" arrow>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={onMoveUp}
+                  disabled={!onMoveUp}
+                  sx={{ p: 0.25 }}
+                >
+                  <ArrowCircleUpIcon sx={{ fontSize: 20, color: onMoveUp ? "warning.main" : "text.disabled" }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Move section down" arrow>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={onMoveDown}
+                  disabled={!onMoveDown}
+                  sx={{ p: 0.25 }}
+                >
+                  <ArrowCircleDownIcon sx={{ fontSize: 20, color: onMoveDown ? "warning.main" : "text.disabled" }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
         )}
         {!isUnsectioned && !editing && (
           <Tooltip title="Delete section" arrow>
@@ -888,7 +889,7 @@ function PlanRow({
         dsoId={dsoId}
         locationId={plan.location_id}
         horizonId={plan.horizon_id}
-        moonSepDeg={plan.moon_sep_deg}
+        moonSepDeg={0}
         dateRanges={plan.date_ranges}
       />
 

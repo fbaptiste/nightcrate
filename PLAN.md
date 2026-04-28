@@ -45,6 +45,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.29.1 — UI Polish + Bug Fixes](#v0291--ui-polish--bug-fixes) ✅
 - [v0.30.0 — Target Wishlist & Planning](#v0300--target-wishlist--planning) ✅
 - [v0.31.0 — Moon Quality Weighted Visibility](#v0310--moon-quality-weighted-visibility) ✅
+- [v0.32.0 — UI Polish + Performance](#v0320--ui-polish--performance) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4351,6 +4352,33 @@ Integrates ASTAP as an external plate solver invoked via subprocess. Users confi
 ### Test count
 
 - 2054 tests passing (17 new annual-hours + scoring tests)
+
+---
+
+## v0.32.0 — UI Polish + Performance
+
+**Status:** Done
+**Branch:** `v0.32.0/ui-polish-performance`
+
+### Delivered
+
+- [x] Rig ordering — `sort_order` column (migration 0026), drag-to-reorder on Rigs page, `PUT /api/rigs/reorder` endpoint, all dropdowns honor user order
+- [x] Rig default button — replaced star icon with a "default" button in the upper right of each rig card
+- [x] Plan filter persistence — moon filter settings + threshold hours saved to `target_plan` (migration 0027), restored when editing assignments
+- [x] Calendar section reorder — HTML section bar column with dnd-kit drag-to-reorder, General pinned at top
+- [x] List section reorder — up/down arrow buttons (ArrowCircleUp/Down) with tooltips, replaced unreliable drag-and-drop
+- [x] Calendar defaults — Location/Horizon/Rig dropdowns auto-select `is_default` items
+- [x] Annual hours result cache — 8-entry in-memory LRU with 15-min TTL, keyed on all input params
+- [x] Removed 12-worker cap on ProcessPoolExecutor — user's `max_worker_cores` setting is the actual cap
+- [x] Serialized concurrent annual-hours requests — `asyncio.Semaphore(1)` prevents pool thrashing
+- [x] Sparkline fix — passes `moonSepDeg: 0` instead of old plan value, shares cache entries
+- [x] Suppressed astropy `NonRotationTransformationWarning` in worker subprocesses
+- [x] Migration policy changed — forward-only migrations from now on (no more in-place edits)
+
+### New migrations
+
+- `0026.rig_sort_order.sql` — `sort_order` column on `rig` table + rebuilt `rig_summary` view
+- `0027.plan_filter_settings.sql` — moon filter + threshold columns on `target_plan`
 
 ---
 

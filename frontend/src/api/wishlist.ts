@@ -48,6 +48,11 @@ export interface PlanSummary {
   rig_id: number;
   rig_name: string;
   moon_sep_deg: number;
+  moon_filter_enabled: boolean;
+  max_illumination_pct: number;
+  min_separation_deg: number;
+  moon_combine: "and" | "or";
+  threshold_hours: number;
   date_ranges: DateRangeOut[];
   notes: string | null;
   created_at: string;
@@ -87,6 +92,11 @@ export interface PlanResponse {
   rig_id: number;
   rig_name: string;
   moon_sep_deg: number;
+  moon_filter_enabled: boolean;
+  max_illumination_pct: number;
+  min_separation_deg: number;
+  moon_combine: "and" | "or";
+  threshold_hours: number;
   date_ranges: DateRangeOut[];
   notes: string | null;
   created_at: string;
@@ -104,6 +114,11 @@ export interface CreatePlanParams {
   horizon_id: number;
   rig_id: number;
   moon_sep_deg?: number;
+  moon_filter_enabled?: boolean;
+  max_illumination_pct?: number;
+  min_separation_deg?: number;
+  moon_combine?: "and" | "or";
+  threshold_hours?: number;
   date_ranges?: DateRangeIn[];
   notes?: string | null;
 }
@@ -113,6 +128,11 @@ export interface UpdatePlanParams {
   horizon_id?: number;
   rig_id?: number;
   moon_sep_deg?: number;
+  moon_filter_enabled?: boolean;
+  max_illumination_pct?: number;
+  min_separation_deg?: number;
+  moon_combine?: "and" | "or";
+  threshold_hours?: number;
   date_ranges?: DateRangeIn[];
   notes?: string | null;
   clear_notes?: boolean;

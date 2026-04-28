@@ -145,7 +145,7 @@ Before committing, all applicable checks must pass:
 - **Python 3.14 + ruff format:** ruff format may strip parentheses from `except (ValueError, IndexError):` turning it into Python 2 syntax. Avoid multi-exception `except` clauses; if needed, define a module-level tuple constant and reference it.
 - **JSX Unicode escapes** are not interpreted in attribute strings: `label="°C"` passes 8 literal characters. Wrap in an expression: `label={"°C"}`. HTML entities like `&approx;` / `&asymp;` aren't in React's named-entity table — use `{"≈"}` instead.
 - **MUI `<Typography variant=...>` overrides parent font styles.** A parent Box's `sx={{ fontSize, lineHeight }}` does NOT cascade — the variant brings its own (caption is 12px / 1.66, not the parent's 11 / 1.35). When sizing a fixed-height container by parent font math, force inheritance: `'& .MuiTypography-root': { fontSize: 'inherit', lineHeight: 'inherit' }`.
-- **Pre-release migration policy** — until first release, OK to edit existing yoyo migration files in place. Two paths to bring an already-applied DB up to date: (a) destructive — delete DB files and let migrations re-run from scratch; (b) non-destructive — manually apply the new SQL via `sqlite3 <db_path> <<EOF ... EOF`. Use (b) when the user has data they don't want to lose.
+- **Migration policy** — never edit existing migration files. Always create new forward migrations (next sequential number in `db/migrations/`). Existing user data (locations, horizons, rigs, plans) must be preserved across upgrades.
 
 ## Cross-cutting patterns
 

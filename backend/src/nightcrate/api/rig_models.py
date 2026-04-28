@@ -180,6 +180,7 @@ class RigOut(BaseModel):
     filter_slots: list[RigFilterSlotOut]
     is_default: bool
     active: bool
+    sort_order: int
     notes: str | None
     created_at: str
     updated_at: str
@@ -290,3 +291,7 @@ class EquipmentOptionsOut(BaseModel):
     guide_scopes: list[GuideScopeOption]
     computers: list[ComputerOption]
     software: list[SoftwareOption]
+
+
+class ReorderRigsRequest(BaseModel):
+    rig_ids: list[int]
