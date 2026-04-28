@@ -303,6 +303,12 @@ def _compute_subrange(
     ``moon_sep_deg == 0`` AND no illumination/separation filters
     disables the moon transform entirely (~30% perf win).
     """
+    import warnings
+
+    from astropy.coordinates import NonRotationTransformationWarning
+
+    warnings.filterwarnings("ignore", category=NonRotationTransformationWarning)
+
     apply_moon = moon_sep_deg > 0.0
     apply_filter = max_illumination_pct is not None or min_separation_deg is not None
     need_moon = apply_moon or apply_filter
