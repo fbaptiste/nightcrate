@@ -41,11 +41,14 @@ date-range chunks aligned on local-noon boundaries.
 from __future__ import annotations
 
 import atexit
+import logging
 import multiprocessing as mp
 import threading
+import time as _time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import astropy.units as u
@@ -59,6 +62,8 @@ from nightcrate.services.planner_visibility import (
     PlannerLocation,
     _make_earth_location,
 )
+
+logger = logging.getLogger(__name__)
 
 _SAMPLE_MINUTES = 5
 _SAMPLE_SECONDS = _SAMPLE_MINUTES * 60
@@ -579,6 +584,49 @@ def _shutdown_pool() -> None:
 atexit.register(_shutdown_pool)
 
 
+# ── Result cache ──────────────────────────────────────────────────────────────
+
+_RESULT_CACHE: dict[tuple[Any, ...], tuple[datetime, AnnualHoursTrack]] = {}
+_RESULT_CACHE_MAX = 8
+_RESULT_CACHE_TTL = 900  # 15 minutes
+_RESULT_CACHE_LOCK = threading.Lock()
+
+
+def _cache_key(
+    location: PlannerLocation,
+    horizon: PlannerHorizon,
+    year: int,
+    dso_id: int,
+    ra_deg: float,
+    dec_deg: float,
+    moon_sep_deg: float,
+    max_illumination_pct: float | None,
+    min_separation_deg: float | None,
+    moon_combine: str,
+) -> tuple[Any, ...]:
+    return (
+        location.id,
+        location.updated_at,
+        horizon.id,
+        horizon.updated_at,
+        horizon.type,
+        horizon.flat_altitude_deg,
+        year,
+        dso_id,
+        round(ra_deg, 6),
+        round(dec_deg, 6),
+        moon_sep_deg,
+        max_illumination_pct,
+        min_separation_deg,
+        moon_combine,
+    )
+
+
+def clear_annual_hours_cache() -> None:
+    with _RESULT_CACHE_LOCK:
+        _RESULT_CACHE.clear()
+
+
 def compute_annual_hours(
     location: PlannerLocation,
     horizon: PlannerHorizon,
@@ -603,6 +651,71 @@ def compute_annual_hours(
         ra_deg = float(dso.ra.deg)  # type: ignore[attr-defined]
         dec_deg = float(dso.dec.deg)  # type: ignore[attr-defined]
 
+    key = _cache_key(
+        location,
+        horizon,
+        year,
+        dso_id,
+        ra_deg,
+        dec_deg,
+        moon_sep_deg,
+        max_illumination_pct,
+        min_separation_deg,
+        moon_combine,
+    )
+    with _RESULT_CACHE_LOCK:
+        entry = _RESULT_CACHE.get(key)
+        if entry is not None:
+            fetched_at, track = entry
+            if (datetime.now(UTC) - fetched_at).total_seconds() <= _RESULT_CACHE_TTL:
+                logger.debug("[annual-hours] cache hit for DSO %d", dso_id)
+                return track
+
+    t0 = _time.monotonic()
+    track = _compute_annual_hours_uncached(
+        location,
+        horizon,
+        year,
+        dso_id,
+        ra_deg,
+        dec_deg,
+        moon_sep_deg=moon_sep_deg,
+        max_illumination_pct=max_illumination_pct,
+        min_separation_deg=min_separation_deg,
+        moon_combine=moon_combine,
+        max_workers=max_workers,
+    )
+    elapsed = _time.monotonic() - t0
+    logger.info(
+        "[annual-hours] DSO %d computed in %.2f s (%d workers)",
+        dso_id,
+        elapsed,
+        max_workers or 1,
+    )
+
+    with _RESULT_CACHE_LOCK:
+        _RESULT_CACHE[key] = (datetime.now(UTC), track)
+        while len(_RESULT_CACHE) > _RESULT_CACHE_MAX:
+            oldest_key = next(iter(_RESULT_CACHE))
+            del _RESULT_CACHE[oldest_key]
+
+    return track
+
+
+def _compute_annual_hours_uncached(
+    location: PlannerLocation,
+    horizon: PlannerHorizon,
+    year: int,
+    dso_id: int,
+    ra_deg: float,
+    dec_deg: float,
+    *,
+    moon_sep_deg: float,
+    max_illumination_pct: float | None = None,
+    min_separation_deg: float | None = None,
+    moon_combine: str = "and",
+    max_workers: int | None = None,
+) -> AnnualHoursTrack:
     year_start = date(year, 1, 1)
     year_end = date(year + 1, 1, 1)
     n_days = (year_end - year_start).days
