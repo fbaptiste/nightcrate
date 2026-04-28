@@ -1184,6 +1184,8 @@ async def target_sky_track(
 
 # ── Annual hours above threshold (best-time-of-year chart) ───────────────────
 
+_annual_hours_semaphore = asyncio.Semaphore(1)
+
 
 @router.get(
     "/targets/{dso_id}/annual-hours",
@@ -1238,18 +1240,19 @@ async def target_annual_hours(
         configured_workers = max(1, (os.cpu_count() or 2) - 1)
     max_workers = max(1, int(configured_workers))
 
-    track = await asyncio.to_thread(
-        compute_annual_hours,
-        location,
-        horizon,
-        year,
-        (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
-        moon_sep_deg=moon_sep_deg,
-        max_illumination_pct=max_illumination_pct,
-        min_separation_deg=min_separation_deg,
-        moon_combine=moon_combine,
-        max_workers=max_workers,
-    )
+    async with _annual_hours_semaphore:
+        track = await asyncio.to_thread(
+            compute_annual_hours,
+            location,
+            horizon,
+            year,
+            (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
+            moon_sep_deg=moon_sep_deg,
+            max_illumination_pct=max_illumination_pct,
+            min_separation_deg=min_separation_deg,
+            moon_combine=moon_combine,
+            max_workers=max_workers,
+        )
 
     return AnnualHoursResponse(
         dso_id=track.dso_id,
