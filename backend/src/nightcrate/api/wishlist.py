@@ -141,6 +141,20 @@ async def create_section(body: CreateSectionRequest) -> SectionResponse:
         return SectionResponse(id=section_id, name=body.name, sort_order=next_order)
 
 
+@router.put("/sections/reorder")
+async def reorder_sections(
+    body: ReorderSectionsRequest,
+) -> list[SectionResponse]:
+    async with get_db() as conn:
+        for idx, sid in enumerate(body.section_ids):
+            await conn.execute(
+                "UPDATE wishlist_section SET sort_order = ? WHERE id = ?",
+                (idx, sid),
+            )
+        await conn.commit()
+        return await _load_sections(conn)
+
+
 @router.put("/sections/{section_id}")
 async def rename_section(section_id: int, body: RenameSectionRequest) -> SectionResponse:
     async with get_db() as conn:
@@ -164,20 +178,6 @@ async def delete_section(section_id: int) -> None:
     async with get_db() as conn:
         await conn.execute("DELETE FROM wishlist_section WHERE id = ?", (section_id,))
         await conn.commit()
-
-
-@router.put("/sections/reorder")
-async def reorder_sections(
-    body: ReorderSectionsRequest,
-) -> list[SectionResponse]:
-    async with get_db() as conn:
-        for idx, sid in enumerate(body.section_ids):
-            await conn.execute(
-                "UPDATE wishlist_section SET sort_order = ? WHERE id = ?",
-                (idx, sid),
-            )
-        await conn.commit()
-        return await _load_sections(conn)
 
 
 # ── Favorites ────────────────────────────────────────────────────────────────

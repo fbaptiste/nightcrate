@@ -801,14 +801,11 @@ function SectionBarDiv({
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        pt: draggable ? 0.25 : 0,
+        pb: draggable ? 0.25 : 0,
         overflow: "hidden",
         cursor: draggable ? "grab" : undefined,
       }}
     >
-      {draggable && (
-        <DragIndicatorIcon sx={{ fontSize: 14, color, flexShrink: 0 }} />
-      )}
       <Box
         sx={{
           writingMode: "vertical-rl",
@@ -825,6 +822,9 @@ function SectionBarDiv({
       >
         {group.name}
       </Box>
+      {draggable && (
+        <DragIndicatorIcon sx={{ fontSize: 14, color, flexShrink: 0 }} />
+      )}
     </Box>
   );
 }
