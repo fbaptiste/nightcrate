@@ -889,7 +889,7 @@ function PlanRow({
         dsoId={dsoId}
         locationId={plan.location_id}
         horizonId={plan.horizon_id}
-        moonSepDeg={plan.moon_sep_deg}
+        moonSepDeg={0}
         dateRanges={plan.date_ranges}
       />
 
