@@ -143,6 +143,7 @@ export default function WishlistTab() {
   const [localGroups, setLocalGroups] = useState<SectionGroup[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const preDragCollapsed = useRef<Set<string> | null>(null);
 
   const toggleCollapse = useCallback((groupId: string) => {
     setCollapsedSections((prev) => {
@@ -184,7 +185,21 @@ export default function WishlistTab() {
   }, [activeId, localGroups]);
 
   function handleDragStart(event: DragStartEvent) {
-    setActiveId(String(event.active.id));
+    const id = String(event.active.id);
+    setActiveId(id);
+    const isSectionDrag = localGroups.some(
+      (g) => g.id === id && g.sectionDbId !== null,
+    );
+    if (isSectionDrag) {
+      preDragCollapsed.current = new Set(collapsedSections);
+      setCollapsedSections(
+        new Set(
+          localGroups
+            .filter((g) => g.sectionDbId !== null)
+            .map((g) => g.id),
+        ),
+      );
+    }
   }
 
   function handleDragOver(event: DragOverEvent) {
@@ -222,10 +237,20 @@ export default function WishlistTab() {
     });
   }
 
+  function restoreCollapsedState() {
+    if (preDragCollapsed.current !== null) {
+      setCollapsedSections(preDragCollapsed.current);
+      preDragCollapsed.current = null;
+    }
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveId(null);
-    if (!over || active.id === over.id) return;
+    if (!over || active.id === over.id) {
+      restoreCollapsedState();
+      return;
+    }
 
     const activeIdStr = String(active.id);
     const overIdStr = String(over.id);
@@ -262,6 +287,7 @@ export default function WishlistTab() {
         return next;
       });
     }
+    restoreCollapsedState();
   }
 
   function persistOrder() {
@@ -387,6 +413,7 @@ export default function WishlistTab() {
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDragEnd={handleDragEnd}
+                onDragCancel={() => { setActiveId(null); restoreCollapsedState(); }}
               >
                 <Stack gap={2}>
                   {/* General (pinned, not sortable as a section) */}
@@ -570,7 +597,7 @@ function DroppableSection({
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.5}>
-        {sectionDragHandleProps && collapsed && (
+        {sectionDragHandleProps && (
           <Box {...sectionDragHandleProps} sx={{ cursor: "grab", color: "text.disabled", display: "flex" }}>
             <DragIndicatorIcon sx={{ fontSize: 18 }} />
           </Box>
