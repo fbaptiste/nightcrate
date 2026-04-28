@@ -7,7 +7,22 @@
  * stops at range boundaries.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -21,7 +36,7 @@ import { useTheme } from "@mui/material/styles";
 import { fetchLocations, type Location } from "@/api/locations";
 import { fetchHorizons, type Horizon } from "@/api/horizons";
 import { fetchRigs, type Rig } from "@/api/rigs";
-import { useCalendarData, type CalendarResponse, type DateRangeOut } from "@/api/wishlist";
+import { useCalendarData, reorderSections, type CalendarResponse, type DateRangeOut } from "@/api/wishlist";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { RIG_ORANGE } from "@/lib/rigColors";
 
@@ -605,37 +620,7 @@ function CalendarChart({
           )}
         </g>
 
-        {/* Section bars — vertical colored bars with rotated names */}
-        {hasSections && sectionGroups.map((sg, sgIdx) => {
-          const barY = MARGIN.top + 1 + sg.yStart;
-          const barH = sg.height;
-          const color = SECTION_COLORS[sgIdx % SECTION_COLORS.length];
-          return (
-            <g key={`sg-${sg.id ?? "none"}`}>
-              <rect
-                x={2}
-                y={barY}
-                width={sectionBarW - 4}
-                height={barH - 2}
-                rx={3}
-                fill={color}
-                opacity={0.25}
-              />
-              <text
-                x={sectionBarW / 2 + 1}
-                y={barY + barH / 2}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fontSize={10}
-                fontWeight={600}
-                fill={color}
-                transform={`rotate(-90, ${sectionBarW / 2 + 1}, ${barY + barH / 2})`}
-              >
-                {sg.name}
-              </text>
-            </g>
-          );
-        })}
+        {/* Section bars rendered as HTML overlay for dnd-kit support */}
 
         {/* Row labels — clickable to open assignment editor */}
         {data.targets.map((target, rowIdx) => (
@@ -656,6 +641,16 @@ function CalendarChart({
           </text>
         ))}
       </svg>
+
+      {/* Section bars — HTML overlay with drag-to-reorder */}
+      {hasSections && (
+        <SectionBarOverlay
+          sectionGroups={sectionGroups}
+          sectionBarW={sectionBarW}
+          marginTop={MARGIN.top + 1}
+          isDark={isDark}
+        />
+      )}
 
       {/* Hover tooltip — above the chart */}
       {hover && (
@@ -714,6 +709,192 @@ function CalendarChart({
           {moonTip.phase} — {moonTip.date}
         </Box>
       )}
+    </Box>
+  );
+}
+
+
+interface SectionGroup {
+  id: number | null;
+  name: string;
+  startRow: number;
+  count: number;
+  yStart: number;
+  height: number;
+}
+
+function SectionBarOverlay({
+  sectionGroups,
+  sectionBarW,
+  marginTop,
+  isDark,
+}: {
+  sectionGroups: SectionGroup[];
+  sectionBarW: number;
+  marginTop: number;
+  isDark: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+  const reorder = useMutation({
+    mutationFn: reorderSections,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+      queryClient.invalidateQueries({ queryKey: ["calendar"] });
+    },
+  });
+
+  const namedGroups = sectionGroups.filter((g) => g.id !== null);
+  const generalGroup = sectionGroups.find((g) => g.id === null);
+  const [localOrder, setLocalOrder] = useState<number[]>(() =>
+    namedGroups.map((g) => g.id!),
+  );
+
+  useEffect(() => {
+    setLocalOrder(namedGroups.map((g) => g.id!));
+  }, [sectionGroups]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIdx = localOrder.indexOf(active.id as number);
+    const newIdx = localOrder.indexOf(over.id as number);
+    if (oldIdx === -1 || newIdx === -1) return;
+    const reordered = arrayMove(localOrder, oldIdx, newIdx);
+    setLocalOrder(reordered);
+    reorder.mutate(reordered);
+  };
+
+  const orderedGroups = localOrder
+    .map((id) => namedGroups.find((g) => g.id === id))
+    .filter((g): g is SectionGroup => g != null);
+
+  return (
+    <Box sx={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }}>
+      {/* General section — pinned, not draggable */}
+      {generalGroup && (
+        <SectionBar
+          group={generalGroup}
+          colorIdx={sectionGroups.indexOf(generalGroup)}
+          sectionBarW={sectionBarW}
+          marginTop={marginTop}
+          isDark={isDark}
+        />
+      )}
+
+      {/* Named sections — sortable */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={localOrder}
+          strategy={verticalListSortingStrategy}
+        >
+          {orderedGroups.map((sg) => (
+            <SortableSectionBar
+              key={sg.id!}
+              group={sg}
+              colorIdx={sectionGroups.indexOf(sg)}
+              sectionBarW={sectionBarW}
+              marginTop={marginTop}
+              isDark={isDark}
+            />
+          ))}
+        </SortableContext>
+      </DndContext>
+    </Box>
+  );
+}
+
+
+function SectionBar({
+  group,
+  colorIdx,
+  sectionBarW,
+  marginTop,
+  isDark,
+  style,
+  dragProps,
+}: {
+  group: SectionGroup;
+  colorIdx: number;
+  sectionBarW: number;
+  marginTop: number;
+  isDark: boolean;
+  style?: React.CSSProperties;
+  dragProps?: Record<string, unknown>;
+}) {
+  const color = SECTION_COLORS[colorIdx % SECTION_COLORS.length];
+  const barY = marginTop + group.yStart;
+  const barH = group.height;
+  return (
+    <Box
+      sx={{
+        position: "absolute",
+        left: 2,
+        top: barY,
+        width: sectionBarW - 4,
+        height: barH - 2,
+        borderRadius: "3px",
+        bgcolor: color,
+        opacity: 0.25,
+        pointerEvents: "auto",
+        cursor: dragProps ? "grab" : undefined,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+      }}
+      style={style}
+      {...dragProps}
+    >
+      <Box
+        sx={{
+          writingMode: "vertical-rl",
+          transform: "rotate(180deg)",
+          fontSize: 10,
+          fontWeight: 600,
+          color,
+          opacity: isDark ? 4 : 3,
+          whiteSpace: "nowrap",
+          userSelect: "none",
+        }}
+      >
+        {group.name}
+      </Box>
+    </Box>
+  );
+}
+
+
+function SortableSectionBar(props: {
+  group: SectionGroup;
+  colorIdx: number;
+  sectionBarW: number;
+  marginTop: number;
+  isDark: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.group.id! });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+    zIndex: isDragging ? 10 : undefined,
+  };
+
+  return (
+    <Box ref={setNodeRef} style={{ position: "absolute", top: 0, left: 0 }}>
+      <SectionBar
+        {...props}
+        style={style}
+        dragProps={{ ...attributes, ...listeners }}
+      />
     </Box>
   );
 }
