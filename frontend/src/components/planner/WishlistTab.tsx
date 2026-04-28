@@ -46,8 +46,8 @@ import AddIcon from "@mui/icons-material/Add";
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import ArrowCircleDownIcon from "@mui/icons-material/ArrowCircleDown";
+import ArrowCircleUpIcon from "@mui/icons-material/ArrowCircleUp";
 import EditIcon from "@mui/icons-material/Edit";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -584,22 +584,30 @@ function DroppableSection({
         )}
         {(onMoveUp || onMoveDown) && (
           <Stack direction="row" gap={0}>
-            <IconButton
-              size="small"
-              onClick={onMoveUp}
-              disabled={!onMoveUp}
-              sx={{ p: 0.25 }}
-            >
-              <KeyboardArrowUpIcon sx={{ fontSize: 20 }} />
-            </IconButton>
-            <IconButton
-              size="small"
-              onClick={onMoveDown}
-              disabled={!onMoveDown}
-              sx={{ p: 0.25 }}
-            >
-              <KeyboardArrowDownIcon sx={{ fontSize: 20 }} />
-            </IconButton>
+            <Tooltip title="Move section up" arrow>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={onMoveUp}
+                  disabled={!onMoveUp}
+                  sx={{ p: 0.25 }}
+                >
+                  <ArrowCircleUpIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Move section down" arrow>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={onMoveDown}
+                  disabled={!onMoveDown}
+                  sx={{ p: 0.25 }}
+                >
+                  <ArrowCircleDownIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
           </Stack>
         )}
         {!isUnsectioned && !editing && (
