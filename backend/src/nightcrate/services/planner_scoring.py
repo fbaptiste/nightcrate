@@ -218,7 +218,7 @@ def _compute_meridian(
         transit_local = transit_time_utc.strftime("%H:%MZ")
         mid_local = dark_mid_utc.strftime("%H:%MZ")
     facts = (
-        f"peak at {transit_local} local (dark midpoint {mid_local})",
+        f"transit at {transit_local} local (dark midpoint {mid_local})",
         f"{delta_hours:.1f} h from the midpoint of {dark_hours:.1f} h of dark",
     )
     return score, facts
