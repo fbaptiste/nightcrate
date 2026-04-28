@@ -480,7 +480,6 @@ function CalendarChart({
             <SectionBarDiv
               group={generalGroup}
               colorIdx={sectionGroups.indexOf(generalGroup)}
-              isDark={isDark}
             />
           )}
           <DndContext
@@ -497,7 +496,6 @@ function CalendarChart({
                   key={sg.id!}
                   group={sg}
                   colorIdx={sectionGroups.indexOf(sg)}
-                  isDark={isDark}
                 />
               ))}
             </SortableContext>
@@ -783,15 +781,11 @@ interface SectionGroup {
 function SectionBarDiv({
   group,
   colorIdx,
-  isDark,
-  style,
-  dragHandleProps,
+  draggable,
 }: {
   group: SectionGroup;
   colorIdx: number;
-  isDark: boolean;
-  style?: React.CSSProperties;
-  dragHandleProps?: Record<string, unknown>;
+  draggable?: boolean;
 }) {
   const color = SECTION_COLORS[colorIdx % SECTION_COLORS.length];
   return (
@@ -801,31 +795,17 @@ function SectionBarDiv({
         mb: `${SECTION_GAP}px`,
         mx: "2px",
         borderRadius: "3px",
-        bgcolor: color,
-        opacity: isDark ? 0.3 : 0.2,
+        bgcolor: `${color}40`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         overflow: "hidden",
-        position: "relative",
+        cursor: draggable ? "grab" : undefined,
       }}
-      style={style}
     >
-      {dragHandleProps && (
-        <Box
-          {...dragHandleProps}
-          sx={{
-            cursor: "grab",
-            color,
-            opacity: 0.6,
-            position: "absolute",
-            top: 2,
-            "&:hover": { opacity: 1 },
-          }}
-        >
-          <DragIndicatorIcon sx={{ fontSize: 14 }} />
-        </Box>
+      {draggable && (
+        <DragIndicatorIcon sx={{ fontSize: 14, color, mb: 0.25 }} />
       )}
       <Box
         sx={{
@@ -848,11 +828,9 @@ function SectionBarDiv({
 function SortableSectionBarDiv({
   group,
   colorIdx,
-  isDark,
 }: {
   group: SectionGroup;
   colorIdx: number;
-  isDark: boolean;
 }) {
   const {
     attributes,
@@ -863,21 +841,22 @@ function SortableSectionBarDiv({
     isDragging,
   } = useSortable({ id: group.id! });
 
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : undefined,
-    zIndex: isDragging ? 10 : undefined,
-  };
-
   return (
-    <Box ref={setNodeRef}>
+    <Box
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        zIndex: isDragging ? 10 : undefined,
+      }}
+      {...attributes}
+      {...listeners}
+    >
       <SectionBarDiv
         group={group}
         colorIdx={colorIdx}
-        isDark={isDark}
-        style={style}
-        dragHandleProps={{ ...attributes, ...listeners }}
+        draggable
       />
     </Box>
   );
