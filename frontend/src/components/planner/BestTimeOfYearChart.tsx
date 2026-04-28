@@ -94,9 +94,9 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
 
     const moonAltLine = d3
       .line<number | null>()
-      .defined((d) => d != null && d >= 0)
+      .defined((d) => d != null)
       .x((_, i) => x(dates[i]))
-      .y((d) => yRight(d!))
+      .y((d) => yRight(Math.max(0, d!)))
       .curve(d3.curveMonotoneX);
 
     return { MARGIN, dates, x, y, yRight, line, lineContinuous, moonAltLine, yMax };
