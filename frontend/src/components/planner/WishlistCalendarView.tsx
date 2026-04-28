@@ -801,7 +801,7 @@ function SectionBarDiv({
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        pb: draggable ? 0.25 : 0,
+        py: 1,
         overflow: "hidden",
         cursor: draggable ? "grab" : undefined,
       }}
