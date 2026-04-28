@@ -1,5 +1,5 @@
 import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
@@ -10,8 +10,6 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import RestoreIcon from "@mui/icons-material/Restore";
-import StarIcon from "@mui/icons-material/Star";
-import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import type { Rig } from "@/api/rigs";
 
 interface RigCardProps {
@@ -70,29 +68,25 @@ export default function RigCard({
       }}
       onClick={() => onSelect(rig)}
     >
-      {/* Default star — upper right */}
+      {/* Default toggle — upper right */}
       {rig.active && (
-        <Tooltip
-          title={rig.is_default ? "Default rig" : "Set as default"}
-          arrow
+        <Button
+          size="small"
+          variant={rig.is_default ? "contained" : "outlined"}
+          onClick={(e) => { e.stopPropagation(); onSetDefault(rig.id); }}
+          sx={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            textTransform: "none",
+            fontSize: "0.7rem",
+            px: 1,
+            py: 0.125,
+            minWidth: 0,
+          }}
         >
-          <IconButton
-            size="small"
-            onClick={(e) => { e.stopPropagation(); onSetDefault(rig.id); }}
-            sx={{
-              position: "absolute",
-              top: 6,
-              right: 6,
-              color: rig.is_default ? "warning.main" : "text.disabled",
-            }}
-          >
-            {rig.is_default ? (
-              <StarIcon fontSize="small" />
-            ) : (
-              <StarOutlineIcon fontSize="small" />
-            )}
-          </IconButton>
-        </Tooltip>
+          default
+        </Button>
       )}
 
       <CardContent sx={{ pb: 1 }}>
