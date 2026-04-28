@@ -124,6 +124,9 @@ export default function SkyPositionGraph({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(600);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  const [showObject, setShowObject] = useState(true);
+  const [showMoon, setShowMoon] = useState(true);
+  const [showHorizon, setShowHorizon] = useState(true);
   // Bare counter used only to trigger a re-render when the minute
   // rolls over — lets the "now" marker advance on its own instead of
   // getting frozen at whatever wall-clock time the panel was first
@@ -418,52 +421,58 @@ export default function SkyPositionGraph({
         ))}
 
         {/* Blocked sky (below horizon) — shaded region, no outline. */}
-        <path
-          d={layout.blockedArea(track.horizon_altitude_at_object_az) ?? undefined}
-          fill={blockedFill}
-          stroke="none"
-        />
+        {showHorizon && (
+          <path
+            d={layout.blockedArea(track.horizon_altitude_at_object_az) ?? undefined}
+            fill={blockedFill}
+            stroke="none"
+          />
+        )}
 
         {/* Shaded visible area */}
-        <path
-          d={layout.visibleArea(track.object_altitude_deg) ?? undefined}
-          fill={COLOR_OBJECT}
-          fillOpacity={0.15}
-        />
+        {showObject && (
+          <path
+            d={layout.visibleArea(track.object_altitude_deg) ?? undefined}
+            fill={COLOR_OBJECT}
+            fillOpacity={0.15}
+          />
+        )}
 
         {/* Moon altitude */}
-        <path
-          d={layout.moonLine(track.moon_altitude_deg) ?? undefined}
-          fill="none"
-          stroke={COLOR_MOON}
-          strokeWidth={1.5}
-          strokeDasharray="6,4"
-        />
+        {showMoon && (
+          <path
+            d={layout.moonLine(track.moon_altitude_deg) ?? undefined}
+            fill="none"
+            stroke={COLOR_MOON}
+            strokeWidth={1.5}
+            strokeDasharray="6,4"
+          />
+        )}
 
         {/* Object altitude */}
-        <path
-          d={layout.objLine(track.object_altitude_deg) ?? undefined}
-          fill="none"
-          stroke={COLOR_OBJECT}
-          strokeWidth={2}
-        />
+        {showObject && (
+          <path
+            d={layout.objLine(track.object_altitude_deg) ?? undefined}
+            fill="none"
+            stroke={COLOR_OBJECT}
+            strokeWidth={2}
+          />
+        )}
 
         {/* Peak-altitude dot */}
-        {(() => {
+        {showObject && (() => {
           const peakT = new Date(track.peak_time_utc);
           const cx = layout.x(peakT);
           const cy = layout.y(Math.max(0, Math.min(90, track.peak_altitude_deg)));
           return (
-            <g>
-              <circle
-                cx={cx}
-                cy={cy}
-                r={4}
-                fill={COLOR_OBJECT}
-                stroke={theme.palette.background.paper}
-                strokeWidth={1.5}
-              />
-            </g>
+            <circle
+              cx={cx}
+              cy={cy}
+              r={4}
+              fill={COLOR_OBJECT}
+              stroke={theme.palette.background.paper}
+              strokeWidth={1.5}
+            />
           );
         })()}
 
@@ -684,7 +693,7 @@ export default function SkyPositionGraph({
         </Box>
       )}
 
-      {/* Legend */}
+      {/* Legend toggles */}
       <Stack
         direction="row"
         gap={2}
@@ -693,34 +702,42 @@ export default function SkyPositionGraph({
         alignItems="center"
         justifyContent="flex-end"
       >
-        <Stack direction="row" gap={0.75} alignItems="center">
-          <Box
-            sx={{
-              width: 18,
-              height: 2,
-              bgcolor: COLOR_OBJECT,
-              borderRadius: 0.5,
-            }}
-          />
-          <Typography variant="caption" color="text.secondary">
+        <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
+          click to toggle
+        </Typography>
+        <Stack
+          direction="row"
+          gap={0.75}
+          alignItems="center"
+          onClick={() => setShowObject((v) => !v)}
+          sx={{ cursor: "pointer", opacity: showObject ? 1 : 0.35, userSelect: "none", "&:hover": { opacity: showObject ? 0.85 : 0.5 } }}
+        >
+          <Box sx={{ width: 16, height: 0, borderTop: `2px solid ${COLOR_OBJECT}` }} />
+          <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
             Object
           </Typography>
         </Stack>
-        <Stack direction="row" gap={0.75} alignItems="center">
-          <Box
-            sx={{
-              width: 18,
-              height: 2,
-              background: `repeating-linear-gradient(90deg, ${COLOR_MOON} 0 4px, transparent 4px 8px)`,
-            }}
-          />
-          <Typography variant="caption" color="text.secondary">
+        <Stack
+          direction="row"
+          gap={0.75}
+          alignItems="center"
+          onClick={() => setShowMoon((v) => !v)}
+          sx={{ cursor: "pointer", opacity: showMoon ? 1 : 0.35, userSelect: "none", "&:hover": { opacity: showMoon ? 0.85 : 0.5 } }}
+        >
+          <Box sx={{ width: 16, height: 0, borderTop: `2px dashed ${COLOR_MOON}` }} />
+          <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
             Moon
           </Typography>
         </Stack>
-        <Stack direction="row" gap={0.75} alignItems="center">
-          <Box sx={{ width: 18, height: 10, bgcolor: blockedFill, borderRadius: 0.5 }} />
-          <Typography variant="caption" color="text.secondary">
+        <Stack
+          direction="row"
+          gap={0.75}
+          alignItems="center"
+          onClick={() => setShowHorizon((v) => !v)}
+          sx={{ cursor: "pointer", opacity: showHorizon ? 1 : 0.35, userSelect: "none", "&:hover": { opacity: showHorizon ? 0.85 : 0.5 } }}
+        >
+          <Box sx={{ width: 16, height: 10, bgcolor: blockedFill, borderRadius: 0.5 }} />
+          <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
             Horizon
           </Typography>
         </Stack>
