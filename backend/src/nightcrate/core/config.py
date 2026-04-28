@@ -94,6 +94,11 @@ class Settings(BaseModel):
     scoring_moon_min_sep_r: float = 60.0
     scoring_moon_min_sep_g: float = 90.0
     scoring_moon_min_sep_b: float = 90.0
+    # Moon impact component weights: sky glow (global sky brightness
+    # from scattered moonlight) + proximity (local gradient/glare near
+    # the moon). min_sep only governs the proximity component.
+    scoring_moon_sky_glow_weight: float = 0.6
+    scoring_moon_proximity_weight: float = 0.4
     # Moon-impact multiplier for OCl / GCl / *Ass (cluster) targets.
     scoring_cluster_moon_modifier: float = 0.5
     # Altitude threshold and max-airmass anchor for the observability curve.

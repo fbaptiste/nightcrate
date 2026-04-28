@@ -276,8 +276,11 @@ def _compute_moon(
     sep_m = moon_sep_row[moon_up_in_obs]
 
     moon_alt_factor = np.sqrt(np.clip(np.sin(np.radians(alt_m)), 0.0, 1.0))
+    base = sensitivity * phase * moon_alt_factor
+    sky_glow = base * settings.scoring_moon_sky_glow_weight
     proximity = np.minimum(1.0, sep_m / max(min_sep, 1e-6))
-    per_sample_impact = sensitivity * phase * moon_alt_factor * (1.0 - proximity)
+    proximity_penalty = base * (1.0 - proximity) * settings.scoring_moon_proximity_weight
+    per_sample_impact = sky_glow + proximity_penalty
 
     mean_impact = float(per_sample_impact.mean())
     overlap = moon_up_in_obs.sum() / obs_samples
