@@ -801,7 +801,7 @@ function SectionBarDiv({
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        py: 1,
+        pb: 0.25,
         overflow: "hidden",
         cursor: draggable ? "grab" : undefined,
       }}
@@ -818,6 +818,7 @@ function SectionBarDiv({
           flex: 1,
           display: "flex",
           alignItems: "center",
+          py: 1,
         }}
       >
         {group.name}
