@@ -548,16 +548,6 @@ function DroppableSection({
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.5}>
-        {onMoveUp && (
-          <IconButton size="small" onClick={onMoveUp} sx={{ p: 0.25 }}>
-            <KeyboardArrowUpIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        )}
-        {onMoveDown && (
-          <IconButton size="small" onClick={onMoveDown} sx={{ p: 0.25 }}>
-            <KeyboardArrowDownIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        )}
         <IconButton size="small" onClick={onToggleCollapse} sx={{ p: 0.25 }}>
           {collapsed ? <ExpandMoreIcon sx={{ fontSize: 18 }} /> : <ExpandLessIcon sx={{ fontSize: 18 }} />}
         </IconButton>
@@ -591,6 +581,26 @@ function DroppableSection({
               ({group.items.length})
             </Typography>
           </Typography>
+        )}
+        {(onMoveUp || onMoveDown) && (
+          <Stack direction="row" gap={0}>
+            <IconButton
+              size="small"
+              onClick={onMoveUp}
+              disabled={!onMoveUp}
+              sx={{ p: 0.125, opacity: onMoveUp ? 0.7 : 0.2 }}
+            >
+              <KeyboardArrowUpIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={onMoveDown}
+              disabled={!onMoveDown}
+              sx={{ p: 0.125, opacity: onMoveDown ? 0.7 : 0.2 }}
+            >
+              <KeyboardArrowDownIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Stack>
         )}
         {!isUnsectioned && !editing && (
           <Tooltip title="Delete section" arrow>
