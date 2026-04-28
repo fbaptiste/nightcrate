@@ -76,9 +76,17 @@ export default function WishlistCalendarView({
 }: {
   onEditTarget?: (dsoId: number, planId: number) => void;
 }) {
+  const queryClient = useQueryClient();
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+
+  const reorderMut = useMutation({
+    mutationFn: reorderSections,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+    },
+  });
 
   const storeLocationId = usePlannerStore((s) => s.calendarLocationId);
   const storeHorizonId = usePlannerStore((s) => s.calendarHorizonId);
@@ -216,6 +224,7 @@ export default function WishlistCalendarView({
           hover={hover}
           setHover={setHover}
           onEditTarget={onEditTarget}
+          onReorderSections={(ids) => reorderMut.mutate(ids)}
         />
       ) : null}
     </Stack>
@@ -230,6 +239,7 @@ function CalendarChart({
   hover,
   setHover,
   onEditTarget,
+  onReorderSections,
 }: {
   data: CalendarResponse;
   wrapperRef: React.RefObject<HTMLDivElement | null>;
@@ -237,19 +247,11 @@ function CalendarChart({
   hover: HoverInfo | null;
   setHover: (h: HoverInfo | null) => void;
   onEditTarget?: (dsoId: number, planId: number) => void;
+  onReorderSections: (sectionIds: number[]) => void;
 }) {
-  const queryClient = useQueryClient();
   const [moonTip, setMoonTip] = useState<{
     x: number; y: number; phase: string; date: string;
   } | null>(null);
-
-  const reorderMutation = useMutation({
-    mutationFn: reorderSections,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
-      queryClient.invalidateQueries({ queryKey: ["calendar"] });
-    },
-  });
 
   const fmtLabel = (t: { primary_designation: string; common_name: string | null }) =>
     t.common_name ? `${t.primary_designation} (${t.common_name})` : t.primary_designation;
@@ -305,7 +307,7 @@ function CalendarChart({
     const newIdx = namedSectionIds.indexOf(over.id as number);
     if (oldIdx === -1 || newIdx === -1) return;
     const reordered = arrayMove(namedSectionIds, oldIdx, newIdx);
-    reorderMutation.mutate(reordered);
+    onReorderSections(reordered);
   };
 
   const maxLabelLen = useMemo(
@@ -799,13 +801,13 @@ function SectionBarDiv({
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
+        pt: draggable ? 0.25 : 0,
         overflow: "hidden",
         cursor: draggable ? "grab" : undefined,
       }}
     >
       {draggable && (
-        <DragIndicatorIcon sx={{ fontSize: 14, color, mb: 0.25 }} />
+        <DragIndicatorIcon sx={{ fontSize: 14, color, flexShrink: 0 }} />
       )}
       <Box
         sx={{
@@ -816,6 +818,9 @@ function SectionBarDiv({
           color,
           whiteSpace: "nowrap",
           userSelect: "none",
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
         }}
       >
         {group.name}
