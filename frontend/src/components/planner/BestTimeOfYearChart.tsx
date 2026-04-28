@@ -399,9 +399,7 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
         <Box
           sx={{
             position: "absolute",
-            ...(hover.yPxRaw < height / 2
-              ? { bottom: layout.MARGIN.bottom + 6 }
-              : { top: 4 }),
+            top: -Math.round(height * 0.3),
             left: Math.min(hover.xPx + 10, width - 180),
             bgcolor: "background.paper",
             border: 1,
