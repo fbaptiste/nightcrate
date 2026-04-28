@@ -8,21 +8,6 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  arrayMove,
-  verticalListSortingStrategy,
-  useSortable,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -31,7 +16,10 @@ import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
+import IconButton from "@mui/material/IconButton";
 import Typography from "@mui/material/Typography";
+import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import { useTheme } from "@mui/material/styles";
 import { fetchLocations, type Location } from "@/api/locations";
 import { fetchHorizons, type Horizon } from "@/api/horizons";
@@ -237,9 +225,18 @@ function CalendarChart({
   setHover: (h: HoverInfo | null) => void;
   onEditTarget?: (dsoId: number, planId: number) => void;
 }) {
+  const queryClient = useQueryClient();
   const [moonTip, setMoonTip] = useState<{
     x: number; y: number; phase: string; date: string;
   } | null>(null);
+
+  const reorderMutation = useMutation({
+    mutationFn: reorderSections,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+      queryClient.invalidateQueries({ queryKey: ["calendar"] });
+    },
+  });
 
   const fmtLabel = (t: { primary_designation: string; common_name: string | null }) =>
     t.common_name ? `${t.primary_designation} (${t.common_name})` : t.primary_designation;
@@ -280,6 +277,19 @@ function CalendarChart({
     }
     return groups;
   }, [data.targets, hasSections]);
+
+  const onReorderSection = (sectionId: number, direction: "up" | "down") => {
+    const namedIds = sectionGroups
+      .filter((g) => g.id !== null)
+      .map((g) => g.id!);
+    const idx = namedIds.indexOf(sectionId);
+    if (idx === -1) return;
+    const newIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= namedIds.length) return;
+    const reordered = [...namedIds];
+    [reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]];
+    reorderMutation.mutate(reordered);
+  };
 
   const maxLabelLen = useMemo(
     () => Math.max(...data.targets.map((t) => fmtLabel(t).length), 6),
@@ -620,7 +630,37 @@ function CalendarChart({
           )}
         </g>
 
-        {/* Section bars rendered as HTML overlay for dnd-kit support */}
+        {/* Section bars — vertical colored bars with rotated names */}
+        {hasSections && sectionGroups.map((sg, sgIdx) => {
+          const barY = MARGIN.top + 1 + sg.yStart;
+          const barH = sg.height;
+          const color = SECTION_COLORS[sgIdx % SECTION_COLORS.length];
+          return (
+            <g key={`sg-${sg.id ?? "none"}`}>
+              <rect
+                x={2}
+                y={barY}
+                width={sectionBarW - 4}
+                height={barH - 2}
+                rx={3}
+                fill={color}
+                opacity={0.25}
+              />
+              <text
+                x={sectionBarW / 2 + 1}
+                y={barY + barH / 2}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={10}
+                fontWeight={600}
+                fill={color}
+                transform={`rotate(-90, ${sectionBarW / 2 + 1}, ${barY + barH / 2})`}
+              >
+                {sg.name}
+              </text>
+            </g>
+          );
+        })}
 
         {/* Row labels — clickable to open assignment editor */}
         {data.targets.map((target, rowIdx) => (
@@ -642,15 +682,50 @@ function CalendarChart({
         ))}
       </svg>
 
-      {/* Section bars — HTML overlay with drag-to-reorder */}
-      {hasSections && (
-        <SectionBarOverlay
-          sectionGroups={sectionGroups}
-          sectionBarW={sectionBarW}
-          marginTop={MARGIN.top + 1}
-          isDark={isDark}
-        />
-      )}
+      {/* Section reorder buttons — positioned over each named section bar */}
+      {hasSections && sectionGroups.length > 1 && sectionGroups.map((sg) => {
+        if (sg.id === null) return null;
+        const namedGroups = sectionGroups.filter((g) => g.id !== null);
+        const namedIdx = namedGroups.indexOf(sg);
+        const isFirst = namedIdx === 0;
+        const isLast = namedIdx === namedGroups.length - 1;
+        if (isFirst && isLast) return null;
+        const barY = MARGIN.top + 1 + sg.yStart;
+        return (
+          <Box
+            key={`reorder-${sg.id}`}
+            sx={{
+              position: "absolute",
+              left: 0,
+              top: barY,
+              width: sectionBarW,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 0,
+            }}
+          >
+            {!isFirst && (
+              <IconButton
+                size="small"
+                onClick={() => onReorderSection(sg.id!, "up")}
+                sx={{ p: 0, color: "text.disabled", "&:hover": { color: "text.secondary" } }}
+              >
+                <KeyboardArrowUpIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            )}
+            {!isLast && (
+              <IconButton
+                size="small"
+                onClick={() => onReorderSection(sg.id!, "down")}
+                sx={{ p: 0, color: "text.disabled", "&:hover": { color: "text.secondary" } }}
+              >
+                <KeyboardArrowDownIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            )}
+          </Box>
+        );
+      })}
 
       {/* Hover tooltip — above the chart */}
       {hover && (
@@ -709,192 +784,6 @@ function CalendarChart({
           {moonTip.phase} — {moonTip.date}
         </Box>
       )}
-    </Box>
-  );
-}
-
-
-interface SectionGroup {
-  id: number | null;
-  name: string;
-  startRow: number;
-  count: number;
-  yStart: number;
-  height: number;
-}
-
-function SectionBarOverlay({
-  sectionGroups,
-  sectionBarW,
-  marginTop,
-  isDark,
-}: {
-  sectionGroups: SectionGroup[];
-  sectionBarW: number;
-  marginTop: number;
-  isDark: boolean;
-}) {
-  const queryClient = useQueryClient();
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-  );
-  const reorder = useMutation({
-    mutationFn: reorderSections,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
-      queryClient.invalidateQueries({ queryKey: ["calendar"] });
-    },
-  });
-
-  const namedGroups = sectionGroups.filter((g) => g.id !== null);
-  const generalGroup = sectionGroups.find((g) => g.id === null);
-  const [localOrder, setLocalOrder] = useState<number[]>(() =>
-    namedGroups.map((g) => g.id!),
-  );
-
-  useEffect(() => {
-    setLocalOrder(namedGroups.map((g) => g.id!));
-  }, [sectionGroups]);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIdx = localOrder.indexOf(active.id as number);
-    const newIdx = localOrder.indexOf(over.id as number);
-    if (oldIdx === -1 || newIdx === -1) return;
-    const reordered = arrayMove(localOrder, oldIdx, newIdx);
-    setLocalOrder(reordered);
-    reorder.mutate(reordered);
-  };
-
-  const orderedGroups = localOrder
-    .map((id) => namedGroups.find((g) => g.id === id))
-    .filter((g): g is SectionGroup => g != null);
-
-  return (
-    <Box sx={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }}>
-      {/* General section — pinned, not draggable */}
-      {generalGroup && (
-        <SectionBar
-          group={generalGroup}
-          colorIdx={sectionGroups.indexOf(generalGroup)}
-          sectionBarW={sectionBarW}
-          marginTop={marginTop}
-          isDark={isDark}
-        />
-      )}
-
-      {/* Named sections — sortable */}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-      >
-        <SortableContext
-          items={localOrder}
-          strategy={verticalListSortingStrategy}
-        >
-          {orderedGroups.map((sg) => (
-            <SortableSectionBar
-              key={sg.id!}
-              group={sg}
-              colorIdx={sectionGroups.indexOf(sg)}
-              sectionBarW={sectionBarW}
-              marginTop={marginTop}
-              isDark={isDark}
-            />
-          ))}
-        </SortableContext>
-      </DndContext>
-    </Box>
-  );
-}
-
-
-function SectionBar({
-  group,
-  colorIdx,
-  sectionBarW,
-  marginTop,
-  isDark,
-  style,
-  dragProps,
-}: {
-  group: SectionGroup;
-  colorIdx: number;
-  sectionBarW: number;
-  marginTop: number;
-  isDark: boolean;
-  style?: React.CSSProperties;
-  dragProps?: Record<string, unknown>;
-}) {
-  const color = SECTION_COLORS[colorIdx % SECTION_COLORS.length];
-  const barY = marginTop + group.yStart;
-  const barH = group.height;
-  return (
-    <Box
-      sx={{
-        position: "absolute",
-        left: 2,
-        top: barY,
-        width: sectionBarW - 4,
-        height: barH - 2,
-        borderRadius: "3px",
-        bgcolor: color,
-        opacity: 0.25,
-        pointerEvents: "auto",
-        cursor: dragProps ? "grab" : undefined,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        overflow: "hidden",
-      }}
-      style={style}
-      {...dragProps}
-    >
-      <Box
-        sx={{
-          writingMode: "vertical-rl",
-          transform: "rotate(180deg)",
-          fontSize: 10,
-          fontWeight: 600,
-          color,
-          opacity: isDark ? 4 : 3,
-          whiteSpace: "nowrap",
-          userSelect: "none",
-        }}
-      >
-        {group.name}
-      </Box>
-    </Box>
-  );
-}
-
-
-function SortableSectionBar(props: {
-  group: SectionGroup;
-  colorIdx: number;
-  sectionBarW: number;
-  marginTop: number;
-  isDark: boolean;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: props.group.id! });
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : undefined,
-    zIndex: isDragging ? 10 : undefined,
-  };
-
-  return (
-    <Box ref={setNodeRef} style={{ position: "absolute", top: 0, left: 0 }}>
-      <SectionBar
-        {...props}
-        style={style}
-        dragProps={{ ...attributes, ...listeners }}
-      />
     </Box>
   );
 }
