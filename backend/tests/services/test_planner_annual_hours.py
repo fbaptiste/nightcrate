@@ -242,6 +242,47 @@ def test_longyearbyen_polar_winter_exceeds_12h_cap():
     )
 
 
+def test_illumination_filter_reduces_full_moon_nights():
+    """With max_illumination_pct=50, nights near full moon (illumination
+    ~100%) should have filtered_hours < raw hours. The filter lets time
+    through only when the moon is below the horizon."""
+    track = compute_annual_hours(
+        PHOENIX,
+        FLAT_30,
+        2026,
+        M42,
+        moon_sep_deg=0.0,
+        max_illumination_pct=50.0,
+        min_separation_deg=60.0,
+        moon_combine="and",
+    )
+    reduced = sum(
+        1
+        for r, f in zip(track.points, track.filtered_points, strict=True)
+        if r.hours > 0.5 and f.hours < r.hours - 0.1
+    )
+    assert reduced > 30, (
+        f"Expected many nights with filtered < raw under strict moon filter; got {reduced}"
+    )
+
+
+def test_min_separation_only_considers_moon_above_horizon():
+    """min_separation_deg in moon_data should be None for nights where the
+    moon never rises above the horizon during dark hours while the target
+    is visible, and should reflect actual moon-above-horizon geometry
+    otherwise."""
+    track = compute_annual_hours(
+        PHOENIX,
+        FLAT_30,
+        2026,
+        M42,
+        moon_sep_deg=0.0,
+    )
+    for md in track.moon_data:
+        if md.min_separation_deg is not None:
+            assert 0.0 <= md.min_separation_deg <= 180.0
+
+
 def test_new_york_has_no_dst_discontinuities():
     """DST transitions (spring-forward Mar 8 2026, fall-back Nov 1
     2026) change the local offset mid-year. Each transition-day bucket

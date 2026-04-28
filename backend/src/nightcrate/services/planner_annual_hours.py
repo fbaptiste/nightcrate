@@ -183,6 +183,94 @@ def _integrate_segment(
     return total_u * _SAMPLE_SECONDS
 
 
+def _integrate_filtered_segment(
+    obj_alt1: float,
+    obj_alt2: float,
+    horizon1: float,
+    horizon2: float,
+    sun_alt1: float,
+    sun_alt2: float,
+    moon_alt1: float,
+    moon_alt2: float,
+    illum1: float,
+    illum2: float,
+    sep1: float,
+    sep2: float,
+    max_illumination_pct: float | None,
+    min_separation_deg: float | None,
+    moon_combine: str,
+) -> float:
+    """Return valid seconds within a segment for the moon filter predicates.
+
+    Same linear-interpolation-and-root approach as ``_integrate_segment``
+    but checks the illumination/separation filter instead of the old
+    binary moon_sep_threshold.
+    """
+    crossings = [0.0, 1.0]
+
+    def root(f1: float, f2: float) -> float | None:
+        if f1 * f2 >= 0:
+            return None
+        denom = f1 - f2
+        if abs(denom) < 1e-12:
+            return None
+        uu = f1 / denom
+        return uu if 0.0 < uu < 1.0 else None
+
+    u = root(obj_alt1 - horizon1, obj_alt2 - horizon2)
+    if u is not None:
+        crossings.append(u)
+    u = root(_ASTRO_DARK_DEG - sun_alt1, _ASTRO_DARK_DEG - sun_alt2)
+    if u is not None:
+        crossings.append(u)
+    u = root(-moon_alt1, -moon_alt2)
+    if u is not None:
+        crossings.append(u)
+    if max_illumination_pct is not None:
+        u = root(max_illumination_pct - illum1, max_illumination_pct - illum2)
+        if u is not None:
+            crossings.append(u)
+    if min_separation_deg is not None:
+        u = root(sep1 - min_separation_deg, sep2 - min_separation_deg)
+        if u is not None:
+            crossings.append(u)
+
+    crossings.sort()
+
+    total_u = 0.0
+    for i in range(len(crossings) - 1):
+        u_lo = crossings[i]
+        u_hi = crossings[i + 1]
+        u_mid = 0.5 * (u_lo + u_hi)
+
+        obj_m = obj_alt1 + u_mid * (obj_alt2 - obj_alt1)
+        horiz_m = horizon1 + u_mid * (horizon2 - horizon1)
+        if obj_m <= horiz_m:
+            continue
+        sun_m = sun_alt1 + u_mid * (sun_alt2 - sun_alt1)
+        if sun_m >= _ASTRO_DARK_DEG:
+            continue
+
+        moon_m = moon_alt1 + u_mid * (moon_alt2 - moon_alt1)
+        if moon_m < 0.0:
+            total_u += u_hi - u_lo
+            continue
+
+        illum_m = illum1 + u_mid * (illum2 - illum1)
+        sep_m = sep1 + u_mid * (sep2 - sep1)
+        illum_pass = max_illumination_pct is None or illum_m <= max_illumination_pct
+        sep_pass = min_separation_deg is None or sep_m >= min_separation_deg
+        if moon_combine == "or":
+            if not (illum_pass or sep_pass):
+                continue
+        else:
+            if not (illum_pass and sep_pass):
+                continue
+
+        total_u += u_hi - u_lo
+
+    return total_u * _SAMPLE_SECONDS
+
 
 def _compute_subrange(
     location: PlannerLocation,
@@ -232,7 +320,8 @@ def _compute_subrange(
     # crossing, and the object / moon values at the crossing are
     # interpolated from the surrounding samples.
     altaz_frame = AltAz(obstime=times, location=earth_loc)
-    sun_alt = np.asarray(get_body("sun", times, earth_loc).transform_to(altaz_frame).alt.deg)
+    sun_body = get_body("sun", times, earth_loc)
+    sun_alt = np.asarray(sun_body.transform_to(altaz_frame).alt.deg)
 
     obj_altaz = coord.transform_to(altaz_frame)
     obj_alt = np.asarray(obj_altaz.alt.deg)
@@ -254,10 +343,13 @@ def _compute_subrange(
         moon_altaz = moon_body.transform_to(altaz_frame)
         moon_alt = np.asarray(moon_altaz.alt.deg)
         moon_sep = np.asarray(coord.separation(moon_body).deg)
+        elongation = np.asarray(sun_body.separation(moon_body).deg)
+        illum_pct = (1.0 + np.cos(np.radians(elongation))) / 2.0 * 100.0
     else:
         moon_body = None
         moon_alt = None
         moon_sep = None
+        illum_pct = None
 
     # Per-sample predicate values. ``above_h`` / ``dark`` / ``moon_ok``
     # are pointwise booleans used for the vectorised fast-path
@@ -341,11 +433,17 @@ def _compute_subrange(
     hours = seconds_per_day / 3600.0
 
     # Moon-filtered hours: apply illumination/separation predicates.
-    if apply_filter and need_moon and moon_alt is not None and moon_sep is not None:
-        sun_body_for_illum = get_body("sun", times, earth_loc)
-        elongation = np.asarray(sun_body_for_illum.separation(moon_body).deg)
-        illum_pct = (1.0 + np.cos(np.radians(elongation))) / 2.0 * 100.0
-
+    # Uses its own sign-change detection (has_cross_filtered) so that
+    # moon rise/set, illumination, and separation crossings are properly
+    # handled even when the raw path's moon_sep_deg == 0.
+    can_filter = (
+        apply_filter
+        and need_moon
+        and moon_alt is not None
+        and moon_sep is not None
+        and illum_pct is not None
+    )
+    if can_filter:
         moon_below = moon_alt < 0.0
         if max_illumination_pct is not None:
             illum_ok = moon_below | (illum_pct <= max_illumination_pct)
@@ -361,58 +459,71 @@ def _compute_subrange(
         else:
             moon_filter_ok = illum_ok & sep_ok
 
-        above_h_local = obj_alt > horizon_alt
-        dark_local = sun_alt < _ASTRO_DARK_DEG
-        filtered_valid = above_h_local & dark_local & moon_filter_ok
+        filtered_valid = above_h & dark & moon_filter_ok
+
+        has_cross_filtered = (
+            has_sign_change(f_h) | has_sign_change(f_d) | has_sign_change(-moon_alt)
+        )
+        if max_illumination_pct is not None:
+            has_cross_filtered = has_cross_filtered | has_sign_change(
+                max_illumination_pct - illum_pct
+            )
+        if min_separation_deg is not None:
+            has_cross_filtered = has_cross_filtered | has_sign_change(moon_sep - min_separation_deg)
 
         filtered_seg = np.zeros(n_samples - 1, dtype=float)
-        stable_filtered = ~has_cross & filtered_valid[:-1]
+        stable_filtered = ~has_cross_filtered & filtered_valid[:-1]
         filtered_seg[stable_filtered] = _SAMPLE_SECONDS
 
-        if crossing_idx.size > 0:
-            for i in crossing_idx:
-                if filtered_valid[i] or filtered_valid[i + 1]:
-                    base = seconds_per_segment[i]
-                    mid_moon_ok = bool(moon_filter_ok[i]) and bool(moon_filter_ok[i + 1])
-                    filtered_seg[i] = base if mid_moon_ok else 0.0
+        crossing_idx_filtered = np.where(has_cross_filtered)[0]
+        if crossing_idx_filtered.size > 0:
+            for i in crossing_idx_filtered:
+                filtered_seg[i] = _integrate_filtered_segment(
+                    float(obj_alt[i]),
+                    float(obj_alt[i + 1]),
+                    float(horizon_alt[i]),
+                    float(horizon_alt[i + 1]),
+                    float(sun_alt[i]),
+                    float(sun_alt[i + 1]),
+                    float(moon_alt[i]),
+                    float(moon_alt[i + 1]),
+                    float(illum_pct[i]),
+                    float(illum_pct[i + 1]),
+                    float(moon_sep[i]),
+                    float(moon_sep[i + 1]),
+                    max_illumination_pct,
+                    min_separation_deg,
+                    moon_combine,
+                )
 
         filtered_per_day = np.zeros(n_days, dtype=float)
         np.add.at(filtered_per_day, seg_day_index[in_range], filtered_seg[in_range])
         filtered_hours = filtered_per_day / 3600.0
-
-        midnight_illum = np.zeros(n_days, dtype=float)
-        samples_per_day = 24 * 60 // _SAMPLE_MINUTES
-        midnight_offset = 12 * 60 // _SAMPLE_MINUTES
-        midnight_indices = np.arange(n_days) * samples_per_day + midnight_offset
-        valid_mid = midnight_indices < len(illum_pct)
-        midnight_illum[valid_mid] = illum_pct[midnight_indices[valid_mid]]
-    elif need_moon and moon_alt is not None and moon_sep is not None:
-        sun_body_for_illum = get_body("sun", times, earth_loc)
-        elongation = np.asarray(sun_body_for_illum.separation(moon_body).deg)
-        illum_pct = (1.0 + np.cos(np.radians(elongation))) / 2.0 * 100.0
-
-        filtered_hours = hours.copy()
-        midnight_illum = np.zeros(n_days, dtype=float)
-        samples_per_day = 24 * 60 // _SAMPLE_MINUTES
-        midnight_offset = 12 * 60 // _SAMPLE_MINUTES
-        midnight_indices = np.arange(n_days) * samples_per_day + midnight_offset
-        valid_mid = midnight_indices < len(illum_pct)
-        midnight_illum[valid_mid] = illum_pct[midnight_indices[valid_mid]]
     else:
         filtered_hours = hours.copy()
-        midnight_illum = np.zeros(n_days, dtype=float)
 
+    # Midnight illumination for the response (one value per night).
+    midnight_illum = np.zeros(n_days, dtype=float)
+    if illum_pct is not None:
+        samples_per_day = 24 * 60 // _SAMPLE_MINUTES
+        midnight_offset = 12 * 60 // _SAMPLE_MINUTES
+        midnight_indices = np.arange(n_days) * samples_per_day + midnight_offset
+        valid_mid = midnight_indices < len(illum_pct)
+        midnight_illum[valid_mid] = illum_pct[midnight_indices[valid_mid]]
+
+    # Min separation per night — only when moon is above horizon
+    # (separation is meaningless when the moon is below).
     min_sep_per_day = np.full(n_days, np.nan)
-    if moon_sep is not None:
-        valid_samples = above_h & dark
-        masked_sep = np.where(valid_samples, moon_sep, np.inf)
+    if moon_sep is not None and moon_alt is not None:
+        moon_above = moon_alt >= 0.0
+        valid_samples = above_h & dark & moon_above
         for i in range(n_samples):
             di = seg_day_index[i] if i < len(seg_day_index) else -1
             if 0 <= di < n_days and valid_samples[i]:
                 if np.isnan(min_sep_per_day[di]):
-                    min_sep_per_day[di] = masked_sep[i]
+                    min_sep_per_day[di] = moon_sep[i]
                 else:
-                    min_sep_per_day[di] = min(min_sep_per_day[di], masked_sep[i])
+                    min_sep_per_day[di] = min(min_sep_per_day[di], moon_sep[i])
 
     return [
         (
@@ -498,24 +609,37 @@ def compute_annual_hours(
     n_workers = max(1, max_workers or 1)
     if n_workers == 1:
         pairs = _compute_subrange(
-            location, horizon, ra_deg, dec_deg, moon_sep_deg,
-            year_start, year_end,
-            max_illumination_pct, min_separation_deg, moon_combine,
+            location,
+            horizon,
+            ra_deg,
+            dec_deg,
+            moon_sep_deg,
+            year_start,
+            year_end,
+            max_illumination_pct,
+            min_separation_deg,
+            moon_combine,
         )
     else:
         n_workers = min(n_workers, n_days)
         bounds = [
-            year_start + timedelta(days=(n_days * i) // n_workers)
-            for i in range(n_workers + 1)
+            year_start + timedelta(days=(n_days * i) // n_workers) for i in range(n_workers + 1)
         ]
         chunks = list(zip(bounds[:-1], bounds[1:], strict=True))
         pool = _get_pool(n_workers)
         futures = [
             pool.submit(
                 _compute_subrange,
-                location, horizon, ra_deg, dec_deg, moon_sep_deg,
-                start_d, end_d,
-                max_illumination_pct, min_separation_deg, moon_combine,
+                location,
+                horizon,
+                ra_deg,
+                dec_deg,
+                moon_sep_deg,
+                start_d,
+                end_d,
+                max_illumination_pct,
+                min_separation_deg,
+                moon_combine,
             )
             for start_d, end_d in chunks
         ]
