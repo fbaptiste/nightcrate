@@ -358,7 +358,7 @@ export default function SkyPositionGraph({
         {/* Y-axis title — rotated so it sits flush against the tick labels. */}
         <text
           x={-((height - layout.MARGIN.top - layout.MARGIN.bottom) / 2 + layout.MARGIN.top)}
-          y={layout.MARGIN.left - 44}
+          y={layout.MARGIN.left - 34}
           textAnchor="middle"
           transform="rotate(-90)"
           fontSize={11}
@@ -482,12 +482,8 @@ export default function SkyPositionGraph({
           const lineTop = labelsBarTop + m.tier * TWILIGHT_TIER_HEIGHT;
           // Label baseline: 3 px above the tier's lower edge.
           const labelY = labelsBarTop + (m.tier + 1) * TWILIGHT_TIER_HEIGHT - 3;
-          const nearLeftEdge = mx < layout.MARGIN.left + 80;
-          const nearRightEdge = mx > width - layout.MARGIN.right - 80;
-          const flipLeft = m.side === "left" && nearLeftEdge;
-          const flipRight = m.side === "right" && nearRightEdge;
-          const labelX = flipLeft ? mx + 4 : flipRight ? mx - 4 : m.side === "left" ? mx - 4 : mx + 4;
-          const textAnchor = flipLeft ? "start" : flipRight ? "end" : m.side === "left" ? "end" : "start";
+          const labelX = m.side === "left" ? mx + 4 : mx - 4;
+          const textAnchor = m.side === "left" ? "start" : "end";
           const timeLocal = new Date(m.utc).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -691,8 +687,9 @@ export default function SkyPositionGraph({
         direction="row"
         gap={2}
         flexWrap="wrap"
-        sx={{ mt: 1, px: 1 }}
+        sx={{ mt: 1, pr: `${layout.MARGIN.right}px` }}
         alignItems="center"
+        justifyContent="flex-end"
       >
         <Stack direction="row" gap={0.75} alignItems="center">
           <Box
