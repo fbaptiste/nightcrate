@@ -30,7 +30,6 @@ import { fetchHorizons, type Horizon } from "@/api/horizons";
 import { fetchSingleTargetScore } from "@/api/planner";
 import { type Rig } from "@/api/rigs";
 import { type Location } from "@/api/locations";
-import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
@@ -242,14 +241,6 @@ export default function PlannerDetailPanel({
 
   // "Best time of year" controls — moon-separation dropdown only now
   // (horizon threshold comes from the dedicated horizon selector).
-  // ``moonSepDeg`` is the minimum moon–target separation the night
-  // needs to count; ``0`` means "ignore moon". Default sourced from
-  // the user's ``planner_moon_sep_deg`` setting so power users who
-  // always shoot LRGB can land on e.g. 60° without reconfiguring the
-  // dropdown per target.
-  const settings = useSettingsStore((s) => s.settings);
-  const moonSepDefault = settings?.planner_moon_sep_deg ?? 0;
-  const [moonSepDeg, setMoonSepDeg] = useState<number>(moonSepDefault);
   const [moonFilterEnabled, setMoonFilterEnabled] = useState(false);
   const [maxIllumination, setMaxIllumination] = useState<number>(50);
   const [minSeparation, setMinSeparation] = useState<number>(60);
@@ -257,16 +248,6 @@ export default function PlannerDetailPanel({
   const [skyPosOpen, setSkyPosOpen] = useState(true);
   const [bestTimeOpen, setBestTimeOpen] = useState(true);
   const [scoreOpen, setScoreOpen] = useState(false);
-
-  useEffect(() => {
-    if (dsoId != null) {
-      setMoonSepDeg(moonSepDefault);
-    }
-    // Re-running on ``moonSepDefault`` would snap the slider back to
-    // the setting whenever Settings is edited — only reset on DSO
-    // open / change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dsoId]);
 
   // Annual "best time of year" track. First-load compute is a few
   // seconds (full-year 5-min astropy grid on cold cache); TanStack
