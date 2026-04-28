@@ -683,13 +683,12 @@ function CalendarChart({
       </svg>
 
       {/* Section reorder buttons — positioned over each named section bar */}
-      {hasSections && sectionGroups.length > 1 && sectionGroups.map((sg) => {
-        if (sg.id === null) return null;
+      {hasSections && (() => {
         const namedGroups = sectionGroups.filter((g) => g.id !== null);
-        const namedIdx = namedGroups.indexOf(sg);
+        if (namedGroups.length < 2) return null;
+        return namedGroups.map((sg, namedIdx) => {
         const isFirst = namedIdx === 0;
         const isLast = namedIdx === namedGroups.length - 1;
-        if (isFirst && isLast) return null;
         const barY = MARGIN.top + 1 + sg.yStart;
         return (
           <Box
@@ -703,6 +702,7 @@ function CalendarChart({
               flexDirection: "column",
               alignItems: "center",
               gap: 0,
+              zIndex: 2,
             }}
           >
             {!isFirst && (
@@ -725,7 +725,8 @@ function CalendarChart({
             )}
           </Box>
         );
-      })}
+        });
+      })()}
 
       {/* Hover tooltip — above the chart */}
       {hover && (
