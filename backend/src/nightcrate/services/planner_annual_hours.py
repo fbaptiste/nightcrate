@@ -511,12 +511,9 @@ def _compute_subrange(
         valid_mid = midnight_indices < len(illum_pct)
         midnight_illum[valid_mid] = illum_pct[midnight_indices[valid_mid]]
 
-    # Min separation per night — only when moon is above horizon
-    # (separation is meaningless when the moon is below).
     min_sep_per_day = np.full(n_days, np.nan)
-    if moon_sep is not None and moon_alt is not None:
-        moon_above = moon_alt >= 0.0
-        valid_samples = above_h & dark & moon_above
+    if moon_sep is not None:
+        valid_samples = above_h & dark
         for i in range(n_samples):
             di = seg_day_index[i] if i < len(seg_day_index) else -1
             if 0 <= di < n_days and valid_samples[i]:
