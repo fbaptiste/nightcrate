@@ -306,35 +306,26 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
           </Stack>
 
           {locationId !== "" && horizonId !== "" && (
-            <Box>
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                sx={{ mb: 0.5 }}
-              >
-                <Box>
-                  <Typography variant="subtitle2">Best time of year</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Hours above{" "}
-                    {selectedHorizon?.type === "artificial" &&
-                    selectedHorizon.flat_altitude_deg != null
-                      ? `${selectedHorizon.flat_altitude_deg.toFixed(0)}°`
-                      : selectedHorizon?.name ?? "horizon"}{" "}
-                    during astronomical darkness. Shift-drag to select date ranges.
-                  </Typography>
-                </Box>
-                <MoonFilterControls
-                  enabled={moonFilterEnabled}
-                  onEnabledChange={setMoonFilterEnabled}
-                  maxIllumination={maxIllumination}
-                  onMaxIlluminationChange={setMaxIllumination}
-                  minSeparation={minSeparation}
-                  onMinSeparationChange={setMinSeparation}
-                  moonCombine={moonCombine}
-                  onMoonCombineChange={setMoonCombine}
-                />
-              </Stack>
+            <Box sx={{ mb: 0.5 }}>
+              <Typography variant="subtitle2">Best time of year</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Hours above{" "}
+                {selectedHorizon?.type === "artificial" &&
+                selectedHorizon.flat_altitude_deg != null
+                  ? `${selectedHorizon.flat_altitude_deg.toFixed(0)}°`
+                  : selectedHorizon?.name ?? "horizon"}{" "}
+                during astronomical darkness. Shift-drag to select date ranges.
+              </Typography>
+              <MoonFilterControls
+                enabled={moonFilterEnabled}
+                onEnabledChange={setMoonFilterEnabled}
+                maxIllumination={maxIllumination}
+                onMaxIlluminationChange={setMaxIllumination}
+                minSeparation={minSeparation}
+                onMinSeparationChange={setMinSeparation}
+                moonCombine={moonCombine}
+                onMoonCombineChange={setMoonCombine}
+              />
 
               <Box sx={{ position: "relative", minHeight: CHART_HEIGHT, overflow: "visible" }}>
                 {annualHoursQuery.data && (
