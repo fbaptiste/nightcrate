@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.29.1
+**NightCrate version:** 0.31.0
 
-**Last updated:** 2026-04-25
+**Last updated:** 2026-04-27
 
 **Last full repo snapshot:** 2026-04-19
 
@@ -141,7 +141,7 @@ Each location owns ≥1 horizon: at most one **custom** polyline shape (imported
 - **Key frontend:** `components/locations/LocationHorizonsSection.tsx` (v0.20.0 rewrite — operates on staged state owned by `LocationsPage`), `components/locations/horizonStaging.ts` (v0.20.0 — StagedHorizon + lifecycle helpers + save-dispatch planner), plus the unchanged editor dialog components (`HorizonEditor`, `HorizonChart`, etc.). Shared `components/planner/horizonMenuItems.tsx` renders the Custom/Artificial grouped dropdown for both the planner main page and the detail panel.
 - **Schema:** migrations `0014.location_horizon.sql` (original 1:1) + `0021.location_horizon_multi.sql` (reshapes to 1:N with partial unique indexes on `is_default` and `type='custom'`). v0.20.0 extends `LocationCreate` with optional `horizons: list[HorizonCreate] | None` for atomic create.
 
-### Target Planner (v0.16.0 Pass A + v0.17.0 Pass B + v0.18.0 Pass C + v0.19.0 rewrite + v0.21.0 scoring)
+### Target Planner (v0.16.0–v0.21.0 + v0.30.0 wishlist + v0.31.0 moon quality)
 
 **Status:** `[shipped]`
 
@@ -170,6 +170,10 @@ FOV Simulator (v0.18.0 rewrite): drag-to-rotate orange sensor rectangle overlaid
 - **Schema:** migrations 0017–0019 (`thumbnail_cache`), 0020 (`sky_tile_cache`, v0.18.0), 0021 (multi-horizon reshape, v0.19.0), 0022 (`dso_external_ref` + `dso_catalog_source.category` widen, v0.20.0). v0.21.0 scoring adds no migration — new settings absorbed by the KV `settings` table via Pydantic defaults.
 - **Settings (v0.19.0 + v0.21.0):** `planner_min_visibility_hours` (2h), `planner_max_magnitude` (12), `planner_min_size_arcmin` (5'), `planner_frames_well_min_pct` (15), `planner_frames_well_max_pct` (90), `planner_moon_sep_deg` (0 — "Ignore moon"; default for the Best time of year chart), `thumbnail_cache_max_mb` (500; slider max 5 GB). **Plus 25 `scoring_*` fields (v0.21.0):** 4 weights, 7 moon sensitivities, 7 moon min-separations, cluster modifier, observability altitude, frame-fit ideal + spread, 3 chip thresholds, 2 hard-gate caps — all configurable in Settings → Planner Scoring with tooltips. **Removed (v0.19.0):** `planner_min_altitude_deg` (altitude floor now lives per-horizon on the location).
 - **Deliberate deviations from spec:** moon distance is **closest approach during the visibility window**, not at-peak — the at-peak value can be misleading when the moon is below horizon at transit but rises during the visible window. Meridian + Max altitude are always rendered as two separate card lines (no collapse-when-equal) for consistent vertical rhythm in the card list.
+
+**v0.30.0 Target Wishlist & Planning.** Wishlist tab for bookmarking DSOs, organizing into named sections (drag-and-drop with dnd-kit Multiple Containers), and creating plan assignments (location + horizon + rig + date ranges + notes). Interactive annual chart with shift-drag date selection, draggable hours threshold, and auto-generate. Calendar view shows a year-agnostic Gantt chart of planned imaging windows with section-colored bars.
+
+**v0.31.0 Moon Quality Weighted Visibility.** Moon illumination/separation filter with checkbox + `Illumination ≤ / AND|OR / Separation ≥` controls (shared `MoonFilterControls` component). Best Time of Year chart shows dual curves (raw blue + effective orange), moon phase backdrop, and a moon max-altitude line on the right y-axis — all toggleable via clickable legend. Moon impact scoring reworked to a two-component model (sky glow 60% + proximity 40%) so a bright moon far from the target still penalises broadband. Meridian timing now uses the true transit time with a 2h buffer. Illumination formula fixed from `(1+cos)` to `(1-cos)` (elongation vs phase angle). Detail panel sections (Score, Sky Position, Best Time of Year) are collapsible; sky position chart widened to match.
 
 ### DSO catalog
 

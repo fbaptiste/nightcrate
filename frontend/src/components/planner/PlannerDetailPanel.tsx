@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import Collapse from "@mui/material/Collapse";
 import Dialog from "@mui/material/Dialog";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
@@ -17,6 +18,8 @@ import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import {
   fetchAnnualHours,
   fetchSkyTrack,
@@ -27,7 +30,6 @@ import { fetchHorizons, type Horizon } from "@/api/horizons";
 import { fetchSingleTargetScore } from "@/api/planner";
 import { type Rig } from "@/api/rigs";
 import { type Location } from "@/api/locations";
-import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
@@ -35,7 +37,9 @@ import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { DsoExternalRefs } from "@/components/dso/DsoExternalRefs";
 import SkyPreview from "@/components/dso/SkyPreview";
 import BestTimeOfYearChart from "./BestTimeOfYearChart";
+import MoonFilterControls from "./MoonFilterControls";
 import { ScoreBreakdownSection } from "./ScoreBreakdownSection";
+import { ScoreChip } from "./ScoreChip";
 import SkyPositionGraph from "./SkyPositionGraph";
 import FovSimulator from "./FovSimulator";
 import { renderHorizonMenuItems } from "./horizonMenuItems";
@@ -237,24 +241,13 @@ export default function PlannerDetailPanel({
 
   // "Best time of year" controls — moon-separation dropdown only now
   // (horizon threshold comes from the dedicated horizon selector).
-  // ``moonSepDeg`` is the minimum moon–target separation the night
-  // needs to count; ``0`` means "ignore moon". Default sourced from
-  // the user's ``planner_moon_sep_deg`` setting so power users who
-  // always shoot LRGB can land on e.g. 60° without reconfiguring the
-  // dropdown per target.
-  const settings = useSettingsStore((s) => s.settings);
-  const moonSepDefault = settings?.planner_moon_sep_deg ?? 0;
-  const [moonSepDeg, setMoonSepDeg] = useState<number>(moonSepDefault);
-
-  useEffect(() => {
-    if (dsoId != null) {
-      setMoonSepDeg(moonSepDefault);
-    }
-    // Re-running on ``moonSepDefault`` would snap the slider back to
-    // the setting whenever Settings is edited — only reset on DSO
-    // open / change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dsoId]);
+  const [moonFilterEnabled, setMoonFilterEnabled] = useState(false);
+  const [maxIllumination, setMaxIllumination] = useState<number>(50);
+  const [minSeparation, setMinSeparation] = useState<number>(60);
+  const [moonCombine, setMoonCombine] = useState<"and" | "or">("and");
+  const [skyPosOpen, setSkyPosOpen] = useState(true);
+  const [bestTimeOpen, setBestTimeOpen] = useState(true);
+  const [scoreOpen, setScoreOpen] = useState(false);
 
   // Annual "best time of year" track. First-load compute is a few
   // seconds (full-year 5-min astropy grid on cold cache); TanStack
@@ -266,12 +259,18 @@ export default function PlannerDetailPanel({
       dsoId,
       previewLocationId,
       effectiveHorizon?.id ?? null,
-      moonSepDeg,
+      moonFilterEnabled,
+      maxIllumination,
+      minSeparation,
+      moonCombine,
     ],
     queryFn: () =>
       fetchAnnualHours(dsoId as number, previewLocationId as number, {
         horizonId: effectiveHorizon?.id,
-        moonSepDeg,
+        moonSepDeg: 0,
+        maxIlluminationPct: moonFilterEnabled ? maxIllumination : undefined,
+        minSeparationDeg: moonFilterEnabled ? minSeparation : undefined,
+        moonCombine: moonFilterEnabled ? moonCombine : undefined,
       }),
     enabled:
       dsoId != null && previewLocationId != null && effectiveHorizon != null,
@@ -607,6 +606,14 @@ export default function PlannerDetailPanel({
                   : "—"
               }
             />
+            <Fact
+              label="Moon illumination"
+              value={
+                skyTrackQuery.data?.moon_phase_pct != null
+                  ? `${Math.round(skyTrackQuery.data.moon_phase_pct)}%`
+                  : "—"
+              }
+            />
           </Stack>
           <Stack direction="row" gap={3} flexWrap="wrap">
             <Fact
@@ -623,149 +630,110 @@ export default function PlannerDetailPanel({
         {/* External-reference chip now lives in the header next to the
             designation pills. */}
 
+        {/* ── Score Breakdown (collapsed by default, pill always visible) ── */}
+        {target && (() => {
+          const scoreItem = previewScoreQuery.data
+            ? { ...target, score_pct: previewScoreQuery.data.score_pct, quality_label: previewScoreQuery.data.quality_label, score_breakdown: previewScoreQuery.data.score_breakdown }
+            : target;
+          return (
+            <Box sx={{ mt: 2 }}>
+              <Stack direction="row" alignItems="center" gap={0.5} sx={{ cursor: "pointer" }} onClick={() => setScoreOpen((v) => !v)}>
+                <IconButton size="small" sx={{ p: 0.25 }}>
+                  {scoreOpen ? <ExpandLessIcon sx={{ fontSize: 18 }} /> : <ExpandMoreIcon sx={{ fontSize: 18 }} />}
+                </IconButton>
+                <Typography variant="subtitle2" fontWeight={600}>Score</Typography>
+                <ScoreChip
+                  scorePct={scoreItem.score_pct}
+                  qualityLabel={scoreItem.quality_label}
+                  gateFailures={scoreItem.score_breakdown?.gate_failures}
+                  size="small"
+                />
+              </Stack>
+              <Collapse in={scoreOpen}>
+                <ScoreBreakdownSection item={scoreItem} />
+              </Collapse>
+            </Box>
+          );
+        })()}
+
+        {/* ── Sky Position (collapsible) ── */}
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" fontWeight={600}>
-            Sky position
-          </Typography>
-          {previewLocationId == null ? (
-            // Anytime mode (or any other state where the panel has
-            // no location). The sky-track computation needs a
-            // location; surface a friendly prompt rather than a
-            // spinner that never resolves.
-            <Box sx={{ p: 4, textAlign: "center" }}>
-              <Typography variant="body2" color="text.secondary">
-                Pick a location in the header above to see this
-                object's sky track.
-              </Typography>
-            </Box>
-          ) : skyTrackQuery.isLoading ? (
-            <Box sx={{ p: 4, display: "flex", justifyContent: "center" }}>
-              <CircularProgress size={24} />
-            </Box>
-          ) : skyTrackQuery.data ? (
-            <SkyPositionGraph track={skyTrackQuery.data} tz={tz} />
-          ) : null}
+          <Stack direction="row" alignItems="center" gap={0.5} sx={{ cursor: "pointer" }} onClick={() => setSkyPosOpen((v) => !v)}>
+            <IconButton size="small" sx={{ p: 0.25 }}>
+              {skyPosOpen ? <ExpandLessIcon sx={{ fontSize: 18 }} /> : <ExpandMoreIcon sx={{ fontSize: 18 }} />}
+            </IconButton>
+            <Typography variant="subtitle2" fontWeight={600}>Sky position</Typography>
+          </Stack>
+          <Collapse in={skyPosOpen}>
+            {previewLocationId == null ? (
+              <Box sx={{ p: 4, textAlign: "center" }}>
+                <Typography variant="body2" color="text.secondary">
+                  Pick a location in the header above to see this object's sky track.
+                </Typography>
+              </Box>
+            ) : skyTrackQuery.isLoading ? (
+              <Box sx={{ p: 4, display: "flex", justifyContent: "center" }}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : skyTrackQuery.data ? (
+              <SkyPositionGraph track={skyTrackQuery.data} tz={tz} />
+            ) : null}
+          </Collapse>
         </Box>
 
-        {skyTrackQuery.data && (
-          <Stack direction="row" gap={3} sx={{ mt: 2 }} flexWrap="wrap">
-            <Typography variant="caption" color="text.secondary">
-              Astro dark: {formatLocalTime(skyTrackQuery.data.twilight.astro_start_utc, tz)} –{" "}
-              {formatLocalTime(skyTrackQuery.data.twilight.astro_end_utc, tz)}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Moon phase: {Math.round(skyTrackQuery.data.moon_phase_pct)}%
-            </Typography>
-          </Stack>
-        )}
-
-        {/* "Best time of year" chart — hours per night above the
-            selected horizon during astro dark, optionally with moon
-            avoidance. Hidden entirely when no location is selected —
-            the calculation is location-dependent. */}
+        {/* ── Best Time of Year (collapsible, with moon filter) ── */}
         {previewLocationId != null && (
-          <Box sx={{ mt: 3 }}>
-            <Typography variant="subtitle2" fontWeight={600}>
-              Best time of year
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Hours above{" "}
-              {effectiveHorizon?.type === "artificial" &&
-              effectiveHorizon.flat_altitude_deg != null
-                ? `${effectiveHorizon.flat_altitude_deg.toFixed(0)}°`
-                : effectiveHorizon?.name ?? "horizon"}{" "}
-              during astronomical darkness, by night.
-            </Typography>
-
-            {/* Controls row — moon-separation dropdown. Horizon choice
-                comes from the header selector above. */}
-            <Stack
-              direction="row"
-              gap={2}
-              alignItems="center"
-              flexWrap="wrap"
-              sx={{ mt: 1 }}
-            >
-              <Tooltip
-                title={
-                  "Minimum moon–target separation required for a sample to count. " +
-                  "``Ignore moon`` (0°) matches narrowband behaviour — every hour above " +
-                  "the horizon during astro dark is counted. Larger values filter out " +
-                  "nights when the moon is close to the target, recommended for LRGB / " +
-                  "broadband imaging."
-                }
-                arrow
-                placement="top"
-              >
-                <FormControl size="small" variant="standard" sx={{ minWidth: 160 }}>
-                  <Select
-                    value={String(moonSepDeg)}
-                    onChange={(e) => setMoonSepDeg(Number(e.target.value))}
-                    sx={{ fontSize: "0.85rem" }}
-                    inputProps={{ "aria-label": "Minimum moon separation" }}
-                  >
-                    <MenuItem value="0">Ignore moon</MenuItem>
-                    {[15, 30, 45, 60, 75, 90].map((deg) => (
-                      <MenuItem key={deg} value={String(deg)}>
-                        Moon &gt; {deg}&deg;
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Tooltip>
+          <Box sx={{ mt: 2 }}>
+            <Stack direction="row" alignItems="center" gap={0.5} sx={{ cursor: "pointer" }} onClick={() => setBestTimeOpen((v) => !v)}>
+              <IconButton size="small" sx={{ p: 0.25 }}>
+                {bestTimeOpen ? <ExpandLessIcon sx={{ fontSize: 18 }} /> : <ExpandMoreIcon sx={{ fontSize: 18 }} />}
+              </IconButton>
+              <Typography variant="subtitle2" fontWeight={600}>Best time of year</Typography>
             </Stack>
+            <Collapse in={bestTimeOpen}>
+              <Typography variant="caption" color="text.secondary">
+                Hours above{" "}
+                {effectiveHorizon?.type === "artificial" &&
+                effectiveHorizon.flat_altitude_deg != null
+                  ? `${effectiveHorizon.flat_altitude_deg.toFixed(0)}°`
+                  : effectiveHorizon?.name ?? "horizon"}{" "}
+                during astronomical darkness, by night.
+              </Typography>
 
-            {/* Fixed-height container so the panel body doesn't
-                shrink when the chart swaps to the spinner. 200 px
-                matches ``BestTimeOfYearChart``'s default height —
-                keep them aligned if one changes. */}
-            <Box sx={{ mt: 1, position: "relative", minHeight: 200 }}>
-              {annualHoursQuery.data && (
-                <BestTimeOfYearChart track={annualHoursQuery.data} />
-              )}
-              {annualHoursQuery.isFetching && (
-                // Centred spinner while a new fetch is in flight —
-                // overlay when we have prior data, full-area when
-                // we don't.
-                <Box
-                  sx={{
-                    position: "absolute",
-                    inset: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    bgcolor: annualHoursQuery.data
-                      ? "rgba(0, 0, 0, 0.25)"
-                      : "transparent",
-                    borderRadius: 1,
-                    pointerEvents: "none",
-                  }}
-                >
-                  <CircularProgress size={28} />
-                </Box>
-              )}
-            </Box>
+              <MoonFilterControls
+                enabled={moonFilterEnabled}
+                onEnabledChange={setMoonFilterEnabled}
+                maxIllumination={maxIllumination}
+                onMaxIlluminationChange={setMaxIllumination}
+                minSeparation={minSeparation}
+                onMinSeparationChange={setMinSeparation}
+                moonCombine={moonCombine}
+                onMoonCombineChange={setMoonCombine}
+              />
+
+              <Box sx={{ mt: 1, position: "relative", minHeight: 346 }}>
+                {annualHoursQuery.data && (
+                  <BestTimeOfYearChart track={annualHoursQuery.data} height={346} />
+                )}
+                {annualHoursQuery.isFetching && (
+                  <Box
+                    sx={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      bgcolor: annualHoursQuery.data ? "rgba(0, 0, 0, 0.25)" : "transparent",
+                      borderRadius: 1,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <CircularProgress size={28} />
+                  </Box>
+                )}
+              </Box>
+            </Collapse>
           </Box>
-        )}
-
-        {/* Score breakdown — v0.21.0. When the panel previews against
-            a different rig / horizon / location than the list page,
-            ``previewScoreQuery`` returns a fresh score spliced in
-            here. Falls back to the frozen list-fetch score while the
-            preview query is in flight. */}
-        {target && (
-          <ScoreBreakdownSection
-            item={
-              previewScoreQuery.data
-                ? {
-                    ...target,
-                    score_pct: previewScoreQuery.data.score_pct,
-                    quality_label: previewScoreQuery.data.quality_label,
-                    score_breakdown: previewScoreQuery.data.score_breakdown,
-                  }
-                : target
-            }
-          />
         )}
       </DialogContent>
     </Dialog>

@@ -185,25 +185,28 @@ class SkyTrackResponse(BaseModel):
 
 
 class AnnualHoursPoint(BaseModel):
-    """One night's bucket in the "best time of year" chart."""
-
-    # Evening date D — the night's hours span dusk D → dawn D+1.
     date: str
     hours: float
+
+
+class MoonDataPoint(BaseModel):
+    date: str
+    illumination_pct: float
+    min_separation_deg: float | None
+    max_altitude_deg: float | None
 
 
 class AnnualHoursResponse(BaseModel):
     dso_id: int
     year: int
     horizon_id: int
-    horizon_type: str  # 'custom' | 'artificial'
+    horizon_type: str
     horizon_name: str
-    # Flat altitude for artificial horizons; ``None`` for custom.
     flat_altitude_deg: float | None
-    # Minimum moon–target separation (deg). ``0`` means the moon check
-    # is disabled entirely.
     moon_sep_deg: float
     points: list[AnnualHoursPoint]
+    filtered_points: list[AnnualHoursPoint]
+    moon_data: list[MoonDataPoint]
 
 
 class ThumbnailCacheStats(BaseModel):

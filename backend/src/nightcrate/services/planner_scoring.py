@@ -59,6 +59,7 @@ class ScoringInput:
     coverage_pct: float | None
     hours_visible: float | None
     peak_time_utc: datetime | None
+    transit_time_utc: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,35 +187,38 @@ def _compute_observability(
 
 
 def _compute_meridian(
-    peak_time_utc: datetime,
+    transit_time_utc: datetime,
     dark_start_utc: datetime,
     dark_end_utc: datetime,
     dark_mid_utc: datetime,
+    buffer_hours: float,
     tz_name: str,
 ) -> tuple[float, tuple[str, ...]]:
-    """``1 - |t_peak - t_mid| / half_dark``, clamped to [0, 1].
+    """``1 - |t_transit - t_mid| / max_delta``, clamped to [0, 1].
 
-    ``peak_time_utc`` is produced by the visibility reduction: transit
-    when it falls inside astro-dark, else the higher-altitude dark-window
-    endpoint.
+    Uses the true astronomical transit time (not clamped to the dark
+    window) so targets transiting just before dark score better than
+    those transiting hours before. The buffer extends the zero point
+    beyond the dark boundary so edge-case targets aren't killed.
     """
     dark_hours = (dark_end_utc - dark_start_utc).total_seconds() / 3600.0
     half_dark = dark_hours / 2.0
     if half_dark <= 0:
         return 0.0, ("astro-dark window is zero length",)
 
-    delta_hours = abs((peak_time_utc - dark_mid_utc).total_seconds() / 3600.0)
-    score = max(0.0, 1.0 - delta_hours / half_dark)
+    delta_hours = abs((transit_time_utc - dark_mid_utc).total_seconds() / 3600.0)
+    max_delta = half_dark + buffer_hours
+    score = max(0.0, 1.0 - delta_hours / max_delta)
 
     try:
         tz = ZoneInfo(tz_name)
-        peak_local = peak_time_utc.astimezone(tz).strftime("%H:%M")
+        transit_local = transit_time_utc.astimezone(tz).strftime("%H:%M")
         mid_local = dark_mid_utc.astimezone(tz).strftime("%H:%M")
     except Exception:  # pragma: no cover — zoneinfo lookup failure
-        peak_local = peak_time_utc.strftime("%H:%MZ")
+        transit_local = transit_time_utc.strftime("%H:%MZ")
         mid_local = dark_mid_utc.strftime("%H:%MZ")
     facts = (
-        f"peak at {peak_local} local (dark midpoint {mid_local})",
+        f"transit at {transit_local} local (dark midpoint {mid_local})",
         f"{delta_hours:.1f} h from the midpoint of {dark_hours:.1f} h of dark",
     )
     return score, facts
@@ -276,8 +280,11 @@ def _compute_moon(
     sep_m = moon_sep_row[moon_up_in_obs]
 
     moon_alt_factor = np.sqrt(np.clip(np.sin(np.radians(alt_m)), 0.0, 1.0))
+    base = sensitivity * phase * moon_alt_factor
+    sky_glow = base * settings.scoring_moon_sky_glow_weight
     proximity = np.minimum(1.0, sep_m / max(min_sep, 1e-6))
-    per_sample_impact = sensitivity * phase * moon_alt_factor * (1.0 - proximity)
+    proximity_penalty = base * (1.0 - proximity) * settings.scoring_moon_proximity_weight
+    per_sample_impact = sky_glow + proximity_penalty
 
     mean_impact = float(per_sample_impact.mean())
     overlap = moon_up_in_obs.sum() / obs_samples
@@ -444,6 +451,7 @@ def score_targets(
         assert dark_start is not None and dark_end is not None  # nosec B101
         assert dark_mid is not None  # nosec B101
         assert item.peak_time_utc is not None  # nosec B101
+        assert item.transit_time_utc is not None  # nosec B101
 
         obs_score, obs_facts = _compute_observability(
             alt_row,
@@ -452,7 +460,12 @@ def score_targets(
             sample_minutes,
         )
         mer_score, mer_facts = _compute_meridian(
-            item.peak_time_utc, dark_start, dark_end, dark_mid, tz_name
+            item.transit_time_utc,
+            dark_start,
+            dark_end,
+            dark_mid,
+            settings.scoring_meridian_buffer_hours,
+            tz_name,
         )
         moon_score, moon_facts = _compute_moon(
             visible_row,

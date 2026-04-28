@@ -133,6 +133,7 @@ def make_input(
     coverage_pct: float | None = None,
     hours_visible: float | None = None,
     peak_time: datetime | None = None,
+    transit_time: datetime | None = None,
 ) -> ScoringInput:
     return ScoringInput(
         dso_id=dso_id,
@@ -140,6 +141,7 @@ def make_input(
         coverage_pct=coverage_pct,
         hours_visible=hours_visible,
         peak_time_utc=peak_time,
+        transit_time_utc=transit_time if transit_time is not None else peak_time,
     )
 
 

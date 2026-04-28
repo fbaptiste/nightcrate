@@ -6,7 +6,7 @@
  * hover crosshair with tooltip showing target + range details, positive
  * stops at range boundaries.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
@@ -95,6 +95,27 @@ export default function WishlistCalendarView({
     queryFn: () => fetchRigs(true),
     staleTime: 5 * 60_000,
   });
+
+  useEffect(() => {
+    if (locationId === "" && locationsQuery.data) {
+      const def = locationsQuery.data.find((l) => l.is_default);
+      if (def) setLocationId(def.id);
+    }
+  }, [locationId, locationsQuery.data, setLocationId]);
+
+  useEffect(() => {
+    if (locationId !== "" && horizonId === "" && horizonsQuery.data) {
+      const def = horizonsQuery.data.find((h: Horizon) => h.is_default);
+      if (def) setHorizonId(def.id);
+    }
+  }, [locationId, horizonId, horizonsQuery.data, setHorizonId]);
+
+  useEffect(() => {
+    if (rigId === "" && rigsQuery.data) {
+      const def = rigsQuery.data.find((r) => r.is_default);
+      if (def) setRigId(def.id);
+    }
+  }, [rigId, rigsQuery.data, setRigId]);
 
   const calendarQuery = useCalendarData({
     locationId: locationId as number,
@@ -343,11 +364,6 @@ function CalendarChart({
     let snapX = mx;
     let isSnapped = false;
 
-    if (todayXPx >= 0 && todayXPx <= innerW && Math.abs(mx - todayXPx) <= SNAP_PX) {
-      snapX = todayXPx;
-      isSnapped = true;
-    }
-
     for (const snap of snapXPositions) {
       if (snap.targetIdx === rowIdx && Math.abs(mx - snap.xPx) <= SNAP_PX) {
         snapX = snap.xPx;
@@ -394,7 +410,18 @@ function CalendarChart({
     });
   };
 
-  const barColor = RIG_ORANGE;
+  const rowSectionColor = useMemo(() => {
+    const colors: string[] = [];
+    if (!hasSections || sectionGroups.length === 0) {
+      for (let i = 0; i < data.targets.length; i++) colors.push(SECTION_COLORS[0]);
+    } else {
+      for (let sgIdx = 0; sgIdx < sectionGroups.length; sgIdx++) {
+        const color = SECTION_COLORS[sgIdx % SECTION_COLORS.length];
+        for (let i = 0; i < sectionGroups[sgIdx].count; i++) colors.push(color);
+      }
+    }
+    return colors;
+  }, [data.targets.length, hasSections, sectionGroups]);
   const todayX = todayXPx;
 
   return (
@@ -480,7 +507,7 @@ function CalendarChart({
                 const by = rowY(rowIdx);
                 const bh = rowH(rowIdx);
                 const barThick = 8;
-                const barProps = { y: by + (bh - barThick) / 2, height: barThick, rx: 2, fill: barColor, opacity: 0.8 };
+                const barProps = { y: by + (bh - barThick) / 2, height: barThick, rx: 2, fill: rowSectionColor[rowIdx], opacity: 0.8 };
 
                 if (rs <= re) {
                   return [(
@@ -536,11 +563,22 @@ function CalendarChart({
 
           {/* Today line — data area only */}
           {todayX >= 0 && todayX <= innerW && (
-            <line
-              x1={todayX} y1={0} x2={todayX} y2={innerH}
-              stroke={isDark ? "#ffffff88" : "#00000044"}
-              strokeWidth={1.5} strokeDasharray="4,3"
-            />
+            <g>
+              <line
+                x1={todayX} y1={0} x2={todayX} y2={innerH}
+                stroke={isDark ? "#ffffff88" : "#00000044"}
+                strokeWidth={1.5} strokeDasharray="4,3"
+              />
+              <text
+                x={todayX}
+                y={innerH + 14}
+                textAnchor="middle"
+                fontSize={9}
+                fill={isDark ? "#999999" : "#666666"}
+              >
+                {toRefNow().toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}
+              </text>
+            </g>
           )}
 
           {/* Row separators */}

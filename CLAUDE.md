@@ -242,6 +242,9 @@ For full feature inventory and per-version history see `nightcrate-current-state
 
 ### Target Planner Scoring
 - Score is **backend-only** and **Tonight-only** (no Anytime score).
+- **Moon impact** uses a two-component model: sky glow (global brightness, default 60% weight) + proximity penalty (local gradient near moon, default 40%). This replaced a proximity-only formula that dropped to zero impact beyond `min_sep`. Both weights are configurable.
+- **Meridian timing** uses the true astronomical transit time (not clamped to the dark window) with a configurable buffer (default 2h) that extends the zero point beyond the dark boundary.
+- **Observability** min-altitude setting must be ≥ 10° (validation enforced) — below that the `1/sin(alt)` airmass formula produces degenerate values.
 - Cluster modifier vocab is closed: `OCl | GCl | *Ass`. `Cl+N` is intentionally NOT a cluster (users image those for the nebula).
 - Detail-panel rig/horizon overrides trigger a refetch via `fetchSingleTargetScore` — the list-fetch score is frozen on the page-level rig.
 

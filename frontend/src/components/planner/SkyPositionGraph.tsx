@@ -13,7 +13,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import type { SkyTrackResponse } from "@/api/planner";
-import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
+import { RIG_BLUE, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {
   track: SkyTrackResponse;
@@ -25,7 +25,6 @@ interface Props {
 // planner visually consistent with the rest of the app and stays on
 // the colorblind-safe blue/orange/teal trio.
 const COLOR_OBJECT = RIG_BLUE;
-const COLOR_MOON = RIG_ORANGE;
 // "Now" indicator colour — distinct from object/moon so the vertical
 // line and its triangular anchor read as "this is happening now" at
 // a glance. Teal is already in the colorblind-safe rig palette.
@@ -80,10 +79,10 @@ const SNAP_PX = 6;
 // the chart); the corresponding vertical line is the longest. Higher
 // tier numbers sit closer to the chart with shorter lines.
 //
-// Tier 0: Astro dark boundaries    (longest line, farthest label)
-// Tier 1: Nautical dark boundaries
-// Tier 2: Civil dark boundaries
-// Tier 3: Sunset / sunrise
+// Tier 0: Sunset / sunrise          (longest line, farthest label)
+// Tier 1: Civil dark boundaries
+// Tier 2: Nautical dark boundaries
+// Tier 3: Astro dark boundaries
 // Tier 4: Meridian transit          (own tier — not shared with
 //                                    sunset/sunrise because a meridian
 //                                    near sunset would overlap text)
@@ -124,6 +123,9 @@ export default function SkyPositionGraph({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(600);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  const [showObject, setShowObject] = useState(true);
+  const [showMoon, setShowMoon] = useState(true);
+  const [showHorizon, setShowHorizon] = useState(true);
   // Bare counter used only to trigger a re-render when the minute
   // rolls over — lets the "now" marker advance on its own instead of
   // getting frozen at whatever wall-clock time the panel was first
@@ -136,10 +138,7 @@ export default function SkyPositionGraph({
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 600;
-      // Minimum bumped from 400 → 540 because the twilight-label
-      // strip eats 220 px of horizontal margin on each side combined.
-      // Below ~540 px the chart data area becomes uselessly narrow.
-      setWidth(Math.max(540, Math.floor(w)));
+      setWidth(Math.max(400, Math.floor(w)));
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -165,21 +164,14 @@ export default function SkyPositionGraph({
 
   const tw = twilightFill(theme.palette.mode);
   const blockedFill = blockedSkyFill(theme.palette.mode);
+  const colorMoon = theme.palette.text.disabled;
 
   const layout = useMemo(() => {
-    // Chart-internal margin. ``top`` reserves the tiered label strip
-    // above the grid (+ the historic 10 px breathing room). ``left``
-    // / ``right`` are generous enough to fit the twilight marker
-    // labels — the earliest (Sunset) and latest (Sunrise) markers
-    // sit only a few minutes inside the chart window, so their
-    // labels extend well past the chart data area on each side
-    // (~90 px for "Sunset 07:01 PM" at 10 px sans-serif). 110 px
-    // on each side leaves ~25 px of slack for longer strings.
     const MARGIN = {
       top: 10 + TWILIGHT_LABELS_TOTAL_HEIGHT,
-      right: 110,
+      right: 44,
       bottom: 28,
-      left: 110,
+      left: 44,
     };
     const times = track.times_utc.map((t) => new Date(t));
     const tmin = times[0] ?? new Date();
@@ -260,14 +252,14 @@ export default function SkyPositionGraph({
   const twilightMarkers = useMemo<TwilightMarker[]>(() => {
     const tw = track.twilight;
     return [
-      { key: "sunset", label: "Sunset", utc: tw.sunset_utc, side: "left", tier: 3 },
-      { key: "civil_end", label: "Civil dark", utc: tw.civil_end_utc, side: "left", tier: 2 },
-      { key: "nautical_end", label: "Nautical dark", utc: tw.nautical_end_utc, side: "left", tier: 1 },
-      { key: "astro_start", label: "Astro dark", utc: tw.astro_start_utc, side: "left", tier: 0 },
-      { key: "astro_end", label: "Astro dark", utc: tw.astro_end_utc, side: "right", tier: 0 },
-      { key: "nautical_start", label: "Nautical dark", utc: tw.nautical_start_utc, side: "right", tier: 1 },
-      { key: "civil_start", label: "Civil dark", utc: tw.civil_start_utc, side: "right", tier: 2 },
-      { key: "sunrise", label: "Sunrise", utc: tw.sunrise_utc, side: "right", tier: 3 },
+      { key: "sunset", label: "Sunset", utc: tw.sunset_utc, side: "left", tier: 0 },
+      { key: "civil_end", label: "Civil dark", utc: tw.civil_end_utc, side: "left", tier: 1 },
+      { key: "nautical_end", label: "Nautical dark", utc: tw.nautical_end_utc, side: "left", tier: 2 },
+      { key: "astro_start", label: "Astro dark", utc: tw.astro_start_utc, side: "left", tier: 3 },
+      { key: "astro_end", label: "Astro dark", utc: tw.astro_end_utc, side: "right", tier: 3 },
+      { key: "nautical_start", label: "Nautical dark", utc: tw.nautical_start_utc, side: "right", tier: 2 },
+      { key: "civil_start", label: "Civil dark", utc: tw.civil_start_utc, side: "right", tier: 1 },
+      { key: "sunrise", label: "Sunrise", utc: tw.sunrise_utc, side: "right", tier: 0 },
     ];
   }, [track.twilight]);
 
@@ -369,7 +361,7 @@ export default function SkyPositionGraph({
         {/* Y-axis title — rotated so it sits flush against the tick labels. */}
         <text
           x={-((height - layout.MARGIN.top - layout.MARGIN.bottom) / 2 + layout.MARGIN.top)}
-          y={layout.MARGIN.left - 44}
+          y={layout.MARGIN.left - 34}
           textAnchor="middle"
           transform="rotate(-90)"
           fontSize={11}
@@ -429,52 +421,58 @@ export default function SkyPositionGraph({
         ))}
 
         {/* Blocked sky (below horizon) — shaded region, no outline. */}
-        <path
-          d={layout.blockedArea(track.horizon_altitude_at_object_az) ?? undefined}
-          fill={blockedFill}
-          stroke="none"
-        />
+        {showHorizon && (
+          <path
+            d={layout.blockedArea(track.horizon_altitude_at_object_az) ?? undefined}
+            fill={blockedFill}
+            stroke="none"
+          />
+        )}
 
         {/* Shaded visible area */}
-        <path
-          d={layout.visibleArea(track.object_altitude_deg) ?? undefined}
-          fill={COLOR_OBJECT}
-          fillOpacity={0.15}
-        />
+        {showObject && (
+          <path
+            d={layout.visibleArea(track.object_altitude_deg) ?? undefined}
+            fill={COLOR_OBJECT}
+            fillOpacity={0.15}
+          />
+        )}
 
         {/* Moon altitude */}
-        <path
-          d={layout.moonLine(track.moon_altitude_deg) ?? undefined}
-          fill="none"
-          stroke={COLOR_MOON}
-          strokeWidth={1.5}
-          strokeDasharray="6,4"
-        />
+        {showMoon && (
+          <path
+            d={layout.moonLine(track.moon_altitude_deg) ?? undefined}
+            fill="none"
+            stroke={colorMoon}
+            strokeWidth={1.5}
+            strokeDasharray="6,4"
+          />
+        )}
 
         {/* Object altitude */}
-        <path
-          d={layout.objLine(track.object_altitude_deg) ?? undefined}
-          fill="none"
-          stroke={COLOR_OBJECT}
-          strokeWidth={2}
-        />
+        {showObject && (
+          <path
+            d={layout.objLine(track.object_altitude_deg) ?? undefined}
+            fill="none"
+            stroke={COLOR_OBJECT}
+            strokeWidth={2}
+          />
+        )}
 
         {/* Peak-altitude dot */}
-        {(() => {
+        {showObject && (() => {
           const peakT = new Date(track.peak_time_utc);
           const cx = layout.x(peakT);
           const cy = layout.y(Math.max(0, Math.min(90, track.peak_altitude_deg)));
           return (
-            <g>
-              <circle
-                cx={cx}
-                cy={cy}
-                r={4}
-                fill={COLOR_OBJECT}
-                stroke={theme.palette.background.paper}
-                strokeWidth={1.5}
-              />
-            </g>
+            <circle
+              cx={cx}
+              cy={cy}
+              r={4}
+              fill={COLOR_OBJECT}
+              stroke={theme.palette.background.paper}
+              strokeWidth={1.5}
+            />
           );
         })()}
 
@@ -493,8 +491,8 @@ export default function SkyPositionGraph({
           const lineTop = labelsBarTop + m.tier * TWILIGHT_TIER_HEIGHT;
           // Label baseline: 3 px above the tier's lower edge.
           const labelY = labelsBarTop + (m.tier + 1) * TWILIGHT_TIER_HEIGHT - 3;
-          const labelX = m.side === "left" ? mx - 4 : mx + 4;
-          const textAnchor = m.side === "left" ? "end" : "start";
+          const labelX = m.side === "left" ? mx + 4 : mx - 4;
+          const textAnchor = m.side === "left" ? "start" : "end";
           const timeLocal = new Date(m.utc).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -520,8 +518,10 @@ export default function SkyPositionGraph({
                 fontSize={10}
                 fontFamily="inherit"
               >
+                {m.side === "left" && <tspan fill={theme.palette.text.disabled}>{"◂"} </tspan>}
                 <tspan fill={theme.palette.text.secondary}>{m.label} </tspan>
                 <tspan fill={theme.palette.text.primary}>{timeLocal}</tspan>
+                {m.side === "right" && <tspan fill={theme.palette.text.disabled}> {"▸"}</tspan>}
               </text>
             </g>
           );
@@ -685,7 +685,7 @@ export default function SkyPositionGraph({
             Object: {hover.objAlt.toFixed(1)}° alt, {hover.objAz.toFixed(0)}° az
           </div>
           <div>
-            Moon: {hover.moonAlt.toFixed(1)}° alt, {hover.moonSep.toFixed(0)}° sep
+            Moon: {hover.moonAlt.toFixed(1)}° alt, {hover.moonSep.toFixed(0)}° sep, {track.moon_phase_pct.toFixed(0)}% illum
           </div>
           <div style={{ color: hover.aboveHorizon ? COLOR_OBJECT : undefined }}>
             {hover.aboveHorizon ? "Visible" : "Below horizon"}
@@ -693,43 +693,52 @@ export default function SkyPositionGraph({
         </Box>
       )}
 
-      {/* Legend */}
+      {/* Legend toggles */}
       <Stack
         direction="row"
         gap={2}
         flexWrap="wrap"
-        sx={{ mt: 1, px: 1 }}
+        sx={{ mt: 1, pr: `${layout.MARGIN.right}px` }}
         alignItems="center"
+        justifyContent="flex-end"
       >
-        <Stack direction="row" gap={0.75} alignItems="center">
-          <Box
-            sx={{
-              width: 18,
-              height: 2,
-              bgcolor: COLOR_OBJECT,
-              borderRadius: 0.5,
-            }}
-          />
-          <Typography variant="caption" color="text.secondary">
+        <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
+          click to toggle
+        </Typography>
+        <Stack
+          direction="row"
+          gap={0.75}
+          alignItems="center"
+          onClick={() => setShowObject((v) => !v)}
+          sx={{ cursor: "pointer", opacity: showObject ? 1 : 0.35, userSelect: "none", "&:hover": { opacity: showObject ? 0.85 : 0.5 } }}
+        >
+          <Box sx={{ width: 16, height: 0, borderTop: `2px solid ${COLOR_OBJECT}` }} />
+          <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
             Object
           </Typography>
         </Stack>
-        <Stack direction="row" gap={0.75} alignItems="center">
-          <Box
-            sx={{
-              width: 18,
-              height: 2,
-              background: `repeating-linear-gradient(90deg, ${COLOR_MOON} 0 4px, transparent 4px 8px)`,
-            }}
-          />
-          <Typography variant="caption" color="text.secondary">
+        <Stack
+          direction="row"
+          gap={0.75}
+          alignItems="center"
+          onClick={() => setShowMoon((v) => !v)}
+          sx={{ cursor: "pointer", opacity: showMoon ? 1 : 0.35, userSelect: "none", "&:hover": { opacity: showMoon ? 0.85 : 0.5 } }}
+        >
+          <Box sx={{ width: 16, height: 0, borderTop: `2px dashed ${colorMoon}` }} />
+          <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
             Moon
           </Typography>
         </Stack>
-        <Stack direction="row" gap={0.75} alignItems="center">
-          <Box sx={{ width: 18, height: 10, bgcolor: blockedFill, borderRadius: 0.5 }} />
-          <Typography variant="caption" color="text.secondary">
-            Below horizon
+        <Stack
+          direction="row"
+          gap={0.75}
+          alignItems="center"
+          onClick={() => setShowHorizon((v) => !v)}
+          sx={{ cursor: "pointer", opacity: showHorizon ? 1 : 0.35, userSelect: "none", "&:hover": { opacity: showHorizon ? 0.85 : 0.5 } }}
+        >
+          <Box sx={{ width: 16, height: 10, bgcolor: blockedFill, borderRadius: 0.5 }} />
+          <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
+            Horizon
           </Typography>
         </Stack>
       </Stack>

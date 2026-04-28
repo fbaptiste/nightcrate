@@ -13,7 +13,7 @@ import type {
   DimensionBreakdown,
   PlannerTargetItem,
 } from "@/api/planner";
-import { ScoreChip } from "./ScoreChip";
+
 
 interface Props {
   item: PlannerTargetItem;
@@ -29,29 +29,17 @@ export function ScoreBreakdownSection({ item }: Props) {
   const gated = item.score_pct === null;
 
   return (
-    <Box sx={{ mt: 3 }}>
-      <Typography variant="overline" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-        Score breakdown
-      </Typography>
-
-      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1.5 }}>
-        <ScoreChip
-          scorePct={item.score_pct}
-          qualityLabel={item.quality_label}
-          gateFailures={breakdown?.gate_failures}
-          size="medium"
-        />
-        {gated ? (
-          <Typography variant="caption" color="text.secondary">
-            This target didn&apos;t pass the hard gates for tonight.
-          </Typography>
-        ) : (
-          <Typography variant="caption" color="text.secondary">
-            Combined via weighted geometric mean — a weakness in any
-            dimension drags the overall score down.
-          </Typography>
-        )}
-      </Stack>
+    <Box sx={{ mt: 1 }}>
+      {gated ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+          This target didn&apos;t pass the hard gates for tonight.
+        </Typography>
+      ) : (
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+          Combined via weighted geometric mean — a weakness in any
+          dimension drags the overall score down.
+        </Typography>
+      )}
 
       {gated && breakdown?.gate_failures && (
         <Stack spacing={0.5} sx={{ mb: 1.5, pl: 1 }}>

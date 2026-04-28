@@ -70,8 +70,13 @@ def test_moon_neutral_at_new_moon():
     assert moon.score == pytest.approx(1.0, abs=1e-6)
 
 
-def test_moon_full_far_from_target_full_score():
-    """Full moon, OIII intent, target 90°+ from moon all night → 1.0."""
+def test_moon_full_far_from_target_sky_glow():
+    """Full moon, OIII intent, target 90°+ from moon all night.
+
+    The proximity penalty is zero (separation >= min_sep), but sky glow
+    still penalises: base = 0.70 × sqrt(sin(45°)) = 0.5886,
+    sky_glow = 0.5886 × 0.6 = 0.3532, score = 1 - 0.3532 ≈ 0.647.
+    """
     n = 120
     _, moon = _run_moon(
         filter_intent=["OIII"],
@@ -80,7 +85,7 @@ def test_moon_full_far_from_target_full_score():
         moon_separation_deg=np.full(n, 95.0),  # >= 90° default min-sep
     )
     assert moon is not None
-    assert moon.score == pytest.approx(1.0, abs=1e-3)
+    assert moon.score == pytest.approx(0.647, abs=0.002)
 
 
 def test_moon_full_at_target_low_score():
@@ -99,10 +104,11 @@ def test_moon_full_at_target_low_score():
 def test_moon_ha_tolerates_full_moon():
     """Full moon, Ha intent (sensitivity 0.15) → relatively high.
 
-    Per-sample impact = 0.15 × 1.0 × sqrt(sin(45°)) × (1 − 5/60)
-                      = 0.15 × 1.0 × 0.8409 × 0.9167
-                      ≈ 0.1156
-    overlap = 1.0, cluster modifier = 1.0 → score = 1 − 0.1156 ≈ 0.8844.
+    base = 0.15 × 1.0 × sqrt(sin(45°)) = 0.1261
+    sky_glow = 0.1261 × 0.6 = 0.0757
+    proximity = 5/60 = 0.0833 → (1 - 0.0833) = 0.9167
+    proximity_penalty = 0.1261 × 0.9167 × 0.4 = 0.0463
+    total = 0.1219, score = 1 - 0.1219 ≈ 0.878.
     """
     n = 120
     _, moon = _run_moon(
@@ -112,7 +118,7 @@ def test_moon_ha_tolerates_full_moon():
         moon_separation_deg=np.full(n, 5.0),
     )
     assert moon is not None
-    assert moon.score == pytest.approx(0.8844, abs=0.001)
+    assert moon.score == pytest.approx(0.878, abs=0.002)
 
 
 def test_moon_limiting_filter_rule_ha_plus_oiii():

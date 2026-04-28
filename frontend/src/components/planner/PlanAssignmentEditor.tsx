@@ -48,6 +48,7 @@ import {
   type DateRangeIn,
 } from "@/api/wishlist";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import MoonFilterControls from "./MoonFilterControls";
 
 interface Props {
   open: boolean;
@@ -71,6 +72,10 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
   const [saveError, setSaveError] = useState<string | null>(null);
   const moonSepDefault = settings?.planner_moon_sep_deg ?? 0;
   const [moonSepDeg, setMoonSepDeg] = useState<number>(moonSepDefault);
+  const [moonFilterEnabled, setMoonFilterEnabled] = useState(false);
+  const [maxIllumination, setMaxIllumination] = useState<number>(50);
+  const [minSeparation, setMinSeparation] = useState<number>(60);
+  const [moonCombine, setMoonCombine] = useState<"and" | "or">("and");
 
   const locationsQuery = useQuery({
     queryKey: ["locations"],
@@ -92,11 +97,17 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
   });
 
   const annualHoursQuery = useQuery({
-    queryKey: ["annual-hours", dsoId, locationId, horizonId, moonSepDeg],
+    queryKey: [
+      "annual-hours", dsoId, locationId, horizonId,
+      moonFilterEnabled, maxIllumination, minSeparation, moonCombine,
+    ],
     queryFn: () =>
       fetchAnnualHours(dsoId, locationId as number, {
         horizonId: horizonId as number,
-        moonSepDeg,
+        moonSepDeg: 0,
+        maxIlluminationPct: moonFilterEnabled ? maxIllumination : undefined,
+        minSeparationDeg: moonFilterEnabled ? minSeparation : undefined,
+        moonCombine: moonFilterEnabled ? moonCombine : undefined,
       }),
     enabled: locationId !== "" && horizonId !== "" && open,
     staleTime: 60 * 60_000,
@@ -295,50 +306,26 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
           </Stack>
 
           {locationId !== "" && horizonId !== "" && (
-            <Box>
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                sx={{ mb: 0.5 }}
-              >
-                <Box>
-                  <Typography variant="subtitle2">Best time of year</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Hours above{" "}
-                    {selectedHorizon?.type === "artificial" &&
-                    selectedHorizon.flat_altitude_deg != null
-                      ? `${selectedHorizon.flat_altitude_deg.toFixed(0)}°`
-                      : selectedHorizon?.name ?? "horizon"}{" "}
-                    during astronomical darkness. Shift-drag to select date ranges.
-                  </Typography>
-                </Box>
-                <Tooltip
-                  title={
-                    "Minimum moon–target separation required for a sample to count. " +
-                    "Ignore moon (0°) matches narrowband behaviour. Larger values " +
-                    "filter out nights when the moon is close, recommended for broadband."
-                  }
-                  arrow
-                  placement="top"
-                >
-                  <FormControl size="small" variant="standard" sx={{ minWidth: 140 }}>
-                    <Select
-                      value={String(moonSepDeg)}
-                      onChange={(e) => setMoonSepDeg(Number(e.target.value))}
-                      sx={{ fontSize: "0.85rem" }}
-                      inputProps={{ "aria-label": "Minimum moon separation" }}
-                    >
-                      <MenuItem value="0">Ignore moon</MenuItem>
-                      {[15, 30, 45, 60, 75, 90].map((deg) => (
-                        <MenuItem key={deg} value={String(deg)}>
-                          {"Moon > "}{deg}{"°"}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Tooltip>
-              </Stack>
+            <Box sx={{ mb: 0.5 }}>
+              <Typography variant="subtitle2">Best time of year</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Hours above{" "}
+                {selectedHorizon?.type === "artificial" &&
+                selectedHorizon.flat_altitude_deg != null
+                  ? `${selectedHorizon.flat_altitude_deg.toFixed(0)}°`
+                  : selectedHorizon?.name ?? "horizon"}{" "}
+                during astronomical darkness. Shift-drag to select date ranges.
+              </Typography>
+              <MoonFilterControls
+                enabled={moonFilterEnabled}
+                onEnabledChange={setMoonFilterEnabled}
+                maxIllumination={maxIllumination}
+                onMaxIlluminationChange={setMaxIllumination}
+                minSeparation={minSeparation}
+                onMinSeparationChange={setMinSeparation}
+                moonCombine={moonCombine}
+                onMoonCombineChange={setMoonCombine}
+              />
 
               <Box sx={{ position: "relative", minHeight: CHART_HEIGHT, overflow: "visible" }}>
                 {annualHoursQuery.data && (
@@ -376,6 +363,16 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
               <IconButton size="small" onClick={addDateRange} aria-label="Add date range">
                 <AddIcon fontSize="small" />
               </IconButton>
+              <Box sx={{ flex: 1 }} />
+              {dateRanges.length > 0 && (
+                <Button
+                  size="small"
+                  onClick={() => setDateRanges([])}
+                  sx={{ textTransform: "none", fontSize: "0.75rem" }}
+                >
+                  Clear all
+                </Button>
+              )}
             </Stack>
             {dateRanges.length === 0 ? (
               <Typography variant="caption" color="text.secondary">
@@ -478,11 +475,18 @@ function InteractiveAnnualChart({
     yPx: number;
     dateLabel: string;
     hours: number;
+    illuminationPct: number | null;
+    minSeparationDeg: number | null;
+    maxAltitudeDeg: number | null;
     isSnapped: boolean;
   } | null>(null);
 
   const isDark = theme.palette.mode === "dark";
   const pts = track.points;
+  const wPts = track.filtered_points ?? [];
+  const moonIllum = track.moon_data ?? [];
+  const hasWeighted = wPts.length > 0 && wPts.some((p, i) => Math.abs(p.hours - pts[i]?.hours) > 0.01);
+  const activePts = hasWeighted ? wPts : pts;
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -500,7 +504,10 @@ function InteractiveAnnualChart({
     .domain([new Date(pts[0].date), new Date(pts[pts.length - 1].date)])
     .range([0, innerW]);
 
-  const maxH = Math.ceil(d3.max(pts, (d) => d.hours) ?? 1);
+  const maxH = Math.ceil(Math.max(
+    d3.max(pts, (d) => d.hours) ?? 1,
+    d3.max(wPts, (d) => d.hours) ?? 0,
+  ));
   const yScale = d3
     .scaleLinear()
     .domain([0, Math.max(maxH, 1)])
@@ -513,24 +520,26 @@ function InteractiveAnnualChart({
     .curve(d3.curveMonotoneX);
 
   const pathD = line(pts) ?? "";
+  const weightedPathD = hasWeighted ? (line(wPts) ?? "") : "";
 
   const SNAP_PX = 8;
 
   const crossingXPositions = useMemo(() => {
     const crossings: number[] = [];
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1].hours;
-      const curr = pts[i].hours;
+    for (let i = 1; i < activePts.length; i++) {
+      const prev = activePts[i - 1].hours;
+      const curr = activePts[i].hours;
       if ((prev < thresholdHours && curr >= thresholdHours) ||
           (prev >= thresholdHours && curr < thresholdHours)) {
         const t = (thresholdHours - prev) / (curr - prev);
-        const d0 = new Date(pts[i - 1].date).getTime();
-        const d1 = new Date(pts[i].date).getTime();
+        const d0 = new Date(activePts[i - 1].date).getTime();
+        const d1 = new Date(activePts[i].date).getTime();
         crossings.push(xScale(new Date(d0 + t * (d1 - d0))));
       }
     }
-    return crossings;
-  }, [pts, thresholdHours, xScale]);
+    crossings.sort((a, b) => a - b);
+    return [...new Set(crossings.map((c) => Math.round(c * 10) / 10))];
+  }, [activePts, thresholdHours, xScale]);
 
   const dateFromX = (px: number): string => {
     const d = xScale.invert(px - CHART_MARGIN.left);
@@ -542,9 +551,9 @@ function InteractiveAnnualChart({
 
   const hoursAtX = (x: number): { hours: number; idx: number } => {
     const t = xScale.invert(x);
-    const idx = Math.max(0, Math.min(pts.length - 1,
-      d3.bisector((p: AnnualHoursPoint) => new Date(p.date)).left(pts, t)));
-    return { hours: pts[idx].hours, idx };
+    const idx = Math.max(0, Math.min(activePts.length - 1,
+      d3.bisector((p: AnnualHoursPoint) => new Date(p.date)).left(activePts, t)));
+    return { hours: activePts[idx].hours, idx };
   };
 
   const snapToNearestCrossing = (rawX: number): number => {
@@ -597,13 +606,16 @@ function InteractiveAnnualChart({
     const { hours, idx } = hoursAtX(snapX);
     const dateAtPos = isSnapped
       ? xScale.invert(snapX)
-      : new Date(pts[idx].date);
+      : new Date(activePts[idx].date);
 
     setHover({
       xPx: snapX,
       yPx: yScale(hours),
       dateLabel: formatDateLabel(dateAtPos),
       hours,
+      illuminationPct: moonIllum[idx]?.illumination_pct ?? null,
+      minSeparationDeg: moonIllum[idx]?.min_separation_deg ?? null,
+      maxAltitudeDeg: moonIllum[idx]?.max_altitude_deg ?? null,
       isSnapped,
     });
   };
@@ -656,7 +668,7 @@ function InteractiveAnnualChart({
     document.addEventListener("mouseup", onUp);
   };
 
-  const rangeColor = `${RIG_ORANGE}55`;
+  const rangeColor = `${RIG_BLUE}33`;
   const dragColor = isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.08)";
   const threshColor = isDark ? "#ffffff66" : "#00000044";
   const todayX = xScale(new Date());
@@ -718,8 +730,33 @@ function InteractiveAnnualChart({
             />
           )}
 
-          {/* Hours curve */}
-          <path d={pathD} fill="none" stroke={RIG_BLUE} strokeWidth={1.5} />
+          {/* Moon phase backdrop */}
+          {moonIllum.length > 0 && moonIllum.map((m, i) => {
+            if (i >= pts.length) return null;
+            const xPos = xScale(new Date(pts[i].date));
+            const nextX = i + 1 < pts.length ? xScale(new Date(pts[i + 1].date)) : xPos + 1;
+            const opacity = isDark
+              ? 0.02 + (m.illumination_pct / 100) * 0.06
+              : 0.01 + (m.illumination_pct / 100) * 0.04;
+            return (
+              <rect
+                key={`moon-${i}`}
+                x={xPos}
+                y={0}
+                width={Math.max(0.5, nextX - xPos)}
+                height={innerH}
+                fill={isDark ? "#ffffff" : "#000000"}
+                opacity={opacity}
+              />
+            );
+          })}
+
+          {/* Hours curve — filtered (orange) when moon filter active, raw (blue) otherwise */}
+          {hasWeighted ? (
+            <path d={weightedPathD} fill="none" stroke={RIG_ORANGE} strokeWidth={2} />
+          ) : (
+            <path d={pathD} fill="none" stroke={RIG_BLUE} strokeWidth={1.5} />
+          )}
 
           {/* Today line */}
           {todayX >= 0 && todayX <= innerW && (
@@ -858,7 +895,7 @@ function InteractiveAnnualChart({
                 cx={hover.xPx}
                 cy={hover.yPx}
                 r={hover.isSnapped ? 5 : 3.5}
-                fill={hover.isSnapped ? RIG_ORANGE : RIG_BLUE}
+                fill={hasWeighted ? RIG_ORANGE : RIG_BLUE}
                 stroke={isDark ? "#000000" : "#ffffff"}
                 strokeWidth={1.5}
                 pointerEvents="none"
@@ -871,17 +908,17 @@ function InteractiveAnnualChart({
       {/* Auto-generate button */}
       <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 0.5 }}>
         <Tooltip
-          title={`Replace all date ranges with periods where visibility is at least ${thresholdHours.toFixed(1)} hours per night`}
+          title={`Replace all date ranges with periods where ${hasWeighted ? "effective" : "raw"} hours ≥ ${thresholdHours.toFixed(1)}h`}
           arrow
           placement="left"
         >
           <Button
             size="small"
             variant="outlined"
-            onClick={() => onAutoGenerate(thresholdHours, pts)}
+            onClick={() => onAutoGenerate(thresholdHours, activePts)}
             sx={{ textTransform: "none", fontSize: "0.75rem" }}
           >
-            Auto from {thresholdHours.toFixed(1)}h threshold
+            Auto from {thresholdHours.toFixed(1)}h
           </Button>
         </Tooltip>
       </Box>
@@ -913,10 +950,16 @@ function InteractiveAnnualChart({
           <Typography variant="caption" fontWeight={600}>
             {hover.dateLabel}
           </Typography>
-          <Box sx={{ color: hover.isSnapped ? RIG_ORANGE : "text.primary" }}>
-            {hover.hours.toFixed(1)} h
-            {hover.isSnapped && " (threshold)"}
+          <Box sx={{ color: hasWeighted ? RIG_ORANGE : RIG_BLUE }}>
+            {hover.hours.toFixed(1)} h{hasWeighted ? " effective" : ""}
           </Box>
+          {(hover.illuminationPct != null || hover.minSeparationDeg != null) && (
+            <Box sx={{ color: "text.secondary", fontSize: 11 }}>
+              Moon: {hover.illuminationPct != null ? `${hover.illuminationPct.toFixed(0)}%` : "—"}
+              {hover.minSeparationDeg != null ? ` · ${hover.minSeparationDeg.toFixed(0)}° sep` : ""}
+              {hover.maxAltitudeDeg != null ? ` · ${hover.maxAltitudeDeg.toFixed(0)}° alt` : ""}
+            </Box>
+          )}
         </Box>
       )}
     </Box>

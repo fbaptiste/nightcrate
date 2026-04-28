@@ -295,27 +295,33 @@ export interface AnnualHoursPoint {
   hours: number;
 }
 
+export interface MoonDataPoint {
+  date: string;
+  illumination_pct: number;
+  min_separation_deg: number | null;
+  max_altitude_deg: number | null;
+}
+
 export interface AnnualHoursResponse {
   dso_id: number;
   year: number;
   horizon_id: number;
   horizon_type: "artificial" | "custom";
   horizon_name: string;
-  /** Flat altitude for artificial horizons; null for custom. */
   flat_altitude_deg: number | null;
-  /** Minimum moon–target separation (deg). ``0`` disables the moon
-   *  check (the old "narrowband" / "ignore moon" behaviour). */
   moon_sep_deg: number;
   points: AnnualHoursPoint[];
+  filtered_points: AnnualHoursPoint[];
+  moon_data: MoonDataPoint[];
 }
 
 export interface AnnualHoursParams {
   year?: number;
-  /** Horizon to count hours against. Defaults to the location's
-   *  default horizon server-side. */
   horizonId?: number | null;
-  /** Minimum moon–target separation (deg), ``0`` = ignore moon. */
   moonSepDeg?: number;
+  maxIlluminationPct?: number | null;
+  minSeparationDeg?: number | null;
+  moonCombine?: "and" | "or";
 }
 
 export function fetchAnnualHours(
@@ -327,6 +333,9 @@ export function fetchAnnualHours(
   if (params.year) qs.set("year", String(params.year));
   if (params.horizonId != null) qs.set("horizon_id", String(params.horizonId));
   if (typeof params.moonSepDeg === "number") qs.set("moon_sep_deg", String(params.moonSepDeg));
+  if (params.maxIlluminationPct != null) qs.set("max_illumination_pct", String(params.maxIlluminationPct));
+  if (params.minSeparationDeg != null) qs.set("min_separation_deg", String(params.minSeparationDeg));
+  if (params.moonCombine) qs.set("moon_combine", params.moonCombine);
   return apiFetch<AnnualHoursResponse>(
     `/planner/targets/${dsoId}/annual-hours?${qs.toString()}`,
   );

@@ -51,7 +51,8 @@ export default function PlanSparkline({
   const layout = useMemo(() => {
     if (!data?.points || data.points.length === 0) return null;
 
-    const pts: AnnualHoursPoint[] = data.points;
+    const pts: AnnualHoursPoint[] =
+      data.filtered_points?.length > 0 ? data.filtered_points : data.points;
     const xScale = d3
       .scaleTime()
       .domain([new Date(pts[0].date), new Date(pts[pts.length - 1].date)])

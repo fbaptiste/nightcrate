@@ -124,34 +124,38 @@ def test_meridian_at_midpoint_scores_one():
     assert mer.score == pytest.approx(1.0, abs=1e-6)
 
 
-def test_meridian_at_dark_start_scores_zero():
+def test_meridian_at_dark_start():
+    """Transit at dark-start boundary: delta = 3h, max_delta = 3 + 2 = 5.
+    Score = 1 - 3/5 = 0.4 — penalised but not killed."""
     mer = _meridian_score(-3.0, dark_hours=6.0)  # half_dark = 3 h
     assert mer is not None
-    assert mer.score == pytest.approx(0.0, abs=1e-6)
+    assert mer.score == pytest.approx(0.4, abs=1e-3)
 
 
-def test_meridian_at_dark_end_scores_zero():
+def test_meridian_at_dark_end():
+    """Transit at dark-end boundary: symmetric with dark-start."""
     mer = _meridian_score(3.0, dark_hours=6.0)
     assert mer is not None
-    assert mer.score == pytest.approx(0.0, abs=1e-6)
+    assert mer.score == pytest.approx(0.4, abs=1e-3)
 
 
-def test_meridian_one_third_offset_scores_two_thirds():
-    """Peak 1 h after midpoint of 6-h dark → 1 - 1/3 = 0.667."""
+def test_meridian_one_fifth_offset():
+    """Transit 1h after midpoint of 6h dark, max_delta = 5.
+    Score = 1 - 1/5 = 0.8."""
     mer = _meridian_score(1.0, dark_hours=6.0)
     assert mer is not None
-    assert mer.score == pytest.approx(2.0 / 3.0, abs=1e-3)
+    assert mer.score == pytest.approx(0.8, abs=1e-3)
 
 
-def test_meridian_descending_all_night_uses_dark_start():
-    """Peak clamped to dark-start → score ≈ 0."""
-    mer = _meridian_score(-5.0, dark_hours=6.0)  # well past dark-start
+def test_meridian_well_before_dark():
+    """Transit 5h before midpoint, max_delta = 5 → score = 0."""
+    mer = _meridian_score(-5.0, dark_hours=6.0)
     assert mer is not None
-    # beyond half-dark so score clamped to 0
     assert mer.score == 0.0
 
 
-def test_meridian_rising_all_night_uses_dark_end():
+def test_meridian_well_after_dark():
+    """Transit 5h after midpoint, max_delta = 5 → score = 0."""
     mer = _meridian_score(5.0, dark_hours=6.0)
     assert mer is not None
     assert mer.score == 0.0
