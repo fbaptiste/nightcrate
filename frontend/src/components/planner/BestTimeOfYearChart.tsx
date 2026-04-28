@@ -2,13 +2,15 @@
  * "Best time of year" chart for the planner detail panel.
  *
  * Dual curves: raw hours (blue solid) and quality-weighted hours
- * (orange dashed). Moon phase backdrop shows the ~29.5-day
- * illumination cycle as a grey band. Hover crosshair shows both
- * values.
+ * (orange). Moon phase backdrop shows the ~29.5-day illumination
+ * cycle as a grey band. Moon max altitude as a subtle dashed line
+ * on the right y-axis. Hover crosshair shows values for visible
+ * lines. Each line can be toggled via the legend above the chart.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
+import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import type { AnnualHoursResponse } from "@/api/planner";
@@ -39,6 +41,9 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(600);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  const [showRaw, setShowRaw] = useState(true);
+  const [showEffective, setShowEffective] = useState(true);
+  const [showMoonAlt, setShowMoonAlt] = useState(true);
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -180,9 +185,35 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
   const isDark = theme.palette.mode === "dark";
   const hasWeighted = track.filtered_points.length > 0 &&
     track.filtered_points.some((p, i) => Math.abs(p.hours - track.points[i]?.hours) > 0.01);
+  const moonAltColor = theme.palette.text.disabled;
 
   return (
     <Box ref={wrapperRef} sx={{ position: "relative", width: "100%" }}>
+      {/* Legend toggles above chart */}
+      <Stack direction="row" spacing={2} sx={{ mb: 0.5 }} flexWrap="wrap">
+        <LegendToggle
+          color={RIG_BLUE}
+          label="Raw hours"
+          active={showRaw}
+          onToggle={() => setShowRaw((v) => !v)}
+        />
+        {hasWeighted && (
+          <LegendToggle
+            color={RIG_ORANGE}
+            label="Effective hours"
+            active={showEffective}
+            onToggle={() => setShowEffective((v) => !v)}
+          />
+        )}
+        <LegendToggle
+          color={moonAltColor}
+          label="Moon altitude"
+          dashed
+          active={showMoonAlt}
+          onToggle={() => setShowMoonAlt((v) => !v)}
+        />
+      </Stack>
+
       <svg
         width={width}
         height={height}
@@ -299,16 +330,18 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
           </g>
         )}
 
-        {/* Raw hours curve — drawn first (behind filtered), thinner when filter active */}
-        <path
-          d={layout.line(track.points.map((p) => p.hours)) ?? undefined}
-          fill="none"
-          stroke={RIG_BLUE}
-          strokeWidth={hasWeighted ? 1.5 : 2}
-        />
+        {/* Raw hours curve */}
+        {showRaw && (
+          <path
+            d={layout.line(track.points.map((p) => p.hours)) ?? undefined}
+            fill="none"
+            stroke={RIG_BLUE}
+            strokeWidth={hasWeighted ? 1.5 : 2}
+          />
+        )}
 
-        {/* Moon-filtered hours curve — continuous (no gaps at zero), drawn on top */}
-        {hasWeighted && (
+        {/* Effective hours curve */}
+        {hasWeighted && showEffective && (
           <path
             d={layout.lineContinuous(track.filtered_points.map((p) => p.hours)) ?? undefined}
             fill="none"
@@ -317,48 +350,44 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
           />
         )}
 
-        {/* Moon max altitude curve — subtle dashed, right y-axis */}
-        <path
-          d={layout.moonAltLine(track.moon_data.map((m) => m.max_altitude_deg)) ?? undefined}
-          fill="none"
-          stroke={theme.palette.text.disabled}
-          strokeWidth={1}
-          strokeDasharray="4,3"
-          opacity={0.6}
-        />
+        {/* Moon max altitude curve */}
+        {showMoonAlt && (
+          <path
+            d={layout.moonAltLine(track.moon_data.map((m) => m.max_altitude_deg)) ?? undefined}
+            fill="none"
+            stroke={moonAltColor}
+            strokeWidth={1}
+            strokeDasharray="4,3"
+            opacity={0.6}
+          />
+        )}
 
-        {/* Right y-axis labels (moon altitude) */}
-        {[0, 30, 60, 90].map((v) => (
-          <text
-            key={`rax-${v}`}
-            x={width - layout.MARGIN.right + 8}
-            y={layout.yRight(v) + 4}
-            textAnchor="start"
-            fontSize={10}
-            fill={theme.palette.text.disabled}
-          >
-            {v}°
-          </text>
-        ))}
-        <text
-          x={-((height - layout.MARGIN.top - layout.MARGIN.bottom) / 2 + layout.MARGIN.top)}
-          y={width - 6}
-          textAnchor="middle"
-          transform="rotate(-90)"
-          fontSize={10}
-          fill={theme.palette.text.disabled}
-        >
-          Moon alt
-        </text>
-
-        {/* Legend */}
-        {hasWeighted && (
-          <g transform={`translate(${width - layout.MARGIN.right - 130}, ${layout.MARGIN.top + 4})`}>
-            <line x1={0} y1={0} x2={16} y2={0} stroke={RIG_BLUE} strokeWidth={1.5} />
-            <text x={20} y={4} fontSize={9} fill={theme.palette.text.secondary}>Raw hours</text>
-            <line x1={0} y1={14} x2={16} y2={14} stroke={RIG_ORANGE} strokeWidth={2} />
-            <text x={20} y={18} fontSize={9} fill={theme.palette.text.secondary}>Effective hours</text>
-          </g>
+        {/* Right y-axis labels (moon altitude) — only when line is visible */}
+        {showMoonAlt && (
+          <>
+            {[0, 30, 60, 90].map((v) => (
+              <text
+                key={`rax-${v}`}
+                x={width - layout.MARGIN.right + 8}
+                y={layout.yRight(v) + 4}
+                textAnchor="start"
+                fontSize={10}
+                fill={moonAltColor}
+              >
+                {v}°
+              </text>
+            ))}
+            <text
+              x={-((height - layout.MARGIN.top - layout.MARGIN.bottom) / 2 + layout.MARGIN.top)}
+              y={width - 6}
+              textAnchor="middle"
+              transform="rotate(-90)"
+              fontSize={10}
+              fill={moonAltColor}
+            >
+              Moon alt
+            </text>
+          </>
         )}
 
         {/* Hover crosshair */}
@@ -373,15 +402,17 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
               strokeWidth={1}
               strokeDasharray="2,2"
             />
-            <circle
-              cx={hover.xPx}
-              cy={hover.yPxRaw}
-              r={3.5}
-              fill={RIG_BLUE}
-              stroke={theme.palette.background.paper}
-              strokeWidth={1.5}
-            />
-            {hasWeighted && (
+            {showRaw && (
+              <circle
+                cx={hover.xPx}
+                cy={hover.yPxRaw}
+                r={3.5}
+                fill={RIG_BLUE}
+                stroke={theme.palette.background.paper}
+                strokeWidth={1.5}
+              />
+            )}
+            {hasWeighted && showEffective && (
               <circle
                 cx={hover.xPx}
                 cy={hover.yPxWeighted}
@@ -424,19 +455,62 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
               </Box>
             )}
           </Typography>
-          <Box sx={{ color: RIG_BLUE }}>{hover.rawHours.toFixed(1)} h raw</Box>
-          {hasWeighted && (
+          {showRaw && (
+            <Box sx={{ color: RIG_BLUE }}>{hover.rawHours.toFixed(1)} h raw</Box>
+          )}
+          {hasWeighted && showEffective && (
             <Box sx={{ color: RIG_ORANGE }}>{hover.weightedHours.toFixed(1)} h effective</Box>
           )}
           {(hover.illuminationPct != null || hover.minSeparationDeg != null) && (
             <Box sx={{ color: "text.secondary", fontSize: 11 }}>
               Moon: {hover.illuminationPct != null ? `${hover.illuminationPct.toFixed(0)}%` : "—"}
               {hover.minSeparationDeg != null ? ` · ${hover.minSeparationDeg.toFixed(0)}° sep` : ""}
-              {hover.maxAltitudeDeg != null ? ` · ${hover.maxAltitudeDeg.toFixed(0)}° alt` : ""}
+              {showMoonAlt && hover.maxAltitudeDeg != null ? ` · ${hover.maxAltitudeDeg.toFixed(0)}° alt` : ""}
             </Box>
           )}
         </Box>
       )}
     </Box>
+  );
+}
+
+
+function LegendToggle({
+  color,
+  label,
+  dashed,
+  active,
+  onToggle,
+}: {
+  color: string;
+  label: string;
+  dashed?: boolean;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.5}
+      onClick={onToggle}
+      sx={{
+        cursor: "pointer",
+        opacity: active ? 1 : 0.35,
+        userSelect: "none",
+        "&:hover": { opacity: active ? 0.85 : 0.5 },
+      }}
+    >
+      <Box
+        sx={{
+          width: 16,
+          height: 0,
+          borderTop: dashed ? `2px dashed ${color}` : `2px solid ${color}`,
+        }}
+      />
+      <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
+        {label}
+      </Typography>
+    </Stack>
   );
 }
