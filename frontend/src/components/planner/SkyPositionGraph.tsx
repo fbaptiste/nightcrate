@@ -729,7 +729,7 @@ export default function SkyPositionGraph({
         <Stack direction="row" gap={0.75} alignItems="center">
           <Box sx={{ width: 18, height: 10, bgcolor: blockedFill, borderRadius: 0.5 }} />
           <Typography variant="caption" color="text.secondary">
-            Below horizon
+            Horizon
           </Typography>
         </Stack>
       </Stack>
