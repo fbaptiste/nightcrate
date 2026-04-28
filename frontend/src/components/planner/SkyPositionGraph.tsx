@@ -13,7 +13,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import type { SkyTrackResponse } from "@/api/planner";
-import { RIG_BLUE, RIG_ORANGE, RIG_TEAL } from "@/lib/rigColors";
+import { RIG_BLUE, RIG_TEAL } from "@/lib/rigColors";
 
 interface Props {
   track: SkyTrackResponse;
@@ -25,7 +25,6 @@ interface Props {
 // planner visually consistent with the rest of the app and stays on
 // the colorblind-safe blue/orange/teal trio.
 const COLOR_OBJECT = RIG_BLUE;
-const COLOR_MOON = RIG_ORANGE;
 // "Now" indicator colour — distinct from object/moon so the vertical
 // line and its triangular anchor read as "this is happening now" at
 // a glance. Teal is already in the colorblind-safe rig palette.
@@ -165,6 +164,7 @@ export default function SkyPositionGraph({
 
   const tw = twilightFill(theme.palette.mode);
   const blockedFill = blockedSkyFill(theme.palette.mode);
+  const colorMoon = theme.palette.text.disabled;
 
   const layout = useMemo(() => {
     const MARGIN = {
@@ -443,7 +443,7 @@ export default function SkyPositionGraph({
           <path
             d={layout.moonLine(track.moon_altitude_deg) ?? undefined}
             fill="none"
-            stroke={COLOR_MOON}
+            stroke={colorMoon}
             strokeWidth={1.5}
             strokeDasharray="6,4"
           />
@@ -724,7 +724,7 @@ export default function SkyPositionGraph({
           onClick={() => setShowMoon((v) => !v)}
           sx={{ cursor: "pointer", opacity: showMoon ? 1 : 0.35, userSelect: "none", "&:hover": { opacity: showMoon ? 0.85 : 0.5 } }}
         >
-          <Box sx={{ width: 16, height: 0, borderTop: `2px dashed ${COLOR_MOON}` }} />
+          <Box sx={{ width: 16, height: 0, borderTop: `2px dashed ${colorMoon}` }} />
           <Typography variant="caption" sx={{ fontSize: 11, lineHeight: 1 }}>
             Moon
           </Typography>
