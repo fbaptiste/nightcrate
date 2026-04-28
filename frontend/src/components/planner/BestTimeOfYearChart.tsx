@@ -89,12 +89,12 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
 
     const yRight = d3
       .scaleLinear()
-      .domain([-10, 90])
+      .domain([0, 90])
       .range([height - MARGIN.bottom, MARGIN.top]);
 
     const moonAltLine = d3
       .line<number | null>()
-      .defined((d) => d != null)
+      .defined((d) => d != null && d >= 0)
       .x((_, i) => x(dates[i]))
       .y((d) => yRight(d!))
       .curve(d3.curveMonotoneX);
