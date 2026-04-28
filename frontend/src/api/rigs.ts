@@ -126,6 +126,7 @@ export interface Rig {
   filter_slots: RigFilterSlotOut[];
   is_default: boolean;
   active: boolean;
+  sort_order: number;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -259,6 +260,13 @@ export const restoreRig = (id: number) =>
 
 export const cloneRig = (id: number) =>
   apiFetch<Rig>(`/rigs/${id}/clone`, { method: "POST" });
+
+export const reorderRigs = (rigIds: number[]) =>
+  apiFetch<Rig[]>("/rigs/reorder", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rig_ids: rigIds }),
+  });
 
 export const fetchRigCalculators = (
   id: number,

@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from nightcrate.api._common import bool_fields, integrity_guard, row_to_dict
 from nightcrate.api.rig_models import (
     EquipmentOptionsOut,
+    ReorderRigsRequest,
     RigCalculators,
     RigCreate,
     RigOut,
@@ -366,6 +367,7 @@ async def _build_rig_response(
         "filter_slots": filter_slots,
         "is_default": rig_row["is_default"],
         "active": rig_row["active"],
+        "sort_order": rig_row.get("sort_order", 0),
         "notes": rig_row.get("notes"),
         "created_at": rig_row["created_at"],
         "updated_at": rig_row["updated_at"],
@@ -580,14 +582,33 @@ async def list_rigs(
     async with get_db() as conn:
         if active_only:
             rows = await conn.execute(
-                "SELECT * FROM rig_summary WHERE active = 1 ORDER BY is_default DESC, name"
+                "SELECT * FROM rig_summary WHERE active = 1 ORDER BY sort_order, name"
             )
         else:
-            rows = await conn.execute("SELECT * FROM rig_summary ORDER BY is_default DESC, name")
+            rows = await conn.execute("SELECT * FROM rig_summary ORDER BY sort_order, name")
         results = []
         for r in await rows.fetchall():
             d = _row_to_dict(r)
             response = await _build_rig_response(conn, d, location_id=location_id)
+            results.append(response)
+        return results
+
+
+@router.put("/reorder", response_model=list[RigOut])
+async def reorder_rigs(body: ReorderRigsRequest):
+    """Persist a new display order for rigs."""
+    async with get_db() as conn:
+        for idx, rid in enumerate(body.rig_ids):
+            await conn.execute(
+                "UPDATE rig SET sort_order = ? WHERE id = ?",
+                (idx, rid),
+            )
+        await conn.commit()
+        rows = await conn.execute("SELECT * FROM rig_summary ORDER BY sort_order, name")
+        results = []
+        for r in await rows.fetchall():
+            d = _row_to_dict(r)
+            response = await _build_rig_response(conn, d)
             results.append(response)
         return results
 
@@ -614,14 +635,17 @@ async def create_rig(body: RigCreate):
         if body.is_default:
             await _ensure_single_default(conn, -1)  # Clear all defaults temporarily
 
+        row = await conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM rig")
+        next_order = (await row.fetchone())[0]
+
         with integrity_guard(conflict_detail=f"A rig with the name '{body.name}' already exists"):
             cursor = await conn.execute(
                 """INSERT INTO rig (
                     name, description, telescope_configuration_id, camera_id,
                     filter_wheel_id, single_filter_id, mount_id, focuser_id,
                     oag_id, guide_scope_id, guide_camera_id, computer_id,
-                    is_default, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    is_default, notes, sort_order
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.name.strip(),
                     body.description,
@@ -637,6 +661,7 @@ async def create_rig(body: RigCreate):
                     body.computer_id,
                     1 if body.is_default else 0,
                     body.notes,
+                    next_order,
                 ),
             )
 
@@ -758,14 +783,16 @@ async def clone_rig(rig_id: int):
                     break
                 n += 1
 
-        # Insert clone (never default)
+        # Insert clone (never default, sort to end)
+        row = await conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM rig")
+        next_order = (await row.fetchone())[0]
         cursor = await conn.execute(
             """INSERT INTO rig (
                 name, description, telescope_configuration_id, camera_id,
                 filter_wheel_id, single_filter_id, mount_id, focuser_id,
                 oag_id, guide_scope_id, guide_camera_id, computer_id,
-                is_default, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+                is_default, notes, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
             (
                 clone_name,
                 original["description"],
@@ -780,6 +807,7 @@ async def clone_rig(rig_id: int):
                 original["guide_camera_id"],
                 original["computer_id"],
                 original["notes"],
+                next_order,
             ),
         )
         clone_id = cursor.lastrowid

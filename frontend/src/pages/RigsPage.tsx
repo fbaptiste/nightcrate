@@ -1,5 +1,20 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -11,6 +26,7 @@ import Snackbar from "@mui/material/Snackbar";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import CloseIcon from "@mui/icons-material/Close";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import RigCard from "@/components/rigs/RigCard";
 import RigFormDialog from "@/components/rigs/RigFormDialog";
 import CalculatorPanel from "@/components/rigs/CalculatorPanel";
@@ -21,6 +37,7 @@ import {
   deleteRig,
   restoreRig,
   updateRig,
+  reorderRigs,
   type Rig,
 } from "@/api/rigs";
 
@@ -51,10 +68,33 @@ export default function RigsPage() {
   const activeRigs = rigs.filter((r) => r.active);
   const retiredRigs = rigs.filter((r) => !r.active);
 
-  // Keep selected rig in sync with latest data after refetch
   const resolvedSelected = selectedRig
     ? rigs.find((r) => r.id === selectedRig.id) ?? null
     : null;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIdx = activeRigs.findIndex((r) => r.id === active.id);
+    const newIdx = activeRigs.findIndex((r) => r.id === over.id);
+    if (oldIdx === -1 || newIdx === -1) return;
+    const reordered = arrayMove(activeRigs, oldIdx, newIdx);
+    queryClient.setQueryData<Rig[]>(["rigs"], (prev) => {
+      if (!prev) return prev;
+      const retired = prev.filter((r) => !r.active);
+      return [...reordered, ...retired];
+    });
+    try {
+      await reorderRigs(reordered.map((r) => r.id));
+      invalidate();
+    } catch {
+      invalidate();
+    }
+  };
 
   const handleNewRig = () => {
     setEditingRig(null);
@@ -159,29 +199,34 @@ export default function RigsPage() {
         </Typography>
       )}
 
-      {/* Active rigs grid */}
+      {/* Active rigs — single-column sortable list */}
       {activeRigs.length > 0 && (
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))",
-            gap: 2,
-          }}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
         >
-          {activeRigs.map((rig) => (
-            <RigCard
-              key={rig.id}
-              rig={rig}
-              selected={resolvedSelected?.id === rig.id}
-              onSelect={handleSelect}
-              onEdit={handleEdit}
-              onClone={handleClone}
-              onDelete={handleDelete}
-              onRestore={handleRestore}
-              onSetDefault={handleSetDefault}
-            />
-          ))}
-        </Box>
+          <SortableContext
+            items={activeRigs.map((r) => r.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {activeRigs.map((rig) => (
+                <SortableRigCard
+                  key={rig.id}
+                  rig={rig}
+                  selected={resolvedSelected?.id === rig.id}
+                  onSelect={handleSelect}
+                  onEdit={handleEdit}
+                  onClone={handleClone}
+                  onDelete={handleDelete}
+                  onRestore={handleRestore}
+                  onSetDefault={handleSetDefault}
+                />
+              ))}
+            </Box>
+          </SortableContext>
+        </DndContext>
       )}
 
       {/* Retired rigs section */}
@@ -197,17 +242,11 @@ export default function RigsPage() {
             }}
             onClick={() => setRetiredVisible((v) => !v)}
           >
-            {retiredVisible ? "\u25BE" : "\u25B8"} Retired Rigs (
+            {retiredVisible ? "▾" : "▸"} Retired Rigs (
             {retiredRigs.length})
           </Typography>
           {retiredVisible && (
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))",
-                gap: 2,
-              }}
-            >
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {retiredRigs.map((rig) => (
                 <RigCard
                   key={rig.id}
@@ -226,7 +265,7 @@ export default function RigsPage() {
         </Box>
       )}
 
-      {/* Detail panel — slides open below the card grid when a rig is selected */}
+      {/* Detail panel */}
       <Collapse in={resolvedSelected !== null} timeout="auto" unmountOnExit>
         <Divider sx={{ mt: 3 }} />
         <Paper variant="outlined" sx={{ p: 2, mt: 1, position: "relative" }}>
@@ -267,6 +306,67 @@ export default function RigsPage() {
           {snack.message}
         </Alert>
       </Snackbar>
+    </Box>
+  );
+}
+
+
+function SortableRigCard({
+  rig,
+  selected,
+  onSelect,
+  onEdit,
+  onClone,
+  onDelete,
+  onRestore,
+  onSetDefault,
+}: {
+  rig: Rig;
+  selected: boolean;
+  onSelect: (r: Rig) => void;
+  onEdit: (r: Rig) => void;
+  onClone: (id: number) => void;
+  onDelete: (id: number) => void;
+  onRestore: (id: number) => void;
+  onSetDefault: (id: number) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: rig.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <Box ref={setNodeRef} style={style} sx={{ display: "flex", alignItems: "stretch" }}>
+      <Box
+        {...attributes}
+        {...listeners}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          px: 0.5,
+          cursor: "grab",
+          color: "text.disabled",
+          "&:hover": { color: "text.secondary" },
+        }}
+      >
+        <DragIndicatorIcon fontSize="small" />
+      </Box>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <RigCard
+          rig={rig}
+          selected={selected}
+          onSelect={onSelect}
+          onEdit={onEdit}
+          onClone={onClone}
+          onDelete={onDelete}
+          onRestore={onRestore}
+          onSetDefault={onSetDefault}
+        />
+      </Box>
     </Box>
   );
 }
