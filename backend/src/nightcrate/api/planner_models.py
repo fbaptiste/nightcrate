@@ -193,6 +193,7 @@ class MoonDataPoint(BaseModel):
     date: str
     illumination_pct: float
     min_separation_deg: float | None
+    max_altitude_deg: float | None
 
 
 class AnnualHoursResponse(BaseModel):

@@ -512,6 +512,7 @@ function InteractiveAnnualChart({
     hours: number;
     illuminationPct: number | null;
     minSeparationDeg: number | null;
+    maxAltitudeDeg: number | null;
     isSnapped: boolean;
   } | null>(null);
 
@@ -649,6 +650,7 @@ function InteractiveAnnualChart({
       hours,
       illuminationPct: moonIllum[idx]?.illumination_pct ?? null,
       minSeparationDeg: moonIllum[idx]?.min_separation_deg ?? null,
+      maxAltitudeDeg: moonIllum[idx]?.max_altitude_deg ?? null,
       isSnapped,
     });
   };
@@ -990,6 +992,7 @@ function InteractiveAnnualChart({
             <Box sx={{ color: "text.secondary", fontSize: 11 }}>
               Moon: {hover.illuminationPct != null ? `${hover.illuminationPct.toFixed(0)}%` : "—"}
               {hover.minSeparationDeg != null ? ` · ${hover.minSeparationDeg.toFixed(0)}° sep` : ""}
+              {hover.maxAltitudeDeg != null ? ` · ${hover.maxAltitudeDeg.toFixed(0)}° alt` : ""}
             </Box>
           )}
         </Box>

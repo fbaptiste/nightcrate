@@ -28,6 +28,7 @@ interface HoverInfo {
   weightedHours: number;
   illuminationPct: number | null;
   minSeparationDeg: number | null;
+  maxAltitudeDeg: number | null;
   snappedToToday: boolean;
 }
 
@@ -51,7 +52,7 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
   }, []);
 
   const layout = useMemo(() => {
-    const MARGIN = { top: 10, right: 20, bottom: 26, left: 44 };
+    const MARGIN = { top: 10, right: 44, bottom: 26, left: 44 };
     const dates = track.points.map((p) => new Date(`${p.date}T12:00:00Z`));
     const tmin = dates[0] ?? new Date();
     const tmax = dates[dates.length - 1] ?? new Date();
@@ -86,7 +87,19 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
       .y((d) => y(Math.max(0, Math.min(yMax, d))))
       .curve(d3.curveMonotoneX);
 
-    return { MARGIN, dates, x, y, line, lineContinuous, yMax };
+    const yRight = d3
+      .scaleLinear()
+      .domain([-10, 90])
+      .range([height - MARGIN.bottom, MARGIN.top]);
+
+    const moonAltLine = d3
+      .line<number | null>()
+      .defined((d) => d != null)
+      .x((_, i) => x(dates[i]))
+      .y((d) => yRight(d!))
+      .curve(d3.curveMonotoneX);
+
+    return { MARGIN, dates, x, y, yRight, line, lineContinuous, moonAltLine, yMax };
   }, [track, width, height]);
 
   function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
@@ -125,6 +138,7 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
       weightedHours: weightedP?.hours ?? rawP.hours,
       illuminationPct: track.moon_data[clamped]?.illumination_pct ?? null,
       minSeparationDeg: track.moon_data[clamped]?.min_separation_deg ?? null,
+      maxAltitudeDeg: track.moon_data[clamped]?.max_altitude_deg ?? null,
       snappedToToday: snapXPx != null,
     });
   }
@@ -303,6 +317,40 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
           />
         )}
 
+        {/* Moon max altitude curve — subtle dashed, right y-axis */}
+        <path
+          d={layout.moonAltLine(track.moon_data.map((m) => m.max_altitude_deg)) ?? undefined}
+          fill="none"
+          stroke={theme.palette.text.disabled}
+          strokeWidth={1}
+          strokeDasharray="4,3"
+          opacity={0.6}
+        />
+
+        {/* Right y-axis labels (moon altitude) */}
+        {[0, 30, 60, 90].map((v) => (
+          <text
+            key={`rax-${v}`}
+            x={width - layout.MARGIN.right + 8}
+            y={layout.yRight(v) + 4}
+            textAnchor="start"
+            fontSize={10}
+            fill={theme.palette.text.disabled}
+          >
+            {v}°
+          </text>
+        ))}
+        <text
+          x={-((height - layout.MARGIN.top - layout.MARGIN.bottom) / 2 + layout.MARGIN.top)}
+          y={width - 6}
+          textAnchor="middle"
+          transform="rotate(-90)"
+          fontSize={10}
+          fill={theme.palette.text.disabled}
+        >
+          Moon alt
+        </text>
+
         {/* Legend */}
         {hasWeighted && (
           <g transform={`translate(${width - layout.MARGIN.right - 130}, ${layout.MARGIN.top + 4})`}>
@@ -386,6 +434,7 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
             <Box sx={{ color: "text.secondary", fontSize: 11 }}>
               Moon: {hover.illuminationPct != null ? `${hover.illuminationPct.toFixed(0)}%` : "—"}
               {hover.minSeparationDeg != null ? ` · ${hover.minSeparationDeg.toFixed(0)}° sep` : ""}
+              {hover.maxAltitudeDeg != null ? ` · ${hover.maxAltitudeDeg.toFixed(0)}° alt` : ""}
             </Box>
           )}
         </Box>

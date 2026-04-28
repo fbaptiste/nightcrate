@@ -299,6 +299,7 @@ export interface MoonDataPoint {
   date: string;
   illumination_pct: number;
   min_separation_deg: number | null;
+  max_altitude_deg: number | null;
 }
 
 export interface AnnualHoursResponse {

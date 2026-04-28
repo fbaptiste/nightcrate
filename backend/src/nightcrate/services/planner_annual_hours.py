@@ -78,6 +78,7 @@ class MoonDataPoint:
     date: date
     illumination_pct: float
     min_separation_deg: float | None
+    max_altitude_deg: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +284,7 @@ def _compute_subrange(
     max_illumination_pct: float | None = None,
     min_separation_deg: float | None = None,
     moon_combine: str = "and",
-) -> list[tuple[date, float, float, float, float | None]]:
+) -> list[tuple[date, float, float, float, float | None, float | None]]:
     """Compute per-night raw hours, filtered hours, and moon illumination.
 
     Raw hours: target above horizon during astro dark (existing logic
@@ -512,15 +513,30 @@ def _compute_subrange(
         midnight_illum[valid_mid] = illum_pct[midnight_indices[valid_mid]]
 
     min_sep_per_day = np.full(n_days, np.nan)
+    max_moon_alt_per_day = np.full(n_days, np.nan)
+    dark_samples = dark
     if moon_sep is not None:
-        valid_samples = above_h & dark
+        valid_samples = above_h & dark_samples
         for i in range(n_samples):
             di = seg_day_index[i] if i < len(seg_day_index) else -1
             if 0 <= di < n_days and valid_samples[i]:
                 if np.isnan(min_sep_per_day[di]):
                     min_sep_per_day[di] = moon_sep[i]
                 else:
-                    min_sep_per_day[di] = min(min_sep_per_day[di], moon_sep[i])
+                    min_sep_per_day[di] = min(
+                        min_sep_per_day[di], moon_sep[i]
+                    )
+    if moon_alt is not None:
+        for i in range(n_samples):
+            di = seg_day_index[i] if i < len(seg_day_index) else -1
+            if 0 <= di < n_days and dark_samples[i]:
+                alt_val = float(moon_alt[i])
+                if np.isnan(max_moon_alt_per_day[di]):
+                    max_moon_alt_per_day[di] = alt_val
+                else:
+                    max_moon_alt_per_day[di] = max(
+                        max_moon_alt_per_day[di], alt_val
+                    )
 
     return [
         (
@@ -528,7 +544,12 @@ def _compute_subrange(
             round(float(hours[i]), 2),
             round(float(filtered_hours[i]), 2),
             round(float(midnight_illum[i]), 1),
-            round(float(min_sep_per_day[i]), 1) if not np.isnan(min_sep_per_day[i]) else None,
+            round(float(min_sep_per_day[i]), 1)
+            if not np.isnan(min_sep_per_day[i])
+            else None,
+            round(float(max_moon_alt_per_day[i]), 1)
+            if not np.isnan(max_moon_alt_per_day[i])
+            else None,
         )
         for i in range(n_days)
     ]
@@ -653,10 +674,17 @@ def compute_annual_hours(
         horizon_name=horizon.name,
         flat_altitude_deg=horizon.flat_altitude_deg,
         moon_sep_deg=moon_sep_deg,
-        points=[AnnualHoursPoint(date=d, hours=h) for d, h, _, _, _ in pairs],
-        filtered_points=[AnnualHoursPoint(date=d, hours=fh) for d, _, fh, _, _ in pairs],
+        points=[AnnualHoursPoint(date=d, hours=h) for d, h, _, _, _, _ in pairs],
+        filtered_points=[
+            AnnualHoursPoint(date=d, hours=fh) for d, _, fh, _, _, _ in pairs
+        ],
         moon_data=[
-            MoonDataPoint(date=d, illumination_pct=il, min_separation_deg=sep)
-            for d, _, _, il, sep in pairs
+            MoonDataPoint(
+                date=d,
+                illumination_pct=il,
+                min_separation_deg=sep,
+                max_altitude_deg=alt,
+            )
+            for d, _, _, il, sep, alt in pairs
         ],
     )

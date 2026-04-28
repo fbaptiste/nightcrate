@@ -1272,6 +1272,7 @@ async def target_annual_hours(
                 date=m.date.isoformat(),
                 illumination_pct=m.illumination_pct,
                 min_separation_deg=m.min_separation_deg,
+                max_altitude_deg=m.max_altitude_deg,
             )
             for m in track.moon_data
         ],
