@@ -626,6 +626,14 @@ export default function PlannerDetailPanel({
                   : "—"
               }
             />
+            <Fact
+              label="Moon illumination"
+              value={
+                skyTrackQuery.data?.moon_phase_pct != null
+                  ? `${Math.round(skyTrackQuery.data.moon_phase_pct)}%`
+                  : "—"
+              }
+            />
           </Stack>
           <Stack direction="row" gap={3} flexWrap="wrap">
             <Fact
@@ -690,17 +698,6 @@ export default function PlannerDetailPanel({
             ) : skyTrackQuery.data ? (
               <SkyPositionGraph track={skyTrackQuery.data} tz={tz} />
             ) : null}
-            {skyTrackQuery.data && (
-              <Stack direction="row" gap={3} sx={{ mt: 1 }} flexWrap="wrap">
-                <Typography variant="caption" color="text.secondary">
-                  Astro dark: {formatLocalTime(skyTrackQuery.data.twilight.astro_start_utc, tz)} –{" "}
-                  {formatLocalTime(skyTrackQuery.data.twilight.astro_end_utc, tz)}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Moon phase: {Math.round(skyTrackQuery.data.moon_phase_pct)}%
-                </Typography>
-              </Stack>
-            )}
           </Collapse>
         </Box>
 
