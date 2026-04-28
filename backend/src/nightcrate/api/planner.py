@@ -58,6 +58,9 @@ from nightcrate.api.planner_models import (
     ThumbnailCacheStats,
     TwilightBandsOut,
 )
+from nightcrate.api.planner_models import (
+    MoonDataPoint as MoonDataPointOut,
+)
 from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import sky_tile_cache, thumbnails
@@ -1203,16 +1206,13 @@ async def target_annual_hours(
         ),
     ),
     moon_sep_deg: float = Query(
-        60.0,
+        0.0,
         ge=0.0,
         le=180.0,
-        description=(
-            "Minimum moon–target separation (deg). A sample counts only "
-            "when the moon is below horizon OR separation > this value. "
-            "``0`` disables the moon check entirely (old ``narrowband`` "
-            "behaviour) and skips the moon astropy transform."
-        ),
     ),
+    max_illumination_pct: float | None = Query(None, ge=0.0, le=100.0),
+    min_separation_deg: float | None = Query(None, ge=0.0, le=180.0),
+    moon_combine: str = Query("and"),
 ) -> AnnualHoursResponse:
     async with get_db() as conn:
         location = await _load_planner_location(conn, location_id)
@@ -1248,6 +1248,9 @@ async def target_annual_hours(
         year,
         (dso_id, float(row["ra_deg"]), float(row["dec_deg"])),
         moon_sep_deg=moon_sep_deg,
+        max_illumination_pct=max_illumination_pct,
+        min_separation_deg=min_separation_deg,
+        moon_combine=moon_combine,
         max_workers=max_workers,
     )
 
@@ -1260,6 +1263,18 @@ async def target_annual_hours(
         flat_altitude_deg=track.flat_altitude_deg,
         moon_sep_deg=track.moon_sep_deg,
         points=[AnnualHoursPointOut(date=p.date.isoformat(), hours=p.hours) for p in track.points],
+        filtered_points=[
+            AnnualHoursPointOut(date=p.date.isoformat(), hours=p.hours)
+            for p in track.filtered_points
+        ],
+        moon_data=[
+            MoonDataPointOut(
+                date=m.date.isoformat(),
+                illumination_pct=m.illumination_pct,
+                min_separation_deg=m.min_separation_deg,
+            )
+            for m in track.moon_data
+        ],
     )
 
 

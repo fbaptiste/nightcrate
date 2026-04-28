@@ -685,7 +685,7 @@ export default function SkyPositionGraph({
             Object: {hover.objAlt.toFixed(1)}° alt, {hover.objAz.toFixed(0)}° az
           </div>
           <div>
-            Moon: {hover.moonAlt.toFixed(1)}° alt, {hover.moonSep.toFixed(0)}° sep
+            Moon: {hover.moonAlt.toFixed(1)}° alt, {hover.moonSep.toFixed(0)}° sep, {track.moon_phase_pct.toFixed(0)}% illum
           </div>
           <div style={{ color: hover.aboveHorizon ? COLOR_OBJECT : undefined }}>
             {hover.aboveHorizon ? "Visible" : "Below horizon"}

@@ -74,25 +74,24 @@ class AnnualHoursPoint:
 
 
 @dataclass(frozen=True, slots=True)
-class AnnualHoursTrack:
-    """Per-night hours-above-threshold series for a single DSO + location
-    + horizon."""
+class MoonDataPoint:
+    date: date
+    illumination_pct: float
+    min_separation_deg: float | None
 
+
+@dataclass(frozen=True, slots=True)
+class AnnualHoursTrack:
     dso_id: int
     year: int
     horizon_id: int
-    # 'custom' or 'artificial' — echoes the input horizon's type so the
-    # response body stays self-describing without needing a separate
-    # horizon fetch.
     horizon_type: str
     horizon_name: str
-    # Flat altitude for artificial horizons; ``None`` for custom.
     flat_altitude_deg: float | None
-    # Minimum moon–target separation (deg) required for a night-sample
-    # to count. ``0`` disables the moon check entirely (all samples
-    # pass the moon predicate), matching the old "ignore moon" mode.
     moon_sep_deg: float
     points: list[AnnualHoursPoint]
+    filtered_points: list[AnnualHoursPoint]
+    moon_data: list[MoonDataPoint]
 
 
 def _integrate_segment(
@@ -184,6 +183,7 @@ def _integrate_segment(
     return total_u * _SAMPLE_SECONDS
 
 
+
 def _compute_subrange(
     location: PlannerLocation,
     horizon: PlannerHorizon,
@@ -192,17 +192,26 @@ def _compute_subrange(
     moon_sep_deg: float,
     start_date: date,
     end_date: date,
-) -> list[tuple[date, float]]:
-    """Compute per-night hours for nights with evening dates in
-    ``[start_date, end_date)``.
+    max_illumination_pct: float | None = None,
+    min_separation_deg: float | None = None,
+    moon_combine: str = "and",
+) -> list[tuple[date, float, float, float, float | None]]:
+    """Compute per-night raw hours, filtered hours, and moon illumination.
 
-    ``moon_sep_deg == 0`` disables the moon check and skips the moon
-    astropy transform entirely (~30% perf win).
+    Raw hours: target above horizon during astro dark (existing logic
+    using ``moon_sep_deg`` for backward compat with the old binary filter).
 
-    Picklable, stateless; fans out cleanly across ``ProcessPoolExecutor``
-    workers.
+    Filtered hours: applies a second moon filter using
+    ``max_illumination_pct`` and/or ``min_separation_deg`` combined
+    with ``moon_combine`` ("and" or "or"). When moon is below horizon,
+    both predicates pass automatically.
+
+    ``moon_sep_deg == 0`` AND no illumination/separation filters
+    disables the moon transform entirely (~30% perf win).
     """
     apply_moon = moon_sep_deg > 0.0
+    apply_filter = max_illumination_pct is not None or min_separation_deg is not None
+    need_moon = True
     coord = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
     earth_loc = _make_earth_location(location)
     tz = ZoneInfo(location.timezone)
@@ -240,12 +249,13 @@ def _compute_subrange(
             horizon.type, horizon.flat_altitude_deg, horizon.points, obj_az
         )
 
-    if apply_moon:
+    if need_moon:
         moon_body = get_body("moon", times, earth_loc)
         moon_altaz = moon_body.transform_to(altaz_frame)
         moon_alt = np.asarray(moon_altaz.alt.deg)
         moon_sep = np.asarray(coord.separation(moon_body).deg)
     else:
+        moon_body = None
         moon_alt = None
         moon_sep = None
 
@@ -330,7 +340,90 @@ def _compute_subrange(
     np.add.at(seconds_per_day, seg_day_index[in_range], seconds_per_segment[in_range])
     hours = seconds_per_day / 3600.0
 
-    return [(start_date + timedelta(days=i), round(float(hours[i]), 2)) for i in range(n_days)]
+    # Moon-filtered hours: apply illumination/separation predicates.
+    if apply_filter and need_moon and moon_alt is not None and moon_sep is not None:
+        sun_body_for_illum = get_body("sun", times, earth_loc)
+        elongation = np.asarray(sun_body_for_illum.separation(moon_body).deg)
+        illum_pct = (1.0 + np.cos(np.radians(elongation))) / 2.0 * 100.0
+
+        moon_below = moon_alt < 0.0
+        if max_illumination_pct is not None:
+            illum_ok = moon_below | (illum_pct <= max_illumination_pct)
+        else:
+            illum_ok = np.ones(n_samples, dtype=bool)
+        if min_separation_deg is not None:
+            sep_ok = moon_below | (moon_sep >= min_separation_deg)
+        else:
+            sep_ok = np.ones(n_samples, dtype=bool)
+
+        if moon_combine == "or":
+            moon_filter_ok = illum_ok | sep_ok
+        else:
+            moon_filter_ok = illum_ok & sep_ok
+
+        above_h_local = obj_alt > horizon_alt
+        dark_local = sun_alt < _ASTRO_DARK_DEG
+        filtered_valid = above_h_local & dark_local & moon_filter_ok
+
+        filtered_seg = np.zeros(n_samples - 1, dtype=float)
+        stable_filtered = ~has_cross & filtered_valid[:-1]
+        filtered_seg[stable_filtered] = _SAMPLE_SECONDS
+
+        if crossing_idx.size > 0:
+            for i in crossing_idx:
+                if filtered_valid[i] or filtered_valid[i + 1]:
+                    base = seconds_per_segment[i]
+                    mid_moon_ok = bool(moon_filter_ok[i]) and bool(moon_filter_ok[i + 1])
+                    filtered_seg[i] = base if mid_moon_ok else 0.0
+
+        filtered_per_day = np.zeros(n_days, dtype=float)
+        np.add.at(filtered_per_day, seg_day_index[in_range], filtered_seg[in_range])
+        filtered_hours = filtered_per_day / 3600.0
+
+        midnight_illum = np.zeros(n_days, dtype=float)
+        samples_per_day = 24 * 60 // _SAMPLE_MINUTES
+        midnight_offset = 12 * 60 // _SAMPLE_MINUTES
+        midnight_indices = np.arange(n_days) * samples_per_day + midnight_offset
+        valid_mid = midnight_indices < len(illum_pct)
+        midnight_illum[valid_mid] = illum_pct[midnight_indices[valid_mid]]
+    elif need_moon and moon_alt is not None and moon_sep is not None:
+        sun_body_for_illum = get_body("sun", times, earth_loc)
+        elongation = np.asarray(sun_body_for_illum.separation(moon_body).deg)
+        illum_pct = (1.0 + np.cos(np.radians(elongation))) / 2.0 * 100.0
+
+        filtered_hours = hours.copy()
+        midnight_illum = np.zeros(n_days, dtype=float)
+        samples_per_day = 24 * 60 // _SAMPLE_MINUTES
+        midnight_offset = 12 * 60 // _SAMPLE_MINUTES
+        midnight_indices = np.arange(n_days) * samples_per_day + midnight_offset
+        valid_mid = midnight_indices < len(illum_pct)
+        midnight_illum[valid_mid] = illum_pct[midnight_indices[valid_mid]]
+    else:
+        filtered_hours = hours.copy()
+        midnight_illum = np.zeros(n_days, dtype=float)
+
+    min_sep_per_day = np.full(n_days, np.nan)
+    if moon_sep is not None:
+        valid_samples = above_h & dark
+        masked_sep = np.where(valid_samples, moon_sep, np.inf)
+        for i in range(n_samples):
+            di = seg_day_index[i] if i < len(seg_day_index) else -1
+            if 0 <= di < n_days and valid_samples[i]:
+                if np.isnan(min_sep_per_day[di]):
+                    min_sep_per_day[di] = masked_sep[i]
+                else:
+                    min_sep_per_day[di] = min(min_sep_per_day[di], masked_sep[i])
+
+    return [
+        (
+            start_date + timedelta(days=i),
+            round(float(hours[i]), 2),
+            round(float(filtered_hours[i]), 2),
+            round(float(midnight_illum[i]), 1),
+            round(float(min_sep_per_day[i]), 1) if not np.isnan(min_sep_per_day[i]) else None,
+        )
+        for i in range(n_days)
+    ]
 
 
 # ── Long-lived worker pool ─────────────────────────────────────────────────
@@ -381,22 +474,11 @@ def compute_annual_hours(
     dso: SkyCoord | tuple[int, float, float],
     *,
     moon_sep_deg: float,
+    max_illumination_pct: float | None = None,
+    min_separation_deg: float | None = None,
+    moon_combine: str = "and",
     max_workers: int | None = None,
 ) -> AnnualHoursTrack:
-    """Compute per-night hours above the given horizon.
-
-    ``moon_sep_deg`` sets the minimum moon–target separation (deg)
-    required during a sample for the sample to count. ``0`` disables
-    the moon check entirely and skips the moon transform; values in
-    ``[0, 180]`` are valid.
-
-    ``max_workers`` controls process-level parallelism:
-    - ``None`` or ``1`` runs single-process in the caller's thread.
-    - ``>= 2`` spawns a ``ProcessPoolExecutor`` with that many workers
-      and splits the year into equal date-range chunks. Spawn
-      overhead is ~1–2 s on mid-range hardware, so the break-even
-      point vs single-process is around 3–4 workers for a full year.
-    """
     if not (0.0 <= moon_sep_deg <= 180.0):
         raise ValueError(f"moon_sep_deg must be in [0, 180], got {moon_sep_deg!r}")
     if horizon.type == "custom" and not horizon.points:
@@ -416,25 +498,24 @@ def compute_annual_hours(
     n_workers = max(1, max_workers or 1)
     if n_workers == 1:
         pairs = _compute_subrange(
-            location, horizon, ra_deg, dec_deg, moon_sep_deg, year_start, year_end
+            location, horizon, ra_deg, dec_deg, moon_sep_deg,
+            year_start, year_end,
+            max_illumination_pct, min_separation_deg, moon_combine,
         )
     else:
         n_workers = min(n_workers, n_days)
         bounds = [
-            year_start + timedelta(days=(n_days * i) // n_workers) for i in range(n_workers + 1)
+            year_start + timedelta(days=(n_days * i) // n_workers)
+            for i in range(n_workers + 1)
         ]
         chunks = list(zip(bounds[:-1], bounds[1:], strict=True))
         pool = _get_pool(n_workers)
         futures = [
             pool.submit(
                 _compute_subrange,
-                location,
-                horizon,
-                ra_deg,
-                dec_deg,
-                moon_sep_deg,
-                start_d,
-                end_d,
+                location, horizon, ra_deg, dec_deg, moon_sep_deg,
+                start_d, end_d,
+                max_illumination_pct, min_separation_deg, moon_combine,
             )
             for start_d, end_d in chunks
         ]
@@ -451,5 +532,10 @@ def compute_annual_hours(
         horizon_name=horizon.name,
         flat_altitude_deg=horizon.flat_altitude_deg,
         moon_sep_deg=moon_sep_deg,
-        points=[AnnualHoursPoint(date=d, hours=h) for d, h in pairs],
+        points=[AnnualHoursPoint(date=d, hours=h) for d, h, _, _, _ in pairs],
+        filtered_points=[AnnualHoursPoint(date=d, hours=fh) for d, _, fh, _, _ in pairs],
+        moon_data=[
+            MoonDataPoint(date=d, illumination_pct=il, min_separation_deg=sep)
+            for d, _, _, il, sep in pairs
+        ],
     )
