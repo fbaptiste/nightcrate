@@ -76,6 +76,11 @@ class PlanSummary(BaseModel):
     rig_id: int
     rig_name: str
     moon_sep_deg: int
+    moon_filter_enabled: bool
+    max_illumination_pct: int
+    min_separation_deg: int
+    moon_combine: str
+    threshold_hours: float
     date_ranges: list[DateRangeOut]
     notes: str | None
     created_at: str
@@ -116,6 +121,11 @@ class CreatePlanRequest(BaseModel):
     horizon_id: int
     rig_id: int
     moon_sep_deg: int = 0
+    moon_filter_enabled: bool = False
+    max_illumination_pct: int = 50
+    min_separation_deg: int = 60
+    moon_combine: str = "and"
+    threshold_hours: float = 2.0
     date_ranges: list[DateRange] = []
     notes: str | None = None
 
@@ -125,6 +135,11 @@ class UpdatePlanRequest(BaseModel):
     horizon_id: int | None = None
     rig_id: int | None = None
     moon_sep_deg: int | None = None
+    moon_filter_enabled: bool | None = None
+    max_illumination_pct: int | None = None
+    min_separation_deg: int | None = None
+    moon_combine: str | None = None
+    threshold_hours: float | None = None
     date_ranges: list[DateRange] | None = None
     notes: str | None = None
     clear_notes: bool = False
@@ -142,6 +157,11 @@ class PlanResponse(BaseModel):
     rig_id: int
     rig_name: str
     moon_sep_deg: int
+    moon_filter_enabled: bool
+    max_illumination_pct: int
+    min_separation_deg: int
+    moon_combine: str
+    threshold_hours: float
     date_ranges: list[DateRangeOut]
     notes: str | None
     created_at: str

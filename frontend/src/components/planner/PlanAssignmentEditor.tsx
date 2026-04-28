@@ -76,6 +76,7 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
   const [maxIllumination, setMaxIllumination] = useState<number>(50);
   const [minSeparation, setMinSeparation] = useState<number>(60);
   const [moonCombine, setMoonCombine] = useState<"and" | "or">("and");
+  const [thresholdHours, setThresholdHours] = useState(2.0);
 
   const locationsQuery = useQuery({
     queryKey: ["locations"],
@@ -123,6 +124,11 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
       setHorizonId(existingPlan.horizon_id);
       setRigId(existingPlan.rig_id);
       setMoonSepDeg(existingPlan.moon_sep_deg);
+      setMoonFilterEnabled(existingPlan.moon_filter_enabled);
+      setMaxIllumination(existingPlan.max_illumination_pct);
+      setMinSeparation(existingPlan.min_separation_deg);
+      setMoonCombine(existingPlan.moon_combine);
+      setThresholdHours(existingPlan.threshold_hours);
       setDateRanges(
         existingPlan.date_ranges.map((r) => ({
           start_date: r.start_date,
@@ -137,6 +143,11 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
       const defRig = rigsQuery.data?.find((r) => r.is_default);
       setRigId(defRig ? defRig.id : "");
       setMoonSepDeg(moonSepDefault);
+      setMoonFilterEnabled(false);
+      setMaxIllumination(50);
+      setMinSeparation(60);
+      setMoonCombine("and");
+      setThresholdHours(2.0);
       setDateRanges([]);
       setNotes("");
     }
@@ -219,6 +230,11 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
             horizon_id: horizonId as number,
             rig_id: rigId as number,
             moon_sep_deg: moonSepDeg,
+            moon_filter_enabled: moonFilterEnabled,
+            max_illumination_pct: maxIllumination,
+            min_separation_deg: minSeparation,
+            moon_combine: moonCombine,
+            threshold_hours: thresholdHours,
             date_ranges: validRanges,
             notes: notes || null,
             clear_notes: !notes && !!existingPlan.notes,
@@ -233,6 +249,11 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
         horizon_id: horizonId as number,
         rig_id: rigId as number,
         moon_sep_deg: moonSepDeg,
+        moon_filter_enabled: moonFilterEnabled,
+        max_illumination_pct: maxIllumination,
+        min_separation_deg: minSeparation,
+        moon_combine: moonCombine,
+        threshold_hours: thresholdHours,
         date_ranges: validRanges,
       };
       if (notes) params.notes = notes;
@@ -336,6 +357,8 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
                     onRemoveRange={removeDateRange}
                     onAutoGenerate={autoGenerateRanges}
                     height={CHART_HEIGHT}
+                    thresholdHours={thresholdHours}
+                    onThresholdChange={setThresholdHours}
                   />
                 )}
                 {annualHoursQuery.isFetching && (
@@ -455,6 +478,8 @@ function InteractiveAnnualChart({
   onRemoveRange,
   onAutoGenerate,
   height,
+  thresholdHours,
+  onThresholdChange,
 }: {
   track: AnnualHoursResponse;
   dateRanges: DateRangeIn[];
@@ -462,6 +487,8 @@ function InteractiveAnnualChart({
   onRemoveRange: (idx: number) => void;
   onAutoGenerate: (threshold: number, points: AnnualHoursPoint[]) => void;
   height: number;
+  thresholdHours: number;
+  onThresholdChange: (v: number) => void;
 }) {
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -469,7 +496,6 @@ function InteractiveAnnualChart({
   const [width, setWidth] = useState(600);
   const [dragStart, setDragStart] = useState<number | null>(null);
   const [dragEnd, setDragEnd] = useState<number | null>(null);
-  const [thresholdHours, setThresholdHours] = useState(2.0);
   const [hover, setHover] = useState<{
     xPx: number;
     yPx: number;
@@ -658,7 +684,7 @@ function InteractiveAnnualChart({
       const rect = svg.getBoundingClientRect();
       const y = ev.clientY - rect.top - CHART_MARGIN.top;
       const hours = yScale.invert(Math.max(0, Math.min(innerH, y)));
-      setThresholdHours(snapTo30Min(hours));
+      onThresholdChange(snapTo30Min(hours));
     };
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
