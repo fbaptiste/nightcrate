@@ -509,8 +509,10 @@ export default function SkyPositionGraph({
                 fontSize={10}
                 fontFamily="inherit"
               >
+                {m.side === "left" && <tspan fill={theme.palette.text.disabled}>{"◂"} </tspan>}
                 <tspan fill={theme.palette.text.secondary}>{m.label} </tspan>
                 <tspan fill={theme.palette.text.primary}>{timeLocal}</tspan>
+                {m.side === "right" && <tspan fill={theme.palette.text.disabled}> {"▸"}</tspan>}
               </text>
             </g>
           );
