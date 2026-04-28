@@ -136,10 +136,7 @@ export default function SkyPositionGraph({
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 600;
-      // Minimum bumped from 400 → 540 because the twilight-label
-      // strip eats 220 px of horizontal margin on each side combined.
-      // Below ~540 px the chart data area becomes uselessly narrow.
-      setWidth(Math.max(540, Math.floor(w)));
+      setWidth(Math.max(400, Math.floor(w)));
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -167,19 +164,11 @@ export default function SkyPositionGraph({
   const blockedFill = blockedSkyFill(theme.palette.mode);
 
   const layout = useMemo(() => {
-    // Chart-internal margin. ``top`` reserves the tiered label strip
-    // above the grid (+ the historic 10 px breathing room). ``left``
-    // / ``right`` are generous enough to fit the twilight marker
-    // labels — the earliest (Sunset) and latest (Sunrise) markers
-    // sit only a few minutes inside the chart window, so their
-    // labels extend well past the chart data area on each side
-    // (~90 px for "Sunset 07:01 PM" at 10 px sans-serif). 110 px
-    // on each side leaves ~25 px of slack for longer strings.
     const MARGIN = {
       top: 10 + TWILIGHT_LABELS_TOTAL_HEIGHT,
-      right: 110,
+      right: 44,
       bottom: 28,
-      left: 110,
+      left: 44,
     };
     const times = track.times_utc.map((t) => new Date(t));
     const tmin = times[0] ?? new Date();
@@ -493,8 +482,12 @@ export default function SkyPositionGraph({
           const lineTop = labelsBarTop + m.tier * TWILIGHT_TIER_HEIGHT;
           // Label baseline: 3 px above the tier's lower edge.
           const labelY = labelsBarTop + (m.tier + 1) * TWILIGHT_TIER_HEIGHT - 3;
-          const labelX = m.side === "left" ? mx - 4 : mx + 4;
-          const textAnchor = m.side === "left" ? "end" : "start";
+          const nearLeftEdge = mx < layout.MARGIN.left + 80;
+          const nearRightEdge = mx > width - layout.MARGIN.right - 80;
+          const flipLeft = m.side === "left" && nearLeftEdge;
+          const flipRight = m.side === "right" && nearRightEdge;
+          const labelX = flipLeft ? mx + 4 : flipRight ? mx - 4 : m.side === "left" ? mx - 4 : mx + 4;
+          const textAnchor = flipLeft ? "start" : flipRight ? "end" : m.side === "left" ? "end" : "start";
           const timeLocal = new Date(m.utc).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
