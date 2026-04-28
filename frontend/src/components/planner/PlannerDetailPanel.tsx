@@ -4,7 +4,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
-import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Collapse from "@mui/material/Collapse";
@@ -39,6 +38,7 @@ import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { DsoExternalRefs } from "@/components/dso/DsoExternalRefs";
 import SkyPreview from "@/components/dso/SkyPreview";
 import BestTimeOfYearChart from "./BestTimeOfYearChart";
+import MoonFilterControls from "./MoonFilterControls";
 import { ScoreBreakdownSection } from "./ScoreBreakdownSection";
 import { ScoreChip } from "./ScoreChip";
 import SkyPositionGraph from "./SkyPositionGraph";
@@ -723,40 +723,16 @@ export default function PlannerDetailPanel({
                 during astronomical darkness, by night.
               </Typography>
 
-              <Stack direction="row" alignItems="center" gap={0.5} flexWrap="wrap" sx={{ mt: 1 }}>
-                <Checkbox
-                  size="small"
-                  checked={moonFilterEnabled}
-                  onChange={(_, checked) => setMoonFilterEnabled(checked)}
-                  sx={{ p: 0.25 }}
-                />
-                <Typography variant="caption" sx={{ color: moonFilterEnabled ? "text.primary" : "text.disabled" }}>
-                  Illumination {"≤"}
-                </Typography>
-                <FormControl size="small" variant="standard" sx={{ minWidth: 60 }} disabled={!moonFilterEnabled}>
-                  <Select value={maxIllumination} onChange={(e) => setMaxIllumination(Number(e.target.value))} sx={{ fontSize: "0.8rem" }}>
-                    {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => (
-                      <MenuItem key={v} value={v}>{v}%</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl size="small" variant="standard" sx={{ minWidth: 50 }} disabled={!moonFilterEnabled}>
-                  <Select value={moonCombine} onChange={(e) => setMoonCombine(e.target.value as "and" | "or")} sx={{ fontSize: "0.8rem" }}>
-                    <MenuItem value="and">AND</MenuItem>
-                    <MenuItem value="or">OR</MenuItem>
-                  </Select>
-                </FormControl>
-                <Typography variant="caption" sx={{ color: moonFilterEnabled ? "text.primary" : "text.disabled" }}>
-                  Separation {"≥"}
-                </Typography>
-                <FormControl size="small" variant="standard" sx={{ minWidth: 60 }} disabled={!moonFilterEnabled}>
-                  <Select value={minSeparation} onChange={(e) => setMinSeparation(Number(e.target.value))} sx={{ fontSize: "0.8rem" }}>
-                    {[0, 15, 30, 45, 60, 75, 90, 120].map((v) => (
-                      <MenuItem key={v} value={v}>{v}°</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Stack>
+              <MoonFilterControls
+                enabled={moonFilterEnabled}
+                onEnabledChange={setMoonFilterEnabled}
+                maxIllumination={maxIllumination}
+                onMaxIlluminationChange={setMaxIllumination}
+                minSeparation={minSeparation}
+                onMinSeparationChange={setMinSeparation}
+                moonCombine={moonCombine}
+                onMoonCombineChange={setMoonCombine}
+              />
 
               <Box sx={{ mt: 1, position: "relative", minHeight: 346 }}>
                 {annualHoursQuery.data && (
