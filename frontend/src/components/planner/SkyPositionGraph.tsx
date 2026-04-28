@@ -80,10 +80,10 @@ const SNAP_PX = 6;
 // the chart); the corresponding vertical line is the longest. Higher
 // tier numbers sit closer to the chart with shorter lines.
 //
-// Tier 0: Astro dark boundaries    (longest line, farthest label)
-// Tier 1: Nautical dark boundaries
-// Tier 2: Civil dark boundaries
-// Tier 3: Sunset / sunrise
+// Tier 0: Sunset / sunrise          (longest line, farthest label)
+// Tier 1: Civil dark boundaries
+// Tier 2: Nautical dark boundaries
+// Tier 3: Astro dark boundaries
 // Tier 4: Meridian transit          (own tier — not shared with
 //                                    sunset/sunrise because a meridian
 //                                    near sunset would overlap text)
@@ -249,14 +249,14 @@ export default function SkyPositionGraph({
   const twilightMarkers = useMemo<TwilightMarker[]>(() => {
     const tw = track.twilight;
     return [
-      { key: "sunset", label: "Sunset", utc: tw.sunset_utc, side: "left", tier: 3 },
-      { key: "civil_end", label: "Civil dark", utc: tw.civil_end_utc, side: "left", tier: 2 },
-      { key: "nautical_end", label: "Nautical dark", utc: tw.nautical_end_utc, side: "left", tier: 1 },
-      { key: "astro_start", label: "Astro dark", utc: tw.astro_start_utc, side: "left", tier: 0 },
-      { key: "astro_end", label: "Astro dark", utc: tw.astro_end_utc, side: "right", tier: 0 },
-      { key: "nautical_start", label: "Nautical dark", utc: tw.nautical_start_utc, side: "right", tier: 1 },
-      { key: "civil_start", label: "Civil dark", utc: tw.civil_start_utc, side: "right", tier: 2 },
-      { key: "sunrise", label: "Sunrise", utc: tw.sunrise_utc, side: "right", tier: 3 },
+      { key: "sunset", label: "Sunset", utc: tw.sunset_utc, side: "left", tier: 0 },
+      { key: "civil_end", label: "Civil dark", utc: tw.civil_end_utc, side: "left", tier: 1 },
+      { key: "nautical_end", label: "Nautical dark", utc: tw.nautical_end_utc, side: "left", tier: 2 },
+      { key: "astro_start", label: "Astro dark", utc: tw.astro_start_utc, side: "left", tier: 3 },
+      { key: "astro_end", label: "Astro dark", utc: tw.astro_end_utc, side: "right", tier: 3 },
+      { key: "nautical_start", label: "Nautical dark", utc: tw.nautical_start_utc, side: "right", tier: 2 },
+      { key: "civil_start", label: "Civil dark", utc: tw.civil_start_utc, side: "right", tier: 1 },
+      { key: "sunrise", label: "Sunrise", utc: tw.sunrise_utc, side: "right", tier: 0 },
     ];
   }, [track.twilight]);
 
