@@ -6,7 +6,7 @@
  * hover crosshair with tooltip showing target + range details, positive
  * stops at range boundaries.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as d3 from "d3";
 import Box from "@mui/material/Box";
@@ -95,6 +95,27 @@ export default function WishlistCalendarView({
     queryFn: () => fetchRigs(true),
     staleTime: 5 * 60_000,
   });
+
+  useEffect(() => {
+    if (locationId === "" && locationsQuery.data) {
+      const def = locationsQuery.data.find((l) => l.is_default);
+      if (def) setLocationId(def.id);
+    }
+  }, [locationId, locationsQuery.data, setLocationId]);
+
+  useEffect(() => {
+    if (locationId !== "" && horizonId === "" && horizonsQuery.data) {
+      const def = horizonsQuery.data.find((h: Horizon) => h.is_default);
+      if (def) setHorizonId(def.id);
+    }
+  }, [locationId, horizonId, horizonsQuery.data, setHorizonId]);
+
+  useEffect(() => {
+    if (rigId === "" && rigsQuery.data) {
+      const def = rigsQuery.data.find((r) => r.is_default);
+      if (def) setRigId(def.id);
+    }
+  }, [rigId, rigsQuery.data, setRigId]);
 
   const calendarQuery = useCalendarData({
     locationId: locationId as number,
