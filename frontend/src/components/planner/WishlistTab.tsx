@@ -11,7 +11,6 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  MeasuringStrategy,
   PointerSensor,
   closestCorners,
   useDroppable,
@@ -47,6 +46,8 @@ import AddIcon from "@mui/icons-material/Add";
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
+import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import EditIcon from "@mui/icons-material/Edit";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -144,7 +145,6 @@ export default function WishlistTab() {
   const [localGroups, setLocalGroups] = useState<SectionGroup[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
-  const preDragCollapsed = useRef<Set<string> | null>(null);
 
   const toggleCollapse = useCallback((groupId: string) => {
     setCollapsedSections((prev) => {
@@ -185,27 +185,8 @@ export default function WishlistTab() {
     return null;
   }, [activeId, localGroups]);
 
-  const activeSection = useMemo(() => {
-    if (!activeId || !activeId.startsWith("section-")) return null;
-    return localGroups.find((g) => g.id === activeId) ?? null;
-  }, [activeId, localGroups]);
-
   function handleDragStart(event: DragStartEvent) {
-    const id = String(event.active.id);
-    setActiveId(id);
-    const isSectionDrag = localGroups.some(
-      (g) => g.id === id && g.sectionDbId !== null,
-    );
-    if (isSectionDrag) {
-      preDragCollapsed.current = new Set(collapsedSections);
-      setCollapsedSections(
-        new Set(
-          localGroups
-            .filter((g) => g.sectionDbId !== null)
-            .map((g) => g.id),
-        ),
-      );
-    }
+    setActiveId(String(event.active.id));
   }
 
   function handleDragOver(event: DragOverEvent) {
@@ -243,20 +224,21 @@ export default function WishlistTab() {
     });
   }
 
-  function restoreCollapsedState() {
-    if (preDragCollapsed.current !== null) {
-      setCollapsedSections(preDragCollapsed.current);
-      preDragCollapsed.current = null;
-    }
+  function handleMoveSection(sectionDbId: number, direction: "up" | "down") {
+    const namedGroups = localGroups.filter((g) => g.sectionDbId !== null);
+    const idx = namedGroups.findIndex((g) => g.sectionDbId === sectionDbId);
+    if (idx === -1) return;
+    const newIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= namedGroups.length) return;
+    const ids = namedGroups.map((g) => g.sectionDbId!);
+    [ids[idx], ids[newIdx]] = [ids[newIdx], ids[idx]];
+    sectionMutations.reorder.mutate(ids);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveId(null);
-    if (!over || active.id === over.id) {
-      restoreCollapsedState();
-      return;
-    }
+    if (!over || active.id === over.id) return;
 
     const activeIdStr = String(active.id);
     const overIdStr = String(over.id);
@@ -280,20 +262,7 @@ export default function WishlistTab() {
         });
       }
       persistOrder();
-    } else if (activeIdStr.startsWith("section-") && overIdStr.startsWith("section-")) {
-      setLocalGroups((prev) => {
-        const oldIdx = prev.findIndex((g) => g.id === activeIdStr);
-        const newIdx = prev.findIndex((g) => g.id === overIdStr);
-        if (oldIdx <= 0 || newIdx <= 0) return prev;
-        const next = [...prev];
-        const [moved] = next.splice(oldIdx, 1);
-        next.splice(newIdx, 0, moved);
-        const ids = next.filter((g) => g.sectionDbId !== null).map((g) => g.sectionDbId!);
-        if (ids.length > 0) sectionMutations.reorder.mutate(ids);
-        return next;
-      });
     }
-    restoreCollapsedState();
   }
 
   function persistOrder() {
@@ -416,11 +385,9 @@ export default function WishlistTab() {
               <DndContext
                 sensors={sensors}
                 collisionDetection={closestCorners}
-                measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDragEnd={handleDragEnd}
-                onDragCancel={() => { setActiveId(null); restoreCollapsedState(); }}
               >
                 <Stack gap={2}>
                   {/* General (pinned, not sortable as a section) */}
@@ -441,13 +408,11 @@ export default function WishlistTab() {
                     />
                   )}
 
-                  {/* Named sections — sortable */}
-                  <SortableContext
-                    items={localGroups.filter((g) => g.sectionDbId !== null).map((g) => g.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {localGroups.filter((g) => g.sectionDbId !== null).map((group) => (
-                      <SortableSection
+                  {/* Named sections — reorder via up/down buttons */}
+                  {(() => {
+                    const named = localGroups.filter((g) => g.sectionDbId !== null);
+                    return named.map((group, idx) => (
+                      <DroppableSection
                         key={group.id}
                         group={group}
                         sections={sections}
@@ -464,9 +429,11 @@ export default function WishlistTab() {
                         onEditPlan={(dsoId, planId) => setEditorState({ open: true, dsoId, planId })}
                         onDeletePlan={(planId) => deletePlan.mutate(planId)}
                         onMoveToSection={(dsoId, sectionId) => sectionMutations.move.mutate({ dsoId, sectionId })}
+                        onMoveUp={idx > 0 ? () => handleMoveSection(group.sectionDbId!, "up") : undefined}
+                        onMoveDown={idx < named.length - 1 ? () => handleMoveSection(group.sectionDbId!, "down") : undefined}
                       />
-                    ))}
-                  </SortableContext>
+                    ));
+                  })()}
                 </Stack>
 
                 <DragOverlay>
@@ -483,13 +450,6 @@ export default function WishlistTab() {
                           </Typography>
                         )}
                       </Stack>
-                    </Card>
-                  )}
-                  {activeSection && (
-                    <Card variant="outlined" sx={{ borderRadius: 2, p: 1.5, opacity: 0.9 }}>
-                      <Typography variant="subtitle2" fontWeight={600}>
-                        {activeSection.name} ({activeSection.items.length})
-                      </Typography>
                     </Card>
                   )}
                 </DragOverlay>
@@ -532,31 +492,6 @@ export default function WishlistTab() {
 
 // ── Droppable Section ───────────────────────────────────────────────────────
 
-function SortableSection(props: Omit<DroppableSectionProps, "sectionDragHandleProps">) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: props.group.id });
-
-  return (
-    <Box
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0 : 1,
-      }}
-    >
-      <DroppableSection {...props} sectionDragHandleProps={{ ...attributes, ...listeners }} />
-    </Box>
-  );
-}
-
-
 interface DroppableSectionProps {
   group: SectionGroup;
   sections: SectionResponse[];
@@ -569,7 +504,8 @@ interface DroppableSectionProps {
   onEditPlan: (dsoId: number, planId: number) => void;
   onDeletePlan: (planId: number) => void;
   onMoveToSection: (dsoId: number, sectionId: number | null) => void;
-  sectionDragHandleProps?: Record<string, unknown>;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }
 
 function DroppableSection({
@@ -584,7 +520,8 @@ function DroppableSection({
   onEditPlan,
   onDeletePlan,
   onMoveToSection,
-  sectionDragHandleProps,
+  onMoveUp,
+  onMoveDown,
 }: DroppableSectionProps) {
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
   const [editing, setEditing] = useState(false);
@@ -611,10 +548,15 @@ function DroppableSection({
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.5}>
-        {sectionDragHandleProps && (
-          <Box {...sectionDragHandleProps} sx={{ cursor: "grab", color: "text.disabled", display: "flex" }}>
-            <DragIndicatorIcon sx={{ fontSize: 18 }} />
-          </Box>
+        {onMoveUp && (
+          <IconButton size="small" onClick={onMoveUp} sx={{ p: 0.25 }}>
+            <KeyboardArrowUpIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        )}
+        {onMoveDown && (
+          <IconButton size="small" onClick={onMoveDown} sx={{ p: 0.25 }}>
+            <KeyboardArrowDownIcon sx={{ fontSize: 18 }} />
+          </IconButton>
         )}
         <IconButton size="small" onClick={onToggleCollapse} sx={{ p: 0.25 }}>
           {collapsed ? <ExpandMoreIcon sx={{ fontSize: 18 }} /> : <ExpandLessIcon sx={{ fontSize: 18 }} />}
