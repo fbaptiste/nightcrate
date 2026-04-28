@@ -190,7 +190,10 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
   return (
     <Box ref={wrapperRef} sx={{ position: "relative", width: "100%" }}>
       {/* Legend toggles above chart */}
-      <Stack direction="row" spacing={2} sx={{ mb: 0.5 }} flexWrap="wrap" justifyContent="flex-end">
+      <Stack direction="row" spacing={2} sx={{ mb: 0.5 }} flexWrap="wrap" justifyContent="flex-end" alignItems="center">
+        <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
+          click to toggle
+        </Typography>
         <LegendToggle
           color={RIG_BLUE}
           label="Raw hours"
