@@ -98,13 +98,13 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
 
   const annualHoursQuery = useQuery({
     queryKey: [
-      "annual-hours", dsoId, locationId, horizonId, moonSepDeg,
+      "annual-hours", dsoId, locationId, horizonId,
       moonFilterEnabled, maxIllumination, minSeparation, moonCombine,
     ],
     queryFn: () =>
       fetchAnnualHours(dsoId, locationId as number, {
         horizonId: horizonId as number,
-        moonSepDeg,
+        moonSepDeg: 0,
         maxIlluminationPct: moonFilterEnabled ? maxIllumination : undefined,
         minSeparationDeg: moonFilterEnabled ? minSeparation : undefined,
         moonCombine: moonFilterEnabled ? moonCombine : undefined,

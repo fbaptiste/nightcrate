@@ -278,7 +278,6 @@ export default function PlannerDetailPanel({
       dsoId,
       previewLocationId,
       effectiveHorizon?.id ?? null,
-      moonSepDeg,
       moonFilterEnabled,
       maxIllumination,
       minSeparation,
@@ -287,7 +286,7 @@ export default function PlannerDetailPanel({
     queryFn: () =>
       fetchAnnualHours(dsoId as number, previewLocationId as number, {
         horizonId: effectiveHorizon?.id,
-        moonSepDeg,
+        moonSepDeg: 0,
         maxIlluminationPct: moonFilterEnabled ? maxIllumination : undefined,
         minSeparationDeg: moonFilterEnabled ? minSeparation : undefined,
         moonCombine: moonFilterEnabled ? moonCombine : undefined,
