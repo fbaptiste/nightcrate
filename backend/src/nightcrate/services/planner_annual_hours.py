@@ -344,7 +344,7 @@ def _compute_subrange(
         moon_alt = np.asarray(moon_altaz.alt.deg)
         moon_sep = np.asarray(coord.separation(moon_body).deg)
         elongation = np.asarray(sun_body.separation(moon_body).deg)
-        illum_pct = (1.0 + np.cos(np.radians(elongation))) / 2.0 * 100.0
+        illum_pct = (1.0 - np.cos(np.radians(elongation))) / 2.0 * 100.0
     else:
         moon_body = None
         moon_alt = None

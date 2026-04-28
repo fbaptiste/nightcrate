@@ -242,6 +242,29 @@ def test_longyearbyen_polar_winter_exceeds_12h_cap():
     )
 
 
+def test_illumination_high_at_full_moon_low_at_new_moon():
+    """Verify the illumination formula is correct: full moon (elongation
+    ~180°) → ~100%, new moon (elongation ~0°) → ~0%.  The formula uses
+    (1 - cos(elongation)) / 2, not (1 + cos(elongation)) / 2."""
+    track = compute_annual_hours(
+        PHOENIX,
+        FLAT_30,
+        2026,
+        M42,
+        moon_sep_deg=0.0,
+    )
+    illuminations = [(m.date, m.illumination_pct) for m in track.moon_data]
+    min_illum = min(illuminations, key=lambda x: x[1])
+    max_illum = max(illuminations, key=lambda x: x[1])
+    assert min_illum[1] < 2.0, (
+        f"Minimum illumination should be near 0% (new moon); got {min_illum[1]}% on {min_illum[0]}"
+    )
+    assert max_illum[1] > 98.0, (
+        f"Maximum illumination should be near 100% (full moon); "
+        f"got {max_illum[1]}% on {max_illum[0]}"
+    )
+
+
 def test_illumination_filter_reduces_full_moon_nights():
     """With max_illumination_pct=50, nights near full moon (illumination
     ~100%) should have filtered_hours < raw hours. The filter lets time
