@@ -11,6 +11,7 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
   closestCorners,
   useDroppable,
@@ -182,6 +183,11 @@ export default function WishlistTab() {
       if (found) return found;
     }
     return null;
+  }, [activeId, localGroups]);
+
+  const activeSection = useMemo(() => {
+    if (!activeId || !activeId.startsWith("section-")) return null;
+    return localGroups.find((g) => g.id === activeId) ?? null;
   }, [activeId, localGroups]);
 
   function handleDragStart(event: DragStartEvent) {
@@ -410,6 +416,7 @@ export default function WishlistTab() {
               <DndContext
                 sensors={sensors}
                 collisionDetection={closestCorners}
+                measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDragEnd={handleDragEnd}
@@ -478,6 +485,13 @@ export default function WishlistTab() {
                       </Stack>
                     </Card>
                   )}
+                  {activeSection && (
+                    <Card variant="outlined" sx={{ borderRadius: 2, p: 1.5, opacity: 0.9 }}>
+                      <Typography variant="subtitle2" fontWeight={600}>
+                        {activeSection.name} ({activeSection.items.length})
+                      </Typography>
+                    </Card>
+                  )}
                 </DragOverlay>
               </DndContext>
             </>
@@ -534,7 +548,7 @@ function SortableSection(props: Omit<DroppableSectionProps, "sectionDragHandlePr
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.5 : 1,
+        opacity: isDragging ? 0 : 1,
       }}
     >
       <DroppableSection {...props} sectionDragHandleProps={{ ...attributes, ...listeners }} />
