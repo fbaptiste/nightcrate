@@ -189,34 +189,6 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
 
   return (
     <Box ref={wrapperRef} sx={{ position: "relative", width: "100%" }}>
-      {/* Legend toggles above chart */}
-      <Stack direction="row" spacing={2} sx={{ mb: 0.5, pr: `${layout.MARGIN.right}px` }} flexWrap="wrap" justifyContent="flex-end" alignItems="center">
-        <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
-          click to toggle
-        </Typography>
-        <LegendToggle
-          color={RIG_BLUE}
-          label="Raw hours"
-          active={showRaw}
-          onToggle={() => setShowRaw((v) => !v)}
-        />
-        {hasWeighted && (
-          <LegendToggle
-            color={RIG_ORANGE}
-            label="Effective hours"
-            active={showEffective}
-            onToggle={() => setShowEffective((v) => !v)}
-          />
-        )}
-        <LegendToggle
-          color={moonAltColor}
-          label="Moon altitude"
-          dashed
-          active={showMoonAlt}
-          onToggle={() => setShowMoonAlt((v) => !v)}
-        />
-      </Stack>
-
       <svg
         width={width}
         height={height}
@@ -473,6 +445,34 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
           )}
         </Box>
       )}
+
+      {/* Legend toggles below chart */}
+      <Stack direction="row" spacing={2} sx={{ mt: 1, pr: `${layout.MARGIN.right}px` }} flexWrap="wrap" justifyContent="flex-end" alignItems="center">
+        <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
+          click to toggle
+        </Typography>
+        <LegendToggle
+          color={RIG_BLUE}
+          label="Raw hours"
+          active={showRaw}
+          onToggle={() => setShowRaw((v) => !v)}
+        />
+        {hasWeighted && (
+          <LegendToggle
+            color={RIG_ORANGE}
+            label="Effective hours"
+            active={showEffective}
+            onToggle={() => setShowEffective((v) => !v)}
+          />
+        )}
+        <LegendToggle
+          color={moonAltColor}
+          label="Moon altitude"
+          dashed
+          active={showMoonAlt}
+          onToggle={() => setShowMoonAlt((v) => !v)}
+        />
+      </Stack>
     </Box>
   );
 }
