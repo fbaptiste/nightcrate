@@ -720,7 +720,7 @@ async def get_calendar_data(
             SELECT tp.id AS plan_id, tp.dso_id, tp.notes,
                    d.primary_designation, d.common_name,
                    ft.section_id, ws.name AS section_name,
-                   COALESCE(ws.sort_order, 999999) AS section_sort
+                   COALESCE(ws.sort_order, -1) AS section_sort
             FROM target_plan tp
             JOIN dso d ON d.id = tp.dso_id
             JOIN favorite_target ft ON ft.dso_id = tp.dso_id

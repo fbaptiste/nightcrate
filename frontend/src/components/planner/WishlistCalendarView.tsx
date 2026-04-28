@@ -449,8 +449,46 @@ function CalendarChart({
   }, [data.targets.length, hasSections, sectionGroups]);
   const todayX = todayXPx;
 
+  const namedSections = sectionGroups.filter((g) => g.id !== null);
+
   return (
     <Box ref={wrapperRef} sx={{ width: "100%", overflow: "auto", position: "relative" }}>
+      {/* Section reorder toolbar */}
+      {hasSections && namedSections.length > 1 && (
+        <Stack direction="row" gap={1} alignItems="center" sx={{ mb: 0.5 }} flexWrap="wrap">
+          <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
+            Section order:
+          </Typography>
+          {namedSections.map((sg, idx) => {
+            const color = SECTION_COLORS[sectionGroups.indexOf(sg) % SECTION_COLORS.length];
+            return (
+              <Stack key={sg.id} direction="row" alignItems="center" gap={0}>
+                <Typography variant="caption" sx={{ color, fontWeight: 600, fontSize: 11 }}>
+                  {sg.name}
+                </Typography>
+                {idx > 0 && (
+                  <IconButton
+                    size="small"
+                    onClick={() => onReorderSection(sg.id!, "up")}
+                    sx={{ p: 0, ml: 0.25 }}
+                  >
+                    <KeyboardArrowUpIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+                {idx < namedSections.length - 1 && (
+                  <IconButton
+                    size="small"
+                    onClick={() => onReorderSection(sg.id!, "down")}
+                    sx={{ p: 0 }}
+                  >
+                    <KeyboardArrowDownIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+              </Stack>
+            );
+          })}
+        </Stack>
+      )}
       <svg
         width={svgWidth}
         height={chartHeight}
@@ -682,51 +720,6 @@ function CalendarChart({
         ))}
       </svg>
 
-      {/* Section reorder buttons — positioned over each named section bar */}
-      {hasSections && (() => {
-        const namedGroups = sectionGroups.filter((g) => g.id !== null);
-        if (namedGroups.length < 2) return null;
-        return namedGroups.map((sg, namedIdx) => {
-        const isFirst = namedIdx === 0;
-        const isLast = namedIdx === namedGroups.length - 1;
-        const barY = MARGIN.top + 1 + sg.yStart;
-        return (
-          <Box
-            key={`reorder-${sg.id}`}
-            sx={{
-              position: "absolute",
-              left: 0,
-              top: barY,
-              width: sectionBarW,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 0,
-              zIndex: 2,
-            }}
-          >
-            {!isFirst && (
-              <IconButton
-                size="small"
-                onClick={() => onReorderSection(sg.id!, "up")}
-                sx={{ p: 0, color: "text.disabled", "&:hover": { color: "text.secondary" } }}
-              >
-                <KeyboardArrowUpIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            )}
-            {!isLast && (
-              <IconButton
-                size="small"
-                onClick={() => onReorderSection(sg.id!, "down")}
-                sx={{ p: 0, color: "text.disabled", "&:hover": { color: "text.secondary" } }}
-              >
-                <KeyboardArrowDownIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            )}
-          </Box>
-        );
-        });
-      })()}
 
       {/* Hover tooltip — above the chart */}
       {hover && (
