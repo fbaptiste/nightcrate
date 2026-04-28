@@ -668,7 +668,7 @@ function InteractiveAnnualChart({
     document.addEventListener("mouseup", onUp);
   };
 
-  const rangeColor = `${RIG_ORANGE}55`;
+  const rangeColor = `${RIG_BLUE}33`;
   const dragColor = isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.08)";
   const threshColor = isDark ? "#ffffff66" : "#00000044";
   const todayX = xScale(new Date());
