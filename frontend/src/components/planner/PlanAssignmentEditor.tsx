@@ -27,8 +27,6 @@ import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
-import ToggleButton from "@mui/material/ToggleButton";
-import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
@@ -509,11 +507,9 @@ function InteractiveAnnualChart({
   const [thresholdHours, setThresholdHours] = useState(2.0);
   const [hover, setHover] = useState<{
     xPx: number;
-    yPxRaw: number;
-    yPxWeighted: number;
+    yPx: number;
     dateLabel: string;
-    rawHours: number;
-    weightedHours: number;
+    hours: number;
     illuminationPct: number | null;
     minSeparationDeg: number | null;
     isSnapped: boolean;
@@ -524,7 +520,7 @@ function InteractiveAnnualChart({
   const wPts = track.filtered_points ?? [];
   const moonIllum = track.moon_data ?? [];
   const hasWeighted = wPts.length > 0 && wPts.some((p, i) => Math.abs(p.hours - pts[i]?.hours) > 0.01);
-  const [autoUseEffective, setAutoUseEffective] = useState(true);
+  const activePts = hasWeighted ? wPts : pts;
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -564,24 +560,20 @@ function InteractiveAnnualChart({
 
   const crossingXPositions = useMemo(() => {
     const crossings: number[] = [];
-    const addCrossings = (points: AnnualHoursPoint[]) => {
-      for (let i = 1; i < points.length; i++) {
-        const prev = points[i - 1].hours;
-        const curr = points[i].hours;
-        if ((prev < thresholdHours && curr >= thresholdHours) ||
-            (prev >= thresholdHours && curr < thresholdHours)) {
-          const t = (thresholdHours - prev) / (curr - prev);
-          const d0 = new Date(points[i - 1].date).getTime();
-          const d1 = new Date(points[i].date).getTime();
-          crossings.push(xScale(new Date(d0 + t * (d1 - d0))));
-        }
+    for (let i = 1; i < activePts.length; i++) {
+      const prev = activePts[i - 1].hours;
+      const curr = activePts[i].hours;
+      if ((prev < thresholdHours && curr >= thresholdHours) ||
+          (prev >= thresholdHours && curr < thresholdHours)) {
+        const t = (thresholdHours - prev) / (curr - prev);
+        const d0 = new Date(activePts[i - 1].date).getTime();
+        const d1 = new Date(activePts[i].date).getTime();
+        crossings.push(xScale(new Date(d0 + t * (d1 - d0))));
       }
-    };
-    addCrossings(pts);
-    if (hasWeighted) addCrossings(wPts);
+    }
     crossings.sort((a, b) => a - b);
     return [...new Set(crossings.map((c) => Math.round(c * 10) / 10))];
-  }, [pts, wPts, hasWeighted, thresholdHours, xScale]);
+  }, [activePts, thresholdHours, xScale]);
 
   const dateFromX = (px: number): string => {
     const d = xScale.invert(px - CHART_MARGIN.left);
@@ -593,9 +585,9 @@ function InteractiveAnnualChart({
 
   const hoursAtX = (x: number): { hours: number; idx: number } => {
     const t = xScale.invert(x);
-    const idx = Math.max(0, Math.min(pts.length - 1,
-      d3.bisector((p: AnnualHoursPoint) => new Date(p.date)).left(pts, t)));
-    return { hours: pts[idx].hours, idx };
+    const idx = Math.max(0, Math.min(activePts.length - 1,
+      d3.bisector((p: AnnualHoursPoint) => new Date(p.date)).left(activePts, t)));
+    return { hours: activePts[idx].hours, idx };
   };
 
   const snapToNearestCrossing = (rawX: number): number => {
@@ -645,19 +637,16 @@ function InteractiveAnnualChart({
       }
     }
 
-    const { hours: rawHours, idx } = hoursAtX(snapX);
-    const weightedHours = hasWeighted && idx < wPts.length ? wPts[idx].hours : rawHours;
+    const { hours, idx } = hoursAtX(snapX);
     const dateAtPos = isSnapped
       ? xScale.invert(snapX)
-      : new Date(pts[idx].date);
+      : new Date(activePts[idx].date);
 
     setHover({
       xPx: snapX,
-      yPxRaw: yScale(rawHours),
-      yPxWeighted: yScale(weightedHours),
+      yPx: yScale(hours),
       dateLabel: formatDateLabel(dateAtPos),
-      rawHours,
-      weightedHours,
+      hours,
       illuminationPct: moonIllum[idx]?.illumination_pct ?? null,
       minSeparationDeg: moonIllum[idx]?.min_separation_deg ?? null,
       isSnapped,
@@ -795,12 +784,11 @@ function InteractiveAnnualChart({
             );
           })}
 
-          {/* Raw hours curve — drawn first (behind filtered), thinner when filter active */}
-          <path d={pathD} fill="none" stroke={RIG_BLUE} strokeWidth={hasWeighted ? 1 : 1.5} />
-
-          {/* Moon-filtered hours curve — drawn on top */}
-          {hasWeighted && weightedPathD && (
+          {/* Hours curve — filtered (orange) when moon filter active, raw (blue) otherwise */}
+          {hasWeighted ? (
             <path d={weightedPathD} fill="none" stroke={RIG_ORANGE} strokeWidth={2} />
+          ) : (
+            <path d={pathD} fill="none" stroke={RIG_BLUE} strokeWidth={1.5} />
           )}
 
           {/* Today line */}
@@ -938,52 +926,29 @@ function InteractiveAnnualChart({
               />
               <circle
                 cx={hover.xPx}
-                cy={hover.yPxRaw}
+                cy={hover.yPx}
                 r={hover.isSnapped ? 5 : 3.5}
-                fill={RIG_BLUE}
+                fill={hasWeighted ? RIG_ORANGE : RIG_BLUE}
                 stroke={isDark ? "#000000" : "#ffffff"}
                 strokeWidth={1.5}
                 pointerEvents="none"
               />
-              {hasWeighted && (
-                <circle
-                  cx={hover.xPx}
-                  cy={hover.yPxWeighted}
-                  r={hover.isSnapped ? 5 : 3.5}
-                  fill={RIG_ORANGE}
-                  stroke={isDark ? "#000000" : "#ffffff"}
-                  strokeWidth={1.5}
-                  pointerEvents="none"
-                />
-              )}
             </>
           )}
         </g>
       </svg>
 
-      {/* Auto-generate button + curve toggle */}
-      <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1, mt: 0.5 }}>
-        {hasWeighted && (
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={autoUseEffective ? "effective" : "raw"}
-            onChange={(_, v) => { if (v) setAutoUseEffective(v === "effective"); }}
-            sx={{ "& .MuiToggleButton-root": { textTransform: "none", fontSize: "0.7rem", px: 1, py: 0.125 } }}
-          >
-            <ToggleButton value="raw">Raw</ToggleButton>
-            <ToggleButton value="effective">Effective</ToggleButton>
-          </ToggleButtonGroup>
-        )}
+      {/* Auto-generate button */}
+      <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 0.5 }}>
         <Tooltip
-          title={`Replace all date ranges with periods where ${autoUseEffective && hasWeighted ? "effective" : "raw"} hours ≥ ${thresholdHours.toFixed(1)}h`}
+          title={`Replace all date ranges with periods where ${hasWeighted ? "effective" : "raw"} hours ≥ ${thresholdHours.toFixed(1)}h`}
           arrow
           placement="left"
         >
           <Button
             size="small"
             variant="outlined"
-            onClick={() => onAutoGenerate(thresholdHours, autoUseEffective && hasWeighted ? wPts : pts)}
+            onClick={() => onAutoGenerate(thresholdHours, activePts)}
             sx={{ textTransform: "none", fontSize: "0.75rem" }}
           >
             Auto from {thresholdHours.toFixed(1)}h
@@ -1018,14 +983,9 @@ function InteractiveAnnualChart({
           <Typography variant="caption" fontWeight={600}>
             {hover.dateLabel}
           </Typography>
-          <Box sx={{ color: RIG_BLUE }}>
-            {hover.rawHours.toFixed(1)} h raw
+          <Box sx={{ color: hasWeighted ? RIG_ORANGE : RIG_BLUE }}>
+            {hover.hours.toFixed(1)} h{hasWeighted ? " effective" : ""}
           </Box>
-          {hasWeighted && (
-            <Box sx={{ color: RIG_ORANGE }}>
-              {hover.weightedHours.toFixed(1)} h effective
-            </Box>
-          )}
           {(hover.illuminationPct != null || hover.minSeparationDeg != null) && (
             <Box sx={{ color: "text.secondary", fontSize: 11 }}>
               Moon: {hover.illuminationPct != null ? `${hover.illuminationPct.toFixed(0)}%` : "—"}
