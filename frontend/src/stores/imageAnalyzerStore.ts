@@ -8,7 +8,7 @@ const DEFAULT_PER_CHANNEL: [StretchParams, StretchParams, StretchParams] = [
   { ...DEFAULT_STRETCH },
 ];
 
-interface ImageViewerState {
+interface ImageAnalyzerState {
   activePath: string;
   inputPath: string;
   selectedHdu: number;
@@ -38,7 +38,7 @@ interface ImageViewerState {
   resetForNewFile: (path: string, inputPath: string) => void;
 }
 
-export const useImageViewerStore = create<ImageViewerState>()((set) => ({
+export const useImageAnalyzerStore = create<ImageAnalyzerState>()((set) => ({
   activePath: "",
   inputPath: "",
   selectedHdu: 0,

@@ -3,7 +3,7 @@ import { apiFetch } from "./client";
 export interface PlateSolveRequest {
   image_path: string;
   hdu?: number;
-  mode?: "auto" | "near" | "blind" | "extract";
+  mode?: "auto" | "near" | "blind";
   ra_hint?: number;
   dec_hint?: number;
   fov_hint?: number;
@@ -44,6 +44,21 @@ export function plateSolve(req: PlateSolveRequest): Promise<PlateSolveResult> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
+  });
+}
+
+export async function validateReferenceImage(
+  currentPath: string,
+  currentHdu: number,
+  referencePath: string,
+): Promise<{ valid: boolean; error?: string; width?: number; height?: number }> {
+  const qs = new URLSearchParams({
+    current_path: currentPath,
+    current_hdu: String(currentHdu),
+    reference_path: referencePath,
+  });
+  return apiFetch(`/plate-solve/validate-reference-image?${qs.toString()}`, {
+    method: "POST",
   });
 }
 

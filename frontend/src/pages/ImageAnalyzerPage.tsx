@@ -65,7 +65,7 @@ import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
-import { useImageViewerStore } from "@/stores/imageViewerStore";
+import { useImageAnalyzerStore } from "@/stores/imageAnalyzerStore";
 import { monoFontFamily } from "@/theme/theme";
 
 const IMAGE_COMMENTARY = [
@@ -189,7 +189,7 @@ function applyAutoStf(
   }
 }
 
-export function ImageViewerPage() {
+export function ImageAnalyzerPage() {
   const queryClient = useQueryClient();
   const {
     activePath, setActivePath,
@@ -205,7 +205,7 @@ export function ImageViewerPage() {
     imageActivity, setImageActivity,
     appliedDefaultsFor, setAppliedDefaultsFor,
     selectedAnnotationId, setSelectedAnnotationId,
-  } = useImageViewerStore();
+  } = useImageAnalyzerStore();
   const imageRef = useRef<FitsImageHandle>(null);
   const [currentZoom, setCurrentZoom] = useState(1);
 
@@ -394,6 +394,7 @@ export function ImageViewerPage() {
     setSelectedAnnotationId(null);
     setAnnotationFilters(DEFAULT_FILTERS);
     setAppliedDefaultsFor("");
+    setLinearityOverride("auto");
     // For project images, show a readable path in the input
     if (isVirtualPath(path) && displayName) {
       const projPath = path.split("::")[0];
@@ -495,9 +496,28 @@ export function ImageViewerPage() {
         })()
       : activePath.split("/").pop() ?? null
     : null;
+  const [linearityOverride, setLinearityOverride] = useState<"auto" | "linear" | "nonlinear">("auto");
+
   const isNonLinear = (() => {
+    if (linearityOverride === "linear") return false;
+    if (linearityOverride === "nonlinear") return true;
+
     const ext = extensions.find((h) => h.index === selectedHdu);
     if (ext?.linear === false) return true;
+
+    const stretchKeywords = [
+      "histogramtransformation", "curvestransformation", "autohistogram",
+      "maskedstretch", "arcsinhstretch", "generalizedhyperbolicstretch",
+      "screentransferfunction",
+    ];
+    for (const card of headerCards) {
+      const text = `${card.key ?? ""} ${card.value ?? ""} ${card.comment ?? ""}`.toLowerCase();
+      if (stretchKeywords.some((kw) => text.includes(kw))) return true;
+    }
+
+    const mrf = statsQuery.data?.mid_range_fraction;
+    if (mrf != null && mrf > 0.001) return true;
+
     const stf = statsQuery.data?.linked_stf ?? statsQuery.data?.channels[0]?.stf;
     return stf != null && stf.midtone >= 0.1;
   })();
@@ -594,22 +614,6 @@ export function ImageViewerPage() {
             </>
           )}
 
-          {hasFile && (
-            <>
-              <Divider orientation="vertical" flexItem />
-              <Tooltip title="Plate Solve" arrow>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setPlateSolveOpen(true)}
-                  startIcon={<TravelExploreIcon sx={{ fontSize: 16 }} />}
-                  sx={{ height: 32 }}
-                >
-                  Plate Solve
-                </Button>
-              </Tooltip>
-            </>
-          )}
 
         </Box>
 
@@ -640,12 +644,30 @@ export function ImageViewerPage() {
                   sx={{ fontSize: "0.65rem", height: 20 }}
                 />
                 {hasStretch && (
-                  <Chip
-                    label={isNonLinear ? "Non-linear" : "Linear"}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: "0.65rem", height: 20 }}
-                  />
+                  <Tooltip title="Click to override linearity detection" arrow>
+                    <Chip
+                      label={isNonLinear ? "Non-linear" : "Linear"}
+                      size="small"
+                      variant="outlined"
+                      onClick={() => {
+                        if (isNonLinear) {
+                          setLinearityOverride("linear");
+                          if (statsQuery.data) {
+                            const stf = statsQuery.data.linked_stf ?? statsQuery.data.channels[0]?.stf;
+                            if (stf) {
+                              const p: StretchParams = { stretch: "stf", shadow: stf.shadow, midtone: stf.midtone, highlight: stf.highlight };
+                              setLinked(p);
+                              setAppliedLinked(p);
+                            }
+                          }
+                        } else {
+                          setLinearityOverride("nonlinear");
+                          handleStretchTypeChange("linear");
+                        }
+                      }}
+                      sx={{ fontSize: "0.65rem", height: 20, cursor: "pointer" }}
+                    />
+                  </Tooltip>
                 )}
                 <EasterEggWand lines={IMAGE_COMMENTARY} tooltip="Expert analysis" size={12} />
               </Box>
@@ -1359,6 +1381,9 @@ export function ImageViewerPage() {
         hdu={selectedHdu}
         headerRa={parseHeaderCoord(true, "RA", "OBJCTRA", "CRVAL1")}
         headerDec={parseHeaderCoord(false, "DEC", "OBJCTDEC", "CRVAL2")}
+        headerFocalLength={(() => { const v = headerVal("FOCALLEN"); return v ? parseFloat(v) : null; })()}
+        headerPixelSize={(() => { const v = headerVal("XPIXSZ"); return v ? parseFloat(v) : null; })()}
+        headerBinning={(() => { const v = headerVal("XBINNING"); return v ? parseInt(v, 10) : null; })()}
         onSolved={(res) => {
           if (res.cd1_1 != null && res.cd1_2 != null && res.cd2_1 != null && res.cd2_2 != null && res.crpix1 != null && res.crpix2 != null && res.ra_deg != null && res.dec_deg != null && res.image_width != null && res.image_height != null) {
             setSolvedWcs({

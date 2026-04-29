@@ -1,16 +1,20 @@
 """Tests for the plate solve service — .ini parsing, result computation,
-ASTAP binary resolution, hint extraction, and coordinate formatting."""
+ASTAP binary resolution, hint extraction, header passthrough, and coordinate formatting."""
 
 import math
 
+import numpy as np
 import pytest
+from astropy.io import fits as astro_fits
 
 from nightcrate.services.coordinate_format import format_dec_dms, format_ra_hms
 from nightcrate.services.plate_solve import (
     _build_astap_args,
+    _coerce_header_value,
     _compute_results,
     _extract_hints,
     _parse_astap_ini,
+    _write_temp_fits,
     resolve_astap_binary,
     validate_astap_path,
 )
@@ -366,3 +370,124 @@ class TestCoordinateFormatting:
     def test_format_dec_zero(self):
         result = format_dec_dms(0.0)
         assert result.startswith("+")
+
+
+# ── _coerce_header_value ───────────────────────────────────────────────
+
+
+class TestCoerceHeaderValue:
+    def test_integer_string_returns_int(self):
+        assert _coerce_header_value("42") == 42
+        assert isinstance(_coerce_header_value("42"), int)
+
+    def test_negative_integer(self):
+        assert _coerce_header_value("-10") == -10
+        assert isinstance(_coerce_header_value("-10"), int)
+
+    def test_float_string_returns_float(self):
+        assert _coerce_header_value("3.76") == pytest.approx(3.76)
+        assert isinstance(_coerce_header_value("3.76"), float)
+
+    def test_scientific_notation_returns_float(self):
+        result = _coerce_header_value("2.69E-004")
+        assert result == pytest.approx(2.69e-4)
+        assert isinstance(result, float)
+
+    def test_plain_string_returns_string(self):
+        assert _coerce_header_value("ZWO ASI2600MM Pro") == "ZWO ASI2600MM Pro"
+        assert isinstance(_coerce_header_value("ZWO ASI2600MM Pro"), str)
+
+    def test_empty_string_returns_string(self):
+        assert _coerce_header_value("") == ""
+
+    def test_hms_coordinate_returns_string(self):
+        assert _coerce_header_value("05 34 31.94") == "05 34 31.94"
+
+
+# ── _write_temp_fits ───────────────────────────────────────────────────
+
+
+class TestWriteTempFits:
+    def test_uint16_data_written_directly(self, tmp_path):
+        data = np.array([[100, 200], [300, 400]], dtype=np.uint16)
+        path = _write_temp_fits(data, tmp_path)
+        assert path.exists()
+        with astro_fits.open(path) as hdul:
+            assert hdul[0].data.dtype == np.uint16
+            np.testing.assert_array_equal(hdul[0].data, data)
+
+    def test_float_data_scaled_to_uint16(self, tmp_path):
+        data = np.array([[0.0, 0.5], [0.75, 1.0]], dtype=np.float32)
+        path = _write_temp_fits(data, tmp_path)
+        with astro_fits.open(path) as hdul:
+            assert hdul[0].data.dtype == np.uint16
+            assert hdul[0].data[0, 0] == 0
+            assert hdul[0].data[0, 1] == 32767
+            assert hdul[0].data[1, 1] == 65535
+
+    def test_no_header_keywords(self, tmp_path):
+        data = np.zeros((10, 10), dtype=np.uint16)
+        path = _write_temp_fits(data, tmp_path)
+        with astro_fits.open(path) as hdul:
+            assert "FOCALLEN" not in hdul[0].header
+
+    def test_header_keywords_passthrough(self, tmp_path):
+        data = np.zeros((10, 10), dtype=np.uint16)
+        keywords = {
+            "FOCALLEN": "2800",
+            "XPIXSZ": "3.76",
+            "INSTRUME": "ZWO ASI2600MM Pro",
+            "RA": "180.0",
+            "XBINNING": "2",
+        }
+        path = _write_temp_fits(data, tmp_path, header_keywords=keywords)
+        with astro_fits.open(path) as hdul:
+            h = hdul[0].header
+            assert h["FOCALLEN"] == 2800
+            assert h["XPIXSZ"] == pytest.approx(3.76)
+            assert h["INSTRUME"] == "ZWO ASI2600MM Pro"
+            assert h["RA"] == pytest.approx(180.0)
+            assert h["XBINNING"] == 2
+
+    def test_non_passthrough_keys_ignored(self, tmp_path):
+        data = np.zeros((10, 10), dtype=np.uint16)
+        keywords = {"OBJECT": "M31", "FOCALLEN": "500"}
+        path = _write_temp_fits(data, tmp_path, header_keywords=keywords)
+        with astro_fits.open(path) as hdul:
+            assert "OBJECT" not in hdul[0].header
+            assert hdul[0].header["FOCALLEN"] == 500
+
+    def test_none_values_in_keywords_skipped(self, tmp_path):
+        data = np.zeros((10, 10), dtype=np.uint16)
+        keywords = {"FOCALLEN": "700", "XPIXSZ": None}
+        path = _write_temp_fits(data, tmp_path, header_keywords=keywords)
+        with astro_fits.open(path) as hdul:
+            assert hdul[0].header["FOCALLEN"] == 700
+            assert "XPIXSZ" not in hdul[0].header
+
+
+# ── get_image_dimensions ───────────────────────────────────────────────
+
+
+class TestGetImageDimensions:
+    def test_fits_dimensions_from_header(self, tmp_path):
+        from nightcrate.services.plate_solve import get_image_dimensions
+
+        fits_path = tmp_path / "test.fits"
+        data = np.zeros((100, 200), dtype=np.uint16)
+        hdu = astro_fits.PrimaryHDU(data)
+        hdu.writeto(fits_path)
+        w, h = get_image_dimensions(str(fits_path))
+        assert w == 200
+        assert h == 100
+
+    def test_fits_3d_dimensions(self, tmp_path):
+        from nightcrate.services.plate_solve import get_image_dimensions
+
+        fits_path = tmp_path / "color.fits"
+        data = np.zeros((3, 80, 120), dtype=np.uint16)
+        hdu = astro_fits.PrimaryHDU(data)
+        hdu.writeto(fits_path)
+        w, h = get_image_dimensions(str(fits_path))
+        assert w == 120
+        assert h == 80

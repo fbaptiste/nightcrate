@@ -539,6 +539,7 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
           rows={rows}
           columns={columns}
           density="compact"
+          getRowHeight={() => "auto"}
           disableRowSelectionOnClick
           hideFooterSelectedRowCount
           pageSizeOptions={[50, 100, 200]}
@@ -552,6 +553,7 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
             "& .row-modified": { bgcolor: "rgba(25, 118, 210, 0.08)" },
             "& .row-added": { bgcolor: "rgba(237, 108, 2, 0.08)" },
             "& .row-structural": { opacity: 0.5 },
+            "& .MuiDataGrid-cell": { whiteSpace: "normal", wordBreak: "break-word", py: 0.5 },
           }}
         />
       </Box>

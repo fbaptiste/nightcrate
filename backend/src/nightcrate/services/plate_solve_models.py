@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class PlateSolveRequest(BaseModel):
     image_path: str
     hdu: int = 0
-    mode: Literal["auto", "near", "blind", "extract"] = "auto"
+    mode: Literal["auto", "near", "blind"] = "auto"
     ra_hint: float | None = None
     dec_hint: float | None = None
     fov_hint: float | None = None

@@ -46,6 +46,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.30.0 — Target Wishlist & Planning](#v0300--target-wishlist--planning) ✅
 - [v0.31.0 — Moon Quality Weighted Visibility](#v0310--moon-quality-weighted-visibility) ✅
 - [v0.32.0 — UI Polish + Performance](#v0320--ui-polish--performance) ✅
+- [v0.33.0 — Plate Solving Refinements](#v0330--plate-solving-refinements) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4379,6 +4380,28 @@ Integrates ASTAP as an external plate solver invoked via subprocess. Users confi
 
 - `0026.rig_sort_order.sql` — `sort_order` column on `rig` table + rebuilt `rig_summary` view
 - `0027.plan_filter_settings.sql` — moon filter + threshold columns on `target_plan`
+
+---
+
+## v0.33.0 — Plate Solving Refinements
+
+**Status:** Done
+**Branch:** `v0.33.0/plate-solving-refinements`
+
+### Delivered
+
+- [x] Rename Image Viewer → Image Analyzer (page, store, sidebar, API docs)
+- [x] Improved linearity detection — search all header cards for stretch keywords, mid-range fraction check (0.1% threshold)
+- [x] Clickable Stretched/Linear pill override for manual STF toggle
+- [x] Remove extract mode (star extraction pipeline) — unreliable, replaced by reference image mode
+- [x] Rename stars-image mode → reference image mode (tab-based UI)
+- [x] Equipment hints for plate solving — Rig, Equipment, or Manual mode providing FOV hint to ASTAP
+- [x] Header keyword passthrough — XISF/pxiproject temp FITS now carry focal length, pixel size, binning, coordinates
+- [x] Auto-close plate solve dialog on success
+- [x] DSO alternate designations as individual chips + "View in DSO Catalog" link
+- [x] Suppress double-click file selection after folder/archive navigation
+- [x] Fix macOS Full Screen layout (100vh → 100dvh)
+- [x] Fix XISF/TIFF plate solve + surface ASTAP output in logs
 
 ---
 

@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
@@ -9,6 +11,7 @@ import type { AnnotatedDso, ImageAnnotationResult, WcsParams } from "@/api/plate
 import { fetchDso } from "@/api/dsos";
 import { formatDistance } from "@/lib/distanceFormat";
 import { SidebarSection } from "@/components/SidebarSection";
+import { useDsoCatalogStore } from "@/stores/dsoCatalogStore";
 import { monoFontFamily } from "@/theme/theme";
 
 interface Props {
@@ -93,6 +96,8 @@ function AstrometricSolutionSection({ result, wcs }: { result: ImageAnnotationRe
 
 
 function DsoDetailSection({ dso }: { dso: AnnotatedDso }) {
+  const navigate = useNavigate();
+  const setDsoCatalogQuery = useDsoCatalogStore((s) => s.setQuery);
   const detailQuery = useQuery({
     queryKey: ["dso-detail", dso.id],
     queryFn: () => fetchDso(dso.id),
@@ -150,12 +155,14 @@ function DsoDetailSection({ dso }: { dso: AnnotatedDso }) {
         {designations.length > 0 && (
           <>
             <Divider sx={{ my: 1 }} />
-            <Typography sx={{ fontSize: "0.6rem", color: "text.secondary", mb: 0.25 }}>
+            <Typography sx={{ fontSize: "0.6rem", color: "text.secondary", mb: 0.5 }}>
               Also known as
             </Typography>
-            <Typography sx={{ fontSize: "0.6rem" }}>
-              {designations.join(", ")}
-            </Typography>
+            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+              {designations.map((d) => (
+                <Chip key={d} label={d} size="small" variant="outlined" sx={{ fontSize: "0.6rem", height: 20 }} />
+              ))}
+            </Stack>
           </>
         )}
 
@@ -181,6 +188,19 @@ function DsoDetailSection({ dso }: { dso: AnnotatedDso }) {
             </Stack>
           </>
         )}
+
+        <Divider sx={{ my: 1 }} />
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => {
+            setDsoCatalogQuery(dso.primary_designation);
+            navigate("/catalog/dso");
+          }}
+          sx={{ textTransform: "none", fontSize: "0.65rem" }}
+        >
+          View in DSO Catalog
+        </Button>
       </Box>
     </SidebarSection>
   );

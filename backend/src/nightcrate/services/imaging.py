@@ -102,6 +102,7 @@ class ImageStats:
     linked_stf: StfParams | None = None
     background_delta: list[float] | None = None  # per-channel deviation from mean median
     lab_a_median: float | None = None  # CIE L*a*b* a* median (color balance diagnostic)
+    mid_range_fraction: float = 0.0  # fraction of pixels in [0.1, 0.9]
 
 
 def _mtf_scalar(x: float, m: float) -> float:
@@ -188,7 +189,9 @@ def compute_image_stats(data: np.ndarray) -> ImageStats:
     before computing a single set of parameters (matching PixInsight's linked mode).
     """
     if data.ndim == 2:
-        return ImageStats(color=False, channels=[_channel_stats(data)])
+        flat = data.ravel()
+        mrf = float(np.count_nonzero((flat >= 0.1) & (flat <= 0.9)) / max(flat.size, 1))
+        return ImageStats(color=False, channels=[_channel_stats(data)], mid_range_fraction=mrf)
 
     n = data.shape[0]
     channels = [_channel_stats(data[i]) for i in range(n)]
@@ -218,12 +221,17 @@ def compute_image_stats(data: np.ndarray) -> ImageStats:
     # CIE L*a*b* a* median — color balance diagnostic
     lab_a_median = _compute_lab_a_median(data) if n == 3 else None
 
+    lum = sum(data[i] * w for i, w in enumerate([LUM_R, LUM_G, LUM_B][:n]))
+    lum_flat = lum.ravel()
+    mrf = float(np.count_nonzero((lum_flat >= 0.1) & (lum_flat <= 0.9)) / max(lum_flat.size, 1))
+
     return ImageStats(
         color=True,
         channels=channels,
         linked_stf=linked_stf,
         background_delta=background_delta,
         lab_a_median=lab_a_median,
+        mid_range_fraction=mrf,
     )
 
 
@@ -337,8 +345,10 @@ def resolve_auto_stretch(
     if stats is None:
         stats = compute_image_stats(data)
 
-    # Non-linear detection: if the STF midtone is >= 0.1, the image is already
-    # stretched — use linear passthrough.
+    # Non-linear detection: mid-range pixel fraction or STF midtone.
+    if stats.mid_range_fraction > 0.001:
+        return StretchParams(stretch="linear"), None, stats
+
     stf = stats.linked_stf or (stats.channels[0].stf if stats.channels else None)
     if stf and stf.midtone >= 0.1:
         return StretchParams(stretch="linear"), None, stats

@@ -1,5 +1,6 @@
 """Plate solving API — ASTAP integration + image annotation endpoints."""
 
+import asyncio
 import logging
 import math
 
@@ -22,6 +23,7 @@ from nightcrate.services.image_annotations import (
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import (
     cards_to_dict,
+    get_image_dimensions,
     get_solve_progress,
     read_header_cards,
     run_plate_solve,
@@ -34,9 +36,49 @@ logger = logging.getLogger("nightcrate")
 router = APIRouter(prefix="/api/plate-solve", tags=["Plate Solve"])
 
 
+@router.post("/validate-reference-image")
+async def validate_reference_image(
+    current_path: str = Query(...),
+    current_hdu: int = Query(0),
+    reference_path: str = Query(...),
+) -> dict:
+    """Validate that a reference image matches the current image dimensions."""
+    try:
+        cw, ch = await asyncio.to_thread(get_image_dimensions, current_path, current_hdu)
+    except ValueError as exc:
+        return {"valid": False, "error": f"Current image: {exc}"}
+    except Exception as exc:
+        return {"valid": False, "error": f"Failed to read current image: {exc}"}
+    try:
+        sw, sh = await asyncio.to_thread(get_image_dimensions, reference_path, 0)
+    except ValueError as exc:
+        return {"valid": False, "error": f"Reference image: {exc}"}
+    except Exception as exc:
+        return {"valid": False, "error": f"Failed to read reference image: {exc}"}
+
+    if cw is None or ch is None:
+        return {"valid": False, "error": "Cannot determine current image dimensions"}
+    if sw is None or sh is None:
+        return {"valid": False, "error": "Cannot determine reference image dimensions"}
+    if cw != sw or ch != sh:
+        return {
+            "valid": False,
+            "error": (
+                f"Dimension mismatch: current image is {cw}×{ch}, reference image is {sw}×{sh}"
+            ),
+        }
+    return {"valid": True, "width": cw, "height": ch}
+
+
 @router.post("/solve")
 async def solve(request: PlateSolveRequest) -> PlateSolveResult:
     """Plate solve an image via ASTAP."""
+    logger.info(
+        "[plate-solve] solve request: path=%r mode=%r hdu=%d",
+        request.image_path,
+        request.mode,
+        request.hdu,
+    )
     settings = await get_settings()
     if not settings.astap_executable_path:
         raise HTTPException(

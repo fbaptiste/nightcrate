@@ -24,7 +24,7 @@ const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { index: true, element: <HomePage /> },
-      { path: "image-viewer", element: null },
+      { path: "image-analyzer", element: null },
       { path: "equipment", element: <EquipmentPage /> },
       { path: "equipment/:category", element: <EquipmentPage /> },
       { path: "locations", element: <LocationsPage /> },
