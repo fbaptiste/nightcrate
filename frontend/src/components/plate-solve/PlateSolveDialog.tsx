@@ -318,6 +318,7 @@ export function PlateSolveDialog({
               </FormControl>
             </Box>
 
+            {mode !== "blind" && (
             <Box>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                 Target (for coordinate hints)
@@ -395,8 +396,9 @@ export function PlateSolveDialog({
                 </Typography>
               )}
             </Box>
+            )}
 
-            {hasHeaderHints && (
+            {mode !== "blind" && hasHeaderHints && (
               <Box>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                   Coordinate hints from header
