@@ -78,11 +78,16 @@ async def validate_stars_image(
     """Validate that a stars-only image matches the current image dimensions."""
     try:
         cw, ch = await asyncio.to_thread(get_image_dimensions, current_path, current_hdu)
+    except ValueError as exc:
+        return {"valid": False, "error": f"Current image: {exc}"}
+    except Exception as exc:
+        return {"valid": False, "error": f"Failed to read current image: {exc}"}
+    try:
         sw, sh = await asyncio.to_thread(get_image_dimensions, stars_path, 0)
     except ValueError as exc:
-        return {"valid": False, "error": str(exc)}
+        return {"valid": False, "error": f"Stars image: {exc}"}
     except Exception as exc:
-        return {"valid": False, "error": f"Failed to read image: {exc}"}
+        return {"valid": False, "error": f"Failed to read stars image: {exc}"}
 
     if cw is None or ch is None:
         return {"valid": False, "error": "Cannot determine current image dimensions"}
