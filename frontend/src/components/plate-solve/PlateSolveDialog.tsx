@@ -399,6 +399,7 @@ export function PlateSolveDialog({
                       size="small"
                       value={extractThresh}
                       onChange={(_, v) => setExtractThresh(v as number)}
+                      onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
                       min={2}
                       max={50}
                       step={1}
@@ -413,6 +414,7 @@ export function PlateSolveDialog({
                       size="small"
                       value={extractMinArea}
                       onChange={(_, v) => setExtractMinArea(v as number)}
+                      onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
                       min={1}
                       max={50}
                       step={1}
@@ -424,7 +426,7 @@ export function PlateSolveDialog({
                       <Checkbox
                         size="small"
                         checked={extractRoundness}
-                        onChange={(_, checked) => setExtractRoundness(checked)}
+                        onChange={(_, checked) => { setExtractRoundness(checked); if (previewUrl) setTimeout(() => handlePreview(), 0); }}
                       />
                     }
                     label={
