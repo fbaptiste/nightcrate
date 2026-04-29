@@ -21,7 +21,8 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 
-import { plateSolve, fetchSolveProgress, fetchExtractPreview, cancelSolve, type PlateSolveResult } from "@/api/plateSolve";
+import { plateSolve, fetchSolveProgress, fetchExtractPreview, validateStarsImage, cancelSolve, type PlateSolveResult } from "@/api/plateSolve";
+import { FileBrowser } from "@/components/fits/FileBrowser";
 import { fetchDsos, type DsoListItem } from "@/api/dsos";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { monoFontFamily } from "@/theme/theme";
@@ -36,7 +37,7 @@ interface Props {
   onSolved?: (result: PlateSolveResult) => void;
 }
 
-type SolveMode = "auto" | "near" | "blind" | "extract";
+type SolveMode = "auto" | "near" | "blind" | "extract" | "stars-image";
 
 export function PlateSolveDialog({
   open,
@@ -66,6 +67,10 @@ export function PlateSolveDialog({
   const [extractRoundness, setExtractRoundness] = useState(false);
   const [extractBgMesh, setExtractBgMesh] = useState(64);
   const [extractDeblendCont, setExtractDeblendCont] = useState(0.005);
+  const [starsImagePath, setStarsImagePath] = useState("");
+  const [starsValidation, setStarsValidation] = useState<{ valid: boolean; error?: string; width?: number; height?: number } | null>(null);
+  const [starsValidating, setStarsValidating] = useState(false);
+  const [starsBrowserOpen, setStarsBrowserOpen] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
@@ -84,6 +89,9 @@ export function PlateSolveDialog({
       setSelectedTarget(null);
       if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
       setPreviewing(false);
+      setStarsImagePath("");
+      setStarsValidation(null);
+      setStarsValidating(false);
       abortRef.current = false;
     }
     return () => {
@@ -123,6 +131,20 @@ export function PlateSolveDialog({
     setSolving(false);
     setProgressMsg("");
   }, []);
+
+  const handleStarsImageSelect = useCallback(async (path: string) => {
+    setStarsImagePath(path);
+    setStarsValidation(null);
+    setStarsValidating(true);
+    try {
+      const result = await validateStarsImage(imagePath, hdu, path);
+      setStarsValidation(result);
+    } catch (err: unknown) {
+      setStarsValidation({ valid: false, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setStarsValidating(false);
+    }
+  }, [imagePath, hdu]);
 
   const handlePreview = useCallback(async () => {
     setPreviewing(true);
@@ -169,10 +191,12 @@ export function PlateSolveDialog({
     try {
       const effectiveRa = selectedTarget?.ra_deg ?? headerRa ?? undefined;
       const effectiveDec = selectedTarget?.dec_deg ?? headerDec ?? undefined;
+      const solveImagePath = mode === "stars-image" ? starsImagePath : imagePath;
+      const solveMode = mode === "stars-image" ? (hasHints ? "auto" : "blind") : mode;
       const res = await plateSolve({
-        image_path: imagePath,
-        hdu,
-        mode,
+        image_path: solveImagePath,
+        hdu: mode === "stars-image" ? 0 : hdu,
+        mode: solveMode,
         ra_hint: effectiveRa,
         dec_hint: effectiveDec,
         timeout: mode === "blind" ? 300 : 180,
@@ -226,6 +250,7 @@ export function PlateSolveDialog({
   const hasHints = hasHeaderHints || selectedTarget != null;
 
   return (
+    <>
     <Dialog open={open} onClose={onClose} fullWidth maxWidth={previewUrl ? "md" : "sm"}>
       <DialogTitle sx={{ pb: 1 }}>Plate Solve</DialogTitle>
       <DialogContent dividers>
@@ -285,6 +310,7 @@ export function PlateSolveDialog({
                   <MenuItem value="near">Near solve (use coordinate hints)</MenuItem>
                   <MenuItem value="blind">Blind solve (search entire sky)</MenuItem>
                   <MenuItem value="extract">Extract stars &amp; solve (for stretched images)</MenuItem>
+                  <MenuItem value="stars-image">Solve from stars-only image</MenuItem>
                 </Select>
               </FormControl>
             </Box>
@@ -485,6 +511,51 @@ export function PlateSolveDialog({
               </Box>
             )}
 
+            {mode === "stars-image" && (
+              <Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                  Stars-only image (from StarExterminator, StarNet, etc.)
+                </Typography>
+                <Stack direction="row" gap={1} alignItems="center">
+                  <TextField
+                    size="small"
+                    fullWidth
+                    value={starsImagePath}
+                    placeholder="Path to stars-only image..."
+                    onChange={(e) => {
+                      setStarsImagePath(e.target.value);
+                      setStarsValidation(null);
+                    }}
+                    inputProps={{ style: { fontFamily: monoFontFamily, fontSize: "0.75rem" } }}
+                  />
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setStarsBrowserOpen(true)}
+                    sx={{ height: 32, flexShrink: 0 }}
+                  >
+                    Browse
+                  </Button>
+                </Stack>
+                {starsValidating && (
+                  <Stack direction="row" gap={1} alignItems="center" sx={{ mt: 0.5 }}>
+                    <CircularProgress size={14} />
+                    <Typography variant="caption" color="text.secondary">Validating dimensions...</Typography>
+                  </Stack>
+                )}
+                {starsValidation && starsValidation.valid && (
+                  <Alert severity="success" sx={{ mt: 0.5 }} variant="outlined">
+                    Dimensions match ({starsValidation.width}×{starsValidation.height})
+                  </Alert>
+                )}
+                {starsValidation && !starsValidation.valid && (
+                  <Alert severity="error" sx={{ mt: 0.5 }} variant="outlined">
+                    {starsValidation.error}
+                  </Alert>
+                )}
+              </Box>
+            )}
+
             {!hasHints && mode === "near" && (
               <Alert severity="info" variant="outlined">
                 No coordinate hints available. Enter a target name above, or use Auto / Blind mode.
@@ -531,7 +602,12 @@ export function PlateSolveDialog({
             {previewing ? "Extracting..." : "Preview"}
           </Button>
         )}
-        {configured && !solving && !result && (mode !== "extract" || previewUrl) && (
+        {configured && !solving && !result && (mode !== "extract" || previewUrl) && mode !== "stars-image" && (
+          <Button variant="contained" size="small" onClick={handleSolve}>
+            Solve
+          </Button>
+        )}
+        {configured && !solving && !result && mode === "stars-image" && starsValidation?.valid && (
           <Button variant="contained" size="small" onClick={handleSolve}>
             Solve
           </Button>
@@ -543,6 +619,14 @@ export function PlateSolveDialog({
         )}
       </DialogActions>
     </Dialog>
+
+    <FileBrowser
+      open={starsBrowserOpen}
+      onClose={() => setStarsBrowserOpen(false)}
+      onSelect={(path) => { setStarsBrowserOpen(false); handleStarsImageSelect(path); }}
+      activePath={starsImagePath}
+    />
+    </>
   );
 }
 

@@ -854,6 +854,22 @@ async def _run_astap(
     return result, elapsed
 
 
+def get_image_dimensions(image_path: str, hdu: int = 0) -> tuple[int | None, int | None]:
+    """Read image dimensions from any supported path."""
+    source, file_type, image_index, _ = _resolve_path(image_path)
+    cards = read_header_cards(source, file_type, image_index, hdu)
+    raw = cards_to_dict(cards)
+    w = _safe_int(raw.get("NAXIS1"))
+    h = _safe_int(raw.get("NAXIS2"))
+    if w and h:
+        return w, h
+    if hasattr(source, "seek"):
+        source.seek(0)
+    if isinstance(source, Path):
+        return _get_dimensions_from_file(source)
+    return None, None
+
+
 def _get_dimensions_from_file(image_path: Path) -> tuple[int | None, int | None]:
     """Read image dimensions directly from a file on disk."""
     ext = image_path.suffix.lower()

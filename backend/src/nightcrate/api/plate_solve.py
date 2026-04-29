@@ -25,6 +25,7 @@ from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import (
     cards_to_dict,
     create_star_map_preview,
+    get_image_dimensions,
     get_solve_progress,
     read_header_cards,
     run_plate_solve,
@@ -66,6 +67,36 @@ async def extract_preview(
         logger.exception("[plate-solve] extract preview failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return Response(content=png_bytes, media_type="image/png")
+
+
+@router.post("/validate-stars-image")
+async def validate_stars_image(
+    current_path: str = Query(...),
+    current_hdu: int = Query(0),
+    stars_path: str = Query(...),
+) -> dict:
+    """Validate that a stars-only image matches the current image dimensions."""
+    try:
+        cw, ch = await asyncio.to_thread(get_image_dimensions, current_path, current_hdu)
+        sw, sh = await asyncio.to_thread(get_image_dimensions, stars_path, 0)
+    except ValueError as exc:
+        return {"valid": False, "error": str(exc)}
+    except Exception as exc:
+        return {"valid": False, "error": f"Failed to read image: {exc}"}
+
+    if cw is None or ch is None:
+        return {"valid": False, "error": "Cannot determine current image dimensions"}
+    if sw is None or sh is None:
+        return {"valid": False, "error": "Cannot determine stars image dimensions"}
+    if cw != sw or ch != sh:
+        return {
+            "valid": False,
+            "error": (
+                f"Dimension mismatch: current image is {cw}×{ch}, "
+                f"stars image is {sw}×{sh}"
+            ),
+        }
+    return {"valid": True, "width": cw, "height": ch}
 
 
 @router.post("/solve")

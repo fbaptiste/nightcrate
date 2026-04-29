@@ -84,6 +84,21 @@ export async function fetchExtractPreview(
   return URL.createObjectURL(blob);
 }
 
+export async function validateStarsImage(
+  currentPath: string,
+  currentHdu: number,
+  starsPath: string,
+): Promise<{ valid: boolean; error?: string; width?: number; height?: number }> {
+  const qs = new URLSearchParams({
+    current_path: currentPath,
+    current_hdu: String(currentHdu),
+    stars_path: starsPath,
+  });
+  return apiFetch(`/plate-solve/validate-stars-image?${qs.toString()}`, {
+    method: "POST",
+  });
+}
+
 export function fetchSolveProgress(): Promise<{ message: string }> {
   return apiFetch<{ message: string }>("/plate-solve/progress");
 }
