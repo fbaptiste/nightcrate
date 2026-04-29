@@ -213,23 +213,6 @@ async def lifespan(app: FastAPI):
 
 openapi_tags = [
     {
-        "name": "File Browser",
-        "description": (
-            "Browse the local filesystem for image files, archives, and PixInsight "
-            "projects. Lists volumes, directories, and supported file types. Handles "
-            "navigation into archive files and multi-image project containers."
-        ),
-    },
-    {
-        "name": "Image Viewer",
-        "description": (
-            "Load, render, and inspect astronomical image files (FITS, XISF, "
-            "PixInsight projects, PNG, JPEG, TIFF). Provides stretched PNG rendering, "
-            "per-channel statistics, histograms, pixel inspection, header reading and "
-            "editing, and recent file tracking."
-        ),
-    },
-    {
         "name": "Aberration Inspector",
         "description": (
             "Analyse star shapes across the imaging field to diagnose optical "
@@ -239,49 +222,11 @@ openapi_tags = [
         ),
     },
     {
-        "name": "Equipment",
+        "name": "Administration",
         "description": (
-            "CRUD operations for all equipment types in the NightCrate catalog: "
-            "cameras, sensors, telescopes (OTAs) with configurations, filters with "
-            "passbands and size options, mounts, focusers, filter wheels, OAGs, "
-            "guide scopes, computers, and software. Supports soft-delete with "
-            "optional restore."
-        ),
-    },
-    {
-        "name": "Lookup Tables",
-        "description": (
-            "Reference data tables that provide the vocabularies and classification "
-            "values used by equipment records: manufacturers, optical designs, mount "
-            "types, connection interfaces, connector sizes, filter sizes, filter "
-            "types, form factors, and focuser types."
-        ),
-    },
-    {
-        "name": "Locations",
-        "description": (
-            "Manage imaging locations with coordinates, timezone, Bortle class, "
-            "and SQM readings. Supports multiple locations with a default for "
-            "weather, moon phase, and session planning features."
-        ),
-    },
-    {
-        "name": "Horizons",
-        "description": (
-            "Per-location custom horizon profiles (azimuth/altitude polylines) for "
-            "session planning and visibility analysis. Import from N.I.N.A. .hrz, "
-            "Theodolite CSV, Telescopius, APCC, or generic two-column text. Export "
-            "to N.I.N.A., Stellarium, or CSV. Includes a stateless parse endpoint "
-            "used by the staged-save editor flow."
-        ),
-    },
-    {
-        "name": "Rigs",
-        "description": (
-            "Imaging rig templates: user-composed equipment configurations with "
-            "optical calculators (image scale, FOV, sampling assessment). Each rig "
-            "combines an OTA configuration, camera, and optional filter wheel, mount, "
-            "guiding, and peripheral equipment."
+            "Database lifecycle management: create, register, activate, and remove "
+            "databases. First-run setup wizard support, filesystem browsing for "
+            "database file selection, directory creation, and equipment re-seeding."
         ),
     },
     {
@@ -295,22 +240,73 @@ openapi_tags = [
         ),
     },
     {
-        "name": "Weather",
-        "description": (
-            "Weather forecast and imaging quality predictions. Provides 7-day "
-            "daily summaries with composite imaging quality scores, hourly "
-            "detail breakdowns with seeing estimates, and methodology "
-            "documentation. Integrates Open-Meteo weather data with astronomy, "
-            "seeing estimation, and imaging quality scoring."
-        ),
-    },
-    {
         "name": "Deep-Sky Objects",
         "description": (
             "Deep-sky object catalog browsing and designation resolution. "
             "Backed by OpenNGC (NGC/IC/Messier/Caldwell + ~20 cross-reference "
             "catalogs). Provides list, detail, exact-designation lookup, and "
             "catalog-source attribution endpoints."
+        ),
+    },
+    {
+        "name": "Diagnostics",
+        "description": (
+            "Request timing and performance diagnostics. Tracks API request "
+            "durations grouped by activity label for in-app performance analysis."
+        ),
+    },
+    {
+        "name": "Equipment",
+        "description": (
+            "CRUD operations for all equipment types in the NightCrate catalog: "
+            "cameras, sensors, telescopes (OTAs) with configurations, filters with "
+            "passbands and size options, mounts, focusers, filter wheels, OAGs, "
+            "guide scopes, computers, and software. Supports soft-delete with "
+            "optional restore."
+        ),
+    },
+    {
+        "name": "File Browser",
+        "description": (
+            "Browse the local filesystem for image files, archives, and PixInsight "
+            "projects. Lists volumes, directories, and supported file types. Handles "
+            "navigation into archive files and multi-image project containers."
+        ),
+    },
+    {
+        "name": "Horizons",
+        "description": (
+            "Per-location custom horizon profiles (azimuth/altitude polylines) for "
+            "session planning and visibility analysis. Import from N.I.N.A. .hrz, "
+            "Theodolite CSV, Telescopius, APCC, or generic two-column text. Export "
+            "to N.I.N.A., Stellarium, or CSV. Includes a stateless parse endpoint "
+            "used by the staged-save editor flow."
+        ),
+    },
+    {
+        "name": "Image Analyzer",
+        "description": (
+            "Load, render, and inspect astronomical image files (FITS, XISF, "
+            "PixInsight projects, PNG, JPEG, TIFF). Provides stretched PNG rendering, "
+            "per-channel statistics, histograms, pixel inspection, header reading and "
+            "editing, and recent file tracking."
+        ),
+    },
+    {
+        "name": "Locations",
+        "description": (
+            "Manage imaging locations with coordinates, timezone, Bortle class, "
+            "and SQM readings. Supports multiple locations with a default for "
+            "weather, moon phase, and session planning features."
+        ),
+    },
+    {
+        "name": "Lookup Tables",
+        "description": (
+            "Reference data tables that provide the vocabularies and classification "
+            "values used by equipment records: manufacturers, optical designs, mount "
+            "types, connection interfaces, connector sizes, filter sizes, filter "
+            "types, form factors, and focuser types."
         ),
     },
     {
@@ -335,6 +331,15 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Rigs",
+        "description": (
+            "Imaging rig templates: user-composed equipment configurations with "
+            "optical calculators (image scale, FOV, sampling assessment). Each rig "
+            "combines an OTA configuration, camera, and optional filter wheel, mount, "
+            "guiding, and peripheral equipment."
+        ),
+    },
+    {
         "name": "Settings",
         "description": (
             "Read and update application settings stored in the database. Controls "
@@ -343,18 +348,22 @@ openapi_tags = [
         ),
     },
     {
-        "name": "Administration",
+        "name": "Target Planner",
         "description": (
-            "Database lifecycle management: create, register, activate, and remove "
-            "databases. First-run setup wizard support, filesystem browsing for "
-            "database file selection, directory creation, and equipment re-seeding."
+            "Tonight's visibility planning for DSO targets. Computes altitude tracks, "
+            "scoring (observability, meridian timing, moon impact, frame fit), annual "
+            "hours charts, sky-tile cache, and FOV simulator. Includes target wishlist "
+            "with sections, date ranges, and calendar view."
         ),
     },
     {
-        "name": "Diagnostics",
+        "name": "Weather",
         "description": (
-            "Request timing and performance diagnostics. Tracks API request "
-            "durations grouped by activity label for in-app performance analysis."
+            "Weather forecast and imaging quality predictions. Provides 7-day "
+            "daily summaries with composite imaging quality scores, hourly "
+            "detail breakdowns with seeing estimates, and methodology "
+            "documentation. Integrates Open-Meteo weather data with astronomy, "
+            "seeing estimation, and imaging quality scoring."
         ),
     },
 ]
