@@ -866,7 +866,24 @@ def get_image_dimensions(image_path: str, hdu: int = 0) -> tuple[int | None, int
     if hasattr(source, "seek"):
         source.seek(0)
     if isinstance(source, Path):
-        return _get_dimensions_from_file(source)
+        fw, fh = _get_dimensions_from_file(source)
+        if fw and fh:
+            return fw, fh
+    try:
+        if hasattr(source, "seek"):
+            source.seek(0)
+        if file_type == "pxiproject":
+            data = pxiproject_io.load_image_data(source, image_index)
+        elif file_type == "fits":
+            data = fits_io.load_image_data(source, hdu)
+        elif file_type == "xisf":
+            data = xisf_io.load_image_data(source, hdu)
+        else:
+            data = standard_io.load_image_data(source)
+        if data is not None and data.ndim >= 2:
+            return data.shape[-1], data.shape[-2]
+    except Exception:
+        pass
     return None, None
 
 
