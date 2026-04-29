@@ -52,6 +52,7 @@ _solve_progress: str = ""
 _solve_process: asyncio.subprocess.Process | None = None
 
 _KEY_VAL_ERRORS = (KeyError, ValueError)
+_HEADER_WRITE_ERRORS = (ValueError, TypeError)
 
 _EXIT_CODE_MESSAGES = {
     1: "No solution found. Try blind solve or verify the image contains stars.",
@@ -335,7 +336,7 @@ def _write_temp_fits(
             if val is not None:
                 try:
                     hdu_obj.header[key] = _coerce_header_value(val)
-                except ValueError, TypeError:
+                except _HEADER_WRITE_ERRORS:
                     pass
     hdu_obj.writeto(temp_path, overwrite=True)
     return temp_path
