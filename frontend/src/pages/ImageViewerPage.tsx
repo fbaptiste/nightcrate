@@ -506,14 +506,15 @@ export function ImageViewerPage() {
     if (ext?.linear === false) return true;
 
     const stretchKeywords = [
-      "HistogramTransformation", "CurvesTransformation", "AutoHistogram",
-      "MaskedStretch", "ArcsinhStretch", "GeneralizedHyperbolicStretch",
-      "ScreenTransferFunction", "StarXTerminator", "StarNet",
+      "histogramtransformation", "curvestransformation", "autohistogram",
+      "maskedstretch", "arcsinhstretch", "generalizedhyperbolicstretch",
+      "screentransferfunction", "starxterminator", "starnet",
+      "pixelmath",
     ];
     for (const card of headerCards) {
-      if (card.key === "HISTORY" || card.key === "COMMENT") {
-        const val = (card.value ?? "").toLowerCase();
-        if (stretchKeywords.some((kw) => val.includes(kw.toLowerCase()))) return true;
+      if (card.key === "HISTORY" || card.key === "COMMENT" || card.key === "Processing:History") {
+        const text = `${card.value ?? ""} ${card.comment ?? ""}`.toLowerCase();
+        if (stretchKeywords.some((kw) => text.includes(kw))) return true;
       }
     }
 
