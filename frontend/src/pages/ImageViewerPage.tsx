@@ -654,11 +654,10 @@ export function ImageViewerPage() {
                       onClick={() => {
                         if (isNonLinear) {
                           setLinearityOverride("linear");
-                          if (statsQuery.data) applyAutoStf(statsQuery.data, setLinked, setPerChannel);
+                          handleStretchTypeChange("stf");
                         } else {
                           setLinearityOverride("nonlinear");
-                          setLinked({ ...DEFAULT_STRETCH });
-                          setPerChannel(DEFAULT_PER_CHANNEL);
+                          handleStretchTypeChange("linear");
                         }
                       }}
                       sx={{ fontSize: "0.65rem", height: 20, cursor: "pointer" }}
