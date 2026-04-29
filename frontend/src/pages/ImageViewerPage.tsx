@@ -516,7 +516,7 @@ export function ImageViewerPage() {
     }
 
     const mrf = statsQuery.data?.mid_range_fraction;
-    if (mrf != null && mrf > 0.005) return true;
+    if (mrf != null && mrf > 0.001) return true;
 
     const stf = statsQuery.data?.linked_stf ?? statsQuery.data?.channels[0]?.stf;
     return stf != null && stf.midtone >= 0.1;
