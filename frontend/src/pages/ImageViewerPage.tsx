@@ -508,8 +508,7 @@ export function ImageViewerPage() {
     const stretchKeywords = [
       "histogramtransformation", "curvestransformation", "autohistogram",
       "maskedstretch", "arcsinhstretch", "generalizedhyperbolicstretch",
-      "screentransferfunction", "starxterminator", "starnet",
-      "pixelmath",
+      "screentransferfunction",
     ];
     for (const card of headerCards) {
       const text = `${card.key ?? ""} ${card.value ?? ""} ${card.comment ?? ""}`.toLowerCase();
