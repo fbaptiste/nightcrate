@@ -440,9 +440,17 @@ def _load_data_from_buf(buf: BinaryIO, file_type: str, hdu: int) -> np.ndarray:
 
 
 def _write_temp_fits(data: np.ndarray, temp_dir: Path) -> Path:
-    """Write a numpy array as a temporary FITS file."""
+    """Write a numpy array as a temporary FITS file for ASTAP.
+
+    If data is float [0,1] (from XISF/standard normalization), scale to
+    uint16 so ASTAP's star detection works with proper dynamic range.
+    """
     temp_path = temp_dir / "solve_input.fits"
-    hdu_obj = astro_fits.PrimaryHDU(data)
+    if data.dtype in (np.float32, np.float64) and data.max() <= 1.0:
+        write_data = (data * 65535).astype(np.uint16)
+    else:
+        write_data = data
+    hdu_obj = astro_fits.PrimaryHDU(write_data)
     hdu_obj.writeto(temp_path, overwrite=True)
     return temp_path
 
@@ -702,6 +710,11 @@ async def _do_solve(
                 tmp_dir,
             )
 
+        logger.info(
+            "[plate-solve] image file for ASTAP: %s (source type: %s)",
+            image_file, file_type,
+        )
+
         if width is None or height is None:
             w, h = await asyncio.to_thread(
                 _get_dimensions_from_file,
@@ -788,7 +801,7 @@ async def _run_astap(
                 if line:
                     global _solve_progress
                     _solve_progress = line
-                    logger.debug("[plate-solve] %s", line)
+                    logger.info("[plate-solve] ASTAP: %s", line)
 
         async def _read_stderr():
             nonlocal stderr_data
@@ -827,7 +840,7 @@ async def _run_astap(
     logger.info("[plate-solve] finished in %.1fs, exit code %d", elapsed, exit_code)
 
     if stderr_data:
-        logger.debug("[plate-solve] stderr: %s", stderr_data.decode(errors="replace").strip())
+        logger.info("[plate-solve] stderr: %s", stderr_data.decode(errors="replace").strip())
 
     ini_path = Path(str(output_base) + ".ini")
     if not ini_path.is_file():
