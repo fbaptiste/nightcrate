@@ -712,11 +712,6 @@ function SolveResults({ result, onCopy }: { result: PlateSolveResult; onCopy: ()
         </tbody>
       </Box>
 
-      {result.warning && (
-        <Typography variant="caption" color="text.secondary">
-          Warning: {result.warning}
-        </Typography>
-      )}
     </Stack>
   );
 }
