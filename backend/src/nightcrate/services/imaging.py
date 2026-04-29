@@ -345,8 +345,10 @@ def resolve_auto_stretch(
     if stats is None:
         stats = compute_image_stats(data)
 
-    # Non-linear detection: if the STF midtone is >= 0.1, the image is already
-    # stretched — use linear passthrough.
+    # Non-linear detection: mid-range pixel fraction or STF midtone.
+    if stats.mid_range_fraction > 0.001:
+        return StretchParams(stretch="linear"), None, stats
+
     stf = stats.linked_stf or (stats.channels[0].stf if stats.channels else None)
     if stf and stf.midtone >= 0.1:
         return StretchParams(stretch="linear"), None, stats
