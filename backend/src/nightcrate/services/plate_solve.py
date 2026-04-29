@@ -269,7 +269,9 @@ def create_star_map_preview(
         with astro_fits.open(star_map_path) as hdu_list:
             data = hdu_list[0].data
         if data.max() > 0:
-            scaled = (data / data.max() * 255).astype(np.uint8)
+            normed = data / data.max()
+            stretched = np.power(normed, 0.3)
+            scaled = (stretched * 255).astype(np.uint8)
         else:
             scaled = np.zeros_like(data, dtype=np.uint8)
         img = Image.fromarray(scaled, mode="L")
