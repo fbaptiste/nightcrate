@@ -9,6 +9,7 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import Alert from "@mui/material/Alert";
 import Checkbox from "@mui/material/Checkbox";
+import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import MenuItem from "@mui/material/MenuItem";
@@ -72,6 +73,7 @@ export function PlateSolveDialog({
   const [starsValidation, setStarsValidation] = useState<{ valid: boolean; error?: string; width?: number; height?: number } | null>(null);
   const [starsValidating, setStarsValidating] = useState(false);
   const [starsBrowserOpen, setStarsBrowserOpen] = useState(false);
+  const [previewStretched, setPreviewStretched] = useState(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
@@ -160,6 +162,7 @@ export function PlateSolveDialog({
         maxElongation: extractRoundness ? 1.5 : 0,
         bgMesh: extractBgMesh,
         deblendCont: extractDeblendCont,
+        applyStretch: previewStretched,
       });
       setPreviewUrl(url);
     } catch (err: unknown) {
@@ -167,7 +170,7 @@ export function PlateSolveDialog({
     } finally {
       setPreviewing(false);
     }
-  }, [imagePath, hdu, previewUrl, extractThresh, extractMinArea, extractRoundness]);
+  }, [imagePath, hdu, previewUrl, extractThresh, extractMinArea, extractRoundness, extractBgMesh, extractDeblendCont, previewStretched]);
 
   const handleSolve = useCallback(async () => {
     setSolving(true);
@@ -572,9 +575,23 @@ export function PlateSolveDialog({
             )}
             {mode === "extract" && previewUrl && (
               <Box sx={{ mt: 1 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                  Star map preview — this image will be sent to ASTAP
-                </Typography>
+                <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Star map preview — this image will be sent to ASTAP
+                  </Typography>
+                  <Tooltip title="Click to toggle stretch. Visual only — does not affect the data sent to ASTAP." arrow>
+                    <Chip
+                      label={previewStretched ? "Stretched" : "Linear"}
+                      size="small"
+                      variant="outlined"
+                      onClick={() => {
+                        setPreviewStretched((v) => !v);
+                        if (previewUrl) setTimeout(() => handlePreview(), 0);
+                      }}
+                      sx={{ fontSize: "0.65rem", height: 20, cursor: "pointer" }}
+                    />
+                  </Tooltip>
+                </Stack>
                 <Box
                   component="img"
                   src={previewUrl}

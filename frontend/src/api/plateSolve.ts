@@ -61,6 +61,7 @@ export async function fetchExtractPreview(
     maxElongation?: number;
     bgMesh?: number;
     deblendCont?: number;
+    applyStretch?: boolean;
   },
 ): Promise<string> {
   const qs = new URLSearchParams({
@@ -72,6 +73,7 @@ export async function fetchExtractPreview(
   if (params?.maxElongation != null) qs.set("max_elongation", String(params.maxElongation));
   if (params?.bgMesh != null) qs.set("bg_mesh", String(params.bgMesh));
   if (params?.deblendCont != null) qs.set("deblend_cont", String(params.deblendCont));
+  if (params?.applyStretch != null) qs.set("apply_stretch", String(params.applyStretch));
   const res = await fetch(
     `/api/plate-solve/extract-preview?${qs.toString()}`,
     { method: "POST" },

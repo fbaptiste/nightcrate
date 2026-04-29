@@ -254,6 +254,7 @@ def create_star_map_preview(
     max_elongation: float = 0.0,
     bg_mesh: int = 64,
     deblend_cont: float = 0.005,
+    apply_stretch: bool = True,
 ) -> bytes:
     """Create a star map and return it as PNG bytes for preview."""
     import io
@@ -273,8 +274,9 @@ def create_star_map_preview(
             data = hdu_list[0].data
         if data.max() > 0:
             normed = data / data.max()
-            stretched = np.power(normed, 0.3)
-            scaled = (stretched * 255).astype(np.uint8)
+            if apply_stretch:
+                normed = np.power(normed, 0.3)
+            scaled = (normed * 255).astype(np.uint8)
         else:
             scaled = np.zeros_like(data, dtype=np.uint8)
         img = Image.fromarray(scaled, mode="L")

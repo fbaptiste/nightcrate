@@ -47,6 +47,7 @@ async def extract_preview(
     max_elongation: float = Query(0.0, ge=0.0, le=10.0),
     bg_mesh: int = Query(64, ge=8, le=256),
     deblend_cont: float = Query(0.005, ge=0.001, le=1.0),
+    apply_stretch: bool = Query(True),
 ) -> Response:
     """Create a star map preview for the extract mode.
 
@@ -60,6 +61,7 @@ async def extract_preview(
             thresh=thresh, min_area=min_area,
             max_elongation=max_elongation,
             bg_mesh=bg_mesh, deblend_cont=deblend_cont,
+            apply_stretch=apply_stretch,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
