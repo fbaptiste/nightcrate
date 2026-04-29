@@ -79,6 +79,7 @@ export function PlateSolveDialog({
 
   useEffect(() => {
     if (open) {
+      setMode("auto");
       setResult(null);
       setError(null);
       setElapsed(0);
@@ -309,8 +310,8 @@ export function PlateSolveDialog({
                   </MenuItem>
                   <MenuItem value="near">Near solve (use coordinate hints)</MenuItem>
                   <MenuItem value="blind">Blind solve (search entire sky)</MenuItem>
-                  <MenuItem value="extract">Extract stars &amp; solve (for stretched images)</MenuItem>
                   <MenuItem value="stars-image">Solve from stars-only image</MenuItem>
+                  <MenuItem value="extract">Extract stars &amp; solve (last resort attempt)</MenuItem>
                 </Select>
               </FormControl>
             </Box>
