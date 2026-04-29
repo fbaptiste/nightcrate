@@ -309,7 +309,7 @@ export function PlateSolveDialog({
                   <MenuItem value="near">Near solve (use coordinate hints)</MenuItem>
                   <MenuItem value="blind">Blind solve (search entire sky)</MenuItem>
                   <MenuItem value="stars-image">Solve from stars-only image</MenuItem>
-                  <MenuItem value="extract">Extract stars &amp; solve (last resort attempt)</MenuItem>
+                  <MenuItem value="extract">Extract stars &amp; solve (experimental, last resort)</MenuItem>
                 </Select>
               </FormControl>
             </Box>
