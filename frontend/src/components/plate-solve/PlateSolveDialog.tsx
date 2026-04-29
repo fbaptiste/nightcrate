@@ -230,7 +230,7 @@ export function PlateSolveDialog({
       setSolving(false);
       setProgressMsg("");
     }
-  }, [imagePath, hdu, mode, selectedTarget, headerRa, headerDec]);
+  }, [imagePath, hdu, mode, selectedTarget, headerRa, headerDec, starsImagePath, extractThresh, extractMinArea, extractRoundness, extractBgMesh, extractDeblendCont]);
 
   const handleCopy = useCallback(() => {
     if (!result || !result.solved) return;
