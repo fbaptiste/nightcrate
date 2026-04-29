@@ -530,7 +530,7 @@ export function ImageViewerPage() {
       {/* Main area */}
       <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minWidth: 0, height: "100%" }}>
         {/* Toolbar */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, p: 1.5, borderBottom: 1, borderColor: "divider", flexShrink: 0, position: "relative", zIndex: 1 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, p: 1.5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
           <Button
             variant="outlined"
             size="small"

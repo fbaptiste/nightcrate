@@ -205,7 +205,7 @@ export function AppShell() {
   };
 
   return (
-    <Box sx={{ display: "flex", height: "100vh" }}>
+    <Box sx={{ display: "flex", height: "100dvh" }}>
       <Drawer
         variant="permanent"
         sx={{
