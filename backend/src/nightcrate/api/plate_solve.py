@@ -107,6 +107,10 @@ async def validate_stars_image(
 @router.post("/solve")
 async def solve(request: PlateSolveRequest) -> PlateSolveResult:
     """Plate solve an image via ASTAP."""
+    logger.info(
+        "[plate-solve] solve request: path=%r mode=%r hdu=%d",
+        request.image_path, request.mode, request.hdu,
+    )
     settings = await get_settings()
     if not settings.astap_executable_path:
         raise HTTPException(
