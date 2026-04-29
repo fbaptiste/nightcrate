@@ -64,6 +64,8 @@ export function PlateSolveDialog({
   const [extractThresh, setExtractThresh] = useState(5);
   const [extractMinArea, setExtractMinArea] = useState(5);
   const [extractRoundness, setExtractRoundness] = useState(false);
+  const [extractBgMesh, setExtractBgMesh] = useState(64);
+  const [extractDeblendCont, setExtractDeblendCont] = useState(0.005);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
@@ -132,6 +134,8 @@ export function PlateSolveDialog({
         thresh: extractThresh,
         minArea: extractMinArea,
         maxElongation: extractRoundness ? 1.5 : 0,
+        bgMesh: extractBgMesh,
+        deblendCont: extractDeblendCont,
       });
       setPreviewUrl(url);
     } catch (err: unknown) {
@@ -176,6 +180,8 @@ export function PlateSolveDialog({
           extract_thresh: extractThresh,
           extract_min_area: extractMinArea,
           extract_max_elongation: extractRoundness ? 1.5 : 0,
+          extract_bg_mesh: extractBgMesh,
+          extract_deblend_cont: extractDeblendCont,
         } : {}),
       });
       if (!abortRef.current) {
@@ -391,50 +397,90 @@ export function PlateSolveDialog({
                   Extraction settings
                 </Typography>
                 <Stack spacing={1.5}>
-                  <Box>
-                    <Typography variant="caption">
-                      Detection threshold: {extractThresh}σ
-                    </Typography>
-                    <Slider
-                      size="small"
-                      value={extractThresh}
-                      onChange={(_, v) => setExtractThresh(v as number)}
-                      onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
-                      min={2}
-                      max={50}
-                      step={1}
-                      valueLabelDisplay="auto"
-                    />
-                  </Box>
-                  <Box>
-                    <Typography variant="caption">
-                      Min area: {extractMinArea} px
-                    </Typography>
-                    <Slider
-                      size="small"
-                      value={extractMinArea}
-                      onChange={(_, v) => setExtractMinArea(v as number)}
-                      onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
-                      min={1}
-                      max={50}
-                      step={1}
-                      valueLabelDisplay="auto"
-                    />
-                  </Box>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        size="small"
-                        checked={extractRoundness}
-                        onChange={(_, checked) => { setExtractRoundness(checked); if (previewUrl) setTimeout(() => handlePreview(), 0); }}
-                      />
-                    }
-                    label={
+                  <Tooltip title="Detection significance in standard deviations above the background. Higher values detect only brighter sources, filtering out faint galaxy knots and noise." arrow placement="left">
+                    <Box>
                       <Typography variant="caption">
-                        Roundness filter (reject elongated detections)
+                        Detection threshold: {extractThresh}σ
                       </Typography>
-                    }
-                  />
+                      <Slider
+                        size="small"
+                        value={extractThresh}
+                        onChange={(_, v) => setExtractThresh(v as number)}
+                        onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
+                        min={2}
+                        max={50}
+                        step={1}
+                        valueLabelDisplay="auto"
+                      />
+                    </Box>
+                  </Tooltip>
+                  <Tooltip title="Minimum number of connected pixels for a detection. Larger values reject small spurious detections like cosmic rays or tiny galaxy knots." arrow placement="left">
+                    <Box>
+                      <Typography variant="caption">
+                        Min area: {extractMinArea} px
+                      </Typography>
+                      <Slider
+                        size="small"
+                        value={extractMinArea}
+                        onChange={(_, v) => setExtractMinArea(v as number)}
+                        onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
+                        min={1}
+                        max={50}
+                        step={1}
+                        valueLabelDisplay="auto"
+                      />
+                    </Box>
+                  </Tooltip>
+                  <Tooltip title="Size of the background estimation mesh. Smaller values follow galaxy structure more closely and subtract it better, but too small can eat into real stars. Try 16–32 for images dominated by galaxies." arrow placement="left">
+                    <Box>
+                      <Typography variant="caption">
+                        Background mesh: {extractBgMesh} px
+                      </Typography>
+                      <Slider
+                        size="small"
+                        value={extractBgMesh}
+                        onChange={(_, v) => setExtractBgMesh(v as number)}
+                        onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
+                        min={8}
+                        max={256}
+                        step={8}
+                        valueLabelDisplay="auto"
+                      />
+                    </Box>
+                  </Tooltip>
+                  <Tooltip title="Minimum contrast required to split overlapping sources. Higher values prevent galaxy arms from being split into many spurious detections. Try 0.1–1.0 for images with galaxies or nebulae." arrow placement="left">
+                    <Box>
+                      <Typography variant="caption">
+                        Deblend contrast: {extractDeblendCont.toFixed(3)}
+                      </Typography>
+                      <Slider
+                        size="small"
+                        value={extractDeblendCont}
+                        onChange={(_, v) => setExtractDeblendCont(v as number)}
+                        onChangeCommitted={() => { if (previewUrl) handlePreview(); }}
+                        min={0.001}
+                        max={1.0}
+                        step={0.001}
+                        valueLabelDisplay="auto"
+                      />
+                    </Box>
+                  </Tooltip>
+                  <Tooltip title="Reject detections that are elongated (non-circular). Stars are round; galaxy fragments and background galaxies tend to be elongated." arrow placement="left">
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          size="small"
+                          checked={extractRoundness}
+                          onChange={(_, checked) => { setExtractRoundness(checked); if (previewUrl) setTimeout(() => handlePreview(), 0); }}
+                        />
+                      }
+                      label={
+                        <Typography variant="caption">
+                          Roundness filter (reject elongated detections)
+                        </Typography>
+                      }
+                    />
+                  </Tooltip>
                 </Stack>
               </Box>
             )}

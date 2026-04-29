@@ -252,6 +252,8 @@ def create_star_map_preview(
     thresh: float = 5.0,
     min_area: int = 5,
     max_elongation: float = 0.0,
+    bg_mesh: int = 64,
+    deblend_cont: float = 0.005,
 ) -> bytes:
     """Create a star map and return it as PNG bytes for preview."""
     import io
@@ -265,6 +267,7 @@ def create_star_map_preview(
             resolved, file_type, image_index, hdu, Path(tmp),
             thresh=thresh, min_area=min_area,
             max_elongation=max_elongation,
+            bg_mesh=bg_mesh, deblend_cont=deblend_cont,
         )
         with astro_fits.open(star_map_path) as hdu_list:
             data = hdu_list[0].data
@@ -290,6 +293,8 @@ def _create_star_map(
     thresh: float = 5.0,
     min_area: int = 5,
     max_elongation: float = 0.0,
+    bg_mesh: int = 64,
+    deblend_cont: float = 0.005,
 ) -> Path:
     """Detect stars with sep and create a synthetic star map for ASTAP.
 
@@ -318,7 +323,7 @@ def _create_star_map(
         mono = data
 
     mono = np.ascontiguousarray(mono, dtype=np.float64)
-    bkg = sep.Background(mono)
+    bkg = sep.Background(mono, bw=bg_mesh, bh=bg_mesh)
     img_sub = mono - bkg
 
     sep.set_extract_pixstack(1_000_000)
@@ -328,7 +333,7 @@ def _create_star_map(
         try:
             objects = sep.extract(
                 img_sub, thresh=detect_thresh, err=bkg.globalrms,
-                minarea=min_area,
+                minarea=min_area, deblend_cont=deblend_cont,
             )
             break
         except Exception as exc:
@@ -603,6 +608,8 @@ async def run_plate_solve(
     extract_thresh: float = 5.0,
     extract_min_area: int = 5,
     extract_max_elongation: float = 0.0,
+    extract_bg_mesh: int = 64,
+    extract_deblend_cont: float = 0.005,
 ) -> PlateSolveResult:
     """Execute ASTAP plate solve and return results.
 
@@ -631,6 +638,8 @@ async def run_plate_solve(
             extract_thresh=extract_thresh,
             extract_min_area=extract_min_area,
             extract_max_elongation=extract_max_elongation,
+            extract_bg_mesh=extract_bg_mesh,
+            extract_deblend_cont=extract_deblend_cont,
         )
     finally:
         _solve_semaphore.release()
@@ -649,6 +658,8 @@ async def _do_solve(
     extract_thresh: float = 5.0,
     extract_min_area: int = 5,
     extract_max_elongation: float = 0.0,
+    extract_bg_mesh: int = 64,
+    extract_deblend_cont: float = 0.005,
 ) -> PlateSolveResult:
     source, file_type, image_index, _cache_key = _resolve_path(image_path)
     cards = read_header_cards(source, file_type, image_index, hdu)
@@ -676,6 +687,8 @@ async def _do_solve(
                 thresh=extract_thresh,
                 min_area=extract_min_area,
                 max_elongation=extract_max_elongation,
+                bg_mesh=extract_bg_mesh,
+                deblend_cont=extract_deblend_cont,
             )
         else:
             image_file = await asyncio.to_thread(

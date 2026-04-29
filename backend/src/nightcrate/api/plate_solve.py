@@ -44,6 +44,8 @@ async def extract_preview(
     thresh: float = Query(5.0, ge=1.0, le=100.0),
     min_area: int = Query(5, ge=1, le=100),
     max_elongation: float = Query(0.0, ge=0.0, le=10.0),
+    bg_mesh: int = Query(64, ge=8, le=256),
+    deblend_cont: float = Query(0.005, ge=0.001, le=1.0),
 ) -> Response:
     """Create a star map preview for the extract mode.
 
@@ -56,6 +58,7 @@ async def extract_preview(
             create_star_map_preview, image_path, hdu,
             thresh=thresh, min_area=min_area,
             max_elongation=max_elongation,
+            bg_mesh=bg_mesh, deblend_cont=deblend_cont,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -95,6 +98,8 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
             extract_thresh=request.extract_thresh,
             extract_min_area=request.extract_min_area,
             extract_max_elongation=request.extract_max_elongation,
+            extract_bg_mesh=request.extract_bg_mesh,
+            extract_deblend_cont=request.extract_deblend_cont,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

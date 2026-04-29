@@ -16,6 +16,8 @@ class PlateSolveRequest(BaseModel):
     extract_thresh: float = 5.0
     extract_min_area: int = 5
     extract_max_elongation: float = 0.0
+    extract_bg_mesh: int = 64
+    extract_deblend_cont: float = 0.005
 
 
 class PlateSolveResult(BaseModel):

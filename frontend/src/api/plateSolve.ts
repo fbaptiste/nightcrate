@@ -11,6 +11,8 @@ export interface PlateSolveRequest {
   extract_thresh?: number;
   extract_min_area?: number;
   extract_max_elongation?: number;
+  extract_bg_mesh?: number;
+  extract_deblend_cont?: number;
 }
 
 export interface PlateSolveResult {
@@ -57,6 +59,8 @@ export async function fetchExtractPreview(
     thresh?: number;
     minArea?: number;
     maxElongation?: number;
+    bgMesh?: number;
+    deblendCont?: number;
   },
 ): Promise<string> {
   const qs = new URLSearchParams({
@@ -66,6 +70,8 @@ export async function fetchExtractPreview(
   if (params?.thresh != null) qs.set("thresh", String(params.thresh));
   if (params?.minArea != null) qs.set("min_area", String(params.minArea));
   if (params?.maxElongation != null) qs.set("max_elongation", String(params.maxElongation));
+  if (params?.bgMesh != null) qs.set("bg_mesh", String(params.bgMesh));
+  if (params?.deblendCont != null) qs.set("deblend_cont", String(params.deblendCont));
   const res = await fetch(
     `/api/plate-solve/extract-preview?${qs.toString()}`,
     { method: "POST" },
