@@ -530,7 +530,7 @@ export function ImageViewerPage() {
       {/* Main area */}
       <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minWidth: 0, height: "100%" }}>
         {/* Toolbar */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, p: 1.5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, p: 1.5, borderBottom: 1, borderColor: "divider", flexShrink: 0, position: "relative", zIndex: 1 }}>
           <Button
             variant="outlined"
             size="small"
@@ -594,22 +594,6 @@ export function ImageViewerPage() {
             </>
           )}
 
-          {hasFile && (
-            <>
-              <Divider orientation="vertical" flexItem />
-              <Tooltip title="Plate Solve" arrow>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setPlateSolveOpen(true)}
-                  startIcon={<TravelExploreIcon sx={{ fontSize: 16 }} />}
-                  sx={{ height: 32 }}
-                >
-                  Plate Solve
-                </Button>
-              </Tooltip>
-            </>
-          )}
 
         </Box>
 
