@@ -37,7 +37,7 @@ interface Props {
   onSolved?: (result: PlateSolveResult) => void;
 }
 
-type SolveMode = "auto" | "near" | "blind" | "extract" | "stars-image";
+type SolveMode = "near" | "blind" | "extract" | "stars-image";
 
 export function PlateSolveDialog({
   open,
@@ -49,7 +49,8 @@ export function PlateSolveDialog({
   onSolved,
 }: Props) {
   const { settings } = useSettingsStore();
-  const [mode, setMode] = useState<SolveMode>("auto");
+  const defaultMode: SolveMode = (headerRa !== null && headerDec !== null) ? "near" : "blind";
+  const [mode, setMode] = useState<SolveMode>(defaultMode);
   const [targetInput, setTargetInput] = useState("");
   const [targetOptions, setTargetOptions] = useState<DsoListItem[]>([]);
   const [selectedTarget, setSelectedTarget] = useState<DsoListItem | null>(null);
@@ -79,7 +80,7 @@ export function PlateSolveDialog({
 
   useEffect(() => {
     if (open) {
-      setMode("auto");
+      setMode(defaultMode);
       setResult(null);
       setError(null);
       setElapsed(0);
@@ -193,7 +194,7 @@ export function PlateSolveDialog({
       const effectiveRa = selectedTarget?.ra_deg ?? headerRa ?? undefined;
       const effectiveDec = selectedTarget?.dec_deg ?? headerDec ?? undefined;
       const solveImagePath = mode === "stars-image" ? starsImagePath : imagePath;
-      const solveMode = mode === "stars-image" ? (hasHints ? "auto" : "blind") : mode;
+      const solveMode = mode === "stars-image" ? (hasHints ? "near" : "blind") : mode;
       const res = await plateSolve({
         image_path: solveImagePath,
         hdu: mode === "stars-image" ? 0 : hdu,
@@ -305,9 +306,6 @@ export function PlateSolveDialog({
                     if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
                   }}
                 >
-                  <MenuItem value="auto">
-                    Auto {hasHints ? "(near solve — hints available)" : "(blind solve — no hints)"}
-                  </MenuItem>
                   <MenuItem value="near">Near solve (use coordinate hints)</MenuItem>
                   <MenuItem value="blind">Blind solve (search entire sky)</MenuItem>
                   <MenuItem value="stars-image">Solve from stars-only image</MenuItem>
