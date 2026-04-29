@@ -91,6 +91,7 @@ export function FileBrowser({
   const [archiveSubdir, setArchiveSubdir] = useState<string>("");
   const [archiveResult, setArchiveResult] = useState<ArchiveBrowseResult | null>(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  const navTimestamp = useRef(0);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; folderName: string; folderPath: string } | null>(null);
@@ -209,6 +210,7 @@ export function FileBrowser({
   }, [activeArchive, archiveSubdir]);
 
   function navigateTo(path: string) {
+    navTimestamp.current = Date.now();
     setCurrentPath(path);
     setSelectedFile(null);
     setSelectedDisplayName(null);
@@ -431,7 +433,7 @@ export function FileBrowser({
               {result.projects.map((proj) => (
                 <ListItemButton
                   key={proj.path}
-                  onClick={() => setActiveProject(proj.path)}
+                  onClick={() => { navTimestamp.current = Date.now(); setActiveProject(proj.path); }}
                 >
                   <ListItemIcon sx={{ minWidth: 36 }}>
                     <AccountTreeIcon fontSize="small" color="primary" />
@@ -450,6 +452,7 @@ export function FileBrowser({
                 <ListItemButton
                   key={archive.path}
                   onClick={() => {
+                    navTimestamp.current = Date.now();
                     setActiveArchive(archive.path);
                     setArchiveSubdir("");
                   }}
@@ -473,7 +476,7 @@ export function FileBrowser({
                   ref={selectedFile === file.path ? selectedFileRef : undefined}
                   selected={selectedFile === file.path}
                   onClick={() => { setSelectedFile(file.path); setSelectedDisplayName(null); }}
-                  onDoubleClick={() => { onSelect(file.path); onClose(); }}
+                  onDoubleClick={() => { if (Date.now() - navTimestamp.current > 500) { onSelect(file.path); onClose(); } }}
                 >
                   <ListItemIcon sx={{ minWidth: 36 }}>
                     <InsertDriveFileIcon fontSize="small" />
@@ -529,7 +532,7 @@ export function FileBrowser({
                     key={img.index}
                     selected={selectedFile === virtualPath}
                     onClick={() => { setSelectedFile(virtualPath); setSelectedDisplayName(img.name); }}
-                    onDoubleClick={() => { onSelect(virtualPath, img.name); onClose(); }}
+                    onDoubleClick={() => { if (Date.now() - navTimestamp.current > 500) { onSelect(virtualPath, img.name); onClose(); } }}
                   >
                     <ListItemIcon sx={{ minWidth: 36 }}>
                       {img.source === "referenced" ? (
@@ -631,6 +634,7 @@ export function FileBrowser({
                       setSelectedDisplayName(file.name);
                     }}
                     onDoubleClick={() => {
+                      if (Date.now() - navTimestamp.current <= 500) return;
                       onSelect(virtualPath, file.name);
                       onClose();
                     }}
