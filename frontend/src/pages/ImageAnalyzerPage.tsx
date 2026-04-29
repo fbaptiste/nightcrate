@@ -65,7 +65,7 @@ import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
-import { useImageViewerStore } from "@/stores/imageViewerStore";
+import { useImageAnalyzerStore } from "@/stores/imageAnalyzerStore";
 import { monoFontFamily } from "@/theme/theme";
 
 const IMAGE_COMMENTARY = [
@@ -189,7 +189,7 @@ function applyAutoStf(
   }
 }
 
-export function ImageViewerPage() {
+export function ImageAnalyzerPage() {
   const queryClient = useQueryClient();
   const {
     activePath, setActivePath,
@@ -205,7 +205,7 @@ export function ImageViewerPage() {
     imageActivity, setImageActivity,
     appliedDefaultsFor, setAppliedDefaultsFor,
     selectedAnnotationId, setSelectedAnnotationId,
-  } = useImageViewerStore();
+  } = useImageAnalyzerStore();
   const imageRef = useRef<FitsImageHandle>(null);
   const [currentZoom, setCurrentZoom] = useState(1);
 

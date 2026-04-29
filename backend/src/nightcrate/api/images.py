@@ -37,7 +37,7 @@ from nightcrate.services.path_resolver import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/images", tags=["Image Viewer"])
+router = APIRouter(prefix="/api/images", tags=["Image Analyzer"])
 
 # ---------------------------------------------------------------------------
 # In-memory image data cache — avoids redundant file loads when multiple

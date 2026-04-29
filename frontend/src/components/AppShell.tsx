@@ -33,7 +33,7 @@ import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { ImageViewerPage } from "@/pages/ImageViewerPage";
+import { ImageAnalyzerPage } from "@/pages/ImageAnalyzerPage";
 import PlannerPage from "@/pages/PlannerPage";
 import Phd2AnalyzerPage from "@/pages/Phd2AnalyzerPage";
 import DsoCatalogPage from "@/pages/DsoCatalogPage";
@@ -81,7 +81,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/tonight", label: "Tonight", icon: <NightsStayIcon /> },
   { to: "/planner", label: "Planner", icon: <StarsIcon /> },
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
-  { to: "/image-viewer", label: "Image Viewer", icon: <ImageSearchIcon /> },
+  { to: "/image-analyzer", label: "Image Analyzer", icon: <ImageSearchIcon /> },
   { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
   { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
@@ -433,7 +433,7 @@ function SortableNavItemRow({ item, navOpen }: { item: NavItem; navOpen: boolean
 }
 
 const PERSISTENT_ROUTES: Record<string, React.ComponentType> = {
-  "/image-viewer": ImageViewerPage,
+  "/image-analyzer": ImageAnalyzerPage,
   "/planner": PlannerPage,
   "/phd2-analyzer": Phd2AnalyzerPage,
   "/catalog/dso": DsoCatalogPage,
