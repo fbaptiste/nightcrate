@@ -216,6 +216,7 @@ export function PlateSolveDialog({
       if (!abortRef.current) {
         setResult(res);
         if (res.solved && onSolved) onSolved(res);
+        if (res.solved) onClose();
       }
     } catch (err: unknown) {
       if (!abortRef.current) {
