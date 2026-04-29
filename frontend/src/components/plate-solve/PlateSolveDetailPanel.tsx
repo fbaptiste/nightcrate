@@ -155,12 +155,14 @@ function DsoDetailSection({ dso }: { dso: AnnotatedDso }) {
         {designations.length > 0 && (
           <>
             <Divider sx={{ my: 1 }} />
-            <Typography sx={{ fontSize: "0.6rem", color: "text.secondary", mb: 0.25 }}>
+            <Typography sx={{ fontSize: "0.6rem", color: "text.secondary", mb: 0.5 }}>
               Also known as
             </Typography>
-            <Typography sx={{ fontSize: "0.6rem" }}>
-              {designations.join(", ")}
-            </Typography>
+            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+              {designations.map((d) => (
+                <Chip key={d} label={d} size="small" variant="outlined" sx={{ fontSize: "0.6rem", height: 20 }} />
+              ))}
+            </Stack>
           </>
         )}
 
