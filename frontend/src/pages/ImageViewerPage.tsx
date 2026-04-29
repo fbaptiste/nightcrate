@@ -394,6 +394,7 @@ export function ImageViewerPage() {
     setSelectedAnnotationId(null);
     setAnnotationFilters(DEFAULT_FILTERS);
     setAppliedDefaultsFor("");
+    setLinearityOverride("auto");
     // For project images, show a readable path in the input
     if (isVirtualPath(path) && displayName) {
       const projPath = path.split("::")[0];
@@ -495,9 +496,30 @@ export function ImageViewerPage() {
         })()
       : activePath.split("/").pop() ?? null
     : null;
+  const [linearityOverride, setLinearityOverride] = useState<"auto" | "linear" | "nonlinear">("auto");
+
   const isNonLinear = (() => {
+    if (linearityOverride === "linear") return false;
+    if (linearityOverride === "nonlinear") return true;
+
     const ext = extensions.find((h) => h.index === selectedHdu);
     if (ext?.linear === false) return true;
+
+    const stretchKeywords = [
+      "HistogramTransformation", "CurvesTransformation", "AutoHistogram",
+      "MaskedStretch", "ArcsinhStretch", "GeneralizedHyperbolicStretch",
+      "ScreenTransferFunction", "StarXTerminator", "StarNet",
+    ];
+    for (const card of headerCards) {
+      if (card.key === "HISTORY" || card.key === "COMMENT") {
+        const val = (card.value ?? "").toLowerCase();
+        if (stretchKeywords.some((kw) => val.includes(kw.toLowerCase()))) return true;
+      }
+    }
+
+    const mrf = statsQuery.data?.mid_range_fraction;
+    if (mrf != null && mrf > 0.005) return true;
+
     const stf = statsQuery.data?.linked_stf ?? statsQuery.data?.channels[0]?.stf;
     return stf != null && stf.midtone >= 0.1;
   })();
@@ -624,12 +646,24 @@ export function ImageViewerPage() {
                   sx={{ fontSize: "0.65rem", height: 20 }}
                 />
                 {hasStretch && (
-                  <Chip
-                    label={isNonLinear ? "Non-linear" : "Linear"}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: "0.65rem", height: 20 }}
-                  />
+                  <Tooltip title="Click to override linearity detection" arrow>
+                    <Chip
+                      label={isNonLinear ? "Non-linear" : "Linear"}
+                      size="small"
+                      variant="outlined"
+                      onClick={() => {
+                        if (isNonLinear) {
+                          setLinearityOverride("linear");
+                          if (statsQuery.data) applyAutoStf(statsQuery.data, setLinked, setPerChannel);
+                        } else {
+                          setLinearityOverride("nonlinear");
+                          setLinked({ ...DEFAULT_STRETCH });
+                          setPerChannel(DEFAULT_PER_CHANNEL);
+                        }
+                      }}
+                      sx={{ fontSize: "0.65rem", height: 20, cursor: "pointer" }}
+                    />
+                  </Tooltip>
                 )}
                 <EasterEggWand lines={IMAGE_COMMENTARY} tooltip="Expert analysis" size={12} />
               </Box>

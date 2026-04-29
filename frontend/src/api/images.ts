@@ -38,6 +38,7 @@ export interface ImageStats {
   linked_stf: StfParams | null;
   background_delta: number[] | null;
   lab_a_median: number | null;
+  mid_range_fraction: number;
 }
 
 export interface StretchParams {
