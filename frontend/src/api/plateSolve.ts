@@ -47,6 +47,26 @@ export function plateSolve(req: PlateSolveRequest): Promise<PlateSolveResult> {
   });
 }
 
+export async function fetchExtractPreview(
+  imagePath: string,
+  hdu: number,
+): Promise<string> {
+  const qs = new URLSearchParams({
+    image_path: imagePath,
+    hdu: String(hdu),
+  });
+  const res = await fetch(
+    `/api/plate-solve/extract-preview?${qs.toString()}`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 export function fetchSolveProgress(): Promise<{ message: string }> {
   return apiFetch<{ message: string }>("/plate-solve/progress");
 }

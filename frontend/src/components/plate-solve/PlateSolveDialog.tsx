@@ -18,7 +18,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 
-import { plateSolve, fetchSolveProgress, cancelSolve, type PlateSolveResult } from "@/api/plateSolve";
+import { plateSolve, fetchSolveProgress, fetchExtractPreview, cancelSolve, type PlateSolveResult } from "@/api/plateSolve";
 import { fetchDsos, type DsoListItem } from "@/api/dsos";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { monoFontFamily } from "@/theme/theme";
@@ -56,6 +56,8 @@ export function PlateSolveDialog({
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [progressMsg, setProgressMsg] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
@@ -72,6 +74,8 @@ export function PlateSolveDialog({
       setTargetInput("");
       setTargetOptions([]);
       setSelectedTarget(null);
+      if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
+      setPreviewing(false);
       abortRef.current = false;
     }
     return () => {
@@ -111,6 +115,21 @@ export function PlateSolveDialog({
     setSolving(false);
     setProgressMsg("");
   }, []);
+
+  const handlePreview = useCallback(async () => {
+    setPreviewing(true);
+    setError(null);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    try {
+      const url = await fetchExtractPreview(imagePath, hdu);
+      setPreviewUrl(url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewing(false);
+    }
+  }, [imagePath, hdu, previewUrl]);
 
   const handleSolve = useCallback(async () => {
     setSolving(true);
@@ -186,7 +205,7 @@ export function PlateSolveDialog({
   const hasHints = hasHeaderHints || selectedTarget != null;
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth={previewUrl ? "md" : "sm"}>
       <DialogTitle sx={{ pb: 1 }}>Plate Solve</DialogTitle>
       <DialogContent dividers>
         {!configured ? (
@@ -234,7 +253,10 @@ export function PlateSolveDialog({
               <FormControl size="small" fullWidth>
                 <Select
                   value={mode}
-                  onChange={(e) => setMode(e.target.value as SolveMode)}
+                  onChange={(e) => {
+                    setMode(e.target.value as SolveMode);
+                    if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
+                  }}
                 >
                   <MenuItem value="auto">
                     Auto {hasHints ? "(near solve — hints available)" : "(blind solve — no hints)"}
@@ -353,6 +375,35 @@ export function PlateSolveDialog({
                 No coordinate hints available. Enter a target name above, or use Auto / Blind mode.
               </Alert>
             )}
+
+            {/* Extract mode preview */}
+            {mode === "extract" && previewing && (
+              <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+                <CircularProgress size={36} />
+                <Typography variant="body2" color="text.secondary" sx={{ ml: 2, alignSelf: "center" }}>
+                  Extracting stars...
+                </Typography>
+              </Box>
+            )}
+            {mode === "extract" && previewUrl && (
+              <Box sx={{ mt: 1 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                  Star map preview — this image will be sent to ASTAP
+                </Typography>
+                <Box
+                  component="img"
+                  src={previewUrl}
+                  alt="Star map preview"
+                  sx={{
+                    width: "100%",
+                    maxHeight: 500,
+                    objectFit: "contain",
+                    borderRadius: 1,
+                    bgcolor: "#000000",
+                  }}
+                />
+              </Box>
+            )}
           </Stack>
         )}
       </DialogContent>
@@ -360,7 +411,12 @@ export function PlateSolveDialog({
         <Button onClick={solving ? () => { handleCancel(); onClose(); } : onClose} size="small">
           {result ? "Close" : "Cancel"}
         </Button>
-        {configured && !solving && !result && (
+        {configured && !solving && !result && mode === "extract" && !previewUrl && (
+          <Button variant="contained" size="small" onClick={handlePreview} disabled={previewing}>
+            {previewing ? "Extracting..." : "Preview"}
+          </Button>
+        )}
+        {configured && !solving && !result && (mode !== "extract" || previewUrl) && (
           <Button variant="contained" size="small" onClick={handleSolve}>
             Solve
           </Button>

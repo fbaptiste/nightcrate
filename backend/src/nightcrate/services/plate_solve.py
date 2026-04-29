@@ -245,6 +245,30 @@ _MAX_EXTRACT_STARS = 500
 _EXTRACT_DOT_RADIUS = 5
 
 
+def create_star_map_preview(image_path: str, hdu: int = 0) -> bytes:
+    """Create a star map and return it as PNG bytes for preview."""
+    import io
+    import tempfile
+
+    from PIL import Image
+
+    resolved, file_type, image_index, _ = _resolve_path(image_path)
+    with tempfile.TemporaryDirectory() as tmp:
+        star_map_path = _create_star_map(resolved, file_type, image_index, hdu, Path(tmp))
+        from astropy.io import fits as astro_fits
+
+        with astro_fits.open(star_map_path) as hdu_list:
+            data = hdu_list[0].data
+        if data.max() > 0:
+            scaled = (data / data.max() * 255).astype(np.uint8)
+        else:
+            scaled = np.zeros_like(data, dtype=np.uint8)
+        img = Image.fromarray(scaled, mode="L")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", compress_level=1)
+        return buf.getvalue()
+
+
 def _create_star_map(
     source: Path | BinaryIO,
     file_type: str,

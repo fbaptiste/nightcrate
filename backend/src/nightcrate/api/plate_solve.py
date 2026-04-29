@@ -1,9 +1,11 @@
 """Plate solving API — ASTAP integration + image annotation endpoints."""
 
+import asyncio
 import logging
 import math
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 from nightcrate.api._common import row_to_dict
 from nightcrate.core.config import get_settings
@@ -22,6 +24,7 @@ from nightcrate.services.image_annotations import (
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import (
     cards_to_dict,
+    create_star_map_preview,
     get_solve_progress,
     read_header_cards,
     run_plate_solve,
@@ -32,6 +35,27 @@ from nightcrate.services.plate_solve_models import PlateSolveRequest, PlateSolve
 logger = logging.getLogger("nightcrate")
 
 router = APIRouter(prefix="/api/plate-solve", tags=["Plate Solve"])
+
+
+@router.post("/extract-preview")
+async def extract_preview(
+    image_path: str = Query(...),
+    hdu: int = Query(0),
+) -> Response:
+    """Create a star map preview for the extract mode.
+
+    Returns a PNG image of the synthetic star map that would be sent
+    to ASTAP, so the user can verify the extraction looks correct
+    before committing to a solve.
+    """
+    try:
+        png_bytes = await asyncio.to_thread(create_star_map_preview, image_path, hdu)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("[plate-solve] extract preview failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @router.post("/solve")
