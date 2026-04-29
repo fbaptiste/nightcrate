@@ -512,10 +512,8 @@ export function ImageViewerPage() {
       "pixelmath",
     ];
     for (const card of headerCards) {
-      if (card.key === "HISTORY" || card.key === "COMMENT" || card.key === "Processing:History") {
-        const text = `${card.value ?? ""} ${card.comment ?? ""}`.toLowerCase();
-        if (stretchKeywords.some((kw) => text.includes(kw))) return true;
-      }
+      const text = `${card.key ?? ""} ${card.value ?? ""} ${card.comment ?? ""}`.toLowerCase();
+      if (stretchKeywords.some((kw) => text.includes(kw))) return true;
     }
 
     const mrf = statsQuery.data?.mid_range_fraction;
