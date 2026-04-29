@@ -8,6 +8,9 @@ export interface PlateSolveRequest {
   dec_hint?: number;
   fov_hint?: number;
   timeout?: number;
+  extract_thresh?: number;
+  extract_min_area?: number;
+  extract_max_elongation?: number;
 }
 
 export interface PlateSolveResult {
@@ -50,11 +53,19 @@ export function plateSolve(req: PlateSolveRequest): Promise<PlateSolveResult> {
 export async function fetchExtractPreview(
   imagePath: string,
   hdu: number,
+  params?: {
+    thresh?: number;
+    minArea?: number;
+    maxElongation?: number;
+  },
 ): Promise<string> {
   const qs = new URLSearchParams({
     image_path: imagePath,
     hdu: String(hdu),
   });
+  if (params?.thresh != null) qs.set("thresh", String(params.thresh));
+  if (params?.minArea != null) qs.set("min_area", String(params.minArea));
+  if (params?.maxElongation != null) qs.set("max_elongation", String(params.maxElongation));
   const res = await fetch(
     `/api/plate-solve/extract-preview?${qs.toString()}`,
     { method: "POST" },

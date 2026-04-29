@@ -13,6 +13,9 @@ class PlateSolveRequest(BaseModel):
     dec_hint: float | None = None
     fov_hint: float | None = None
     timeout: int = 180
+    extract_thresh: float = 5.0
+    extract_min_area: int = 5
+    extract_max_elongation: float = 0.0
 
 
 class PlateSolveResult(BaseModel):

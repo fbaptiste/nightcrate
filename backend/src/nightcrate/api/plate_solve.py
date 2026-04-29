@@ -41,6 +41,9 @@ router = APIRouter(prefix="/api/plate-solve", tags=["Plate Solve"])
 async def extract_preview(
     image_path: str = Query(...),
     hdu: int = Query(0),
+    thresh: float = Query(5.0, ge=1.0, le=100.0),
+    min_area: int = Query(5, ge=1, le=100),
+    max_elongation: float = Query(0.0, ge=0.0, le=10.0),
 ) -> Response:
     """Create a star map preview for the extract mode.
 
@@ -49,7 +52,11 @@ async def extract_preview(
     before committing to a solve.
     """
     try:
-        png_bytes = await asyncio.to_thread(create_star_map_preview, image_path, hdu)
+        png_bytes = await asyncio.to_thread(
+            create_star_map_preview, image_path, hdu,
+            thresh=thresh, min_area=min_area,
+            max_elongation=max_elongation,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -85,6 +92,9 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
             dec_hint=request.dec_hint,
             fov_hint=request.fov_hint,
             timeout=request.timeout,
+            extract_thresh=request.extract_thresh,
+            extract_min_area=request.extract_min_area,
+            extract_max_elongation=request.extract_max_elongation,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

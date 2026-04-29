@@ -245,7 +245,14 @@ _MAX_EXTRACT_STARS = 500
 _EXTRACT_DOT_RADIUS = 5
 
 
-def create_star_map_preview(image_path: str, hdu: int = 0) -> bytes:
+def create_star_map_preview(
+    image_path: str,
+    hdu: int = 0,
+    *,
+    thresh: float = 5.0,
+    min_area: int = 5,
+    max_elongation: float = 0.0,
+) -> bytes:
     """Create a star map and return it as PNG bytes for preview."""
     import io
     import tempfile
@@ -254,9 +261,11 @@ def create_star_map_preview(image_path: str, hdu: int = 0) -> bytes:
 
     resolved, file_type, image_index, _ = _resolve_path(image_path)
     with tempfile.TemporaryDirectory() as tmp:
-        star_map_path = _create_star_map(resolved, file_type, image_index, hdu, Path(tmp))
-        from astropy.io import fits as astro_fits
-
+        star_map_path = _create_star_map(
+            resolved, file_type, image_index, hdu, Path(tmp),
+            thresh=thresh, min_area=min_area,
+            max_elongation=max_elongation,
+        )
         with astro_fits.open(star_map_path) as hdu_list:
             data = hdu_list[0].data
         if data.max() > 0:
@@ -275,12 +284,20 @@ def _create_star_map(
     image_index: int,
     hdu: int,
     temp_dir: Path,
+    *,
+    thresh: float = 5.0,
+    min_area: int = 5,
+    max_elongation: float = 0.0,
 ) -> Path:
     """Detect stars with sep and create a synthetic star map for ASTAP.
 
     Extracts the brightest stars, renders Gaussian-profile dots on a
     black background. ASTAP solves this reliably even when the original
     stretched image fails.
+
+    ``thresh`` — detection threshold in sigma (higher = fewer, brighter).
+    ``min_area`` — minimum pixel area for a detection.
+    ``max_elongation`` — max a/b ratio; 0 disables the filter.
     """
     import sep
 
@@ -303,15 +320,18 @@ def _create_star_map(
     img_sub = mono - bkg
 
     sep.set_extract_pixstack(1_000_000)
-    thresh = 5.0
+    detect_thresh = thresh
     objects = None
     for attempt in range(4):
         try:
-            objects = sep.extract(img_sub, thresh=thresh, err=bkg.globalrms)
+            objects = sep.extract(
+                img_sub, thresh=detect_thresh, err=bkg.globalrms,
+                minarea=min_area,
+            )
             break
         except Exception as exc:
             if "pixel buffer full" in str(exc) and attempt < 3:
-                thresh *= 2
+                detect_thresh *= 2
             else:
                 raise
 
@@ -319,6 +339,13 @@ def _create_star_map(
     star_map = np.zeros((h, w), dtype=np.float32)
 
     if objects is not None and len(objects) > 0:
+        if max_elongation > 0:
+            b = objects["b"]
+            a = objects["a"]
+            safe_b = np.where(b > 0, b, 1e-6)
+            elongation = a / safe_b
+            objects = objects[elongation <= max_elongation]
+
         if len(objects) > _MAX_EXTRACT_STARS:
             flux_cutoff = np.sort(objects["flux"])[-_MAX_EXTRACT_STARS]
             objects = objects[objects["flux"] >= flux_cutoff]
@@ -571,6 +598,9 @@ async def run_plate_solve(
     dec_hint: float | None = None,
     fov_hint: float | None = None,
     timeout: int = 180,
+    extract_thresh: float = 5.0,
+    extract_min_area: int = 5,
+    extract_max_elongation: float = 0.0,
 ) -> PlateSolveResult:
     """Execute ASTAP plate solve and return results.
 
@@ -596,6 +626,9 @@ async def run_plate_solve(
             dec_hint,
             fov_hint,
             timeout,
+            extract_thresh=extract_thresh,
+            extract_min_area=extract_min_area,
+            extract_max_elongation=extract_max_elongation,
         )
     finally:
         _solve_semaphore.release()
@@ -610,6 +643,10 @@ async def _do_solve(
     dec_hint: float | None,
     fov_hint: float | None,
     timeout: int,
+    *,
+    extract_thresh: float = 5.0,
+    extract_min_area: int = 5,
+    extract_max_elongation: float = 0.0,
 ) -> PlateSolveResult:
     source, file_type, image_index, _cache_key = _resolve_path(image_path)
     cards = read_header_cards(source, file_type, image_index, hdu)
@@ -634,6 +671,9 @@ async def _do_solve(
                 image_index,
                 hdu,
                 tmp_dir,
+                thresh=extract_thresh,
+                min_area=extract_min_area,
+                max_elongation=extract_max_elongation,
             )
         else:
             image_file = await asyncio.to_thread(

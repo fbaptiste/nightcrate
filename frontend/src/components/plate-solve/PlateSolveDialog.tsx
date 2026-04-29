@@ -8,9 +8,12 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import Alert from "@mui/material/Alert";
+import Checkbox from "@mui/material/Checkbox";
 import FormControl from "@mui/material/FormControl";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
+import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
@@ -58,6 +61,9 @@ export function PlateSolveDialog({
   const [progressMsg, setProgressMsg] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [extractThresh, setExtractThresh] = useState(5);
+  const [extractMinArea, setExtractMinArea] = useState(5);
+  const [extractRoundness, setExtractRoundness] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
@@ -122,14 +128,18 @@ export function PlateSolveDialog({
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     try {
-      const url = await fetchExtractPreview(imagePath, hdu);
+      const url = await fetchExtractPreview(imagePath, hdu, {
+        thresh: extractThresh,
+        minArea: extractMinArea,
+        maxElongation: extractRoundness ? 1.5 : 0,
+      });
       setPreviewUrl(url);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPreviewing(false);
     }
-  }, [imagePath, hdu, previewUrl]);
+  }, [imagePath, hdu, previewUrl, extractThresh, extractMinArea, extractRoundness]);
 
   const handleSolve = useCallback(async () => {
     setSolving(true);
@@ -162,6 +172,11 @@ export function PlateSolveDialog({
         ra_hint: effectiveRa,
         dec_hint: effectiveDec,
         timeout: mode === "blind" ? 300 : 180,
+        ...(mode === "extract" ? {
+          extract_thresh: extractThresh,
+          extract_min_area: extractMinArea,
+          extract_max_elongation: extractRoundness ? 1.5 : 0,
+        } : {}),
       });
       if (!abortRef.current) {
         setResult(res);
@@ -365,6 +380,58 @@ export function PlateSolveDialog({
                     value={headerDec?.toFixed(4) ?? ""}
                     slotProps={{ input: { readOnly: true } }}
                     sx={{ flex: 1 }}
+                  />
+                </Stack>
+              </Box>
+            )}
+
+            {mode === "extract" && (
+              <Box sx={{ bgcolor: "action.hover", borderRadius: 1, p: 1.5 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Extraction settings
+                </Typography>
+                <Stack spacing={1.5}>
+                  <Box>
+                    <Typography variant="caption">
+                      Detection threshold: {extractThresh}σ
+                    </Typography>
+                    <Slider
+                      size="small"
+                      value={extractThresh}
+                      onChange={(_, v) => setExtractThresh(v as number)}
+                      min={2}
+                      max={50}
+                      step={1}
+                      valueLabelDisplay="auto"
+                    />
+                  </Box>
+                  <Box>
+                    <Typography variant="caption">
+                      Min area: {extractMinArea} px
+                    </Typography>
+                    <Slider
+                      size="small"
+                      value={extractMinArea}
+                      onChange={(_, v) => setExtractMinArea(v as number)}
+                      min={1}
+                      max={50}
+                      step={1}
+                      valueLabelDisplay="auto"
+                    />
+                  </Box>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={extractRoundness}
+                        onChange={(_, checked) => setExtractRoundness(checked)}
+                      />
+                    }
+                    label={
+                      <Typography variant="caption">
+                        Roundness filter (reject elongated detections)
+                      </Typography>
+                    }
                   />
                 </Stack>
               </Box>
