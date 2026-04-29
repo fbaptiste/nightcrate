@@ -241,165 +241,13 @@ def _estimate_fov(raw: dict[str, str]) -> float | None:
     return plate_scale_arcsec * naxis2 / 3600.0
 
 
-_MAX_EXTRACT_STARS = 500
-_EXTRACT_DOT_RADIUS = 5
-
-
-def create_star_map_preview(
-    image_path: str,
-    hdu: int = 0,
-    *,
-    thresh: float = 5.0,
-    min_area: int = 5,
-    max_elongation: float = 0.0,
-    bg_mesh: int = 64,
-    deblend_cont: float = 0.005,
-    apply_stretch: bool = True,
-) -> bytes:
-    """Create a star map and return it as PNG bytes for preview."""
-    import io
-    import tempfile
-
-    from PIL import Image
-
-    resolved, file_type, image_index, _ = _resolve_path(image_path)
-    with tempfile.TemporaryDirectory() as tmp:
-        star_map_path = _create_star_map(
-            resolved, file_type, image_index, hdu, Path(tmp),
-            thresh=thresh, min_area=min_area,
-            max_elongation=max_elongation,
-            bg_mesh=bg_mesh, deblend_cont=deblend_cont,
-        )
-        with astro_fits.open(star_map_path) as hdu_list:
-            data = hdu_list[0].data
-        if data.max() > 0:
-            normed = data / data.max()
-            if apply_stretch:
-                normed = np.power(normed, 0.3)
-            scaled = (normed * 255).astype(np.uint8)
-        else:
-            scaled = np.zeros_like(data, dtype=np.uint8)
-        img = Image.fromarray(scaled, mode="L")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG", compress_level=1)
-        return buf.getvalue()
-
-
-def _create_star_map(
-    source: Path | BinaryIO,
-    file_type: str,
-    image_index: int,
-    hdu: int,
-    temp_dir: Path,
-    *,
-    thresh: float = 5.0,
-    min_area: int = 5,
-    max_elongation: float = 0.0,
-    bg_mesh: int = 64,
-    deblend_cont: float = 0.005,
-) -> Path:
-    """Detect stars with sep and create a synthetic star map for ASTAP.
-
-    Extracts the brightest stars, renders Gaussian-profile dots on a
-    black background. ASTAP solves this reliably even when the original
-    stretched image fails.
-
-    ``thresh`` — detection threshold in sigma (higher = fewer, brighter).
-    ``min_area`` — minimum pixel area for a detection.
-    ``max_elongation`` — max a/b ratio; 0 disables the filter.
-    """
-    import sep
-
-    if file_type == "pxiproject":
-        data = pxiproject_io.load_image_data(source, image_index)
-    elif file_type == "fits":
-        data = fits_io.load_image_data(source, hdu)
-    elif file_type == "xisf":
-        data = xisf_io.load_image_data(source, hdu)
-    else:
-        data = standard_io.load_image_data(source)
-
-    if data.ndim == 3:
-        mono = np.mean(data, axis=0)
-    else:
-        mono = data
-
-    mono = np.ascontiguousarray(mono, dtype=np.float64)
-    bkg = sep.Background(mono, bw=bg_mesh, bh=bg_mesh)
-    img_sub = mono - bkg
-
-    sep.set_extract_pixstack(1_000_000)
-    detect_thresh = thresh
-    objects = None
-    for attempt in range(4):
-        try:
-            objects = sep.extract(
-                img_sub, thresh=detect_thresh, err=bkg.globalrms,
-                minarea=min_area, deblend_cont=deblend_cont,
-            )
-            break
-        except Exception as exc:
-            if "pixel buffer full" in str(exc) and attempt < 3:
-                detect_thresh *= 2
-            else:
-                raise
-
-    h, w = mono.shape
-    star_map = np.zeros((h, w), dtype=np.float32)
-
-    if objects is not None and len(objects) > 0:
-        if max_elongation > 0:
-            b = objects["b"]
-            a = objects["a"]
-            safe_b = np.where(b > 0, b, 1e-6)
-            elongation = a / safe_b
-            objects = objects[elongation <= max_elongation]
-
-        if len(objects) > _MAX_EXTRACT_STARS:
-            flux_cutoff = np.sort(objects["flux"])[-_MAX_EXTRACT_STARS]
-            objects = objects[objects["flux"] >= flux_cutoff]
-
-        fluxes = objects["flux"]
-        max_flux = fluxes.max() if fluxes.max() > 0 else 1.0
-        r = _EXTRACT_DOT_RADIUS
-        sigma = r * 1.6
-
-        for i in range(len(objects)):
-            x = int(round(float(objects["x"][i])))
-            y = int(round(float(objects["y"][i])))
-            if 0 <= x < w and 0 <= y < h:
-                brightness = min(1.0, (fluxes[i] / max_flux) * 3.0 + 0.3)
-                for dy in range(-r, r + 1):
-                    for dx in range(-r, r + 1):
-                        d2 = dx * dx + dy * dy
-                        if d2 <= r * r:
-                            ny, nx = y + dy, x + dx
-                            if 0 <= ny < h and 0 <= nx < w:
-                                val = brightness * math.exp(-d2 / sigma)
-                                if val > star_map[ny, nx]:
-                                    star_map[ny, nx] = val
-
-        logger.info(
-            "[plate-solve] star extraction: %d stars, %dx%d star map",
-            len(objects),
-            w,
-            h,
-        )
-    else:
-        logger.warning("[plate-solve] star extraction: no stars detected")
-
-    temp_path = temp_dir / "star_map.fits"
-    hdu_obj = astro_fits.PrimaryHDU(star_map)
-    hdu_obj.writeto(temp_path, overwrite=True)
-    return temp_path
-
-
 def _prepare_image_file(
     source: Path | BinaryIO,
     file_type: str,
     image_index: int,
     hdu: int,
     temp_dir: Path,
+    header_keywords: dict[str, str] | None = None,
 ) -> Path:
     """Ensure a real filesystem path suitable for ASTAP.
 
@@ -413,10 +261,10 @@ def _prepare_image_file(
             return source
         if ext == ".xisf":
             data = xisf_io.load_image_data(source, hdu)
-            return _write_temp_fits(data, temp_dir)
+            return _write_temp_fits(data, temp_dir, header_keywords)
         if file_type == "pxiproject":
             data = pxiproject_io.load_image_data(source, image_index)
-            return _write_temp_fits(data, temp_dir)
+            return _write_temp_fits(data, temp_dir, header_keywords)
         return source
 
     if file_type == "fits":
@@ -425,7 +273,7 @@ def _prepare_image_file(
         return temp_path
 
     data = _load_data_from_buf(source, file_type, hdu)
-    return _write_temp_fits(data, temp_dir)
+    return _write_temp_fits(data, temp_dir, header_keywords)
 
 
 def _load_data_from_buf(buf: BinaryIO, file_type: str, hdu: int) -> np.ndarray:
@@ -439,11 +287,41 @@ def _load_data_from_buf(buf: BinaryIO, file_type: str, hdu: int) -> np.ndarray:
     return fits_io.load_image_data(buf, hdu)
 
 
-def _write_temp_fits(data: np.ndarray, temp_dir: Path) -> Path:
+_PASSTHROUGH_KEYS = (
+    "FOCALLEN",
+    "XPIXSZ",
+    "YPIXSZ",
+    "INSTRUME",
+    "TELESCOP",
+    "RA",
+    "DEC",
+    "OBJCTRA",
+    "OBJCTDEC",
+    "CRVAL1",
+    "CRVAL2",
+    "EXPTIME",
+    "GAIN",
+    "CCD-TEMP",
+    "FILTER",
+    "DATE-OBS",
+    "XBINNING",
+    "YBINNING",
+    "IMAGETYP",
+)
+
+
+def _write_temp_fits(
+    data: np.ndarray,
+    temp_dir: Path,
+    header_keywords: dict[str, str] | None = None,
+) -> Path:
     """Write a numpy array as a temporary FITS file for ASTAP.
 
     If data is float [0,1] (from XISF/standard normalization), scale to
     uint16 so ASTAP's star detection works with proper dynamic range.
+    When *header_keywords* is provided, copies ASTAP-relevant keywords
+    (focal length, pixel size, coordinates) into the FITS header so ASTAP
+    can determine the correct binning and FOV.
     """
     temp_path = temp_dir / "solve_input.fits"
     if data.dtype in (np.float32, np.float64) and data.max() <= 1.0:
@@ -451,8 +329,29 @@ def _write_temp_fits(data: np.ndarray, temp_dir: Path) -> Path:
     else:
         write_data = data
     hdu_obj = astro_fits.PrimaryHDU(write_data)
+    if header_keywords:
+        for key in _PASSTHROUGH_KEYS:
+            val = header_keywords.get(key)
+            if val is not None:
+                try:
+                    hdu_obj.header[key] = _coerce_header_value(val)
+                except ValueError, TypeError:
+                    pass
     hdu_obj.writeto(temp_path, overwrite=True)
     return temp_path
+
+
+def _coerce_header_value(val: str) -> int | float | str:
+    """Try to store numeric header values as numbers, not strings."""
+    try:
+        return int(val)
+    except ValueError:
+        pass
+    try:
+        return float(val)
+    except ValueError:
+        pass
+    return val
 
 
 def _build_astap_args(
@@ -470,6 +369,8 @@ def _build_astap_args(
 
     if mode == "blind":
         args.extend(["-r", "180"])
+        if fov_hint is not None:
+            args.extend(["-fov", str(fov_hint)])
     elif mode == "near":
         args.extend(["-r", "30"])
         if ra_hint is not None:
@@ -615,11 +516,6 @@ async def run_plate_solve(
     dec_hint: float | None = None,
     fov_hint: float | None = None,
     timeout: int = 180,
-    extract_thresh: float = 5.0,
-    extract_min_area: int = 5,
-    extract_max_elongation: float = 0.0,
-    extract_bg_mesh: int = 64,
-    extract_deblend_cont: float = 0.005,
 ) -> PlateSolveResult:
     """Execute ASTAP plate solve and return results.
 
@@ -645,11 +541,6 @@ async def run_plate_solve(
             dec_hint,
             fov_hint,
             timeout,
-            extract_thresh=extract_thresh,
-            extract_min_area=extract_min_area,
-            extract_max_elongation=extract_max_elongation,
-            extract_bg_mesh=extract_bg_mesh,
-            extract_deblend_cont=extract_deblend_cont,
         )
     finally:
         _solve_semaphore.release()
@@ -664,12 +555,6 @@ async def _do_solve(
     dec_hint: float | None,
     fov_hint: float | None,
     timeout: int,
-    *,
-    extract_thresh: float = 5.0,
-    extract_min_area: int = 5,
-    extract_max_elongation: float = 0.0,
-    extract_bg_mesh: int = 64,
-    extract_deblend_cont: float = 0.005,
 ) -> PlateSolveResult:
     source, file_type, image_index, _cache_key = _resolve_path(image_path)
     cards = read_header_cards(source, file_type, image_index, hdu)
@@ -686,33 +571,20 @@ async def _do_solve(
         tmp_dir = Path(tmp)
         output_base = tmp_dir / "result"
 
-        if mode == "extract":
-            image_file = await asyncio.to_thread(
-                _create_star_map,
-                source,
-                file_type,
-                image_index,
-                hdu,
-                tmp_dir,
-                thresh=extract_thresh,
-                min_area=extract_min_area,
-                max_elongation=extract_max_elongation,
-                bg_mesh=extract_bg_mesh,
-                deblend_cont=extract_deblend_cont,
-            )
-        else:
-            image_file = await asyncio.to_thread(
-                _prepare_image_file,
-                source,
-                file_type,
-                image_index,
-                hdu,
-                tmp_dir,
-            )
+        image_file = await asyncio.to_thread(
+            _prepare_image_file,
+            source,
+            file_type,
+            image_index,
+            hdu,
+            tmp_dir,
+            header_keywords=raw_header,
+        )
 
         logger.info(
             "[plate-solve] image file for ASTAP: %s (source type: %s)",
-            image_file, file_type,
+            image_file,
+            file_type,
         )
 
         if width is None or height is None:
@@ -725,15 +597,12 @@ async def _do_solve(
             if height is None:
                 height = h
 
-        astap_mode = "auto" if mode == "extract" else mode
         effective_fov = fov_hint
-        if mode == "extract" and effective_fov is None:
-            effective_fov = 0.0
         args = _build_astap_args(
             astap_binary,
             image_file,
             output_base,
-            astap_mode,
+            mode,
             hints,
             ra_hint,
             dec_hint,

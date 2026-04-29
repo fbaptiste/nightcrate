@@ -5,7 +5,6 @@ import logging
 import math
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
 
 from nightcrate.api._common import row_to_dict
 from nightcrate.core.config import get_settings
@@ -24,7 +23,6 @@ from nightcrate.services.image_annotations import (
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import (
     cards_to_dict,
-    create_star_map_preview,
     get_image_dimensions,
     get_solve_progress,
     read_header_cards,
@@ -38,46 +36,13 @@ logger = logging.getLogger("nightcrate")
 router = APIRouter(prefix="/api/plate-solve", tags=["Plate Solve"])
 
 
-@router.post("/extract-preview")
-async def extract_preview(
-    image_path: str = Query(...),
-    hdu: int = Query(0),
-    thresh: float = Query(5.0, ge=1.0, le=100.0),
-    min_area: int = Query(5, ge=1, le=100),
-    max_elongation: float = Query(0.0, ge=0.0, le=10.0),
-    bg_mesh: int = Query(64, ge=8, le=256),
-    deblend_cont: float = Query(0.005, ge=0.001, le=1.0),
-    apply_stretch: bool = Query(True),
-) -> Response:
-    """Create a star map preview for the extract mode.
-
-    Returns a PNG image of the synthetic star map that would be sent
-    to ASTAP, so the user can verify the extraction looks correct
-    before committing to a solve.
-    """
-    try:
-        png_bytes = await asyncio.to_thread(
-            create_star_map_preview, image_path, hdu,
-            thresh=thresh, min_area=min_area,
-            max_elongation=max_elongation,
-            bg_mesh=bg_mesh, deblend_cont=deblend_cont,
-            apply_stretch=apply_stretch,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("[plate-solve] extract preview failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return Response(content=png_bytes, media_type="image/png")
-
-
-@router.post("/validate-stars-image")
-async def validate_stars_image(
+@router.post("/validate-reference-image")
+async def validate_reference_image(
     current_path: str = Query(...),
     current_hdu: int = Query(0),
-    stars_path: str = Query(...),
+    reference_path: str = Query(...),
 ) -> dict:
-    """Validate that a stars-only image matches the current image dimensions."""
+    """Validate that a reference image matches the current image dimensions."""
     try:
         cw, ch = await asyncio.to_thread(get_image_dimensions, current_path, current_hdu)
     except ValueError as exc:
@@ -85,22 +50,21 @@ async def validate_stars_image(
     except Exception as exc:
         return {"valid": False, "error": f"Failed to read current image: {exc}"}
     try:
-        sw, sh = await asyncio.to_thread(get_image_dimensions, stars_path, 0)
+        sw, sh = await asyncio.to_thread(get_image_dimensions, reference_path, 0)
     except ValueError as exc:
-        return {"valid": False, "error": f"Stars image: {exc}"}
+        return {"valid": False, "error": f"Reference image: {exc}"}
     except Exception as exc:
-        return {"valid": False, "error": f"Failed to read stars image: {exc}"}
+        return {"valid": False, "error": f"Failed to read reference image: {exc}"}
 
     if cw is None or ch is None:
         return {"valid": False, "error": "Cannot determine current image dimensions"}
     if sw is None or sh is None:
-        return {"valid": False, "error": "Cannot determine stars image dimensions"}
+        return {"valid": False, "error": "Cannot determine reference image dimensions"}
     if cw != sw or ch != sh:
         return {
             "valid": False,
             "error": (
-                f"Dimension mismatch: current image is {cw}×{ch}, "
-                f"stars image is {sw}×{sh}"
+                f"Dimension mismatch: current image is {cw}×{ch}, reference image is {sw}×{sh}"
             ),
         }
     return {"valid": True, "width": cw, "height": ch}
@@ -111,7 +75,9 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
     """Plate solve an image via ASTAP."""
     logger.info(
         "[plate-solve] solve request: path=%r mode=%r hdu=%d",
-        request.image_path, request.mode, request.hdu,
+        request.image_path,
+        request.mode,
+        request.hdu,
     )
     settings = await get_settings()
     if not settings.astap_executable_path:
@@ -137,11 +103,6 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
             dec_hint=request.dec_hint,
             fov_hint=request.fov_hint,
             timeout=request.timeout,
-            extract_thresh=request.extract_thresh,
-            extract_min_area=request.extract_min_area,
-            extract_max_elongation=request.extract_max_elongation,
-            extract_bg_mesh=request.extract_bg_mesh,
-            extract_deblend_cont=request.extract_deblend_cont,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

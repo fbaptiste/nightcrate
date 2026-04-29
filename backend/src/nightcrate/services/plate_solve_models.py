@@ -8,16 +8,11 @@ from pydantic import BaseModel
 class PlateSolveRequest(BaseModel):
     image_path: str
     hdu: int = 0
-    mode: Literal["auto", "near", "blind", "extract"] = "auto"
+    mode: Literal["auto", "near", "blind"] = "auto"
     ra_hint: float | None = None
     dec_hint: float | None = None
     fov_hint: float | None = None
     timeout: int = 180
-    extract_thresh: float = 5.0
-    extract_min_area: int = 5
-    extract_max_elongation: float = 0.0
-    extract_bg_mesh: int = 64
-    extract_deblend_cont: float = 0.005
 
 
 class PlateSolveResult(BaseModel):

@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.32.0
+**NightCrate version:** 0.33.0
 
-**Last updated:** 2026-04-28
+**Last updated:** 2026-04-29
 
 **Last full repo snapshot:** 2026-04-19
 
@@ -299,14 +299,14 @@ Incidental fix with broader reach: `_moon_rise_set` in `services/astronomy.py` w
 
 ### Plate Solving (ASTAP)
 
-Plate solving via ASTAP subprocess invocation. User configures the ASTAP executable path in Settings (with macOS `.app` bundle auto-resolution via `Contents/MacOS/`), then plate solves any image from the Image Viewer toolbar. Supports near solve (with RA/Dec hints from FITS headers), blind solve (full sky search), and auto mode (detects hints and chooses). Results (RA, Dec, pixel scale, rotation, FOV) displayed in a dialog — no database persistence.
+Plate solving via ASTAP subprocess invocation. User configures the ASTAP executable path in Settings (with macOS `.app` bundle auto-resolution via `Contents/MacOS/`), then plate solves any image from the Image Analyzer toolbar. Two-tab UI: "Solve" (current image) and "From Reference Image" (pre-processed stars-only image with dimension validation). Automatically detects near vs blind mode from available coordinate hints (FITS header or target search). Equipment hints (Rig, Equipment, or Manual) provide FOV to ASTAP for faster solving. Results (RA, Dec, pixel scale, rotation, FOV) displayed in a dialog — no database persistence.
 
-Handles all NightCrate image sources: filesystem files passed directly to ASTAP; archive and pxiproject images extracted to temp FITS; XISF converted to temp FITS (ASTAP only supports uncompressed XISF). File browser enhanced with `accept=*` mode for selecting extensionless Unix executables.
+Handles all NightCrate image sources: filesystem files passed directly to ASTAP; archive and pxiproject images extracted to temp FITS with header keyword passthrough (focal length, pixel size, coordinates); XISF converted to temp FITS. File browser enhanced with `accept=*` mode for selecting extensionless Unix executables.
 
-- **Route:** Image Viewer toolbar button (no dedicated page)
-- **API:** `POST /api/plate-solve/solve` (accepts image path, mode, optional RA/Dec/FOV hints), `POST /api/plate-solve/validate-path` (validates ASTAP executable, resolves `.app` bundles)
-- **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing + temp file pipeline), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (endpoints), `services/coordinate_format.py` (added `format_ra_hms`, `format_dec_dms`)
-- **Key frontend:** `components/plate-solve/PlateSolveDialog.tsx` (mode selector + results table + copy), `pages/SettingsPage.tsx` (`AstapPathSection` with browse + validation), `api/plateSolve.ts`
+- **Route:** Image Analyzer toolbar button (no dedicated page)
+- **API:** `POST /api/plate-solve/solve` (accepts image path, mode, optional RA/Dec/FOV hints), `POST /api/plate-solve/validate-reference-image` (validates reference image dimensions match), `POST /api/plate-solve/validate-path` (validates ASTAP executable, resolves `.app` bundles)
+- **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing + temp file pipeline + header passthrough), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (endpoints), `services/coordinate_format.py` (`format_ra_hms`, `format_dec_dms`)
+- **Key frontend:** `components/plate-solve/PlateSolveDialog.tsx` (tab UI + equipment hints + results table + copy), `pages/SettingsPage.tsx` (`AstapPathSection` with browse + validation), `api/plateSolve.ts`
 - **Settings:** `astap_executable_path` (KV table, no migration)
 
 ---

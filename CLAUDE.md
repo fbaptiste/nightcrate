@@ -180,7 +180,7 @@ All outbound HTTP goes through `services/http_client.py:get()`. Uniform 30 s tim
 
 For full feature inventory and per-version history see `nightcrate-current-state.md` (living snapshot) and `PLAN.md`. This section captures only the **architectural invariants and gotchas worth knowing when modifying these areas**.
 
-### Image Viewer
+### Image Analyzer
 - Format-agnostic core in `services/imaging.py`; per-format I/O in `services/{fits,xisf,pxiproject,standard}_io.py`. The XISF parser is **clean-room** — the GPL-licensed reference lib is off-limits per the dependency policy.
 - **Auto-stretch uses PixInsight AutoSTF** (avgDev, NOT MAD). Constants: shadow clip = `median + (-1.25)·avgDev`, midtone target = 0.25, MTF self-inverse for midtones balance.
 - Stretch is **server-side**; frontend sends params as query string and receives a rendered PNG. Default mode is `stretch=auto` (one round-trip computes stats + linearity + STF); user slider interaction switches to explicit `stretch=stf`.
@@ -263,10 +263,12 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
 ### Plate Solving
 - **ASTAP via subprocess** — invoked via `asyncio.create_subprocess_exec()`. **Never pass `-update`** (would modify the input file). Output directed to temp dir via `-o`, parsed from the `.ini` sidecar.
 - **macOS `.app` bundle resolution**: `resolve_astap_binary()` navigates `Contents/MacOS/` to find the executable by name (`astap`, `ASTAP`).
-- **Temp file pipeline**: archive/pxiproject images extracted to temp FITS for ASTAP. XISF also converted (ASTAP only handles uncompressed XISF). Regular FITS/TIFF/PNG/JPG passed directly.
+- **Temp file pipeline**: archive/pxiproject images extracted to temp FITS for ASTAP. XISF also converted (ASTAP only handles uncompressed XISF). Regular FITS/TIFF/PNG/JPG passed directly. Header keywords (focal length, pixel size, coordinates) are passed through to temp FITS so ASTAP can determine correct binning and FOV.
 - **Concurrency**: `asyncio.Semaphore(1)` — one solve at a time. Second request gets 409.
 - **Display-only results** — no DB persistence. RA/Dec/pixel scale/rotation/FOV shown in a dialog.
-- **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (`POST /solve`, `POST /validate-path`).
+- **Two-tab UI**: "Solve" (solve the current image directly) and "From Reference Image" (solve a pre-processed stars-only image with matching dimensions). Both support coordinate hints (from header or target search) and equipment hints (from rig, individual equipment, or manual focal length/pixel size).
+- **Equipment hints**: Rig, Equipment (OTA config + camera), or Manual mode. Computes pixel scale and FOV from the selected equipment + binning, passed to ASTAP as `-fov` for faster solving.
+- **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (`POST /solve`, `POST /validate-reference-image`).
 - **Key frontend:** `components/plate-solve/PlateSolveDialog.tsx`, Settings page `AstapPathSection`.
 
 ### Weather Forecast

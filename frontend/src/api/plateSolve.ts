@@ -3,16 +3,11 @@ import { apiFetch } from "./client";
 export interface PlateSolveRequest {
   image_path: string;
   hdu?: number;
-  mode?: "auto" | "near" | "blind" | "extract";
+  mode?: "auto" | "near" | "blind";
   ra_hint?: number;
   dec_hint?: number;
   fov_hint?: number;
   timeout?: number;
-  extract_thresh?: number;
-  extract_min_area?: number;
-  extract_max_elongation?: number;
-  extract_bg_mesh?: number;
-  extract_deblend_cont?: number;
 }
 
 export interface PlateSolveResult {
@@ -52,51 +47,17 @@ export function plateSolve(req: PlateSolveRequest): Promise<PlateSolveResult> {
   });
 }
 
-export async function fetchExtractPreview(
-  imagePath: string,
-  hdu: number,
-  params?: {
-    thresh?: number;
-    minArea?: number;
-    maxElongation?: number;
-    bgMesh?: number;
-    deblendCont?: number;
-    applyStretch?: boolean;
-  },
-): Promise<string> {
-  const qs = new URLSearchParams({
-    image_path: imagePath,
-    hdu: String(hdu),
-  });
-  if (params?.thresh != null) qs.set("thresh", String(params.thresh));
-  if (params?.minArea != null) qs.set("min_area", String(params.minArea));
-  if (params?.maxElongation != null) qs.set("max_elongation", String(params.maxElongation));
-  if (params?.bgMesh != null) qs.set("bg_mesh", String(params.bgMesh));
-  if (params?.deblendCont != null) qs.set("deblend_cont", String(params.deblendCont));
-  if (params?.applyStretch != null) qs.set("apply_stretch", String(params.applyStretch));
-  const res = await fetch(
-    `/api/plate-solve/extract-preview?${qs.toString()}`,
-    { method: "POST" },
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
-}
-
-export async function validateStarsImage(
+export async function validateReferenceImage(
   currentPath: string,
   currentHdu: number,
-  starsPath: string,
+  referencePath: string,
 ): Promise<{ valid: boolean; error?: string; width?: number; height?: number }> {
   const qs = new URLSearchParams({
     current_path: currentPath,
     current_hdu: String(currentHdu),
-    stars_path: starsPath,
+    reference_path: referencePath,
   });
-  return apiFetch(`/plate-solve/validate-stars-image?${qs.toString()}`, {
+  return apiFetch(`/plate-solve/validate-reference-image?${qs.toString()}`, {
     method: "POST",
   });
 }

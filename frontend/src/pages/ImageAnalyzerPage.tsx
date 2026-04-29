@@ -1381,6 +1381,9 @@ export function ImageAnalyzerPage() {
         hdu={selectedHdu}
         headerRa={parseHeaderCoord(true, "RA", "OBJCTRA", "CRVAL1")}
         headerDec={parseHeaderCoord(false, "DEC", "OBJCTDEC", "CRVAL2")}
+        headerFocalLength={(() => { const v = headerVal("FOCALLEN"); return v ? parseFloat(v) : null; })()}
+        headerPixelSize={(() => { const v = headerVal("XPIXSZ"); return v ? parseFloat(v) : null; })()}
+        headerBinning={(() => { const v = headerVal("XBINNING"); return v ? parseInt(v, 10) : null; })()}
         onSolved={(res) => {
           if (res.cd1_1 != null && res.cd1_2 != null && res.cd2_1 != null && res.cd2_2 != null && res.crpix1 != null && res.crpix2 != null && res.ra_deg != null && res.dec_deg != null && res.image_width != null && res.image_height != null) {
             setSolvedWcs({
