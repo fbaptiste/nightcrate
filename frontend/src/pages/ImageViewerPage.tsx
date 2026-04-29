@@ -654,7 +654,14 @@ export function ImageViewerPage() {
                       onClick={() => {
                         if (isNonLinear) {
                           setLinearityOverride("linear");
-                          handleStretchTypeChange("stf");
+                          if (statsQuery.data) {
+                            const stf = statsQuery.data.linked_stf ?? statsQuery.data.channels[0]?.stf;
+                            if (stf) {
+                              const p: StretchParams = { stretch: "stf", shadow: stf.shadow, midtone: stf.midtone, highlight: stf.highlight };
+                              setLinked(p);
+                              setAppliedLinked(p);
+                            }
+                          }
                         } else {
                           setLinearityOverride("nonlinear");
                           handleStretchTypeChange("linear");
