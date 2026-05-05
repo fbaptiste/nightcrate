@@ -851,10 +851,12 @@ export default function HourlyTimeline({
 
     hoverOverlay
       .on("mousemove", handleHover)
-      .on("mouseleave", hideHover)
-      .on("touchstart", (event: TouchEvent) => { event.preventDefault(); handleHover(event); }, { passive: false })
-      .on("touchmove", (event: TouchEvent) => { event.preventDefault(); handleHover(event); }, { passive: false })
-      .on("touchend", hideHover);
+      .on("mouseleave", hideHover);
+
+    const overlayNode = hoverOverlay.node() as SVGRectElement;
+    overlayNode.addEventListener("touchstart", (e) => { e.preventDefault(); handleHover(e); }, { passive: false });
+    overlayNode.addEventListener("touchmove", (e) => { e.preventDefault(); handleHover(e); }, { passive: false });
+    overlayNode.addEventListener("touchend", () => hideHover(), { passive: true });
 
     curY += COMPOSITE_HEIGHT + 4;
 
