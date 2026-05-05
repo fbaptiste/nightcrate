@@ -408,29 +408,54 @@ export default function FovSimulator({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size, zoomFit, zoomMax]);
 
-  // Pinch-to-zoom for touch devices. Tracks two simultaneous touches
-  // and adjusts zoom proportionally to the distance change between them,
-  // anchored on their midpoint.
+  // Pinch-to-zoom (+ rotate when inside the frame) for touch devices.
+  // Two-finger gesture anywhere on the image zooms; when the midpoint
+  // of the two fingers is inside the rig frame, rotation is also applied.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     let startDist = 0;
+    let startAngle = 0;
     let startZoom = 0;
+    let startRotation = 0;
     let midX = 0;
     let midY = 0;
+    let rotateMode = false;
 
     function dist(t1: Touch, t2: Touch): number {
       return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    }
+
+    function angle(t1: Touch, t2: Touch): number {
+      return Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX) * (180 / Math.PI);
+    }
+
+    function isMidpointInRect(mx: number, my: number): boolean {
+      const l = layoutRef.current;
+      if (!l) return false;
+      const z = zoomRef.current;
+      const vcx = l.view_center_pixel_x;
+      const vcy = l.view_center_pixel_y;
+      const sourceX = (mx - size / 2 + vcx * z - panXRef.current) / z;
+      const sourceY = (my - size / 2 + vcy * z - panYRef.current) / z;
+      const rectCx = vcx + rectOffsetXRef.current;
+      const rectCy = vcy + rectOffsetYRef.current;
+      const hw = rectWidth / 2;
+      const hh = rectHeight / 2;
+      return Math.abs(sourceX - rectCx) <= hw && Math.abs(sourceY - rectCy) <= hh;
     }
 
     function onTouchStart(e: TouchEvent) {
       if (e.touches.length === 2) {
         e.preventDefault();
         startDist = dist(e.touches[0], e.touches[1]);
+        startAngle = angle(e.touches[0], e.touches[1]);
         startZoom = zoomRef.current;
+        startRotation = rotationRef.current;
         const r = container!.getBoundingClientRect();
         midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
         midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+        rotateMode = isMidpointInRect(midX, midY);
       }
     }
 
@@ -440,10 +465,10 @@ export default function FovSimulator({
       const l = layoutRef.current;
       if (!l) return;
 
+      // Zoom
       const curDist = dist(e.touches[0], e.touches[1]);
       const factor = curDist / startDist;
       const zNew = Math.max(zoomFit, Math.min(zoomMax, startZoom * factor));
-      if (zNew === zoomRef.current) return;
 
       const vcx = l.view_center_pixel_x;
       const vcy = l.view_center_pixel_y;
@@ -463,15 +488,26 @@ export default function FovSimulator({
       zoomRef.current = zNew;
       panXRef.current = panXNew;
       panYRef.current = panYNew;
-      applyLive();
 
+      // Rotation (only when gesture started inside the frame)
+      if (rotateMode) {
+        const curAngle = angle(e.touches[0], e.touches[1]);
+        const deltaAngle = curAngle - startAngle;
+        rotationRef.current = normalizeAngle(startRotation - deltaAngle);
+      }
+
+      applyLive();
       setZoom(zNew);
       setPanX(panXNew);
       setPanY(panYNew);
+      if (rotateMode) setRotation(rotationRef.current);
     }
 
     function onTouchEnd(e: TouchEvent) {
-      if (e.touches.length < 2) startDist = 0;
+      if (e.touches.length < 2) {
+        startDist = 0;
+        rotateMode = false;
+      }
     }
 
     container.addEventListener("touchstart", onTouchStart, { passive: false });
@@ -483,7 +519,7 @@ export default function FovSimulator({
       container.removeEventListener("touchend", onTouchEnd);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size, zoomFit, zoomMax]);
+  }, [size, zoomFit, zoomMax, rectWidth, rectHeight]);
 
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
