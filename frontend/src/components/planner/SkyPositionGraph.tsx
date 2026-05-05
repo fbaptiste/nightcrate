@@ -263,10 +263,9 @@ export default function SkyPositionGraph({
     ];
   }, [track.twilight]);
 
-  function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    const svg = e.currentTarget;
+  function handleHover(svg: SVGSVGElement, clientX: number) {
     const rect = svg.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
+    const mx = clientX - rect.left;
 
     // Magnetic snap — meridian + each twilight boundary. Pick the
     // landmark closest to the cursor within SNAP_PX; gives the user
@@ -345,9 +344,12 @@ export default function SkyPositionGraph({
       <svg
         width={width}
         height={height}
-        onMouseMove={onMouseMove}
+        onMouseMove={(e) => handleHover(e.currentTarget, e.clientX)}
         onMouseLeave={() => setHover(null)}
-        style={{ display: "block" }}
+        onTouchStart={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
+        onTouchMove={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
+        onTouchEnd={() => setHover(null)}
+        style={{ display: "block", touchAction: "none" }}
       >
         {/* Twilight bands */}
         {bandRect(track.twilight.sunset_utc, track.twilight.civil_end_utc, tw.civil)}

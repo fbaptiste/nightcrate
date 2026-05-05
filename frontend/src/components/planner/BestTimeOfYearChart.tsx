@@ -107,9 +107,9 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
     return { MARGIN, dates, x, y, yRight, line, lineContinuous, moonAltLine, yMax };
   }, [track, width, height]);
 
-  function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
+  function handleHover(svg: SVGSVGElement, clientX: number) {
+    const rect = svg.getBoundingClientRect();
+    const mx = clientX - rect.left;
     if (mx < layout.MARGIN.left || mx > width - layout.MARGIN.right) {
       setHover(null);
       return;
@@ -192,9 +192,12 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
       <svg
         width={width}
         height={height}
-        onMouseMove={onMouseMove}
+        onMouseMove={(e) => handleHover(e.currentTarget, e.clientX)}
         onMouseLeave={() => setHover(null)}
-        style={{ display: "block" }}
+        onTouchStart={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
+        onTouchMove={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
+        onTouchEnd={() => setHover(null)}
+        style={{ display: "block", touchAction: "none" }}
       >
         {/* Y-axis title */}
         <text
