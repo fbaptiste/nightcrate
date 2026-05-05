@@ -789,7 +789,10 @@ export default function HourlyTimeline({
     const capturedWindowEndMin = windowEndMin;
 
     function handleHover(event: MouseEvent | TouchEvent) {
-      const [mx] = d3.pointer(event, g.node());
+      const sourceEvent = "touches" in event && event.touches.length > 0
+        ? event.touches[0]
+        : event;
+      const [mx] = d3.pointer(sourceEvent as unknown as MouseEvent, g.node());
       const frac = (mx - LABEL_WIDTH) / gridWidth;
       if (frac < 0 || frac > 1) return;
 
