@@ -459,7 +459,10 @@ export default function HourlyTimeline({
       .append("svg")
       .attr("width", totalWidth)
       .attr("height", totalHeight)
-      .style("display", "block");
+      .style("display", "block")
+      .style("-webkit-touch-callout", "none")
+      .style("-webkit-user-select", "none")
+      .style("user-select", "none");
 
     const g = svg.append("g").attr("transform", `translate(0, ${MARKER_PAD})`);
 
@@ -762,7 +765,11 @@ export default function HourlyTimeline({
       .attr("x", LABEL_WIDTH).attr("y", compositeY)
       .attr("width", gridWidth).attr("height", COMPOSITE_HEIGHT)
       .attr("fill", "transparent")
-      .style("cursor", "crosshair");
+      .style("cursor", "crosshair")
+      .style("touch-action", "none")
+      .style("-webkit-touch-callout", "none")
+      .style("user-select", "none")
+      .style("-webkit-user-select", "none");
 
     const hoverVisuals = svg.append("g")
       .attr("transform", `translate(0, ${MARKER_PAD})`)

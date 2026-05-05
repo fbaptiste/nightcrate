@@ -197,7 +197,7 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
         onTouchStart={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
         onTouchMove={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
         onTouchEnd={() => setHover(null)}
-        style={{ display: "block", touchAction: "none" }}
+        style={{ display: "block", touchAction: "none", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
       >
         {/* Y-axis title */}
         <text

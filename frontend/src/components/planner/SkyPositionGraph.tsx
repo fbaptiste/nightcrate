@@ -349,7 +349,7 @@ export default function SkyPositionGraph({
         onTouchStart={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
         onTouchMove={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
         onTouchEnd={() => setHover(null)}
-        style={{ display: "block", touchAction: "none" }}
+        style={{ display: "block", touchAction: "none", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
       >
         {/* Twilight bands */}
         {bandRect(track.twilight.sunset_utc, track.twilight.civil_end_utc, tw.civil)}
