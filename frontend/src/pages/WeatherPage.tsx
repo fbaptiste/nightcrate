@@ -156,7 +156,7 @@ export default function WeatherPage() {
 
       {/* Attribution + 7-day cards */}
       {forecast && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
           Weather data by{" "}
           <a
             href="https://open-meteo.com/"
