@@ -19,7 +19,7 @@ help:
 	} \
 	{ lastLine = $$0 }' $(MAKEFILE_LIST)
 
-.PHONY: help dev backend frontend install lint format test test-fast
+.PHONY: help dev dev-lan backend backend-lan frontend install lint format test test-fast
 
 ## Start backend and frontend together (Ctrl+C stops both).
 ## Log level defaults to INFO; override with `make dev LOG=DEBUG`.
@@ -36,9 +36,21 @@ dev:
 	wait; \
 	stty sane 2>/dev/null; true
 
+## Start backend + frontend on LAN (accessible from other machines on local network)
+dev-lan:
+	@(cd backend && NIGHTCRATE_LAN=1 NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --host 0.0.0.0 --port 8000) & \
+	(cd frontend && NIGHTCRATE_LAN=1 npm run dev) & \
+	trap '' INT TERM; \
+	wait; \
+	stty sane 2>/dev/null; true
+
 ## Start backend only (port 8000). Override log level with `make backend LOG=DEBUG`.
 backend:
 	cd backend && NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --port 8000
+
+## Start backend only, accessible on LAN
+backend-lan:
+	cd backend && NIGHTCRATE_LAN=1 NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Start frontend only (port 5173)
 frontend:

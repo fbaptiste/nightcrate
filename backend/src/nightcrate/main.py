@@ -370,9 +370,11 @@ openapi_tags = [
 
 app = FastAPI(title="NightCrate", lifespan=lifespan, openapi_tags=openapi_tags)
 
+_LAN_MODE = os.environ.get("NIGHTCRATE_LAN", "").strip() == "1"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"] if _LAN_MODE else ["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -412,4 +414,5 @@ async def health() -> dict:
 
 
 def run() -> None:
-    uvicorn.run("nightcrate.main:app", host="127.0.0.1", port=8000, reload=True)
+    host = "0.0.0.0" if _LAN_MODE else "127.0.0.1"
+    uvicorn.run("nightcrate.main:app", host=host, port=8000, reload=True)

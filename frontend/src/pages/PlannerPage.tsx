@@ -344,8 +344,6 @@ export default function PlannerPage() {
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        height: "100%",
-        overflow: "hidden",
       }}
     >
       {/* Header — title + prominent mode toggle. The mode chooses
@@ -873,7 +871,7 @@ export default function PlannerPage() {
           the data density we actually want. */}
       <Paper
         variant="outlined"
-        sx={{ flex: 1, minHeight: 0, position: "relative", overflow: "auto" }}
+        sx={{ position: "relative" }}
       >
         {/* Opaque loading overlay on the Paper — covers the card
             stack during sort / filter refetches so prior rows don't
