@@ -408,6 +408,83 @@ export default function FovSimulator({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size, zoomFit, zoomMax]);
 
+  // Pinch-to-zoom for touch devices. Tracks two simultaneous touches
+  // and adjusts zoom proportionally to the distance change between them,
+  // anchored on their midpoint.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let startDist = 0;
+    let startZoom = 0;
+    let midX = 0;
+    let midY = 0;
+
+    function dist(t1: Touch, t2: Touch): number {
+      return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        startDist = dist(e.touches[0], e.touches[1]);
+        startZoom = zoomRef.current;
+        const r = container!.getBoundingClientRect();
+        midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+        midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+      }
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (e.touches.length !== 2 || startDist === 0) return;
+      e.preventDefault();
+      const l = layoutRef.current;
+      if (!l) return;
+
+      const curDist = dist(e.touches[0], e.touches[1]);
+      const factor = curDist / startDist;
+      const zNew = Math.max(zoomFit, Math.min(zoomMax, startZoom * factor));
+      if (zNew === zoomRef.current) return;
+
+      const vcx = l.view_center_pixel_x;
+      const vcy = l.view_center_pixel_y;
+      const zOld = zoomRef.current;
+      const panXOld = panXRef.current;
+      const panYOld = panYRef.current;
+
+      const sourceX = (midX - size / 2 + vcx * zOld - panXOld) / zOld;
+      const sourceY = (midY - size / 2 + vcy * zOld - panYOld) / zOld;
+      let panXNew = midX - size / 2 + vcx * zNew - sourceX * zNew;
+      let panYNew = midY - size / 2 + vcy * zNew - sourceY * zNew;
+      const limX = Math.max(0, Math.max(vcx, l.composite_width_px - vcx) * zNew);
+      const limY = Math.max(0, Math.max(vcy, l.composite_height_px - vcy) * zNew);
+      panXNew = clamp(panXNew, -limX, limX);
+      panYNew = clamp(panYNew, -limY, limY);
+
+      zoomRef.current = zNew;
+      panXRef.current = panXNew;
+      panYRef.current = panYNew;
+      applyLive();
+
+      setZoom(zNew);
+      setPanX(panXNew);
+      setPanY(panYNew);
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length < 2) startDist = 0;
+    }
+
+    container.addEventListener("touchstart", onTouchStart, { passive: false });
+    container.addEventListener("touchmove", onTouchMove, { passive: false });
+    container.addEventListener("touchend", onTouchEnd);
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+      container.removeEventListener("touchend", onTouchEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size, zoomFit, zoomMax]);
+
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
       if (e.key === "Shift") setIsShiftHeld(true);
