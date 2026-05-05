@@ -154,7 +154,20 @@ export default function WeatherPage() {
         </Box>
       )}
 
-      {/* 7-day cards */}
+      {/* Attribution + 7-day cards */}
+      {forecast && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+          Weather data by{" "}
+          <a
+            href="https://open-meteo.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "inherit" }}
+          >
+            Open-Meteo.com
+          </a>
+        </Typography>
+      )}
       {forecast && !selectedDate && (
         <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: "block" }}>
           Click a day to see hourly details
