@@ -70,7 +70,7 @@ const DARK_CSS = `
   /* Buttons */
   .swagger-ui .btn { color: #e2e0dd; border-color: rgba(255,255,255,0.25); }
   .swagger-ui .btn:hover { background: rgba(255,255,255,0.08); }
-  .swagger-ui .try-out__btn { color: #e2e0dd; border-color: rgba(255,255,255,0.25); }
+  .swagger-ui .try-out { display: none; }
 
   /* Dialogs */
   .swagger-ui .dialog-ux .modal-ux { background: #24272c; }
@@ -116,6 +116,7 @@ const DARK_CSS = `
 
 const LIGHT_CSS = `
   .swagger-ui .topbar { display: none; }
+  .swagger-ui .try-out { display: none; }
 `;
 
 export function ApiDocsPage() {
