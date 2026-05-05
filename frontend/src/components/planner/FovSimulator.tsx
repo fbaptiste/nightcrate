@@ -200,6 +200,7 @@ export default function FovSimulator({
       }
     | null
   >(null);
+  const twoFingerActiveRef = useRef(false);
 
   const tier = useMemo(() => tierForFov(fovMajorDeg), [fovMajorDeg]);
   const extentDeg = useMemo(
@@ -408,9 +409,10 @@ export default function FovSimulator({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size, zoomFit, zoomMax]);
 
-  // Pinch-to-zoom (+ rotate when inside the frame) for touch devices.
-  // Two-finger gesture anywhere on the image zooms; when the midpoint
-  // of the two fingers is inside the rig frame, rotation is also applied.
+  // Two-finger gesture: zoom OR rotate (mutually exclusive).
+  // The gesture starts undecided; once the dominant motion is detected
+  // (angle change > threshold = rotate, distance change > threshold =
+  // zoom), it locks in and only applies that transform until released.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -420,53 +422,65 @@ export default function FovSimulator({
     let startRotation = 0;
     let midX = 0;
     let midY = 0;
-    let rotateMode = false;
+    let gestureMode: "undecided" | "zoom" | "rotate" = "undecided";
 
-    function dist(t1: Touch, t2: Touch): number {
+    const ANGLE_THRESHOLD = 8;
+    const DIST_THRESHOLD_RATIO = 0.08;
+
+    function fingerDist(t1: Touch, t2: Touch): number {
       return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
     }
 
-    function angle(t1: Touch, t2: Touch): number {
+    function fingerAngle(t1: Touch, t2: Touch): number {
       return Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX) * (180 / Math.PI);
-    }
-
-    function isMidpointInRect(mx: number, my: number): boolean {
-      const l = layoutRef.current;
-      if (!l) return false;
-      const z = zoomRef.current;
-      const vcx = l.view_center_pixel_x;
-      const vcy = l.view_center_pixel_y;
-      const sourceX = (mx - size / 2 + vcx * z - panXRef.current) / z;
-      const sourceY = (my - size / 2 + vcy * z - panYRef.current) / z;
-      const rectCx = vcx + rectOffsetXRef.current;
-      const rectCy = vcy + rectOffsetYRef.current;
-      const hw = rectWidth / 2;
-      const hh = rectHeight / 2;
-      return Math.abs(sourceX - rectCx) <= hw && Math.abs(sourceY - rectCy) <= hh;
     }
 
     function onTouchStart(e: TouchEvent) {
       if (e.touches.length === 2) {
         e.preventDefault();
-        startDist = dist(e.touches[0], e.touches[1]);
-        startAngle = angle(e.touches[0], e.touches[1]);
+        twoFingerActiveRef.current = true;
+        dragStateRef.current = null;
+        startDist = fingerDist(e.touches[0], e.touches[1]);
+        startAngle = fingerAngle(e.touches[0], e.touches[1]);
         startZoom = zoomRef.current;
         startRotation = rotationRef.current;
         const r = container!.getBoundingClientRect();
         midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
         midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
-        rotateMode = isMidpointInRect(midX, midY);
+        gestureMode = "undecided";
       }
     }
 
     function onTouchMove(e: TouchEvent) {
-      if (e.touches.length !== 2 || startDist === 0) return;
+      if (e.touches.length !== 2 || !twoFingerActiveRef.current) return;
       e.preventDefault();
       const l = layoutRef.current;
       if (!l) return;
 
-      // Zoom
-      const curDist = dist(e.touches[0], e.touches[1]);
+      const curDist = fingerDist(e.touches[0], e.touches[1]);
+      const curAngle = fingerAngle(e.touches[0], e.touches[1]);
+
+      if (gestureMode === "undecided") {
+        const angleDelta = Math.abs(curAngle - startAngle);
+        const distRatio = Math.abs(curDist - startDist) / Math.max(startDist, 1);
+        if (angleDelta >= ANGLE_THRESHOLD) {
+          gestureMode = "rotate";
+        } else if (distRatio >= DIST_THRESHOLD_RATIO) {
+          gestureMode = "zoom";
+        } else {
+          return;
+        }
+      }
+
+      if (gestureMode === "rotate") {
+        const deltaAngle = curAngle - startAngle;
+        rotationRef.current = normalizeAngle(startRotation - deltaAngle);
+        applyLive();
+        setRotation(rotationRef.current);
+        return;
+      }
+
+      // gestureMode === "zoom"
       const factor = curDist / startDist;
       const zNew = Math.max(zoomFit, Math.min(zoomMax, startZoom * factor));
 
@@ -488,25 +502,17 @@ export default function FovSimulator({
       zoomRef.current = zNew;
       panXRef.current = panXNew;
       panYRef.current = panYNew;
-
-      // Rotation (only when gesture started inside the frame)
-      if (rotateMode) {
-        const curAngle = angle(e.touches[0], e.touches[1]);
-        const deltaAngle = curAngle - startAngle;
-        rotationRef.current = normalizeAngle(startRotation - deltaAngle);
-      }
-
       applyLive();
       setZoom(zNew);
       setPanX(panXNew);
       setPanY(panYNew);
-      if (rotateMode) setRotation(rotationRef.current);
     }
 
     function onTouchEnd(e: TouchEvent) {
       if (e.touches.length < 2) {
+        twoFingerActiveRef.current = false;
+        gestureMode = "undecided";
         startDist = 0;
-        rotateMode = false;
       }
     }
 
@@ -519,7 +525,7 @@ export default function FovSimulator({
       container.removeEventListener("touchend", onTouchEnd);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size, zoomFit, zoomMax, rectWidth, rectHeight]);
+  }, [size, zoomFit, zoomMax]);
 
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
@@ -538,6 +544,7 @@ export default function FovSimulator({
 
   useEffect(() => {
     function onMove(e: PointerEvent) {
+      if (twoFingerActiveRef.current) return;
       const drag = dragStateRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
       const container = containerRef.current;
