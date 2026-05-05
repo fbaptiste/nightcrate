@@ -788,69 +788,73 @@ export default function HourlyTimeline({
     const capturedWindowStartMin = windowStartMin;
     const capturedWindowEndMin = windowEndMin;
 
-    hoverOverlay
-      .on("mousemove", (event: MouseEvent) => {
-        const [mx] = d3.pointer(event, g.node());
-        const frac = (mx - LABEL_WIDTH) / gridWidth;
-        if (frac < 0 || frac > 1) return;
+    function handleHover(event: MouseEvent | TouchEvent) {
+      const [mx] = d3.pointer(event, g.node());
+      const frac = (mx - LABEL_WIDTH) / gridWidth;
+      if (frac < 0 || frac > 1) return;
 
-        const mins = capturedWindowStartMin + frac * (capturedWindowEndMin - capturedWindowStartMin);
-        const timeStr = minutesToHHMM(mins);
+      const mins = capturedWindowStartMin + frac * (capturedWindowEndMin - capturedWindowStartMin);
+      const timeStr = minutesToHHMM(mins);
 
-        hoverLine.attr("x1", mx).attr("x2", mx).style("opacity", 1);
+      hoverLine.attr("x1", mx).attr("x2", mx).style("opacity", 1);
 
-        // Find moon altitude at this time by interpolating polyline
-        let moonAltText = "";
-        if (moonPolyline.length > 0) {
-          // Find closest polyline point
-          let closestAlt: number | null = null;
-          let closestDist = Infinity;
-          for (const p of moonPolyline) {
-            const pMins = utcToLocalMinutes(p.time_utc, capturedTimezone);
-            let adjPMins = pMins;
-            if (adjPMins < capturedWindowStartMin - 12 * 60) adjPMins += 24 * 60;
-            const dist = Math.abs(adjPMins - mins);
-            if (dist < closestDist) {
-              closestDist = dist;
-              closestAlt = p.altitude_deg;
-            }
-          }
-          if (closestAlt !== null && closestAlt > 0) {
-            moonAltText = `Moon: ${Math.round(closestAlt)}°`;
+      let moonAltText = "";
+      if (moonPolyline.length > 0) {
+        let closestAlt: number | null = null;
+        let closestDist = Infinity;
+        for (const p of moonPolyline) {
+          const pMins = utcToLocalMinutes(p.time_utc, capturedTimezone);
+          let adjPMins = pMins;
+          if (adjPMins < capturedWindowStartMin - 12 * 60) adjPMins += 24 * 60;
+          const dist = Math.abs(adjPMins - mins);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestAlt = p.altitude_deg;
           }
         }
+        if (closestAlt !== null && closestAlt > 0) {
+          moonAltText = `Moon: ${Math.round(closestAlt)}°`;
+        }
+      }
 
-        tooltipTime.text(timeStr);
-        tooltipMoon.text(moonAltText);
+      tooltipTime.text(timeStr);
+      tooltipMoon.text(moonAltText);
 
-        // Position tooltip
-        const tooltipX = mx;
-        const tooltipY = darknessBarY - 6;
-        const timeWidth = 35;
-        const moonWidth = moonAltText ? moonAltText.length * 6 : 0;
-        const bgWidth = Math.max(timeWidth, moonWidth) + 12;
-        const bgHeight = moonAltText ? 30 : 18;
+      const tooltipX = mx;
+      const tooltipY = darknessBarY - 6;
+      const timeWidth = 35;
+      const moonWidth = moonAltText ? moonAltText.length * 6 : 0;
+      const bgWidth = Math.max(timeWidth, moonWidth) + 12;
+      const bgHeight = moonAltText ? 30 : 18;
 
-        tooltipBg
-          .attr("x", tooltipX - bgWidth / 2)
-          .attr("y", tooltipY - bgHeight)
-          .attr("width", bgWidth)
-          .attr("height", bgHeight);
-        tooltipTime
-          .attr("x", tooltipX)
-          .attr("y", tooltipY - bgHeight + 13)
-          .attr("text-anchor", "middle");
-        tooltipMoon
-          .attr("x", tooltipX)
-          .attr("y", tooltipY - bgHeight + 25)
-          .attr("text-anchor", "middle");
+      tooltipBg
+        .attr("x", tooltipX - bgWidth / 2)
+        .attr("y", tooltipY - bgHeight)
+        .attr("width", bgWidth)
+        .attr("height", bgHeight);
+      tooltipTime
+        .attr("x", tooltipX)
+        .attr("y", tooltipY - bgHeight + 13)
+        .attr("text-anchor", "middle");
+      tooltipMoon
+        .attr("x", tooltipX)
+        .attr("y", tooltipY - bgHeight + 25)
+        .attr("text-anchor", "middle");
 
-        tooltipG.style("opacity", 1);
-      })
-      .on("mouseleave", () => {
-        hoverLine.style("opacity", 0);
-        tooltipG.style("opacity", 0);
-      });
+      tooltipG.style("opacity", 1);
+    }
+
+    function hideHover() {
+      hoverLine.style("opacity", 0);
+      tooltipG.style("opacity", 0);
+    }
+
+    hoverOverlay
+      .on("mousemove", handleHover)
+      .on("mouseleave", hideHover)
+      .on("touchstart", (event: TouchEvent) => { event.preventDefault(); handleHover(event); }, { passive: false })
+      .on("touchmove", (event: TouchEvent) => { event.preventDefault(); handleHover(event); }, { passive: false })
+      .on("touchend", hideHover);
 
     curY += COMPOSITE_HEIGHT + 4;
 
