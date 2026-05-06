@@ -16,8 +16,8 @@ import Snackbar from "@mui/material/Snackbar";
 import Tooltip from "@mui/material/Tooltip";
 
 import IconButton from "@mui/material/IconButton";
-import KeyboardDoubleArrowLeftIcon from "@mui/icons-material/KeyboardDoubleArrowLeft";
-import KeyboardDoubleArrowRightIcon from "@mui/icons-material/KeyboardDoubleArrowRight";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FitScreenIcon from "@mui/icons-material/FitScreen";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
@@ -1011,7 +1011,7 @@ export function ImageAnalyzerPage() {
                 onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
                 sx={{ p: 0.25, color: "primary.main" }}
               >
-                {rightSidebarOpen ? <KeyboardDoubleArrowRightIcon sx={{ fontSize: 16 }} /> : <KeyboardDoubleArrowLeftIcon sx={{ fontSize: 16 }} />}
+                {rightSidebarOpen ? <ExpandLessIcon sx={{ fontSize: 16 }} /> : <ExpandMoreIcon sx={{ fontSize: 16 }} />}
               </IconButton>
             </Tooltip>
           </Box>
