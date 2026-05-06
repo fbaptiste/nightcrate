@@ -188,7 +188,11 @@ async def export_section(
         raise HTTPException(status_code=400, detail="Export is only supported for guiding sections")
 
     output = await asyncio.to_thread(
-        _build_export, parsed, section, time_start, time_end,
+        _build_export,
+        parsed,
+        section,
+        time_start,
+        time_end,
     )
 
     filename = f"PHD2_Export_{section.start_time.strftime('%Y-%m-%d_%H%M%S')}.txt"
@@ -249,10 +253,24 @@ def _build_export(
         lines.append(f"{k} = {v}")
 
     columns = [
-        "Frame", "Time", "mount", "dx", "dy",
-        "RARawDistance", "DECRawDistance", "RAGuideDistance", "DECGuideDistance",
-        "RADuration", "RADirection", "DECDuration", "DECDirection",
-        "XStep", "YStep", "StarMass", "SNR", "ErrorCode",
+        "Frame",
+        "Time",
+        "mount",
+        "dx",
+        "dy",
+        "RARawDistance",
+        "DECRawDistance",
+        "RAGuideDistance",
+        "DECGuideDistance",
+        "RADuration",
+        "RADirection",
+        "DECDuration",
+        "DECDirection",
+        "XStep",
+        "YStep",
+        "StarMass",
+        "SNR",
+        "ErrorCode",
     ]
     lines.append(",".join(columns))
 
@@ -274,7 +292,8 @@ def _build_export(
 
     events_by_time: list[tuple[float | None, str]] = [
         (ev.time_seconds, f"INFO: {ev.raw_message}")
-        for ev in section.events if in_range(ev.time_seconds)
+        for ev in section.events
+        if in_range(ev.time_seconds)
     ]
 
     event_idx = 0
