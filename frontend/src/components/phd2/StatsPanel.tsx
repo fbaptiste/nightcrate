@@ -34,6 +34,8 @@ interface Props {
   collapsible?: boolean;
   /** Initial expanded state when ``collapsible``. Default true. */
   defaultExpanded?: boolean;
+  /** Optional content rendered at the bottom of the collapsible area. */
+  footer?: React.ReactNode;
 }
 
 export default function StatsPanel({
@@ -43,6 +45,7 @@ export default function StatsPanel({
   subtitle,
   collapsible = false,
   defaultExpanded = true,
+  footer,
 }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [copiedOpen, setCopiedOpen] = useState(false);
@@ -306,6 +309,7 @@ export default function StatsPanel({
             Pixel scale not declared in header — arcsec values unavailable.
           </Typography>
         )}
+        {footer}
       </Collapse>
       <Snackbar
         open={copiedOpen}

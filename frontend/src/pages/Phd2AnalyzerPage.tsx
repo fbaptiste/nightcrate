@@ -522,17 +522,19 @@ export default function Phd2AnalyzerPage() {
                             )}
                             collapsible
                             defaultExpanded={false}
+                            footer={viewport && (
+                              <Box sx={{ display: "flex", justifyContent: "center", mt: 1 }}>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{ textTransform: "none" }}
+                                  onClick={() => handleExportViewport()}
+                                >
+                                  Export viewport log
+                                </Button>
+                              </Box>
+                            )}
                           />
-                          {viewport && (
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              sx={{ mt: 1, width: "100%", textTransform: "none" }}
-                              onClick={() => handleExportViewport()}
-                            >
-                              Export viewport log
-                            </Button>
-                          )}
                         </Box>
                       )}
                     </Box>

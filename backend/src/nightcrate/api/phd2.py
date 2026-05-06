@@ -293,7 +293,7 @@ def _build_export(
         row = [
             str(sample.frame),
             f"{sample.time_seconds:.3f}",
-            f'"{sample.mount_kind.value}"',
+            f'"{sample.mount_kind}"',
             fmt(sample.dx_px),
             fmt(sample.dy_px),
             fmt(sample.ra_raw_px),
