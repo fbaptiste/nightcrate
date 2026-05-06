@@ -167,6 +167,88 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       };
     }, [isPanning]);
 
+    // ── Touch pan + pinch-to-zoom ─────────────────────────────────────────
+
+    const twoFingerRef = useRef(false);
+
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      let startDist = 0;
+      let startZoom = 0;
+      let midX = 0;
+      let midY = 0;
+      let panTouchId: number | null = null;
+      let panStartX = 0;
+      let panStartY = 0;
+      let panStartOx = 0;
+      let panStartOy = 0;
+
+      function fingerDist(t1: Touch, t2: Touch): number {
+        return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      }
+
+      function onTouchStart(e: TouchEvent) {
+        if (e.touches.length === 2) {
+          e.preventDefault();
+          twoFingerRef.current = true;
+          panTouchId = null;
+          startDist = fingerDist(e.touches[0], e.touches[1]);
+          startZoom = zoom ?? getFitScale();
+          const rect = container!.getBoundingClientRect();
+          midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left - rect.width / 2;
+          midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top - rect.height / 2;
+        } else if (e.touches.length === 1 && !twoFingerRef.current) {
+          panTouchId = e.touches[0].identifier;
+          panStartX = e.touches[0].clientX;
+          panStartY = e.touches[0].clientY;
+          panStartOx = offset.x;
+          panStartOy = offset.y;
+        }
+      }
+
+      function onTouchMove(e: TouchEvent) {
+        if (e.touches.length === 2 && twoFingerRef.current) {
+          e.preventDefault();
+          const curDist = fingerDist(e.touches[0], e.touches[1]);
+          const factor = curDist / startDist;
+          const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, startZoom * factor));
+          const ratio = newZoom / startZoom;
+          setOffset((prev) => ({
+            x: midX - ratio * (midX - prev.x),
+            y: midY - ratio * (midY - prev.y),
+          }));
+          setZoom(newZoom);
+        } else if (e.touches.length === 1 && panTouchId != null && !twoFingerRef.current) {
+          const t = Array.from(e.touches).find((t) => t.identifier === panTouchId);
+          if (!t) return;
+          e.preventDefault();
+          const dx = t.clientX - panStartX;
+          const dy = t.clientY - panStartY;
+          setOffset({ x: panStartOx + dx, y: panStartOy + dy });
+        }
+      }
+
+      function onTouchEnd(e: TouchEvent) {
+        if (e.touches.length < 2) {
+          twoFingerRef.current = false;
+          startDist = 0;
+        }
+        if (e.touches.length === 0) {
+          panTouchId = null;
+        }
+      }
+
+      container.addEventListener("touchstart", onTouchStart, { passive: false });
+      container.addEventListener("touchmove", onTouchMove, { passive: false });
+      container.addEventListener("touchend", onTouchEnd);
+      return () => {
+        container.removeEventListener("touchstart", onTouchStart);
+        container.removeEventListener("touchmove", onTouchMove);
+        container.removeEventListener("touchend", onTouchEnd);
+      };
+    });
+
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
 
     const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
@@ -287,6 +369,9 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           position: "relative",
           cursor: isPanning ? "grabbing" : onPixelHover ? `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Ccircle cx='12' cy='12' r='8' fill='none' stroke='%23000' stroke-width='3'/%3E%3Cline x1='12' y1='0' x2='12' y2='8' stroke='%23000' stroke-width='3'/%3E%3Cline x1='12' y1='16' x2='12' y2='24' stroke='%23000' stroke-width='3'/%3E%3Cline x1='0' y1='12' x2='8' y2='12' stroke='%23000' stroke-width='3'/%3E%3Cline x1='16' y1='12' x2='24' y2='12' stroke='%23000' stroke-width='3'/%3E%3Ccircle cx='12' cy='12' r='8' fill='none' stroke='%23d4993f' stroke-width='1'/%3E%3Cline x1='12' y1='0' x2='12' y2='8' stroke='%23d4993f' stroke-width='1'/%3E%3Cline x1='12' y1='16' x2='12' y2='24' stroke='%23d4993f' stroke-width='1'/%3E%3Cline x1='0' y1='12' x2='8' y2='12' stroke='%23d4993f' stroke-width='1'/%3E%3Cline x1='16' y1='12' x2='24' y2='12' stroke='%23d4993f' stroke-width='1'/%3E%3C/svg%3E") 12 12, crosshair` : "default",
           userSelect: "none",
+          WebkitTouchCallout: "none",
+          WebkitUserSelect: "none",
+          touchAction: "none",
         }}
       >
         {/* Loading spinner — initial load or src change (e.g., stretch applied) */}

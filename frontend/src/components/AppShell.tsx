@@ -11,6 +11,8 @@ import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTheme } from "@mui/material/styles";
 import KeyboardDoubleArrowLeftIcon from "@mui/icons-material/KeyboardDoubleArrowLeft";
 import KeyboardDoubleArrowRightIcon from "@mui/icons-material/KeyboardDoubleArrowRight";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
@@ -172,6 +174,19 @@ export function AppShell() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
 
+  const muiTheme = useTheme();
+  const isTablet = useMediaQuery(muiTheme.breakpoints.down("md"));
+
+  useEffect(() => {
+    if (isTablet) setNavOpen(false);
+  }, [isTablet]);
+
+  const isTabletRef = useRef(isTablet);
+  isTabletRef.current = isTablet;
+  useEffect(() => {
+    if (isTabletRef.current) setNavOpen(false);
+  }, [pathname]);
+
   const drawerWidth = navOpen ? DRAWER_WIDTH_OPEN : DRAWER_WIDTH_CLOSED;
 
   // Resolve the user's saved nav order. Re-normalized every render so a
@@ -273,19 +288,27 @@ export function AppShell() {
         <List dense>
           {/* Home stays pinned at the top, never reorderable. */}
           <NavItemRow item={HOME_ITEM} navOpen={navOpen} />
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={reorderableRoutes} strategy={verticalListSortingStrategy}>
-              {reorderableRoutes.map((route) => {
-                const item = itemByRoute.get(route);
-                if (!item) return null;
-                return <SortableNavItemRow key={route} item={item} navOpen={navOpen} />;
-              })}
-            </SortableContext>
-          </DndContext>
+          {isTablet ? (
+            reorderableRoutes.map((route) => {
+              const item = itemByRoute.get(route);
+              if (!item) return null;
+              return <NavItemRow key={route} item={item} navOpen={navOpen} />;
+            })
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={reorderableRoutes} strategy={verticalListSortingStrategy}>
+                {reorderableRoutes.map((route) => {
+                  const item = itemByRoute.get(route);
+                  if (!item) return null;
+                  return <SortableNavItemRow key={route} item={item} navOpen={navOpen} />;
+                })}
+              </SortableContext>
+            </DndContext>
+          )}
         </List>
 
         <Box sx={{ flexGrow: 1 }} />
