@@ -122,7 +122,7 @@ export default function StatsPanel({
   const renderDist = (px: number | null): string => {
     if (px === null) return "—";
     if (scale === null) return `${px.toFixed(3)} px`;
-    return `${px.toFixed(3)} px / ${(px * scale).toFixed(2)}″`;
+    return `${px.toFixed(3)} px\n${(px * scale).toFixed(2)}″`;
   };
   const renderDrift = (pxPerMin: number | null): string => {
     if (pxPerMin === null) return "—";
@@ -133,7 +133,7 @@ export default function StatsPanel({
     const pxStr = pxPerMin.toFixed(4);
     if (scale === null) return `${pxStr} px/min`;
     const arcsecStr = (pxPerMin * scale).toFixed(3);
-    return `${pxStr} px/min / ${arcsecStr}″/min`;
+    return `${pxStr} px/min\n${arcsecStr}″/min`;
   };
   const renderOscillation = (frac: number | null): string => {
     if (frac === null) return "—";

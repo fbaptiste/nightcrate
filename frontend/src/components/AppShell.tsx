@@ -25,7 +25,7 @@ import BuildIcon from "@mui/icons-material/Build";
 import CalculateOutlinedIcon from "@mui/icons-material/CalculateOutlined";
 import CodeIcon from "@mui/icons-material/Code";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
-import PublicIcon from "@mui/icons-material/Public";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import PlaceIcon from "@mui/icons-material/Place";
 import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -85,7 +85,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
   { to: "/image-analyzer", label: "Image Analyzer", icon: <ImageSearchIcon /> },
   { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
-  { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
+  { to: "/catalog/dso", label: "DSO Catalog", icon: <AutoAwesomeIcon /> },
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
   { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
   { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
