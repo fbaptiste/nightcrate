@@ -52,8 +52,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const crosshairRef = useRef<SVGSVGElement | null>(null);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
     const imageWrapperRef = useRef<HTMLDivElement | null>(null);
-    const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
-    const samplingCtx = useRef<CanvasRenderingContext2D | null>(null);
+    const pixelData = useRef<{ data: Uint8ClampedArray; width: number; height: number } | null>(null);
 
     // Cache the last valid fit scale so we don't lose it when the container
     // is hidden (display:none → 0×0) during tab switches.
@@ -344,53 +343,87 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
+    // ── Pixel sampling bitmap ──────────────────────────────────────────────
 
-    // Rebuild the offscreen canvas when the image loads.
-    // Sync drawImage(img) works on desktop. On iOS Safari, pixels may
-    // not be decoded at onLoad time — poll with rAF until the canvas
-    // has non-zero pixel data, then stop.
+    // Build an in-memory pixel array for sampling. Two paths:
+    // 1. Sync: drawImage(img) → getImageData (works on desktop)
+    // 2. Async: fetch(src) → createImageBitmap → draw → getImageData
+    //    (works on iOS where canvas is tainted by self-signed HTTPS)
+    // The async path reuses the <img>'s browser-cached response.
     useEffect(() => {
       const img = imgRef.current;
       if (!img || !imageLoaded || !img.naturalWidth) {
-        samplingCanvas.current = null;
-        samplingCtx.current = null;
+        pixelData.current = null;
         return;
       }
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
       const c = document.createElement("canvas");
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
+      c.width = w;
+      c.height = h;
       const ctx = c.getContext("2d", { willReadFrequently: true });
       if (!ctx) return;
 
+      // Desktop fast path
       ctx.drawImage(img, 0, 0);
-      samplingCanvas.current = c;
-      samplingCtx.current = ctx;
-
-      const probe = ctx.getImageData(
-        Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1,
-      ).data;
-      if (probe[0] + probe[1] + probe[2] + probe[3] > 0) return;
-
-      let cancelled = false;
-      let rafId = 0;
-      function retry() {
-        if (cancelled) return;
-        ctx!.drawImage(img!, 0, 0);
-        const p = ctx!.getImageData(
-          Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1,
-        ).data;
-        if (p[0] + p[1] + p[2] + p[3] > 0) return;
-        rafId = requestAnimationFrame(retry);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const nonZero = imgData.data.some((v) => v !== 0);
+      if (nonZero) {
+        pixelData.current = { data: imgData.data, width: w, height: h };
+        return;
       }
-      rafId = requestAnimationFrame(retry);
-      return () => { cancelled = true; cancelAnimationFrame(rafId); };
+
+      // iOS fallback: fetch as blob → createImageBitmap → extract pixels
+      let cancelled = false;
+      fetch(src)
+        .then((r) => r.blob())
+        .then((blob) => createImageBitmap(blob))
+        .then((bitmap) => {
+          if (cancelled) { bitmap.close(); return; }
+          c.width = bitmap.width;
+          c.height = bitmap.height;
+          ctx.drawImage(bitmap, 0, 0);
+          bitmap.close();
+          const bd = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+          pixelData.current = { data: bd.data, width: bitmap.width, height: bitmap.height };
+        })
+        .catch(() => {});
+      return () => { cancelled = true; };
     }, [imageLoaded, src]);
+
+    function sampleFromPixelData(
+      px: number, py: number, patchRadius: number,
+    ): PixelInfo | null {
+      const pd = pixelData.current;
+      if (!pd) return null;
+      if (px < 0 || px >= pd.width || py < 0 || py >= pd.height) return null;
+      const idx = (py * pd.width + px) * 4;
+      const r = pd.data[idx] / 255;
+      const g = pd.data[idx + 1] / 255;
+      const b = pd.data[idx + 2] / 255;
+      const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+      const patchSize = patchRadius * 2 + 1;
+      const patch = new ImageData(patchSize, patchSize);
+      for (let row = 0; row < patchSize; row++) {
+        for (let col = 0; col < patchSize; col++) {
+          const srcX = Math.max(0, Math.min(pd.width - 1, px - patchRadius + col));
+          const srcY = Math.max(0, Math.min(pd.height - 1, py - patchRadius + row));
+          const si = (srcY * pd.width + srcX) * 4;
+          const di = (row * patchSize + col) * 4;
+          patch.data[di] = pd.data[si];
+          patch.data[di + 1] = pd.data[si + 1];
+          patch.data[di + 2] = pd.data[si + 2];
+          patch.data[di + 3] = 255;
+        }
+      }
+      return { x: px, y: py, R: r, G: g, B: b, K: k, patch };
+    }
 
     function handleMouseMoveForPixel(e: React.MouseEvent) {
       if (!onPixelHover || !imgRef.current || !containerRef.current || isPanning) return;
       const img = imgRef.current;
-      if (!img.naturalWidth || !samplingCtx.current) return;
+      if (!img.naturalWidth || !pixelData.current) return;
 
       const container = containerRef.current;
       const rect = container.getBoundingClientRect();
@@ -402,47 +435,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       const imgX = (mx - offset.x) / ez + img.naturalWidth / 2;
       const imgY = (my - offset.y) / ez + img.naturalHeight / 2;
 
-      const px = Math.floor(imgX);
-      const py = Math.floor(imgY);
-
-      if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
-        const ctx = samplingCtx.current;
-        const pixel = ctx.getImageData(px, py, 1, 1).data;
-        const r = pixel[0] / 255;
-        const g = pixel[1] / 255;
-        const b = pixel[2] / 255;
-        const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-        // Extract surrounding patch centered on the target pixel
-        const patchRadius = pixelPatchRadius;
-        const patchSize = patchRadius * 2 + 1;
-        const sx = Math.max(0, px - patchRadius);
-        const sy = Math.max(0, py - patchRadius);
-        const ex = Math.min(img.naturalWidth, px + patchRadius + 1);
-        const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
-        const sw = ex - sx;
-        const sh = ey - sy;
-        const srcPatch = ctx.getImageData(sx, sy, sw, sh);
-
-        // Place into a full-size patch (handles edge clamping)
-        const patch = new ImageData(patchSize, patchSize);
-        const ox = px - patchRadius - sx;
-        const oy = py - patchRadius - sy;
-        for (let row = 0; row < sh; row++) {
-          for (let col = 0; col < sw; col++) {
-            const srcIdx = (row * sw + col) * 4;
-            const dstIdx = ((row - oy) * patchSize + (col - ox)) * 4;
-            patch.data[dstIdx] = srcPatch.data[srcIdx];
-            patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
-            patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
-            patch.data[dstIdx + 3] = 255;
-          }
-        }
-
-        onPixelHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
-      } else {
-        onPixelHover(null);
-      }
+      const info = sampleFromPixelData(Math.floor(imgX), Math.floor(imgY), pixelPatchRadius);
+      onPixelHover(info);
     }
 
     function handleMouseLeaveForPixel() {
@@ -453,7 +447,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     function samplePixelAtClient(clientX: number, clientY: number) {
       if (!onPixelHover || !imgRef.current || !containerRef.current) return;
       const img = imgRef.current;
-      if (!img.naturalWidth || !samplingCtx.current) return;
+      if (!img.naturalWidth || !pixelData.current) return;
       const container = containerRef.current;
       const rect = container.getBoundingClientRect();
       const ez = effectiveZoom();
@@ -468,41 +462,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       }
       const imgX = (mx - offset.x) / ez + img.naturalWidth / 2;
       const imgY = (my - offset.y) / ez + img.naturalHeight / 2;
-      const px = Math.floor(imgX);
-      const py = Math.floor(imgY);
-      if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
-        const ctx = samplingCtx.current;
-        const pixel = ctx.getImageData(px, py, 1, 1).data;
-        const r = pixel[0] / 255;
-        const g = pixel[1] / 255;
-        const b = pixel[2] / 255;
-        const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        const patchRadius = pixelPatchRadius;
-        const patchSize = patchRadius * 2 + 1;
-        const sx2 = Math.max(0, px - patchRadius);
-        const sy2 = Math.max(0, py - patchRadius);
-        const ex = Math.min(img.naturalWidth, px + patchRadius + 1);
-        const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
-        const sw = ex - sx2;
-        const sh = ey - sy2;
-        const srcPatch = ctx.getImageData(sx2, sy2, sw, sh);
-        const patch = new ImageData(patchSize, patchSize);
-        const pox = px - patchRadius - sx2;
-        const poy = py - patchRadius - sy2;
-        for (let row = 0; row < sh; row++) {
-          for (let col = 0; col < sw; col++) {
-            const srcIdx = (row * sw + col) * 4;
-            const dstIdx = ((row - poy) * patchSize + (col - pox)) * 4;
-            patch.data[dstIdx] = srcPatch.data[srcIdx];
-            patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
-            patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
-            patch.data[dstIdx + 3] = 255;
-          }
-        }
-        onPixelHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
-      } else {
-        onPixelHover(null);
-      }
+      const info = sampleFromPixelData(Math.floor(imgX), Math.floor(imgY), pixelPatchRadius);
+      onPixelHover(info);
     }
     const samplePixelRef = useRef(samplePixelAtClient);
     samplePixelRef.current = samplePixelAtClient;
