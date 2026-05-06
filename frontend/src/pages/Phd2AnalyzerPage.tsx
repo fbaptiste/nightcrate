@@ -220,6 +220,25 @@ export default function Phd2AnalyzerPage() {
     );
   }, [viewportSamples, selected, includeSettle]);
 
+  const handleExportViewport = async () => {
+    if (!activePath || !selected || !viewport) return;
+    const params = new URLSearchParams({
+      path: activePath,
+      section_index: String(selected.section.index),
+      time_start: String(viewport[0]),
+      time_end: String(viewport[1]),
+    });
+    const res = await fetch(`/api/phd2/export?${params.toString()}`, { method: "POST" });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "PHD2_Export.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const openPath = (path: string) => {
     const trimmed = path.trim();
     if (!trimmed) return;
@@ -504,6 +523,16 @@ export default function Phd2AnalyzerPage() {
                             collapsible
                             defaultExpanded={false}
                           />
+                          {viewport && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              sx={{ mt: 1, width: "100%", textTransform: "none" }}
+                              onClick={() => handleExportViewport()}
+                            >
+                              Export viewport log
+                            </Button>
+                          )}
                         </Box>
                       )}
                     </Box>
