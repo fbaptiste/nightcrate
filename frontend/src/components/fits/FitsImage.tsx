@@ -346,7 +346,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
 
-    // Rebuild the offscreen canvas when the image loads
+    // Rebuild the offscreen canvas when the image loads. Uses
+    // img.decode() to ensure iOS Safari has fully decoded the pixels
+    // before drawing to the canvas (onLoad fires at header-parse time,
+    // before pixel decoding completes on iOS).
     useEffect(() => {
       const img = imgRef.current;
       if (!img || !imageLoaded || !img.naturalWidth) {
@@ -354,15 +357,20 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         samplingCtx.current = null;
         return;
       }
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      const ctx = c.getContext("2d", { willReadFrequently: true });
-      if (ctx) {
-        ctx.drawImage(img, 0, 0);
-        samplingCanvas.current = c;
-        samplingCtx.current = ctx;
-      }
+      let cancelled = false;
+      img.decode().then(() => {
+        if (cancelled) return;
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          samplingCanvas.current = c;
+          samplingCtx.current = ctx;
+        }
+      }).catch(() => {});
+      return () => { cancelled = true; };
     }, [imageLoaded, src]);
 
     function handleMouseMoveForPixel(e: React.MouseEvent) {
