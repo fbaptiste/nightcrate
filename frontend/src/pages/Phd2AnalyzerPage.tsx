@@ -232,11 +232,17 @@ export default function Phd2AnalyzerPage() {
     if (!res.ok) return;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
+    const filename = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "PHD2_Export.txt";
     const a = document.createElement("a");
     a.href = url;
-    a.download = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "PHD2_Export.txt";
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
   };
 
   const openPath = (path: string) => {
