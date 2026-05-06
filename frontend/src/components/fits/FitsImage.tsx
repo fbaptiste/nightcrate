@@ -346,10 +346,9 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
 
-    // Rebuild the offscreen canvas when the image loads. Uses
-    // img.decode() to ensure iOS Safari has fully decoded the pixels
-    // before drawing to the canvas (onLoad fires at header-parse time,
-    // before pixel decoding completes on iOS).
+    // Rebuild the offscreen canvas when the image loads. The synchronous
+    // drawImage works on desktop; on iOS Safari, pixels may not be decoded
+    // yet at onLoad time, so we also schedule a decode-then-redraw fallback.
     useEffect(() => {
       const img = imgRef.current;
       if (!img || !imageLoaded || !img.naturalWidth) {
@@ -357,18 +356,19 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         samplingCtx.current = null;
         return;
       }
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+        samplingCanvas.current = c;
+        samplingCtx.current = ctx;
+      }
       let cancelled = false;
       img.decode().then(() => {
-        if (cancelled) return;
-        const c = document.createElement("canvas");
-        c.width = img.naturalWidth;
-        c.height = img.naturalHeight;
-        const ctx = c.getContext("2d", { willReadFrequently: true });
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          samplingCanvas.current = c;
-          samplingCtx.current = ctx;
-        }
+        if (cancelled || !ctx) return;
+        ctx.drawImage(img, 0, 0);
       }).catch(() => {});
       return () => { cancelled = true; };
     }, [imageLoaded, src]);
