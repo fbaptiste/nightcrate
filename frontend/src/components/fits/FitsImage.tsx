@@ -43,10 +43,9 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     // null zoom = fit-to-window (computed from container/image size)
     const [zoom, setZoom] = useState<number | null>(null);
     const [imageLoaded, setImageLoaded] = useState(false);
-    // Show spinner overlay when src changes (e.g., Apply stretch).
-    // Old image stays visible behind spinner.
     const [imageLoading, setImageLoading] = useState(false);
-    const prevSrc = useRef(src);
+    const [blobSrc, setBlobSrc] = useState<string | null>(null);
+    const prevBlobSrc = useRef<string | null>(null);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const crosshairRef = useRef<SVGSVGElement | null>(null);
@@ -54,25 +53,55 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const imageWrapperRef = useRef<HTMLDivElement | null>(null);
     const pixelData = useRef<{ data: Uint8ClampedArray; width: number; height: number } | null>(null);
 
-    // Cache the last valid fit scale so we don't lose it when the container
-    // is hidden (display:none → 0×0) during tab switches.
     const lastFitScale = useRef(1);
 
-    // Detect src changes for loading spinner (stretch param changes, etc.)
-    if (src !== prevSrc.current) {
-      prevSrc.current = src;
-      if (imageLoaded) {
-        setImageLoading(true);
-      }
-    }
-
-    // Reset zoom/offset and loading state when a different file is opened
+    // Reset zoom/offset when a different file is opened
     useEffect(() => {
       setZoom(null);
       setOffset({ x: 0, y: 0 });
       setImageLoaded(false);
       setImageLoading(false);
     }, [path, hdu]);
+
+    // Single fetch: image URL → blob → blob URL for display + pixel array for sampling.
+    // ONE network request. The <img> loads from the blob URL (local, no network).
+    useEffect(() => {
+      let cancelled = false;
+      setImageLoading(true);
+      pixelData.current = null;
+
+      fetch(src)
+        .then((r) => r.blob())
+        .then(async (blob) => {
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          if (prevBlobSrc.current) URL.revokeObjectURL(prevBlobSrc.current);
+          prevBlobSrc.current = url;
+          setBlobSrc(url);
+
+          try {
+            const bitmap = await createImageBitmap(blob);
+            if (cancelled) { bitmap.close(); return; }
+            const c = document.createElement("canvas");
+            c.width = bitmap.width;
+            c.height = bitmap.height;
+            const ctx = c.getContext("2d", { willReadFrequently: true });
+            if (ctx) {
+              ctx.drawImage(bitmap, 0, 0);
+              const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+              pixelData.current = { data: imgData.data, width: bitmap.width, height: bitmap.height };
+            }
+            bitmap.close();
+          } catch {
+            // createImageBitmap not supported or failed — pixel inspector unavailable
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setImageLoading(false);
+        });
+
+      return () => { cancelled = true; };
+    }, [src]);
 
     // Compute the fit-to-window scale
     function getFitScale(): number {
@@ -343,53 +372,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ── Pixel sampling bitmap ──────────────────────────────────────────────
-
-    // Build an in-memory pixel array for sampling. Two paths:
-    // 1. Sync: drawImage(img) → getImageData (works on desktop)
-    // 2. Async: fetch(src) → createImageBitmap → draw → getImageData
-    //    (works on iOS where canvas is tainted by self-signed HTTPS)
-    // The async path reuses the <img>'s browser-cached response.
-    useEffect(() => {
-      const img = imgRef.current;
-      if (!img || !imageLoaded || !img.naturalWidth) {
-        pixelData.current = null;
-        return;
-      }
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      const c = document.createElement("canvas");
-      c.width = w;
-      c.height = h;
-      const ctx = c.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return;
-
-      // Desktop fast path
-      ctx.drawImage(img, 0, 0);
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const nonZero = imgData.data.some((v) => v !== 0);
-      if (nonZero) {
-        pixelData.current = { data: imgData.data, width: w, height: h };
-        return;
-      }
-
-      // iOS fallback: fetch as blob → createImageBitmap → extract pixels
-      let cancelled = false;
-      fetch(src)
-        .then((r) => r.blob())
-        .then((blob) => createImageBitmap(blob))
-        .then((bitmap) => {
-          if (cancelled) { bitmap.close(); return; }
-          c.width = bitmap.width;
-          c.height = bitmap.height;
-          ctx.drawImage(bitmap, 0, 0);
-          bitmap.close();
-          const bd = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-          pixelData.current = { data: bd.data, width: bitmap.width, height: bitmap.height };
-        })
-        .catch(() => {});
-      return () => { cancelled = true; };
-    }, [imageLoaded, src]);
+    // ── Pixel sampling ─────────────────────────────────────────────────────
+    // pixelData is populated by the single-fetch effect above.
 
     function sampleFromPixelData(
       px: number, py: number, patchRadius: number,
@@ -524,16 +508,18 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             imageRendering: ez >= 2 ? "pixelated" : "auto",
           }}
         >
-          <Box
-            component="img"
-            ref={imgRef}
-            src={src}
-            alt="Astronomical image"
-            draggable={false}
-            onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-            onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-            sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
-          />
+          {blobSrc && (
+            <Box
+              component="img"
+              ref={imgRef}
+              src={blobSrc}
+              alt="Astronomical image"
+              draggable={false}
+              onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+              onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+              sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
+            />
+          )}
         </Box>
         <svg
           ref={crosshairRef}
