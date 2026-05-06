@@ -70,38 +70,45 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       setImageLoading(true);
       pixelData.current = null;
 
-      fetch(src, { signal: abort.signal })
-        .then((r) => r.blob())
-        .then(async (blob) => {
-          if (abort.signal.aborted) return;
-
-          try {
-            const bitmap = await createImageBitmap(blob);
-            if (abort.signal.aborted) { bitmap.close(); return; }
-            const c = document.createElement("canvas");
-            c.width = bitmap.width;
-            c.height = bitmap.height;
-            const ctx = c.getContext("2d", { willReadFrequently: true });
-            if (ctx) {
-              ctx.drawImage(bitmap, 0, 0);
-              const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-              pixelData.current = { data: imgData.data, width: bitmap.width, height: bitmap.height };
-            }
-            bitmap.close();
-          } catch {
-            // createImageBitmap not supported or failed
-          }
-
-          if (abort.signal.aborted) return;
-          const url = URL.createObjectURL(blob);
-          if (prevBlobSrc.current) URL.revokeObjectURL(prevBlobSrc.current);
-          prevBlobSrc.current = url;
-          setBlobSrc(url);
-        })
-        .catch((e) => {
+      (async () => {
+        let r: Response;
+        try {
+          r = await fetch(src, { signal: abort.signal });
+        } catch (e) {
           if (e instanceof DOMException && e.name === "AbortError") return;
           setImageLoading(false);
-        });
+          return;
+        }
+        if (!r.ok || abort.signal.aborted) {
+          if (!abort.signal.aborted) setImageLoading(false);
+          return;
+        }
+
+        const blob = await r.blob();
+        if (abort.signal.aborted) return;
+
+        const url = URL.createObjectURL(blob);
+        if (prevBlobSrc.current) URL.revokeObjectURL(prevBlobSrc.current);
+        prevBlobSrc.current = url;
+        setBlobSrc(url);
+
+        try {
+          const bitmap = await createImageBitmap(blob);
+          if (abort.signal.aborted) { bitmap.close(); return; }
+          const c = document.createElement("canvas");
+          c.width = bitmap.width;
+          c.height = bitmap.height;
+          const ctx = c.getContext("2d", { willReadFrequently: true });
+          if (ctx) {
+            ctx.drawImage(bitmap, 0, 0);
+            const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+            pixelData.current = { data: imgData.data, width: bitmap.width, height: bitmap.height };
+          }
+          bitmap.close();
+        } catch {
+          // pixel data unavailable — inspector will show no colors
+        }
+      })();
 
       return () => abort.abort();
     }, [src]);
