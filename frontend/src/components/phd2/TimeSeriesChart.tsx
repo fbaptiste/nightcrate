@@ -628,6 +628,7 @@ function TimeSeriesChartInner(
         [MARGIN.left + innerW, height],
       ])
       .filter((e) => {
+        if (e.type === "touchstart" || e.type === "touchmove" || e.type === "touchend") return true;
         const me = e as MouseEvent;
         if (me.type === "mousedown" && me.shiftKey) return false;
         if (me.ctrlKey || me.button) return false;
