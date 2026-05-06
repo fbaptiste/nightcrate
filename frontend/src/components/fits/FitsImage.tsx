@@ -66,18 +66,18 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     // Single fetch: image URL → blob → blob URL for display + pixel array for sampling.
     // ONE network request. The <img> loads from the blob URL (local, no network).
     useEffect(() => {
-      let cancelled = false;
+      const abort = new AbortController();
       setImageLoading(true);
       pixelData.current = null;
 
-      fetch(src)
+      fetch(src, { signal: abort.signal })
         .then((r) => r.blob())
         .then(async (blob) => {
-          if (cancelled) return;
+          if (abort.signal.aborted) return;
 
           try {
             const bitmap = await createImageBitmap(blob);
-            if (cancelled) { bitmap.close(); return; }
+            if (abort.signal.aborted) { bitmap.close(); return; }
             const c = document.createElement("canvas");
             c.width = bitmap.width;
             c.height = bitmap.height;
@@ -92,17 +92,18 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             // createImageBitmap not supported or failed
           }
 
-          if (cancelled) return;
+          if (abort.signal.aborted) return;
           const url = URL.createObjectURL(blob);
           if (prevBlobSrc.current) URL.revokeObjectURL(prevBlobSrc.current);
           prevBlobSrc.current = url;
           setBlobSrc(url);
         })
-        .catch(() => {
-          if (!cancelled) setImageLoading(false);
+        .catch((e) => {
+          if (e instanceof DOMException && e.name === "AbortError") return;
+          setImageLoading(false);
         });
 
-      return () => { cancelled = true; };
+      return () => abort.abort();
     }, [src]);
 
     // Compute the fit-to-window scale
@@ -510,16 +511,18 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             imageRendering: ez >= 2 ? "pixelated" : "auto",
           }}
         >
-          <Box
-            component="img"
-            ref={imgRef}
-            src={blobSrc ?? ""}
-            alt="Astronomical image"
-            draggable={false}
-            onLoad={() => { if (blobSrc) { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); } }}
-            onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-            sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
-          />
+          {blobSrc && (
+            <Box
+              component="img"
+              ref={imgRef}
+              src={blobSrc}
+              alt="Astronomical image"
+              draggable={false}
+              onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+              onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+              sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
+            />
+          )}
         </Box>
         <svg
           ref={crosshairRef}
