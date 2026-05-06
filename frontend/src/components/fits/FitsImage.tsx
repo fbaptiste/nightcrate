@@ -43,75 +43,37 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     // null zoom = fit-to-window (computed from container/image size)
     const [zoom, setZoom] = useState<number | null>(null);
     const [imageLoaded, setImageLoaded] = useState(false);
+    // Show spinner overlay when src changes (e.g., Apply stretch).
+    // Old image stays visible behind spinner.
     const [imageLoading, setImageLoading] = useState(false);
-    const [blobSrc, setBlobSrc] = useState<string | null>(null);
-    const prevBlobSrc = useRef<string | null>(null);
+    const prevSrc = useRef(src);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const crosshairRef = useRef<SVGSVGElement | null>(null);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
     const imageWrapperRef = useRef<HTMLDivElement | null>(null);
-    const pixelData = useRef<{ data: Uint8ClampedArray; width: number; height: number } | null>(null);
+    const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
+    const samplingCtx = useRef<CanvasRenderingContext2D | null>(null);
 
+    // Cache the last valid fit scale so we don't lose it when the container
+    // is hidden (display:none → 0×0) during tab switches.
     const lastFitScale = useRef(1);
 
-    // Reset zoom/offset when a different file is opened
+    // Detect src changes for loading spinner (stretch param changes, etc.)
+    if (src !== prevSrc.current) {
+      prevSrc.current = src;
+      if (imageLoaded) {
+        setImageLoading(true);
+      }
+    }
+
+    // Reset zoom/offset and loading state when a different file is opened
     useEffect(() => {
       setZoom(null);
       setOffset({ x: 0, y: 0 });
       setImageLoaded(false);
       setImageLoading(false);
     }, [path, hdu]);
-
-    // Single fetch: image URL → blob → blob URL for display + pixel array for sampling.
-    // ONE network request. The <img> loads from the blob URL (local, no network).
-    useEffect(() => {
-      const abort = new AbortController();
-      setImageLoading(true);
-      pixelData.current = null;
-
-      (async () => {
-        let r: Response;
-        try {
-          r = await fetch(src, { signal: abort.signal });
-        } catch (e) {
-          if (e instanceof DOMException && e.name === "AbortError") return;
-          setImageLoading(false);
-          return;
-        }
-        if (!r.ok || abort.signal.aborted) {
-          if (!abort.signal.aborted) setImageLoading(false);
-          return;
-        }
-
-        const blob = await r.blob();
-        if (abort.signal.aborted) return;
-
-        const url = URL.createObjectURL(blob);
-        if (prevBlobSrc.current) URL.revokeObjectURL(prevBlobSrc.current);
-        prevBlobSrc.current = url;
-        setBlobSrc(url);
-
-        try {
-          const bitmap = await createImageBitmap(blob);
-          if (abort.signal.aborted) { bitmap.close(); return; }
-          const c = document.createElement("canvas");
-          c.width = bitmap.width;
-          c.height = bitmap.height;
-          const ctx = c.getContext("2d", { willReadFrequently: true });
-          if (ctx) {
-            ctx.drawImage(bitmap, 0, 0);
-            const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-            pixelData.current = { data: imgData.data, width: bitmap.width, height: bitmap.height };
-          }
-          bitmap.close();
-        } catch {
-          // pixel data unavailable — inspector will show no colors
-        }
-      })();
-
-      return () => abort.abort();
-    }, [src]);
 
     // Compute the fit-to-window scale
     function getFitScale(): number {
@@ -223,8 +185,9 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       const container = containerRef.current;
       if (!container) return;
 
-      const LONG_PRESS_MS = 250;
+      const LONG_PRESS_MS = 400;
       const LONG_PRESS_MOVE_THRESHOLD = 10;
+      const PIXEL_INSPECT_OFFSET_Y = -60;
 
       const gesture = {
         startDist: 0,
@@ -246,6 +209,62 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
       function fingerDist(t1: Touch, t2: Touch): number {
         return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      }
+
+      function samplePixelAt(clientX: number, clientY: number) {
+        const img = imgRef.current;
+        const ctx = samplingCtx.current;
+        const onHover = onPixelHoverRef.current;
+        if (!img || !onHover || !container || !img.naturalWidth) return;
+        const rect = container.getBoundingClientRect();
+        const sampleClientY = clientY + PIXEL_INSPECT_OFFSET_Y;
+        const ch = crosshairRef.current;
+        if (ch) {
+          ch.style.display = "block";
+          ch.style.left = `${clientX - rect.left - 12}px`;
+          ch.style.top = `${sampleClientY - rect.top - 12}px`;
+        }
+        if (!ctx) return;
+        const ez = zoomRef.current ?? currentZoom();
+        const off = offsetRef.current;
+        const mx = clientX - rect.left - rect.width / 2;
+        const my = sampleClientY - rect.top - rect.height / 2;
+        const imgX = (mx - off.x) / ez + img.naturalWidth / 2;
+        const imgY = (my - off.y) / ez + img.naturalHeight / 2;
+        const px = Math.floor(imgX);
+        const py = Math.floor(imgY);
+        if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
+          const pixel = ctx.getImageData(px, py, 1, 1).data;
+          const r = pixel[0] / 255;
+          const g = pixel[1] / 255;
+          const b = pixel[2] / 255;
+          const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          const patchRadius = 50;
+          const patchSize = patchRadius * 2 + 1;
+          const sx = Math.max(0, px - patchRadius);
+          const sy = Math.max(0, py - patchRadius);
+          const ex = Math.min(img.naturalWidth, px + patchRadius + 1);
+          const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
+          const sw = ex - sx;
+          const sh = ey - sy;
+          const srcPatch = ctx.getImageData(sx, sy, sw, sh);
+          const patch = new ImageData(patchSize, patchSize);
+          const ox = px - patchRadius - sx;
+          const oy = py - patchRadius - sy;
+          for (let row = 0; row < sh; row++) {
+            for (let col = 0; col < sw; col++) {
+              const srcIdx = (row * sw + col) * 4;
+              const dstIdx = ((row - oy) * patchSize + (col - ox)) * 4;
+              patch.data[dstIdx] = srcPatch.data[srcIdx];
+              patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
+              patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
+              patch.data[dstIdx + 3] = 255;
+            }
+          }
+          onHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
+        } else {
+          onHover(null);
+        }
       }
 
       function currentZoom(): number {
@@ -299,7 +318,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             gesture.longPressTimer = null;
             gesture.isInspecting = true;
             gesture.panTouchId = null;
-            samplePixelRef.current?.(gesture.touchOriginX, gesture.touchOriginY);
+            samplePixelAt(gesture.touchOriginX, gesture.touchOriginY);
           }, LONG_PRESS_MS);
         }
       }
@@ -322,7 +341,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           const t = e.touches[0];
           if (gesture.isInspecting) {
             e.preventDefault();
-            samplePixelRef.current?.(t.clientX, t.clientY);
+            samplePixelAt(t.clientX, t.clientY);
           } else {
             if (gesture.longPressTimer) {
               const dx = Math.abs(t.clientX - gesture.touchOriginX);
@@ -361,13 +380,6 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           gesture.panTouchId = null;
           setOffset(offsetRef.current);
           if (zoomRef.current != null) setZoom(zoomRef.current);
-          requestAnimationFrame(() => {
-            const el = imageWrapperRef.current;
-            if (el) {
-              el.style.transform = "";
-              el.style.imageRendering = "";
-            }
-          });
         }
       }
 
@@ -382,42 +394,31 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ── Pixel sampling ─────────────────────────────────────────────────────
-    // pixelData is populated by the single-fetch effect above.
+    // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
 
-    function sampleFromPixelData(
-      px: number, py: number, patchRadius: number,
-    ): PixelInfo | null {
-      const pd = pixelData.current;
-      if (!pd) return null;
-      if (px < 0 || px >= pd.width || py < 0 || py >= pd.height) return null;
-      const idx = (py * pd.width + px) * 4;
-      const r = pd.data[idx] / 255;
-      const g = pd.data[idx + 1] / 255;
-      const b = pd.data[idx + 2] / 255;
-      const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-      const patchSize = patchRadius * 2 + 1;
-      const patch = new ImageData(patchSize, patchSize);
-      for (let row = 0; row < patchSize; row++) {
-        for (let col = 0; col < patchSize; col++) {
-          const srcX = Math.max(0, Math.min(pd.width - 1, px - patchRadius + col));
-          const srcY = Math.max(0, Math.min(pd.height - 1, py - patchRadius + row));
-          const si = (srcY * pd.width + srcX) * 4;
-          const di = (row * patchSize + col) * 4;
-          patch.data[di] = pd.data[si];
-          patch.data[di + 1] = pd.data[si + 1];
-          patch.data[di + 2] = pd.data[si + 2];
-          patch.data[di + 3] = 255;
-        }
+    // Rebuild the offscreen canvas when the image loads
+    useEffect(() => {
+      const img = imgRef.current;
+      if (!img || !imageLoaded || !img.naturalWidth) {
+        samplingCanvas.current = null;
+        samplingCtx.current = null;
+        return;
       }
-      return { x: px, y: py, R: r, G: g, B: b, K: k, patch };
-    }
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+        samplingCanvas.current = c;
+        samplingCtx.current = ctx;
+      }
+    }, [imageLoaded, src]);
 
     function handleMouseMoveForPixel(e: React.MouseEvent) {
       if (!onPixelHover || !imgRef.current || !containerRef.current || isPanning) return;
       const img = imgRef.current;
-      if (!img.naturalWidth || !pixelData.current) return;
+      if (!img.naturalWidth || !samplingCtx.current) return;
 
       const container = containerRef.current;
       const rect = container.getBoundingClientRect();
@@ -429,38 +430,52 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       const imgX = (mx - offset.x) / ez + img.naturalWidth / 2;
       const imgY = (my - offset.y) / ez + img.naturalHeight / 2;
 
-      const info = sampleFromPixelData(Math.floor(imgX), Math.floor(imgY), pixelPatchRadius);
-      onPixelHover(info);
+      const px = Math.floor(imgX);
+      const py = Math.floor(imgY);
+
+      if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
+        const ctx = samplingCtx.current;
+        const pixel = ctx.getImageData(px, py, 1, 1).data;
+        const r = pixel[0] / 255;
+        const g = pixel[1] / 255;
+        const b = pixel[2] / 255;
+        const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+        // Extract surrounding patch centered on the target pixel
+        const patchRadius = pixelPatchRadius;
+        const patchSize = patchRadius * 2 + 1;
+        const sx = Math.max(0, px - patchRadius);
+        const sy = Math.max(0, py - patchRadius);
+        const ex = Math.min(img.naturalWidth, px + patchRadius + 1);
+        const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
+        const sw = ex - sx;
+        const sh = ey - sy;
+        const srcPatch = ctx.getImageData(sx, sy, sw, sh);
+
+        // Place into a full-size patch (handles edge clamping)
+        const patch = new ImageData(patchSize, patchSize);
+        const ox = px - patchRadius - sx;
+        const oy = py - patchRadius - sy;
+        for (let row = 0; row < sh; row++) {
+          for (let col = 0; col < sw; col++) {
+            const srcIdx = (row * sw + col) * 4;
+            const dstIdx = ((row - oy) * patchSize + (col - ox)) * 4;
+            patch.data[dstIdx] = srcPatch.data[srcIdx];
+            patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
+            patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
+            patch.data[dstIdx + 3] = 255;
+          }
+        }
+
+        onPixelHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
+      } else {
+        onPixelHover(null);
+      }
     }
 
     function handleMouseLeaveForPixel() {
       onPixelHover?.(null);
     }
-
-    const PIXEL_INSPECT_OFFSET_Y = -60;
-    function samplePixelAtClient(clientX: number, clientY: number) {
-      if (!onPixelHover || !imgRef.current || !containerRef.current) return;
-      const img = imgRef.current;
-      if (!img.naturalWidth) return;
-      const container = containerRef.current;
-      const rect = container.getBoundingClientRect();
-      const ez = effectiveZoom();
-      const sampleClientY = clientY + PIXEL_INSPECT_OFFSET_Y;
-      const mx = clientX - rect.left - rect.width / 2;
-      const my = sampleClientY - rect.top - rect.height / 2;
-      const ch = crosshairRef.current;
-      if (ch) {
-        ch.style.display = "block";
-        ch.style.left = `${clientX - rect.left - 12}px`;
-        ch.style.top = `${sampleClientY - rect.top - 12}px`;
-      }
-      const imgX = (mx - offset.x) / ez + img.naturalWidth / 2;
-      const imgY = (my - offset.y) / ez + img.naturalHeight / 2;
-      const info = sampleFromPixelData(Math.floor(imgX), Math.floor(imgY), pixelPatchRadius);
-      onPixelHover(info);
-    }
-    const samplePixelRef = useRef(samplePixelAtClient);
-    samplePixelRef.current = samplePixelAtClient;
 
     // ── Re-render when container resizes (e.g. tab becomes visible) ────────
 
@@ -518,18 +533,16 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             imageRendering: ez >= 2 ? "pixelated" : "auto",
           }}
         >
-          {blobSrc && (
-            <Box
-              component="img"
-              ref={imgRef}
-              src={blobSrc}
-              alt="Astronomical image"
-              draggable={false}
-              onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-              onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-              sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
-            />
-          )}
+          <Box
+            component="img"
+            ref={imgRef}
+            src={src}
+            alt="Astronomical image"
+            draggable={false}
+            onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+            onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+            sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
+          />
         </Box>
         <svg
           ref={crosshairRef}
