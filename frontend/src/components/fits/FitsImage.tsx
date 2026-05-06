@@ -545,7 +545,6 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             component="img"
             ref={imgRef}
             src={src}
-            crossOrigin="anonymous"
             alt="Astronomical image"
             draggable={false}
             onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
