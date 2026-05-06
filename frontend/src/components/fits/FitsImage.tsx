@@ -49,9 +49,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const prevSrc = useRef(src);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
-    const [touchCrosshair, setTouchCrosshair] = useState<{ x: number; y: number } | null>(null);
-    const setTouchCrosshairRef = useRef(setTouchCrosshair);
-    setTouchCrosshairRef.current = setTouchCrosshair;
+    const crosshairRef = useRef<SVGSVGElement | null>(null);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
     const imageWrapperRef = useRef<HTMLDivElement | null>(null);
     const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
@@ -189,7 +187,6 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
       const LONG_PRESS_MS = 400;
       const LONG_PRESS_MOVE_THRESHOLD = 10;
-      const PIXEL_INSPECT_OFFSET_Y = -60;
 
       const gesture = {
         startDist: 0,
@@ -211,59 +208,6 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
       function fingerDist(t1: Touch, t2: Touch): number {
         return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-      }
-
-      function samplePixelAt(clientX: number, clientY: number) {
-        const img = imgRef.current;
-        const ctx = samplingCtx.current;
-        const onHover = onPixelHoverRef.current;
-        if (!img || !ctx || !onHover || !container || !img.naturalWidth) return;
-        const rect = container.getBoundingClientRect();
-        const ez = zoomRef.current ?? currentZoom();
-        const off = offsetRef.current;
-        const sampleClientY = clientY + PIXEL_INSPECT_OFFSET_Y;
-        const mx = clientX - rect.left - rect.width / 2;
-        const my = sampleClientY - rect.top - rect.height / 2;
-        setTouchCrosshairRef.current({
-          x: clientX - rect.left,
-          y: sampleClientY - rect.top,
-        });
-        const imgX = (mx - off.x) / ez + img.naturalWidth / 2;
-        const imgY = (my - off.y) / ez + img.naturalHeight / 2;
-        const px = Math.floor(imgX);
-        const py = Math.floor(imgY);
-        if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
-          const pixel = ctx.getImageData(px, py, 1, 1).data;
-          const r = pixel[0] / 255;
-          const g = pixel[1] / 255;
-          const b = pixel[2] / 255;
-          const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-          const patchRadius = 50;
-          const patchSize = patchRadius * 2 + 1;
-          const sx = Math.max(0, px - patchRadius);
-          const sy = Math.max(0, py - patchRadius);
-          const ex = Math.min(img.naturalWidth, px + patchRadius + 1);
-          const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
-          const sw = ex - sx;
-          const sh = ey - sy;
-          const srcPatch = ctx.getImageData(sx, sy, sw, sh);
-          const patch = new ImageData(patchSize, patchSize);
-          const ox = px - patchRadius - sx;
-          const oy = py - patchRadius - sy;
-          for (let row = 0; row < sh; row++) {
-            for (let col = 0; col < sw; col++) {
-              const srcIdx = (row * sw + col) * 4;
-              const dstIdx = ((row - oy) * patchSize + (col - ox)) * 4;
-              patch.data[dstIdx] = srcPatch.data[srcIdx];
-              patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
-              patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
-              patch.data[dstIdx + 3] = 255;
-            }
-          }
-          onHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
-        } else {
-          onHover(null);
-        }
       }
 
       function currentZoom(): number {
@@ -317,7 +261,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             gesture.longPressTimer = null;
             gesture.isInspecting = true;
             gesture.panTouchId = null;
-            samplePixelAt(gesture.touchOriginX, gesture.touchOriginY);
+            samplePixelRef.current?.(gesture.touchOriginX, gesture.touchOriginY);
           }, LONG_PRESS_MS);
         }
       }
@@ -340,7 +284,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           const t = e.touches[0];
           if (gesture.isInspecting) {
             e.preventDefault();
-            samplePixelAt(t.clientX, t.clientY);
+            samplePixelRef.current?.(t.clientX, t.clientY);
           } else {
             if (gesture.longPressTimer) {
               const dx = Math.abs(t.clientX - gesture.touchOriginX);
@@ -368,7 +312,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           gesture.isInspecting = false;
           const onHover = onPixelHoverRef.current;
           if (onHover) onHover(null);
-          setTouchCrosshairRef.current(null);
+          const ch = crosshairRef.current;
+          if (ch) ch.style.display = "none";
         }
         if (e.touches.length < 2) {
           twoFingerRef.current = false;
@@ -480,6 +425,64 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       onPixelHover?.(null);
     }
 
+    const PIXEL_INSPECT_OFFSET_Y = -60;
+    function samplePixelAtClient(clientX: number, clientY: number) {
+      if (!onPixelHover || !imgRef.current || !containerRef.current) return;
+      const img = imgRef.current;
+      if (!img.naturalWidth || !samplingCtx.current) return;
+      const container = containerRef.current;
+      const rect = container.getBoundingClientRect();
+      const ez = effectiveZoom();
+      const sampleClientY = clientY + PIXEL_INSPECT_OFFSET_Y;
+      const mx = clientX - rect.left - rect.width / 2;
+      const my = sampleClientY - rect.top - rect.height / 2;
+      const ch = crosshairRef.current;
+      if (ch) {
+        ch.style.display = "block";
+        ch.style.left = `${clientX - rect.left - 12}px`;
+        ch.style.top = `${sampleClientY - rect.top - 12}px`;
+      }
+      const imgX = (mx - offset.x) / ez + img.naturalWidth / 2;
+      const imgY = (my - offset.y) / ez + img.naturalHeight / 2;
+      const px = Math.floor(imgX);
+      const py = Math.floor(imgY);
+      if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
+        const ctx = samplingCtx.current;
+        const pixel = ctx.getImageData(px, py, 1, 1).data;
+        const r = pixel[0] / 255;
+        const g = pixel[1] / 255;
+        const b = pixel[2] / 255;
+        const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const patchRadius = pixelPatchRadius;
+        const patchSize = patchRadius * 2 + 1;
+        const sx2 = Math.max(0, px - patchRadius);
+        const sy2 = Math.max(0, py - patchRadius);
+        const ex = Math.min(img.naturalWidth, px + patchRadius + 1);
+        const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
+        const sw = ex - sx2;
+        const sh = ey - sy2;
+        const srcPatch = ctx.getImageData(sx2, sy2, sw, sh);
+        const patch = new ImageData(patchSize, patchSize);
+        const pox = px - patchRadius - sx2;
+        const poy = py - patchRadius - sy2;
+        for (let row = 0; row < sh; row++) {
+          for (let col = 0; col < sw; col++) {
+            const srcIdx = (row * sw + col) * 4;
+            const dstIdx = ((row - poy) * patchSize + (col - pox)) * 4;
+            patch.data[dstIdx] = srcPatch.data[srcIdx];
+            patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
+            patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
+            patch.data[dstIdx + 3] = 255;
+          }
+        }
+        onPixelHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
+      } else {
+        onPixelHover(null);
+      }
+    }
+    const samplePixelRef = useRef(samplePixelAtClient);
+    samplePixelRef.current = samplePixelAtClient;
+
     // ── Re-render when container resizes (e.g. tab becomes visible) ────────
 
     const [, forceRender] = useState(0);
@@ -547,25 +550,23 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
           />
         </Box>
-        {touchCrosshair && (
-          <svg
-            style={{
-              position: "absolute",
-              left: touchCrosshair.x - 12,
-              top: touchCrosshair.y - 12,
-              width: 24,
-              height: 24,
-              pointerEvents: "none",
-              zIndex: 2,
-            }}
-          >
-            <circle cx={12} cy={12} r={8} fill="none" stroke="#d4993f" strokeWidth={1.5} />
-            <line x1={12} y1={0} x2={12} y2={8} stroke="#d4993f" strokeWidth={1.5} />
-            <line x1={12} y1={16} x2={12} y2={24} stroke="#d4993f" strokeWidth={1.5} />
-            <line x1={0} y1={12} x2={8} y2={12} stroke="#d4993f" strokeWidth={1.5} />
-            <line x1={16} y1={12} x2={24} y2={12} stroke="#d4993f" strokeWidth={1.5} />
-          </svg>
-        )}
+        <svg
+          ref={crosshairRef}
+          style={{
+            position: "absolute",
+            display: "none",
+            width: 24,
+            height: 24,
+            pointerEvents: "none",
+            zIndex: 2,
+          }}
+        >
+          <circle cx={12} cy={12} r={8} fill="none" stroke="#d4993f" strokeWidth={1.5} />
+          <line x1={12} y1={0} x2={12} y2={8} stroke="#d4993f" strokeWidth={1.5} />
+          <line x1={12} y1={16} x2={12} y2={24} stroke="#d4993f" strokeWidth={1.5} />
+          <line x1={0} y1={12} x2={8} y2={12} stroke="#d4993f" strokeWidth={1.5} />
+          <line x1={16} y1={12} x2={24} y2={12} stroke="#d4993f" strokeWidth={1.5} />
+        </svg>
       </Box>
     );
   },
