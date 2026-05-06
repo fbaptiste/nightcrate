@@ -447,7 +447,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     function samplePixelAtClient(clientX: number, clientY: number) {
       if (!onPixelHover || !imgRef.current || !containerRef.current) return;
       const img = imgRef.current;
-      if (!img.naturalWidth || !pixelData.current) return;
+      if (!img.naturalWidth) return;
       const container = containerRef.current;
       const rect = container.getBoundingClientRect();
       const ez = effectiveZoom();
