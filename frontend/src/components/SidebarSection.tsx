@@ -27,7 +27,7 @@ export function SidebarSection({ label, children, defaultOpen = true, open: cont
       >
         <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
         <Typography variant="caption" color="secondary.main" sx={{ fontSize: "0.65rem", flexShrink: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-          {isOpen ? label : `${label} ▸`}
+          {isOpen ? `${label} ▾` : `${label} ▸`}
         </Typography>
         <Box sx={{ flex: 1, borderBottom: 1, borderColor: "secondary.main", opacity: 0.6 }} />
       </Box>
