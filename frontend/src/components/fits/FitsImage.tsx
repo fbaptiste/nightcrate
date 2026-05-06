@@ -185,7 +185,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       const container = containerRef.current;
       if (!container) return;
 
-      const LONG_PRESS_MS = 400;
+      const LONG_PRESS_MS = 250;
       const LONG_PRESS_MOVE_THRESHOLD = 10;
 
       const gesture = {
@@ -321,13 +321,15 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         }
         if (e.touches.length === 0) {
           gesture.panTouchId = null;
-          const el = imageWrapperRef.current;
-          if (el) {
-            el.style.transform = "";
-            el.style.imageRendering = "";
-          }
           setOffset(offsetRef.current);
           if (zoomRef.current != null) setZoom(zoomRef.current);
+          requestAnimationFrame(() => {
+            const el = imageWrapperRef.current;
+            if (el) {
+              el.style.transform = "";
+              el.style.imageRendering = "";
+            }
+          });
         }
       }
 
@@ -543,6 +545,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             component="img"
             ref={imgRef}
             src={src}
+            crossOrigin="anonymous"
             alt="Astronomical image"
             draggable={false}
             onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
