@@ -170,40 +170,56 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     // ── Touch pan + pinch-to-zoom ─────────────────────────────────────────
 
     const twoFingerRef = useRef(false);
+    const zoomRef = useRef(zoom);
+    const offsetRef = useRef(offset);
+    zoomRef.current = zoom;
+    offsetRef.current = offset;
 
     useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
-      let startDist = 0;
-      let startZoom = 0;
-      let midX = 0;
-      let midY = 0;
-      let panTouchId: number | null = null;
-      let panStartX = 0;
-      let panStartY = 0;
-      let panStartOx = 0;
-      let panStartOy = 0;
+
+      const gesture = {
+        startDist: 0,
+        startZoom: 0,
+        midX: 0,
+        midY: 0,
+        panTouchId: null as number | null,
+        panStartX: 0,
+        panStartY: 0,
+        panStartOx: 0,
+        panStartOy: 0,
+      };
 
       function fingerDist(t1: Touch, t2: Touch): number {
         return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      }
+
+      function currentZoom(): number {
+        if (zoomRef.current != null) return zoomRef.current;
+        const img = imgRef.current;
+        if (!container || !img || !img.naturalWidth) return 1;
+        const sx = container.clientWidth / img.naturalWidth;
+        const sy = container.clientHeight / img.naturalHeight;
+        return Math.min(sx, sy);
       }
 
       function onTouchStart(e: TouchEvent) {
         if (e.touches.length === 2) {
           e.preventDefault();
           twoFingerRef.current = true;
-          panTouchId = null;
-          startDist = fingerDist(e.touches[0], e.touches[1]);
-          startZoom = zoom ?? getFitScale();
+          gesture.panTouchId = null;
+          gesture.startDist = fingerDist(e.touches[0], e.touches[1]);
+          gesture.startZoom = currentZoom();
           const rect = container!.getBoundingClientRect();
-          midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left - rect.width / 2;
-          midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top - rect.height / 2;
+          gesture.midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left - rect.width / 2;
+          gesture.midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top - rect.height / 2;
         } else if (e.touches.length === 1 && !twoFingerRef.current) {
-          panTouchId = e.touches[0].identifier;
-          panStartX = e.touches[0].clientX;
-          panStartY = e.touches[0].clientY;
-          panStartOx = offset.x;
-          panStartOy = offset.y;
+          gesture.panTouchId = e.touches[0].identifier;
+          gesture.panStartX = e.touches[0].clientX;
+          gesture.panStartY = e.touches[0].clientY;
+          gesture.panStartOx = offsetRef.current.x;
+          gesture.panStartOy = offsetRef.current.y;
         }
       }
 
@@ -211,31 +227,33 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         if (e.touches.length === 2 && twoFingerRef.current) {
           e.preventDefault();
           const curDist = fingerDist(e.touches[0], e.touches[1]);
-          const factor = curDist / startDist;
-          const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, startZoom * factor));
-          const ratio = newZoom / startZoom;
+          const factor = curDist / gesture.startDist;
+          const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, gesture.startZoom * factor));
+          const ratio = newZoom / gesture.startZoom;
+          const mx = gesture.midX;
+          const my = gesture.midY;
           setOffset((prev) => ({
-            x: midX - ratio * (midX - prev.x),
-            y: midY - ratio * (midY - prev.y),
+            x: mx - ratio * (mx - prev.x),
+            y: my - ratio * (my - prev.y),
           }));
           setZoom(newZoom);
-        } else if (e.touches.length === 1 && panTouchId != null && !twoFingerRef.current) {
-          const t = Array.from(e.touches).find((t) => t.identifier === panTouchId);
+        } else if (e.touches.length === 1 && gesture.panTouchId != null && !twoFingerRef.current) {
+          const t = Array.from(e.touches).find((tc) => tc.identifier === gesture.panTouchId);
           if (!t) return;
           e.preventDefault();
-          const dx = t.clientX - panStartX;
-          const dy = t.clientY - panStartY;
-          setOffset({ x: panStartOx + dx, y: panStartOy + dy });
+          const dx = t.clientX - gesture.panStartX;
+          const dy = t.clientY - gesture.panStartY;
+          setOffset({ x: gesture.panStartOx + dx, y: gesture.panStartOy + dy });
         }
       }
 
       function onTouchEnd(e: TouchEvent) {
         if (e.touches.length < 2) {
           twoFingerRef.current = false;
-          startDist = 0;
+          gesture.startDist = 0;
         }
         if (e.touches.length === 0) {
-          panTouchId = null;
+          gesture.panTouchId = null;
         }
       }
 
@@ -247,7 +265,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         container.removeEventListener("touchmove", onTouchMove);
         container.removeEventListener("touchend", onTouchEnd);
       };
-    });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
 
