@@ -34,14 +34,27 @@ const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 40;
 const ZOOM_FACTOR = 1.15;
 
+// On iPad, fit-scale start + first pinch step makes WebKit lazily allocate
+// the GPU layer mid-gesture, causing the well-known stutter. Starting at 1:1
+// pays the layer-allocation cost up front (with the loading spinner already
+// visible), and from then on transforms re-composite the existing layer
+// smoothly. Desktop continues to start at fit.
+const IS_TOUCH_DEVICE = typeof navigator !== "undefined" && navigator.maxTouchPoints > 1;
+
+
+
 export const FitsImage = forwardRef<FitsImageHandle, Props>(
   function FitsImage({ path, hdu, linked, perChannel, activity, onZoomChange, onPixelHover, pixelPatchRadius = 50 }, ref) {
     const src = imageUrl(path, hdu, linked, perChannel, activity);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const imgRef = useRef<HTMLImageElement | null>(null);
 
-    // null zoom = fit-to-window (computed from container/image size)
-    const [zoom, setZoom] = useState<number | null>(null);
+    // null zoom = fit-to-window (computed from container/image size).
+    // Touch devices start at 1:1 so WebKit pre-allocates the GPU layer at
+    // native resolution before the user can pinch. A black cover is shown
+    // until WebKit finishes the allocation, then we swap to fit.
+    const [zoom, setZoom] = useState<number | null>(IS_TOUCH_DEVICE ? 1 : null);
+    const [prewarming, setPrewarming] = useState(IS_TOUCH_DEVICE);
     const [imageLoaded, setImageLoaded] = useState(false);
     // Show spinner overlay when src changes (e.g., Apply stretch).
     // Old image stays visible behind spinner.
@@ -67,13 +80,28 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       }
     }
 
-    // Reset zoom/offset and loading state when a different file is opened
+    // Reset zoom/offset and loading state when a different file is opened.
+    // Touch devices restart the prewarm-at-1:1-then-swap-to-fit dance.
     useEffect(() => {
-      setZoom(null);
+      setZoom(IS_TOUCH_DEVICE ? 1 : null);
       setOffset({ x: 0, y: 0 });
       setImageLoaded(false);
       setImageLoading(false);
+      setPrewarming(IS_TOUCH_DEVICE);
     }, [path, hdu]);
+
+    // After the image loads at 1:1 on touch devices, give WebKit time to
+    // allocate the native-resolution GPU layer, then swap to fit and reveal
+    // the image. Switching scale earlier competes with the in-progress
+    // allocation and re-triggers the stutter.
+    useEffect(() => {
+      if (!IS_TOUCH_DEVICE || !prewarming || !imageLoaded) return;
+      const timer = setTimeout(() => {
+        setZoom(null);
+        requestAnimationFrame(() => setPrewarming(false));
+      }, 1500);
+      return () => clearTimeout(timer);
+    }, [imageLoaded, prewarming]);
 
     // Compute the fit-to-window scale
     function getFitScale(): number {
@@ -94,10 +122,15 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
     useImperativeHandle(ref, () => ({
       fitToWindow() {
+        // Touch handlers write directly to el.style.transform (inline), which
+        // outranks the class-based sx transform. Clear the inline transform
+        // so the React-rendered sx (driven by the new state) takes effect.
+        if (imageWrapperRef.current) imageWrapperRef.current.style.transform = "";
         setZoom(null);
         setOffset({ x: 0, y: 0 });
       },
       oneToOne() {
+        if (imageWrapperRef.current) imageWrapperRef.current.style.transform = "";
         setZoom(1);
         setOffset({ x: 0, y: 0 });
       },
@@ -278,10 +311,15 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
       function applyTransformDirect(ox: number, oy: number, z: number) {
         const el = imageWrapperRef.current;
-        if (el) {
-          el.style.transform = `translate(${ox}px, ${oy}px) translate(-50%, -50%) scale(${z})`;
-          el.style.imageRendering = z >= 2 ? "pixelated" : "auto";
-        }
+        const img = imgRef.current;
+        if (!el || !img) return;
+        // Use pixel-valued centering translate (-W/2, -H/2) instead of the
+        // percentage `translate(-50%, -50%)`. Mathematically identical, but
+        // WebKit on iPad takes a slow path for percentage transforms that
+        // depend on the element's box size.
+        const halfW = img.naturalWidth / 2;
+        const halfH = img.naturalHeight / 2;
+        el.style.transform = `translate(${ox - halfW}px, ${oy - halfH}px) scale(${z})`;
       }
 
       function cancelLongPress() {
@@ -383,20 +421,37 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         }
       }
 
+      // iOS Safari fires proprietary gesturestart/change/end alongside touch
+      // events; without preventDefault on these, native pinch-to-zoom of the
+      // page engages even though touch-action is "none" — visible as the
+      // "freeze then jump" stutter during two-finger zoom.
+      function preventGesture(e: Event) {
+        e.preventDefault();
+      }
+
       container.addEventListener("touchstart", onTouchStart, { passive: false });
       container.addEventListener("touchmove", onTouchMove, { passive: false });
       container.addEventListener("touchend", onTouchEnd);
+      container.addEventListener("gesturestart", preventGesture);
+      container.addEventListener("gesturechange", preventGesture);
+      container.addEventListener("gestureend", preventGesture);
       return () => {
         container.removeEventListener("touchstart", onTouchStart);
         container.removeEventListener("touchmove", onTouchMove);
         container.removeEventListener("touchend", onTouchEnd);
+        container.removeEventListener("gesturestart", preventGesture);
+        container.removeEventListener("gesturechange", preventGesture);
+        container.removeEventListener("gestureend", preventGesture);
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
 
-    // Rebuild the offscreen canvas when the image loads
+    // Rebuild the offscreen canvas when the image loads. Pixel inspector reads
+    // from this canvas via getImageData, which is silently tainted on iOS Safari
+    // over self-signed HTTPS — that's a known limitation handled separately
+    // (HTTP mode or mkcert-trusted cert eliminates the taint).
     useEffect(() => {
       const img = imgRef.current;
       if (!img || !imageLoaded || !img.naturalWidth) {
@@ -491,6 +546,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     // ── Notify parent of zoom changes ──────────────────────────────────────
 
     const ez = effectiveZoom();
+    const halfImgW = (imgRef.current?.naturalWidth ?? 0) / 2;
+    const halfImgH = (imgRef.current?.naturalHeight ?? 0) / 2;
 
     useEffect(() => {
       onZoomChange?.(ez);
@@ -516,9 +573,14 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           touchAction: "none",
         }}
       >
-        {/* Loading spinner — initial load or src change (e.g., stretch applied) */}
-        {(!imageLoaded || imageLoading) && (
-          <Box sx={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 1 }}>
+        {/* Touch-device prewarm cover — hides the image while it loads at
+            1:1 and WebKit allocates the GPU layer, before we swap to fit. */}
+        {prewarming && (
+          <Box sx={{ position: "absolute", inset: 0, bgcolor: "#000", zIndex: 1 }} />
+        )}
+        {/* Loading spinner — initial load, src change (stretch applied), or prewarm. */}
+        {(!imageLoaded || imageLoading || prewarming) && (
+          <Box sx={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 2 }}>
             <CircularProgress size={32} sx={{ color: "rgba(255,255,255,0.4)" }} />
           </Box>
         )}
@@ -528,9 +590,17 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             position: "absolute",
             top: "50%",
             left: "50%",
-            transform: `translate(${offset.x}px, ${offset.y}px) translate(-50%, -50%) scale(${ez})`,
+            // Explicit width/height (matching FovSimulator's panGroup pattern)
+            // gives WebKit a fixed-size layout box up front, so it can allocate
+            // a stable GPU layer instead of re-resolving on every transform.
+            width: halfImgW * 2 || undefined,
+            height: halfImgH * 2 || undefined,
+            transform: `translate(${offset.x - halfImgW}px, ${offset.y - halfImgH}px) scale(${ez})`,
             transformOrigin: "center center",
             imageRendering: ez >= 2 ? "pixelated" : "auto",
+            // Pre-allocate the GPU layer at the wrapper's native size so the
+            // first pinch doesn't trigger an incremental re-rasterize cascade.
+            willChange: "transform",
           }}
         >
           <Box
@@ -539,9 +609,11 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             src={src}
             alt="Astronomical image"
             draggable={false}
+            width={halfImgW * 2 || undefined}
+            height={halfImgH * 2 || undefined}
             onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
             onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-            sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
+            sx={{ display: "block", width: "100%", height: "100%", visibility: imageLoaded ? "visible" : "hidden" }}
           />
         </Box>
         <svg
@@ -552,7 +624,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             width: 24,
             height: 24,
             pointerEvents: "none",
-            zIndex: 2,
+            zIndex: 3,
           }}
         >
           <circle cx={12} cy={12} r={8} fill="none" stroke="#d4993f" strokeWidth={1.5} />
