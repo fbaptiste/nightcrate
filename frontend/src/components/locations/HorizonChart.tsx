@@ -316,7 +316,7 @@ export default function HorizonChart({
         ref={svgRef}
         width={width}
         height={height}
-        style={{ display: "block", overflow: "visible" }}
+        style={{ display: "block", overflow: "visible", touchAction: "none", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
         role="img"
         aria-label="Horizon panorama chart"
       >
