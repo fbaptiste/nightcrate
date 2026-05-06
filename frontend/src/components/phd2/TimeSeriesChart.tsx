@@ -864,11 +864,10 @@ function TimeSeriesChartInner(
   const snrTicks = withDomainExtremes(ySnrScale, 2);
   const massTicks = withDomainExtremes(yMassScale, 2);
 
-  function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+  function handleHover(svg: SVGSVGElement, clientX: number) {
     if (samples.length === 0) return;
-    const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
+    const mx = clientX - rect.left;
     if (mx < MARGIN.left || mx > MARGIN.left + innerW) {
       setHover(null);
       return;
@@ -1599,18 +1598,19 @@ function TimeSeriesChartInner(
         ref={svgRef}
         width={width}
         height={effectiveSvgHeight}
-        onMouseMove={handleMouseMove}
+        onMouseMove={(e) => handleHover(e.currentTarget, e.clientX)}
         onMouseLeave={() => setHover(null)}
         onMouseDown={handleSelectionMouseDown}
+        onTouchStart={(e) => { if (e.touches.length === 1) handleHover(e.currentTarget, e.touches[0].clientX); }}
+        onTouchMove={(e) => { if (e.touches.length === 1) handleHover(e.currentTarget, e.touches[0].clientX); }}
+        onTouchEnd={() => setHover(null)}
         style={{
           display: ready ? "block" : "none",
-          // ``grab`` by default signals "drag to pan" (works when
-          // zoomed in). Crosshair would also be reasonable but
-          // users need a visual cue that the chart is draggable.
-          // ``touch-action: none`` prevents the browser from
-          // stealing wheel / touch gestures before d3.zoom sees them.
           cursor: zoomX ? "grab" : "crosshair",
           touchAction: "none",
+          WebkitTouchCallout: "none",
+          WebkitUserSelect: "none",
+          userSelect: "none",
         }}
       >
         {/* Per-panel clip rects — every series + bar renders inside its
