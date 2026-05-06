@@ -280,11 +280,33 @@ export default function HorizonChart({
       dragIndexRef.current = null;
       dragMovedRef.current = false;
     };
+    const handleTouchMove = (e: TouchEvent) => {
+      const idx = dragIndexRef.current;
+      if (idx === null || !onPointDrag || e.touches.length !== 1) return;
+      e.preventDefault();
+      const pos = localFromEvent(e.touches[0].clientX, e.touches[0].clientY);
+      if (!pos) return;
+      dragMovedRef.current = true;
+      const az = Math.round(pos.az * 10) / 10;
+      const alt = Math.round(pos.alt * 10) / 10;
+      onPointDrag(idx, ((az % 360) + 360) % 360, Math.max(-5, Math.min(90, alt)));
+    };
+    const handleTouchEnd = () => {
+      if (dragIndexRef.current !== null && dragMovedRef.current && onPointDragEnd) {
+        onPointDragEnd();
+      }
+      dragIndexRef.current = null;
+      dragMovedRef.current = false;
+    };
     window.addEventListener("mousemove", handleMove);
     window.addEventListener("mouseup", handleUp);
+    window.addEventListener("touchmove", handleTouchMove, { passive: false });
+    window.addEventListener("touchend", handleTouchEnd);
     return () => {
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
     };
   }, [mode, onPointDrag, onPointDragEnd, localFromEvent]);
 
@@ -427,6 +449,9 @@ export default function HorizonChart({
             style={{ cursor: mode === "editable" ? "crosshair" : "default" }}
             onMouseMove={onOverlayMouseMove}
             onMouseLeave={onOverlayMouseLeave}
+            onTouchStart={(e) => { if (e.touches.length === 1) setHover(localFromEvent(e.touches[0].clientX, e.touches[0].clientY)); }}
+            onTouchMove={(e) => { if (e.touches.length === 1) { e.preventDefault(); setHover(localFromEvent(e.touches[0].clientX, e.touches[0].clientY)); } }}
+            onTouchEnd={() => setHover(null)}
             onDoubleClick={onOverlayDoubleClick}
             onContextMenu={(e) => {
               if (mode === "editable") e.preventDefault();
@@ -448,6 +473,7 @@ export default function HorizonChart({
                   strokeWidth={1.5}
                   style={{ cursor: mode === "editable" ? "grab" : "default" }}
                   onMouseDown={mode === "editable" ? onPointMouseDown(i) : undefined}
+                  onTouchStart={mode === "editable" ? (e) => { e.stopPropagation(); e.preventDefault(); dragIndexRef.current = i; dragMovedRef.current = false; } : undefined}
                   onContextMenu={mode === "editable" ? onPointContextMenu(i) : undefined}
                 />
               );

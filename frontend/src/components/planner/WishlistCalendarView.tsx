@@ -389,10 +389,10 @@ function CalendarChart({
 
   const todayXPx = x(toRefNow());
 
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const mx = e.clientX - rect.left - leftMargin;
-    const my = e.clientY - rect.top - MARGIN.top;
+  const handleHover = (svg: SVGSVGElement, clientX: number, clientY: number) => {
+    const rect = svg.getBoundingClientRect();
+    const mx = clientX - rect.left - leftMargin;
+    const my = clientY - rect.top - MARGIN.top;
 
     if (mx < 0 || mx > innerW || my < 0 || my > innerH) {
       setHover(null);
@@ -510,9 +510,12 @@ function CalendarChart({
       <svg
         width={svgWidth}
         height={chartHeight}
-        style={{ display: "block" }}
-        onMouseMove={handleMouseMove}
+        style={{ display: "block", touchAction: "none", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
+        onMouseMove={(e) => handleHover(e.currentTarget, e.clientX, e.clientY)}
         onMouseLeave={() => setHover(null)}
+        onTouchStart={(e) => { if (e.touches.length === 1) handleHover(e.currentTarget, e.touches[0].clientX, e.touches[0].clientY); }}
+        onTouchMove={(e) => { if (e.touches.length === 1) { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX, e.touches[0].clientY); } }}
+        onTouchEnd={() => setHover(null)}
       >
         <defs>
           <clipPath id="calendar-clip">

@@ -343,7 +343,7 @@ export function Histogram({ path, hdu, histogramData, histogramPending, shadow, 
     e.preventDefault();
   }
 
-  // Track mouse globally during drag so dragging beyond the canvas edges works
+  // Track mouse/touch globally during drag so dragging beyond the canvas edges works
   const dragStartRef = useRef(dragStartX);
   const dragCurrentRef = useRef(dragCurrentX);
   dragStartRef.current = dragStartX;
@@ -361,6 +361,13 @@ export function Histogram({ path, hdu, histogramData, histogramPending, shadow, 
 
     const handleGlobalMove = (e: MouseEvent) => {
       setDragCurrentX(clampToCanvas(e.clientX));
+    };
+
+    const handleGlobalTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        e.preventDefault();
+        setDragCurrentX(clampToCanvas(e.touches[0].clientX));
+      }
     };
 
     const commitZoom = () => {
@@ -384,9 +391,13 @@ export function Histogram({ path, hdu, histogramData, histogramPending, shadow, 
 
     window.addEventListener("mousemove", handleGlobalMove);
     window.addEventListener("mouseup", commitZoom);
+    window.addEventListener("touchmove", handleGlobalTouchMove, { passive: false });
+    window.addEventListener("touchend", commitZoom);
     return () => {
       window.removeEventListener("mousemove", handleGlobalMove);
       window.removeEventListener("mouseup", commitZoom);
+      window.removeEventListener("touchmove", handleGlobalTouchMove);
+      window.removeEventListener("touchend", commitZoom);
     };
   }, [dragging]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -461,10 +472,23 @@ export function Histogram({ path, hdu, histogramData, histogramPending, shadow, 
             width: "100%",
             height: CANVAS_HEIGHT,
             cursor: dragging ? "col-resize" : "crosshair",
+            touchAction: "none",
+            WebkitTouchCallout: "none",
+            WebkitUserSelect: "none",
           }}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onMouseDown={handleMouseDown}
+          onTouchStart={(e) => {
+            if (e.touches.length !== 1) return;
+            const rect = canvasRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const x = e.touches[0].clientX - rect.left;
+            setDragging(true);
+            setDragStartX(x);
+            setDragCurrentX(x);
+            setHoverX(null);
+          }}
         />
 
         {/* Hover tooltip — follows cursor, flips side at midpoint (hidden during drag) */}
