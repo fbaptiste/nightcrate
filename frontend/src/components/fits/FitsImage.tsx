@@ -50,6 +50,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+    const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
+    const samplingCtx = useRef<CanvasRenderingContext2D | null>(null);
 
     // Cache the last valid fit scale so we don't lose it when the container
     // is hidden (display:none → 0×0) during tab switches.
@@ -172,12 +174,18 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const twoFingerRef = useRef(false);
     const zoomRef = useRef(zoom);
     const offsetRef = useRef(offset);
+    const onPixelHoverRef = useRef(onPixelHover);
     zoomRef.current = zoom;
     offsetRef.current = offset;
+    onPixelHoverRef.current = onPixelHover;
 
     useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
+
+      const LONG_PRESS_MS = 400;
+      const LONG_PRESS_MOVE_THRESHOLD = 10;
+      const PIXEL_INSPECT_OFFSET_Y = -60;
 
       const gesture = {
         startDist: 0,
@@ -191,10 +199,62 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         panStartY: 0,
         panStartOx: 0,
         panStartOy: 0,
+        longPressTimer: null as ReturnType<typeof setTimeout> | null,
+        isInspecting: false,
+        touchOriginX: 0,
+        touchOriginY: 0,
       };
 
       function fingerDist(t1: Touch, t2: Touch): number {
         return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      }
+
+      function samplePixelAt(clientX: number, clientY: number) {
+        const img = imgRef.current;
+        const ctx = samplingCtx.current;
+        const onHover = onPixelHoverRef.current;
+        if (!img || !ctx || !onHover || !container || !img.naturalWidth) return;
+        const rect = container.getBoundingClientRect();
+        const ez = zoomRef.current ?? currentZoom();
+        const off = offsetRef.current;
+        const mx = clientX - rect.left - rect.width / 2;
+        const my = (clientY + PIXEL_INSPECT_OFFSET_Y) - rect.top - rect.height / 2;
+        const imgX = (mx - off.x) / ez + img.naturalWidth / 2;
+        const imgY = (my - off.y) / ez + img.naturalHeight / 2;
+        const px = Math.floor(imgX);
+        const py = Math.floor(imgY);
+        if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
+          const pixel = ctx.getImageData(px, py, 1, 1).data;
+          const r = pixel[0] / 255;
+          const g = pixel[1] / 255;
+          const b = pixel[2] / 255;
+          const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          const patchRadius = 50;
+          const patchSize = patchRadius * 2 + 1;
+          const sx = Math.max(0, px - patchRadius);
+          const sy = Math.max(0, py - patchRadius);
+          const ex = Math.min(img.naturalWidth, px + patchRadius + 1);
+          const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
+          const sw = ex - sx;
+          const sh = ey - sy;
+          const srcPatch = ctx.getImageData(sx, sy, sw, sh);
+          const patch = new ImageData(patchSize, patchSize);
+          const ox = px - patchRadius - sx;
+          const oy = py - patchRadius - sy;
+          for (let row = 0; row < sh; row++) {
+            for (let col = 0; col < sw; col++) {
+              const srcIdx = (row * sw + col) * 4;
+              const dstIdx = ((row - oy) * patchSize + (col - ox)) * 4;
+              patch.data[dstIdx] = srcPatch.data[srcIdx];
+              patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
+              patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
+              patch.data[dstIdx + 3] = 255;
+            }
+          }
+          onHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
+        } else {
+          onHover(null);
+        }
       }
 
       function currentZoom(): number {
@@ -206,9 +266,18 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         return Math.min(sx, sy);
       }
 
+      function cancelLongPress() {
+        if (gesture.longPressTimer) {
+          clearTimeout(gesture.longPressTimer);
+          gesture.longPressTimer = null;
+        }
+      }
+
       function onTouchStart(e: TouchEvent) {
         if (e.touches.length === 2) {
           e.preventDefault();
+          cancelLongPress();
+          gesture.isInspecting = false;
           twoFingerRef.current = true;
           gesture.panTouchId = null;
           gesture.startDist = fingerDist(e.touches[0], e.touches[1]);
@@ -224,6 +293,15 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           gesture.panStartY = e.touches[0].clientY;
           gesture.panStartOx = offsetRef.current.x;
           gesture.panStartOy = offsetRef.current.y;
+          gesture.touchOriginX = e.touches[0].clientX;
+          gesture.touchOriginY = e.touches[0].clientY;
+          gesture.isInspecting = false;
+          gesture.longPressTimer = setTimeout(() => {
+            gesture.longPressTimer = null;
+            gesture.isInspecting = true;
+            gesture.panTouchId = null;
+            samplePixelAt(gesture.touchOriginX, gesture.touchOriginY);
+          }, LONG_PRESS_MS);
         }
       }
 
@@ -241,17 +319,36 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             y: my - ratio * (my - gesture.startOffsetY),
           });
           setZoom(newZoom);
-        } else if (e.touches.length === 1 && gesture.panTouchId != null && !twoFingerRef.current) {
-          const t = Array.from(e.touches).find((tc) => tc.identifier === gesture.panTouchId);
-          if (!t) return;
-          e.preventDefault();
-          const dx = t.clientX - gesture.panStartX;
-          const dy = t.clientY - gesture.panStartY;
-          setOffset({ x: gesture.panStartOx + dx, y: gesture.panStartOy + dy });
+        } else if (e.touches.length === 1 && !twoFingerRef.current) {
+          const t = e.touches[0];
+          if (gesture.isInspecting) {
+            e.preventDefault();
+            samplePixelAt(t.clientX, t.clientY);
+          } else {
+            if (gesture.longPressTimer) {
+              const dx = Math.abs(t.clientX - gesture.touchOriginX);
+              const dy = Math.abs(t.clientY - gesture.touchOriginY);
+              if (dx > LONG_PRESS_MOVE_THRESHOLD || dy > LONG_PRESS_MOVE_THRESHOLD) {
+                cancelLongPress();
+              }
+            }
+            if (gesture.panTouchId != null) {
+              e.preventDefault();
+              const dx = t.clientX - gesture.panStartX;
+              const dy = t.clientY - gesture.panStartY;
+              setOffset({ x: gesture.panStartOx + dx, y: gesture.panStartOy + dy });
+            }
+          }
         }
       }
 
       function onTouchEnd(e: TouchEvent) {
+        cancelLongPress();
+        if (gesture.isInspecting) {
+          gesture.isInspecting = false;
+          const onHover = onPixelHoverRef.current;
+          if (onHover) onHover(null);
+        }
         if (e.touches.length < 2) {
           twoFingerRef.current = false;
           gesture.startDist = 0;
@@ -273,9 +370,6 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     }, []);
 
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
-
-    const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
-    const samplingCtx = useRef<CanvasRenderingContext2D | null>(null);
 
     // Rebuild the offscreen canvas when the image loads
     useEffect(() => {
