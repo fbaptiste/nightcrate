@@ -348,10 +348,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
     // Rebuild the offscreen canvas when the image loads.
     // Sync drawImage(img) works on desktop. On iOS Safari, pixels may
-    // not be decoded yet (or the canvas gets tainted by self-signed HTTPS),
-    // so we also fetch the same URL as a Blob → createImageBitmap → draw.
-    // The fetch hits the browser cache; createImageBitmap guarantees
-    // fully decoded pixels independent of the <img> element.
+    // not be decoded at onLoad time — poll with rAF until the canvas
+    // has non-zero pixel data, then stop.
     useEffect(() => {
       const img = imgRef.current;
       if (!img || !imageLoaded || !img.naturalWidth) {
@@ -363,25 +361,30 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       c.width = img.naturalWidth;
       c.height = img.naturalHeight;
       const ctx = c.getContext("2d", { willReadFrequently: true });
-      if (ctx) {
-        ctx.drawImage(img, 0, 0);
-        samplingCanvas.current = c;
-        samplingCtx.current = ctx;
-      }
+      if (!ctx) return;
+
+      ctx.drawImage(img, 0, 0);
+      samplingCanvas.current = c;
+      samplingCtx.current = ctx;
+
+      const probe = ctx.getImageData(
+        Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1,
+      ).data;
+      if (probe[0] + probe[1] + probe[2] + probe[3] > 0) return;
+
       let cancelled = false;
-      fetch(src)
-        .then((r) => r.blob())
-        .then((blob) => createImageBitmap(blob))
-        .then((bitmap) => {
-          if (cancelled) { bitmap.close(); return; }
-          if (!ctx) return;
-          c.width = bitmap.width;
-          c.height = bitmap.height;
-          ctx.drawImage(bitmap, 0, 0);
-          bitmap.close();
-        })
-        .catch(() => {});
-      return () => { cancelled = true; };
+      let rafId = 0;
+      function retry() {
+        if (cancelled) return;
+        ctx!.drawImage(img!, 0, 0);
+        const p = ctx!.getImageData(
+          Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1,
+        ).data;
+        if (p[0] + p[1] + p[2] + p[3] > 0) return;
+        rafId = requestAnimationFrame(retry);
+      }
+      rafId = requestAnimationFrame(retry);
+      return () => { cancelled = true; cancelAnimationFrame(rafId); };
     }, [imageLoaded, src]);
 
     function handleMouseMoveForPixel(e: React.MouseEvent) {
