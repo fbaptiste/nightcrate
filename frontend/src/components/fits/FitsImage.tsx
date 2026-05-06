@@ -50,6 +50,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+    const imageWrapperRef = useRef<HTMLDivElement | null>(null);
     const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
     const samplingCtx = useRef<CanvasRenderingContext2D | null>(null);
 
@@ -266,6 +267,14 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         return Math.min(sx, sy);
       }
 
+      function applyTransformDirect(ox: number, oy: number, z: number) {
+        const el = imageWrapperRef.current;
+        if (el) {
+          el.style.transform = `translate(${ox}px, ${oy}px) translate(-50%, -50%) scale(${z})`;
+          el.style.imageRendering = z >= 2 ? "pixelated" : "auto";
+        }
+      }
+
       function cancelLongPress() {
         if (gesture.longPressTimer) {
           clearTimeout(gesture.longPressTimer);
@@ -314,11 +323,11 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           const ratio = newZoom / gesture.startZoom;
           const mx = gesture.midX;
           const my = gesture.midY;
-          setOffset({
-            x: mx - ratio * (mx - gesture.startOffsetX),
-            y: my - ratio * (my - gesture.startOffsetY),
-          });
-          setZoom(newZoom);
+          const ox = mx - ratio * (mx - gesture.startOffsetX);
+          const oy = my - ratio * (my - gesture.startOffsetY);
+          offsetRef.current = { x: ox, y: oy };
+          zoomRef.current = newZoom;
+          applyTransformDirect(ox, oy, newZoom);
         } else if (e.touches.length === 1 && !twoFingerRef.current) {
           const t = e.touches[0];
           if (gesture.isInspecting) {
@@ -336,7 +345,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
               e.preventDefault();
               const dx = t.clientX - gesture.panStartX;
               const dy = t.clientY - gesture.panStartY;
-              setOffset({ x: gesture.panStartOx + dx, y: gesture.panStartOy + dy });
+              const ox = gesture.panStartOx + dx;
+              const oy = gesture.panStartOy + dy;
+              offsetRef.current = { x: ox, y: oy };
+              applyTransformDirect(ox, oy, zoomRef.current ?? currentZoom());
             }
           }
         }
@@ -355,6 +367,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         }
         if (e.touches.length === 0) {
           gesture.panTouchId = null;
+          setOffset(offsetRef.current);
+          if (zoomRef.current != null) setZoom(zoomRef.current);
         }
       }
 
@@ -498,6 +512,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           </Box>
         )}
         <Box
+          ref={imageWrapperRef}
           sx={{
             position: "absolute",
             top: "50%",
