@@ -182,6 +182,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
       const gesture = {
         startDist: 0,
         startZoom: 0,
+        startOffsetX: 0,
+        startOffsetY: 0,
         midX: 0,
         midY: 0,
         panTouchId: null as number | null,
@@ -211,6 +213,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           gesture.panTouchId = null;
           gesture.startDist = fingerDist(e.touches[0], e.touches[1]);
           gesture.startZoom = currentZoom();
+          gesture.startOffsetX = offsetRef.current.x;
+          gesture.startOffsetY = offsetRef.current.y;
           const rect = container!.getBoundingClientRect();
           gesture.midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left - rect.width / 2;
           gesture.midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top - rect.height / 2;
@@ -232,10 +236,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           const ratio = newZoom / gesture.startZoom;
           const mx = gesture.midX;
           const my = gesture.midY;
-          setOffset((prev) => ({
-            x: mx - ratio * (mx - prev.x),
-            y: my - ratio * (my - prev.y),
-          }));
+          setOffset({
+            x: mx - ratio * (mx - gesture.startOffsetX),
+            y: my - ratio * (my - gesture.startOffsetY),
+          });
           setZoom(newZoom);
         } else if (e.touches.length === 1 && gesture.panTouchId != null && !twoFingerRef.current) {
           const t = Array.from(e.touches).find((tc) => tc.identifier === gesture.panTouchId);
