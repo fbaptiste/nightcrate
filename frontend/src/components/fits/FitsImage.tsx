@@ -49,6 +49,9 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
     const prevSrc = useRef(src);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
+    const [touchCrosshair, setTouchCrosshair] = useState<{ x: number; y: number } | null>(null);
+    const setTouchCrosshairRef = useRef(setTouchCrosshair);
+    setTouchCrosshairRef.current = setTouchCrosshair;
     const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
     const imageWrapperRef = useRef<HTMLDivElement | null>(null);
     const samplingCanvas = useRef<HTMLCanvasElement | null>(null);
@@ -218,8 +221,13 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         const rect = container.getBoundingClientRect();
         const ez = zoomRef.current ?? currentZoom();
         const off = offsetRef.current;
+        const sampleClientY = clientY + PIXEL_INSPECT_OFFSET_Y;
         const mx = clientX - rect.left - rect.width / 2;
-        const my = (clientY + PIXEL_INSPECT_OFFSET_Y) - rect.top - rect.height / 2;
+        const my = sampleClientY - rect.top - rect.height / 2;
+        setTouchCrosshairRef.current({
+          x: clientX - rect.left,
+          y: sampleClientY - rect.top,
+        });
         const imgX = (mx - off.x) / ez + img.naturalWidth / 2;
         const imgY = (my - off.y) / ez + img.naturalHeight / 2;
         const px = Math.floor(imgX);
@@ -360,6 +368,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           gesture.isInspecting = false;
           const onHover = onPixelHoverRef.current;
           if (onHover) onHover(null);
+          setTouchCrosshairRef.current(null);
         }
         if (e.touches.length < 2) {
           twoFingerRef.current = false;
@@ -367,6 +376,11 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         }
         if (e.touches.length === 0) {
           gesture.panTouchId = null;
+          const el = imageWrapperRef.current;
+          if (el) {
+            el.style.transform = "";
+            el.style.imageRendering = "";
+          }
           setOffset(offsetRef.current);
           if (zoomRef.current != null) setZoom(zoomRef.current);
         }
@@ -533,6 +547,25 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
           />
         </Box>
+        {touchCrosshair && (
+          <svg
+            style={{
+              position: "absolute",
+              left: touchCrosshair.x - 12,
+              top: touchCrosshair.y - 12,
+              width: 24,
+              height: 24,
+              pointerEvents: "none",
+              zIndex: 2,
+            }}
+          >
+            <circle cx={12} cy={12} r={8} fill="none" stroke="#d4993f" strokeWidth={1.5} />
+            <line x1={12} y1={0} x2={12} y2={8} stroke="#d4993f" strokeWidth={1.5} />
+            <line x1={12} y1={16} x2={12} y2={24} stroke="#d4993f" strokeWidth={1.5} />
+            <line x1={0} y1={12} x2={8} y2={12} stroke="#d4993f" strokeWidth={1.5} />
+            <line x1={16} y1={12} x2={24} y2={12} stroke="#d4993f" strokeWidth={1.5} />
+          </svg>
+        )}
       </Box>
     );
   },
