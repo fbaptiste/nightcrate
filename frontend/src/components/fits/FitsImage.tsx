@@ -74,10 +74,6 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         .then((r) => r.blob())
         .then(async (blob) => {
           if (cancelled) return;
-          const url = URL.createObjectURL(blob);
-          if (prevBlobSrc.current) URL.revokeObjectURL(prevBlobSrc.current);
-          prevBlobSrc.current = url;
-          setBlobSrc(url);
 
           try {
             const bitmap = await createImageBitmap(blob);
@@ -93,8 +89,14 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             }
             bitmap.close();
           } catch {
-            // createImageBitmap not supported or failed — pixel inspector unavailable
+            // createImageBitmap not supported or failed
           }
+
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          if (prevBlobSrc.current) URL.revokeObjectURL(prevBlobSrc.current);
+          prevBlobSrc.current = url;
+          setBlobSrc(url);
         })
         .catch(() => {
           if (!cancelled) setImageLoading(false);
@@ -508,18 +510,16 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             imageRendering: ez >= 2 ? "pixelated" : "auto",
           }}
         >
-          {blobSrc && (
-            <Box
-              component="img"
-              ref={imgRef}
-              src={blobSrc}
-              alt="Astronomical image"
-              draggable={false}
-              onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-              onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-              sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
-            />
-          )}
+          <Box
+            component="img"
+            ref={imgRef}
+            src={blobSrc ?? ""}
+            alt="Astronomical image"
+            draggable={false}
+            onLoad={() => { if (blobSrc) { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); } }}
+            onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+            sx={{ display: "block", visibility: imageLoaded ? "visible" : "hidden" }}
+          />
         </Box>
         <svg
           ref={crosshairRef}
