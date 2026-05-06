@@ -250,6 +250,7 @@ function TimeSeriesChartInner(
   const [width, setWidth] = useState(640);
   const [zoomX, setZoomX] = useState<[number, number] | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  const tapRef = useRef<{ x: number; y: number } | null>(null);
   // Per-series visibility, toggled by clicking a legend chip. All
   // series default to shown; individual series can be hidden without
   // affecting the axes so zoom/pan state stays coherent.
@@ -635,6 +636,9 @@ function TimeSeriesChartInner(
         const rect = svg.getBoundingClientRect();
         const x = me.clientX - rect.left;
         return x >= MARGIN.left && x <= MARGIN.left + innerW;
+      })
+      .on("start", () => {
+        setHover(null);
       })
       .on("zoom", (e) => {
         const rescaled = e.transform.rescaleX(base);
@@ -1602,9 +1606,24 @@ function TimeSeriesChartInner(
         onMouseMove={(e) => handleHover(e.currentTarget, e.clientX)}
         onMouseLeave={() => setHover(null)}
         onMouseDown={handleSelectionMouseDown}
-        onTouchStart={(e) => { if (e.touches.length === 1) handleHover(e.currentTarget, e.touches[0].clientX); }}
-        onTouchMove={(e) => { if (e.touches.length === 1) handleHover(e.currentTarget, e.touches[0].clientX); }}
-        onTouchEnd={() => setHover(null)}
+        onTouchStart={(e) => {
+          if (e.touches.length === 1) {
+            tapRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          } else {
+            tapRef.current = null;
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (e.touches.length === 0 && tapRef.current && e.changedTouches.length === 1) {
+            const t = e.changedTouches[0];
+            const dx = Math.abs(t.clientX - tapRef.current.x);
+            const dy = Math.abs(t.clientY - tapRef.current.y);
+            if (dx < 10 && dy < 10) {
+              handleHover(e.currentTarget, t.clientX);
+            }
+          }
+          tapRef.current = null;
+        }}
         style={{
           display: ready ? "block" : "none",
           cursor: zoomX ? "grab" : "crosshair",
