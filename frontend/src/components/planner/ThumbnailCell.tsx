@@ -4,8 +4,11 @@
  * Detects the backend's 1x1-pixel placeholder via ``naturalWidth`` and
  * polls with an exponential-ish backoff (fast first retry, slower
  * after) using a cache-busting query string until the real image
- * lands. A 204 (permanent fetch-error backoff) fires the <img>
- * onError handler; we swap to a neutral icon in that case.
+ * lands. Hard errors (5xx, 204, network blip) go through the same
+ * retry budget — without that, a single transient failure on first
+ * load left the cell stuck on the icon placeholder until the user
+ * refreshed the page. The neutral icon only appears once retries are
+ * exhausted (MAX_RETRIES) or no real image arrives.
  *
  * Supports three variants (``list``, ``detail``, ``rig_framed``). The
  * rig-dependent ``rig_framed`` variant accepts ``fovMajor/MinorDeg``
@@ -111,17 +114,10 @@ export default function ThumbnailCell({
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
 
-  // Idempotent — shared by the native ``load`` event and the
-  // ``img.complete`` safety net. Repeat calls on a real image re-fire
-  // setState no-ops; repeat calls on a placeholder short-circuit via
-  // the in-flight ``retryTimerRef``.
-  function handleImageResolved(img: HTMLImageElement): void {
-    if (img.naturalWidth > 1 && img.naturalHeight > 1) {
-      setLoading(false);
-      onReady?.();
-      return;
-    }
-    // Placeholder path — schedule a retry if one isn't pending.
+  // Schedule the next retry under the shared backoff schedule, or mark
+  // the cell as failed once the retry budget is exhausted. Idempotent —
+  // re-entry while a timer is already pending is a no-op.
+  function scheduleRetry(): void {
     if (retryTimerRef.current != null) return;
     if (retryCountRef.current >= MAX_RETRIES) {
       setFailed(true);
@@ -132,6 +128,28 @@ export default function ThumbnailCell({
       retryTimerRef.current = null;
       setVersion((v) => v + 1);
     }, retryDelayMs(retryCountRef.current));
+  }
+
+  // Idempotent — shared by the native ``load`` event and the
+  // ``img.complete`` safety net. Repeat calls on a real image re-fire
+  // setState no-ops; repeat calls on a placeholder short-circuit via
+  // the in-flight ``retryTimerRef``.
+  function handleImageResolved(img: HTMLImageElement): void {
+    if (img.naturalWidth > 1 && img.naturalHeight > 1) {
+      setLoading(false);
+      onReady?.();
+      return;
+    }
+    // Placeholder path — backend returned the 1×1 "still working" tile.
+    scheduleRetry();
+  }
+
+  // Hard error (5xx, 204, network blip, etc.) — retry under the same
+  // backoff. Without this, a single transient failure on first load
+  // pinned the cell to the placeholder icon until the user manually
+  // refreshed the whole page.
+  function handleImageError(): void {
+    scheduleRetry();
   }
 
   useEffect(() => {
@@ -222,7 +240,7 @@ export default function ThumbnailCell({
       <img
         ref={imgRef}
         onLoad={(e) => handleImageResolved(e.currentTarget)}
-        onError={() => setFailed(true)}
+        onError={handleImageError}
         src={src}
         width={typeof renderWidth === "number" ? renderWidth : undefined}
         height={typeof renderHeight === "number" ? renderHeight : undefined}

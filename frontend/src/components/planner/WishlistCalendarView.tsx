@@ -364,19 +364,32 @@ function CalendarChart({
   );
 
   const snapXPositions = useMemo(() => {
-    const snaps: { xPx: number; targetIdx: number; rangeIdx: number; edge: "start" | "end" }[] = [];
+    // Each snap carries its underlying date so callers can use it directly
+    // instead of round-tripping pixel → date through x.invert. d3.scaleTime's
+    // linear interpolation can introduce ~1 ms of float error which makes
+    // the snap-aligned hoverDate fail a strict `>= rs` check against the
+    // bar's start, dropping the rangeLabel on snaps near the today line.
+    const snaps: {
+      xPx: number;
+      targetIdx: number;
+      rangeIdx: number;
+      edge: "start" | "end";
+      date: Date;
+    }[] = [];
     data.targets.forEach((target, tIdx) => {
       target.date_ranges.forEach((dr, rIdx) => {
         const rs = toRefDate(dr.start_date);
         const re = toRefDate(dr.end_date);
         if (rs <= re) {
-          snaps.push({ xPx: x(rs), targetIdx: tIdx, rangeIdx: rIdx, edge: "start" });
-          snaps.push({ xPx: x(re), targetIdx: tIdx, rangeIdx: rIdx, edge: "end" });
+          snaps.push({ xPx: x(rs), targetIdx: tIdx, rangeIdx: rIdx, edge: "start", date: rs });
+          snaps.push({ xPx: x(re), targetIdx: tIdx, rangeIdx: rIdx, edge: "end", date: re });
         } else {
-          snaps.push({ xPx: x(rs), targetIdx: tIdx, rangeIdx: rIdx, edge: "start" });
-          snaps.push({ xPx: x(new Date(Date.UTC(REF_YEAR, 11, 31))), targetIdx: tIdx, rangeIdx: rIdx, edge: "end" });
-          snaps.push({ xPx: x(new Date(Date.UTC(REF_YEAR, 0, 1))), targetIdx: tIdx, rangeIdx: rIdx, edge: "start" });
-          snaps.push({ xPx: x(re), targetIdx: tIdx, rangeIdx: rIdx, edge: "end" });
+          const yearEnd = new Date(Date.UTC(REF_YEAR, 11, 31));
+          const yearStart = new Date(Date.UTC(REF_YEAR, 0, 1));
+          snaps.push({ xPx: x(rs), targetIdx: tIdx, rangeIdx: rIdx, edge: "start", date: rs });
+          snaps.push({ xPx: x(yearEnd), targetIdx: tIdx, rangeIdx: rIdx, edge: "end", date: yearEnd });
+          snaps.push({ xPx: x(yearStart), targetIdx: tIdx, rangeIdx: rIdx, edge: "start", date: yearStart });
+          snaps.push({ xPx: x(re), targetIdx: tIdx, rangeIdx: rIdx, edge: "end", date: re });
         }
       });
     });
@@ -408,16 +421,22 @@ function CalendarChart({
 
     let snapX = mx;
     let isSnapped = false;
+    let snappedDate: Date | null = null;
 
     for (const snap of snapXPositions) {
       if (snap.targetIdx === rowIdx && Math.abs(mx - snap.xPx) <= SNAP_PX) {
         snapX = snap.xPx;
         isSnapped = true;
+        snappedDate = snap.date;
         break;
       }
     }
 
-    const hoverDate = x.invert(snapX);
+    // When snapped, take the snap's known date directly. Round-tripping
+    // through x.invert can return a date 1 ms before the intended one due
+    // to scaleTime's float interpolation — that 1-ms gap fails the strict
+    // ``hoverDate >= rs`` check below and drops the rangeLabel.
+    const hoverDate = snappedDate ?? x.invert(snapX);
 
     let rangeLabel: string | null = null;
     let targetName: string | null = null;
