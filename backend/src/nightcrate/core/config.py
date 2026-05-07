@@ -18,6 +18,15 @@ class BrowserFavorite(BaseModel):
     path: str
 
 
+class PlannerSortEntry(BaseModel):
+    field: str
+    dir: Literal["asc", "desc"]
+
+
+PlannerTab = Literal["tonight", "anytime", "wishlist"]
+FilterLine = Literal["Ha", "SII", "OIII", "L", "R", "G", "B"]
+
+
 class Settings(BaseModel):
     theme: Literal["light", "dark", "browser"] = "browser"
     gpu_acceleration: bool = True
@@ -132,6 +141,29 @@ class Settings(BaseModel):
     # the panel and the state should persist.
     phd2_help_expanded: dict[str, bool] = Field(default_factory=dict)
     astap_executable_path: str | None = None
+    # ─── Target Planner UI state ───────────────────────────────────
+    # Persisted across sessions so iPad/Mac/etc share the same state.
+    # `searchQuery` (free-text search box) is intentionally NOT here —
+    # it stays ephemeral per-session.
+    planner_selected_location_id: int | None = None
+    planner_selected_horizon_id: int | None = None
+    planner_selected_rig_id: int | None = None
+    planner_active_tab: PlannerTab = "tonight"
+    planner_sort_by: list[PlannerSortEntry] = Field(
+        default_factory=lambda: [PlannerSortEntry(field="primary_designation", dir="asc")]
+    )
+    planner_filter_intent: list[FilterLine] = Field(default_factory=list)
+    planner_type_filter: list[str] = Field(default_factory=list)
+    planner_catalog_filter: list[str] = Field(default_factory=list)
+    planner_constellation_filter: list[str] = Field(default_factory=list)
+    planner_detail_id: int | None = None
+    planner_min_hours: float | None = None
+    planner_max_mag: float | None = None
+    planner_min_size: float | None = None
+    planner_coverage_range: tuple[float, float] | None = None
+    planner_calendar_location_id: int | None = None
+    planner_calendar_horizon_id: int | None = None
+    planner_calendar_rig_id: int | None = None
 
     @model_validator(mode="after")
     def _validate_scoring(self) -> Settings:

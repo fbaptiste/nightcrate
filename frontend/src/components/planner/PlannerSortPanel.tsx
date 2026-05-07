@@ -23,6 +23,7 @@ import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import Stack from "@mui/material/Stack";
@@ -57,6 +58,7 @@ import {
   type SortDir,
   type SortEntry,
 } from "@/lib/plannerSortFields";
+import { DEFAULT_SORT } from "@/stores/plannerStore";
 
 interface Props {
   sortBy: SortEntry[];
@@ -103,6 +105,15 @@ export default function PlannerSortPanel({
 
   function removeEntry(field: string) {
     onSortChange(sortBy.filter((e) => e.field !== field));
+  }
+
+  // Reset button is only shown when the current sort differs from the
+  // store-level default.
+  const isDefaultSort =
+    sortBy.length === DEFAULT_SORT.length &&
+    sortBy.every((e, i) => e.field === DEFAULT_SORT[i].field && e.dir === DEFAULT_SORT[i].dir);
+  function resetToDefault() {
+    onSortChange(DEFAULT_SORT);
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -265,6 +276,14 @@ export default function PlannerSortPanel({
               )}
             </Box>
           </Box>
+
+          {!isDefaultSort && (
+            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button size="small" variant="text" onClick={resetToDefault}>
+                Reset sorting
+              </Button>
+            </Box>
+          )}
         </Stack>
       </AccordionDetails>
     </Accordion>

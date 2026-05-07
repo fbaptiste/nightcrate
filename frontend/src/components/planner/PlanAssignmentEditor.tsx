@@ -676,8 +676,17 @@ function InteractiveAnnualChart({
   const handleThresholdDrag = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const svg = svgRef.current!;
+    startThresholdDrag();
+  };
 
+  const handleThresholdTouchStart = (e: React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startThresholdDrag();
+  };
+
+  const startThresholdDrag = () => {
+    const svg = svgRef.current!;
     const snapTo30Min = (raw: number) => Math.max(0, Math.round(raw * 2) / 2);
 
     const onMove = (ev: MouseEvent) => {
@@ -686,12 +695,24 @@ function InteractiveAnnualChart({
       const hours = yScale.invert(Math.max(0, Math.min(innerH, y)));
       onThresholdChange(snapTo30Min(hours));
     };
-    const onUp = () => {
+    const onTouchMove = (ev: TouchEvent) => {
+      if (ev.touches.length !== 1) return;
+      ev.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const y = ev.touches[0].clientY - rect.top - CHART_MARGIN.top;
+      const hours = yScale.invert(Math.max(0, Math.min(innerH, y)));
+      onThresholdChange(snapTo30Min(hours));
+    };
+    const cleanup = () => {
       document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("mouseup", cleanup);
+      document.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("touchend", cleanup);
     };
     document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    document.addEventListener("mouseup", cleanup);
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    document.addEventListener("touchend", cleanup);
   };
 
   const rangeColor = `${RIG_BLUE}33`;
@@ -807,13 +828,13 @@ function InteractiveAnnualChart({
             strokeWidth={1.5}
             strokeDasharray="6,3"
             style={{ cursor: "ns-resize" }}
-            onMouseDown={handleThresholdDrag}
+            onMouseDown={handleThresholdDrag} onTouchStart={handleThresholdTouchStart}
           />
           {/* Drag handle — squeeze arrows icon */}
           <g
             transform={`translate(${innerW + HANDLE_SIZE / 2 + 4}, ${yScale(thresholdHours)})`}
             style={{ cursor: "ns-resize" }}
-            onMouseDown={handleThresholdDrag}
+            onMouseDown={handleThresholdDrag} onTouchStart={handleThresholdTouchStart}
           >
             <rect
               x={-HANDLE_SIZE / 2}

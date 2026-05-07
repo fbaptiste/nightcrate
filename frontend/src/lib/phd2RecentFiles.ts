@@ -1,65 +1,86 @@
 /**
- * Recent-files history for the PHD2 Analyzer — localStorage-backed,
- * capped at MAX_ENTRIES, deduped on path. Corruption silently resets.
+ * Recent-files history for the PHD2 Analyzer. The actual list lives in the
+ * `phd2_recent_files` table on the backend; the API client lives in
+ * `@/api/phd2`. This module exposes a thin async wrapper that runs a
+ * one-time migration of pre-existing browser-localStorage entries into
+ * the database, plus the relative-time display helper.
  */
+import {
+  deleteRecentPhd2File,
+  fetchRecentPhd2Files,
+  recordRecentPhd2File,
+  type RecentFile,
+} from "@/api/phd2";
 
-const STORAGE_KEY = "phd2.recentFiles";
-const MAX_ENTRIES = 10;
+export type { RecentFile };
 
-export interface RecentFile {
-  path: string;
-  openedAt: string;
+const LEGACY_STORAGE_KEY = "phd2.recentFiles";
+const MIGRATED_FLAG_KEY = "phd2.recentFiles.migrated";
+
+export async function getRecentFiles(): Promise<RecentFile[]> {
+  await migrateLegacyOnce();
+  return fetchRecentPhd2Files();
 }
 
-export function getRecentFiles(): RecentFile[] {
+export async function addRecentFile(path: string): Promise<RecentFile[]> {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (e): e is RecentFile =>
-        typeof e === "object" &&
-        e !== null &&
-        typeof (e as RecentFile).path === "string" &&
-        typeof (e as RecentFile).openedAt === "string",
-    );
+    await recordRecentPhd2File(path);
   } catch {
-    return [];
+    // Network error — return current list anyway so UI stays consistent.
   }
+  return fetchRecentPhd2Files();
 }
 
-export function addRecentFile(path: string): RecentFile[] {
-  const now = new Date().toISOString();
-  const prev = getRecentFiles();
-  const filtered = prev.filter((e) => e.path !== path);
-  const next: RecentFile[] = [{ path, openedAt: now }, ...filtered].slice(
-    0,
-    MAX_ENTRIES,
-  );
-  saveRecentFiles(next);
-  return next;
-}
-
-export function removeRecentFile(path: string): RecentFile[] {
-  const next = getRecentFiles().filter((e) => e.path !== path);
-  saveRecentFiles(next);
-  return next;
-}
-
-export function clearRecentFiles(): void {
+export async function removeRecentFile(path: string): Promise<RecentFile[]> {
   try {
-    window.localStorage.removeItem(STORAGE_KEY);
+    await deleteRecentPhd2File(path);
   } catch {
-    // localStorage unavailable (private mode, quota) — swallow.
+    // ignore
   }
+  return fetchRecentPhd2Files();
 }
 
-function saveRecentFiles(entries: RecentFile[]): void {
+// Posts oldest-first so the most-recently-opened file ends up with the
+// largest opened_at on the server. Sequential awaits are intentional —
+// `datetime('now')` has 1-second resolution, so concurrent posts risk
+// tying on timestamp; the route's `id DESC` tiebreaker preserves
+// insertion order anyway, but the sequential pattern keeps the
+// guarantee intact regardless. Idempotent via MIGRATED_FLAG_KEY.
+async function migrateLegacyOnce(): Promise<void> {
+  let raw: string | null;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    if (window.localStorage.getItem(MIGRATED_FLAG_KEY)) return;
+    raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
   } catch {
-    // localStorage unavailable — swallow.
+    return;
+  }
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter(
+          (e): e is { path: string } =>
+            typeof e === "object" &&
+            e !== null &&
+            typeof (e as { path: unknown }).path === "string",
+        );
+        for (let i = valid.length - 1; i >= 0; i--) {
+          try {
+            await recordRecentPhd2File(valid[i].path);
+          } catch {
+            // ignore individual failures
+          }
+        }
+      }
+    } catch {
+      // corrupted localStorage — ignore
+    }
+  }
+  try {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    window.localStorage.setItem(MIGRATED_FLAG_KEY, "1");
+  } catch {
+    // ignore
   }
 }
 

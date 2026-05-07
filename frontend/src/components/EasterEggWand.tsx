@@ -27,6 +27,8 @@ export function EasterEggWand({ lines, tooltip = "Cast a spell", size = 14 }: Pr
   const nextId = useRef(0);
   const queue = useRef<string[]>([]);
 
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const cast = () => {
     if (queue.current.length === 0) {
       queue.current = shuffleQueue(lines);
@@ -40,11 +42,15 @@ export function EasterEggWand({ lines, tooltip = "Cast a spell", size = 14 }: Pr
       y: Math.random() * -30 - 10,
     }));
     setSparkles(newSparkles);
+
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    dismissTimer.current = setTimeout(dismiss, 4000);
   };
 
   const dismiss = () => {
     setCasting(false);
     setSparkles([]);
+    if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
   };
 
   return (

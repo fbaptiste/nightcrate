@@ -34,6 +34,8 @@ interface Props {
   collapsible?: boolean;
   /** Initial expanded state when ``collapsible``. Default true. */
   defaultExpanded?: boolean;
+  /** Optional content rendered at the bottom of the collapsible area. */
+  footer?: React.ReactNode;
 }
 
 export default function StatsPanel({
@@ -43,6 +45,7 @@ export default function StatsPanel({
   subtitle,
   collapsible = false,
   defaultExpanded = true,
+  footer,
 }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [copiedOpen, setCopiedOpen] = useState(false);
@@ -119,7 +122,7 @@ export default function StatsPanel({
   const renderDist = (px: number | null): string => {
     if (px === null) return "—";
     if (scale === null) return `${px.toFixed(3)} px`;
-    return `${px.toFixed(3)} px / ${(px * scale).toFixed(2)}″`;
+    return `${px.toFixed(3)} px\n${(px * scale).toFixed(2)}″`;
   };
   const renderDrift = (pxPerMin: number | null): string => {
     if (pxPerMin === null) return "—";
@@ -130,7 +133,7 @@ export default function StatsPanel({
     const pxStr = pxPerMin.toFixed(4);
     if (scale === null) return `${pxStr} px/min`;
     const arcsecStr = (pxPerMin * scale).toFixed(3);
-    return `${pxStr} px/min / ${arcsecStr}″/min`;
+    return `${pxStr} px/min\n${arcsecStr}″/min`;
   };
   const renderOscillation = (frac: number | null): string => {
     if (frac === null) return "—";
@@ -306,6 +309,7 @@ export default function StatsPanel({
             Pixel scale not declared in header — arcsec values unavailable.
           </Typography>
         )}
+        {footer}
       </Collapse>
       <Snackbar
         open={copiedOpen}

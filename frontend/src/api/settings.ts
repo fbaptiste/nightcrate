@@ -1,12 +1,18 @@
 import { apiFetch } from "./client";
+import type { FilterLine } from "./planner";
+import type { SortEntry } from "@/lib/plannerSortFields";
 
 export type Theme = "light" | "dark" | "browser";
 export type WeatherUnits = "metric" | "imperial";
+export type PlannerTab = "tonight" | "anytime" | "wishlist";
 
 export interface BrowserFavorite {
   name: string;
   path: string;
 }
+
+// Re-export so consumers can keep importing from a single API surface.
+export type { FilterLine, SortEntry };
 
 export interface Settings {
   theme: Theme;
@@ -60,6 +66,24 @@ export interface Settings {
   phd2_help_expanded: Record<string, boolean>;
   phd2_recurrence_mode: "boundary_skip" | "verbatim";
   astap_executable_path: string | null;
+  // ─── Target Planner UI state (v0.34.0) ──────────────────────
+  planner_selected_location_id: number | null;
+  planner_selected_horizon_id: number | null;
+  planner_selected_rig_id: number | null;
+  planner_active_tab: PlannerTab;
+  planner_sort_by: SortEntry[];
+  planner_filter_intent: FilterLine[];
+  planner_type_filter: string[];
+  planner_catalog_filter: string[];
+  planner_constellation_filter: string[];
+  planner_detail_id: number | null;
+  planner_min_hours: number | null;
+  planner_max_mag: number | null;
+  planner_min_size: number | null;
+  planner_coverage_range: [number, number] | null;
+  planner_calendar_location_id: number | null;
+  planner_calendar_horizon_id: number | null;
+  planner_calendar_rig_id: number | null;
 }
 
 export function fetchSettings(): Promise<Settings> {

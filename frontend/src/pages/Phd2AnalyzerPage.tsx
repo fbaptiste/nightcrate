@@ -100,14 +100,19 @@ export default function Phd2AnalyzerPage() {
   // reset on section change alongside viewport.
   const [selections, setSelections] = useState<Array<[number, number]>>([]);
   const [exclusions, setExclusions] = useState<Array<[number, number]>>([]);
-  // Recent files history — localStorage-backed, displayed on the
-  // empty-state landing when no log is currently loaded.
-  const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() =>
-    getRecentFiles(),
-  );
+  // Recent files history — backend-backed via /api/phd2/recent.
+  // Displayed on the empty-state landing when no log is currently loaded.
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
 
   useEffect(() => {
     setActivity("PHD2 Analyzer");
+    let canceled = false;
+    getRecentFiles().then((files) => {
+      if (!canceled) setRecentFiles(files);
+    });
+    return () => {
+      canceled = true;
+    };
   }, []);
 
   const parseMutation = useMutation({
@@ -123,7 +128,7 @@ export default function Phd2AnalyzerPage() {
       // Only record successfully-parsed logs in the recent-files
       // history so a typo path or unreadable file doesn't pollute
       // the list.
-      setRecentFiles(addRecentFile(path));
+      addRecentFile(path).then(setRecentFiles);
     },
   });
 
@@ -219,6 +224,31 @@ export default function Phd2AnalyzerPage() {
       },
     );
   }, [viewportSamples, selected, includeSettle]);
+
+  const handleExportViewport = async () => {
+    if (!activePath || !selected || !viewport) return;
+    const params = new URLSearchParams({
+      path: activePath,
+      section_index: String(selected.section.index),
+      time_start: String(viewport[0]),
+      time_end: String(viewport[1]),
+    });
+    const res = await fetch(`/api/phd2/export?${params.toString()}`, { method: "POST" });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const filename = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "PHD2_Export.txt";
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+  };
 
   const openPath = (path: string) => {
     const trimmed = path.trim();
@@ -356,7 +386,7 @@ export default function Phd2AnalyzerPage() {
                       aria-label={`Remove ${item.path} from recent logs`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setRecentFiles(removeRecentFile(item.path));
+                        removeRecentFile(item.path).then(setRecentFiles);
                       }}
                       sx={{ ml: 0.5 }}
                     >
@@ -503,6 +533,18 @@ export default function Phd2AnalyzerPage() {
                             )}
                             collapsible
                             defaultExpanded={false}
+                            footer={viewport && (
+                              <Box sx={{ display: "flex", justifyContent: "center", mt: 1 }}>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{ textTransform: "none" }}
+                                  onClick={() => handleExportViewport()}
+                                >
+                                  Export viewport log
+                                </Button>
+                              </Box>
+                            )}
                           />
                         </Box>
                       )}

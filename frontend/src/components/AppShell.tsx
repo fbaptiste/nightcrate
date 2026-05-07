@@ -11,6 +11,8 @@ import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTheme } from "@mui/material/styles";
 import KeyboardDoubleArrowLeftIcon from "@mui/icons-material/KeyboardDoubleArrowLeft";
 import KeyboardDoubleArrowRightIcon from "@mui/icons-material/KeyboardDoubleArrowRight";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
@@ -23,7 +25,7 @@ import BuildIcon from "@mui/icons-material/Build";
 import CalculateOutlinedIcon from "@mui/icons-material/CalculateOutlined";
 import CodeIcon from "@mui/icons-material/Code";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
-import PublicIcon from "@mui/icons-material/Public";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import PlaceIcon from "@mui/icons-material/Place";
 import PrecisionManufacturingIcon from "@mui/icons-material/PrecisionManufacturing";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -83,7 +85,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
   { to: "/image-analyzer", label: "Image Analyzer", icon: <ImageSearchIcon /> },
   { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
-  { to: "/catalog/dso", label: "DSO Catalog", icon: <PublicIcon /> },
+  { to: "/catalog/dso", label: "DSO Catalog", icon: <AutoAwesomeIcon /> },
   { to: "/calculators", label: "Calculators", icon: <CalculateOutlinedIcon /> },
   { to: "/locations", label: "Locations", icon: <PlaceIcon /> },
   { to: "/rigs", label: "Rigs", icon: <PrecisionManufacturingIcon /> },
@@ -171,6 +173,16 @@ export function AppShell() {
   const version = healthQuery.data?.version ?? "…";
   const [activityOpen, setActivityOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
+
+  const muiTheme = useTheme();
+  const isTablet = useMediaQuery(muiTheme.breakpoints.down("md"));
+
+  // Auto-collapse the nav on tablet — both when the breakpoint changes
+  // (rotate/resize) and when the route changes (so the drawer doesn't
+  // linger over the new page).
+  useEffect(() => {
+    if (isTablet) setNavOpen(false);
+  }, [isTablet, pathname]);
 
   const drawerWidth = navOpen ? DRAWER_WIDTH_OPEN : DRAWER_WIDTH_CLOSED;
 
@@ -273,19 +285,27 @@ export function AppShell() {
         <List dense>
           {/* Home stays pinned at the top, never reorderable. */}
           <NavItemRow item={HOME_ITEM} navOpen={navOpen} />
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={reorderableRoutes} strategy={verticalListSortingStrategy}>
-              {reorderableRoutes.map((route) => {
-                const item = itemByRoute.get(route);
-                if (!item) return null;
-                return <SortableNavItemRow key={route} item={item} navOpen={navOpen} />;
-              })}
-            </SortableContext>
-          </DndContext>
+          {isTablet ? (
+            reorderableRoutes.map((route) => {
+              const item = itemByRoute.get(route);
+              if (!item) return null;
+              return <NavItemRow key={route} item={item} navOpen={navOpen} />;
+            })
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={reorderableRoutes} strategy={verticalListSortingStrategy}>
+                {reorderableRoutes.map((route) => {
+                  const item = itemByRoute.get(route);
+                  if (!item) return null;
+                  return <SortableNavItemRow key={route} item={item} navOpen={navOpen} />;
+                })}
+              </SortableContext>
+            </DndContext>
+          )}
         </List>
 
         <Box sx={{ flexGrow: 1 }} />

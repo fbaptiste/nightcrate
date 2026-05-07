@@ -127,11 +127,22 @@ export function ZoneOverlayMap({
       setDragOffset(null);
     };
 
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      const ev = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY } as MouseEvent;
+      onMouseMove(ev);
+    };
+
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onMouseUp);
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onMouseUp);
     };
   }, [dragging, imgSize, scaleX, scaleY, computeBounds, grid.square_size, imgW, imgH, dragOffset, onSquareMoved]);
 
@@ -166,6 +177,7 @@ export function ZoneOverlayMap({
           <Box
             key={`${sq.row}-${sq.col}`}
             onMouseDown={(e) => handleMouseDown(e, sq)}
+            onTouchStart={(e) => { if (e.touches.length === 1) { e.preventDefault(); e.stopPropagation(); const cx = (sq.x0 + sq.x1) / 2; const cy = (sq.y0 + sq.y1) / 2; setDragging({ sq, startMouseX: e.touches[0].clientX, startMouseY: e.touches[0].clientY, startCx: cx, startCy: cy }); setDragOffset(null); } }}
             onClick={(e) => { if (!dragOffset) { e.stopPropagation(); onSquareClick(sq); } }}
             sx={{
               position: "absolute",

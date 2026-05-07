@@ -971,7 +971,7 @@ export default function LocationsPage() {
               </Button>
             </Box>
             {/* Address fields + Lookup from Address */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
                 label="City"
                 value={form.city}
@@ -983,7 +983,7 @@ export default function LocationsPage() {
                 onChange={(e) => set("state_province", e.target.value)}
               />
             </Box>
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
                 label="Country"
                 value={form.country}
@@ -1006,7 +1006,7 @@ export default function LocationsPage() {
             </Button>
 
             {/* Lat/Lon + Map preview */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
                 label="Latitude"
                 type="number"
@@ -1039,7 +1039,7 @@ export default function LocationsPage() {
 
             {/* Elevation — user types in their preferred unit; helper text
                 shows the other unit so both are visible at a glance. */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
                 label={`Elevation (${elevationUnitLabel})`}
                 type="number"
@@ -1072,7 +1072,7 @@ export default function LocationsPage() {
                 by default — clicking the disabled field opens a warning; the
                 overlay is absolutely positioned over the Autocomplete so the
                 two fields stay the same size and aligned. */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, alignItems: "start" }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2, alignItems: "start" }}>
               <Autocomplete
                 options={timezones}
                 value={timezones.includes(form.timezone) ? form.timezone : null}
@@ -1218,7 +1218,7 @@ export default function LocationsPage() {
             <Typography variant="subtitle2" sx={{ mt: 1, mb: -0.5 }}>
               Seeing Conditions
             </Typography>
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
                 label="Best Typical Seeing"
                 type="number"
@@ -1384,7 +1384,7 @@ export default function LocationsPage() {
               autoFocus
               placeholder="e.g. 123 Main St"
             />
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
                 label="City"
                 value={addressForm.city}
@@ -1396,7 +1396,7 @@ export default function LocationsPage() {
                 onChange={(e) => setAddressForm((p) => ({ ...p, state_province: e.target.value }))}
               />
             </Box>
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
                 label="Country"
                 value={addressForm.country}

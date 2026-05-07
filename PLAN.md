@@ -47,6 +47,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.31.0 — Moon Quality Weighted Visibility](#v0310--moon-quality-weighted-visibility) ✅
 - [v0.32.0 — UI Polish + Performance](#v0320--ui-polish--performance) ✅
 - [v0.33.0 — Plate Solving Refinements](#v0330--plate-solving-refinements) ✅
+- [v0.34.0 — Tablet & Desktop Support](#v0340--tablet--desktop-support) ✅
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4402,6 +4403,84 @@ Integrates ASTAP as an external plate solver invoked via subprocess. Users confi
 - [x] Suppress double-click file selection after folder/archive navigation
 - [x] Fix macOS Full Screen layout (100vh → 100dvh)
 - [x] Fix XISF/TIFF plate solve + surface ASTAP output in logs
+
+---
+
+## v0.34.0 — Tablet & Desktop Support
+
+**Status:** Done
+**Branch:** `v0.34.0/tablet-desktop-support`
+
+Make NightCrate usable from an iPad or Android tablet over the LAN, plus
+fold a few persistent state and planner UX cleanups that came up while
+testing on tablet.
+
+### LAN access + HTTPS
+
+- [x] `make dev-lan` / `make backend-lan` — bind to `0.0.0.0`, permissive CORS
+- [x] Vite dev server: HTTPS via `@vitejs/plugin-basic-ssl` fallback, auto-picks `frontend/.certs/{cert,key}.pem` if present (mkcert-friendly path)
+- [x] iPad/iPhone/Android documented setup: install mkcert local CA via `.mobileconfig` profile; trusted-by-default after that
+
+### Touch support
+
+- [x] Image Analyzer (FitsImage): pinch-to-zoom + pan with direct DOM transform during gesture, state sync on touchend
+- [x] Long-press pixel inspector with floating crosshair overlay
+- [x] PHD2 TimeSeriesChart: tap-to-place crosshair, d3.zoom touch filter, pinch zoom
+- [x] Histogram: drag-to-zoom
+- [x] HorizonChart: point drag + hover
+- [x] BestTimeOfYearChart, SkyPositionGraph, WishlistCalendarView, FovSimulator, PlanAssignmentEditor, ZoneOverlayMap, CropGrid: touch hover / drag
+- [x] iPadOS loupe suppression (`-webkit-touch-callout: none` + `touch-action: none`) on chart SVGs
+- [x] Viewport meta `maximum-scale=1.0, user-scalable=no` + iOS proprietary `gesturestart`/`gesturechange`/`gestureend` preventDefault on FitsImage container — eliminates iPad pinch-zoom freeze-then-jump
+
+### iPad pixel inspector — small sampling canvas
+
+- [x] Replace full-image offscreen canvas (silently fails to allocate on iOS WebKit for large images, leaving the canvas empty) with a single 301×301 sampling canvas
+- [x] Sample via 9-arg `drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh)` — copies just the patch region per request
+- [x] rAF-throttle pixel sampling during inspect-mode finger drag (one `getImageData` per paint, drop intermediate moves)
+
+### Image Analyzer touch tuning
+
+- [x] Translate3d + dynamic `will-change: transform` on touchstart/end for GPU layer promotion
+- [x] Pre-warm at 1:1 on tablet behind a black cover, then swap to fit — avoids WebKit's lazy GPU-layer allocation cascade on first pinch
+- [x] Fit/1:1 buttons clear the inline transform so post-touch state changes take effect
+- [x] Strip `image-rendering` toggle from gesture path (was invalidating the compositing layer per touchmove)
+
+### Responsive layout
+
+- [x] Sidebar auto-collapse to icon-only on tablet (<900px); disable dnd-kit drag-reorder on touch
+- [x] PlannerPage filter widths, LocationsPage form grids, PlannerDetailPanel `fullScreen` on tablet
+- [x] EasterEggWand 4-second auto-dismiss on touch devices
+
+### PHD2 Analyzer
+
+- [x] Viewport log export — `POST /api/phd2/export` returns the visible window as a PHD2-format text file
+- [x] Recent files moved from `localStorage` to SQLite (`phd2_recent_files` table, migration 0028) — accessible across devices/origins
+- [x] One-time browser-localStorage → backend migration of pre-existing entries
+- [x] Per-tab dual-unit stats split onto two lines
+
+### Planner — state + UX
+
+- [x] Persist all planner UI state in the `settings` KV table (location, horizon, rig, sort, filter intent, type/catalog/constellation chips, sliders, tab, detail panel, calendar pickers — everything except free-text search)
+- [x] New `usePlannerSettingsSync` bridge: hydrates Zustand store from settings on mount, rAF-coalesced PUT on change, payload-diff to skip no-op writes (e.g. post-hydration echo)
+- [x] One-time legacy `nightcrate-planner` localStorage migration into backend
+- [x] "Clear filters" button moved inside the Filters panel
+- [x] "Reset sorting" button inside the Sort panel (returns to `[{primary_designation, asc}]`)
+- [x] Catalog / Object type / Constellation / Filter intent dropdowns: `readOnly` input — dropdown still opens on tap, but iPad soft keyboard never appears
+- [x] Thumbnail cell: hard fetch errors (5xx, 204, network blip) share the placeholder retry budget instead of immediately showing the icon
+- [x] WishlistCalendarView: snap entries carry their underlying date so `hoverDate` is no longer subject to `d3.scaleTime` 1-ms invert precision drift (was dropping the bar tooltip when snapping near the today line)
+
+### Sidebar
+
+- [x] Section arrows: MUI `ExpandLess`/`ExpandMore` icons (up when expanded, down when collapsed)
+
+### Migrations
+
+- `0028.phd2_recent_files.sql` — `phd2_recent_files(id, path UNIQUE, opened_at)` + `idx_phd2_recent_files_opened`
+
+### Tests added
+
+- `backend/tests/test_phd2_api.py::TestRecentFiles` — 4 tests (add/list, upsert dedup, delete, idempotent delete)
+- `backend/tests/test_planner_settings.py` — 4 tests (defaults, full round-trip with nested types, schema-drift fallback, PUT/GET roundtrip via API)
 
 ---
 

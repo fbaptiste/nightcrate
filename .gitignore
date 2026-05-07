@@ -30,6 +30,9 @@ frontend/dist/
 frontend/build/
 frontend/.vite/
 
+# Local mkcert-issued TLS certs (per-machine, contain a private key — never commit)
+frontend/.certs/
+
 # SQLite
 *.db
 *.sqlite

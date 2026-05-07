@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.33.0
+**NightCrate version:** 0.34.0
 
-**Last updated:** 2026-04-29
+**Last updated:** 2026-05-06
 
 **Last full repo snapshot:** 2026-04-19
 
@@ -29,8 +29,8 @@
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.1.
 - **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder (Clocks view). Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0020.sky_tile_cache.sql`. Pydantic for all data models.
-- **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0028.phd2_recent_files.sql`. Pydantic for all data models.
+- **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `make dev-lan` binds to `0.0.0.0` + serves Vite over HTTPS (auto-picks `frontend/.certs/{cert,key}.pem` if present, else `@vitejs/plugin-basic-ssl` self-signed) so iPad/Android tablets can reach NightCrate over the LAN. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
 ---
@@ -175,6 +175,8 @@ FOV Simulator (v0.18.0 rewrite): drag-to-rotate orange sensor rectangle overlaid
 
 **v0.31.0 Moon Quality Weighted Visibility.** Moon illumination/separation filter with checkbox + `Illumination ≤ / AND|OR / Separation ≥` controls (shared `MoonFilterControls` component). Best Time of Year chart shows dual curves (raw blue + effective orange), moon phase backdrop, and a moon max-altitude line on the right y-axis — all toggleable via clickable legend. Moon impact scoring reworked to a two-component model (sky glow 60% + proximity 40%) so a bright moon far from the target still penalises broadband. Meridian timing now uses the true transit time with a 2h buffer. Illumination formula fixed from `(1+cos)` to `(1-cos)` (elongation vs phase angle). Detail panel sections (Score, Sky Position, Best Time of Year) are collapsible; sky position chart widened to match.
 
+**v0.34.0 DB-backed UI state + UX cleanup.** All planner UI state (location, horizon, rig, sort, filter intent, type/catalog/constellation chips, sliders, tab, detail panel, calendar pickers — everything except free-text search) moved from the Zustand `persist` middleware (browser localStorage, per-origin) to the `settings` KV table. Bridged by `frontend/src/lib/usePlannerSettingsSync.ts`: hydrates the in-memory store on mount, rAF-coalesces multi-setter ticks into one PUT, skips no-op writes via a `lastPushedRef` JSON diff. One-time legacy `nightcrate-planner` localStorage migration carries existing entries forward. UX: "Clear filters" moved inside the Filters panel; "Reset sorting" button added inside the Sort panel; CatalogFilter / TypeFilter / ConstellationFilter / FilterIntentSelect inner inputs are `readOnly` so the iPad soft keyboard never appears. Planner thumbnails now retry hard fetch errors (5xx, 204, network blip) under the same backoff budget as the 1×1 placeholder. WishlistCalendarView snap entries carry their underlying `Date` (round-tripping through `d3.scaleTime().invert` was returning ~1 ms before the snap target due to float interpolation, dropping the bar tooltip's range label near the today line).
+
 ### DSO catalog
 
 **Status:** `[shipped]` (v0.14.0 MVP + v0.15.0 augmentation + v0.20.0 external references)
@@ -208,6 +210,8 @@ VizieR fetches (Sharpless, Barnard) rotate through three CDS mirrors (Strasbourg
 Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsight projects (.pxiproject), PNG, JPEG, TIFF (including float32). Archive browsing (zip, tar, tar.gz, tar.bz2, tar.zst, 7z) with in-memory extraction. PixInsight-compatible auto-stretch (STF with avgDev). Per-channel statistics (median, MAD, avgDev, SNR, CIE L*a*b* a*). Canvas-based histogram with R/G/B/Luminosity channels, log/linear scale. Client-side pixel inspector with magnifier, hex color, XKCD named color. FITS header viewing and editing (batch update/add/delete with structural keyword protection). Recent files tracking. GPU-accelerated stretch and stats via mlx/cupy with numpy fallback.
 
 **Aberration Inspector** tab: star detection via sep, configurable sample grid with per-square metrics, draggable grid squares, tile preview with ellipse overlays. Results cached in SQLite with TTL-based cleanup.
+
+**Tablet support (v0.34.0).** Pinch-to-zoom + one-finger pan via native touch handlers + direct DOM transform during gesture (state syncs on touchend). Long-press enters pixel-inspect mode with a floating crosshair. iPad pixel inspector uses a single 301×301 sampling canvas + 9-arg `drawImage` to copy just the patch region per sample — full-image canvases silently fail to allocate on iOS WebKit. Pre-warm at 1:1 behind a black cover on tablet to avoid WebKit's lazy GPU-layer cascade on first pinch. Viewport meta sets `maximum-scale=1.0, user-scalable=no` and the container preventDefaults Apple's proprietary `gesturestart`/`change`/`end` events to keep iPadOS from running its own pinch-zoom in parallel.
 
 - **Route:** `/image-viewer`
 - **API:** `/api/images/*`, `/api/files/*`, `/api/aberration/*`
@@ -275,11 +279,11 @@ ASGI middleware records every request with start timestamp, duration, status, an
 
 ### PHD2 Guide-Log Analyzer (Passes A + B + C + D-1 + D-2 + D-3)
 
-**Status:** `[in progress]` (Passes A–D-3 shipped; four more passes planned through v0.34.0 + roadmap tail)
+**Status:** `[shipped]` (Passes A–D-3 shipped; the FFT/spectrum and unguided-RA passes from D-2/D-3 were removed in subsequent cleanup as unreliable. v0.34.0 adds tablet touch + DB-backed recent files + viewport export.)
 
 First pass of a ten-version arc that delivers a PHD2 guide-log analyzer, aiming to replace the community's "post log to the PHD2 Google Group and wait for expert" workflow with an in-app parser + charts + (eventually, in v0.31.0) an automated diagnostic engine. Functional spec: `docs/nightcrate-phd2-analyzer-spec-v4.md`. v0.22.0 delivers a format-tolerant parser (handles ASIAIR's blank app-version field, irregular header key separators, 18-vs-19-column row arity, DROP frames, locale-decimal recovery, backward timestamp jumps), a D3 time-series chart with RA/Dec traces + correction bars + SNR/mass sub-panels + crosshair cursor + row-packed vertical-line event markers, a five-phase calibration plot with derived angle/rate/parity, per-section + viewport summary panels (collapsible), and a warnings hover-tooltip. Settle-window exclusion in the quality metrics (originally Pass B scope) was pulled forward during the polish round because inflated Peak/RMS numbers from dither excursions were actively misleading. Standalone-first (spec §4.1) — no persistence yet (in-process TTL cache only); catalog integration lands in v0.34.0.
 
-- **API:** `/api/phd2/parse` (POST), `/api/phd2/cache/stats` (GET), `/api/phd2/cache/clear` (POST)
+- **API:** `/api/phd2/parse` (POST), `/api/phd2/cache/stats` (GET), `/api/phd2/cache/clear` (POST), `/api/phd2/export` (POST — viewport export to PHD2-format text), `/api/phd2/recent` (GET/POST/DELETE — DB-backed recent-files history)
 - **Backend services:** `services/phd2_parser.py`, `services/phd2_metrics.py` (with `_settle_intervals` state-machine), `services/phd2_models.py`
 - **Frontend:** `pages/Phd2AnalyzerPage.tsx`, `components/phd2/{TimeSeriesChart,CalibrationPlot,ScatterPlot,FftChart,RigSelectBar,StatsPanel,EventList,WarningsDrawer,SectionNavigator,SectionInfoPanel,SectionDataTab}.tsx`, `lib/phd2GuidingMetrics.ts` (client-side metrics helper for Viewport / Selection Summary + toggle-aware recompute), `lib/phd2RecentFiles.ts` (per-log rig persistence), `api/phd2.ts`
 
@@ -313,7 +317,9 @@ Handles all NightCrate image sources: filesystem files passed directly to ASTAP;
 
 ## Schema state
 
-Current migration: **0024** (mount worm period + `rig_summary` view rebuild). 24 migrations total (`0001`–`0024`).
+Current migration: **0028** (`phd2_recent_files`). 28 migrations total (`0001`–`0028`).
+
+**Recent migrations not detailed below:** 0025 (`target_wishlist` — wishlist + sections + plan assignments + date ranges), 0026 (`rig_sort_order` — `sort_order` column on `rig` + view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
 
 - **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
 - **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.

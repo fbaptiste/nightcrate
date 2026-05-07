@@ -251,6 +251,16 @@ export function CropGrid({ grid, squares, stars, path, hdu, metric, selectedSqua
                           setHoveredStar({ star: s, x: px, y: py });
                         }}
                         onMouseLeave={() => setHoveredStar(null)}
+                        onTouchStart={(e) => {
+                          e.preventDefault();
+                          const svg = e.currentTarget.closest("svg");
+                          if (!svg) return;
+                          const rect = svg.getBoundingClientRect();
+                          const px = (cx / pW) * rect.width + rect.left;
+                          const py = (cy / pH) * rect.height + rect.top;
+                          setHoveredStar({ star: s, x: px, y: py });
+                        }}
+                        onTouchEnd={() => setHoveredStar(null)}
                       >
                         {/* Invisible hit area for easier hover */}
                         <ellipse

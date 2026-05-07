@@ -250,6 +250,7 @@ function TimeSeriesChartInner(
   const [width, setWidth] = useState(640);
   const [zoomX, setZoomX] = useState<[number, number] | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  const tapRef = useRef<{ x: number; y: number } | null>(null);
   // Per-series visibility, toggled by clicking a legend chip. All
   // series default to shown; individual series can be hidden without
   // affecting the axes so zoom/pan state stays coherent.
@@ -628,12 +629,16 @@ function TimeSeriesChartInner(
         [MARGIN.left + innerW, height],
       ])
       .filter((e) => {
+        if (e.type === "touchstart" || e.type === "touchmove" || e.type === "touchend") return true;
         const me = e as MouseEvent;
         if (me.type === "mousedown" && me.shiftKey) return false;
         if (me.ctrlKey || me.button) return false;
         const rect = svg.getBoundingClientRect();
         const x = me.clientX - rect.left;
         return x >= MARGIN.left && x <= MARGIN.left + innerW;
+      })
+      .on("start", () => {
+        setHover(null);
       })
       .on("zoom", (e) => {
         const rescaled = e.transform.rescaleX(base);
@@ -864,11 +869,10 @@ function TimeSeriesChartInner(
   const snrTicks = withDomainExtremes(ySnrScale, 2);
   const massTicks = withDomainExtremes(yMassScale, 2);
 
-  function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+  function handleHover(svg: SVGSVGElement, clientX: number) {
     if (samples.length === 0) return;
-    const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
+    const mx = clientX - rect.left;
     if (mx < MARGIN.left || mx > MARGIN.left + innerW) {
       setHover(null);
       return;
@@ -1599,18 +1603,34 @@ function TimeSeriesChartInner(
         ref={svgRef}
         width={width}
         height={effectiveSvgHeight}
-        onMouseMove={handleMouseMove}
+        onMouseMove={(e) => handleHover(e.currentTarget, e.clientX)}
         onMouseLeave={() => setHover(null)}
         onMouseDown={handleSelectionMouseDown}
+        onTouchStart={(e) => {
+          if (e.touches.length === 1) {
+            tapRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          } else {
+            tapRef.current = null;
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (e.touches.length === 0 && tapRef.current && e.changedTouches.length === 1) {
+            const t = e.changedTouches[0];
+            const dx = Math.abs(t.clientX - tapRef.current.x);
+            const dy = Math.abs(t.clientY - tapRef.current.y);
+            if (dx < 10 && dy < 10) {
+              handleHover(e.currentTarget, t.clientX);
+            }
+          }
+          tapRef.current = null;
+        }}
         style={{
           display: ready ? "block" : "none",
-          // ``grab`` by default signals "drag to pan" (works when
-          // zoomed in). Crosshair would also be reasonable but
-          // users need a visual cue that the chart is draggable.
-          // ``touch-action: none`` prevents the browser from
-          // stealing wheel / touch gestures before d3.zoom sees them.
           cursor: zoomX ? "grab" : "crosshair",
           touchAction: "none",
+          WebkitTouchCallout: "none",
+          WebkitUserSelect: "none",
+          userSelect: "none",
         }}
       >
         {/* Per-panel clip rects — every series + bar renders inside its

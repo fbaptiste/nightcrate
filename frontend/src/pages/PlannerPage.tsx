@@ -49,6 +49,7 @@ import { fetchPlannerTargets } from "@/api/planner";
 import { FilterIntentSelect } from "@/components/planner/FilterIntentSelect";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
+import { usePlannerSettingsSync } from "@/lib/usePlannerSettingsSync";
 import { useDebounce } from "@/lib/useDebounce";
 import PaginationActions from "@/components/common/PaginationActions";
 import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
@@ -77,6 +78,9 @@ function formatLocalTime(iso: string, tz: string): string {
 
 
 export default function PlannerPage() {
+  // Bridges the in-memory zustand store with the database-backed
+  // settings — hydrates on mount and pushes changes back.
+  usePlannerSettingsSync();
   const settings = useSettingsStore((s) => s.settings);
   const locationId = usePlannerStore((s) => s.selectedLocationId);
   const setLocationId = usePlannerStore((s) => s.setSelectedLocationId);
@@ -512,7 +516,7 @@ export default function PlannerPage() {
         {/* Row 1: Location + Horizon + Rig (with FOV) + Filter intent */}
         <Stack direction="row" gap={2} flexWrap="wrap" alignItems="flex-start">
           {restrictTonight && (
-            <FormControl size="small" sx={{ minWidth: 180 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: 140, sm: 180 } }}>
               <InputLabel>Location</InputLabel>
               <Select
                 label="Location"
@@ -534,7 +538,7 @@ export default function PlannerPage() {
           )}
 
           {restrictTonight && locationId != null && horizons.length > 0 && (
-            <FormControl size="small" sx={{ minWidth: 160 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: 130, sm: 160 } }}>
               <InputLabel>Horizon</InputLabel>
               <Select
                 label="Horizon"
@@ -550,7 +554,7 @@ export default function PlannerPage() {
           )}
 
           <Box>
-            <FormControl size="small" sx={{ minWidth: 180 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: 140, sm: 180 } }}>
               <InputLabel>Rig</InputLabel>
               <Select
                 label="Rig"
@@ -590,11 +594,6 @@ export default function PlannerPage() {
             />
           )}
 
-          {catalogFiltersActive && (
-            <Button size="small" variant="text" onClick={clearCatalogFilters} sx={{ mb: 0.5 }}>
-              Clear filters
-            </Button>
-          )}
         </Stack>
 
         {/* Filters subsection — collapsible */}
@@ -623,7 +622,7 @@ export default function PlannerPage() {
               setSearchQuery(e.target.value);
               setPagination((p) => ({ ...p, page: 0 }));
             }}
-            sx={{ width: 280 }}
+            sx={{ width: { xs: "100%", sm: 280 } }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -639,7 +638,7 @@ export default function PlannerPage() {
               ) : null,
             }}
           />
-          <Box sx={{ width: 220 }}>
+          <Box sx={{ width: { xs: "100%", sm: 220 } }}>
             <CatalogFilter
               value={catalogFilter}
               onChange={(codes) => {
@@ -652,7 +651,7 @@ export default function PlannerPage() {
               }))}
             />
           </Box>
-          <Box sx={{ width: 220 }}>
+          <Box sx={{ width: { xs: "100%", sm: 220 } }}>
             <TypeFilter
               value={typeFilter}
               onChange={(codes) => {
@@ -665,7 +664,7 @@ export default function PlannerPage() {
               }))}
             />
           </Box>
-          <Box sx={{ width: 220 }}>
+          <Box sx={{ width: { xs: "100%", sm: 220 } }}>
             <ConstellationFilter
               value={constellationFilter}
               onChange={(codes) => {
@@ -687,7 +686,7 @@ export default function PlannerPage() {
           sx={{ mt: 2 }}
         >
           {restrictTonight && (
-            <Box sx={{ width: 180 }}>
+            <Box sx={{ width: { xs: "100%", sm: 180 } }}>
               <Stack direction="row" alignItems="center">
                 <Checkbox
                   size="small"
@@ -720,7 +719,7 @@ export default function PlannerPage() {
               />
             </Box>
           )}
-          <Box sx={{ width: 180 }}>
+          <Box sx={{ width: { xs: "100%", sm: 180 } }}>
             <Stack direction="row" alignItems="center">
               <Checkbox
                 size="small"
@@ -753,7 +752,7 @@ export default function PlannerPage() {
               }}
             />
           </Box>
-          <Box sx={{ width: 180 }}>
+          <Box sx={{ width: { xs: "100%", sm: 180 } }}>
             <Stack direction="row" alignItems="center">
               <Checkbox
                 size="small"
@@ -786,7 +785,7 @@ export default function PlannerPage() {
             />
           </Box>
           {rigId != null && (
-            <Box sx={{ width: 200 }}>
+            <Box sx={{ width: { xs: "100%", sm: 200 } }}>
               <Tooltip
                 title={
                   "Percentage of the rig's FOV filled by the DSO's angular size. " +
@@ -832,6 +831,13 @@ export default function PlannerPage() {
                   setPagination((p) => ({ ...p, page: 0 }));
                 }}
               />
+            </Box>
+          )}
+          {catalogFiltersActive && (
+            <Box sx={{ width: "100%", display: "flex", justifyContent: "flex-end" }}>
+              <Button size="small" variant="text" onClick={clearCatalogFilters}>
+                Clear filters
+              </Button>
             </Box>
           )}
         </Stack>
