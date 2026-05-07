@@ -33,6 +33,13 @@ async def _test_db(tmp_path: Path, monkeypatch):
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS phd2_recent_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                opened_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS aberration_analysis (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL,

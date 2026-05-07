@@ -1,65 +1,109 @@
 /**
- * Recent-files history for the PHD2 Analyzer — localStorage-backed,
- * capped at MAX_ENTRIES, deduped on path. Corruption silently resets.
+ * Recent-files history for the PHD2 Analyzer — backed by the
+ * phd2_recent_files table on the backend (POST/GET/DELETE
+ * /api/phd2/recent). On first call after the upgrade, any pre-existing
+ * localStorage entries are migrated into the database and localStorage is
+ * cleared. Mirrors the image-analyzer recent-files pattern.
  */
 
-const STORAGE_KEY = "phd2.recentFiles";
-const MAX_ENTRIES = 10;
+const LEGACY_STORAGE_KEY = "phd2.recentFiles";
+const MIGRATED_FLAG_KEY = "phd2.recentFiles.migrated";
 
 export interface RecentFile {
   path: string;
   openedAt: string;
 }
 
-export function getRecentFiles(): RecentFile[] {
+interface RecentFileApi {
+  path: string;
+  opened_at: string;
+}
+
+function fromApi(r: RecentFileApi): RecentFile {
+  return { path: r.path, openedAt: r.opened_at };
+}
+
+async function fetchList(): Promise<RecentFile[]> {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (e): e is RecentFile =>
-        typeof e === "object" &&
-        e !== null &&
-        typeof (e as RecentFile).path === "string" &&
-        typeof (e as RecentFile).openedAt === "string",
-    );
+    const r = await fetch("/api/phd2/recent");
+    if (!r.ok) return [];
+    const data: RecentFileApi[] = await r.json();
+    return data.map(fromApi);
   } catch {
     return [];
   }
 }
 
-export function addRecentFile(path: string): RecentFile[] {
-  const now = new Date().toISOString();
-  const prev = getRecentFiles();
-  const filtered = prev.filter((e) => e.path !== path);
-  const next: RecentFile[] = [{ path, openedAt: now }, ...filtered].slice(
-    0,
-    MAX_ENTRIES,
-  );
-  saveRecentFiles(next);
-  return next;
+export async function getRecentFiles(): Promise<RecentFile[]> {
+  await migrateLegacyOnce();
+  return fetchList();
 }
 
-export function removeRecentFile(path: string): RecentFile[] {
-  const next = getRecentFiles().filter((e) => e.path !== path);
-  saveRecentFiles(next);
-  return next;
-}
-
-export function clearRecentFiles(): void {
+export async function addRecentFile(path: string): Promise<RecentFile[]> {
   try {
-    window.localStorage.removeItem(STORAGE_KEY);
+    await fetch(`/api/phd2/recent?path=${encodeURIComponent(path)}`, {
+      method: "POST",
+    });
   } catch {
-    // localStorage unavailable (private mode, quota) — swallow.
+    // Network error — return current list anyway so UI stays consistent.
   }
+  return fetchList();
 }
 
-function saveRecentFiles(entries: RecentFile[]): void {
+export async function removeRecentFile(path: string): Promise<RecentFile[]> {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    await fetch(`/api/phd2/recent?path=${encodeURIComponent(path)}`, {
+      method: "DELETE",
+    });
   } catch {
-    // localStorage unavailable — swallow.
+    // Network error — return current list anyway.
+  }
+  return fetchList();
+}
+
+// One-time migration of pre-existing localStorage entries into the
+// database. Posts oldest-first so the most recently opened file ends up
+// with the most recent opened_at on the server (relative ordering is
+// preserved; absolute timestamps reset to "now"). Idempotent — guarded
+// by a localStorage flag, so subsequent calls are no-ops.
+async function migrateLegacyOnce(): Promise<void> {
+  let raw: string | null;
+  try {
+    if (window.localStorage.getItem(MIGRATED_FLAG_KEY)) return;
+    raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+  } catch {
+    return;
+  }
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter(
+          (e): e is { path: string } =>
+            typeof e === "object" &&
+            e !== null &&
+            typeof (e as { path: unknown }).path === "string",
+        );
+        for (let i = valid.length - 1; i >= 0; i--) {
+          try {
+            await fetch(
+              `/api/phd2/recent?path=${encodeURIComponent(valid[i].path)}`,
+              { method: "POST" },
+            );
+          } catch {
+            // ignore individual failures
+          }
+        }
+      }
+    } catch {
+      // corrupted localStorage — ignore
+    }
+  }
+  try {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    window.localStorage.setItem(MIGRATED_FLAG_KEY, "1");
+  } catch {
+    // ignore
   }
 }
 

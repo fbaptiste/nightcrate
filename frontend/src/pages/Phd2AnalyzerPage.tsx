@@ -100,14 +100,19 @@ export default function Phd2AnalyzerPage() {
   // reset on section change alongside viewport.
   const [selections, setSelections] = useState<Array<[number, number]>>([]);
   const [exclusions, setExclusions] = useState<Array<[number, number]>>([]);
-  // Recent files history — localStorage-backed, displayed on the
-  // empty-state landing when no log is currently loaded.
-  const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() =>
-    getRecentFiles(),
-  );
+  // Recent files history — backend-backed via /api/phd2/recent.
+  // Displayed on the empty-state landing when no log is currently loaded.
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
 
   useEffect(() => {
     setActivity("PHD2 Analyzer");
+    let canceled = false;
+    getRecentFiles().then((files) => {
+      if (!canceled) setRecentFiles(files);
+    });
+    return () => {
+      canceled = true;
+    };
   }, []);
 
   const parseMutation = useMutation({
@@ -123,7 +128,7 @@ export default function Phd2AnalyzerPage() {
       // Only record successfully-parsed logs in the recent-files
       // history so a typo path or unreadable file doesn't pollute
       // the list.
-      setRecentFiles(addRecentFile(path));
+      addRecentFile(path).then(setRecentFiles);
     },
   });
 
@@ -381,7 +386,7 @@ export default function Phd2AnalyzerPage() {
                       aria-label={`Remove ${item.path} from recent logs`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setRecentFiles(removeRecentFile(item.path));
+                        removeRecentFile(item.path).then(setRecentFiles);
                       }}
                       sx={{ ml: 0.5 }}
                     >

@@ -171,3 +171,45 @@ class TestArchivePaths:
         assert r2.status_code == 200
         stats2 = (await client.get("/api/phd2/cache/stats")).json()
         assert stats2["entries"] == stats1["entries"]
+
+
+class TestRecentFiles:
+    async def test_add_and_list(self, client: AsyncClient):
+        resp = await client.post("/api/phd2/recent", params={"path": "/tmp/log_a.txt"})
+        assert resp.status_code == 200
+        resp = await client.post("/api/phd2/recent", params={"path": "/tmp/log_b.txt"})
+        assert resp.status_code == 200
+
+        listing = (await client.get("/api/phd2/recent")).json()
+        paths = [r["path"] for r in listing]
+        assert "/tmp/log_a.txt" in paths
+        assert "/tmp/log_b.txt" in paths
+        # Most-recent-first ordering: /tmp/log_b.txt was added second
+        assert paths.index("/tmp/log_b.txt") < paths.index("/tmp/log_a.txt")
+        for r in listing:
+            assert "opened_at" in r
+
+    async def test_upsert_does_not_duplicate(self, client: AsyncClient):
+        await client.post("/api/phd2/recent", params={"path": "/tmp/dup.txt"})
+        await client.post("/api/phd2/recent", params={"path": "/tmp/dup.txt"})
+
+        listing = (await client.get("/api/phd2/recent")).json()
+        paths = [r["path"] for r in listing]
+        assert paths.count("/tmp/dup.txt") == 1
+
+    async def test_delete_removes_entry(self, client: AsyncClient):
+        await client.post("/api/phd2/recent", params={"path": "/tmp/to_remove.txt"})
+        await client.post("/api/phd2/recent", params={"path": "/tmp/to_keep.txt"})
+
+        resp = await client.delete("/api/phd2/recent", params={"path": "/tmp/to_remove.txt"})
+        assert resp.status_code == 200
+
+        listing = (await client.get("/api/phd2/recent")).json()
+        paths = [r["path"] for r in listing]
+        assert "/tmp/to_remove.txt" not in paths
+        assert "/tmp/to_keep.txt" in paths
+
+    async def test_delete_missing_path_is_idempotent(self, client: AsyncClient):
+        # Should succeed even if the path was never recorded.
+        resp = await client.delete("/api/phd2/recent", params={"path": "/tmp/never_there.txt"})
+        assert resp.status_code == 200

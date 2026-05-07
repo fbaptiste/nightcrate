@@ -19,6 +19,7 @@ from nightcrate.api.phd2_models import (
     SectionAnalysis,
     SectionWithMetrics,
 )
+from nightcrate.db.session import get_db
 from nightcrate.services import archive_io
 from nightcrate.services.phd2_metrics import compute_section_metrics
 from nightcrate.services.phd2_models import LogSection, ParsedLog
@@ -342,3 +343,57 @@ def _build_export(
 
     lines.append("")
     return "\n".join(lines)
+
+
+# ── Recent files ─────────────────────────────────────────────────────────────
+# Mirrors the image-analyzer recent-files pattern (api/images.py): same
+# upsert + prune-on-cap behavior, but in its own table so the two histories
+# stay independent.
+
+MAX_RECENT_PHD2 = 50
+
+
+@router.post("/recent")
+async def add_recent_phd2(path: str = Query(..., description="Path to record")) -> dict:
+    """Record a PHD2 log open. Upserts the path and prunes beyond MAX_RECENT_PHD2."""
+    async with get_db() as conn:
+        await conn.execute(
+            """INSERT INTO phd2_recent_files (path, opened_at) VALUES (?, datetime('now'))
+               ON CONFLICT(path) DO UPDATE SET opened_at = datetime('now')""",
+            (path,),
+        )
+        await conn.execute(
+            """DELETE FROM phd2_recent_files WHERE id NOT IN (
+                   SELECT id FROM phd2_recent_files ORDER BY opened_at DESC LIMIT ?
+               )""",
+            (MAX_RECENT_PHD2,),
+        )
+        await conn.commit()
+    return {"ok": True}
+
+
+@router.get("/recent")
+async def get_recent_phd2() -> list[dict]:
+    """Return recent PHD2 logs ordered most recent first."""
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            # id DESC as tie-breaker so back-to-back inserts (sub-second
+            # apart) still order by insertion sequence.
+            "SELECT path, opened_at FROM phd2_recent_files"
+            " ORDER BY opened_at DESC, id DESC LIMIT ?",
+            (MAX_RECENT_PHD2,),
+        )
+        rows = await cursor.fetchall()
+    return [{"path": row[0], "opened_at": row[1]} for row in rows]
+
+
+@router.delete("/recent")
+async def delete_recent_phd2(path: str = Query(..., description="Path to remove")) -> dict:
+    """Remove a single PHD2 log from the recent-files history."""
+    async with get_db() as conn:
+        await conn.execute(
+            "DELETE FROM phd2_recent_files WHERE path = ?",
+            (path,),
+        )
+        await conn.commit()
+    return {"ok": True}
