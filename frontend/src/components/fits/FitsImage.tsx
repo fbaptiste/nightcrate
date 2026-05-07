@@ -267,11 +267,9 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         const px = Math.floor(imgX);
         const py = Math.floor(imgY);
         if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
-          const pixel = ctx.getImageData(px, py, 1, 1).data;
-          const r = pixel[0] / 255;
-          const g = pixel[1] / 255;
-          const b = pixel[2] / 255;
-          const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          // 9-arg drawImage extracts just the patch region from the source
+          // <img>. Avoids ever allocating a full-image canvas (iOS WebKit
+          // silently fails for large canvases — see canvas-build effect).
           const patchRadius = 50;
           const patchSize = patchRadius * 2 + 1;
           const sx = Math.max(0, px - patchRadius);
@@ -280,20 +278,19 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
           const sw = ex - sx;
           const sh = ey - sy;
-          const srcPatch = ctx.getImageData(sx, sy, sw, sh);
-          const patch = new ImageData(patchSize, patchSize);
-          const ox = px - patchRadius - sx;
-          const oy = py - patchRadius - sy;
-          for (let row = 0; row < sh; row++) {
-            for (let col = 0; col < sw; col++) {
-              const srcIdx = (row * sw + col) * 4;
-              const dstIdx = ((row - oy) * patchSize + (col - ox)) * 4;
-              patch.data[dstIdx] = srcPatch.data[srcIdx];
-              patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
-              patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
-              patch.data[dstIdx + 3] = 255;
-            }
-          }
+          // Destination offset on the small canvas so in-image pixels land
+          // at the right spot (handles edge clamping).
+          const ox = sx - (px - patchRadius);
+          const oy = sy - (py - patchRadius);
+          ctx.clearRect(0, 0, patchSize, patchSize);
+          ctx.drawImage(img, sx, sy, sw, sh, ox, oy, sw, sh);
+          const patch = ctx.getImageData(0, 0, patchSize, patchSize);
+          // Center pixel = exact crosshair location
+          const centerIdx = (patchRadius * patchSize + patchRadius) * 4;
+          const r = patch.data[centerIdx] / 255;
+          const g = patch.data[centerIdx + 1] / 255;
+          const b = patch.data[centerIdx + 2] / 255;
+          const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
           onHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
         } else {
           onHover(null);
@@ -448,27 +445,27 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
 
-    // Rebuild the offscreen canvas when the image loads. Pixel inspector reads
-    // from this canvas via getImageData, which is silently tainted on iOS Safari
-    // over self-signed HTTPS — that's a known limitation handled separately
-    // (HTTP mode or mkcert-trusted cert eliminates the taint).
+    // Allocate a single small sampling canvas, big enough for the maximum
+    // patch size (radius slider goes 10-150, so max patch = 301×301). We
+    // never copy the whole image into a canvas — iOS WebKit silently fails
+    // to allocate the backing store for huge canvases (a 6000×4000 image
+    // needs ~96 MB), making drawImage a no-op and getImageData return
+    // zeros. Using a tiny canvas + the 9-arg drawImage with source crop
+    // lets us pull just the region we need per sample.
     useEffect(() => {
-      const img = imgRef.current;
-      if (!img || !imageLoaded || !img.naturalWidth) {
-        samplingCanvas.current = null;
-        samplingCtx.current = null;
-        return;
-      }
       const c = document.createElement("canvas");
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
+      c.width = 301;
+      c.height = 301;
       const ctx = c.getContext("2d", { willReadFrequently: true });
       if (ctx) {
-        ctx.drawImage(img, 0, 0);
         samplingCanvas.current = c;
         samplingCtx.current = ctx;
       }
-    }, [imageLoaded, src]);
+      return () => {
+        samplingCanvas.current = null;
+        samplingCtx.current = null;
+      };
+    }, []);
 
     function handleMouseMoveForPixel(e: React.MouseEvent) {
       if (!onPixelHover || !imgRef.current || !containerRef.current || isPanning) return;
@@ -490,13 +487,8 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
       if (px >= 0 && px < img.naturalWidth && py >= 0 && py < img.naturalHeight) {
         const ctx = samplingCtx.current;
-        const pixel = ctx.getImageData(px, py, 1, 1).data;
-        const r = pixel[0] / 255;
-        const g = pixel[1] / 255;
-        const b = pixel[2] / 255;
-        const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-        // Extract surrounding patch centered on the target pixel
+        // Use 9-arg drawImage to copy just the patch region into the small
+        // sampling canvas (see canvas-build effect for rationale).
         const patchRadius = pixelPatchRadius;
         const patchSize = patchRadius * 2 + 1;
         const sx = Math.max(0, px - patchRadius);
@@ -505,22 +497,16 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         const ey = Math.min(img.naturalHeight, py + patchRadius + 1);
         const sw = ex - sx;
         const sh = ey - sy;
-        const srcPatch = ctx.getImageData(sx, sy, sw, sh);
-
-        // Place into a full-size patch (handles edge clamping)
-        const patch = new ImageData(patchSize, patchSize);
-        const ox = px - patchRadius - sx;
-        const oy = py - patchRadius - sy;
-        for (let row = 0; row < sh; row++) {
-          for (let col = 0; col < sw; col++) {
-            const srcIdx = (row * sw + col) * 4;
-            const dstIdx = ((row - oy) * patchSize + (col - ox)) * 4;
-            patch.data[dstIdx] = srcPatch.data[srcIdx];
-            patch.data[dstIdx + 1] = srcPatch.data[srcIdx + 1];
-            patch.data[dstIdx + 2] = srcPatch.data[srcIdx + 2];
-            patch.data[dstIdx + 3] = 255;
-          }
-        }
+        const ox = sx - (px - patchRadius);
+        const oy = sy - (py - patchRadius);
+        ctx.clearRect(0, 0, patchSize, patchSize);
+        ctx.drawImage(img, sx, sy, sw, sh, ox, oy, sw, sh);
+        const patch = ctx.getImageData(0, 0, patchSize, patchSize);
+        const centerIdx = (patchRadius * patchSize + patchRadius) * 4;
+        const r = patch.data[centerIdx] / 255;
+        const g = patch.data[centerIdx + 1] / 255;
+        const b = patch.data[centerIdx + 2] / 255;
+        const k = 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
         onPixelHover({ x: px, y: py, R: r, G: g, B: b, K: k, patch });
       } else {
@@ -613,7 +599,12 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             height={halfImgH * 2 || undefined}
             onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
             onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
-            sx={{ display: "block", width: "100%", height: "100%", visibility: imageLoaded ? "visible" : "hidden" }}
+            sx={{
+              display: "block",
+              width: "100%",
+              height: "100%",
+              visibility: imageLoaded ? "visible" : "hidden",
+            }}
           />
         </Box>
         <svg

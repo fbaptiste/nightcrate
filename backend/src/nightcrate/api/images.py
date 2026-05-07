@@ -548,14 +548,7 @@ async def get_image(
 
     try:
         png_bytes = await asyncio.to_thread(_render_image, p, ft, idx, hdu, linked, per_channel, ck)
-        # URL deterministically encodes all stretch params, so the same URL always
-        # maps to the same PNG. Caching lets the tablet sampling-canvas fetch
-        # (FitsImage.tsx) hit the browser cache instead of re-running mlx.
-        return Response(
-            content=png_bytes,
-            media_type="image/png",
-            headers={"Cache-Control": "private, max-age=300"},
-        )
+        return Response(content=png_bytes, media_type="image/png")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
