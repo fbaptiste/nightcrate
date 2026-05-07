@@ -187,6 +187,14 @@ For full feature inventory and per-version history see `nightcrate-current-state
 - **Per-key locks** on image-data and stats caches prevent redundant computation under concurrent requests. Archive cache key is `(archive_path, mtime, entry_path)` so archive-extracted images share with regular files.
 - **FITS header editing only** — XISF, standard images, archive paths, and pxiproject virtuals can't be edited. Structural keywords (`SIMPLE`, `BITPIX`, `NAXIS*`, `EXTEND`, `BZERO`, `BSCALE`, `COMMENT`, `HISTORY`, `END`) are protected.
 - Performance patterns: histograms subsample to ~2M pixels for large images; PNG encoding uses `compress_level=1` (local app, speed > size); `bottleneck.nanmedian` over numpy median.
+- **Pixel inspector — small sampling canvas (iOS WebKit constraint).** Never allocate a full-image offscreen canvas — iOS silently fails to allocate the backing store for canvases backing >~70 MB images and `getImageData` returns all zeros without throwing. Use a single 301×301 canvas allocated once, and 9-arg `drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh)` to copy just the requested patch region per sample. Pattern lives in `frontend/src/components/fits/FitsImage.tsx`.
+- **Touch viewport hardening (iPad).** The page sets `<meta name="viewport" content="...maximum-scale=1.0, user-scalable=no">` and the FitsImage container preventDefaults Apple's proprietary `gesturestart`/`gesturechange`/`gestureend` events. Without those, iPadOS engages its own pinch-zoom alongside our touch handler and the user sees the "freeze then jump" stutter. **Do not regress** — if you ever see touch-zoom go janky on iPad, check the viewport meta first.
+
+### Tablet / LAN access (`make dev-lan`)
+- Vite binds to `0.0.0.0:5173` and serves HTTPS. Cert resolution: prefers `frontend/.certs/{cert,key}.pem` (mkcert-issued, trusted on iPad after profile install) and falls back to `@vitejs/plugin-basic-ssl` (untrusted, browser warning) if those files are absent. See `frontend/vite.config.ts`.
+- Backend stays HTTP on `127.0.0.1:8000`; Vite proxies `/api` → backend, so the iPad never talks to the backend directly.
+- iPad pixel inspector and clipboard buttons require a trusted cert. Self-signed → canvas tainting + `navigator.clipboard` rejection.
+- Touch interactions are added to chart SVGs as native `addEventListener` with `{ passive: false }` so `preventDefault` works. The shared loupe-suppression CSS bundle is `WebkitTouchCallout: "none"` + `WebkitUserSelect: "none"` + `userSelect: "none"` + `touch-action: "none"` on the chart's SVG element.
 
 ### Aberration Inspector
 - Cache key is `(file_path, hdu, settings_json)`. Different filter settings = different cache row. TTL via `aberration_cache_ttl_days` setting.
@@ -239,6 +247,8 @@ For full feature inventory and per-version history see `nightcrate-current-state
 - `compute_now_status` needs **both** `astro_dark_start_utc` and `astro_dark_end_utc` and uses a **48 h midnight-anchored grid** for moon rise/set (24 h noon-to-noon misses the lunar period of 24h50m).
 - Moon separation is computed at **closest approach during the visibility window**, not at peak (peak is misleading when moon is below horizon at transit).
 - Sort null-handling: blanks (None AND empty/whitespace strings) always sort last regardless of per-key direction.
+- **Persistent UI state lives in the `settings` KV table** (planner_* fields), bridged by `frontend/src/lib/usePlannerSettingsSync.ts`. Free-text search is the only ephemeral field. The sync hook hydrates the in-memory Zustand store on mount, then rAF-coalesces multi-setter ticks into a single PUT and skips no-op writes via a `lastPushedRef` JSON diff. Adding a new persisted field = add it to the Pydantic model, the TS Settings interface, the planner store, and the `buildPayload` map.
+- **WishlistCalendarView snap precision.** Snap entries carry their underlying `Date`; never round-trip pixel→date through `d3.scaleTime().invert()` — its linear interpolation can return a date 1 ms before the intended one, which will fail the strict `hoverDate >= rs` check that gates the bar tooltip's range label.
 
 ### Target Planner Scoring
 - Score is **backend-only** and **Tonight-only** (no Anytime score).
@@ -258,6 +268,8 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
 - **Never silently coerce missing data.** Empty fields → `None`, never `0.0`. DROP frames have `None` in positional fields (coercing to zero silently corrupts RMS and creates phantom ideal-guiding periods on charts).
 - **No hardcoded ErrorCode → string table.** The log's own ErrorDescription is authoritative.
 - **Three tabs**: Guiding (RA/Dec time-series + pulses + SNR + Mass sub-panels), Dispersion (2-D scatter + 1σ / 2σ ellipses), Data (per-frame table). No spectrum / no unguided RA — both stripped in v0.27.0 cleanup.
+- **Recent files in DB.** `phd2_recent_files(id, path UNIQUE, opened_at)` (migration 0028). Endpoints `POST/GET/DELETE /api/phd2/recent` mirror the image-analyzer's recent-files pattern. Frontend client lives in `api/phd2.ts` (not the lib file — that one only owns the legacy localStorage migration + the `formatRelativeTime` display helper).
+- **Viewport export.** `POST /api/phd2/export` returns the visible window (filtered by section + time range) as a PHD2-format text log file.
 - Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
 
 ### Plate Solving

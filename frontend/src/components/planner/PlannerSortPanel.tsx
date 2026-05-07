@@ -58,6 +58,7 @@ import {
   type SortDir,
   type SortEntry,
 } from "@/lib/plannerSortFields";
+import { DEFAULT_SORT } from "@/stores/plannerStore";
 
 interface Props {
   sortBy: SortEntry[];
@@ -106,13 +107,13 @@ export default function PlannerSortPanel({
     onSortChange(sortBy.filter((e) => e.field !== field));
   }
 
-  // Default = single ascending sort by primary designation. Mirrors
-  // DEFAULT_SORT in stores/plannerStore.ts. Reset button is only shown
-  // when the current sort differs.
+  // Reset button is only shown when the current sort differs from the
+  // store-level default.
   const isDefaultSort =
-    sortBy.length === 1 && sortBy[0].field === "primary_designation" && sortBy[0].dir === "asc";
+    sortBy.length === DEFAULT_SORT.length &&
+    sortBy.every((e, i) => e.field === DEFAULT_SORT[i].field && e.dir === DEFAULT_SORT[i].dir);
   function resetToDefault() {
-    onSortChange([{ field: "primary_designation", dir: "asc" }]);
+    onSortChange(DEFAULT_SORT);
   }
 
   function handleDragEnd(event: DragEndEvent) {

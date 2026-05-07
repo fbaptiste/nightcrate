@@ -1,20 +1,18 @@
 import { apiFetch } from "./client";
+import type { FilterLine } from "./planner";
+import type { SortEntry } from "@/lib/plannerSortFields";
 
 export type Theme = "light" | "dark" | "browser";
 export type WeatherUnits = "metric" | "imperial";
 export type PlannerTab = "tonight" | "anytime" | "wishlist";
-export type FilterLine = "Ha" | "SII" | "OIII" | "L" | "R" | "G" | "B";
-export type SortDir = "asc" | "desc";
 
 export interface BrowserFavorite {
   name: string;
   path: string;
 }
 
-export interface PlannerSortEntry {
-  field: string;
-  dir: SortDir;
-}
+// Re-export so consumers can keep importing from a single API surface.
+export type { FilterLine, SortEntry };
 
 export interface Settings {
   theme: Theme;
@@ -73,7 +71,7 @@ export interface Settings {
   planner_selected_horizon_id: number | null;
   planner_selected_rig_id: number | null;
   planner_active_tab: PlannerTab;
-  planner_sort_by: PlannerSortEntry[];
+  planner_sort_by: SortEntry[];
   planner_filter_intent: FilterLine[];
   planner_type_filter: string[];
   planner_catalog_filter: string[];

@@ -4,11 +4,10 @@
  * Detects the backend's 1x1-pixel placeholder via ``naturalWidth`` and
  * polls with an exponential-ish backoff (fast first retry, slower
  * after) using a cache-busting query string until the real image
- * lands. Hard errors (5xx, 204, network blip) go through the same
- * retry budget — without that, a single transient failure on first
- * load left the cell stuck on the icon placeholder until the user
- * refreshed the page. The neutral icon only appears once retries are
- * exhausted (MAX_RETRIES) or no real image arrives.
+ * lands. Hard errors (5xx, 204, network blip) share the same retry
+ * budget — they're indistinguishable from "still working" from the
+ * <img> element's perspective. The neutral icon only appears once
+ * retries are exhausted (MAX_RETRIES).
  *
  * Supports three variants (``list``, ``detail``, ``rig_framed``). The
  * rig-dependent ``rig_framed`` variant accepts ``fovMajor/MinorDeg``
@@ -144,10 +143,8 @@ export default function ThumbnailCell({
     scheduleRetry();
   }
 
-  // Hard error (5xx, 204, network blip, etc.) — retry under the same
-  // backoff. Without this, a single transient failure on first load
-  // pinned the cell to the placeholder icon until the user manually
-  // refreshed the whole page.
+  // Hard errors (5xx, 204, network blip) get the same retry budget as
+  // the 1×1 placeholder — see the file header.
   function handleImageError(): void {
     scheduleRetry();
   }

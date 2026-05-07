@@ -238,6 +238,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         isInspecting: false,
         touchOriginX: 0,
         touchOriginY: 0,
+        // rAF coalescing for inspect-mode pixel sampling.
+        sampleRafId: null as number | null,
+        pendingSampleX: 0,
+        pendingSampleY: 0,
       };
 
       function fingerDist(t1: Touch, t2: Touch): number {
@@ -376,7 +380,19 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
           const t = e.touches[0];
           if (gesture.isInspecting) {
             e.preventDefault();
-            samplePixelAt(t.clientX, t.clientY);
+            // Throttle to one sample per animation frame. getImageData is
+            // synchronous, allocates ~360 KB per call, and forces a CPU
+            // readback — at 60 Hz finger drag that's 60 calls/sec without
+            // throttling. rAF caps it at one per paint, dropping
+            // intermediate moves and using only the latest position.
+            gesture.pendingSampleX = t.clientX;
+            gesture.pendingSampleY = t.clientY;
+            if (gesture.sampleRafId == null) {
+              gesture.sampleRafId = requestAnimationFrame(() => {
+                gesture.sampleRafId = null;
+                samplePixelAt(gesture.pendingSampleX, gesture.pendingSampleY);
+              });
+            }
           } else {
             if (gesture.longPressTimer) {
               const dx = Math.abs(t.clientX - gesture.touchOriginX);
@@ -400,6 +416,10 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
 
       function onTouchEnd(e: TouchEvent) {
         cancelLongPress();
+        if (gesture.sampleRafId != null) {
+          cancelAnimationFrame(gesture.sampleRafId);
+          gesture.sampleRafId = null;
+        }
         if (gesture.isInspecting) {
           gesture.isInspecting = false;
           const onHover = onPixelHoverRef.current;

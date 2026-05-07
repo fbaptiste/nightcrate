@@ -79,8 +79,7 @@ function formatLocalTime(iso: string, tz: string): string {
 
 export default function PlannerPage() {
   // Bridges the in-memory zustand store with the database-backed
-  // settings — hydrates on mount and pushes changes back. Replaces the
-  // localStorage persist middleware that used to live on the store.
+  // settings — hydrates on mount and pushes changes back.
   usePlannerSettingsSync();
   const settings = useSettingsStore((s) => s.settings);
   const locationId = usePlannerStore((s) => s.selectedLocationId);

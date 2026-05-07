@@ -63,6 +63,12 @@ export function usePlannerSettingsSync(): void {
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.update);
   const hydratedRef = useRef(false);
+  // Latest payload PUT to the backend, JSON-stringified. Used to skip
+  // redundant saves — the post-hydration render is the prime offender.
+  const lastPushedRef = useRef<string | null>(null);
+  // rAF handle for the debounced save. A single frame coalesces multi-
+  // setter actions (e.g. Clear filters → 3 sequential setters) into one PUT.
+  const pendingSaveRef = useRef<number | null>(null);
 
   // Hydrate once on first arrival of settings from the backend.
   useEffect(() => {
@@ -72,61 +78,61 @@ export function usePlannerSettingsSync(): void {
     // fields are still default, push the legacy values to the backend
     // first so the user's pre-upgrade selections aren't lost.
     const legacy = consumeLegacyLocalStorage();
+    const merged: Settings = settings;
+    const overlay: Partial<Settings> = {};
     if (legacy) {
-      // Only forward fields the backend hasn't already saved (default).
-      const filtered: Partial<Settings> = {};
-      if (legacy.planner_selected_location_id != null && settings.planner_selected_location_id == null) {
-        filtered.planner_selected_location_id = legacy.planner_selected_location_id;
+      if (legacy.planner_selected_location_id != null && merged.planner_selected_location_id == null) {
+        overlay.planner_selected_location_id = legacy.planner_selected_location_id;
       }
-      if (legacy.planner_selected_horizon_id != null && settings.planner_selected_horizon_id == null) {
-        filtered.planner_selected_horizon_id = legacy.planner_selected_horizon_id;
+      if (legacy.planner_selected_horizon_id != null && merged.planner_selected_horizon_id == null) {
+        overlay.planner_selected_horizon_id = legacy.planner_selected_horizon_id;
       }
-      if (legacy.planner_selected_rig_id != null && settings.planner_selected_rig_id == null) {
-        filtered.planner_selected_rig_id = legacy.planner_selected_rig_id;
+      if (legacy.planner_selected_rig_id != null && merged.planner_selected_rig_id == null) {
+        overlay.planner_selected_rig_id = legacy.planner_selected_rig_id;
       }
       if (
         legacy.planner_sort_by &&
-        JSON.stringify(settings.planner_sort_by) === JSON.stringify(DEFAULT_SORT)
+        JSON.stringify(merged.planner_sort_by) === JSON.stringify(DEFAULT_SORT)
       ) {
-        filtered.planner_sort_by = legacy.planner_sort_by;
+        overlay.planner_sort_by = legacy.planner_sort_by;
       }
       if (
         legacy.planner_filter_intent &&
         legacy.planner_filter_intent.length > 0 &&
-        (!settings.planner_filter_intent || settings.planner_filter_intent.length === 0)
+        (!merged.planner_filter_intent || merged.planner_filter_intent.length === 0)
       ) {
-        filtered.planner_filter_intent = legacy.planner_filter_intent;
+        overlay.planner_filter_intent = legacy.planner_filter_intent;
       }
-      if (Object.keys(filtered).length > 0) {
-        void updateSettings(filtered);
-        // Apply the legacy values to the live settings object for the
-        // hydration below so the user sees them immediately.
-        Object.assign(settings, filtered);
-      }
+      if (Object.keys(overlay).length > 0) void updateSettings(overlay);
     }
 
-    usePlannerStore.setState({
-      selectedLocationId: settings.planner_selected_location_id,
-      selectedHorizonId: settings.planner_selected_horizon_id,
-      selectedRigId: settings.planner_selected_rig_id,
-      activeTab: settings.planner_active_tab,
-      sortBy:
-        settings.planner_sort_by && settings.planner_sort_by.length > 0
-          ? settings.planner_sort_by
-          : DEFAULT_SORT,
-      filterIntent: settings.planner_filter_intent,
-      typeFilter: settings.planner_type_filter,
-      catalogFilter: settings.planner_catalog_filter,
-      constellationFilter: settings.planner_constellation_filter,
-      detailId: settings.planner_detail_id,
-      minHours: settings.planner_min_hours,
-      maxMag: settings.planner_max_mag,
-      minSize: settings.planner_min_size,
-      coverageRange: settings.planner_coverage_range,
-      calendarLocationId: settings.planner_calendar_location_id,
-      calendarHorizonId: settings.planner_calendar_horizon_id,
-      calendarRigId: settings.planner_calendar_rig_id,
-    });
+    const sortByFromSettings =
+      overlay.planner_sort_by ?? merged.planner_sort_by;
+    const sortBy = sortByFromSettings && sortByFromSettings.length > 0 ? sortByFromSettings : DEFAULT_SORT;
+    const hydrated = {
+      selectedLocationId: overlay.planner_selected_location_id ?? merged.planner_selected_location_id,
+      selectedHorizonId: overlay.planner_selected_horizon_id ?? merged.planner_selected_horizon_id,
+      selectedRigId: overlay.planner_selected_rig_id ?? merged.planner_selected_rig_id,
+      activeTab: merged.planner_active_tab,
+      sortBy,
+      filterIntent: overlay.planner_filter_intent ?? merged.planner_filter_intent,
+      typeFilter: merged.planner_type_filter,
+      catalogFilter: merged.planner_catalog_filter,
+      constellationFilter: merged.planner_constellation_filter,
+      detailId: merged.planner_detail_id,
+      minHours: merged.planner_min_hours,
+      maxMag: merged.planner_max_mag,
+      minSize: merged.planner_min_size,
+      coverageRange: merged.planner_coverage_range,
+      calendarLocationId: merged.planner_calendar_location_id,
+      calendarHorizonId: merged.planner_calendar_horizon_id,
+      calendarRigId: merged.planner_calendar_rig_id,
+    };
+    usePlannerStore.setState(hydrated);
+    // Seed lastPushedRef with the hydrated payload so the post-hydration
+    // save effect doesn't fire a no-op PUT echoing the values that just
+    // arrived from the server.
+    lastPushedRef.current = JSON.stringify(buildPayload(hydrated));
     hydratedRef.current = true;
   }, [settings, updateSettings]);
 
@@ -153,27 +159,46 @@ export function usePlannerSettingsSync(): void {
   const calendarHorizonId = usePlannerStore((s) => s.calendarHorizonId);
   const calendarRigId = usePlannerStore((s) => s.calendarRigId);
 
+  // rAF-coalesced save: a single tick of multiple setters (e.g. Clear
+  // filters → 3 sequential setState calls) collapses to one PUT. Skips
+  // saves where the payload matches the last one we sent — guards against
+  // the post-hydration render echoing server values back, and against
+  // back-to-back identical pushes.
   useEffect(() => {
     if (!hydratedRef.current) return;
-    void updateSettings({
-      planner_selected_location_id: selectedLocationId,
-      planner_selected_horizon_id: selectedHorizonId,
-      planner_selected_rig_id: selectedRigId,
-      planner_active_tab: activeTab,
-      planner_sort_by: sortBy,
-      planner_filter_intent: filterIntent,
-      planner_type_filter: typeFilter,
-      planner_catalog_filter: catalogFilter,
-      planner_constellation_filter: constellationFilter,
-      planner_detail_id: detailId,
-      planner_min_hours: minHours,
-      planner_max_mag: maxMag,
-      planner_min_size: minSize,
-      planner_coverage_range: coverageRange,
-      planner_calendar_location_id: calendarLocationId,
-      planner_calendar_horizon_id: calendarHorizonId,
-      planner_calendar_rig_id: calendarRigId,
+    if (pendingSaveRef.current != null) return;
+    pendingSaveRef.current = requestAnimationFrame(() => {
+      pendingSaveRef.current = null;
+      const payload = buildPayload({
+        selectedLocationId,
+        selectedHorizonId,
+        selectedRigId,
+        activeTab,
+        sortBy,
+        filterIntent,
+        typeFilter,
+        catalogFilter,
+        constellationFilter,
+        detailId,
+        minHours,
+        maxMag,
+        minSize,
+        coverageRange,
+        calendarLocationId,
+        calendarHorizonId,
+        calendarRigId,
+      });
+      const json = JSON.stringify(payload);
+      if (json === lastPushedRef.current) return;
+      lastPushedRef.current = json;
+      void updateSettings(payload);
     });
+    return () => {
+      if (pendingSaveRef.current != null) {
+        cancelAnimationFrame(pendingSaveRef.current);
+        pendingSaveRef.current = null;
+      }
+    };
   }, [
     selectedLocationId,
     selectedHorizonId,
@@ -194,4 +219,46 @@ export function usePlannerSettingsSync(): void {
     calendarRigId,
     updateSettings,
   ]);
+}
+
+interface PlannerSnapshot {
+  selectedLocationId: number | null;
+  selectedHorizonId: number | null;
+  selectedRigId: number | null;
+  activeTab: Settings["planner_active_tab"];
+  sortBy: Settings["planner_sort_by"];
+  filterIntent: Settings["planner_filter_intent"];
+  typeFilter: string[];
+  catalogFilter: string[];
+  constellationFilter: string[];
+  detailId: number | null;
+  minHours: number | null;
+  maxMag: number | null;
+  minSize: number | null;
+  coverageRange: [number, number] | null;
+  calendarLocationId: number | null;
+  calendarHorizonId: number | null;
+  calendarRigId: number | null;
+}
+
+function buildPayload(s: PlannerSnapshot): Partial<Settings> {
+  return {
+    planner_selected_location_id: s.selectedLocationId,
+    planner_selected_horizon_id: s.selectedHorizonId,
+    planner_selected_rig_id: s.selectedRigId,
+    planner_active_tab: s.activeTab,
+    planner_sort_by: s.sortBy,
+    planner_filter_intent: s.filterIntent,
+    planner_type_filter: s.typeFilter,
+    planner_catalog_filter: s.catalogFilter,
+    planner_constellation_filter: s.constellationFilter,
+    planner_detail_id: s.detailId,
+    planner_min_hours: s.minHours,
+    planner_max_mag: s.maxMag,
+    planner_min_size: s.minSize,
+    planner_coverage_range: s.coverageRange,
+    planner_calendar_location_id: s.calendarLocationId,
+    planner_calendar_horizon_id: s.calendarHorizonId,
+    planner_calendar_rig_id: s.calendarRigId,
+  };
 }

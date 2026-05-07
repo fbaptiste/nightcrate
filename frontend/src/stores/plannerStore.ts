@@ -1,10 +1,7 @@
 /**
  * Target Planner UI state — in-memory zustand store. Persistence lives
- * on the backend in the `settings` KV table (planner_* fields). The
- * sync layer in `pages/PlannerPage.tsx` hydrates the store from
- * `useSettingsStore` on mount and pushes changes back via
- * `settingsStore.update`. The store no longer self-persists to
- * localStorage.
+ * on the backend in the `settings` KV table (planner_* fields), bridged
+ * by `lib/usePlannerSettingsSync.ts`.
  */
 import { create } from "zustand";
 import type { SortEntry } from "@/lib/plannerSortFields";

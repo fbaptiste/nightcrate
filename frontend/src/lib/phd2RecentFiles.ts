@@ -1,71 +1,51 @@
 /**
- * Recent-files history for the PHD2 Analyzer — backed by the
- * phd2_recent_files table on the backend (POST/GET/DELETE
- * /api/phd2/recent). On first call after the upgrade, any pre-existing
- * localStorage entries are migrated into the database and localStorage is
- * cleared. Mirrors the image-analyzer recent-files pattern.
+ * Recent-files history for the PHD2 Analyzer. The actual list lives in the
+ * `phd2_recent_files` table on the backend; the API client lives in
+ * `@/api/phd2`. This module exposes a thin async wrapper that runs a
+ * one-time migration of pre-existing browser-localStorage entries into
+ * the database, plus the relative-time display helper.
  */
+import {
+  deleteRecentPhd2File,
+  fetchRecentPhd2Files,
+  recordRecentPhd2File,
+  type RecentFile,
+} from "@/api/phd2";
+
+export type { RecentFile };
 
 const LEGACY_STORAGE_KEY = "phd2.recentFiles";
 const MIGRATED_FLAG_KEY = "phd2.recentFiles.migrated";
 
-export interface RecentFile {
-  path: string;
-  openedAt: string;
-}
-
-interface RecentFileApi {
-  path: string;
-  opened_at: string;
-}
-
-function fromApi(r: RecentFileApi): RecentFile {
-  return { path: r.path, openedAt: r.opened_at };
-}
-
-async function fetchList(): Promise<RecentFile[]> {
-  try {
-    const r = await fetch("/api/phd2/recent");
-    if (!r.ok) return [];
-    const data: RecentFileApi[] = await r.json();
-    return data.map(fromApi);
-  } catch {
-    return [];
-  }
-}
-
 export async function getRecentFiles(): Promise<RecentFile[]> {
   await migrateLegacyOnce();
-  return fetchList();
+  return fetchRecentPhd2Files();
 }
 
 export async function addRecentFile(path: string): Promise<RecentFile[]> {
   try {
-    await fetch(`/api/phd2/recent?path=${encodeURIComponent(path)}`, {
-      method: "POST",
-    });
+    await recordRecentPhd2File(path);
   } catch {
     // Network error — return current list anyway so UI stays consistent.
   }
-  return fetchList();
+  return fetchRecentPhd2Files();
 }
 
 export async function removeRecentFile(path: string): Promise<RecentFile[]> {
   try {
-    await fetch(`/api/phd2/recent?path=${encodeURIComponent(path)}`, {
-      method: "DELETE",
-    });
+    await deleteRecentPhd2File(path);
   } catch {
-    // Network error — return current list anyway.
+    // ignore
   }
-  return fetchList();
+  return fetchRecentPhd2Files();
 }
 
-// One-time migration of pre-existing localStorage entries into the
-// database. Posts oldest-first so the most recently opened file ends up
-// with the most recent opened_at on the server (relative ordering is
-// preserved; absolute timestamps reset to "now"). Idempotent — guarded
-// by a localStorage flag, so subsequent calls are no-ops.
+// Posts oldest-first so the most-recently-opened file ends up with the
+// largest opened_at on the server. Sequential awaits are intentional —
+// `datetime('now')` has 1-second resolution, so concurrent posts risk
+// tying on timestamp; the route's `id DESC` tiebreaker preserves
+// insertion order anyway, but the sequential pattern keeps the
+// guarantee intact regardless. Idempotent via MIGRATED_FLAG_KEY.
 async function migrateLegacyOnce(): Promise<void> {
   let raw: string | null;
   try {
@@ -86,10 +66,7 @@ async function migrateLegacyOnce(): Promise<void> {
         );
         for (let i = valid.length - 1; i >= 0; i--) {
           try {
-            await fetch(
-              `/api/phd2/recent?path=${encodeURIComponent(valid[i].path)}`,
-              { method: "POST" },
-            );
+            await recordRecentPhd2File(valid[i].path);
           } catch {
             // ignore individual failures
           }

@@ -141,10 +141,10 @@ class Settings(BaseModel):
     # the panel and the state should persist.
     phd2_help_expanded: dict[str, bool] = Field(default_factory=dict)
     astap_executable_path: str | None = None
-    # ─── Target Planner UI state (v0.34.0) ─────────────────────────
+    # ─── Target Planner UI state ───────────────────────────────────
     # Persisted across sessions so iPad/Mac/etc share the same state.
-    # Replaces the previous Zustand+localStorage `nightcrate-planner`
-    # store. Only `searchQuery` (free-text search box) stays ephemeral.
+    # `searchQuery` (free-text search box) is intentionally NOT here —
+    # it stays ephemeral per-session.
     planner_selected_location_id: int | None = None
     planner_selected_horizon_id: int | None = None
     planner_selected_rig_id: int | None = None

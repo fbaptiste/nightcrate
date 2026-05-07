@@ -199,3 +199,32 @@ export async function fetchGuideLogCacheStats(): Promise<CacheStatsResponse> {
 export async function clearGuideLogCache(): Promise<{ cleared: number }> {
   return apiFetch<{ cleared: number }>("/phd2/cache/clear", { method: "POST" });
 }
+
+// ── Recent files ─────────────────────────────────────────────────────────────
+
+interface RecentFileApi {
+  path: string;
+  opened_at: string;
+}
+
+export interface RecentFile {
+  path: string;
+  openedAt: string;
+}
+
+export async function fetchRecentPhd2Files(): Promise<RecentFile[]> {
+  const data = await apiFetch<RecentFileApi[]>("/phd2/recent");
+  return data.map((r) => ({ path: r.path, openedAt: r.opened_at }));
+}
+
+export async function recordRecentPhd2File(path: string): Promise<void> {
+  await apiFetch<unknown>(`/phd2/recent?path=${encodeURIComponent(path)}`, {
+    method: "POST",
+  });
+}
+
+export async function deleteRecentPhd2File(path: string): Promise<void> {
+  await apiFetch<unknown>(`/phd2/recent?path=${encodeURIComponent(path)}`, {
+    method: "DELETE",
+  });
+}

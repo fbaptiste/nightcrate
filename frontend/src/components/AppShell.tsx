@@ -177,15 +177,12 @@ export function AppShell() {
   const muiTheme = useTheme();
   const isTablet = useMediaQuery(muiTheme.breakpoints.down("md"));
 
+  // Auto-collapse the nav on tablet — both when the breakpoint changes
+  // (rotate/resize) and when the route changes (so the drawer doesn't
+  // linger over the new page).
   useEffect(() => {
     if (isTablet) setNavOpen(false);
-  }, [isTablet]);
-
-  const isTabletRef = useRef(isTablet);
-  isTabletRef.current = isTablet;
-  useEffect(() => {
-    if (isTabletRef.current) setNavOpen(false);
-  }, [pathname]);
+  }, [isTablet, pathname]);
 
   const drawerWidth = navOpen ? DRAWER_WIDTH_OPEN : DRAWER_WIDTH_CLOSED;
 
