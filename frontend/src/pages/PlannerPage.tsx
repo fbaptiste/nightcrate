@@ -49,6 +49,7 @@ import { fetchPlannerTargets } from "@/api/planner";
 import { FilterIntentSelect } from "@/components/planner/FilterIntentSelect";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore } from "@/stores/plannerStore";
+import { usePlannerSettingsSync } from "@/lib/usePlannerSettingsSync";
 import { useDebounce } from "@/lib/useDebounce";
 import PaginationActions from "@/components/common/PaginationActions";
 import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
@@ -77,6 +78,10 @@ function formatLocalTime(iso: string, tz: string): string {
 
 
 export default function PlannerPage() {
+  // Bridges the in-memory zustand store with the database-backed
+  // settings — hydrates on mount and pushes changes back. Replaces the
+  // localStorage persist middleware that used to live on the store.
+  usePlannerSettingsSync();
   const settings = useSettingsStore((s) => s.settings);
   const locationId = usePlannerStore((s) => s.selectedLocationId);
   const setLocationId = usePlannerStore((s) => s.setSelectedLocationId);
@@ -590,11 +595,6 @@ export default function PlannerPage() {
             />
           )}
 
-          {catalogFiltersActive && (
-            <Button size="small" variant="text" onClick={clearCatalogFilters} sx={{ mb: 0.5 }}>
-              Clear filters
-            </Button>
-          )}
         </Stack>
 
         {/* Filters subsection — collapsible */}
@@ -832,6 +832,13 @@ export default function PlannerPage() {
                   setPagination((p) => ({ ...p, page: 0 }));
                 }}
               />
+            </Box>
+          )}
+          {catalogFiltersActive && (
+            <Box sx={{ width: "100%", display: "flex", justifyContent: "flex-end" }}>
+              <Button size="small" variant="text" onClick={clearCatalogFilters}>
+                Clear filters
+              </Button>
             </Box>
           )}
         </Stack>

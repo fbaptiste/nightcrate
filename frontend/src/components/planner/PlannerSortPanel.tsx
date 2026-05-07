@@ -23,6 +23,7 @@ import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import Stack from "@mui/material/Stack";
@@ -103,6 +104,15 @@ export default function PlannerSortPanel({
 
   function removeEntry(field: string) {
     onSortChange(sortBy.filter((e) => e.field !== field));
+  }
+
+  // Default = single ascending sort by primary designation. Mirrors
+  // DEFAULT_SORT in stores/plannerStore.ts. Reset button is only shown
+  // when the current sort differs.
+  const isDefaultSort =
+    sortBy.length === 1 && sortBy[0].field === "primary_designation" && sortBy[0].dir === "asc";
+  function resetToDefault() {
+    onSortChange([{ field: "primary_designation", dir: "asc" }]);
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -265,6 +275,14 @@ export default function PlannerSortPanel({
               )}
             </Box>
           </Box>
+
+          {!isDefaultSort && (
+            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button size="small" variant="text" onClick={resetToDefault}>
+                Reset sorting
+              </Button>
+            </Box>
+          )}
         </Stack>
       </AccordionDetails>
     </Accordion>

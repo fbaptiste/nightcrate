@@ -101,6 +101,11 @@ export default function PillFilter({
           {...params}
           label={label}
           placeholder={value.length === 0 ? placeholder : ""}
+          // readOnly disables typing without disabling the dropdown:
+          // tap/click still opens it and selects options. iPad's soft
+          // keyboard never opens, which would otherwise eat half the
+          // screen on every chip-filter focus.
+          inputProps={{ ...params.inputProps, readOnly: true }}
         />
       )}
       fullWidth

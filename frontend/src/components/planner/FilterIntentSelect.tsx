@@ -64,6 +64,9 @@ export function FilterIntentSelect({ value, onChange, showLabel = true }: Props)
               {...params}
               label={showLabel ? "Filter intent" : undefined}
               placeholder={value.length === 0 ? "Add filters..." : undefined}
+              // readOnly so typing doesn't pop the iPad soft keyboard.
+              // The dropdown still opens on tap; options are selectable.
+              inputProps={{ ...params.inputProps, readOnly: true }}
             />
           )}
           ChipProps={{
