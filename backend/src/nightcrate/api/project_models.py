@@ -18,6 +18,14 @@ class AddImagesRequest(BaseModel):
     file_paths: list[str]
 
 
+class ThumbnailCropDef(BaseModel):
+    source_image_id: int | None = None
+    crop_x: float = 0
+    crop_y: float = 0
+    crop_w: float = 1
+    crop_h: float = 1
+
+
 class ProjectSaveRequest(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -29,6 +37,7 @@ class ProjectSaveRequest(BaseModel):
     image_order: list[int] | None = None
     main_image_id: int | None = None
     image_notes: dict[str, str | None] | None = None
+    thumbnail_crops: dict[str, ThumbnailCropDef] | None = None
 
 
 # ── Responses ───────────────────────────────────────────────────────────────
@@ -46,6 +55,15 @@ class ProjectImageResponse(BaseModel):
     updated_at: str
 
 
+class ThumbnailCropResponse(BaseModel):
+    size: str
+    source_image_id: int | None
+    crop_x: float
+    crop_y: float
+    crop_w: float
+    crop_h: float
+
+
 class ProjectResponse(BaseModel):
     id: int
     name: str
@@ -54,6 +72,7 @@ class ProjectResponse(BaseModel):
     status: str
     active: bool
     images: list[ProjectImageResponse]
+    thumbnail_crops: list[ThumbnailCropResponse]
     created_at: str
     updated_at: str
 

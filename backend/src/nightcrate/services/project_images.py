@@ -130,3 +130,57 @@ def generate_rendered_images(file_path: str, output_dir: Path) -> None:
                 _save_jpeg(img, output_dir / f"{variant}.jpg")
 
     logger.info("[project-images] rendered %s → %s", file_path, output_dir)
+
+
+CROP_SIZES: dict[str, tuple[int, int]] = {
+    "small": (180, 180),
+    "medium": (400, 400),
+    "large": (280, 210),
+}
+
+
+def generate_cropped_thumbnail(
+    file_path: str,
+    crop_x: float,
+    crop_y: float,
+    crop_w: float,
+    crop_h: float,
+    output_path: Path,
+    size: str,
+) -> None:
+    """Generate a cropped thumbnail from *file_path* and write to *output_path*.
+
+    Crop coordinates are fractions 0–1 relative to the source image.
+    Serialised via the module-level render lock.
+    """
+    target = CROP_SIZES.get(size, (180, 180))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with _RENDER_LOCK:
+        ft, raw = _load_raw(file_path)
+
+        if ft == "standard":
+            pil_img: PILImage.Image = raw  # type: ignore[assignment]
+            if pil_img.mode == "RGBA":
+                pil_img = pil_img.convert("RGB")
+        else:
+            data: np.ndarray = raw  # type: ignore[assignment]
+            max_dim = max(data.shape[-2], data.shape[-1])
+            render_size = min(max_dim, max(target) * 4)
+            pil_img = _render_scientific(data, render_size)
+
+        w, h = pil_img.size
+        left = int(crop_x * w)
+        upper = int(crop_y * h)
+        right = int((crop_x + crop_w) * w)
+        lower = int((crop_y + crop_h) * h)
+        left = max(0, min(left, w - 1))
+        upper = max(0, min(upper, h - 1))
+        right = max(left + 1, min(right, w))
+        lower = max(upper + 1, min(lower, h))
+
+        cropped = pil_img.crop((left, upper, right, lower))
+        cropped = cropped.resize(target, PILImage.LANCZOS)
+        _save_jpeg(cropped, output_path)
+
+    logger.info("[project-images] cropped %s → %s", file_path, output_path)

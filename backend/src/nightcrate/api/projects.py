@@ -18,11 +18,16 @@ from nightcrate.api.project_models import (
     ProjectListItem,
     ProjectResponse,
     ProjectSaveRequest,
+    ThumbnailCropResponse,
 )
 from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db
 from nightcrate.services import archive_io, pxiproject_io
-from nightcrate.services.project_images import VARIANT_SIZES, generate_rendered_images
+from nightcrate.services.project_images import (
+    VARIANT_SIZES,
+    generate_cropped_thumbnail,
+    generate_rendered_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,8 @@ _VALID_STATUSES = {"active", "paused", "complete", "abandoned"}
 _VALID_SORTS = {"name", "created_at", "updated_at"}
 _IMAGE_SUFFIXES = {".fits", ".fit", ".fts", ".xisf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 _VALID_VARIANTS = set(VARIANT_SIZES.keys())
+_VALID_THUMB_SIZES = {"small", "medium", "large"}
+_THUMB_FALLBACK = {"small": "thumb_sm", "medium": "thumb_md", "large": "thumb_lg"}
 
 
 # ── path helpers ───────────────────────────────────────────────────────────
@@ -85,7 +92,16 @@ async def _fetch_project_with_images(conn, project_id: int) -> ProjectResponse:
     )
     image_rows = await cursor.fetchall()
     images = [_image_row(row_to_dict(r)) for r in image_rows]
-    return ProjectResponse(**proj, images=images)
+
+    cursor = await conn.execute(
+        "SELECT size, source_image_id, crop_x, crop_y, crop_w, crop_h"
+        " FROM project_thumbnail WHERE project_id = ?",
+        (project_id,),
+    )
+    crop_rows = await cursor.fetchall()
+    crops = [ThumbnailCropResponse(**row_to_dict(r)) for r in crop_rows]
+
+    return ProjectResponse(**proj, images=images, thumbnail_crops=crops)
 
 
 async def _auto_promote_main(conn, project_id: int) -> None:
@@ -421,6 +437,71 @@ async def save_project(project_id: int, body: ProjectSaveRequest) -> ProjectResp
             (project_id,),
         )
 
+        # Save thumbnail crop definitions and generate cropped thumbnails.
+        if body.thumbnail_crops:
+            for size_name, crop_def in body.thumbnail_crops.items():
+                if size_name not in _VALID_THUMB_SIZES:
+                    continue
+                await conn.execute(
+                    """INSERT INTO project_thumbnail
+                       (project_id, size, source_image_id, crop_x, crop_y, crop_w, crop_h)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT (project_id, size) DO UPDATE SET
+                           source_image_id = excluded.source_image_id,
+                           crop_x = excluded.crop_x,
+                           crop_y = excluded.crop_y,
+                           crop_w = excluded.crop_w,
+                           crop_h = excluded.crop_h""",
+                    (
+                        project_id,
+                        size_name,
+                        crop_def.source_image_id,
+                        crop_def.crop_x,
+                        crop_def.crop_y,
+                        crop_def.crop_w,
+                        crop_def.crop_h,
+                    ),
+                )
+
+                source_id = crop_def.source_image_id
+                if source_id is None:
+                    cursor = await conn.execute(
+                        "SELECT id FROM project_image"
+                        " WHERE project_id = ? AND is_main = 1 AND staged = 0"
+                        " LIMIT 1",
+                        (project_id,),
+                    )
+                    main_row = await cursor.fetchone()
+                    if main_row:
+                        source_id = main_row["id"]
+
+                if source_id is not None:
+                    cursor = await conn.execute(
+                        "SELECT file_path FROM project_image WHERE id = ?",
+                        (source_id,),
+                    )
+                    src_row = await cursor.fetchone()
+                    if src_row:
+                        out_path = perm_dir / f"thumb_crop_{size_name}.jpg"
+                        try:
+                            await asyncio.to_thread(
+                                generate_cropped_thumbnail,
+                                src_row["file_path"],
+                                crop_def.crop_x,
+                                crop_def.crop_y,
+                                crop_def.crop_w,
+                                crop_def.crop_h,
+                                out_path,
+                                size_name,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Cropped thumbnail generation failed for project %d size %s",
+                                project_id,
+                                size_name,
+                                exc_info=True,
+                            )
+
         await _auto_promote_main(conn, project_id)
         await conn.commit()
 
@@ -478,7 +559,21 @@ async def get_rendered_image(project_id: int, image_id: int, variant: str) -> Re
 
 
 @router.get("/{project_id}/thumbnail")
-async def get_thumbnail(project_id: int) -> Response:
+async def get_thumbnail(
+    project_id: int,
+    size: str = Query("small", description="Thumbnail size: small, medium, large"),
+) -> Response:
+    if size not in _VALID_THUMB_SIZES:
+        size = "small"
+
+    cropped = _permanent_dir(project_id) / f"thumb_crop_{size}.jpg"
+    if cropped.is_file():
+        return FileResponse(
+            cropped,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
     async with get_db() as conn:
         cursor = await conn.execute(
             "SELECT id FROM project_image WHERE project_id = ? AND is_main = 1 AND staged = 0",
@@ -489,7 +584,8 @@ async def get_thumbnail(project_id: int) -> Response:
     if row is None:
         return Response(status_code=204)
 
-    path = _find_rendered(project_id, row["id"], "thumb_sm")
+    fallback_variant = _THUMB_FALLBACK.get(size, "thumb_sm")
+    path = _find_rendered(project_id, row["id"], fallback_variant)
     if path is None:
         return Response(status_code=204)
 

@@ -769,11 +769,16 @@ Omitted from diagrams for readability. Every seedable table carries:
 | `project` (migration 0029) | User-defined imaging project. `name` UNIQUE, `description`, `notes`, `status` CHECK ∈ `{'active','paused','complete','abandoned'}`, `active` soft-delete flag, timestamps with `updated_at` trigger. Index on `active`. |
 | `project_image` (migrations 0029 + 0030) | File reference within a project. `project_id` FK CASCADE, `file_path` (supports `::` virtual paths for archives and pxiprojects), `display_order`, `is_main` with partial unique index enforcing at most one main per project, `staged` (0 = committed, 1 = pending save), `notes`, timestamps with trigger. Index on `project_id`. |
 
+### v0.36.0 — Project Thumbnails (1 table)
+
+| Table | Purpose |
+|-------|---------|
+| `project_thumbnail` (migration 0032) | Per-project, per-size crop definitions for thumbnail generation. `project_id` FK CASCADE, `size` CHECK ('small', 'medium', 'large'), `source_image_id` FK to project_image (ON DELETE SET NULL), crop rectangle as fractions 0-1 (`crop_x`, `crop_y`, `crop_w`, `crop_h`), UNIQUE (project_id, size). Cropped thumbnails stored on disk at `{project_dir}/thumb_crop_{size}.jpg`. |
+
 ### Future Tables
 
 | Table | Purpose |
 |-------|---------|
-| `project_thumbnail` | Per-project crop definitions for thumbnail generation (v0.36.0) |
 | `project_target` | Sky coordinates + optional DSO link per project (v0.37.0) |
 | `session` | Single-night imaging sessions |
 | `sub_frame` | Individual FITS exposures linked to session + rig |
