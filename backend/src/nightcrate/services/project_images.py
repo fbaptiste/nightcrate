@@ -1,9 +1,13 @@
 """Pre-calculated image generation for projects.
 
-Produces auto-stretched JPEGs at multiple sizes from any supported
-image format.  The caller provides an output directory; this module
-writes ``full.jpg``, ``thumb_lg.jpg``, ``thumb_md.jpg``, and
-``thumb_sm.jpg`` into it.
+Two entry points:
+
+- ``generate_rendered_images(file_path, output_dir)`` — produces
+  ``full.jpg``, ``thumb_lg.jpg``, ``thumb_md.jpg``, ``thumb_sm.jpg``
+  in the given directory (per-image previews).
+- ``generate_cropped_thumbnail(file_path, crop, output_path, size)`` —
+  produces a single cropped thumbnail at the target size written to
+  *output_path* (project-level display thumbnails).
 
 Pure service — no FastAPI, no DB access.
 """

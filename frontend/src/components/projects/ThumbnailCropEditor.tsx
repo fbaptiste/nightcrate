@@ -3,6 +3,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
+import { useTheme } from "@mui/material/styles";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import FormControl from "@mui/material/FormControl";
@@ -62,6 +63,8 @@ interface CropRectProps {
 }
 
 function CropRect({ crop, onChange, aspectRatio, containerRef }: CropRectProps) {
+  const theme = useTheme();
+  const primary = theme.palette.primary.main;
   const dragging = useRef<"move" | "nw" | "ne" | "sw" | "se" | null>(null);
   const startPos = useRef({ mx: 0, my: 0, cx: 0, cy: 0, cw: 0, ch: 0 });
 
@@ -143,8 +146,8 @@ function CropRect({ crop, onChange, aspectRatio, containerRef }: CropRectProps) 
     position: "absolute",
     width: 10,
     height: 10,
-    background: "white",
-    border: "2px solid #1976d2",
+    background: theme.palette.common.white,
+    border: `2px solid ${primary}`,
     borderRadius: 2,
     ...(pos === "nw" ? { top: -5, left: -5, cursor: "nw-resize" } : {}),
     ...(pos === "ne" ? { top: -5, right: -5, cursor: "ne-resize" } : {}),
@@ -160,8 +163,8 @@ function CropRect({ crop, onChange, aspectRatio, containerRef }: CropRectProps) 
         top: `${crop.crop_y * 100}%`,
         width: `${crop.crop_w * 100}%`,
         height: `${crop.crop_h * 100}%`,
-        border: "2px solid #1976d2",
-        boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)",
+        border: `2px solid ${primary}`,
+        boxShadow: `0 0 0 9999px ${theme.palette.action.disabledBackground}`,
         cursor: "move",
       }}
       onMouseDown={handleMouseDown("move")}
@@ -298,7 +301,7 @@ export default function ThumbnailCropEditor({
               width: "100%",
               maxWidth: 500,
               aspectRatio: imgAspect,
-              bgcolor: "black",
+              bgcolor: "common.black",
               overflow: "hidden",
               borderRadius: 1,
               userSelect: "none",

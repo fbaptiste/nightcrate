@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ── Requests ────────────────────────────────────────────────────────────────
 
@@ -20,10 +20,10 @@ class AddImagesRequest(BaseModel):
 
 class ThumbnailCropDef(BaseModel):
     source_image_id: int | None = None
-    crop_x: float = 0
-    crop_y: float = 0
-    crop_w: float = 1
-    crop_h: float = 1
+    crop_x: float = Field(default=0, ge=0, le=1)
+    crop_y: float = Field(default=0, ge=0, le=1)
+    crop_w: float = Field(default=1, gt=0, le=1)
+    crop_h: float = Field(default=1, gt=0, le=1)
 
 
 class ProjectSaveRequest(BaseModel):

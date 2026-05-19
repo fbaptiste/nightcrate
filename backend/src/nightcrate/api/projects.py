@@ -378,7 +378,8 @@ async def save_project(project_id: int, body: ProjectSaveRequest) -> ProjectResp
 
         # Remove images marked for deletion.
         perm_dir = _permanent_dir(project_id)
-        for rid in body.remove_image_ids or []:
+        removed_ids = set(body.remove_image_ids or [])
+        for rid in removed_ids:
             await conn.execute(
                 "DELETE FROM project_image WHERE id = ? AND project_id = ?",
                 (rid, project_id),
@@ -389,6 +390,19 @@ async def save_project(project_id: int, body: ProjectSaveRequest) -> ProjectResp
             staged_dir = _image_dir(_staging_dir(project_id), rid)
             if staged_dir.is_dir():
                 shutil.rmtree(staged_dir, ignore_errors=True)
+
+        # Clean up cropped thumbnails whose source image was removed
+        # (FK ON DELETE SET NULL handles the DB; files need manual cleanup).
+        if removed_ids:
+            cursor = await conn.execute(
+                "SELECT size FROM project_thumbnail"
+                " WHERE project_id = ? AND source_image_id IS NULL",
+                (project_id,),
+            )
+            for row in await cursor.fetchall():
+                stale = perm_dir / f"thumb_crop_{row['size']}.jpg"
+                if stale.is_file():
+                    stale.unlink(missing_ok=True)
 
         # Reorder images.
         if body.image_order is not None:
@@ -477,8 +491,8 @@ async def save_project(project_id: int, body: ProjectSaveRequest) -> ProjectResp
 
                 if source_id is not None:
                     cursor = await conn.execute(
-                        "SELECT file_path FROM project_image WHERE id = ?",
-                        (source_id,),
+                        "SELECT file_path FROM project_image WHERE id = ? AND project_id = ?",
+                        (source_id, project_id),
                     )
                     src_row = await cursor.fetchone()
                     if src_row:
