@@ -423,3 +423,149 @@ class TestRenderedImages:
         pid = r.json()["id"]
         resp = await client.get(f"/api/projects/{pid}/thumbnail")
         assert resp.status_code == 204
+
+    async def test_project_thumbnail_accepts_size(self, client: AsyncClient, tmp_fits_mono: Path):
+        r = await client.post("/api/projects", json={"name": "Size Thumb"})
+        pid = r.json()["id"]
+        await client.post(
+            f"/api/projects/{pid}/images/stage",
+            json={"file_paths": [str(tmp_fits_mono)]},
+        )
+        await client.post(f"/api/projects/{pid}/save", json={})
+
+        for size in ("small", "medium", "large"):
+            resp = await client.get(f"/api/projects/{pid}/thumbnail", params={"size": size})
+            assert resp.status_code in (200, 204), f"size={size} got {resp.status_code}"
+
+
+# ── Thumbnail crops ────────────────────────────────────────────────────────
+
+
+class TestThumbnailCrops:
+    async def test_save_with_crop_stores_definition(self, client: AsyncClient, tmp_fits_mono: Path):
+        r = await client.post("/api/projects", json={"name": "Crop Save"})
+        pid = r.json()["id"]
+
+        await client.post(
+            f"/api/projects/{pid}/images/stage",
+            json={"file_paths": [str(tmp_fits_mono)]},
+        )
+        await client.post(f"/api/projects/{pid}/save", json={})
+
+        proj = (await client.get(f"/api/projects/{pid}")).json()
+        iid = proj["images"][0]["id"]
+
+        resp = await client.post(
+            f"/api/projects/{pid}/save",
+            json={
+                "thumbnail_crops": {
+                    "large": {
+                        "source_image_id": iid,
+                        "crop_x": 0.1,
+                        "crop_y": 0.2,
+                        "crop_w": 0.5,
+                        "crop_h": 0.5,
+                    }
+                }
+            },
+        )
+        assert resp.status_code == 200
+        crops = resp.json()["thumbnail_crops"]
+        assert len(crops) == 1
+        assert crops[0]["size"] == "large"
+        assert crops[0]["source_image_id"] == iid
+        assert crops[0]["crop_x"] == 0.1
+        assert crops[0]["crop_w"] == 0.5
+
+    async def test_crop_updates_on_second_save(self, client: AsyncClient, tmp_fits_mono: Path):
+        r = await client.post("/api/projects", json={"name": "Crop Update"})
+        pid = r.json()["id"]
+
+        await client.post(
+            f"/api/projects/{pid}/images/stage",
+            json={"file_paths": [str(tmp_fits_mono)]},
+        )
+        await client.post(f"/api/projects/{pid}/save", json={})
+
+        await client.post(
+            f"/api/projects/{pid}/save",
+            json={"thumbnail_crops": {"small": {"crop_x": 0.1, "crop_w": 0.8}}},
+        )
+        await client.post(
+            f"/api/projects/{pid}/save",
+            json={"thumbnail_crops": {"small": {"crop_x": 0.3, "crop_w": 0.4}}},
+        )
+        proj = (await client.get(f"/api/projects/{pid}")).json()
+        small_crop = next(c for c in proj["thumbnail_crops"] if c["size"] == "small")
+        assert small_crop["crop_x"] == 0.3
+        assert small_crop["crop_w"] == 0.4
+
+    async def test_crop_null_source_uses_main(self, client: AsyncClient, tmp_fits_mono: Path):
+        r = await client.post("/api/projects", json={"name": "Crop Default"})
+        pid = r.json()["id"]
+
+        await client.post(
+            f"/api/projects/{pid}/images/stage",
+            json={"file_paths": [str(tmp_fits_mono)]},
+        )
+        await client.post(f"/api/projects/{pid}/save", json={})
+
+        resp = await client.post(
+            f"/api/projects/{pid}/save",
+            json={
+                "thumbnail_crops": {
+                    "large": {"source_image_id": None, "crop_w": 0.5, "crop_h": 0.5}
+                }
+            },
+        )
+        assert resp.status_code == 200
+        crops = resp.json()["thumbnail_crops"]
+        assert len(crops) == 1
+        assert crops[0]["source_image_id"] is None
+
+    async def test_cropped_thumbnail_served_over_fallback(
+        self, client: AsyncClient, tmp_fits_mono: Path
+    ):
+        r = await client.post("/api/projects", json={"name": "Crop Serve"})
+        pid = r.json()["id"]
+
+        await client.post(
+            f"/api/projects/{pid}/images/stage",
+            json={"file_paths": [str(tmp_fits_mono)]},
+        )
+        await client.post(f"/api/projects/{pid}/save", json={})
+
+        resp_before = await client.get(f"/api/projects/{pid}/thumbnail", params={"size": "large"})
+
+        proj = (await client.get(f"/api/projects/{pid}")).json()
+        iid = proj["images"][0]["id"]
+        await client.post(
+            f"/api/projects/{pid}/save",
+            json={
+                "thumbnail_crops": {
+                    "large": {
+                        "source_image_id": iid,
+                        "crop_x": 0.25,
+                        "crop_y": 0.25,
+                        "crop_w": 0.5,
+                        "crop_h": 0.5,
+                    }
+                }
+            },
+        )
+
+        resp_after = await client.get(f"/api/projects/{pid}/thumbnail", params={"size": "large"})
+        assert resp_after.status_code == 200
+        assert resp_after.headers["content-type"] == "image/jpeg"
+        if resp_before.status_code == 200:
+            assert resp_after.content != resp_before.content
+
+    async def test_response_includes_thumbnail_crops(
+        self,
+        client: AsyncClient,
+    ):
+        r = await client.post("/api/projects", json={"name": "Crop Response"})
+        pid = r.json()["id"]
+        proj = (await client.get(f"/api/projects/{pid}")).json()
+        assert "thumbnail_crops" in proj
+        assert proj["thumbnail_crops"] == []

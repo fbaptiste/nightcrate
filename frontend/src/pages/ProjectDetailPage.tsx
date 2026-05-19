@@ -31,8 +31,10 @@ import {
   renderedImageUrl,
   PROJECT_STATUS_COLORS,
   type ProjectSaveRequest,
+  type ThumbnailCropDef,
 } from "@/api/projects";
 import ImageGalleryStrip from "@/components/projects/ImageGalleryStrip";
+import ThumbnailCropEditor from "@/components/projects/ThumbnailCropEditor";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -56,6 +58,8 @@ export default function ProjectDetailPage() {
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesInput, setNotesInput] = useState("");
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [cropEditorOpen, setCropEditorOpen] = useState(false);
+  const [stagedCrops, setStagedCrops] = useState<Record<string, ThumbnailCropDef> | null>(null);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -126,6 +130,7 @@ export default function ProjectDetailPage() {
     removedImageIds.size > 0 ||
     imageOrder !== null ||
     mainImageId !== null ||
+    stagedCrops !== null ||
     hasStagedImages;
 
   // Block navigation when dirty — shows Save/Discard/Cancel dialog.
@@ -143,6 +148,7 @@ export default function ProjectDetailPage() {
     setImageOrder(null);
     setMainImageId(null);
     setViewedImageId(null);
+    setStagedCrops(null);
   }, []);
 
   // Mutations.
@@ -169,8 +175,9 @@ export default function ProjectDetailPage() {
     if (removedImageIds.size > 0) req.remove_image_ids = [...removedImageIds];
     if (imageOrder) req.image_order = imageOrder;
     if (mainImageId !== null) req.main_image_id = mainImageId;
+    if (stagedCrops) req.thumbnail_crops = stagedCrops;
     return req;
-  }, [editedName, editedDesc, editedNotes, removedImageIds, imageOrder, mainImageId]);
+  }, [editedName, editedDesc, editedNotes, removedImageIds, imageOrder, mainImageId, stagedCrops]);
 
   const saveMut = useMutation({
     mutationFn: () => saveProject(projectId, buildSaveRequest()),
@@ -465,6 +472,16 @@ export default function ProjectDetailPage() {
             isStaging={stageMut.isPending}
           />
 
+          {visibleImages.length > 0 && (
+            <Button
+              size="small"
+              onClick={() => setCropEditorOpen(true)}
+              sx={{ mt: 0.5 }}
+            >
+              Customize thumbnails
+            </Button>
+          )}
+
           {/* Notes */}
           <Box sx={{ mt: 2 }}>
             <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
@@ -590,6 +607,45 @@ export default function ProjectDetailPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {project && (
+        <ThumbnailCropEditor
+          open={cropEditorOpen}
+          onClose={() => setCropEditorOpen(false)}
+          projectId={projectId}
+          images={visibleImages}
+          mainImageId={effectiveMainId}
+          existingCrops={
+            stagedCrops
+              ? project.thumbnail_crops.map((c) => {
+                  const staged = stagedCrops[c.size];
+                  return staged
+                    ? {
+                        ...c,
+                        source_image_id: staged.source_image_id ?? c.source_image_id,
+                        crop_x: staged.crop_x ?? c.crop_x,
+                        crop_y: staged.crop_y ?? c.crop_y,
+                        crop_w: staged.crop_w ?? c.crop_w,
+                        crop_h: staged.crop_h ?? c.crop_h,
+                      }
+                    : c;
+                }).concat(
+                  Object.entries(stagedCrops)
+                    .filter(([size]) => !project.thumbnail_crops.some((c) => c.size === size))
+                    .map(([size, def]) => ({
+                      size,
+                      source_image_id: def.source_image_id ?? null,
+                      crop_x: def.crop_x ?? 0,
+                      crop_y: def.crop_y ?? 0,
+                      crop_w: def.crop_w ?? 1,
+                      crop_h: def.crop_h ?? 1,
+                    })),
+                )
+              : project.thumbnail_crops
+          }
+          onApply={(crops) => setStagedCrops(crops)}
+        />
+      )}
 
       <Snackbar
         open={!!snack}

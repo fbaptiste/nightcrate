@@ -14,6 +14,23 @@ export interface ProjectImage {
   updated_at: string;
 }
 
+export interface ThumbnailCrop {
+  size: string;
+  source_image_id: number | null;
+  crop_x: number;
+  crop_y: number;
+  crop_w: number;
+  crop_h: number;
+}
+
+export interface ThumbnailCropDef {
+  source_image_id?: number | null;
+  crop_x?: number;
+  crop_y?: number;
+  crop_w?: number;
+  crop_h?: number;
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -22,6 +39,7 @@ export interface Project {
   status: string;
   active: boolean;
   images: ProjectImage[];
+  thumbnail_crops: ThumbnailCrop[];
   created_at: string;
   updated_at: string;
 }
@@ -56,6 +74,7 @@ export interface ProjectSaveRequest {
   image_order?: number[];
   main_image_id?: number;
   image_notes?: Record<string, string | null>;
+  thumbnail_crops?: Record<string, ThumbnailCropDef>;
 }
 
 // ── Fetch functions ───────────────────────────────────────────────────────
@@ -138,9 +157,16 @@ export async function discardStaging(id: number): Promise<Project> {
   return apiFetch<Project>(`/projects/${id}/discard`, { method: "POST" });
 }
 
-export function projectThumbnailUrl(projectId: number, updatedAt?: string): string {
-  const qs = updatedAt ? `?_v=${encodeURIComponent(updatedAt)}` : "";
-  return `/api/projects/${projectId}/thumbnail${qs}`;
+export function projectThumbnailUrl(
+  projectId: number,
+  size?: "small" | "medium" | "large",
+  updatedAt?: string,
+): string {
+  const sp = new URLSearchParams();
+  if (size && size !== "small") sp.set("size", size);
+  if (updatedAt) sp.set("_v", updatedAt);
+  const qs = sp.toString();
+  return `/api/projects/${projectId}/thumbnail${qs ? `?${qs}` : ""}`;
 }
 
 export function renderedImageUrl(

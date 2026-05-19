@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ── Requests ────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,14 @@ class AddImagesRequest(BaseModel):
     file_paths: list[str]
 
 
+class ThumbnailCropDef(BaseModel):
+    source_image_id: int | None = None
+    crop_x: float = Field(default=0, ge=0, le=1)
+    crop_y: float = Field(default=0, ge=0, le=1)
+    crop_w: float = Field(default=1, gt=0, le=1)
+    crop_h: float = Field(default=1, gt=0, le=1)
+
+
 class ProjectSaveRequest(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -29,6 +37,7 @@ class ProjectSaveRequest(BaseModel):
     image_order: list[int] | None = None
     main_image_id: int | None = None
     image_notes: dict[str, str | None] | None = None
+    thumbnail_crops: dict[str, ThumbnailCropDef] | None = None
 
 
 # ── Responses ───────────────────────────────────────────────────────────────
@@ -46,6 +55,15 @@ class ProjectImageResponse(BaseModel):
     updated_at: str
 
 
+class ThumbnailCropResponse(BaseModel):
+    size: str
+    source_image_id: int | None
+    crop_x: float
+    crop_y: float
+    crop_w: float
+    crop_h: float
+
+
 class ProjectResponse(BaseModel):
     id: int
     name: str
@@ -54,6 +72,7 @@ class ProjectResponse(BaseModel):
     status: str
     active: bool
     images: list[ProjectImageResponse]
+    thumbnail_crops: list[ThumbnailCropResponse]
     created_at: str
     updated_at: str
 

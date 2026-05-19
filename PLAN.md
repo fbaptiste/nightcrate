@@ -49,7 +49,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.33.0 — Plate Solving Refinements](#v0330--plate-solving-refinements) ✅
 - [v0.34.0 — Tablet & Desktop Support](#v0340--tablet--desktop-support) ✅
 - [v0.35.0 — Project Shell + Image Management](#v0350--project-shell--image-management) ✅
-- [v0.36.0 — Project Thumbnails + Gallery View](#v0360--project-thumbnails--gallery-view)
+- [v0.36.0 — Project Thumbnails + Gallery View](#v0360--project-thumbnails--gallery-view) ✅
 - [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking)
 - [v0.38.0 — Project Metadata Enrichment](#v0380--project-metadata-enrichment)
 - [v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline](#v0390--sessions-sub-frames-and-ingest-pipeline)
@@ -4539,6 +4539,9 @@ Plate solving, DSO linking, rig/location association, thumbnail cropping/caching
 ---
 
 ## v0.36.0 — Project Thumbnails + Gallery View
+
+**Status:** Done
+**Branch:** `v0.36.0/project-thumbnails-gallery`
 
 Thumbnails render from user-defined crop rectangles and are cached on disk.
 The Projects page gains a gallery/card view with search and sort.
