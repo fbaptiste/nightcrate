@@ -6,6 +6,8 @@ export interface AppInfo {
   app_data_dir: string;
   backend_root: string;
   seed_data_dir: string;
+  workspace_dir: string | null;
+  projects_dir: string | null;
   python_version: string;
 }
 

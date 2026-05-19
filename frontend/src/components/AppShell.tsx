@@ -34,6 +34,7 @@ import NightsStayIcon from "@mui/icons-material/NightsStay";
 import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
+import CollectionsIcon from "@mui/icons-material/Collections";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ImageAnalyzerPage } from "@/pages/ImageAnalyzerPage";
 import PlannerPage from "@/pages/PlannerPage";
@@ -83,6 +84,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/tonight", label: "Tonight", icon: <NightsStayIcon /> },
   { to: "/planner", label: "Planner", icon: <StarsIcon /> },
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
+  { to: "/projects", label: "Projects", icon: <CollectionsIcon /> },
   { to: "/image-analyzer", label: "Image Analyzer", icon: <ImageSearchIcon /> },
   { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
   { to: "/catalog/dso", label: "DSO Catalog", icon: <AutoAwesomeIcon /> },

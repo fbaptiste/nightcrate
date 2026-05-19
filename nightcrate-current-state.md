@@ -4,11 +4,11 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.34.0
+**NightCrate version:** 0.35.0
 
-**Last updated:** 2026-05-18
+**Last updated:** 2026-05-19
 
-**Last full repo snapshot:** 2026-05-18
+**Last full repo snapshot:** 2026-05-19
 
 ---
 
@@ -29,7 +29,7 @@
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn.
 - **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, scipy (FFT pipeline, Akima interpolation), sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI Material 7 + MUI X Community v8 (DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand 5 for state, TanStack Query 5 for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder. KaTeX + react-katex for math rendering. Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0028.phd2_recent_files.sql`. Pydantic for all data models.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0031.project_name_not_unique.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `make dev-lan` binds to `0.0.0.0` + serves Vite over HTTPS (auto-picks `frontend/.certs/{cert,key}.pem` if present, else `@vitejs/plugin-basic-ssl` self-signed) so iPad/Android tablets can reach NightCrate over the LAN. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -48,7 +48,7 @@ nightcrate/
       catalog_loader/       # DSO catalog fetchers (OpenNGC, VizieR, 50MGC, Wikidata,
                             #   Sharpless/Barnard loaders, augmenters, shared primitives)
       core/                 # App config, GPU compute abstraction, settings model
-      db/                   # Session management, migrations (0001–0028 .sql files)
+      db/                   # Session management, migrations (0001–0031 .sql files)
       seed_loader/          # CSV-driven equipment seed loader (hash, registry, loader, CLI)
       services/             # Domain logic (~40 modules: imaging, fits/xisf/pxiproject/
                             #   standard/archive I/O, aberration, weather, astronomy,
@@ -84,7 +84,7 @@ nightcrate/
   CLAUDE.md                 # AI assistant instructions
   PLAN.md                   # Version roadmap and changelog
   Makefile                  # dev, dev-lan, backend, frontend, install, lint, format, test
-  VERSION                   # Current version (0.34.0)
+  VERSION                   # Current version (0.35.0)
 ```
 
 ---
@@ -314,6 +314,18 @@ v0.27.0 Pass D-3 — **Unguided RA Reconstruction** (spec v4 §6.2 + §6.1.8). N
 
 Incidental fix with broader reach: `_moon_rise_set` in `services/astronomy.py` was widened from the sun's 24 h noon-to-noon grid to a dedicated 48 h midnight-anchored window. The **Tonight at-a-glance calculator** now reports actual moonrise times even when the moon rose earlier in the day.
 
+### Projects (v0.35.0)
+
+**Status:** `[shipped]`
+
+Imaging project management with staged editing and pre-calculated images. Projects are first-class entities supporting both manual/incremental use (start with a name + finished image) and full ingest (future — v0.39.0+). Each project has a multi-image gallery with drag-to-reorder, main image designation (star), and per-image notes. All edits are staged in frontend state (metadata) and backend DB + filesystem (images) until an explicit Save. Pre-calculated images (full ~4000px + 3 thumbnails at 800/400/180px) are generated eagerly when images are staged, downsampled before stretching for speed, serialised through a render lock to avoid MLX Metal concurrency crashes. Workspace folder structure: user-named folder containing `nightcrate.db` + `project_data/` — self-contained and portable.
+
+- **Route:** `/projects` (list), `/projects/:id` (detail)
+- **API:** `GET/POST /api/projects` (list, create), `GET/DELETE /api/projects/{id}` (get, soft-delete), `POST /api/projects/{id}/restore`, `DELETE /api/projects/{id}/permanent` (hard-delete + disk cleanup), `POST /api/projects/{id}/images/stage` (stage images with pre-calc), `DELETE /api/projects/{id}/images/{id}/stage` (unstage), `POST /api/projects/{id}/save` (commit all changes), `POST /api/projects/{id}/discard` (discard staging), `GET /api/projects/{id}/images/{id}/rendered/{variant}` (serve pre-calc JPEG), `GET /api/projects/{id}/thumbnail` (list thumbnail from main image)
+- **Key backend:** `api/projects.py`, `api/project_models.py`, `services/project_images.py` (pre-calc generation), `core/app_config.py` (workspace folder model)
+- **Key frontend:** `pages/ProjectsPage.tsx`, `pages/ProjectDetailPage.tsx`, `components/projects/{ProjectCard,ProjectFormDialog,ImageGalleryStrip}.tsx`, `api/projects.ts`
+- **Schema:** migrations 0029 (`project` + `project_image`), 0030 (`staged` column), 0031 (drop UNIQUE on name)
+
 ### Plate Solving (ASTAP)
 
 Plate solving via ASTAP subprocess invocation. User configures the ASTAP executable path in Settings (with macOS `.app` bundle auto-resolution via `Contents/MacOS/`), then plate solves any image from the Image Analyzer toolbar. Two-tab UI: "Solve" (current image) and "From Reference Image" (pre-processed stars-only image with dimension validation). Automatically detects near vs blind mode from available coordinate hints (FITS header or target search). Equipment hints (Rig, Equipment, or Manual) provide FOV to ASTAP for faster solving. Results (RA, Dec, pixel scale, rotation, FOV) displayed in a dialog — no database persistence.
@@ -330,7 +342,7 @@ Handles all NightCrate image sources: filesystem files passed directly to ASTAP;
 
 ## Schema state
 
-Current migration: **0028** (`phd2_recent_files`). 28 migrations total (`0001`–`0028`).
+Current migration: **0031** (`project_name_not_unique`). 31 migrations total (`0001`–`0031`).
 
 **Recent migrations not detailed elsewhere:** 0025 (`target_wishlist` — `target_wishlist`, `wishlist_section`, `target_plan`, `target_plan_date_range` tables for the wishlist + planning system), 0026 (`rig_sort_order` — `sort_order` column on `rig` + `rig_summary` view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
 
