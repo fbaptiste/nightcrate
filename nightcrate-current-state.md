@@ -6,9 +6,9 @@
 
 **NightCrate version:** 0.34.0
 
-**Last updated:** 2026-05-06
+**Last updated:** 2026-05-18
 
-**Last full repo snapshot:** 2026-04-19
+**Last full repo snapshot:** 2026-05-18
 
 ---
 
@@ -26,9 +26,9 @@
 
 ## Stack and runtime
 
-- **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn. Version 0.12.1.
-- **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
-- **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI 7 (Material + X Community: DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand for state, TanStack Query for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder (Clocks view). Geist font via @fontsource-variable.
+- **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn.
+- **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, scipy (FFT pipeline, Akima interpolation), sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
+- **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI Material 7 + MUI X Community v8 (DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand 5 for state, TanStack Query 5 for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder. KaTeX + react-katex for math rendering. Geist font via @fontsource-variable.
 - **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0028.phd2_recent_files.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `make dev-lan` binds to `0.0.0.0` + serves Vite over HTTPS (auto-picks `frontend/.certs/{cert,key}.pem` if present, else `@vitejs/plugin-basic-ssl` self-signed) so iPad/Android tablets can reach NightCrate over the LAN. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
@@ -41,39 +41,50 @@
 nightcrate/
   backend/                  # Python backend (FastAPI app)
     src/nightcrate/
-      api/                  # FastAPI routers (files, images, aberration, equipment,
-                            #   locations, weather, rigs, settings, admin, diagnostics)
+      api/                  # FastAPI routers (~18 modules: files, images, aberration,
+                            #   equipment, locations, horizons, weather, rigs, planner,
+                            #   wishlist, dso, phd2, plate_solve, calculators, settings,
+                            #   admin, diagnostics + _common helpers + equipment_factory)
+      catalog_loader/       # DSO catalog fetchers (OpenNGC, VizieR, 50MGC, Wikidata,
+                            #   Sharpless/Barnard loaders, augmenters, shared primitives)
       core/                 # App config, GPU compute abstraction, settings model
-      db/                   # Session management, migrations (0001–0010 .sql files)
+      db/                   # Session management, migrations (0001–0028 .sql files)
       seed_loader/          # CSV-driven equipment seed loader (hash, registry, loader, CLI)
-      services/             # Domain logic (imaging, fits_io, xisf_io, pxiproject_io,
-                            #   standard_io, archive_io, aberration, weather, astronomy,
-                            #   seeing, transparency, dew, imaging_quality, fits_header_map,
-                            #   rig_calculators)
+      services/             # Domain logic (~40 modules: imaging, fits/xisf/pxiproject/
+                            #   standard/archive I/O, aberration, weather, astronomy,
+                            #   seeing, transparency, dew, imaging_quality, planner_*,
+                            #   thumbnails, sky_tiles, horizon, phd2_*, plate_solve,
+                            #   image_annotations, rig_calculators, calculators,
+                            #   coordinate_format, http_client, path_resolver)
       data/seed/            # 31 CSV seed files for equipment reference data
+      data/catalogs/        # Bundled NightCrate editorial CSVs (augmentation, crossrefs)
       main.py               # App entry point, lifespan, router registration
-    tests/                  # pytest test suite (~1124 tests, ~94% coverage on new code)
+    tests/                  # pytest test suite (~2087 tests)
   frontend/                 # React + TypeScript frontend (Vite)
     src/
-      api/                  # Typed fetch clients per backend domain
-      components/           # UI components (aberration/, equipment/, fits/, rigs/, weather/,
-                            #   AppShell, SetupWizard, ThemeProvider, ActivityConsole, etc.)
-      lib/                  # Shared utilities (channelColors, colorName, namedColors,
-                            #   formUtils, unitConversion, useDebounce, rigColors,
-                            #   weatherColors)
-      pages/                # Route pages: Home, ImageViewer, Equipment, Locations,
-                            #   Weather, Rigs, Settings, Admin, ApiDocs
-      stores/               # Zustand stores (settingsStore)
+      api/                  # Typed fetch clients (18 modules, one per backend domain)
+      components/           # UI components (14 directories: aberration, admin, calculators,
+                            #   common, dso, equipment, fits, locations, phd2, planner,
+                            #   plate-solve, rigs, settings, weather + root-level AppShell,
+                            #   SetupWizard, ThemeProvider, ActivityConsole, SidebarSection,
+                            #   EasterEggWand)
+      lib/                  # Shared utilities (23 modules: formatting, colors, debounce,
+                            #   type groups, sort fields, guiding metrics, settings sync)
+      pages/                # 14 route pages: Home, ImageAnalyzer, Equipment, Locations,
+                            #   Weather, Rigs, Settings, Admin, ApiDocs, Planner,
+                            #   DsoCatalog, Phd2Analyzer, Calculators, Tonight
+      stores/               # 7 Zustand stores (settings, planner, imageAnalyzer, phd2,
+                            #   dsoCatalog, calculators, thumbnailCache)
       theme/                # MUI theme configuration
-  docs/                     # Reference documents (XISF spec, weather algorithms,
-                            #   superpowers specs & plans for rigs / my-equipment /
-                            #   guide suitability)
+  docs/                     # Reference documents, specs, algorithm docs
+  sample_data/              # Sample logs for testing (PHD2, ASIAIR)
   DB_SCHEMA.md              # Mermaid ER diagrams
   DB_SCHEMA_DDL.sql         # Authoritative CREATE TABLE statements
+  LLM_DB_SPECS.md           # LLM-facing seed-data + schema reference
   CLAUDE.md                 # AI assistant instructions
   PLAN.md                   # Version roadmap and changelog
-  Makefile                  # dev, backend, frontend, install, lint, format, test
-  VERSION                   # Current version (0.12.0)
+  Makefile                  # dev, dev-lan, backend, frontend, install, lint, format, test
+  VERSION                   # Current version (0.34.0)
 ```
 
 ---
@@ -102,7 +113,7 @@ Full CRUD for 12 equipment types (camera, sensor, telescope/OTA, filter, mount, 
 
 **Status:** `[shipped]`
 
-User-composed imaging rig templates (one telescope configuration + one camera + optional mount / focuser / filter wheel / filter slots / OAG / guide scope / guide camera / computer / software). Full CRUD with clone, restore, and default-rig enforcement. `rig_summary` view drives list rendering with joined equipment names and guide-camera sensor data for calculators.
+User-composed imaging rig templates (one telescope configuration + one camera + optional mount / focuser / filter wheel / filter slots / OAG / guide scope / guide camera / computer / software). Full CRUD with clone, restore, and default-rig enforcement. `rig_summary` view drives list rendering with joined equipment names and guide-camera sensor data for calculators. **v0.32.0:** drag-to-reorder on the Rigs page via `sort_order` column (migration 0026); `PUT /api/rigs/reorder` endpoint; all rig dropdowns honour user order.
 
 **Calculators:** Image scale, FOV (arctan formula with sensor-dim fallback), Dawes/Rayleigh limits, sensor coverage, sampling assessment (3-tier: oversampled/well_sampled/undersampled with per-binning recommendations). **Guide suitability:** mode-aware (guide-scope vs OAG), 4-tier rating on `effective_error_main_pixels` (0.6/1.0/1.2 thresholds), 6″/pixel hard cap, binning + centroid accuracy as query params. **Guiding tolerance:** 0.5× / 1.0× / 1.5× main-scale thresholds with plain-language comparison to current guide precision.
 
@@ -203,19 +214,21 @@ VizieR fetches (Sharpless, Barnard) rotate through three CDS mirrors (Strasbourg
 
 **v0.20.0 — external references (Wikidata + Wikipedia); v0.21.1 — SIMBAD + NED extension:** provider-agnostic `dso_external_ref` child table populated by two loaders. Wikidata SPARQL fetch pulls catalog-cross-referenced entities (NGC / Messier / Sharpless / Barnard / PGC / UGC via P528/P972 + P3208/P4095/P6340 shortcuts) + their English Wikipedia sitelinks + SIMBAD IDs (P3083); matching runs in-DB against `dso_designation.search_key`. Editorial CSV override (`dso_external_refs.csv`, ships empty) runs last and always wins — supports upsert and suppression rows across all four providers. **Chips on the detail panels:** Wikipedia (always when present) + SIMBAD (always, fallback from primary_designation when Wikidata has no P3083) + NED (extragalactic-only, always synthesised from primary_designation via NED's tolerant `byname` resolver — Wikidata's P2528 turned out to be earthquake magnitude, not NED). Wikidata QIDs are stored silently, filtered at render time. Admin endpoints: `GET /api/admin/catalogs/wikidata/remote-version` (now reports `installed_query_version` vs `current_query_version` so the admin UI's "Update available" chip flags SPARQL-shape changes), `POST /api/admin/catalogs/wikidata/fetch`. Schema: migration 0022 creates the table with `{wikidata, wikipedia}` CHECK; migration 0023 widens to `{wikidata, wikipedia, simbad, ned}` via the SQLite table-rewrite pattern.
 
-### Image viewer
+### Image Analyzer (renamed from Image Viewer in v0.33.0)
 
 **Status:** `[shipped]`
 
-Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsight projects (.pxiproject), PNG, JPEG, TIFF (including float32). Archive browsing (zip, tar, tar.gz, tar.bz2, tar.zst, 7z) with in-memory extraction. PixInsight-compatible auto-stretch (STF with avgDev). Per-channel statistics (median, MAD, avgDev, SNR, CIE L*a*b* a*). Canvas-based histogram with R/G/B/Luminosity channels, log/linear scale. Client-side pixel inspector with magnifier, hex color, XKCD named color. FITS header viewing and editing (batch update/add/delete with structural keyword protection). Recent files tracking. GPU-accelerated stretch and stats via mlx/cupy with numpy fallback.
+Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsight projects (.pxiproject), PNG, JPEG, TIFF (including float32). Archive browsing (zip, tar, tar.gz, tar.bz2, tar.zst, 7z) with in-memory extraction. PixInsight-compatible auto-stretch (STF with avgDev). Per-channel statistics (median, MAD, avgDev, SNR, CIE L*a*b* a*). Canvas-based histogram with R/G/B/Luminosity channels, log/linear scale. Client-side pixel inspector with magnifier, hex color, XKCD named color. FITS header viewing and editing (batch update/add/delete with structural keyword protection). Recent files tracking. GPU-accelerated stretch and stats via mlx/cupy with numpy fallback. **v0.33.0:** clickable Stretched/Linear pill override, improved linearity detection (header keyword search + mid-range fraction check).
 
 **Aberration Inspector** tab: star detection via sep, configurable sample grid with per-square metrics, draggable grid squares, tile preview with ellipse overlays. Results cached in SQLite with TTL-based cleanup.
 
+**Identify tab (v0.29.0).** Detects WCS from FITS headers (CD matrix + CDELT/CROTA forms) or plate solves via ASTAP, then overlays DSO annotations on the image using astropy WCS pixel projection. SVG annotation overlay with ellipses + labels, colorblind-safe palette. Right detail panel shows astrometric solution + selected object info (designations, distance, external links). Bottom DSO grid is sortable with bi-directional selection sync (click grid ↔ highlight marker). Type group filter chips + min-size slider. ASTAP `-speed slow` retry on failure; progress streaming via `GET /progress` + `POST /cancel`.
+
 **Tablet support (v0.34.0).** Pinch-to-zoom + one-finger pan via native touch handlers + direct DOM transform during gesture (state syncs on touchend). Long-press enters pixel-inspect mode with a floating crosshair. iPad pixel inspector uses a single 301×301 sampling canvas + 9-arg `drawImage` to copy just the patch region per sample — full-image canvases silently fail to allocate on iOS WebKit. Pre-warm at 1:1 behind a black cover on tablet to avoid WebKit's lazy GPU-layer cascade on first pinch. Viewport meta sets `maximum-scale=1.0, user-scalable=no` and the container preventDefaults Apple's proprietary `gesturestart`/`change`/`end` events to keep iPadOS from running its own pinch-zoom in parallel.
 
-- **Route:** `/image-viewer`
-- **API:** `/api/images/*`, `/api/files/*`, `/api/aberration/*`
-- **Key backend:** `services/imaging.py`, `services/fits_io.py`, `services/xisf_io.py`, `services/pxiproject_io.py`, `services/standard_io.py`, `services/archive_io.py`, `services/aberration.py`
+- **Route:** `/image-analyzer`
+- **API:** `/api/images/*`, `/api/files/*`, `/api/aberration/*`, `/api/plate-solve/detect-wcs`, `/api/plate-solve/annotate`, `/api/plate-solve/progress`, `/api/plate-solve/cancel`
+- **Key backend:** `services/imaging.py`, `services/fits_io.py`, `services/xisf_io.py`, `services/pxiproject_io.py`, `services/standard_io.py`, `services/archive_io.py`, `services/aberration.py`, `services/image_annotations.py`, `services/image_annotation_models.py`
 
 ### Weather
 
@@ -235,7 +248,7 @@ Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsig
 
 **Status:** `[shipped]`
 
-**Settings:** theme (light/dark/browser), GPU acceleration toggle, max worker cores, file browser favorites and last path, aberration cache TTL, weather cache TTL, weather moon penalty toggle, weather units (metric/imperial), calculators clock order. As of v0.12.1, stored as one row per preference in the `settings(key, value_json, updated_at)` key-value table (migration 0011 — reshaped from the previous singleton JSON blob). `core/config.py:Settings` remains the Pydantic source of truth; adding a new field still requires no schema migration.
+**Settings:** theme (light/dark/browser), GPU acceleration toggle, max worker cores, file browser favorites and last path, aberration cache TTL, weather cache TTL, weather moon penalty toggle, weather units (metric/imperial), calculators clock order, ASTAP executable path, thumbnail/sky-tile cache budgets, 25 `scoring_*` fields (planner scoring weights and thresholds), `planner_*` fields (min visibility hours, max magnitude, min size, size-in-frame range, moon separation, filter intent, sort order, selected location/horizon/rig, active tab, detail panel state, calendar pickers — everything except free-text search). As of v0.12.1, stored as one row per preference in the `settings(key, value_json, updated_at)` key-value table (migration 0011 — reshaped from the previous singleton JSON blob). `core/config.py:Settings` remains the Pydantic source of truth; adding a new field still requires no schema migration.
 
 **Admin:** Multi-database support with first-run setup wizard (three scenarios: fresh, available DBs, all unavailable). Create, register, activate, remove databases — Create now auto-activates + reloads. Database list alphabetical with the active row inlined. DB hot-swap via `set_db_path()` + page reload. Filesystem browser with shortcuts (Home, Documents, App Data) and directory creation. App info display. Equipment re-seed trigger.
 
@@ -248,7 +261,7 @@ Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsig
 
 Standalone mini-app with 12 astronomer/astrophotographer utilities grouped into four categories. Each calculator is backed by its own API endpoint so the math is equally usable from any external client — the frontend does no math beyond live-tick display.
 
-**Calculators:** Lat/Long Converter (sexagesimal ↔ decimal), RA/Dec ↔ Alt/Az (location-aware, astropy-backed), Clocks (Local / UTC / LST / JD / MJD + Location's Display Timezone + Location Timezone; drag-to-reorder), Tonight at a Glance, Angular Units, Linear Units, Pixel Scale, Field of View, File Size, Airmass (Kasten-Young), SQM / Bortle / NELM, Temperature.
+**Calculators:** Lat/Long Converter (sexagesimal ↔ decimal), RA/Dec ↔ Alt/Az (location-aware, astropy-backed), Clocks (Local / UTC / LST / JD / MJD + Location's Display Timezone + Location Timezone; drag-to-reorder), Tonight at a Glance, Angular Units, Linear Units, Pixel Scale, Field of View, File Size, Airmass (Kasten-Young), SQM / Bortle / NELM, Temperature. **Tonight at a Glance** was promoted to its own top-level nav entry in v0.27.0 (`/tonight` route, `TonightPage.tsx`).
 
 - **Route:** `/calculators[/:calcId]`
 - **API:** `/api/calculators/*` (13 endpoints)
@@ -262,7 +275,7 @@ Standalone mini-app with 12 astronomer/astrophotographer utilities grouped into 
 
 **Status:** `[shipped]`
 
-Auto-generated OpenAPI/Swagger docs from FastAPI with organized tag groups (File Browser, Image Viewer, Aberration Inspector, Equipment, Lookup Tables, Locations, Weather, Settings, Administration, Diagnostics). Accessible via in-app API Docs page.
+Auto-generated OpenAPI/Swagger docs from FastAPI with organized tag groups (File Browser, Image Analyzer, Aberration Inspector, Equipment, Lookup Tables, Locations, Weather, Settings, Administration, Diagnostics). Accessible via in-app API Docs page.
 
 - **Route:** `/api-docs` (in-app page), plus standard FastAPI `/docs` and `/redoc`
 
@@ -319,7 +332,7 @@ Handles all NightCrate image sources: filesystem files passed directly to ASTAP;
 
 Current migration: **0028** (`phd2_recent_files`). 28 migrations total (`0001`–`0028`).
 
-**Recent migrations not detailed below:** 0025 (`target_wishlist` — wishlist + sections + plan assignments + date ranges), 0026 (`rig_sort_order` — `sort_order` column on `rig` + view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
+**Recent migrations not detailed elsewhere:** 0025 (`target_wishlist` — `target_wishlist`, `wishlist_section`, `target_plan`, `target_plan_date_range` tables for the wishlist + planning system), 0026 (`rig_sort_order` — `sort_order` column on `rig` + `rig_summary` view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
 
 - **Core app:** `settings` (key-value table as of migration 0011 — one row per preference), `recent_files` — app preferences and state
 - **Equipment (migrations 0005–0006, plus inline edits in v0.12.0):** 12 equipment tables, 10 lookup/reference tables, 5 junction tables, 2 child tables, 4 FITS alias tables, 1 view, `seed_loader_meta` — fully normalized equipment catalog. `is_mine` column + partial index added to 10 owned equipment tables in v0.12.0. `idx_camera_guide_sensor` added inline to 0006 in v0.12.1.
@@ -331,7 +344,7 @@ Current migration: **0028** (`phd2_recent_files`). 28 migrations total (`0001`�
 - **Sky-tile cache (migration 0020):** `sky_tile_cache` — DSO-agnostic cell-keyed cache `(hips_survey, healpix_nside, healpix_ipix, tier, cell_size, cell_w/h, cell_i, cell_j)` that lets two DSOs whose views overlap share every cell in the overlap. Three tiers selected by rig major FOV (narrow ≤1°, med 1–3°, wide >3°). Same long-poll + error-backoff semantics as the thumbnail cache. Filenames also encode stable identity for cross-DB survival.
 - **Aberration (migration 0004):** `aberration_analysis`, `aberration_stars` — cached star detection results with TTL
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
-- **Rigs (migrations 0009–0010, 0013):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. Migration 0010 recreates the view to expose `telescope_id` for the Equipment tab's detail pane. Migration 0013 recreates the view again to expose `sensor_adc_bit_depth` for the File Size calculator's auto-populate flow.
+- **Rigs (migrations 0009–0010, 0013, 0024, 0026):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. `rig_summary` view has been rebuilt four times: 0010 (expose `telescope_id`), 0013 (expose `sensor_adc_bit_depth`), 0024 (expose `mount_drive_type` + `mount_worm_period_seconds`), 0026 (expose `sort_order`).
 - **Mount worm period (migration 0024, v0.26.0):** ALTER adds `mount.worm_period_seconds REAL`. Rebuilds `rig_summary` to expose `mount_drive_type` + `mount_worm_period_seconds`. Backfills 24 worm-drive seed mounts via direct UPDATE statements (sidesteps the seed loader's user-modified hash check, which would otherwise refuse to update existing rows after `worm_period_seconds` was added to mount's `seeded_fields`).
 
 Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`. LLM-facing seed-data + abbreviated-schema reference (for CSV authoring in Claude Desktop) in `LLM_DB_SPECS.md` at the repo root.
@@ -340,21 +353,30 @@ Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`. LLM-fac
 
 ## Background processes and jobs
 
-- **Startup (lifespan):** Migrations applied, seed loader runs (first-run populate / hash-based re-seed), stale aberration cache purged (TTL-based), stale weather cache purged (2× TTL)
+- **Startup (lifespan):** Migrations applied, seed loader runs (first-run populate / hash-based re-seed), stale aberration cache purged (TTL-based), stale weather cache purged (2× TTL), thumbnail + sky-tile on-disk caches rehydrated (filename → cache-key re-index, then orphan sweep)
 - **No recurring background tasks** — no Celery, APScheduler, or asyncio task loops. All work is request-driven.
 - **Caching:**
   - Image data + stats: in-memory with per-key locking (prevents redundant computation from concurrent requests)
   - Aberration analysis: SQLite cache keyed by (file_path, hdu, settings_json), TTL configurable (default 30 days)
   - Weather forecasts: SQLite cache keyed by source type, TTL configurable (default 6 hours, purged at 2× TTL)
   - Supplementary weather data (PWV/AOD): cached alongside forecast with non-fatal writes
-  - Frontend: TanStack Query caches rig calculator + per-equipment detail fetches; `["mine-counts"]` invalidated on any star toggle
+  - Planner thumbnails: SQLite metadata + on-disk JPEGs under `APP_DIR/thumbnails/`. Keyed by sky coordinates (not DB ID) so cache survives DB recreation. LRU with configurable budget (default 500 MB). Background fetch via `asyncio.shield` with 8-slot semaphore against CDS. 1-hour error backoff.
+  - Sky-tile cache: SQLite metadata + on-disk JPEGs. DSO-agnostic HEALPix cells; two DSOs whose views overlap share every cell. Same long-poll + error-backoff semantics as thumbnails.
+  - Planner visibility: process-wide 4-entry LRU keyed on location + date + horizon; holds the vectorized alt/az snapshot for ~14 k DSOs.
+  - Annual hours: 8-entry in-memory LRU with 15-min TTL.
+  - PHD2 parse results: in-process TTL cache (no DB persistence).
+  - Frontend: TanStack Query caches rig calculator + per-equipment detail fetches; `["mine-counts"]` invalidated on any star toggle. Zustand `persist` middleware for page-level state (image analyzer, PHD2, DSO catalog, calculators). Planner state persisted to backend `settings` KV table via `usePlannerSettingsSync`.
 
 ---
 
 ## External dependencies
 
-- **Open-Meteo** — weather forecast data (standard API for main weather, ECMWF endpoint for PWV, Air Quality API for AOD). Free, no auth required.
-- No other external services called at runtime. Astronomy computations (moon, twilight, seeing) are all local via astropy + custom models. Rig calculators (image scale, FOV, guide suitability, guiding tolerance, sampling) are pure local math — no external calls.
+- **Open-Meteo** — weather forecast data (standard API for main weather, ECMWF endpoint for PWV, Air Quality API for AOD). Free, no auth required. Called on weather page load (cached 6 h).
+- **CDS Aladin hips2fits** (`alasky.cds.unistra.fr`) — DSS2 colour/red JPEG tiles for planner thumbnails and sky-tile cache. Free, no auth required. Called at runtime when a user views a planner target and the tile is not cached.
+- **GitHub raw.githubusercontent.com** — OpenNGC catalog data + 50 MGC galaxy distance catalog (FITS binary table). Free, no auth. User-triggered via Admin → Catalogs (one-time fetch, cached on disk).
+- **CDS VizieR** (`vizier.cds.unistra.fr` + India/South Africa mirrors) — Sharpless 2 + Barnard dark-nebula catalog data (TSV). Free, no auth. User-triggered via Admin → Catalogs.
+- **Wikidata SPARQL** (`query.wikidata.org`) — DSO external references (QIDs, Wikipedia sitelinks, SIMBAD IDs). Free, CC0, no auth. User-triggered via Admin → Catalogs.
+- Astronomy computations (moon, twilight, seeing) are all local via astropy + custom models. Rig calculators (image scale, FOV, guide suitability, guiding tolerance, sampling) are pure local math — no external calls.
 
 ---
 

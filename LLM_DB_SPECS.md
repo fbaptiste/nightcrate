@@ -45,7 +45,7 @@ CREATE TABLE sensor (manufacturer_id FK, model_name TEXT, sensor_type CHECK ('mo
     pixel_size_um REAL, resolution_x INT, resolution_y INT, sensor_width_mm REAL,
     sensor_height_mm REAL, adc_bit_depth INT, full_well_capacity_ke REAL,
     read_noise_e REAL, peak_qe_pct REAL, bayer_pattern CHECK ('RGGB','BGGR','GRBG','GBRG'),
-    dual_gain BOOL, hcg_threshold_gain INT, notes TEXT);
+    dual_gain BOOL, hcg_threshold_gain INT, notes TEXT, source_url TEXT);
 
 CREATE TABLE camera (manufacturer_id FK, sensor_id FK, guide_sensor_id FK nullable,
     connector_size_id FK nullable, model_name TEXT, cooled BOOL, cooling_delta_c REAL,
@@ -58,7 +58,8 @@ CREATE TABLE camera (manufacturer_id FK, sensor_id FK, guide_sensor_id FK nullab
 -- junction: camera_interface (camera_id, interface_id → connection_interface)
 
 CREATE TABLE telescope (manufacturer_id FK, optical_design_id FK nullable, model_name TEXT,
-    aperture_mm REAL, image_circle_mm REAL, weight_kg REAL, obstruction_pct REAL, notes TEXT);
+    aperture_mm REAL, image_circle_mm REAL, weight_kg REAL, obstruction_pct REAL, notes TEXT,
+    source_url TEXT);
 -- junction: telescope_connector (telescope_id, connector_size_id)
 
 CREATE TABLE telescope_configuration (telescope_id FK, config_name TEXT, accessory_name TEXT,
@@ -68,7 +69,7 @@ CREATE TABLE telescope_configuration (telescope_id FK, config_name TEXT, accesso
 -- child of telescope; every telescope needs at least one config with is_native=1
 
 CREATE TABLE filter (manufacturer_id FK, filter_type_id FK,
-    model_name TEXT, peak_transmission_pct REAL, notes TEXT);
+    model_name TEXT, peak_transmission_pct REAL, notes TEXT, source_url TEXT);
 
 CREATE TABLE filter_passband (filter_id FK, line_name CHECK ('Ha','Hb','Oiii','Sii','Nii','OI',
     'Lum','R','G','B','UVIR','LP','ND','other'), central_wavelength_nm REAL,
@@ -82,7 +83,7 @@ CREATE TABLE filter_size_option (filter_id FK, filter_size_id FK,
 CREATE TABLE mount (manufacturer_id FK, mount_type_id FK nullable, model_name TEXT,
     payload_capacity_kg REAL, mount_weight_kg REAL, counterweight_required BOOL,
     goto_capable BOOL, periodic_error_arcsec REAL, drive_type TEXT,
-    worm_period_seconds REAL, notes TEXT);
+    worm_period_seconds REAL, notes TEXT, source_url TEXT);
 -- junction: mount_interface (mount_id, interface_id → connection_interface)
 
 CREATE TABLE focuser (manufacturer_id FK, focuser_type_id FK nullable, model_name TEXT,
@@ -92,17 +93,20 @@ CREATE TABLE focuser (manufacturer_id FK, focuser_type_id FK nullable, model_nam
 
 CREATE TABLE filter_wheel (manufacturer_id FK, filter_size_id FK nullable,
     camera_side_connector_id FK nullable, telescope_side_connector_id FK nullable,
-    model_name TEXT, num_positions INT, back_focus_contribution_mm REAL, notes TEXT);
+    model_name TEXT, num_positions INT, back_focus_contribution_mm REAL, notes TEXT,
+    source_url TEXT);
 -- junction: filter_wheel_interface (filter_wheel_id, interface_id → connection_interface)
 
 CREATE TABLE oag (manufacturer_id FK, imaging_side_connector_id FK nullable,
     guide_camera_connector_id FK nullable, model_name TEXT, prism_size_mm REAL,
-    back_focus_contribution_mm REAL, weight_g REAL, notes TEXT);
+    back_focus_contribution_mm REAL, weight_g REAL, notes TEXT, source_url TEXT);
 
 CREATE TABLE guide_scope (manufacturer_id FK, guide_camera_connector_id FK nullable,
-    model_name TEXT, aperture_mm REAL, focal_length_mm REAL, weight_g REAL, notes TEXT);
+    model_name TEXT, aperture_mm REAL, focal_length_mm REAL, weight_g REAL, notes TEXT,
+    source_url TEXT);
 
-CREATE TABLE computer (manufacturer_id FK, form_factor_id FK nullable, model_name TEXT, notes TEXT);
+CREATE TABLE computer (manufacturer_id FK, form_factor_id FK nullable, model_name TEXT, notes TEXT,
+    source_url TEXT);
 
 CREATE TABLE software (manufacturer_id FK, name TEXT, category CHECK ('capture','guiding',
     'processing','planetarium','plate_solving','utility','other'), website TEXT, notes TEXT);
@@ -139,18 +143,18 @@ CREATE TABLE rig_filter_slot (rig_id FK CASCADE, slot_number INT CHECK (>=1),
 CREATE TABLE rig_software (rig_id FK CASCADE, software_id FK, PRIMARY KEY (rig_id, software_id));
 
 -- rig_summary: convenience view joining equipment names + guide-camera sensor for list rendering.
--- Recreated in migration 0010 to expose telescope_id for the Equipment tab's detail fetch.
--- Recreated in migration 0013 to expose sensor_adc_bit_depth for the File Size calculator.
+-- Rebuilt in: 0010 (telescope_id), 0013 (sensor_adc_bit_depth), 0024 (mount_drive_type +
+-- mount_worm_period_seconds), 0026 (sort_order).
 ```
 
 ---
 
 ## Populated Lookup Tables
 
-### manufacturer.csv (57 rows)
+### manufacturer.csv (61 rows)
 Header: `seed_key,name,notes,website`
 
-Seed_keys: `manufacturer.zwo`, `manufacturer.celestron`, `manufacturer.optolong`, `manufacturer.sony`, `manufacturer.pegasus_astro`, `manufacturer.qhy`, `manufacturer.skywatcher`, `manufacturer.ioptron`, `manufacturer.askar`, `manufacturer.sharpstar`, `manufacturer.antlia`, `manufacturer.chroma`, `manufacturer.baader`, `manufacturer.william_optics`, `manufacturer.starizona`, `manufacturer.primalucelab`, `manufacturer.takahashi`, `manufacturer.player_one`, `manufacturer.touptek`, `manufacturer.warpastron`, `manufacturer.planewave`, `manufacturer.explore_scientific`, `manufacturer.ts_optics`, `manufacturer.rainbow_astro`, `manufacturer.open_source`, `manufacturer.freeware`, `manufacturer.pleiades_astrophoto`, `manufacturer.sharpcap`, `manufacturer.main_sequence`, `manufacturer.ideiki`, `manufacturer.starkeeper`, `manufacturer.rc_astro`, `manufacturer.aries_productions`, `manufacturer.ascom_initiative`, `manufacturer.simulation_curriculum`, `manufacturer.diffraction_limited`, `manufacturer.adobe`, `manufacturer.serif`, `manufacturer.topaz_labs`, `manufacturer.nina_project`, `manufacturer.open_phd_guiding`, `manufacturer.seti_astro`, `manufacturer.emil_kraaikamp`, `manufacturer.han_kleijn`, `manufacturer.ilanga`, `manufacturer.stellarmate`, `manufacturer.software_bisque`, `manufacturer.losmandy`, `manufacturer.astro_physics`, `manufacturer.10micron`, `manufacturer.vixen`, `manufacturer.msm`, `manufacturer.generic`, `manufacturer.rigel_systems`, `manufacturer.lacerta`, `manufacturer.deep_sky_dad`, `manufacturer.moonlite`
+Seed_keys: `manufacturer.zwo`, `manufacturer.celestron`, `manufacturer.optolong`, `manufacturer.sony`, `manufacturer.smartsens`, `manufacturer.panasonic`, `manufacturer.onsemi`, `manufacturer.pegasus_astro`, `manufacturer.qhy`, `manufacturer.skywatcher`, `manufacturer.ioptron`, `manufacturer.askar`, `manufacturer.sharpstar`, `manufacturer.antlia`, `manufacturer.chroma`, `manufacturer.baader`, `manufacturer.william_optics`, `manufacturer.starizona`, `manufacturer.primalucelab`, `manufacturer.takahashi`, `manufacturer.player_one`, `manufacturer.touptek`, `manufacturer.warpastron`, `manufacturer.planewave`, `manufacturer.explore_scientific`, `manufacturer.ts_optics`, `manufacturer.rainbow_astro`, `manufacturer.open_source`, `manufacturer.freeware`, `manufacturer.pleiades_astrophoto`, `manufacturer.sharpcap`, `manufacturer.main_sequence`, `manufacturer.ideiki`, `manufacturer.starkeeper`, `manufacturer.rc_astro`, `manufacturer.aries_productions`, `manufacturer.ascom_initiative`, `manufacturer.simulation_curriculum`, `manufacturer.diffraction_limited`, `manufacturer.adobe`, `manufacturer.serif`, `manufacturer.topaz_labs`, `manufacturer.nina_project`, `manufacturer.open_phd_guiding`, `manufacturer.seti_astro`, `manufacturer.emil_kraaikamp`, `manufacturer.han_kleijn`, `manufacturer.ilanga`, `manufacturer.stellarmate`, `manufacturer.software_bisque`, `manufacturer.losmandy`, `manufacturer.astro_physics`, `manufacturer.10micron`, `manufacturer.vixen`, `manufacturer.msm`, `manufacturer.generic`, `manufacturer.rigel_systems`, `manufacturer.lacerta`, `manufacturer.deep_sky_dad`, `manufacturer.moonlite`, `manufacturer.optec`
 
 ### optical_design.csv (10 rows)
 Header: `seed_key,description,name`
@@ -202,12 +206,12 @@ Header: `seed_key,manufacturer_seed_key,category,name,notes,website`
 Seed_keys: `software.nina`, `software.sgp`, `software.apt`, `software.voyager`, `software.sharpcap`, `software.ekos`, `software.maximdl`, `software.firecapture`, `software.nina_hocus_focus`, `software.nina_tppa`, `software.nina_ground_station`, `software.nina_target_scheduler`, `software.phd2`, `software.metaguide`, `software.pixinsight`, `software.siril`, `software.dss`, `software.app`, `software.graxpert`, `software.bxt`, `software.nxt`, `software.sxt`, `software.seti_astro_suite`, `software.starnet`, `software.photoshop`, `software.affinity_photo`, `software.topaz_photo_ai`, `software.autostakkert`, `software.registax`, `software.pipp`, `software.winjupos`, `software.imppg`, `software.stellarium`, `software.kstars`, `software.theskyx`, `software.skysafari`, `software.cartes_du_ciel`, `software.astap`, `software.astrometry_net`, `software.platesolve2`, `software.ascom`, `software.indi`, `software.eqmod`, `software.astroplanner`
 
 ### computer.csv (16 rows)
-Header: `seed_key,form_factor_seed_key,manufacturer_seed_key,model_name,notes`
+Header: `seed_key,form_factor_seed_key,manufacturer_seed_key,model_name,notes,source_url`
 
 Seed_keys: `computer.zwo.asiair`, `computer.zwo.asiair_mini`, `computer.zwo.asiair_pro`, `computer.zwo.asiair_plus_32gb`, `computer.zwo.asiair_plus_256gb`, `computer.primalucelab.eagle3`, `computer.primalucelab.eagle4_s`, `computer.primalucelab.eagle4`, `computer.primalucelab.eagle4_pro`, `computer.primalucelab.eagle5_s`, `computer.primalucelab.eagle5`, `computer.primalucelab.eagle5_pro`, `computer.stellarmate.plus`, `computer.stellarmate.pro`, `computer.stellarmate.x`, `computer.touptek.stellavita`
 
 ### mount.csv (54 rows)
-Header: `seed_key,manufacturer_seed_key,mount_type_seed_key,counterweight_required,drive_type,goto_capable,model_name,mount_weight_kg,notes,payload_capacity_kg,periodic_error_arcsec,worm_period_seconds`
+Header: `seed_key,manufacturer_seed_key,mount_type_seed_key,counterweight_required,drive_type,goto_capable,model_name,mount_weight_kg,notes,payload_capacity_kg,periodic_error_arcsec,source_url,worm_period_seconds`
 
 Seed_keys: `mount.zwo.am3`, `mount.zwo.am3n`, `mount.zwo.am5`, `mount.zwo.am5n`, `mount.zwo.am7`, `mount.skywatcher.heq5_pro`, `mount.skywatcher.eq6_r_pro`, `mount.skywatcher.cq350_pro`, `mount.skywatcher.eq8_r_pro`, `mount.skywatcher.eq8_rh_pro`, `mount.skywatcher.az_eq6`, `mount.skywatcher.wave_100i`, `mount.skywatcher.wave_150i`, `mount.skywatcher.star_adventurer_2i`, `mount.skywatcher.star_adventurer_gti`, `mount.ioptron.cem26`, `mount.ioptron.cem40`, `mount.ioptron.cem70`, `mount.ioptron.gem28`, `mount.ioptron.gem45`, `mount.ioptron.hem27`, `mount.ioptron.hem44`, `mount.ioptron.hae29`, `mount.ioptron.hae43`, `mount.ioptron.hae69`, `mount.ioptron.skyguider_pro`, `mount.celestron.avx`, `mount.celestron.cgem_ii`, `mount.celestron.cgx`, `mount.celestron.cgx_l`, `mount.warpastron.wd20`, `mount.warpastron.wd20p`, `mount.rainbow_astro.rst135`, `mount.rainbow_astro.rst135e`, `mount.rainbow_astro.rst300`, `mount.pegasus_astro.nyx101`, `mount.takahashi.em200_temma3`, `mount.takahashi.em11_temma2z`, `mount.losmandy.g11`, `mount.losmandy.gm8`, `mount.vixen.sxd2`, `mount.vixen.sxp2`, `mount.explore_scientific.iexos100_2`, `mount.explore_scientific.exos2_pmc8`, `mount.astro_physics.mach2gto`, `mount.astro_physics.ap1100gto`, `mount.10micron.gm1000_hps_ep`, `mount.10micron.gm2000_hps_ii`, `mount.software_bisque.myt`, `mount.software_bisque.mx_series6`, `mount.software_bisque.me_ii`, `mount.planewave.l350`, `mount.planewave.l500`, `mount.msm.nomad`
 
@@ -222,72 +226,56 @@ Seed_keys: `focuser.zwo.eaf`, `focuser.zwo.eaf_5v`, `focuser.zwo.eafn`, `focuser
 ### focuser_interface.csv (30 junction rows)
 Header: `focuser_seed_key,interface_seed_key`
 
----
+### sensor.csv (37 rows)
+Header: `seed_key,manufacturer_seed_key,model_name,sensor_type,pixel_size_um,resolution_x,resolution_y,sensor_width_mm,sensor_height_mm,adc_bit_depth,full_well_capacity_ke,read_noise_e,peak_qe_pct,bayer_pattern,dual_gain,notes,source_url`
 
-## Tables with Minimal Test Data (need expansion)
+Note: mono and color variants of the same chip need separate rows (sensor_type='mono' vs 'color' with bayer_pattern). `hcg_threshold_gain` exists in the SQL schema but is NOT in the CSV — it is populated only at the camera level.
 
-### sensor.csv (2 rows)
-Header: `seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,hcg_threshold_gain,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm`
+### camera.csv (101 rows)
+Header: `seed_key,manufacturer_seed_key,sensor_seed_key,guide_sensor_seed_key,connector_size_seed_key,model_name,cooled,cooling_delta_c,back_focus_mm,weight_g,tilt_adapter,has_usb_hub,usb_hub_interface_seed_key,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,notes,source_url`
 
-Seed_keys: `sensor.sony.imx571`, `sensor.sony.imx533`
-
-Note: mono and color variants of the same chip need separate rows (sensor_type='mono' vs 'color' with bayer_pattern).
-
-### camera.csv (2 rows)
-Header: `seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,tilt_adapter,unity_gain,weight_g`
-
-Seed_keys: `camera.zwo.asi2600mm_pro`, `camera.zwo.asi533mm_pro`
-
-### camera_interface.csv (2 junction rows)
+### camera_interface.csv (144 junction rows)
 Header: `camera_seed_key,interface_seed_key`
 
-### telescope.csv (1 row)
-Header: `seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,weight_kg`
+### telescope.csv (40 rows)
+Header: `seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,weight_kg,source_url`
 
-Seed_keys: `telescope.celestron.c11`
-
-### telescope_connector.csv (1 junction row)
+### telescope_connector.csv (50 junction rows)
 Header: `connector_size_seed_key,telescope_seed_key`
 
-### telescope_configuration.csv (2 rows)
+### telescope_configuration.csv (73 rows)
 Header: `seed_key,telescope_seed_key,accessory_name,config_name,effective_back_focus_mm,effective_focal_length_mm,effective_focal_ratio,effective_image_circle_mm,is_native,notes,reduction_factor`
-
-Seed_keys: `telescope_configuration.celestron.c11.native`, `telescope_configuration.celestron.c11.0_7x`
 
 Every telescope MUST have at least one config with `is_native=1` and `reduction_factor=1.0`.
 
-### filter.csv (2 rows)
-Header: `seed_key,filter_type_seed_key,manufacturer_seed_key,model_name,notes,peak_transmission_pct`
+### filter.csv (74 rows)
+Header: `seed_key,manufacturer_seed_key,filter_type_seed_key,model_name,peak_transmission_pct,notes,source_url`
 
-Seed_keys: `filter.optolong.ha_7nm`, `filter.optolong.oiii_6_5nm`
-
-### filter_passband.csv (2 rows)
+### filter_passband.csv (79 rows)
 Header: `seed_key,filter_seed_key,bandwidth_nm,central_wavelength_nm,line_name,peak_transmission_pct`
-
-Seed_keys: `filter_passband.optolong.ha_7nm.ha`, `filter_passband.optolong.oiii_6_5nm.oiii`
 
 Dual/tri-band filters have multiple passband rows.
 
-### filter_size_option.csv (child of filter — one row per physical size)
+### filter_size_option.csv (196 rows)
 Header: `seed_key,filter_seed_key,filter_size_seed_key,mounted_thickness_mm,notes`
 
-One row per size a filter product is sold in. `mounted_thickness_mm` was previously on the `filter` table; it moved to this child table in the equipment schema revision so the same filter model can carry multiple sizes with per-size thickness.
+One row per size a filter product is sold in.
+
+### filter_wheel.csv (24 rows)
+Header: `seed_key,camera_side_connector_seed_key,filter_size_seed_key,manufacturer_seed_key,telescope_side_connector_seed_key,back_focus_contribution_mm,model_name,notes,num_positions,source_url`
+
+### filter_wheel_interface.csv (23 junction rows)
+Header: `filter_wheel_seed_key,interface_seed_key`
+
+### oag.csv (13 rows)
+Header: `seed_key,guide_camera_connector_seed_key,imaging_side_connector_seed_key,manufacturer_seed_key,back_focus_contribution_mm,model_name,notes,prism_size_mm,weight_g,source_url`
+
+### guide_scope.csv (8 rows)
+Header: `seed_key,guide_camera_connector_seed_key,manufacturer_seed_key,aperture_mm,focal_length_mm,model_name,notes,weight_g,source_url`
 
 ---
 
-## Empty Tables (need population)
-
-### filter_wheel.csv
-Header: `seed_key,camera_side_connector_seed_key,filter_size_seed_key,manufacturer_seed_key,telescope_side_connector_seed_key,back_focus_contribution_mm,model_name,notes,num_positions`
-
-### filter_wheel_interface.csv
-Header: `filter_wheel_seed_key,interface_seed_key`
-
-### oag.csv
-Header: `seed_key,guide_camera_connector_seed_key,imaging_side_connector_seed_key,manufacturer_seed_key,back_focus_contribution_mm,model_name,notes,prism_size_mm,weight_g`
-
-### guide_scope.csv
-Header: `seed_key,guide_camera_connector_seed_key,manufacturer_seed_key,aperture_mm,focal_length_mm,model_name,notes,weight_g`
+## Alias Tables (not yet populated)
 
 ### camera_alias.csv
 Header: `camera_seed_key,alias,confirmed,source`

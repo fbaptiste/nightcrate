@@ -4484,6 +4484,214 @@ testing on tablet.
 
 ---
 
+## v0.35.0 — Project Shell + Image Management
+
+**Status:** Planned
+**Branch:** `v0.35.0/project-shell-images`
+
+Foundation for the Projects feature. Projects are first-class entities supporting two
+usage patterns from day one: (1) full ingest — user points at a directory and the
+pipeline populates everything; (2) manual/incremental — user starts with just a name and
+a finished image, adding metadata over time. The project entity is useful with nothing
+more than a name and a single image. Features that depend on automated ingest (sessions,
+sub-frames, log parsing) layer on top in v0.39.0+ without invalidating simpler projects.
+
+### Schema (migration 0029)
+
+- [ ] `project` table — name UNIQUE, description, notes, status CHECK ('active', 'paused', 'complete', 'abandoned'), soft delete via `active`, timestamps
+- [ ] `project_image` table — project_id FK CASCADE, file_path (supports `::` virtual paths into archives/pxiprojects via `path_resolver`), display_order, is_main (partial unique index enforcing at most one per project), notes, timestamps
+- [ ] DB_SCHEMA.md + DB_SCHEMA_DDL.sql updates
+
+### Backend
+
+- [ ] `api/projects.py` — Project CRUD: list (sort/filter/search by name+description), create, get, update, soft-delete, restore. Uses `integrity_guard` for UNIQUE name conflicts, `row_to_dict` + `bool_fields` from `api/_common.py`
+- [ ] `api/project_models.py` — Pydantic request/response shapes
+- [ ] Image management endpoints: add images (POST — adding an archive/pxiproject enumerates contents via `archive_io` and creates one `project_image` per entry using `::` virtual paths), remove (DELETE), reorder (PUT), set main (POST)
+- [ ] Main image auto-enforcement: first image added auto-becomes main; removing the main auto-promotes the next by display_order (same pattern as horizon `is_default`)
+- [ ] `GET /api/projects/{id}/thumbnail` — reads the main image via `services/imaging.py` pipeline, auto-stretches FITS/XISF, returns resized PNG (~180px). In-memory cache with per-key lock (matching `api/images.py` pattern) to avoid re-reading large FITS on every list render. Virtual paths resolved via `path_resolver`
+- [ ] Tests: project CRUD, image management, main image enforcement, virtual path handling, thumbnail endpoint
+
+### Frontend — Projects page
+
+- [ ] Top-level nav entry "Projects" with route `/projects`
+- [ ] Project list view: main image thumbnail (via thumbnail endpoint), name, status chip, date modified. Sort by name/date. Text search across name + description
+- [ ] Create project dialog: name + optional description
+- [ ] Click-through to project detail page at `/projects/:id`
+- [ ] Zustand store (`projectsStore`) + PersistentPages mount for navigation preservation
+
+### Frontend — Project detail page
+
+- [ ] Overview tab (only tab in this version)
+- [ ] Main image displayed prominently via existing image endpoint with auto-stretch
+- [ ] Project name/description editable inline
+- [ ] Image gallery strip: all project images with drag-to-reorder (dnd-kit), click to designate main, remove button, per-image notes editing
+- [ ] Add images via file picker — supports individual files + archive/pxiproject containers (enumerate contents on add)
+
+### Not in scope
+
+Plate solving, DSO linking, rig/location association, thumbnail cropping/caching, gallery/card view on Projects list, sessions, sub-frames, ingest pipeline.
+
+---
+
+## v0.36.0 — Project Thumbnails + Gallery View
+
+Thumbnails render from user-defined crop rectangles and are cached on disk.
+The Projects page gains a gallery/card view with search and sort.
+
+### Schema (migration 0030)
+
+- [ ] `project_thumbnail` table — project_id FK CASCADE, size CHECK ('small', 'medium', 'large'), source_image_id FK to project_image (ON DELETE SET NULL), crop_x/crop_y/crop_w/crop_h REAL (fractions 0–1 for resolution independence), UNIQUE (project_id, size)
+- [ ] Defaults when no custom thumbnail row exists: use the main image with center-weighted auto-crop at the target aspect ratio for each size
+
+### Backend
+
+- [ ] `services/project_thumbnails.py` — thumbnail generation: read source image via `services/imaging.py` pipeline, apply crop rectangle, auto-stretch FITS/XISF, resize to target dimensions (small ~180px, medium ~400px, large ~800px), write JPEG to `APP_DIR/project_thumbnails/`. Stable filenames keyed on (project_id, size, source_mtime, crop_hash) so stale thumbnails regenerate automatically. Rehydrate-from-disk on startup before orphan sweep (same contract as planner thumbnails)
+- [ ] `GET /api/projects/{id}/thumbnail?size=small|medium|large` — serves cached thumbnail, generates on miss. Replaces the simple v0.35.0 endpoint
+- [ ] `PUT /api/projects/{id}/thumbnails/{size}` — save crop definition (source_image_id + crop rectangle)
+- [ ] Cache invalidation on crop change, source image removal, or main image change (for default thumbnails)
+- [ ] Thumbnail cache stats + clear endpoints on Admin → Caches page
+- [ ] Tests: generation pipeline, crop application, cache invalidation, default fallback behaviour
+
+### Frontend — Thumbnail crop editor
+
+- [ ] Dialog opened from project detail page (per-size tab or dropdown)
+- [ ] Source image selector (dropdown of project images, defaults to main)
+- [ ] Interactive crop rectangle: drag to position, handles to resize, constrained to target aspect ratio
+- [ ] Live preview of cropped result at actual thumbnail dimensions
+- [ ] Save commits crop definition; thumbnail regenerates
+
+### Frontend — Projects page gallery view
+
+- [ ] Toggle between list view (v0.35.0) and gallery/card view
+- [ ] Card layout: large thumbnail, project name, status chip, date, summary metadata
+- [ ] Responsive grid layout
+- [ ] Sort by name, date created, date modified. Text search across name + description
+
+---
+
+## v0.37.0 — Target Identification + DSO Linking
+
+Plate solving connects projects to the DSO catalog, enabling object-based search
+and catalog-completion tracking.
+
+Design note: the Imaging Core Schema spec (§3) defines a separate `target` table as
+a "cache of astronomical objects." Since NightCrate now has a 14k-entry `dso` table with
+normalized designations, external refs, and distances, the `target` table would be
+redundant. `project_target` links directly to `dso` via an optional FK. Custom
+coordinates (comets, novae, objects not in the catalog) use RA/Dec + label without
+a `dso_id`.
+
+### Schema (migration 0031)
+
+- [ ] `project_target` table — project_id FK CASCADE, center_ra_deg REAL, center_dec_deg REAL, dso_id FK to `dso` (nullable, ON DELETE SET NULL), label TEXT, source CHECK ('plate_solve', 'user', 'planner'), pixel_scale_arcsec REAL, rotation_deg REAL, fov_width_deg REAL, fov_height_deg REAL, timestamps. CHECK constraint: every row must have either `dso_id IS NOT NULL` or both coordinates present
+- [ ] No separate `project_dso` junction table — the optional `dso_id` FK provides the many-to-many relationship. "DSOs in this project" = `WHERE project_id = ? AND dso_id IS NOT NULL`. "Projects containing this DSO" = `WHERE dso_id = ?`
+
+### Backend
+
+- [ ] Plate-solve project images: `POST /api/projects/{id}/images/{image_id}/plate-solve` — reuses existing `services/plate_solve.py` (ASTAP subprocess) + `services/image_annotations.py` for DSO matching. Auto-creates `project_target` rows with matching `dso_id` FKs. Sequential solving (existing semaphore(1) constraint)
+- [ ] Manual target linking: `POST /api/projects/{id}/targets` — user picks a DSO from the catalog or enters arbitrary RA/Dec
+- [ ] `GET /api/projects/{id}/targets` — list targets for a project
+- [ ] `DELETE /api/projects/{id}/targets/{target_id}` — remove a target
+- [ ] `GET /api/dso/{id}/projects` — reverse lookup: which projects contain this DSO
+- [ ] `GET /api/projects/catalog-completion?catalog=Messier` — completion stats for a named catalog (query `dso_designation WHERE catalog = ?` cross-joined with `project_target`)
+- [ ] Tests: plate-solve → target creation flow, manual linking, reverse lookup, completion query
+
+### Frontend — Overview tab enrichment
+
+- [ ] Identified DSOs shown as chips/tags on the project overview after plate solving or manual linking
+- [ ] Click a DSO chip → navigate to its DSO catalog entry
+- [ ] "Plate solve" button on each project image → triggers solve → auto-links DSOs found in FOV
+- [ ] "Add target" button — DSO search autocomplete (existing pattern from plate solve dialog) or manual RA/Dec entry
+
+### Frontend — Projects page search enrichment
+
+- [ ] Search by DSO designation or common name (e.g., "M31", "Andromeda Galaxy")
+- [ ] Filter by constellation (dropdown)
+
+### Frontend — Catalog completion view
+
+- [ ] New view mode on the Projects page (toggle: List / Gallery / Completion)
+- [ ] Catalog selector dropdown: Messier, Caldwell, NGC, IC, Sharpless, Barnard (driven by `dso_designation.catalog`)
+- [ ] Grid of objects in the selected catalog with visual indication: imaged (in ≥1 project) vs not
+- [ ] Imaged objects show mini thumbnail from the project; click opens project. Un-imaged objects click → DSO catalog entry
+- [ ] Progress summary: "42 / 110 Messier objects imaged"
+
+### Not in scope
+
+Rig/location association, session dates, integration time tracking. Curated observing lists (Herschel 400, Messier Marathon) that don't map to a `dso_designation.catalog` prefix — these need an `observing_list` schema in a future version.
+
+---
+
+## v0.38.0 — Project Metadata Enrichment
+
+Projects gain rig, location, date, and per-filter integration time context — all
+manually entered in this version. Automated derivation from sub-frame data comes
+in v0.39.0+.
+
+### Schema (migration 0032)
+
+- [ ] `project_rig` junction table — project_id FK CASCADE, rig_id FK, UNIQUE (project_id, rig_id). A project can use multiple rigs (Fred's dual-rig setup)
+- [ ] ALTER ADD `location_id` INTEGER REFERENCES location(id) ON DELETE SET NULL on `project`
+- [ ] ALTER ADD `first_session_date` TEXT, `last_session_date` TEXT on `project`
+- [ ] `project_integration` table — project_id FK CASCADE, line_name TEXT CHECK (same vocabulary as `filter_passband.line_name`), actual_minutes REAL, goal_minutes REAL, notes TEXT, UNIQUE (project_id, line_name)
+
+### Backend
+
+- [ ] Rig association endpoints: add/remove rigs to/from project (`POST/DELETE /api/projects/{id}/rigs`)
+- [ ] Location association: set/clear location on project (`PATCH /api/projects/{id}` with location_id)
+- [ ] Date range: set/clear first/last session dates (`PATCH /api/projects/{id}`)
+- [ ] Integration time CRUD: `GET/POST/PUT/DELETE /api/projects/{id}/integration` — per-filter entries with actual + goal minutes
+- [ ] Integration time summary endpoint: total actual + per-filter breakdown
+- [ ] Tests: rig/location association, date validation, integration time CRUD + summary
+
+### Frontend — Overview tab enrichment
+
+- [ ] Rig selector (multi-select from user's rigs)
+- [ ] Location selector (from user's locations)
+- [ ] Date range display and editor (first/last session dates)
+- [ ] Integration time summary: per-filter bar chart showing hours per filter using the colorblind-safe palette. "4h Ha / 1.5h OIII / 2h SII" at a glance. Manual entry form for adding/editing per-filter time
+- [ ] Contextual visibility chart: if the project has a target (v0.37.0), a location, and session dates — show a retrospective altitude chart for the imaging period. Reuses `services/planner_sky_track.py` with historical dates. Shows object altitude curve, moon phase/position, and highlights actual imaging nights. "Here's what conditions you were working with"
+
+### Not in scope
+
+Sessions, sub-frames, ingest pipeline, automated integration time from FITS headers, PHD2 tab.
+
+---
+
+## v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline
+
+Bridge to the full imaging core schema. Multiple versions will be needed — the exact
+breakdown depends on decisions made during v0.35–v0.38 development. The
+[Imaging Core Schema spec](#imaging-core-schema--rigs-projects-sessions-sub-frames) and
+[FITS Equipment Resolver spec](#fits-equipment-resolver-spec) in this document define the
+target architecture.
+
+### High-level scope (multiple versions)
+
+- [ ] Imaging core schema: `session`, `sub_frame`, `file_location`, `ingestion_run` tables per the Imaging Core Schema spec
+- [ ] FITS equipment resolver: matches FITS header strings to equipment DB rows via alias tables per the FITS Equipment Resolver spec
+- [ ] Directory-scan ingest pipeline: FITS metadata extraction → equipment resolution → session formation → project target assignment → persistence. Content-hash identity for idempotent re-ingest
+- [ ] Session tab on project detail: list of sessions with date, rig, sub-frame count, integration time per filter
+- [ ] Sub-frames tab: DataGrid of individual exposures with FITS metadata, thumbnail preview, accept/reject status
+- [ ] PHD2 tab: guide log data associated with sessions, linked to the existing PHD2 analyzer
+- [ ] Calibration frame matching: darks/flats/bias matched to sessions by camera + gain + temp + exposure + binning (views, not bespoke code)
+- [ ] Automated integration time: derived from actual sub-frame data, supplementing manual entry from v0.38.0
+
+### Future features (not yet versioned)
+
+- Project slideshow with metadata overlays (year/month, rig, location, integration time)
+- Custom catalogs / user-created collections of projects
+- Curated observing lists (Herschel 400, Messier Marathon) via `observing_list` + `observing_list_member` schema
+- Advanced plate-solve-based search (any object in the solved FOV, not just linked DSOs)
+- Session timeline visualization (Gantt chart of a night's captures overlaid with guiding + altitude)
+- N.I.N.A. log parser integration (sequence timeline, autofocus events, meridian flips)
+- ASIAIR log parser integration (deferred until format stabilizes and sample logs are available)
+- Processed image provenance (which subs → which stack → which final)
+- Export / sharing / potential Astrobin integration
+- "Send to project" from target planner (create project pre-populated with target info)
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.
