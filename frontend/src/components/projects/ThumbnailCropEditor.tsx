@@ -242,6 +242,14 @@ export default function ThumbnailCropEditor({
     setCrops((prev) => ({ ...prev, [currentSize]: defaultCrop() }));
   };
 
+  const [imgAspect, setImgAspect] = useState("1 / 1");
+
+  const prevSourceRef = useRef<number | null>(null);
+  if (sourceId !== prevSourceRef.current) {
+    prevSourceRef.current = sourceId;
+    if (imgAspect !== "1 / 1") setImgAspect("1 / 1");
+  }
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Customize Thumbnails</DialogTitle>
@@ -289,7 +297,7 @@ export default function ThumbnailCropEditor({
               position: "relative",
               width: "100%",
               maxWidth: 500,
-              aspectRatio: "1 / 1",
+              aspectRatio: imgAspect,
               bgcolor: "black",
               overflow: "hidden",
               borderRadius: 1,
@@ -300,10 +308,16 @@ export default function ThumbnailCropEditor({
               component="img"
               src={renderedImageUrl(projectId, sourceId, "thumb_lg")}
               alt=""
+              onLoad={(e) => {
+                const img = e.target as HTMLImageElement;
+                if (img.naturalWidth && img.naturalHeight) {
+                  setImgAspect(`${img.naturalWidth} / ${img.naturalHeight}`);
+                }
+              }}
               sx={{
                 width: "100%",
                 height: "100%",
-                objectFit: "contain",
+                objectFit: "fill",
                 display: "block",
               }}
             />
