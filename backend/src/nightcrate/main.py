@@ -31,6 +31,7 @@ from nightcrate.api import (
     phd2,
     planner,
     plate_solve,
+    projects,
     rigs,
     settings,
     weather,
@@ -93,7 +94,9 @@ async def lifespan(app: FastAPI):
     # /api/health and /api/admin/* endpoints are functional.
     config = load_config()
     if config.db_configured:
-        set_db_path(Path(config.active_db))
+        from nightcrate.core.app_config import workspace_db_path
+
+        set_db_path(workspace_db_path(Path(config.active_db)))
         apply_migrations()
         # Load seed data (first run populates, subsequent runs check for updates).
         # Uses a separate sync sqlite3 connection — the seed loader is synchronous
@@ -207,6 +210,13 @@ async def lifespan(app: FastAPI):
                 await sync_sky_tile_orphans(conn)
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("sky-tile cache maintenance failed", exc_info=True)
+
+        try:
+            from nightcrate.api.projects import cleanup_orphaned_staging
+
+            await cleanup_orphaned_staging()
+        except _MAINT_EXPECTED_ERRS:
+            startup_logger.warning("project staging cleanup failed", exc_info=True)
 
     yield
 
@@ -331,6 +341,16 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Projects",
+        "description": (
+            "Imaging project management: create and organise projects with "
+            "multi-image galleries, drag-to-reorder, main image designation, "
+            "and auto-stretched thumbnails. Supports images from the filesystem, "
+            "archives (zip/tar/7z), and PixInsight .pxiproject containers via "
+            "the :: virtual-path convention."
+        ),
+    },
+    {
         "name": "Rigs",
         "description": (
             "Imaging rig templates: user-composed equipment configurations with "
@@ -397,6 +417,7 @@ app.include_router(dso.router)
 app.include_router(planner.router)
 app.include_router(phd2.router)
 app.include_router(plate_solve.router)
+app.include_router(projects.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(wishlist.router)

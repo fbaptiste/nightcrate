@@ -74,7 +74,7 @@ async def test_health_includes_db_configured(client):
 
 @pytest.mark.anyio
 async def test_setup_first_run(client, tmp_path):
-    db_path = str(tmp_path / "test_setup.db")
+    db_path = str(tmp_path / "test_setup")
     resp = await client.post(
         "/api/admin/database/setup",
         json={"path": db_path, "name": "Test Setup DB"},
@@ -85,7 +85,7 @@ async def test_setup_first_run(client, tmp_path):
     assert data["name"] == "Test Setup DB"
     assert data["available"] is True
     assert data["size_bytes"] is not None
-    assert Path(db_path).is_file()
+    assert (Path(db_path) / "nightcrate.db").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ async def test_setup_first_run(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_setup_rejects_if_configured(client, tmp_path):
-    db_path = str(tmp_path / "test_setup_dup.db")
+    db_path = str(tmp_path / "test_setup_dup")
     # First call should succeed
     resp1 = await client.post(
         "/api/admin/database/setup",
@@ -104,7 +104,7 @@ async def test_setup_rejects_if_configured(client, tmp_path):
     assert resp1.status_code == 200
 
     # Second call should be rejected with 409
-    db_path2 = str(tmp_path / "test_setup_dup2.db")
+    db_path2 = str(tmp_path / "test_setup_dup2")
     resp2 = await client.post(
         "/api/admin/database/setup",
         json={"path": db_path2, "name": "Second"},
@@ -119,7 +119,7 @@ async def test_setup_rejects_if_configured(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_create_database(client, tmp_path):
-    db_path = str(tmp_path / "test_create.db")
+    db_path = str(tmp_path / "test_create")
     resp = await client.post(
         "/api/admin/database/create",
         json={"path": db_path, "name": "New DB"},
@@ -129,7 +129,7 @@ async def test_create_database(client, tmp_path):
     assert data["path"] == db_path
     assert data["name"] == "New DB"
     assert data["available"] is True
-    assert Path(db_path).is_file()
+    assert (Path(db_path) / "nightcrate.db").is_file()
 
     # Should NOT be set as active
     status = await client.get("/api/admin/status")
@@ -148,7 +148,7 @@ async def test_create_database(client, tmp_path):
 @pytest.mark.anyio
 async def test_activate_database(client, tmp_path):
     # First create a database
-    db_path = str(tmp_path / "test_activate.db")
+    db_path = str(tmp_path / "test_activate")
     create_resp = await client.post(
         "/api/admin/database/create",
         json={"path": db_path, "name": "To Activate"},
@@ -179,7 +179,7 @@ async def test_activate_database(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_activate_unknown_path(client, tmp_path):
-    db_path = str(tmp_path / "nonexistent.db")
+    db_path = str(tmp_path / "nonexistent")
     resp = await client.post(
         "/api/admin/database/activate",
         json={"path": db_path},
@@ -197,7 +197,7 @@ async def test_activate_missing_file(client, tmp_path, monkeypatch):
     # Manually add a path to config without creating the file
     from nightcrate.core.app_config import DatabaseEntry, load_config, save_config
 
-    db_path = str(tmp_path / "missing.db")
+    db_path = str(tmp_path / "missing")
     config = load_config()
     config.databases[db_path] = DatabaseEntry(name="Missing")
     save_config(config)
@@ -217,7 +217,7 @@ async def test_activate_missing_file(client, tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_remove_database(client, tmp_path):
     # Create a database
-    db_path = str(tmp_path / "test_remove.db")
+    db_path = str(tmp_path / "test_remove")
     await client.post(
         "/api/admin/database/create",
         json={"path": db_path, "name": "To Remove"},
@@ -238,7 +238,7 @@ async def test_remove_database(client, tmp_path):
     assert db_path not in known_paths
 
     # File should still exist on disk
-    assert Path(db_path).is_file()
+    assert (Path(db_path) / "nightcrate.db").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +248,7 @@ async def test_remove_database(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_remove_active_rejected(client, tmp_path):
-    db_path = str(tmp_path / "test_remove_active.db")
+    db_path = str(tmp_path / "test_remove_active")
     setup_resp = await client.post(
         "/api/admin/database/setup",
         json={"path": db_path, "name": "Active DB"},
@@ -270,15 +270,16 @@ async def test_remove_active_rejected(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_status_shows_unavailable(client, tmp_path):
-    db_path = str(tmp_path / "test_unavailable.db")
+    db_path = str(tmp_path / "test_unavailable")
     # Create database in known list without activating
     await client.post(
         "/api/admin/database/create",
         json={"path": db_path, "name": "Soon Gone"},
     )
 
-    # Delete the file
-    Path(db_path).unlink()
+    import shutil
+
+    shutil.rmtree(db_path)
 
     status = await client.get("/api/admin/status")
     status_data = status.json()
@@ -408,12 +409,12 @@ async def test_mkdir_already_exists(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_remove_database_deletes_file(client, tmp_path):
-    db_path = str(tmp_path / "test_delete_file.db")
+    db_path = str(tmp_path / "test_delete_file")
     await client.post(
         "/api/admin/database/create",
         json={"path": db_path, "name": "Delete Me"},
     )
-    assert Path(db_path).is_file()
+    assert (Path(db_path) / "nightcrate.db").is_file()
 
     resp = await client.request(
         "DELETE",
@@ -423,7 +424,7 @@ async def test_remove_database_deletes_file(client, tmp_path):
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
     # File should be gone from disk
-    assert not Path(db_path).is_file()
+    assert not (Path(db_path) / "nightcrate.db").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -433,12 +434,13 @@ async def test_remove_database_deletes_file(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_add_existing_database(client, tmp_path):
-    db_path = tmp_path / "existing.db"
-    db_path.write_bytes(b"SQLite format 3\x00")
+    ws = tmp_path / "existing_ws"
+    ws.mkdir()
+    (ws / "nightcrate.db").write_bytes(b"SQLite format 3\x00")
 
     resp = await client.post(
         "/api/admin/database/add",
-        json={"path": str(db_path), "name": "Existing DB"},
+        json={"path": str(ws), "name": "Existing DB"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -447,21 +449,10 @@ async def test_add_existing_database(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_add_nonexistent_file_rejected(client, tmp_path):
+async def test_add_nonexistent_workspace_rejected(client, tmp_path):
     resp = await client.post(
         "/api/admin/database/add",
-        json={"path": str(tmp_path / "nope.db"), "name": "Missing"},
-    )
-    assert resp.status_code == 400
-
-
-@pytest.mark.anyio
-async def test_add_non_db_extension_rejected(client, tmp_path):
-    txt_file = tmp_path / "data.txt"
-    txt_file.write_text("not a db")
-    resp = await client.post(
-        "/api/admin/database/add",
-        json={"path": str(txt_file), "name": "Wrong Ext"},
+        json={"path": str(tmp_path / "nope"), "name": "Missing"},
     )
     assert resp.status_code == 400
 
@@ -473,13 +464,14 @@ async def test_add_non_db_extension_rejected(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_create_database_already_exists(client, tmp_path):
-    """Creating a DB at an existing path should fail with 400."""
-    existing = tmp_path / "existing.db"
-    existing.write_bytes(b"data")
+    """Creating a workspace where nightcrate.db already exists should fail."""
+    ws = tmp_path / "existing_ws2"
+    ws.mkdir()
+    (ws / "nightcrate.db").write_bytes(b"data")
 
     resp = await client.post(
         "/api/admin/database/create",
-        json={"path": str(existing), "name": "Dup"},
+        json={"path": str(ws), "name": "Dup"},
     )
     assert resp.status_code == 400
     assert "already exists" in resp.json()["detail"].lower()
@@ -492,21 +484,21 @@ async def test_create_database_already_exists(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_add_database_duplicate_rejected(client, tmp_path):
-    """Adding an already-registered database should return 409."""
-    db_file = tmp_path / "dup.db"
-    db_file.write_bytes(b"SQLite format 3\x00")
+    """Adding an already-registered workspace should return 409."""
+    ws = tmp_path / "dup_ws"
+    ws.mkdir()
+    (ws / "nightcrate.db").write_bytes(b"SQLite format 3\x00")
 
-    # First add succeeds
     resp1 = await client.post(
         "/api/admin/database/add",
-        json={"path": str(db_file), "name": "First"},
+        json={"path": str(ws), "name": "First"},
     )
     assert resp1.status_code == 200
 
     # Second add should fail with 409
     resp2 = await client.post(
         "/api/admin/database/add",
-        json={"path": str(db_file), "name": "Second"},
+        json={"path": str(ws), "name": "Second"},
     )
     assert resp2.status_code == 409
     assert "already registered" in resp2.json()["detail"].lower()
@@ -519,13 +511,14 @@ async def test_add_database_duplicate_rejected(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_setup_existing_path_rejected(client, tmp_path):
-    """Setup with a path that already exists should return 400."""
-    existing = tmp_path / "taken.db"
-    existing.write_bytes(b"data")
+    """Setup with a workspace where nightcrate.db exists should return 400."""
+    ws = tmp_path / "taken_ws"
+    ws.mkdir()
+    (ws / "nightcrate.db").write_bytes(b"data")
 
     resp = await client.post(
         "/api/admin/database/setup",
-        json={"path": str(existing), "name": "Taken"},
+        json={"path": str(ws), "name": "Taken"},
     )
     assert resp.status_code == 400
     assert "already exists" in resp.json()["detail"].lower()
@@ -545,7 +538,7 @@ async def test_remove_unknown_database_rejected(client, tmp_path):
         json={"path": str(tmp_path / "unknown.db")},
     )
     assert resp.status_code == 400
-    assert "not in known databases" in resp.json()["detail"].lower()
+    assert "not in known workspaces" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

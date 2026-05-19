@@ -762,10 +762,18 @@ Omitted from diagrams for readability. Every seedable table carries:
 |-------|---------|
 | `dso_external_ref` (migrations 0022 + 0023) | Associates Wikidata QIDs, Wikipedia article URLs, SIMBAD cross-references, and NED galaxy-DB links with canonical DSOs. Columns: `dso_id` (FK CASCADE), `provider` (CHECK ∈ `{'wikidata','wikipedia','simbad','ned'}` after migration 0023), nullable `language` (required for wikipedia, forbidden for the three language-agnostic providers — enforced in loader code), `identifier` (QID / article slug / SIMBAD ID / primary designation), `url`, `label`, optional `source_catalog_id`, `created_at`, `updated_at` (with trigger). `UNIQUE(dso_id, provider, language)` enforces one row per DSO per provider per language; a partial unique index `(dso_id, provider) WHERE language IS NULL` covers the language-agnostic case (SQLite treats NULLs as distinct in the main unique index). No global uniqueness on `(provider, language, identifier)` — a single resource may legitimately span multiple DSOs (Stephan's Quintet article = 5 galaxies; Crab Nebula Wikidata QID = NGC 1952 + Sh2-244). Populated by `catalog_loader/wikidata_loader.py` (bulk SPARQL fetch — Wikipedia + Wikidata + SIMBAD from P3083; NED synthesised from primary_designation gated by `GALAXY_TYPES`) and `catalog_loader/external_refs_loader.py` (editorial CSV overrides — precedence "later wins"). |
 
+### v0.35.0 — Projects (2 tables)
+
+| Table | Purpose |
+|-------|---------|
+| `project` (migration 0029) | User-defined imaging project. `name` UNIQUE, `description`, `notes`, `status` CHECK ∈ `{'active','paused','complete','abandoned'}`, `active` soft-delete flag, timestamps with `updated_at` trigger. Index on `active`. |
+| `project_image` (migrations 0029 + 0030) | File reference within a project. `project_id` FK CASCADE, `file_path` (supports `::` virtual paths for archives and pxiprojects), `display_order`, `is_main` with partial unique index enforcing at most one main per project, `staged` (0 = committed, 1 = pending save), `notes`, timestamps with trigger. Index on `project_id`. |
+
 ### Future Tables
 
 | Table | Purpose |
 |-------|---------|
-| `project` | Imaging projects (targets) |
+| `project_thumbnail` | Per-project crop definitions for thumbnail generation (v0.36.0) |
+| `project_target` | Sky coordinates + optional DSO link per project (v0.37.0) |
 | `session` | Single-night imaging sessions |
 | `sub_frame` | Individual FITS exposures linked to session + rig |

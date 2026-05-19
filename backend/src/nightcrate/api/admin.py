@@ -14,6 +14,7 @@ from nightcrate.core.app_config import (
     DatabaseEntry,
     load_config,
     save_config,
+    workspace_db_path,
 )
 from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import get_db_path, set_db_path
@@ -45,11 +46,11 @@ class RemoveDatabaseRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _db_size(path: str) -> int | None:
-    """Return file size in bytes, or None if the file doesn't exist."""
-    p = Path(path)
-    if p.is_file():
-        return p.stat().st_size
+def _db_size(workspace_path: str) -> int | None:
+    """Return database file size in bytes, or None if not found."""
+    db = workspace_db_path(Path(workspace_path))
+    if db.is_file():
+        return db.stat().st_size
     return None
 
 
@@ -166,11 +167,17 @@ async def _rehydrate_caches_for_active_db() -> dict[str, int]:
 @router.get("/info")
 async def admin_info() -> dict:
     """Return read-only application info."""
+    from nightcrate.core.app_config import get_active_workspace, get_projects_root
+
+    workspace = get_active_workspace()
+    projects_root = get_projects_root()
     return {
         "config_file": str(CONFIG_PATH),
         "app_data_dir": str(APP_DIR),
         "backend_root": str(Path(__file__).resolve().parents[1]),
         "seed_data_dir": str(importlib.resources.files("nightcrate") / "data" / "seed"),
+        "workspace_dir": str(workspace) if workspace else None,
+        "projects_dir": str(projects_root) if projects_root else None,
         "python_version": sys.version.split()[0],
     }
 
@@ -212,15 +219,14 @@ async def admin_status() -> dict:
 
 @router.post("/database/create")
 async def create_database(req: CreateDatabaseRequest) -> dict:
-    """Create a new database at the given path without activating it."""
-    db_path = Path(req.path)
+    """Create a new workspace folder with a database inside it."""
+    ws = Path(req.path)
+    db_path = workspace_db_path(ws)
 
     if db_path.exists():
-        raise HTTPException(status_code=400, detail=f"Path already exists: {req.path}")
+        raise HTTPException(status_code=400, detail=f"Workspace already exists: {req.path}")
 
-    # Ensure parent directory exists
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
+    ws.mkdir(parents=True, exist_ok=True)
     _initialize_database(db_path)
 
     config = load_config()
@@ -237,18 +243,19 @@ async def create_database(req: CreateDatabaseRequest) -> dict:
 
 @router.post("/database/add")
 async def add_existing_database(req: CreateDatabaseRequest) -> dict:
-    """Register an existing database file in the config without creating it."""
-    db_path = Path(req.path)
+    """Register an existing workspace folder in the config."""
+    ws = Path(req.path)
+    db_path = workspace_db_path(ws)
 
     if not db_path.is_file():
-        raise HTTPException(status_code=400, detail=f"File does not exist: {req.path}")
-
-    if not req.path.endswith(".db"):
-        raise HTTPException(status_code=400, detail="File must have a .db extension")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No nightcrate.db found in: {req.path}",
+        )
 
     config = load_config()
     if req.path in config.databases:
-        raise HTTPException(status_code=409, detail=f"Database already registered: {req.path}")
+        raise HTTPException(status_code=409, detail=f"Workspace already registered: {req.path}")
 
     config.databases[req.path] = DatabaseEntry(name=req.name)
     save_config(config)
@@ -263,15 +270,15 @@ async def add_existing_database(req: CreateDatabaseRequest) -> dict:
 
 @router.post("/database/activate")
 async def activate_database(req: ActivateDatabaseRequest) -> dict:
-    """Activate a known database, running migrations and seed loader first."""
+    """Activate a known workspace, running migrations and seed loader first."""
     config = load_config()
 
     if req.path not in config.databases:
-        raise HTTPException(status_code=400, detail=f"Path not in known databases: {req.path}")
+        raise HTTPException(status_code=400, detail=f"Path not in known workspaces: {req.path}")
 
-    db_path = Path(req.path)
+    db_path = workspace_db_path(Path(req.path))
     if not db_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Database file does not exist: {req.path}")
+        raise HTTPException(status_code=400, detail=f"Database not found in workspace: {req.path}")
 
     _initialize_database(db_path)
 
@@ -298,7 +305,7 @@ async def activate_database(req: ActivateDatabaseRequest) -> dict:
 
 @router.post("/database/setup")
 async def setup_database(req: CreateDatabaseRequest) -> dict:
-    """First-run setup: create, migrate, seed, and activate a new database.
+    """First-run setup: create workspace, migrate, seed, and activate.
 
     Returns 409 if a database is already configured.
     """
@@ -308,13 +315,13 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
             status_code=409, detail="A database is already configured. Use activate instead."
         )
 
-    db_path = Path(req.path)
+    ws = Path(req.path)
+    db_path = workspace_db_path(ws)
 
     if db_path.exists():
-        raise HTTPException(status_code=400, detail=f"Path already exists: {req.path}")
+        raise HTTPException(status_code=400, detail=f"Workspace already exists: {req.path}")
 
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
+    ws.mkdir(parents=True, exist_ok=True)
     _initialize_database(db_path)
 
     config = load_config()
@@ -341,26 +348,28 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
 @router.delete("/database")
 async def remove_database(
     req: RemoveDatabaseRequest,
-    delete_file: bool = Query(False, description="Also delete the database file from disk"),
+    delete_file: bool = Query(False, description="Also delete the workspace folder from disk"),
 ) -> dict:
-    """Remove a database from the known list, optionally deleting the file."""
+    """Remove a workspace from the known list, optionally deleting the folder."""
+    import shutil
+
     config = load_config()
 
     if config.active_db == req.path:
         raise HTTPException(
-            status_code=400, detail="Cannot remove the active database. Activate another first."
+            status_code=400, detail="Cannot remove the active workspace. Activate another first."
         )
 
     if req.path not in config.databases:
-        raise HTTPException(status_code=400, detail=f"Path not in known databases: {req.path}")
+        raise HTTPException(status_code=400, detail=f"Path not in known workspaces: {req.path}")
 
     del config.databases[req.path]
     save_config(config)
 
     if delete_file:
-        db_path = Path(req.path)
-        if db_path.is_file():
-            db_path.unlink()
+        ws = Path(req.path)
+        if ws.is_dir():
+            shutil.rmtree(ws, ignore_errors=True)
 
     return {"ok": True}
 

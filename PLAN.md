@@ -48,6 +48,11 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.32.0 — UI Polish + Performance](#v0320--ui-polish--performance) ✅
 - [v0.33.0 — Plate Solving Refinements](#v0330--plate-solving-refinements) ✅
 - [v0.34.0 — Tablet & Desktop Support](#v0340--tablet--desktop-support) ✅
+- [v0.35.0 — Project Shell + Image Management](#v0350--project-shell--image-management) ✅
+- [v0.36.0 — Project Thumbnails + Gallery View](#v0360--project-thumbnails--gallery-view)
+- [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking)
+- [v0.38.0 — Project Metadata Enrichment](#v0380--project-metadata-enrichment)
+- [v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline](#v0390--sessions-sub-frames-and-ingest-pipeline)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4486,7 +4491,7 @@ testing on tablet.
 
 ## v0.35.0 — Project Shell + Image Management
 
-**Status:** Planned
+**Status:** Done
 **Branch:** `v0.35.0/project-shell-images`
 
 Foundation for the Projects feature. Projects are first-class entities supporting two

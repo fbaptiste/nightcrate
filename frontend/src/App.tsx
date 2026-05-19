@@ -12,6 +12,8 @@ import LocationsPage from "@/pages/LocationsPage";
 import RigsPage from "@/pages/RigsPage";
 import CalculatorsPage from "@/pages/CalculatorsPage";
 import TonightPage from "@/pages/TonightPage";
+import ProjectsPage from "@/pages/ProjectsPage";
+import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 import { fetchHealth } from "@/api/admin";
@@ -28,6 +30,8 @@ const router = createBrowserRouter([
       { path: "equipment", element: <EquipmentPage /> },
       { path: "equipment/:category", element: <EquipmentPage /> },
       { path: "locations", element: <LocationsPage /> },
+      { path: "projects", element: <ProjectsPage /> },
+      { path: "projects/:id", element: <ProjectDetailPage /> },
       { path: "rigs", element: <RigsPage /> },
       { path: "weather", element: null },
       { path: "calculators", element: <CalculatorsPage /> },

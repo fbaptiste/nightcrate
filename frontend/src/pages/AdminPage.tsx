@@ -51,12 +51,12 @@ function formatBytes(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function nameToFilename(name: string): string {
+function nameToFolder(name: string): string {
   const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return slug ? `${slug}.db` : "nightcrate.db";
+    .replace(/[^a-zA-Z0-9 ]+/g, "")
+    .trim()
+    .replace(/ +/g, "_");
+  return slug || "NightCrate";
 }
 
 interface InfoRowProps {
@@ -135,7 +135,7 @@ function CreateDbDialog({
   };
 
   const fullPath = directory
-    ? `${directory.replace(/\/$/, "")}/${nameToFilename(name)}`
+    ? `${directory.replace(/\/$/, "")}/${nameToFolder(name)}`
     : "";
 
   const handleSubmit = async () => {
@@ -672,6 +672,12 @@ export function AdminPage() {
             <InfoRow label="App Data Directory" value={info.app_data_dir} />
             <InfoRow label="Backend Root" value={info.backend_root} />
             <InfoRow label="Seed Data" value={info.seed_data_dir} />
+            {info.workspace_dir && (
+              <InfoRow label="Workspace" value={info.workspace_dir} />
+            )}
+            {info.projects_dir && (
+              <InfoRow label="Project Data" value={info.projects_dir} />
+            )}
             <InfoRow label="Python Version" value={info.python_version} />
             <InfoRow label="App Version" value={appVersion} />
           </Box>
@@ -679,7 +685,12 @@ export function AdminPage() {
       </Paper>
 
       <Typography variant="h6" sx={{ mb: 1 }}>
-        Database Management
+        Workspace Management
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        Each workspace is a self-contained folder with a database and project
+        files. The entire folder is portable — you can move or back it up as a
+        unit.
       </Typography>
       <Paper sx={{ p: 2 }}>
         {statusQuery.isLoading && <CircularProgress size={20} />}

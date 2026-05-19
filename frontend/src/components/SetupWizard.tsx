@@ -35,17 +35,17 @@ import {
   createFolder,
 } from "@/api/admin";
 
-/** Convert a database name to a filename slug (e.g., "Fred's Rig" → "freds_rig.db") */
-function nameToFilename(name: string): string {
+/** Convert a workspace name to a folder slug (e.g., "Fred's Rig" → "Freds_Rig") */
+function nameToFolder(name: string): string {
   const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return slug ? `${slug}.db` : "nightcrate.db";
+    .replace(/[^a-zA-Z0-9 ]+/g, "")
+    .trim()
+    .replace(/ +/g, "_");
+  return slug || "NightCrate";
 }
 
 export function SetupWizard() {
-  const [name, setName] = useState("My NightCrate Database");
+  const [name, setName] = useState("My NightCrate");
   const [directory, setDirectory] = useState("");
   const [browseOpen, setBrowseOpen] = useState(false);
   const [browsePath, setBrowsePath] = useState("~");
@@ -86,7 +86,7 @@ export function SetupWizard() {
   }, [info, directory]);
 
   const fullPath = directory
-    ? `${directory.replace(/\/$/, "")}/${nameToFilename(name)}`
+    ? `${directory.replace(/\/$/, "")}/${nameToFolder(name)}`
     : "";
 
   const knownDbs = status?.known_databases ?? [];
@@ -171,7 +171,7 @@ export function SetupWizard() {
                 Welcome to NightCrate
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Create your first NightCrate database to get started.
+                Create your first NightCrate workspace to get started.
               </Typography>
             </>
           )}
@@ -234,7 +234,7 @@ export function SetupWizard() {
           )}
 
           <TextField
-            label="Database Name"
+            label="Workspace Name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             fullWidth

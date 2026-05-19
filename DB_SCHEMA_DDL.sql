@@ -1,4 +1,4 @@
--- NightCrate version: 0.34.0
+-- NightCrate version: 0.35.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1435,3 +1435,55 @@ CREATE UNIQUE INDEX idx_dso_external_ref_langless_unique
 -- Crab Nebula entity = NGC 1952 + Sh2-244; etc.). The loader duplicates
 -- the ref onto every matching DSO so users viewing any of them see the
 -- chip.
+
+-- ============================================================
+-- Projects (v0.35.0)
+-- ============================================================
+
+CREATE TABLE project (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    description TEXT,
+    notes       TEXT,
+    status      TEXT    NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'paused', 'complete', 'abandoned')),
+    active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_project_active ON project(active);
+
+CREATE TRIGGER trg_project_updated_at
+AFTER UPDATE ON project
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE project SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
+CREATE TABLE project_image (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id    INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    file_path     TEXT    NOT NULL,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    is_main       INTEGER NOT NULL DEFAULT 0 CHECK (is_main IN (0, 1)),
+    staged        INTEGER NOT NULL DEFAULT 0 CHECK (staged IN (0, 1)),
+    notes         TEXT,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_project_image_project
+    ON project_image(project_id);
+-- At most one main image per project.
+CREATE UNIQUE INDEX idx_project_image_main
+    ON project_image(project_id) WHERE is_main = 1;
+
+CREATE TRIGGER trg_project_image_updated_at
+AFTER UPDATE ON project_image
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE project_image SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
