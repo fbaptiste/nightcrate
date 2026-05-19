@@ -128,7 +128,7 @@ function CreateDbDialog({
   });
 
   const handleOpen = () => {
-    setName(isAddExisting ? "" : "My NightCrate Database");
+    setName(isAddExisting ? "" : "My NightCrate");
     setDirectory(defaultDir);
     setExistingPath("");
     setError(null);
@@ -164,12 +164,11 @@ function CreateDbDialog({
     setBrowseOpen(false);
   };
 
-  const handleBrowseSelectFile = (filePath: string) => {
-    setExistingPath(filePath);
-    // Auto-derive name from filename if empty
+  const handleBrowseSelectWorkspace = (dirPath: string) => {
+    setExistingPath(dirPath);
     if (!name.trim()) {
-      const filename = filePath.split("/").pop() ?? "";
-      const base = filename.replace(/\.db$/i, "").replace(/_/g, " ");
+      const folderName = dirPath.split("/").pop() ?? "";
+      const base = folderName.replace(/_/g, " ");
       setName(base.charAt(0).toUpperCase() + base.slice(1));
     }
     setBrowseOpen(false);
@@ -211,7 +210,7 @@ function CreateDbDialog({
         <DialogContent>
           <Box sx={{ pt: 1, display: "flex", flexDirection: "column", gap: 2 }}>
             <TextField
-              label="Database Name"
+              label="Workspace Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               fullWidth
@@ -220,7 +219,7 @@ function CreateDbDialog({
             {isAddExisting ? (
               <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
                 <TextField
-                  label="Database File"
+                  label="Workspace Folder"
                   value={existingPath}
                   fullWidth
                   slotProps={{ input: { readOnly: true } }}
@@ -229,7 +228,11 @@ function CreateDbDialog({
                     setBrowsePath(defaultDir);
                     setBrowseOpen(true);
                   }}
-                  helperText={existingPath ? undefined : "Select an existing .db file"}
+                  helperText={
+                    existingPath
+                      ? undefined
+                      : "Select a folder containing nightcrate.db"
+                  }
                 />
                 <Button
                   variant="outlined"
@@ -391,22 +394,9 @@ function CreateDbDialog({
                   <ListItemText primary={dir.name} />
                 </ListItemButton>
               ))}
-              {/* Show .db files when browsing for existing database */}
-              {isAddExisting && browseResult?.files.map((file) => (
-                <ListItemButton
-                  key={file.path}
-                  onClick={() => handleBrowseSelectFile(file.path)}
-                >
-                  <ListItemIcon sx={{ minWidth: 36 }}><StorageIcon fontSize="small" /></ListItemIcon>
-                  <ListItemText
-                    primary={file.name}
-                    secondary={formatBytes(file.size)}
-                  />
-                </ListItemButton>
-              ))}
-              {browseResult?.dirs.length === 0 && (!isAddExisting || browseResult?.files.length === 0) && (
+              {browseResult?.dirs.length === 0 && (
                 <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: "center" }}>
-                  {isAddExisting ? "No folders or .db files" : "No subdirectories"}
+                  No subdirectories
                 </Typography>
               )}
             </List>
@@ -414,11 +404,16 @@ function CreateDbDialog({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setBrowseOpen(false)}>Cancel</Button>
-          {!isAddExisting && (
-            <Button variant="contained" onClick={() => handleBrowseSelectDir(browseResult?.path ?? browsePath)}>
-              Select This Folder
-            </Button>
-          )}
+          <Button
+            variant="contained"
+            onClick={() =>
+              isAddExisting
+                ? handleBrowseSelectWorkspace(browseResult?.path ?? browsePath)
+                : handleBrowseSelectDir(browseResult?.path ?? browsePath)
+            }
+          >
+            Select This Folder
+          </Button>
         </DialogActions>
       </Dialog>
     </>

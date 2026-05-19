@@ -153,10 +153,10 @@ export function renderedImageUrl(
 
 export const PROJECT_STATUS_COLORS: Record<
   string,
-  "default" | "warning" | "success" | "info"
+  "default" | "warning" | "info"
 > = {
   active: "default",
   paused: "warning",
-  complete: "success",
-  abandoned: "info",
+  complete: "info",
+  abandoned: "default",
 };
