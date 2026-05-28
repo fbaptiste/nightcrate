@@ -11,12 +11,14 @@ ASIAIR) and processing software (PixInsight) — nobody else combines
 FITS metadata, guiding logs, session logs, and equipment tracking
 into a unified, searchable catalog.
 
-This is an indie software product targeting a niche community of
-tens of thousands of users, not a [redacted] startup. The goal
-is [redacted] as part of a [redacted]. Key competitive
-advantages: no direct competitor, high switching costs once a
-library is cataloged, Mac-first in a Windows-dominated ecosystem,
-and a data model designed for a future AI-powered session analyzer.
+This is a free, open-source project (MIT licensed) built to give
+the astrophotography community a tool that doesn't yet exist. The
+goal is simply to provide something genuinely useful to serious
+amateur astrophotographers — a niche community that's underserved
+by existing software. What makes it distinctive: no equivalent
+tool combines these data sources, Mac-first in a Windows-dominated
+ecosystem, but still supporting Windows users, and a data model designed for a future AI-powered
+session analyzer.
 
 The user base is technically sophisticated — they run imaging rigs
 with multiple computers, automate multi-hour capture sequences, and
