@@ -9,6 +9,7 @@ from nightcrate.core.app_config import (
     get_default_db_path,
     load_config,
     save_config,
+    workspace_db_path,
 )
 
 
@@ -45,11 +46,13 @@ def test_save_and_load_roundtrip(tmp_path):
 
 
 def test_db_configured_true(tmp_path):
-    db_file = tmp_path / "test.db"
-    db_file.write_text("")
+    # active_db is a workspace folder; the DB lives at <folder>/nightcrate.db.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    workspace_db_path(workspace).write_text("")
     config = AppConfig(
-        databases={str(db_file): DatabaseEntry(name="Test")},
-        active_db=str(db_file),
+        databases={str(workspace): DatabaseEntry(name="Test")},
+        active_db=str(workspace),
     )
     assert config.db_configured is True
 
@@ -93,11 +96,14 @@ def test_get_active_db_path_none_when_file_missing(tmp_path):
 
 
 def test_get_active_db_path_returns_path(tmp_path):
-    db_file = tmp_path / "test.db"
+    # active_db is a workspace folder; get_active_db_path returns the DB file inside it.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    db_file = workspace_db_path(workspace)
     db_file.write_text("")
     config = AppConfig(
-        databases={str(db_file): DatabaseEntry(name="Test")},
-        active_db=str(db_file),
+        databases={str(workspace): DatabaseEntry(name="Test")},
+        active_db=str(workspace),
     )
     save_config(config)
     result = get_active_db_path()
@@ -105,5 +111,6 @@ def test_get_active_db_path_returns_path(tmp_path):
 
 
 def test_get_default_db_path(tmp_path):
+    # The default workspace is a "Default" subfolder of APP_DIR (patched to tmp_path).
     result = get_default_db_path()
-    assert result == tmp_path / "nightcrate.db"
+    assert result == tmp_path / "Default" / "nightcrate.db"
