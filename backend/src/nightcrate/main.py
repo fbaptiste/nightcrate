@@ -31,6 +31,7 @@ from nightcrate.api import (
     phd2,
     planner,
     plate_solve,
+    project_solve,
     projects,
     rigs,
     settings,
@@ -210,13 +211,6 @@ async def lifespan(app: FastAPI):
                 await sync_sky_tile_orphans(conn)
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("sky-tile cache maintenance failed", exc_info=True)
-
-        try:
-            from nightcrate.api.projects import cleanup_orphaned_staging
-
-            await cleanup_orphaned_staging()
-        except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("project staging cleanup failed", exc_info=True)
 
     yield
 
@@ -418,6 +412,7 @@ app.include_router(planner.router)
 app.include_router(phd2.router)
 app.include_router(plate_solve.router)
 app.include_router(projects.router)
+app.include_router(project_solve.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(wishlist.router)
@@ -435,5 +430,6 @@ async def health() -> dict:
 
 
 def run() -> None:
-    host = "0.0.0.0" if _LAN_MODE else "127.0.0.1"
+    # Bind-all only in opt-in LAN mode (make dev-lan) for tablet access; defaults to localhost.
+    host = "0.0.0.0" if _LAN_MODE else "127.0.0.1"  # nosec B104 - intentional, LAN mode is opt-in
     uvicorn.run("nightcrate.main:app", host=host, port=8000, reload=True)

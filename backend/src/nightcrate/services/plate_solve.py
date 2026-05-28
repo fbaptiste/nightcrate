@@ -7,6 +7,7 @@ pxiproject) is handled internally.
 """
 
 import asyncio
+import io
 import logging
 import math
 import os
@@ -524,12 +525,14 @@ async def run_plate_solve(
     """
     astap_binary = resolve_astap_binary(astap_path)
 
+    # Claim the single solve slot. asyncio is single-threaded, so testing
+    # locked() and acquiring with no await in between is race-free — two
+    # concurrent solve requests (e.g. the Image Analyzer dialog and the
+    # Projects solve tab) can't both slip past into the same temp dir. A
+    # second request is rejected (→ 409) rather than killing the first;
+    # use POST /plate-solve/cancel to stop an in-progress solve.
     if _solve_semaphore.locked():
-        if cancel_solve():
-            logger.warning("[plate-solve] killed stale ASTAP process before new solve")
-            await asyncio.sleep(0.5)
-        if _solve_semaphore.locked():
-            raise RuntimeError("A plate solve is already in progress.")
+        raise RuntimeError("A plate solve is already in progress.")
     await _solve_semaphore.acquire()
 
     try:
@@ -558,15 +561,24 @@ async def _do_solve(
     timeout: int,
 ) -> PlateSolveResult:
     source, file_type, image_index, _cache_key = _resolve_path(image_path)
-    cards = read_header_cards(source, file_type, image_index, hdu)
+
+    # A BinaryIO source (e.g. an archive-extracted entry) gets closed by header
+    # reading — astropy closes file objects passed to fits.open. Read its bytes
+    # once and hand a fresh buffer to each consumer, so neither the header read
+    # nor the temp-file write operates on a closed/exhausted stream.
+    raw_bytes: bytes | None = None
+    if not isinstance(source, Path):
+        raw_bytes = source.read()
+
+    def fresh_source() -> Path | BinaryIO:
+        return io.BytesIO(raw_bytes) if raw_bytes is not None else source
+
+    cards = read_header_cards(fresh_source(), file_type, image_index, hdu)
     hints = _extract_hints(cards)
 
     raw_header = cards_to_dict(cards)
     width = _safe_int(raw_header.get("NAXIS1"))
     height = _safe_int(raw_header.get("NAXIS2"))
-
-    if hasattr(source, "seek"):
-        source.seek(0)
 
     with tempfile.TemporaryDirectory(prefix="nightcrate_solve_") as tmp:
         tmp_dir = Path(tmp)
@@ -574,7 +586,7 @@ async def _do_solve(
 
         image_file = await asyncio.to_thread(
             _prepare_image_file,
-            source,
+            fresh_source(),
             file_type,
             image_index,
             hdu,
@@ -742,29 +754,36 @@ async def _run_astap(
 def get_image_dimensions(image_path: str, hdu: int = 0) -> tuple[int | None, int | None]:
     """Read image dimensions from any supported path."""
     source, file_type, image_index, _ = _resolve_path(image_path)
-    cards = read_header_cards(source, file_type, image_index, hdu)
+
+    # A BinaryIO source (archive entry) is closed by header reading (astropy
+    # closes file objects passed to fits.open); read its bytes once and hand a
+    # fresh buffer to each consumer so the fallbacks don't hit a closed stream.
+    raw_bytes: bytes | None = None
+    if not isinstance(source, Path):
+        raw_bytes = source.read()
+
+    def fresh_source() -> Path | BinaryIO:
+        return io.BytesIO(raw_bytes) if raw_bytes is not None else source
+
+    cards = read_header_cards(fresh_source(), file_type, image_index, hdu)
     raw = cards_to_dict(cards)
     w = _safe_int(raw.get("NAXIS1"))
     h = _safe_int(raw.get("NAXIS2"))
     if w and h:
         return w, h
-    if hasattr(source, "seek"):
-        source.seek(0)
     if isinstance(source, Path):
         fw, fh = _get_dimensions_from_file(source)
         if fw and fh:
             return fw, fh
     try:
-        if hasattr(source, "seek"):
-            source.seek(0)
         if file_type == "pxiproject":
-            data = pxiproject_io.load_image_data(source, image_index)
+            data = pxiproject_io.load_image_data(fresh_source(), image_index)
         elif file_type == "fits":
-            data = fits_io.load_image_data(source, hdu)
+            data = fits_io.load_image_data(fresh_source(), hdu)
         elif file_type == "xisf":
-            data = xisf_io.load_image_data(source, hdu)
+            data = xisf_io.load_image_data(fresh_source(), hdu)
         else:
-            data = standard_io.load_image_data(source)
+            data = standard_io.load_image_data(fresh_source())
         if data is not None and data.ndim >= 2:
             return data.shape[-1], data.shape[-2]
     except Exception:

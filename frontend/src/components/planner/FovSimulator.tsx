@@ -12,7 +12,7 @@
  *   │                                                │
  *   │    ┌─── pan group (composite source px) ────┐ │
  *   │    │   SkyTileComposite                       │
- *   │    │   DsoAnnotationOverlay                   │
+ *   │    │   PlannerDsoAnnotationOverlay            │
  *   │    │   Rig rectangle (sensor)                 │
  *   │    └──────────────────────────────────────────┘ │
  *   └────────────────────────────────────────────────┘
@@ -57,7 +57,7 @@ import {
   type SkyTileTier,
 } from "@/api/planner";
 import SkyTileComposite from "./SkyTileComposite";
-import DsoAnnotationOverlay from "./DsoAnnotationOverlay";
+import PlannerDsoAnnotationOverlay from "./PlannerDsoAnnotationOverlay";
 import DsoAnnotationPopover from "./DsoAnnotationPopover";
 
 interface Props {
@@ -919,7 +919,7 @@ export default function FovSimulator({
             )}
 
             {showAnnotations && showCoords && layout && (
-              <DsoAnnotationOverlay
+              <PlannerDsoAnnotationOverlay
                 items={nearbyItems}
                 primary={{
                   id: dsoId,

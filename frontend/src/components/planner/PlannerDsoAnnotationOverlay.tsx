@@ -75,7 +75,7 @@ const FALLBACK_POINT_RADIUS = 4;
 const LABEL_GAP = 3;
 const LABEL_EDGE_PAD = 20;
 
-export default function DsoAnnotationOverlay({
+export default function PlannerDsoAnnotationOverlay({
   items,
   primary,
   tangentRaDeg,

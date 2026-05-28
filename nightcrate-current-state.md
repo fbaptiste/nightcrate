@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.36.0
+**NightCrate version:** 0.37.0
 
-**Last updated:** 2026-05-19
+**Last updated:** 2026-05-28
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -29,7 +29,7 @@
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn.
 - **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, scipy (FFT pipeline, Akima interpolation), sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI Material 7 + MUI X Community v8 (DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand 5 for state, TanStack Query 5 for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder. KaTeX + react-katex for math rendering. Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0032.project_thumbnail.sql`. Pydantic for all data models.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0034.project_solve.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `make dev-lan` binds to `0.0.0.0` + serves Vite over HTTPS (auto-picks `frontend/.certs/{cert,key}.pem` if present, else `@vitejs/plugin-basic-ssl` self-signed) so iPad/Android tablets can reach NightCrate over the LAN. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -48,7 +48,7 @@ nightcrate/
       catalog_loader/       # DSO catalog fetchers (OpenNGC, VizieR, 50MGC, Wikidata,
                             #   Sharpless/Barnard loaders, augmenters, shared primitives)
       core/                 # App config, GPU compute abstraction, settings model
-      db/                   # Session management, migrations (0001–0032 .sql files)
+      db/                   # Session management, migrations (0001–0034 .sql files)
       seed_loader/          # CSV-driven equipment seed loader (hash, registry, loader, CLI)
       services/             # Domain logic (~40 modules: imaging, fits/xisf/pxiproject/
                             #   standard/archive I/O, aberration, weather, astronomy,
@@ -318,15 +318,18 @@ Incidental fix with broader reach: `_moon_rise_set` in `services/astronomy.py` w
 
 **Status:** `[shipped]`
 
-Imaging project management with staged editing and pre-calculated images. Projects are first-class entities supporting both manual/incremental use (start with a name + finished image) and full ingest (future — v0.39.0+). Each project has a multi-image gallery with drag-to-reorder, main image designation (star), and per-image notes. All edits are staged in frontend state (metadata) and backend DB + filesystem (images) until an explicit Save. Pre-calculated images (full ~4000px + 3 thumbnails at 800/400/180px) are generated eagerly when images are staged, downsampled before stretching for speed, serialised through a render lock to avoid MLX Metal concurrency crashes. Workspace folder structure: user-named folder containing `nightcrate.db` + `project_data/` — self-contained and portable.
+Imaging project management with **save-as-you-go** editing and pre-calculated images. Projects are first-class entities supporting both manual/incremental use (start with a name + finished image) and full ingest (future — v0.39.0+). Each project has a multi-image gallery with drag-to-reorder, main image designation (star), and per-image notes. **v0.37.0 replaced the original stage-then-Save model: every edit persists immediately** (text fields on blur/Enter; image add/remove/reorder/main/crop on the click) — no Save/Cancel, no staging. Pre-calculated images (full ~4000px + 3 thumbnails at 800/400/180px) are generated eagerly when images are added, downsampled before stretching for speed, serialised through a render lock to avoid MLX Metal concurrency crashes. Workspace folder structure: user-named folder containing `nightcrate.db` + `project_data/` — self-contained and portable.
 
-- **Route:** `/projects` (list), `/projects/:id` (detail)
-- **API:** `GET/POST /api/projects` (list, create), `GET/DELETE /api/projects/{id}` (get, soft-delete), `POST /api/projects/{id}/restore`, `DELETE /api/projects/{id}/permanent` (hard-delete + disk cleanup), `POST /api/projects/{id}/images/stage` (stage images with pre-calc), `DELETE /api/projects/{id}/images/{id}/stage` (unstage), `POST /api/projects/{id}/save` (commit all changes), `POST /api/projects/{id}/discard` (discard staging), `GET /api/projects/{id}/images/{id}/rendered/{variant}` (serve pre-calc JPEG), `GET /api/projects/{id}/thumbnail?size=small|medium|large` (project thumbnail — serves cropped version if defined, falls back to main image)
-- **Key backend:** `api/projects.py`, `api/project_models.py`, `services/project_images.py` (pre-calc generation), `core/app_config.py` (workspace folder model)
-- **Key frontend:** `pages/ProjectsPage.tsx`, `pages/ProjectDetailPage.tsx`, `components/projects/{ProjectCard,ProjectGalleryCard,ProjectFormDialog,ImageGalleryStrip,ThumbnailCropEditor}.tsx`, `api/projects.ts`
-- **Schema:** migrations 0029 (`project` + `project_image`), 0030 (`staged` column), 0031 (drop UNIQUE on name), 0032 (`project_thumbnail` — per-size crop definitions)
+- **Route:** `/projects` (list), `/projects/:id` (detail — Overview + Plate Solve tabs)
+- **API (projects):** `GET/POST /api/projects`, `GET/PATCH/DELETE /api/projects/{id}` (get / metadata update / soft-delete), `POST /restore`, `DELETE /permanent`, `POST/DELETE /api/projects/{id}/images`, `PUT /images/order`, `POST /images/{id}/main`, `PATCH /images/{id}` (notes), `PUT /api/projects/{id}/thumbnails` (crops), `GET /images/{id}/rendered/{variant}`, `GET /thumbnail?size=…`
+- **API (plate solve, v0.37.0):** `POST/GET/DELETE /api/projects/{id}/solve`, `PUT /api/projects/{id}/solve/objects/{dso_id}` (toggle main), `GET /api/projects/{id}/solve/image/{variant}`
+- **Key backend:** `api/projects.py`, `api/project_models.py`, `api/project_solve.py` + `project_solve_models.py` (v0.37.0), `services/project_images.py` (pre-calc), `core/app_config.py` (workspace model)
+- **Key frontend:** `pages/ProjectsPage.tsx`, `pages/ProjectDetailPage.tsx`, `components/projects/{ProjectCard,ProjectGalleryCard,ProjectFormDialog,ImageGalleryStrip,ThumbnailCropEditor,ProjectPlateSolveTab}.tsx`, `components/plate-solve/DsoAnnotationOverlay.tsx` (shared with Image Analyzer), `api/{projects,projectSolve}.ts`
+- **Schema:** migrations 0029 (`project` + `project_image`), 0031 (drop UNIQUE on name), 0032 (`project_thumbnail`), 0033 (drop `staged` column — save-as-you-go), 0034 (`project_solve` + `project_dso`)
 
 **v0.36.0 — Thumbnail Crops + Gallery View.** User-defined crop rectangles per thumbnail size (small 1:1, medium 1:1, large 4:3) stored in `project_thumbnail` table. Crop editor dialog with three tabs, draggable/resizable rectangle with aspect-ratio constraint, source image selector. Cropped thumbnails generated server-side and cached on disk at `{project_dir}/thumb_crop_{size}.jpg`. Projects page has three view modes: Gallery (4:3 cards), List (120px medium thumbnail + description), Compact (56px small thumbnail). "Show retired" toggle to view/restore/delete soft-deleted projects.
+
+**v0.37.0 — Target Identification + DSO Linking.** Two parts. (1) **Save-as-you-go refactor** — dropped the stage + Save/Cancel model for immediate persistence (migration 0033 drops `project_image.staged`); rationale: staging doesn't scale to the v0.39.0+ sessions/sub-frames ingest. (2) **Plate-solve DSO linking** — a project gets one standalone (non-gallery) plate-solve image; solving stores the WCS solution (view-only — delete to re-solve) plus **every** in-FOV catalog object in `project_dso` (one auto-flagged main, nearest centre + largest; multi-main via star toggle). Deleting the solve cascades its objects + the rendered image behind a confirm dialog. A "Plate Solve" tab shows the image with a catalog-annotation overlay (shared `DsoAnnotationOverlay` — mains teal / others blue, colorblind-safe), a read-only solution summary, and the object list; mains surface as chips on the Overview. Storing all objects (not just mains) is deliberate — powers a future cross-project DSO search (search/completion UI deferred). Also fixed a pre-existing bug: solving an archive entry failed with "I/O operation on closed file" (header reading closes the BytesIO) — the solver now reads bytes once and hands fresh buffers to each consumer.
 
 ### Plate Solving (ASTAP)
 
@@ -344,7 +347,7 @@ Handles all NightCrate image sources: filesystem files passed directly to ASTAP;
 
 ## Schema state
 
-Current migration: **0032** (`project_thumbnail`). 32 migrations total (`0001`–`0032`).
+Current migration: **0034** (`project_solve` + `project_dso`). 34 migrations total (`0001`–`0034`).
 
 **Recent migrations not detailed elsewhere:** 0025 (`target_wishlist` — `target_wishlist`, `wishlist_section`, `target_plan`, `target_plan_date_range` tables for the wishlist + planning system), 0026 (`rig_sort_order` — `sort_order` column on `rig` + `rig_summary` view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
 

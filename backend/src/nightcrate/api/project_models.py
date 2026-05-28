@@ -26,18 +26,27 @@ class ThumbnailCropDef(BaseModel):
     crop_h: float = Field(default=1, gt=0, le=1)
 
 
-class ProjectSaveRequest(BaseModel):
+class ProjectUpdate(BaseModel):
+    """Partial metadata update (save-as-you-go). Only the fields present in
+    the request body are changed; absent fields are left untouched. Empty
+    strings for description/notes clear them."""
+
     name: str | None = None
     description: str | None = None
     notes: str | None = None
     status: str | None = None
-    clear_description: bool = False
-    clear_notes: bool = False
-    remove_image_ids: list[int] | None = None
-    image_order: list[int] | None = None
-    main_image_id: int | None = None
-    image_notes: dict[str, str | None] | None = None
-    thumbnail_crops: dict[str, ThumbnailCropDef] | None = None
+
+
+class ImageNotesUpdate(BaseModel):
+    notes: str | None = None
+
+
+class ReorderImagesRequest(BaseModel):
+    image_ids: list[int]
+
+
+class ThumbnailCropsRequest(BaseModel):
+    crops: dict[str, ThumbnailCropDef]
 
 
 # ── Responses ───────────────────────────────────────────────────────────────
@@ -49,7 +58,6 @@ class ProjectImageResponse(BaseModel):
     file_path: str
     display_order: int
     is_main: bool
-    staged: bool
     notes: str | None
     created_at: str
     updated_at: str

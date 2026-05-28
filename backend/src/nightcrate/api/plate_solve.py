@@ -104,6 +104,13 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
             fov_hint=request.fov_hint,
             timeout=request.timeout,
         )
+    except FileNotFoundError as exc:
+        # A referenced source file wasn't reachable — usually a disconnected
+        # drive (e.g. a pxiproject master on another volume), not a bug.
+        raise HTTPException(
+            status_code=422,
+            detail=f"{exc} — is the source file's drive connected?",
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -212,7 +219,7 @@ async def annotate(
     )
     rotation = compute_rotation(wcs_params)
 
-    dsos = await _query_dsos_in_cone(center_ra, center_dec, diag_radius)
+    dsos = await query_dsos_in_cone(center_ra, center_dec, diag_radius)
 
     annotations = project_dsos(wcs_params, dsos)
 
@@ -259,7 +266,7 @@ def _build_wcs_override(
     return None
 
 
-async def _query_dsos_in_cone(
+async def query_dsos_in_cone(
     center_ra: float,
     center_dec: float,
     radius_deg: float,
@@ -279,8 +286,9 @@ async def _query_dsos_in_cone(
         ra_clause = "ra_deg BETWEEN ? AND ?"
         ra_params = (ra_min, ra_max)
 
-    query = (  # nosec B608 — ra_clause is hardcoded SQL, not user input
-        f"SELECT id, primary_designation, obj_type, ra_deg, dec_deg,"
+    query = (
+        # nosec B608 — hardcoded SQL: only ra_clause (a fixed string) is interpolated; all values are bound with ? params
+        f"SELECT id, primary_designation, obj_type, ra_deg, dec_deg,"  # nosec B608
         f" maj_axis_arcmin, min_axis_arcmin, position_angle_deg,"
         f" common_name, constellation, distance_pc, distance_method, mag_b"
         f" FROM dso WHERE active = 1"

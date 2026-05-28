@@ -50,7 +50,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.34.0 — Tablet & Desktop Support](#v0340--tablet--desktop-support) ✅
 - [v0.35.0 — Project Shell + Image Management](#v0350--project-shell--image-management) ✅
 - [v0.36.0 — Project Thumbnails + Gallery View](#v0360--project-thumbnails--gallery-view) ✅
-- [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking)
+- [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking) ✅
 - [v0.38.0 — Project Metadata Enrichment](#v0380--project-metadata-enrichment)
 - [v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline](#v0390--sessions-sub-frames-and-ingest-pipeline)
 - [v0.4x.0 — Mosaic Projects (Arc Capstone)](#v04x0--mosaic-projects-arc-capstone)
@@ -4580,62 +4580,45 @@ The Projects page gains a gallery/card view with search and sort.
 
 ## v0.37.0 — Target Identification + DSO Linking
 
-Plate solving connects projects to the DSO catalog, enabling object-based search
-and catalog-completion tracking.
+**Status:** Done
+**Branch:** `v0.37.0/target-identification-dso-linking`
 
-Design note: the Imaging Core Schema spec (§3) defines a separate `target` table as
-a "cache of astronomical objects." Since NightCrate now has a 14k-entry `dso` table with
-normalized designations, external refs, and distances, the `target` table would be
-redundant. `project_target` links directly to `dso` via an optional FK. Custom
-coordinates (comets, novae, objects not in the catalog) use RA/Dec + label without
-a `dso_id`.
+Two pieces: a foundational refactor of the project detail page to **save-as-you-go**,
+then **plate-solve-based DSO linking** that connects a project to the `dso` catalog.
 
-Mosaics are **deferred** to the [Mosaic Projects capstone](#v04x0--mosaic-projects-arc-capstone)
-at the end of the arc — that version adds panel columns to `project_target`. v0.37.0
-is single-link-per-object: one `project_target` per distinct DSO per project.
+### Save-as-you-go refactor
 
-### Schema (migration 0033)
+Dropped the stage + Save/Cancel dirty-state model (v0.35/v0.36) for immediate
+persistence — every edit saves on its own (text fields on blur/Enter; add/remove/
+reorder/set-main/crop on the click). Rationale: the staging model forced every new
+project sub-entity to answer "wait for Save or not?" and doesn't scale to the
+sessions/sub-frames ingest coming in v0.39.0+ (you can't hold an ingest of hundreds
+of rows in memory pending a Save button).
 
-- [ ] `project_target` table — project_id FK CASCADE, center_ra_deg REAL, center_dec_deg REAL, dso_id FK to `dso` (nullable, ON DELETE SET NULL), label TEXT, source CHECK ('plate_solve', 'user', 'planner'), pixel_scale_arcsec REAL, rotation_deg REAL, fov_width_deg REAL, fov_height_deg REAL, timestamps. CHECK constraint: every row must have either `dso_id IS NOT NULL` or both coordinates present
-- [ ] No separate `project_dso` junction table — the optional `dso_id` FK provides the many-to-many relationship. "DSOs in this project" = `WHERE project_id = ? AND dso_id IS NOT NULL`. "Projects containing this DSO" = `WHERE dso_id = ?`
-- [ ] Dedup: partial unique index `UNIQUE (project_id, dso_id) WHERE dso_id IS NOT NULL` — one link per distinct DSO per project (re-solving the same object updates the framing on the existing row, doesn't duplicate). Coordinate-only targets (`dso_id IS NULL`) are exempt and may repeat.
+- [x] Migration 0033 drops the now-dead `project_image.staged` column
+- [x] Backend direct CRUD: `PATCH /projects/{id}` (metadata), `POST`/`DELETE /projects/{id}/images`, `PUT /projects/{id}/images/order`, `POST /images/{id}/main`, `PATCH /images/{id}` (notes), `PUT /projects/{id}/thumbnails`. Removed `stage`/`unstage`/`save`/`discard` + `cleanup_orphaned_staging`; images render straight into the permanent dir
+- [x] Frontend: removed dirty-state, navigation blocker, and Save/Cancel; each edit fires an immediate mutation. Backing out of a new project = delete it (it's saved on creation)
 
-### Backend
+### Plate-solve DSO linking
 
-- [ ] Plate-solve project images: `POST /api/projects/{id}/images/{image_id}/plate-solve` — reuses existing `services/plate_solve.py` (ASTAP subprocess) + `services/image_annotations.py` (`project_dsos`) for DSO matching. Sequential solving (existing semaphore(1) constraint). **Auto-link is "center + suggestions," not fan-out:** `project_dsos` returns *every* catalog object whose center lands in the FOV (no filtering — dozens in rich fields), so do NOT bulk-create a target per in-FOV DSO. Instead:
-  - Create **one** `project_target` from the solve center (`source='plate_solve'`, storing `center_ra/dec`, `fov_width/height_deg`, `rotation_deg`, `pixel_scale_arcsec`).
-  - Auto-link the **best-match DSO** as that target's `dso_id` — nearest projected center to image center, tie-break by largest `maj_axis_arcmin`. (Respects the dedup index: if the object is already linked, update framing instead of inserting.)
-  - Return the remaining in-FOV DSOs as **suggestions** in the response, NOT persisted. The user promotes any of them to a link with one click (which calls the manual-link endpoint below).
-- [ ] Manual target linking: `POST /api/projects/{id}/targets` — user picks a DSO from the catalog (or promotes a suggestion) or enters arbitrary RA/Dec. Also the endpoint that accepts plate-solve suggestions.
-- [ ] `GET /api/projects/{id}/targets` — list targets for a project
-- [ ] `DELETE /api/projects/{id}/targets/{target_id}` — remove a target
-- [ ] `GET /api/dso/{id}/projects` — reverse lookup: which projects contain this DSO
-- [ ] `GET /api/projects/catalog-completion?catalog=messier` — completion stats for a named catalog. Query param is a `dso_designation.catalog` prefix (lowercase): `messier`, `caldwell`, `ngc`, `ic`, `sharpless2` (Sharpless), `barnard`. Joins `dso_designation WHERE catalog = ?` against linked `project_target` rows
-- [ ] Tests: plate-solve → single-center-target + best-match link + unpersisted suggestions; suggestion promotion; dedup (re-solve updates, doesn't duplicate); manual linking; reverse lookup; completion query
+A project has at most **one** plate solve (mosaics relax this later). The solve image
+is a **standalone** linear FITS/XISF picked via the file browser — deliberately kept
+out of the gallery (which is for finished images that don't plate-solve). Solving stores
+the solution + **every** catalog object in the field; one is auto-flagged main.
 
-### Frontend — Overview tab enrichment
+- [x] Migration 0034: `project_solve` (image_path + WCS solution + display fields, one per project) and `project_dso` (`solve_id` FK CASCADE, `dso_id` FK, `is_main`, `UNIQUE(solve_id, dso_id)`). Deleting the solve cascades its objects
+- [x] `POST /projects/{id}/solve` — runs ASTAP via `run_plate_solve`, projects in-FOV catalog objects (`image_annotations.project_dsos` + the cone query), stores the solution + **all** identified DSOs, auto-flags the best-match main (nearest frame centre, tie-break largest object), pre-renders a display image. 409 if a solve already exists (delete to re-solve)
+- [x] `GET /projects/{id}/solve` (solution + objects with overlay pixel coords reprojected from the stored WCS); `PUT /solve/objects/{dso_id}` (toggle main — multi-main allowed); `DELETE /solve` (cascade); `GET /solve/image/{variant}` (rendered display)
+- [x] Store-all-objects (not just mains) is deliberate — it powers a future "which projects contain M31?" search
+- [x] Fixed a pre-existing bug: solving an archive entry (`zip::sub.fits`) failed with "I/O operation on closed file" — header reading closes the BytesIO, so `_do_solve` now reads the bytes once and hands a fresh buffer to each consumer
+- [x] Frontend **Plate Solve** tab: file-pick → solve → overlay viewer + read-only solution summary + identified-objects list with star toggles + delete-with-confirmation. Main targets surface as chips on the Overview. Overlay uses a shared `DsoAnnotationOverlay` extracted from the Image Analyzer (teal mains / blue others — colorblind-safe)
+- [x] Tests: store-all + best-match main, multi-main toggle, cascade delete, 409/422/404 paths, empty-field; archive-source regression test
 
-- [ ] Identified DSOs shown as chips/tags on the project overview after plate solving or manual linking
-- [ ] Click a DSO chip → navigate to its DSO catalog entry
-- [ ] "Plate solve" button on each project image → triggers solve → adds the solved center target (best-match DSO auto-linked) and shows the remaining in-FOV DSOs as a dismissible suggestion list with one-click "add" per object (no bulk auto-add)
-- [ ] "Add target" button — DSO search autocomplete (existing pattern from plate solve dialog) or manual RA/Dec entry
+### Deferred (data stored now, UI later)
 
-### Frontend — Projects page search enrichment
-
-- [ ] Search by DSO designation or common name (e.g., "M31", "Andromeda Galaxy")
-- [ ] Filter by constellation (dropdown)
-
-### Frontend — Catalog completion view
-
-- [ ] New view mode on the Projects page (toggle: List / Gallery / Completion)
-- [ ] Catalog selector dropdown: Messier, Caldwell, NGC, IC, Sharpless, Barnard — labels map to lowercase `dso_designation.catalog` prefixes (`messier`, `caldwell`, `ngc`, `ic`, `sharpless2`, `barnard`)
-- [ ] Grid of objects in the selected catalog with visual indication: imaged (in ≥1 project) vs not
-- [ ] Imaged objects show mini thumbnail from the project; click opens project. Un-imaged objects click → DSO catalog entry
-- [ ] Progress summary: "42 / 110 Messier objects imaged"
-
-### Not in scope
-
-Mosaics / multi-panel targets (deferred to the [Mosaic Projects capstone](#v04x0--mosaic-projects-arc-capstone)). Rig/location association, session dates, integration time tracking. Curated observing lists (Herschel 400, Messier Marathon) that don't map to a `dso_designation.catalog` prefix — these need an `observing_list` schema in a future version.
+- Project search by DSO designation/constellation + the catalog-completion view ("42 / 110 Messier") — every identified object is stored, so this is a later UI layer
+- Non-catalog / custom-coordinate targets (comets, novae) — v0.37.0 is catalog-only; project title/description search can cover ad-hoc labels later
+- Mosaics / multiple solve images per project → [Mosaic Projects capstone](#v04x0--mosaic-projects-arc-capstone)
 
 ---
 

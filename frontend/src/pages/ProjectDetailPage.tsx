@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useNavigate, useBlocker } from "react-router-dom";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -14,27 +14,31 @@ import Typography from "@mui/material/Typography";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RestoreIcon from "@mui/icons-material/Restore";
-import SaveIcon from "@mui/icons-material/Save";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import {
   fetchProject,
-  saveProject,
+  updateProject,
   deleteProject,
   restoreProject,
   permanentlyDeleteProject,
-  discardStaging,
-  stageImages,
-  unstageImage,
+  addImages,
+  removeImage,
+  reorderImages,
+  setMainImage,
+  saveThumbnailCrops,
   renderedImageUrl,
   PROJECT_STATUS_COLORS,
-  type ProjectSaveRequest,
+  type Project,
+  type ProjectUpdate,
   type ThumbnailCropDef,
 } from "@/api/projects";
 import ImageGalleryStrip from "@/components/projects/ImageGalleryStrip";
 import ThumbnailCropEditor from "@/components/projects/ThumbnailCropEditor";
+import ProjectPlateSolveTab from "@/components/projects/ProjectPlateSolveTab";
+import { getProjectSolve } from "@/api/projectSolve";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -44,13 +48,6 @@ export default function ProjectDetailPage() {
   const [tab, setTab] = useState(0);
   const [snack, setSnack] = useState<string | null>(null);
 
-  // Staged metadata — local state, only persisted on Save.
-  const [editedName, setEditedName] = useState<string | null>(null);
-  const [editedDesc, setEditedDesc] = useState<string | null>(null);
-  const [editedNotes, setEditedNotes] = useState<string | null>(null);
-  const [removedImageIds, setRemovedImageIds] = useState<Set<number>>(new Set());
-  const [imageOrder, setImageOrder] = useState<number[] | null>(null);
-  const [mainImageId, setMainImageId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [editingDesc, setEditingDesc] = useState(false);
@@ -59,7 +56,6 @@ export default function ProjectDetailPage() {
   const [notesInput, setNotesInput] = useState("");
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [cropEditorOpen, setCropEditorOpen] = useState(false);
-  const [stagedCrops, setStagedCrops] = useState<Record<string, ThumbnailCropDef> | null>(null);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -67,53 +63,45 @@ export default function ProjectDetailPage() {
     enabled: !isNaN(projectId),
   });
 
-  // Discard any leftover staging from a previous interrupted session.
-  const discardedRef = useRef(false);
-  useEffect(() => {
-    if (!project || discardedRef.current) return;
-    const hasOrphanedStaging = project.images.some((i) => i.staged);
-    if (hasOrphanedStaging) {
-      discardStaging(projectId).then(() => {
-        queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      });
-    }
-    discardedRef.current = true;
-  }, [project, projectId, queryClient]);
+  const { data: solve } = useQuery({
+    queryKey: ["project-solve", projectId],
+    queryFn: () => getProjectSolve(projectId),
+    enabled: !isNaN(projectId),
+  });
+  const mainTargets = (solve?.objects ?? []).filter((o) => o.is_main);
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     queryClient.invalidateQueries({ queryKey: ["projects"] });
   }, [queryClient, projectId]);
 
-  // Visible images: exclude removed, apply local order.
-  const visibleImages = useMemo(() => {
-    if (!project) return [];
-    let imgs = project.images.filter((i) => !removedImageIds.has(i.id));
-    if (imageOrder) {
-      const orderMap = new Map(imageOrder.map((id, idx) => [id, idx]));
-      imgs = [...imgs].sort(
-        (a, b) => (orderMap.get(a.id) ?? a.display_order) - (orderMap.get(b.id) ?? b.display_order),
-      );
-    }
-    return imgs;
-  }, [project, removedImageIds, imageOrder]);
+  // Apply a server response directly to the cache (no extra round-trip),
+  // and refresh the list view that shows thumbnails/counts.
+  const applyProject = useCallback(
+    (p: Project) => {
+      queryClient.setQueryData(["project", projectId], p);
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+    [queryClient, projectId],
+  );
+
+  const images = project?.images ?? [];
 
   const effectiveMainId = useMemo(() => {
-    if (mainImageId && visibleImages.some((i) => i.id === mainImageId)) return mainImageId;
-    const existing = visibleImages.find((i) => i.is_main);
-    return existing?.id ?? visibleImages[0]?.id ?? null;
-  }, [mainImageId, visibleImages]);
+    const existing = images.find((i) => i.is_main);
+    return existing?.id ?? images[0]?.id ?? null;
+  }, [images]);
 
   const [viewedImageId, setViewedImageId] = useState<number | null>(null);
   const [mainImgLoaded, setMainImgLoaded] = useState(false);
   const viewedImage = useMemo(() => {
-    if (!visibleImages.length) return null;
+    if (!images.length) return null;
     if (viewedImageId) {
-      const found = visibleImages.find((i) => i.id === viewedImageId);
+      const found = images.find((i) => i.id === viewedImageId);
       if (found) return found;
     }
-    return visibleImages.find((i) => i.id === effectiveMainId) ?? visibleImages[0] ?? null;
-  }, [visibleImages, viewedImageId, effectiveMainId]);
+    return images.find((i) => i.id === effectiveMainId) ?? images[0] ?? null;
+  }, [images, viewedImageId, effectiveMainId]);
 
   const prevViewedRef = useRef<number | null>(null);
   if (viewedImage?.id !== prevViewedRef.current) {
@@ -121,81 +109,66 @@ export default function ProjectDetailPage() {
     if (mainImgLoaded) setMainImgLoaded(false);
   }
 
-  // Dirty tracking.
-  const hasStagedImages = project?.images.some((i) => i.staged) ?? false;
-  const isDirty =
-    editedName !== null ||
-    editedDesc !== null ||
-    editedNotes !== null ||
-    removedImageIds.size > 0 ||
-    imageOrder !== null ||
-    mainImageId !== null ||
-    stagedCrops !== null ||
-    hasStagedImages;
+  // ── Mutations ──────────────────────────────────────────────────────────
+  const metaMut = useMutation({
+    mutationFn: (patch: ProjectUpdate) => updateProject(projectId, patch),
+    onSuccess: applyProject,
+    onError: (err) => setSnack(String(err)),
+  });
 
-  // Block navigation when dirty — shows Save/Discard/Cancel dialog.
-  const blocker = useBlocker(isDirty);
-  const [exitDialogOpen, setExitDialogOpen] = useState(false);
-  useEffect(() => {
-    if (blocker.state === "blocked") setExitDialogOpen(true);
-  }, [blocker.state]);
-
-  const resetLocal = useCallback(() => {
-    setEditedName(null);
-    setEditedDesc(null);
-    setEditedNotes(null);
-    setRemovedImageIds(new Set());
-    setImageOrder(null);
-    setMainImageId(null);
-    setViewedImageId(null);
-    setStagedCrops(null);
-  }, []);
-
-  // Mutations.
-  const stageMut = useMutation({
-    mutationFn: (paths: string[]) => stageImages(projectId, paths),
+  const addMut = useMutation({
+    mutationFn: (paths: string[]) => addImages(projectId, paths),
     onSuccess: (imgs) => {
       invalidate();
-      setSnack(`Staged ${imgs.length} image${imgs.length !== 1 ? "s" : ""}`);
+      setSnack(`Added ${imgs.length} image${imgs.length !== 1 ? "s" : ""}`);
     },
     onError: (err) => setSnack(String(err)),
   });
 
-  const buildSaveRequest = useCallback((): ProjectSaveRequest => {
-    const req: ProjectSaveRequest = {};
-    if (editedName !== null) req.name = editedName;
-    if (editedDesc !== null) {
-      if (editedDesc === "") req.clear_description = true;
-      else req.description = editedDesc;
-    }
-    if (editedNotes !== null) {
-      if (editedNotes === "") req.clear_notes = true;
-      else req.notes = editedNotes;
-    }
-    if (removedImageIds.size > 0) req.remove_image_ids = [...removedImageIds];
-    if (imageOrder) req.image_order = imageOrder;
-    if (mainImageId !== null) req.main_image_id = mainImageId;
-    if (stagedCrops) req.thumbnail_crops = stagedCrops;
-    return req;
-  }, [editedName, editedDesc, editedNotes, removedImageIds, imageOrder, mainImageId, stagedCrops]);
-
-  const saveMut = useMutation({
-    mutationFn: () => saveProject(projectId, buildSaveRequest()),
-    onSuccess: () => {
-      resetLocal();
-      invalidate();
-      setSnack("Project saved");
-    },
+  const removeMut = useMutation({
+    mutationFn: (imageId: number) => removeImage(projectId, imageId),
+    onSuccess: invalidate,
     onError: (err) => setSnack(String(err)),
   });
 
-  const discardMut = useMutation({
-    mutationFn: () => discardStaging(projectId),
-    onSuccess: () => {
-      resetLocal();
-      invalidate();
-      setSnack("Changes discarded");
+  const reorderMut = useMutation({
+    mutationFn: (ids: number[]) => reorderImages(projectId, ids),
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey: ["project", projectId] });
+      const prev = queryClient.getQueryData<Project>(["project", projectId]);
+      if (prev) {
+        const byId = new Map(prev.images.map((i) => [i.id, i]));
+        const reordered = ids
+          .map((id, idx) => {
+            const img = byId.get(id);
+            return img ? { ...img, display_order: idx } : null;
+          })
+          .filter((i): i is NonNullable<typeof i> => i !== null);
+        queryClient.setQueryData<Project>(["project", projectId], { ...prev, images: reordered });
+      }
+      return { prev };
     },
+    onError: (err, _ids, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(["project", projectId], ctx.prev);
+      setSnack(String(err));
+    },
+    onSettled: invalidate,
+  });
+
+  const mainMut = useMutation({
+    mutationFn: (imageId: number) => setMainImage(projectId, imageId),
+    onSuccess: applyProject,
+    onError: (err) => setSnack(String(err)),
+  });
+
+  const cropMut = useMutation({
+    mutationFn: (crops: Record<string, ThumbnailCropDef>) =>
+      saveThumbnailCrops(projectId, crops),
+    onSuccess: (p) => {
+      applyProject(p);
+      setSnack("Thumbnails updated");
+    },
+    onError: (err) => setSnack(String(err)),
   });
 
   const deleteMut = useMutation({
@@ -242,9 +215,8 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const displayName = editedName ?? project.name;
-  const displayDesc = editedDesc ?? project.description ?? "";
-  const displayNotes = editedNotes ?? project.notes ?? "";
+  const displayDesc = project.description ?? "";
+  const displayNotes = project.notes ?? "";
 
   return (
     <Box sx={{ p: 3, height: "100%", overflow: "auto" }}>
@@ -263,7 +235,7 @@ export default function ProjectDetailPage() {
             onBlur={() => {
               setEditingName(false);
               const trimmed = nameInput.trim();
-              if (trimmed && trimmed !== project.name) setEditedName(trimmed);
+              if (trimmed && trimmed !== project.name) metaMut.mutate({ name: trimmed });
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -277,11 +249,11 @@ export default function ProjectDetailPage() {
             fontWeight={600}
             sx={{ flexGrow: 1, cursor: "pointer" }}
             onClick={() => {
-              setNameInput(displayName);
+              setNameInput(project.name);
               setEditingName(true);
             }}
           >
-            {displayName}
+            {project.name}
           </Typography>
         )}
 
@@ -291,40 +263,13 @@ export default function ProjectDetailPage() {
           color={PROJECT_STATUS_COLORS[project.status] ?? "default"}
         />
 
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<SaveIcon />}
-          onClick={() => saveMut.mutate()}
-          disabled={saveMut.isPending}
-          sx={{ visibility: isDirty ? "visible" : "hidden" }}
-        >
-          Save
-        </Button>
-        <Button
-          size="small"
-          onClick={() => discardMut.mutate()}
-          disabled={discardMut.isPending}
-          sx={{ visibility: isDirty ? "visible" : "hidden" }}
-        >
-          Cancel
-        </Button>
-
         {project.active ? (
-          <IconButton
-            size="small"
-            onClick={() => deleteMut.mutate()}
-            title="Retire project"
-          >
+          <IconButton size="small" onClick={() => deleteMut.mutate()} title="Retire project">
             <DeleteIcon fontSize="small" />
           </IconButton>
         ) : (
           <>
-            <Button
-              size="small"
-              onClick={() => restoreMut.mutate()}
-              startIcon={<RestoreIcon />}
-            >
+            <Button size="small" onClick={() => restoreMut.mutate()} startIcon={<RestoreIcon />}>
               Restore
             </Button>
             <Button
@@ -339,18 +284,13 @@ export default function ProjectDetailPage() {
         )}
       </Box>
 
-      <Typography
-        variant="caption"
-        color="warning.main"
-        sx={{ mb: 1, display: "block", visibility: isDirty ? "visible" : "hidden" }}
-      >
-        Unsaved changes
-      </Typography>
-
       {/* Tabs */}
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
         <Tab label="Overview" />
+        <Tab label="Plate Solve" />
       </Tabs>
+
+      {tab === 1 && <ProjectPlateSolveTab projectId={projectId} />}
 
       {/* Overview tab */}
       {tab === 0 && (
@@ -365,10 +305,10 @@ export default function ProjectDetailPage() {
                 flexShrink: 0,
                 borderRadius: 1,
                 overflow: "hidden",
-                bgcolor: visibleImages.length > 0 ? "black" : undefined,
-                border: visibleImages.length === 0 ? 2 : 0,
+                bgcolor: images.length > 0 ? "common.black" : undefined,
+                border: images.length === 0 ? 2 : 0,
                 borderColor: "divider",
-                borderStyle: visibleImages.length === 0 ? "dashed" : undefined,
+                borderStyle: images.length === 0 ? "dashed" : undefined,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -376,24 +316,22 @@ export default function ProjectDetailPage() {
             >
               {viewedImage ? (
                 <>
-                  {(!mainImgLoaded || stageMut.isPending) && (
-                    <CircularProgress size={32} />
-                  )}
+                  {(!mainImgLoaded || addMut.isPending) && <CircularProgress size={32} />}
                   <Box
                     component="img"
                     key={viewedImage.id}
                     src={renderedImageUrl(projectId, viewedImage.id, "thumb_lg")}
-                    alt={displayName}
+                    alt={project.name}
                     onLoad={() => setMainImgLoaded(true)}
                     sx={{
                       maxWidth: "100%",
                       maxHeight: "100%",
                       objectFit: "contain",
-                      display: mainImgLoaded && !stageMut.isPending ? "block" : "none",
+                      display: mainImgLoaded && !addMut.isPending ? "block" : "none",
                     }}
                   />
                 </>
-              ) : stageMut.isPending ? (
+              ) : addMut.isPending ? (
                 <CircularProgress size={32} />
               ) : (
                 <Typography color="text.secondary" sx={{ px: 2, textAlign: "center" }}>
@@ -420,9 +358,7 @@ export default function ProjectDetailPage() {
                   onBlur={() => {
                     setEditingDesc(false);
                     const v = descInput.trim();
-                    if (v !== (project.description ?? "")) {
-                      setEditedDesc(v || "");
-                    }
+                    if (v !== (project.description ?? "")) metaMut.mutate({ description: v });
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Escape") setEditingDesc(false);
@@ -448,36 +384,43 @@ export default function ProjectDetailPage() {
                   {displayDesc || "Click to add a description..."}
                 </Typography>
               )}
+
+              {mainTargets.length > 0 && (
+                <Box sx={{ mt: 1.5 }}>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+                    Main targets
+                  </Typography>
+                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                    {mainTargets.map((o) => (
+                      <Chip
+                        key={o.dso_id}
+                        label={o.common_name ?? o.primary_designation}
+                        size="small"
+                        onClick={() => setTab(1)}
+                      />
+                    ))}
+                  </Box>
+                </Box>
+              )}
             </Box>
           </Box>
 
           {/* Image gallery strip */}
           <ImageGalleryStrip
             projectId={projectId}
-            images={visibleImages}
+            images={images}
             viewedImageId={viewedImage?.id ?? null}
             mainImageId={effectiveMainId}
             onViewImage={setViewedImageId}
-            onSetMain={setMainImageId}
-            onRemove={(imageId) => {
-              const img = project.images.find((i) => i.id === imageId);
-              if (img?.staged) {
-                unstageImage(projectId, imageId).then(() => invalidate());
-              } else {
-                setRemovedImageIds((prev) => new Set([...prev, imageId]));
-              }
-            }}
-            onReorder={(ids) => setImageOrder(ids)}
-            onAddImages={(paths) => stageMut.mutate(paths)}
-            isStaging={stageMut.isPending}
+            onSetMain={(imageId) => mainMut.mutate(imageId)}
+            onRemove={(imageId) => removeMut.mutate(imageId)}
+            onReorder={(ids) => reorderMut.mutate(ids)}
+            onAddImages={(paths) => addMut.mutate(paths)}
+            isAdding={addMut.isPending}
           />
 
-          {visibleImages.length > 0 && (
-            <Button
-              size="small"
-              onClick={() => setCropEditorOpen(true)}
-              sx={{ mt: 0.5 }}
-            >
+          {images.length > 0 && (
+            <Button size="small" onClick={() => setCropEditorOpen(true)} sx={{ mt: 0.5 }}>
               Customize thumbnails
             </Button>
           )}
@@ -500,9 +443,7 @@ export default function ProjectDetailPage() {
                 onBlur={() => {
                   setEditingNotes(false);
                   const v = notesInput.trim();
-                  if (v !== (project.notes ?? "")) {
-                    setEditedNotes(v || "");
-                  }
+                  if (v !== (project.notes ?? "")) metaMut.mutate({ notes: v });
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setEditingNotes(false);
@@ -536,8 +477,8 @@ export default function ProjectDetailPage() {
         <DialogTitle>Delete project permanently?</DialogTitle>
         <DialogContent>
           <Typography>
-            This will permanently delete "{project.name}" and all its
-            pre-calculated images. This cannot be undone.
+            This will permanently delete "{project.name}" and all its pre-calculated images. This
+            cannot be undone.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -555,97 +496,15 @@ export default function ProjectDetailPage() {
         </DialogActions>
       </Dialog>
 
-      {/* Unsaved changes — shown when navigating away while dirty */}
-      <Dialog
-        open={exitDialogOpen}
-        onClose={() => {
-          setExitDialogOpen(false);
-          blocker.reset?.();
-        }}
-      >
-        <DialogTitle>Unsaved changes</DialogTitle>
-        <DialogContent>
-          <Typography>
-            You have unsaved changes. What would you like to do?
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setExitDialogOpen(false);
-              blocker.reset?.();
-            }}
-          >
-            Stay on page
-          </Button>
-          <Button
-            color="warning"
-            onClick={async () => {
-              setExitDialogOpen(false);
-              await discardStaging(projectId).catch(() => {});
-              resetLocal();
-              blocker.proceed?.();
-            }}
-          >
-            Discard
-          </Button>
-          <Button
-            variant="contained"
-            onClick={async () => {
-              setExitDialogOpen(false);
-              try {
-                await saveProject(projectId, buildSaveRequest());
-                resetLocal();
-                blocker.proceed?.();
-              } catch {
-                setSnack("Save failed — staying on page");
-                blocker.reset?.();
-              }
-            }}
-          >
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {project && (
-        <ThumbnailCropEditor
-          open={cropEditorOpen}
-          onClose={() => setCropEditorOpen(false)}
-          projectId={projectId}
-          images={visibleImages}
-          mainImageId={effectiveMainId}
-          existingCrops={
-            stagedCrops
-              ? project.thumbnail_crops.map((c) => {
-                  const staged = stagedCrops[c.size];
-                  return staged
-                    ? {
-                        ...c,
-                        source_image_id: staged.source_image_id ?? c.source_image_id,
-                        crop_x: staged.crop_x ?? c.crop_x,
-                        crop_y: staged.crop_y ?? c.crop_y,
-                        crop_w: staged.crop_w ?? c.crop_w,
-                        crop_h: staged.crop_h ?? c.crop_h,
-                      }
-                    : c;
-                }).concat(
-                  Object.entries(stagedCrops)
-                    .filter(([size]) => !project.thumbnail_crops.some((c) => c.size === size))
-                    .map(([size, def]) => ({
-                      size,
-                      source_image_id: def.source_image_id ?? null,
-                      crop_x: def.crop_x ?? 0,
-                      crop_y: def.crop_y ?? 0,
-                      crop_w: def.crop_w ?? 1,
-                      crop_h: def.crop_h ?? 1,
-                    })),
-                )
-              : project.thumbnail_crops
-          }
-          onApply={(crops) => setStagedCrops(crops)}
-        />
-      )}
+      <ThumbnailCropEditor
+        open={cropEditorOpen}
+        onClose={() => setCropEditorOpen(false)}
+        projectId={projectId}
+        images={images}
+        mainImageId={effectiveMainId}
+        existingCrops={project.thumbnail_crops}
+        onApply={(crops) => cropMut.mutate(crops)}
+      />
 
       <Snackbar
         open={!!snack}
