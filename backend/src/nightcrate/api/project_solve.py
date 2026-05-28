@@ -183,6 +183,13 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
                 dec_hint=body.dec_hint,
                 fov_hint=body.fov_hint,
             )
+        except FileNotFoundError as exc:
+            # A referenced source file (e.g. a pxiproject's master on another
+            # drive) wasn't reachable — usually a disconnected drive, not a bug.
+            raise HTTPException(
+                status_code=422,
+                detail=f"{exc} — is the source file's drive connected?",
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:

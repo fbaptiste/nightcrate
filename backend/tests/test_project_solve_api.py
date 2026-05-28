@@ -199,6 +199,34 @@ class TestCreateSolve:
         assert resp.status_code == 200
         assert resp.json()["objects"] == []
 
+    async def test_referenced_file_missing_422(self, client: AsyncClient):
+        """A missing referenced source file (e.g. a pxiproject master on a
+        disconnected drive) surfaces as a clear 422, not a generic 500."""
+        pid = await _make_project(client, "Missing Ref")
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(return_value=SimpleNamespace(astap_executable_path="/fake/astap")),
+            ),
+            patch(
+                "nightcrate.api.project_solve.validate_astap_path",
+                new=MagicMock(return_value={"valid": True, "error": None}),
+            ),
+            patch(
+                "nightcrate.api.project_solve.run_plate_solve",
+                new=AsyncMock(
+                    side_effect=FileNotFoundError("Referenced file not found: /Volumes/X/m.xisf")
+                ),
+            ),
+        ):
+            resp = await client.post(
+                f"/api/projects/{pid}/solve", json={"image_path": "/fake/p.pxiproject::3"}
+            )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert "Referenced file not found" in detail
+        assert "drive connected" in detail
+
 
 class TestGetSolve:
     async def test_get_after_create(self, client: AsyncClient):

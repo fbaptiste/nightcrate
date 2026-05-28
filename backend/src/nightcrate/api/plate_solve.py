@@ -104,6 +104,13 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
             fov_hint=request.fov_hint,
             timeout=request.timeout,
         )
+    except FileNotFoundError as exc:
+        # A referenced source file wasn't reachable — usually a disconnected
+        # drive (e.g. a pxiproject master on another volume), not a bug.
+        raise HTTPException(
+            status_code=422,
+            detail=f"{exc} — is the source file's drive connected?",
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
