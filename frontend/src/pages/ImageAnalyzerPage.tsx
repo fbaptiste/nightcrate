@@ -61,7 +61,7 @@ import { PlateSolveDsoGrid } from "@/components/plate-solve/PlateSolveDsoGrid";
 import { PlateSolveFilters, applyFilters, DEFAULT_FILTERS, type AnnotationFilters } from "@/components/plate-solve/PlateSolveFilters";
 import { detectWcs, fetchAnnotations } from "@/api/plateSolve";
 import { setActivity } from "@/api/client";
-import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
+import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
@@ -851,51 +851,14 @@ export function ImageAnalyzerPage() {
                 return (
                   <>
                     <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                      <Box
-                        component="svg"
-                        viewBox={imgW > 0 ? `0 0 ${imgW} ${imgH}` : undefined}
-                        preserveAspectRatio="xMidYMid meet"
-                        sx={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
-                      >
-                        <image
-                          href={imageUrl(activePath, selectedHdu, appliedLinked, activePerChannel, imageActivity)}
-                          width={imgW || undefined}
-                          height={imgH || undefined}
-                        />
-                        {imgW > 0 && filtered.length > 0 && filtered.map((dso) => {
-                          const isSelected = dso.id === selectedAnnotationId;
-                          const refDim = Math.max(imgW, imgH);
-                          const sw = refDim * (isSelected ? 0.0025 : 0.0015);
-                          const fs = refDim * 0.012;
-                          const ts = refDim * 0.002;
-                          const minR = refDim * 0.004;
-                          const gap = refDim * 0.003;
-                          const color = isSelected ? RIG_ORANGE : RIG_BLUE;
-                          const hasEllipse = dso.ellipse_semi_major_px != null && dso.ellipse_semi_minor_px != null && dso.ellipse_semi_major_px > minR;
-                          const a = hasEllipse ? dso.ellipse_semi_major_px! : dso.ellipse_semi_major_px != null ? Math.max(minR, dso.ellipse_semi_major_px) : minR;
-                          const b = hasEllipse ? dso.ellipse_semi_minor_px! : a;
-                          const theta = (dso.ellipse_angle_deg ?? 0) * Math.PI / 180;
-                          const cosT = Math.cos(theta);
-                          const sinT = Math.sin(theta);
-                          const edgeR = (a * b) / Math.sqrt(b * b * cosT * cosT + a * a * sinT * sinT);
-                          const labelOffset = edgeR + gap;
-                          return (
-                            <g key={dso.id} onClick={(e) => { e.stopPropagation(); setSelectedAnnotationId(dso.id); }} style={{ cursor: "pointer" }}>
-                              {hasEllipse ? (
-                                <ellipse cx={dso.pixel_x} cy={dso.pixel_y} rx={a} ry={b}
-                                  transform={dso.ellipse_angle_deg ? `rotate(${dso.ellipse_angle_deg} ${dso.pixel_x} ${dso.pixel_y})` : undefined}
-                                  fill="transparent" stroke={color} strokeWidth={sw} opacity={isSelected ? 1 : 0.85} />
-                              ) : (
-                                <circle cx={dso.pixel_x} cy={dso.pixel_y} r={a} fill="transparent" stroke={color} strokeWidth={sw} opacity={isSelected ? 1 : 0.85} />
-                              )}
-                              <text x={dso.pixel_x + labelOffset} y={dso.pixel_y + fs * 0.35} fill={color} fontSize={fs} fontWeight={isSelected ? 700 : 500}
-                                stroke="#000000" strokeWidth={ts} paintOrder="stroke">
-                                {dso.common_name ?? dso.primary_designation}
-                              </text>
-                            </g>
-                          );
-                        })}
-                      </Box>
+                      <DsoAnnotationOverlay
+                        imageHref={imageUrl(activePath, selectedHdu, appliedLinked, activePerChannel, imageActivity)}
+                        imgW={imgW}
+                        imgH={imgH}
+                        dsos={filtered}
+                        selectedId={selectedAnnotationId}
+                        onSelect={setSelectedAnnotationId}
+                      />
                       {!effectiveWcs && !wcsQuery.isLoading && (
                         <Box sx={{
                           position: "absolute", inset: 0,

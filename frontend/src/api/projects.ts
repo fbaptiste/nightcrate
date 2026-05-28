@@ -8,7 +8,6 @@ export interface ProjectImage {
   file_path: string;
   display_order: number;
   is_main: boolean;
-  staged: boolean;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -63,18 +62,11 @@ export interface ProjectCreate {
   status?: string;
 }
 
-export interface ProjectSaveRequest {
-  name?: string | null;
-  description?: string | null;
-  notes?: string | null;
-  status?: string | null;
-  clear_description?: boolean;
-  clear_notes?: boolean;
-  remove_image_ids?: number[];
-  image_order?: number[];
-  main_image_id?: number;
-  image_notes?: Record<string, string | null>;
-  thumbnail_crops?: Record<string, ThumbnailCropDef>;
+export interface ProjectUpdate {
+  name?: string;
+  description?: string;
+  notes?: string;
+  status?: string;
 }
 
 // ── Fetch functions ───────────────────────────────────────────────────────
@@ -110,6 +102,17 @@ export async function createProject(data: ProjectCreate): Promise<Project> {
   });
 }
 
+export async function updateProject(
+  id: number,
+  data: ProjectUpdate,
+): Promise<Project> {
+  return apiFetch<Project>(`/projects/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function deleteProject(id: number): Promise<void> {
   return apiFetch<void>(`/projects/${id}`, { method: "DELETE" });
 }
@@ -122,39 +125,67 @@ export async function permanentlyDeleteProject(id: number): Promise<void> {
   return apiFetch<void>(`/projects/${id}/permanent`, { method: "DELETE" });
 }
 
-export async function stageImages(
+export async function addImages(
   projectId: number,
   filePaths: string[],
 ): Promise<ProjectImage[]> {
-  return apiFetch<ProjectImage[]>(`/projects/${projectId}/images/stage`, {
+  return apiFetch<ProjectImage[]>(`/projects/${projectId}/images`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file_paths: filePaths }),
   });
 }
 
-export async function unstageImage(
+export async function removeImage(
   projectId: number,
   imageId: number,
 ): Promise<void> {
-  return apiFetch<void>(`/projects/${projectId}/images/${imageId}/stage`, {
+  return apiFetch<void>(`/projects/${projectId}/images/${imageId}`, {
     method: "DELETE",
   });
 }
 
-export async function saveProject(
-  id: number,
-  data: ProjectSaveRequest,
+export async function reorderImages(
+  projectId: number,
+  imageIds: number[],
 ): Promise<Project> {
-  return apiFetch<Project>(`/projects/${id}/save`, {
-    method: "POST",
+  return apiFetch<Project>(`/projects/${projectId}/images/order`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ image_ids: imageIds }),
   });
 }
 
-export async function discardStaging(id: number): Promise<Project> {
-  return apiFetch<Project>(`/projects/${id}/discard`, { method: "POST" });
+export async function setMainImage(
+  projectId: number,
+  imageId: number,
+): Promise<Project> {
+  return apiFetch<Project>(`/projects/${projectId}/images/${imageId}/main`, {
+    method: "POST",
+  });
+}
+
+export async function updateImageNotes(
+  projectId: number,
+  imageId: number,
+  notes: string | null,
+): Promise<ProjectImage> {
+  return apiFetch<ProjectImage>(`/projects/${projectId}/images/${imageId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes }),
+  });
+}
+
+export async function saveThumbnailCrops(
+  projectId: number,
+  crops: Record<string, ThumbnailCropDef>,
+): Promise<Project> {
+  return apiFetch<Project>(`/projects/${projectId}/thumbnails`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ crops }),
+  });
 }
 
 export function projectThumbnailUrl(

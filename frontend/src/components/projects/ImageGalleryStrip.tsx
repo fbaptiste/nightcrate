@@ -74,7 +74,6 @@ function SortableThumb({
         cursor: "grab",
         border: 2,
         borderColor: isViewed ? "primary.main" : "divider",
-        opacity: image.staged ? 0.8 : 1,
         "&:hover .thumb-actions": { opacity: 1 },
       }}
     >
@@ -117,23 +116,6 @@ function SortableThumb({
             filter: "drop-shadow(0 0 2px rgba(0,0,0,0.8))",
           }}
         />
-      )}
-      {image.staged && (
-        <Box
-          sx={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            bgcolor: "rgba(255,152,0,0.7)",
-            fontSize: 9,
-            textAlign: "center",
-            color: "white",
-            lineHeight: 1.5,
-          }}
-        >
-          new
-        </Box>
       )}
       <Box
         className="thumb-actions"
@@ -198,7 +180,7 @@ interface Props {
   onRemove: (imageId: number) => void;
   onReorder: (imageIds: number[]) => void;
   onAddImages: (paths: string[]) => void;
-  isStaging?: boolean;
+  isAdding?: boolean;
 }
 
 export default function ImageGalleryStrip({
@@ -211,7 +193,7 @@ export default function ImageGalleryStrip({
   onRemove,
   onReorder,
   onAddImages,
-  isStaging,
+  isAdding,
 }: Props) {
   const [browserOpen, setBrowserOpen] = useState(false);
 
@@ -265,7 +247,7 @@ export default function ImageGalleryStrip({
           </SortableContext>
         </DndContext>
 
-        {isStaging ? (
+        {isAdding ? (
           <Box
             sx={{
               width: THUMB_SIZE,
@@ -301,7 +283,7 @@ export default function ImageGalleryStrip({
           </Tooltip>
         )}
 
-        {images.length === 0 && !isStaging && (
+        {images.length === 0 && !isAdding && (
           <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
             No images yet. Click + to add.
           </Typography>

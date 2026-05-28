@@ -212,7 +212,7 @@ async def annotate(
     )
     rotation = compute_rotation(wcs_params)
 
-    dsos = await _query_dsos_in_cone(center_ra, center_dec, diag_radius)
+    dsos = await query_dsos_in_cone(center_ra, center_dec, diag_radius)
 
     annotations = project_dsos(wcs_params, dsos)
 
@@ -259,7 +259,7 @@ def _build_wcs_override(
     return None
 
 
-async def _query_dsos_in_cone(
+async def query_dsos_in_cone(
     center_ra: float,
     center_dec: float,
     radius_deg: float,

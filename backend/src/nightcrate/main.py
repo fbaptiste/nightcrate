@@ -31,6 +31,7 @@ from nightcrate.api import (
     phd2,
     planner,
     plate_solve,
+    project_solve,
     projects,
     rigs,
     settings,
@@ -210,13 +211,6 @@ async def lifespan(app: FastAPI):
                 await sync_sky_tile_orphans(conn)
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("sky-tile cache maintenance failed", exc_info=True)
-
-        try:
-            from nightcrate.api.projects import cleanup_orphaned_staging
-
-            await cleanup_orphaned_staging()
-        except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("project staging cleanup failed", exc_info=True)
 
     yield
 
@@ -418,6 +412,7 @@ app.include_router(planner.router)
 app.include_router(phd2.router)
 app.include_router(plate_solve.router)
 app.include_router(projects.router)
+app.include_router(project_solve.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(wishlist.router)

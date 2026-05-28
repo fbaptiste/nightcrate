@@ -1,12 +1,16 @@
 """Tests for the plate solve service — .ini parsing, result computation,
 ASTAP binary resolution, hint extraction, header passthrough, and coordinate formatting."""
 
+import io
 import math
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 from astropy.io import fits as astro_fits
 
+from nightcrate.services import plate_solve
 from nightcrate.services.coordinate_format import format_dec_dms, format_ra_hms
 from nightcrate.services.plate_solve import (
     _build_astap_args,
@@ -18,6 +22,7 @@ from nightcrate.services.plate_solve import (
     resolve_astap_binary,
     validate_astap_path,
 )
+from nightcrate.services.plate_solve_models import PlateSolveResult
 
 # ── resolve_astap_binary ────────────────────────────────────────────────
 
@@ -491,3 +496,38 @@ class TestGetImageDimensions:
         w, h = get_image_dimensions(str(fits_path))
         assert w == 120
         assert h == 80
+
+
+# ── Archive / BytesIO source handling ───────────────────────────────────
+
+
+class TestArchiveSourceSolve:
+    async def test_bytesio_source_not_closed_during_solve(self, tmp_fits_mono):
+        """Regression: an archive-extracted BytesIO source gets closed by
+        header reading (astropy closes file objects passed to fits.open).
+        _do_solve must read its bytes once and reuse them so preparing the
+        ASTAP temp file doesn't fail with 'I/O operation on closed file'."""
+        raw = tmp_fits_mono.read_bytes()
+
+        def fake_resolve(_path):
+            return io.BytesIO(raw), "fits", 0, ("archive.zip", 1.0, "sub.fits")
+
+        async def fake_run_astap(_args, _output_base, _timeout, _width, _height):
+            return PlateSolveResult(solved=True, ra_deg=210.0, dec_deg=54.0), 0.1
+
+        with (
+            patch.object(plate_solve, "_resolve_path", fake_resolve),
+            patch.object(plate_solve, "_run_astap", fake_run_astap),
+        ):
+            result = await plate_solve._do_solve(
+                Path("/fake/astap"),
+                "archive.zip::sub.fits",
+                hdu=0,
+                mode="auto",
+                ra_hint=None,
+                dec_hint=None,
+                fov_hint=None,
+                timeout=60,
+            )
+
+        assert result.solved is True

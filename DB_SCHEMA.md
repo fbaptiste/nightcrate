@@ -766,8 +766,8 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 | Table | Purpose |
 |-------|---------|
-| `project` (migration 0029) | User-defined imaging project. `name` UNIQUE, `description`, `notes`, `status` CHECK ∈ `{'active','paused','complete','abandoned'}`, `active` soft-delete flag, timestamps with `updated_at` trigger. Index on `active`. |
-| `project_image` (migrations 0029 + 0030) | File reference within a project. `project_id` FK CASCADE, `file_path` (supports `::` virtual paths for archives and pxiprojects), `display_order`, `is_main` with partial unique index enforcing at most one main per project, `staged` (0 = committed, 1 = pending save), `notes`, timestamps with trigger. Index on `project_id`. |
+| `project` (migrations 0029, 0031) | User-defined imaging project. `name` (NOT unique — migration 0031 allows duplicate project names), `description`, `notes`, `status` CHECK ∈ `{'active','paused','complete','abandoned'}`, `active` soft-delete flag, timestamps with `updated_at` trigger. Index on `active`. |
+| `project_image` (migrations 0029, 0033) | File reference within a project. `project_id` FK CASCADE, `file_path` (supports `::` virtual paths for archives and pxiprojects), `display_order`, `is_main` with partial unique index enforcing at most one main per project, `notes`, timestamps with trigger. Index on `project_id`. (v0.37.0 / migration 0033 dropped the `staged` column — the project editor moved to save-as-you-go: edits persist immediately, no Save/Cancel.) |
 
 ### v0.36.0 — Project Thumbnails (1 table)
 
@@ -775,10 +775,16 @@ Omitted from diagrams for readability. Every seedable table carries:
 |-------|---------|
 | `project_thumbnail` (migration 0032) | Per-project, per-size crop definitions for thumbnail generation. `project_id` FK CASCADE, `size` CHECK ('small', 'medium', 'large'), `source_image_id` FK to project_image (ON DELETE SET NULL), crop rectangle as fractions 0-1 (`crop_x`, `crop_y`, `crop_w`, `crop_h`), UNIQUE (project_id, size). Cropped thumbnails stored on disk at `{project_dir}/thumb_crop_{size}.jpg`. |
 
+### v0.37.0 — Project Plate Solve + DSO Links (2 tables)
+
+| Table | Purpose |
+|-------|---------|
+| `project_solve` (migration 0034) | One plate solve per project (`project_id` FK CASCADE `UNIQUE`) of a **standalone** non-gallery image. Stores `image_path`, `image_width`/`image_height`, the WCS solution (`center_ra_deg`/`center_dec_deg` = ASTAP CRVAL, full CD matrix, `crpix1`/`crpix2`) and display fields (`ra_hms`, `dec_dms`, `pixel_scale_arcsec`, `rotation_deg`, `fov_width_arcmin`, `fov_height_arcmin`), `solved_at`. View-only; delete to re-solve. Index on `project_id`. |
+| `project_dso` (migration 0034) | Catalog objects found in a solved frame. `solve_id` FK CASCADE, `dso_id` FK CASCADE, `is_main` (multiple mains allowed), `created_at`, `UNIQUE(solve_id, dso_id)`. **Every** in-FOV object is stored (not just mains) to power a future cross-project DSO search; one is auto-flagged main (nearest frame centre, tie-break largest). Deleting the solve cascades these rows. Indexes on `solve_id` and `dso_id`. |
+
 ### Future Tables
 
 | Table | Purpose |
 |-------|---------|
-| `project_target` | Sky coordinates + optional DSO link per project (v0.37.0) |
 | `session` | Single-night imaging sessions |
 | `sub_frame` | Individual FITS exposures linked to session + rig |

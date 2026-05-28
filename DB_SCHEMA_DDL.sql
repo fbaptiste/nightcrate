@@ -1468,7 +1468,6 @@ CREATE TABLE project_image (
     file_path     TEXT    NOT NULL,
     display_order INTEGER NOT NULL DEFAULT 0,
     is_main       INTEGER NOT NULL DEFAULT 0 CHECK (is_main IN (0, 1)),
-    staged        INTEGER NOT NULL DEFAULT 0 CHECK (staged IN (0, 1)),
     notes         TEXT,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -1512,3 +1511,44 @@ WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE project_thumbnail SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
+
+-- Project plate solve + identified DSO objects (v0.37.0, migration 0034).
+-- One solve per project of a standalone (non-gallery) image; deleting the
+-- solve cascades its identified objects.
+CREATE TABLE project_solve (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id         INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    image_path         TEXT    NOT NULL,
+    image_width        INTEGER NOT NULL,
+    image_height       INTEGER NOT NULL,
+    center_ra_deg      REAL    NOT NULL,   -- ASTAP CRVAL = field centre
+    center_dec_deg     REAL    NOT NULL,
+    ra_hms             TEXT,
+    dec_dms            TEXT,
+    pixel_scale_arcsec REAL,
+    rotation_deg       REAL,
+    fov_width_arcmin   REAL,
+    fov_height_arcmin  REAL,
+    cd1_1              REAL    NOT NULL,
+    cd1_2              REAL    NOT NULL,
+    cd2_1              REAL    NOT NULL,
+    cd2_2              REAL    NOT NULL,
+    crpix1             REAL    NOT NULL,
+    crpix2             REAL    NOT NULL,
+    solved_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (project_id)
+);
+
+CREATE INDEX idx_project_solve_project ON project_solve(project_id);
+
+CREATE TABLE project_dso (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    solve_id   INTEGER NOT NULL REFERENCES project_solve(id) ON DELETE CASCADE,
+    dso_id     INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    is_main    INTEGER NOT NULL DEFAULT 0 CHECK (is_main IN (0, 1)),
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (solve_id, dso_id)
+);
+
+CREATE INDEX idx_project_dso_solve ON project_dso(solve_id);
+CREATE INDEX idx_project_dso_dso ON project_dso(dso_id);
