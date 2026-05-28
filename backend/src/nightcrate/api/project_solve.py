@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
-from nightcrate.api._common import get_or_404, row_to_dict
+from nightcrate.api._common import get_or_404, integrity_guard, row_to_dict
 from nightcrate.api.plate_solve import query_dsos_in_cone
 from nightcrate.api.project_solve_models import (
     IdentifiedDso,
@@ -152,6 +152,8 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
 
+        # Fast-fail before the expensive ASTAP solve; the integrity_guard on the
+        # INSERT below is the authoritative UNIQUE(project_id) check.
         cursor = await conn.execute(
             "SELECT id FROM project_solve WHERE project_id = ?", (project_id,)
         )
@@ -239,34 +241,37 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
             )
             best_id = best.id
 
-        cursor = await conn.execute(
-            """INSERT INTO project_solve
-               (project_id, image_path, image_width, image_height,
-                center_ra_deg, center_dec_deg, ra_hms, dec_dms,
-                pixel_scale_arcsec, rotation_deg, fov_width_arcmin, fov_height_arcmin,
-                cd1_1, cd1_2, cd2_1, cd2_2, crpix1, crpix2)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                project_id,
-                body.image_path,
-                result.image_width,
-                result.image_height,
-                result.ra_deg,
-                result.dec_deg,
-                result.ra_hms,
-                result.dec_dms,
-                result.pixel_scale_arcsec,
-                result.rotation_deg,
-                result.fov_width_arcmin,
-                result.fov_height_arcmin,
-                result.cd1_1,
-                result.cd1_2,
-                result.cd2_1,
-                result.cd2_2,
-                result.crpix1,
-                result.crpix2,
-            ),
-        )
+        with integrity_guard(
+            conflict_detail="A plate solve already exists for this project. Delete it first."
+        ):
+            cursor = await conn.execute(
+                """INSERT INTO project_solve
+                   (project_id, image_path, image_width, image_height,
+                    center_ra_deg, center_dec_deg, ra_hms, dec_dms,
+                    pixel_scale_arcsec, rotation_deg, fov_width_arcmin, fov_height_arcmin,
+                    cd1_1, cd1_2, cd2_1, cd2_2, crpix1, crpix2)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    project_id,
+                    body.image_path,
+                    result.image_width,
+                    result.image_height,
+                    result.ra_deg,
+                    result.dec_deg,
+                    result.ra_hms,
+                    result.dec_dms,
+                    result.pixel_scale_arcsec,
+                    result.rotation_deg,
+                    result.fov_width_arcmin,
+                    result.fov_height_arcmin,
+                    result.cd1_1,
+                    result.cd1_2,
+                    result.cd2_1,
+                    result.cd2_2,
+                    result.crpix1,
+                    result.crpix2,
+                ),
+            )
         solve_id = cursor.lastrowid
         for a in annotated:
             await conn.execute(
