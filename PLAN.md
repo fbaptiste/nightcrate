@@ -53,6 +53,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking)
 - [v0.38.0 — Project Metadata Enrichment](#v0380--project-metadata-enrichment)
 - [v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline](#v0390--sessions-sub-frames-and-ingest-pipeline)
+- [v0.4x.0 — Mosaic Projects (Arc Capstone)](#v04x0--mosaic-projects-arc-capstone)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
@@ -4546,7 +4547,7 @@ Plate solving, DSO linking, rig/location association, thumbnail cropping/caching
 Thumbnails render from user-defined crop rectangles and are cached on disk.
 The Projects page gains a gallery/card view with search and sort.
 
-### Schema (migration 0030)
+### Schema (migration 0032)
 
 - [ ] `project_thumbnail` table — project_id FK CASCADE, size CHECK ('small', 'medium', 'large'), source_image_id FK to project_image (ON DELETE SET NULL), crop_x/crop_y/crop_w/crop_h REAL (fractions 0–1 for resolution independence), UNIQUE (project_id, size)
 - [ ] Defaults when no custom thumbnail row exists: use the main image with center-weighted auto-crop at the target aspect ratio for each size
@@ -4589,26 +4590,34 @@ redundant. `project_target` links directly to `dso` via an optional FK. Custom
 coordinates (comets, novae, objects not in the catalog) use RA/Dec + label without
 a `dso_id`.
 
-### Schema (migration 0031)
+Mosaics are **deferred** to the [Mosaic Projects capstone](#v04x0--mosaic-projects-arc-capstone)
+at the end of the arc — that version adds panel columns to `project_target`. v0.37.0
+is single-link-per-object: one `project_target` per distinct DSO per project.
+
+### Schema (migration 0033)
 
 - [ ] `project_target` table — project_id FK CASCADE, center_ra_deg REAL, center_dec_deg REAL, dso_id FK to `dso` (nullable, ON DELETE SET NULL), label TEXT, source CHECK ('plate_solve', 'user', 'planner'), pixel_scale_arcsec REAL, rotation_deg REAL, fov_width_deg REAL, fov_height_deg REAL, timestamps. CHECK constraint: every row must have either `dso_id IS NOT NULL` or both coordinates present
 - [ ] No separate `project_dso` junction table — the optional `dso_id` FK provides the many-to-many relationship. "DSOs in this project" = `WHERE project_id = ? AND dso_id IS NOT NULL`. "Projects containing this DSO" = `WHERE dso_id = ?`
+- [ ] Dedup: partial unique index `UNIQUE (project_id, dso_id) WHERE dso_id IS NOT NULL` — one link per distinct DSO per project (re-solving the same object updates the framing on the existing row, doesn't duplicate). Coordinate-only targets (`dso_id IS NULL`) are exempt and may repeat.
 
 ### Backend
 
-- [ ] Plate-solve project images: `POST /api/projects/{id}/images/{image_id}/plate-solve` — reuses existing `services/plate_solve.py` (ASTAP subprocess) + `services/image_annotations.py` for DSO matching. Auto-creates `project_target` rows with matching `dso_id` FKs. Sequential solving (existing semaphore(1) constraint)
-- [ ] Manual target linking: `POST /api/projects/{id}/targets` — user picks a DSO from the catalog or enters arbitrary RA/Dec
+- [ ] Plate-solve project images: `POST /api/projects/{id}/images/{image_id}/plate-solve` — reuses existing `services/plate_solve.py` (ASTAP subprocess) + `services/image_annotations.py` (`project_dsos`) for DSO matching. Sequential solving (existing semaphore(1) constraint). **Auto-link is "center + suggestions," not fan-out:** `project_dsos` returns *every* catalog object whose center lands in the FOV (no filtering — dozens in rich fields), so do NOT bulk-create a target per in-FOV DSO. Instead:
+  - Create **one** `project_target` from the solve center (`source='plate_solve'`, storing `center_ra/dec`, `fov_width/height_deg`, `rotation_deg`, `pixel_scale_arcsec`).
+  - Auto-link the **best-match DSO** as that target's `dso_id` — nearest projected center to image center, tie-break by largest `maj_axis_arcmin`. (Respects the dedup index: if the object is already linked, update framing instead of inserting.)
+  - Return the remaining in-FOV DSOs as **suggestions** in the response, NOT persisted. The user promotes any of them to a link with one click (which calls the manual-link endpoint below).
+- [ ] Manual target linking: `POST /api/projects/{id}/targets` — user picks a DSO from the catalog (or promotes a suggestion) or enters arbitrary RA/Dec. Also the endpoint that accepts plate-solve suggestions.
 - [ ] `GET /api/projects/{id}/targets` — list targets for a project
 - [ ] `DELETE /api/projects/{id}/targets/{target_id}` — remove a target
 - [ ] `GET /api/dso/{id}/projects` — reverse lookup: which projects contain this DSO
-- [ ] `GET /api/projects/catalog-completion?catalog=Messier` — completion stats for a named catalog (query `dso_designation WHERE catalog = ?` cross-joined with `project_target`)
-- [ ] Tests: plate-solve → target creation flow, manual linking, reverse lookup, completion query
+- [ ] `GET /api/projects/catalog-completion?catalog=messier` — completion stats for a named catalog. Query param is a `dso_designation.catalog` prefix (lowercase): `messier`, `caldwell`, `ngc`, `ic`, `sharpless2` (Sharpless), `barnard`. Joins `dso_designation WHERE catalog = ?` against linked `project_target` rows
+- [ ] Tests: plate-solve → single-center-target + best-match link + unpersisted suggestions; suggestion promotion; dedup (re-solve updates, doesn't duplicate); manual linking; reverse lookup; completion query
 
 ### Frontend — Overview tab enrichment
 
 - [ ] Identified DSOs shown as chips/tags on the project overview after plate solving or manual linking
 - [ ] Click a DSO chip → navigate to its DSO catalog entry
-- [ ] "Plate solve" button on each project image → triggers solve → auto-links DSOs found in FOV
+- [ ] "Plate solve" button on each project image → triggers solve → adds the solved center target (best-match DSO auto-linked) and shows the remaining in-FOV DSOs as a dismissible suggestion list with one-click "add" per object (no bulk auto-add)
 - [ ] "Add target" button — DSO search autocomplete (existing pattern from plate solve dialog) or manual RA/Dec entry
 
 ### Frontend — Projects page search enrichment
@@ -4619,14 +4628,14 @@ a `dso_id`.
 ### Frontend — Catalog completion view
 
 - [ ] New view mode on the Projects page (toggle: List / Gallery / Completion)
-- [ ] Catalog selector dropdown: Messier, Caldwell, NGC, IC, Sharpless, Barnard (driven by `dso_designation.catalog`)
+- [ ] Catalog selector dropdown: Messier, Caldwell, NGC, IC, Sharpless, Barnard — labels map to lowercase `dso_designation.catalog` prefixes (`messier`, `caldwell`, `ngc`, `ic`, `sharpless2`, `barnard`)
 - [ ] Grid of objects in the selected catalog with visual indication: imaged (in ≥1 project) vs not
 - [ ] Imaged objects show mini thumbnail from the project; click opens project. Un-imaged objects click → DSO catalog entry
 - [ ] Progress summary: "42 / 110 Messier objects imaged"
 
 ### Not in scope
 
-Rig/location association, session dates, integration time tracking. Curated observing lists (Herschel 400, Messier Marathon) that don't map to a `dso_designation.catalog` prefix — these need an `observing_list` schema in a future version.
+Mosaics / multi-panel targets (deferred to the [Mosaic Projects capstone](#v04x0--mosaic-projects-arc-capstone)). Rig/location association, session dates, integration time tracking. Curated observing lists (Herschel 400, Messier Marathon) that don't map to a `dso_designation.catalog` prefix — these need an `observing_list` schema in a future version.
 
 ---
 
@@ -4636,12 +4645,13 @@ Projects gain rig, location, date, and per-filter integration time context — a
 manually entered in this version. Automated derivation from sub-frame data comes
 in v0.39.0+.
 
-### Schema (migration 0032)
+### Schema (migration 0034)
 
 - [ ] `project_rig` junction table — project_id FK CASCADE, rig_id FK, UNIQUE (project_id, rig_id). A project can use multiple rigs (Fred's dual-rig setup)
 - [ ] ALTER ADD `location_id` INTEGER REFERENCES location(id) ON DELETE SET NULL on `project`
 - [ ] ALTER ADD `first_session_date` TEXT, `last_session_date` TEXT on `project`
-- [ ] `project_integration` table — project_id FK CASCADE, line_name TEXT CHECK (same vocabulary as `filter_passband.line_name`), actual_minutes REAL, goal_minutes REAL, notes TEXT, UNIQUE (project_id, line_name)
+- [ ] `project_integration` table — project_id FK CASCADE, line_name TEXT CHECK (same closed vocabulary as `filter_passband.line_name`: `Ha`, `Hb`, `Oiii`, `Sii`, `Nii`, `OI`, `Lum`, `R`, `G`, `B`, `UVIR`, `LP`, `ND`, `other`), `actual_minutes` REAL (manual), `goal_minutes` REAL, notes TEXT, UNIQUE (project_id, line_name)
+- [ ] **Manual-overrides contract (decided):** `actual_minutes` here is the *manual* value and always wins for display + progress. v0.39.0+ derives a measured per-filter total from `sub_frame` data, stored **separately** (a view/column — never overwriting this manual column). Effective actual = `COALESCE(project_integration.actual_minutes, derived)`. The future AI bundle carries both with provenance so it can report measured reality even when a manual override is set. Do NOT collapse the two into one mutable column.
 
 ### Backend
 
@@ -4683,7 +4693,7 @@ target architecture.
 - [ ] Sub-frames tab: DataGrid of individual exposures with FITS metadata, thumbnail preview, accept/reject status
 - [ ] PHD2 tab: guide log data associated with sessions, linked to the existing PHD2 analyzer
 - [ ] Calibration frame matching: darks/flats/bias matched to sessions by camera + gain + temp + exposure + binning (views, not bespoke code)
-- [ ] Automated integration time: derived from actual sub-frame data, supplementing manual entry from v0.38.0
+- [ ] Automated integration time: derived from actual sub-frame data, stored separately from the v0.38.0 manual column. Per the manual-overrides contract, the manual value always wins for display/progress (`COALESCE(manual, derived)`); the derived value is never written over manual. Both surface in the AI bundle with provenance
 
 ### Future features (not yet versioned)
 
@@ -4700,11 +4710,46 @@ target architecture.
 
 ---
 
+## v0.4x.0 — Mosaic Projects (Arc Capstone)
+
+Multi-panel mosaic support — the projects arc's capstone. Deferred to the **end** of the
+arc (exact version number depends on how v0.39.0+ splits) because per-panel integration
+roll-up ("panel 3 needs more Ha") is only meaningful once `sub_frame` data exists. Until
+this version, a project is single-target-per-link (one `project_target` per distinct DSO).
+
+This version aligns `project_target` toward the mosaic-aware shape in the
+[Imaging Core Schema spec §3](#imaging-core-schema--rigs-projects-sessions-sub-frames)
+(`panel_name`, `panel_index`), which v0.37.0 intentionally skipped.
+
+### Schema (migration TBD)
+
+- [ ] ALTER `project_target` ADD `panel_name` TEXT, `panel_index` INTEGER NOT NULL DEFAULT 0 (0 = non-mosaic / center; 1..N = mosaic panels)
+- [ ] Replace the v0.37.0 dedup index: DROP `UNIQUE (project_id, dso_id) WHERE dso_id IS NOT NULL`; ADD `UNIQUE (project_id, panel_index)`. Non-mosaic projects keep one panel-0 row (re-solve still updates, doesn't duplicate); mosaics carry panels 1..N of the same `dso_id` with distinct center coords/rotation
+- [ ] Per-panel integration: decide whether goals/actuals move to `project_target` level (matching the spec's `project_filter_goal`) with a project-level roll-up = sum across panels, or stay project-level. Resolve when sub-frame integration lands — flagged, not pre-decided
+
+### Backend
+
+- [ ] Panel CRUD on `project_target` (add/rename/remove panels, set per-panel center + rotation)
+- [ ] Multi-panel plate-solve: solve each panel image, assign to its panel by best-match framing
+- [ ] Per-panel + rolled-up completion and integration endpoints
+
+### Frontend
+
+- [ ] "Convert to mosaic" / "add panel" affordance on the project detail page
+- [ ] Mosaic layout view: panel grid showing each panel's framing + per-panel integration progress (colorblind-safe palette)
+- [ ] Multi-panel FOV preview reusing the planner FOV simulator (sky-tile render with panel rectangles overlaid)
+
+### Not in scope
+
+Automated mosaic-panel detection from FITS headers / N.I.N.A. mosaic plans (a later ingest enhancement).
+
+---
+
 ## FITS Equipment Resolver Spec
 
 This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.
 
-Target: Python 3.12+, SQLite. Assumes the schema from `nightcrate-schema-revision-spec.md` is in place (specifically: `camera_alias`, `telescope_alias`, `filter_alias` tables exist).
+Assumes the FITS alias tables (`camera_alias`, `telescope_alias`, `filter_alias`) already exist (see DB_SCHEMA.md §12).
 
 **Out of scope for this change:** the FITS file reader itself (astropy handles that), the full sub frame ingest pipeline, UI for reviewing unresolved aliases, any automatic fuzzy matching beyond the specific rules in §5.
 
@@ -4759,42 +4804,11 @@ Target: Python 3.12+, SQLite. Assumes the schema from `nightcrate-schema-revisio
 
 ### 3. High-level design
 
-The resolver is a single module, `nightcrate.equipment_resolver`, with a class:
+The resolver is a single **stateless** module (safe to instantiate per ingest run) exposing `resolve_camera`, `resolve_telescope`, and `resolve_filter`. Each takes a header value plus a `source` tag and follows the same shape: normalize the value (§4), look it up in the corresponding alias table, and return a structured result. A match to an active row is the happy path; a match to a retired row still returns the row but flags it; a miss records the observation (§5) and returns unresolved. `last_seen_at` is bumped on every match.
 
-```python
-class EquipmentResolver:
-    def __init__(self, conn: sqlite3.Connection): ...
+#### Result shape
 
-    def resolve_camera(self, header_value: str, source: AliasSource) -> ResolveResult[Camera]: ...
-    def resolve_telescope(self, header_value: str, source: AliasSource) -> ResolveResult[Telescope]: ...
-    def resolve_filter(self, header_value: str, source: AliasSource) -> ResolveResult[Filter]: ...
-```
-
-Each resolve method:
-
-1. Normalizes the header value (§4).
-2. Looks it up in the corresponding alias table.
-3. If found and the equipment row is active, returns a `ResolveResult` containing the resolved row.
-4. If found but the equipment row is `active=0`, still returns it but flags it with a warning.
-5. If not found, inserts a new unconfirmed alias row with the given `source`, returns an `Unresolved` result, and the caller decides what to do.
-6. Updates `last_seen_at` on the alias row whether or not it's newly inserted.
-
-The resolver is **stateless** beyond the DB connection. Safe to instantiate per-ingest-run.
-
-#### ResolveResult shape
-
-```python
-@dataclass
-class ResolveResult(Generic[T]):
-    status: Literal['resolved', 'resolved_retired', 'unresolved', 'ambiguous']
-    equipment: T | None
-    alias_row_id: int | None
-    normalized_alias: str
-    was_newly_observed: bool
-    message: str | None = None
-```
-
-`status` values:
+A resolve call returns the resolved equipment row (or none), the normalized alias, whether the alias was newly observed, an optional message, and a **status**:
 
 - **`resolved`** — matched an alias pointing to an active equipment row. Happy path.
 - **`resolved_retired`** — matched an alias pointing to an `active=0` equipment row. Still returns the row (the header is probably from an old session before retirement), but the caller should display a warning in the UI.
@@ -4822,150 +4836,26 @@ Normalization must be deterministic and reversible enough that the same header v
 
 The rule of thumb: **normalization handles pure string-formatting differences. Everything else is the user's call.**
 
-#### Implementation
-
-```python
-import re
-import unicodedata
-
-_WHITESPACE_RUN = re.compile(r'\s+')
-_INVISIBLE = re.compile(r'[\u0000-\u001f\u007f-\u009f\u200b-\u200f\ufeff]')
-
-def normalize_alias(value: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"alias must be str, got {type(value).__name__}")
-    v = unicodedata.normalize('NFKC', value)
-    v = _INVISIBLE.sub('', v)
-    v = v.strip()
-    v = _WHITESPACE_RUN.sub(' ', v)
-    v = v.lower()
-    return v
-```
-
-The resolver stores normalized aliases in the alias tables — never the raw header value. If you want to preserve the raw form for display (e.g., show the user "we saw `ZWO ASI2600MM Pro` in your header"), add an `original_observation TEXT` column to the alias tables in a follow-up schema change. Not doing that in this change; normalization is lossy and we accept that.
+The resolver stores the normalized alias, never the raw header value — normalization is lossy and we accept that. The raw string is preserved for display only in the unresolved-observations table (§5).
 
 ---
 
 ### 5. Resolution algorithm
 
-For each equipment type, the algorithm is the same shape. Here it is for cameras; telescopes and filters are structurally identical, swapping table and FK names.
+All three resolve methods share one shape (cameras shown; telescopes and filters are identical bar table/FK names):
 
-```python
-def resolve_camera(
-    self,
-    header_value: str,
-    source: AliasSource,
-) -> ResolveResult[Camera]:
-    if not header_value or not header_value.strip():
-        return ResolveResult(
-            status='unresolved',
-            equipment=None,
-            alias_row_id=None,
-            normalized_alias='',
-            was_newly_observed=False,
-            message='empty header value',
-        )
-
-    normalized = normalize_alias(header_value)
-
-    # Look up existing alias
-    row = self.conn.execute("""
-        SELECT ca.id AS alias_id, ca.confirmed, c.id AS camera_id, c.active
-        FROM camera_alias ca
-        JOIN camera c ON c.id = ca.camera_id
-        WHERE ca.alias = ?
-    """, (normalized,)).fetchone()
-
-    if row is not None:
-        # Update last_seen_at
-        self.conn.execute(
-            "UPDATE camera_alias SET last_seen_at = datetime('now') WHERE id = ?",
-            (row['alias_id'],),
-        )
-        camera = self._load_camera(row['camera_id'])
-        if row['active'] == 0:
-            return ResolveResult(
-                status='resolved_retired',
-                equipment=camera,
-                alias_row_id=row['alias_id'],
-                normalized_alias=normalized,
-                was_newly_observed=False,
-                message='camera is retired (active=0)',
-            )
-        return ResolveResult(
-            status='resolved',
-            equipment=camera,
-            alias_row_id=row['alias_id'],
-            normalized_alias=normalized,
-            was_newly_observed=False,
-        )
-
-    # Alias not in table — record the observation as unconfirmed.
-    # We insert with camera_id = NULL? NO — the schema requires camera_id NOT NULL.
-    # So we can't auto-insert an unresolved alias. See below.
-    return ResolveResult(
-        status='unresolved',
-        equipment=None,
-        alias_row_id=None,
-        normalized_alias=normalized,
-        was_newly_observed=False,
-    )
-```
+1. Empty/blank header value → `unresolved` immediately.
+2. Normalize (§4), then look up the alias joined to its equipment row.
+3. Match + equipment active → `resolved`.
+4. Match + equipment `active=0` → `resolved_retired` (still return the row — the header is probably from a session before the gear was retired — but the caller should warn).
+5. No match → record the observation (below) and return `unresolved`.
+6. Bump `last_seen_at` on any matched alias row.
 
 #### The "unresolved observation" problem
 
-The schema from the revision spec has `camera_alias.camera_id INTEGER NOT NULL`. That means you **cannot** insert an alias row without already knowing which camera it maps to. This is intentional — it prevents orphaned alias rows.
+The alias tables have a NOT-NULL equipment FK — an alias must point at a real equipment row (this prevents orphaned aliases). So the resolver **can't** record a brand-new, unmapped header value in the alias table itself. A separate `unresolved_equipment_observation` table fills the gap: on a miss the resolver upserts a row there, keyed by `(equipment_kind, normalized_alias)` and incrementing a `seen_count` on repeat sightings, storing the raw header string and a `source` tag (`nina | asiair | user | manual`). `equipment_kind` is one of `camera | telescope | filter`.
 
-But it creates a gap: when the resolver sees a brand-new header value, it has nowhere to record the observation. The caller has to handle this via a separate "unresolved observations" table:
-
-```sql
--- Add in a follow-up migration (NOT part of the schema revision spec — new here):
-CREATE TABLE unresolved_equipment_observation (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    equipment_kind TEXT NOT NULL CHECK (equipment_kind IN ('camera', 'telescope', 'filter')),
-    normalized_alias TEXT NOT NULL,
-    original_observation TEXT NOT NULL,
-    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    seen_count INTEGER NOT NULL DEFAULT 1,
-    source TEXT NOT NULL CHECK (source IN ('nina', 'asiair', 'user', 'manual')),
-    resolved_to_equipment_id INTEGER,
-    resolved_at TEXT,
-    UNIQUE (equipment_kind, normalized_alias)
-);
-
-CREATE INDEX idx_unresolved_equipment_observation_kind
-    ON unresolved_equipment_observation(equipment_kind, resolved_at);
-```
-
-When the resolver returns `status='unresolved'`, it also inserts (or updates via `ON CONFLICT`) a row in `unresolved_equipment_observation`. The UI will later query this table to present a "needs review" screen where the user picks the correct equipment row. When the user confirms, the app:
-
-1. Inserts a row into the appropriate alias table with `confirmed=1` and `source='user'`.
-2. Sets `resolved_to_equipment_id` and `resolved_at` on the unresolved observation row (keeping it for history, not deleting it).
-
-**This schema addition is part of this spec's deliverables** (it's a small migration). The resolver code depends on the table existing.
-
-#### Updated resolve_camera ending
-
-```python
-    # Alias not in table — record as unresolved observation
-    self.conn.execute("""
-        INSERT INTO unresolved_equipment_observation
-            (equipment_kind, normalized_alias, original_observation, source)
-        VALUES ('camera', ?, ?, ?)
-        ON CONFLICT (equipment_kind, normalized_alias) DO UPDATE SET
-            last_seen_at = datetime('now'),
-            seen_count = seen_count + 1
-    """, (normalized, header_value, source))
-
-    return ResolveResult(
-        status='unresolved',
-        equipment=None,
-        alias_row_id=None,
-        normalized_alias=normalized,
-        was_newly_observed=True,
-    )
-```
+The review UI (later) reads this table as a "map these to equipment" queue. When the user maps one, the app inserts a **confirmed** alias (`source='user'`, `confirmed=1`) and marks the observation resolved (recording the equipment id + timestamp) — kept for history, not deleted. Adding this small table is part of this spec's deliverables.
 
 ---
 
@@ -4980,141 +4870,31 @@ This means `resolve_filter` has to do two things:
 
 #### Line name canonicalization table
 
-This is a hard-coded table in the resolver module, not in the database. Closed vocabulary, grows only via code change:
+A closed, code-level mapping (not in the DB; grows only by code change) folds common header spellings onto the canonical `line_name` vocabulary. Matching is case/space/punctuation-insensitive (after §4 normalization). A value not in the map is "not a line name" → fall back to the regular alias lookup, so a physical model name like `"Optolong L-Pro"` still resolves normally.
 
-```python
-LINE_NAME_CANONICAL: dict[str, str] = {
-    # Ha and variants
-    'ha': 'Ha',
-    'h-a': 'Ha',
-    'h alpha': 'Ha',
-    'h-alpha': 'Ha',
-    'halpha': 'Ha',
-    'hydrogen alpha': 'Ha',
-    'hydrogen-alpha': 'Ha',
-    # Hb
-    'hb': 'Hb',
-    'h-b': 'Hb',
-    'h beta': 'Hb',
-    'h-beta': 'Hb',
-    'hbeta': 'Hb',
-    'hydrogen beta': 'Hb',
-    # Oiii
-    'oiii': 'Oiii',
-    'o3': 'Oiii',
-    'o-iii': 'Oiii',
-    'o iii': 'Oiii',
-    'oxygen iii': 'Oiii',
-    'oxygen-iii': 'Oiii',
-    'oxygeniii': 'Oiii',
-    # Sii
-    'sii': 'Sii',
-    's2': 'Sii',
-    's-ii': 'Sii',
-    's ii': 'Sii',
-    'sulfur ii': 'Sii',
-    'sulphur ii': 'Sii',
-    'sulfur-ii': 'Sii',
-    # Broadband
-    'l': 'Lum',
-    'lum': 'Lum',
-    'luminance': 'Lum',
-    'clear': 'Lum',
-    'r': 'R',
-    'red': 'R',
-    'g': 'G',
-    'green': 'G',
-    'b': 'B',
-    'blue': 'B',
-    # Utility
-    'uvir': 'UVIR',
-    'uv/ir': 'UVIR',
-    'uv-ir': 'UVIR',
-    'uv ir cut': 'UVIR',
-}
+| Canonical | Accepted header spellings |
+|-----------|---------------------------|
+| `Ha`   | ha, h-a, h alpha, h-alpha, halpha, hydrogen alpha, hydrogen-alpha |
+| `Hb`   | hb, h-b, h beta, h-beta, hbeta, hydrogen beta |
+| `Oiii` | oiii, o3, o-iii, o iii, oxygen iii, oxygen-iii, oxygeniii |
+| `Sii`  | sii, s2, s-ii, s ii, sulfur ii, sulphur ii, sulfur-ii |
+| `Lum`  | l, lum, luminance, clear |
+| `R` / `G` / `B` | r/red, g/green, b/blue |
+| `UVIR` | uvir, uv/ir, uv-ir, uv ir cut |
 
-def canonicalize_line_name(value: str) -> str | None:
-    normalized = normalize_alias(value)
-    return LINE_NAME_CANONICAL.get(normalized)
-```
+(`Nii`, `OI`, `LP`, `ND` are valid `line_name` values but have no common header spellings yet — extend the map when real headers surface them.)
 
-If `canonicalize_line_name` returns `None`, the header value is not a recognized line name — it might be a physical filter model name instead (`"Optolong L-Pro"`), in which case the regular alias lookup applies.
+#### Filter resolution order
 
-#### Filter resolution, full algorithm
+`resolve_filter` tries, in order:
 
-```python
-def resolve_filter(
-    self,
-    header_value: str,
-    source: AliasSource,
-    rig_context: RigContext | None = None,
-) -> ResolveResult[Filter]:
-    normalized = normalize_alias(header_value)
+1. **Exact alias lookup** — handles model-name headers (`"Optolong L-Pro"`).
+2. **Line-name canonicalization scoped to the rig's filter wheel** — `"Ha"` is ambiguous globally (Fred's 7nm Optolong vs 3nm Antlia), so candidates are restricted to the filters loaded in the capturing rig's wheel (join `filter_passband.line_name` → `filter` → `filter_wheel_filter` for that wheel). Exactly one candidate → `resolved`; more than one → `ambiguous`; none → fall through.
+3. **Unresolved** — record the observation as in §5.
 
-    # 1. Try exact alias lookup first (handles "Optolong L-Pro" style headers)
-    row = self.conn.execute("""
-        SELECT fa.id AS alias_id, fa.confirmed, f.id AS filter_id, f.active
-        FROM filter_alias fa
-        JOIN filter f ON f.id = fa.filter_id
-        WHERE fa.alias = ?
-    """, (normalized,)).fetchone()
-    if row:
-        # ... same handling as resolve_camera ...
-        return ResolveResult(...)
+#### `RigContext` and the forward-compatible stub
 
-    # 2. Try line name canonicalization (handles "Ha", "H-alpha" style headers)
-    canonical_line = canonicalize_line_name(header_value)
-    if canonical_line is not None and rig_context is not None:
-        # Scope filter lookup to the rig's filter wheel
-        candidate_filters = self.conn.execute("""
-            SELECT DISTINCT f.id, f.active
-            FROM filter f
-            JOIN filter_passband fp ON fp.filter_id = f.id
-            JOIN filter_wheel_filter fwf ON fwf.filter_id = f.id
-            WHERE fp.line_name = ?
-              AND fwf.filter_wheel_id = ?
-        """, (canonical_line, rig_context.filter_wheel_id)).fetchall()
-
-        if len(candidate_filters) == 1:
-            filter_row = self._load_filter(candidate_filters[0]['id'])
-            return ResolveResult(
-                status='resolved',
-                equipment=filter_row,
-                alias_row_id=None,
-                normalized_alias=normalized,
-                was_newly_observed=False,
-                message=f'resolved via line name canonicalization: {canonical_line}',
-            )
-        elif len(candidate_filters) > 1:
-            return ResolveResult(
-                status='ambiguous',
-                equipment=None,
-                alias_row_id=None,
-                normalized_alias=normalized,
-                was_newly_observed=False,
-                message=f'multiple filters match line {canonical_line} in this rig',
-            )
-        # len == 0 falls through to unresolved
-
-    # 3. Unresolved — record observation
-    self.conn.execute("""
-        INSERT INTO unresolved_equipment_observation
-            (equipment_kind, normalized_alias, original_observation, source)
-        VALUES ('filter', ?, ?, ?)
-        ON CONFLICT (equipment_kind, normalized_alias) DO UPDATE SET
-            last_seen_at = datetime('now'),
-            seen_count = seen_count + 1
-    """, (normalized, header_value, source))
-    return ResolveResult(status='unresolved', ...)
-```
-
-#### `RigContext` and `filter_wheel_filter`
-
-`RigContext` is a simple dataclass carrying the rig identity resolved earlier in the same ingest pipeline (typically via camera + telescope resolution). It has `rig_id`, `filter_wheel_id`, and optionally `session_id`.
-
-`filter_wheel_filter` is a junction table that **does not yet exist** in the schema revision spec. It belongs to the rig/session layer that will be built later. For this spec, **mark the rig_context path as a forward-compatible stub:** the resolver accepts the `rig_context` parameter and its signature is ready, but if the schema doesn't have `filter_wheel_filter` yet, the code catches the missing-table error at query time and falls through to unresolved, logging a warning. Document this clearly.
-
-Once the rig/session schema lands, the line-name-to-filter resolution starts working automatically.
+Rig scoping needs a `RigContext` (rig + filter-wheel identity, resolved earlier in the same ingest run) and the `filter_wheel_filter` junction (rig wheel → filter), which lives in the rig/session layer built later. The `rig_context` parameter and signature are in place now; if that table doesn't exist yet, the resolver catches the missing-table error, logs a warning, and falls through to unresolved. Line-name-to-filter resolution starts working automatically once that schema lands.
 
 ---
 
@@ -5135,169 +4915,29 @@ The alias tables will need a schema change later to support this (likely: replac
 
 ---
 
-### 8. Public API
+### 8. Public API and transaction ownership
 
-```python
-# nightcrate/equipment_resolver/__init__.py
+The module exposes `EquipmentResolver(conn)` with `resolve_camera` / `resolve_telescope` / `resolve_filter`, plus the `normalize_alias` and `canonicalize_line_name` helpers. `source` is one of `nina | asiair | user | manual`.
 
-from .resolver import EquipmentResolver, ResolveResult, RigContext
-from .normalize import normalize_alias
-from .line_names import canonicalize_line_name, LINE_NAME_CANONICAL
-
-__all__ = [
-    'EquipmentResolver',
-    'ResolveResult',
-    'RigContext',
-    'normalize_alias',
-    'canonicalize_line_name',
-    'LINE_NAME_CANONICAL',
-]
-
-AliasSource = Literal['nina', 'asiair', 'user', 'manual']
-```
-
-#### Usage pattern
-
-```python
-import sqlite3
-from nightcrate.equipment_resolver import EquipmentResolver
-
-conn = sqlite3.connect('nightcrate.sqlite')
-conn.row_factory = sqlite3.Row
-
-resolver = EquipmentResolver(conn)
-
-camera_result = resolver.resolve_camera('ZWO ASI2600MM Pro', source='nina')
-if camera_result.status == 'resolved':
-    print(f'Resolved to camera #{camera_result.equipment.id}: {camera_result.equipment.model_name}')
-elif camera_result.status == 'unresolved':
-    print(f'Unknown camera: {camera_result.normalized_alias} — flagged for review')
-
-conn.commit()  # resolver writes to the DB (unresolved observations, last_seen_at updates)
-```
-
-The resolver writes to the DB during normal operation (updating `last_seen_at`, inserting unresolved observations). **The caller is responsible for committing** — the resolver never commits or rolls back on its own. This lets the caller wrap the entire ingest operation in a single transaction.
+**The caller owns the transaction.** The resolver writes during normal operation (bumping `last_seen_at`, upserting unresolved observations) but never commits or rolls back itself — so the caller can wrap a whole ingest run in one transaction and commit at the end.
 
 ---
 
-### 9. Unresolved alias handling
+### 9. Unresolved handling and promotion
 
-#### From the resolver's side
+Unresolved is a **normal outcome, not an error** — the resolver never raises for it. The ingest caller should keep processing the sub frame with whatever equipment *did* resolve, leave the unresolved FK NULL (or stash the observation id), and report an unresolved count at the end of the run. The review UI (later) turns `unresolved_equipment_observation` into a "map these to equipment" screen.
 
-When a header value doesn't resolve:
-
-1. Insert or update `unresolved_equipment_observation` via `ON CONFLICT`.
-2. Return `ResolveResult(status='unresolved', ...)`.
-3. Do **not** raise an exception. Unresolved is a normal outcome, not an error.
-
-#### From the caller's side (documentation only — not implemented in this change)
-
-The ingest pipeline should:
-
-1. Continue processing the sub frame, recording whatever equipment *did* resolve.
-2. Leave the unresolved equipment FK as NULL on the sub frame row, or store the unresolved observation ID for later resolution.
-3. At the end of the ingest run, produce a count of how many unresolved observations were recorded.
-4. The UI (later) surfaces the `unresolved_equipment_observation` table as a "map these to equipment" screen.
-
-#### Promotion to confirmed aliases
-
-When the user resolves an unresolved observation via UI (future):
-
-```python
-def confirm_unresolved_observation(
-    conn: sqlite3.Connection,
-    observation_id: int,
-    equipment_id: int,
-) -> None:
-    """
-    Map an unresolved observation to an equipment row.
-    Creates a confirmed alias and marks the observation resolved.
-    """
-    obs = conn.execute(
-        "SELECT equipment_kind, normalized_alias FROM unresolved_equipment_observation WHERE id = ?",
-        (observation_id,),
-    ).fetchone()
-
-    table = f"{obs['equipment_kind']}_alias"
-    fk = f"{obs['equipment_kind']}_id"
-
-    conn.execute(
-        f"INSERT INTO {table} ({fk}, alias, source, confirmed) VALUES (?, ?, 'user', 1)",
-        (equipment_id, obs['normalized_alias']),
-    )
-    conn.execute(
-        "UPDATE unresolved_equipment_observation "
-        "SET resolved_to_equipment_id = ?, resolved_at = datetime('now') "
-        "WHERE id = ?",
-        (equipment_id, observation_id),
-    )
-```
-
-Include this as a utility function in the resolver module for completeness, but **do not wire it to any UI** in this change.
+**Promotion** (when the user maps an observation): insert a confirmed alias (`source='user'`, `confirmed=1`) pointing at the chosen equipment row, and mark the observation resolved (retained for history). The resolver never auto-confirms — promotion is always a human action. A `confirm_unresolved_observation` utility ships with the module but is not wired to any UI in this change.
 
 ---
 
 ### 10. Logging and diagnostics
 
-The resolver uses Python's `logging` module with the logger name `nightcrate.equipment_resolver`. Log levels:
-
-- **DEBUG** — every resolve call with input, normalized form, and result.
-- **INFO** — first-time observations of a new unresolved alias.
-- **WARNING** — resolved to a retired (`active=0`) equipment row; schema version mismatches; the `filter_wheel_filter` table being missing (forward-compat fallback).
-- **ERROR** — unexpected DB errors, integrity violations, type errors on input.
-
-Provide a `ResolverStats` accumulator that the caller can optionally pass in:
-
-```python
-@dataclass
-class ResolverStats:
-    resolved: int = 0
-    resolved_retired: int = 0
-    unresolved: int = 0
-    ambiguous: int = 0
-    newly_observed: int = 0
-```
-
-If passed to the `EquipmentResolver` constructor, it's updated in place on every resolve call. Useful for ingest summary reporting.
-
----
+Logger `nightcrate.equipment_resolver`: DEBUG per resolve call, INFO on first sighting of a new alias, WARNING on resolving-to-retired-equipment and on the missing-`filter_wheel_filter` fallback, ERROR on DB/integrity/type failures. An optional `ResolverStats` accumulator (counts per outcome + newly-observed) can be passed in for ingest-summary reporting.
 
 ### 11. Deliverables
 
-1. **Schema migration** adding `unresolved_equipment_observation` table (see §5). Include `CREATE TABLE` and the index. This is a small follow-up migration, not a modification of the main schema revision spec.
-
-2. **`nightcrate/equipment_resolver/__init__.py`** — public API exports.
-
-3. **`nightcrate/equipment_resolver/normalize.py`** — `normalize_alias` function with the rules from §4.
-
-4. **`nightcrate/equipment_resolver/line_names.py`** — `LINE_NAME_CANONICAL` dict and `canonicalize_line_name` function.
-
-5. **`nightcrate/equipment_resolver/resolver.py`** — `EquipmentResolver` class with `resolve_camera`, `resolve_telescope`, `resolve_filter` methods. `ResolveResult`, `RigContext`, `ResolverStats` dataclasses.
-
-6. **`nightcrate/equipment_resolver/promotion.py`** — `confirm_unresolved_observation` utility.
-
-7. **Tests** — pytest-based, using in-memory SQLite with the full schema:
-   - `test_normalize.py` — normalization rules, NFKC, whitespace, invisibles, lowercase, non-removal of punctuation.
-   - `test_line_names.py` — every entry in `LINE_NAME_CANONICAL`, plus `None` returns for unknown values.
-   - `test_resolve_camera_happy_path.py` — seed a camera + alias, resolve header → expect `resolved` with correct camera.
-   - `test_resolve_camera_retired.py` — camera with `active=0`, resolve → expect `resolved_retired`.
-   - `test_resolve_camera_unresolved.py` — unknown header → expect `unresolved`, row created in `unresolved_equipment_observation`, `seen_count=1`. Second call increments `seen_count` and updates `last_seen_at`.
-   - `test_resolve_telescope.py` — equivalent coverage.
-   - `test_resolve_filter_via_alias.py` — filter resolved via exact alias match.
-   - `test_resolve_filter_via_line_name.py` — filter resolved via line name canonicalization with a `RigContext` and a single matching filter in the rig.
-   - `test_resolve_filter_ambiguous.py` — two filters in the same rig's wheel both match the line → `ambiguous`.
-   - `test_resolve_filter_no_rig_context.py` — line name header without rig context → unresolved.
-   - `test_resolve_filter_missing_fwf_table.py` — `filter_wheel_filter` table doesn't exist → warning logged, falls through to unresolved.
-   - `test_promotion.py` — `confirm_unresolved_observation` creates the alias row and marks the observation resolved.
-   - `test_resolver_stats.py` — ResolverStats accumulator correctly tracks counts.
-   - `test_no_auto_commit.py` — verify the resolver never calls `conn.commit()` on its own.
-
-8. **README section** covering:
-   - The public API with a minimal example.
-   - The normalization rules (so users understand why `"Ha"` and `"H-alpha"` work but `"7nm Ha"` and `"7 nm Ha"` don't).
-   - The two-camera-same-model limitation (§7).
-   - The forward-compatible stub for rig-scoped filter resolution (§6) and what will change once the rig/session schema lands.
-   - The recommendation to wrap ingest operations in a single transaction and commit at the end.
+The resolver module (normalization, line-name canonicalization, the resolver class, the promotion utility) plus a small migration adding the `unresolved_equipment_observation` table. Tests cover: normalization rules, every line-name mapping, the four resolve outcomes (resolved / retired / unresolved / ambiguous), the missing-`filter_wheel_filter` fallback, promotion, and the no-auto-commit guarantee. A README section documents the API, the normalization rules, the two-camera limitation (§7), and the rig-scoped-filter forward stub (§6).
 
 ---
 
@@ -5315,9 +4955,9 @@ If passed to the `EquipmentResolver` constructor, it's updated in place on every
 ---
 ## Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames
 
-This spec defines the imaging-core schema layer: the tables that model *what you imaged*, *when you imaged it*, *what gear captured it*, and *what individual exposures resulted*. It sits on top of the equipment schema from `nightcrate-schema-revision-spec.md` and assumes the FITS equipment resolver from `nightcrate-fits-resolver-spec.md` exists (or is being built in parallel).
+This spec defines the imaging-core schema layer: the tables that model *what you imaged*, *when you imaged it*, *what gear captured it*, and *what individual exposures resulted*. It sits on top of the existing equipment schema (see DB_SCHEMA.md) and assumes the FITS Equipment Resolver (spec above) exists or is built in parallel.
 
-Target: SQLite. Stack: Python/FastAPI backend. Raw SQL migration, no ORM assumptions.
+This is target architecture, not a migration to apply as-is — schema truth lives in DB_SCHEMA.md and the migrations. The DDL below has been reduced to intent + decisions; columns, indices, and exact constraints are settled at implementation time.
 
 **Out of scope for this change:** the FITS file parser itself (astropy handles that), the ingest pipeline that drives this schema (separate spec), any UI, the AI analyzer feature (post-MVP — but the schema must enable it).
 
@@ -5425,95 +5065,27 @@ Not in this spec:
 
 ### 3. Targets and projects
 
-#### target
-
-Cache of astronomical objects. Populated by plate solves, name lookups, and user entry.
-
-```sql
-CREATE TABLE target (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    primary_name TEXT NOT NULL UNIQUE,       -- "M101", "NGC 7000", "Sh2-155"
-    object_type TEXT,                         -- "galaxy", "emission_nebula", "planetary_nebula", "cluster", "other"
-    constellation TEXT,
-    ra_deg REAL,                              -- J2000
-    dec_deg REAL,                             -- J2000
-    catalog_designations_json TEXT,           -- JSON array: ["NGC 5457", "UGC 8981", "Arp 26"]
-    source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'simbad', 'ned', 'plate_solve', 'nina', 'asiair')),
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1))
-);
-
-CREATE INDEX idx_target_primary_name ON target(primary_name);
-```
+> **Note:** Astronomical objects are the existing `dso` catalog (14k rows, normalized
+> designations + external refs + distances) — there is no separate `target` table.
+> `project_target` links to objects via an optional `dso_id` FK (uncatalogued objects
+> like comets/novae use raw RA/Dec + label). See the v0.37.0 design note for the rationale.
 
 #### project
 
-```sql
-CREATE TABLE project (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'complete', 'abandoned')),
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT,
-    goal_total_integration_minutes REAL,
-    cover_sub_frame_id INTEGER,               -- FK added later via ALTER after sub_frame exists
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
+`status` is a closed vocabulary: `active | paused | complete | abandoned`. The spec shape also envisaged an optional `goal_total_integration_minutes` and a `cover_sub_frame_id` (wired once sub frames exist). The **shipped** `project` table (v0.35.0, migration 0029) is the source of truth — see DB_SCHEMA.md; treat this as aspirational intent.
 
 #### project_target
 
-Join between project and target, with panel-specific data for mosaics.
+Join between project and object, with panel-specific data for mosaics. Links to the `dso`
+catalog via an optional `dso_id` FK; uncatalogued objects use raw center coordinates + label.
 
-```sql
-CREATE TABLE project_target (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    target_id INTEGER NOT NULL REFERENCES target(id),
-    panel_name TEXT,                          -- NULL for non-mosaic; "Panel 1" for mosaics
-    panel_index INTEGER NOT NULL DEFAULT 0,   -- 0 for non-mosaic; 1..N for mosaic panels
-    center_ra_deg REAL,                       -- may differ from target.ra_deg for mosaic panels
-    center_dec_deg REAL,
-    rotation_deg REAL,
-    goal_integration_minutes REAL,            -- per-panel goal; rolls up to project.goal_total
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (project_id, panel_index)
-);
-
-CREATE INDEX idx_project_target_project ON project_target(project_id);
-CREATE INDEX idx_project_target_target ON project_target(target_id);
-```
+Key points: optional `dso_id` (NULL for uncatalogued); `panel_index` (0 = non-mosaic, 1..N = mosaic panels) with `UNIQUE (project_id, panel_index)`; per-panel `center_ra/dec`, `rotation_deg`, and a `goal_integration_minutes` that rolls up to the project total. (The mosaic panel columns land in the Mosaic Projects capstone — see the version plan.)
 
 #### project_filter_goal
 
-Per-filter integration goals for a project target. "4 hours of Ha on the Elephant Trunk."
+Per-filter integration goals for a project target ("4 hours of Ha on the Elephant Trunk"). `line_name` uses the same closed vocabulary as `filter_passband.line_name` (`Ha, Hb, Oiii, Sii, Nii, OI, Lum, R, G, B, UVIR, LP, ND, other`); `goal_minutes > 0`; `UNIQUE (project_target_id, line_name)`.
 
-```sql
-CREATE TABLE project_filter_goal (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_target_id INTEGER NOT NULL REFERENCES project_target(id) ON DELETE CASCADE,
-    line_name TEXT NOT NULL,                  -- same controlled vocabulary as filter_passband.line_name
-    goal_minutes REAL NOT NULL CHECK (goal_minutes > 0),
-    notes TEXT,
-    CHECK (line_name IN (
-        'Ha', 'Hb', 'Oiii', 'Sii', 'Nii', 'OI',
-        'Lum', 'R', 'G', 'B',
-        'UVIR', 'LP', 'ND', 'other'
-    )),
-    UNIQUE (project_target_id, line_name)
-);
-
-CREATE INDEX idx_project_filter_goal_target ON project_filter_goal(project_target_id);
-```
-
-Note: goals are per `line_name`, not per physical filter. A goal of "240 minutes of Ha" is satisfied by any sub frame whose filter has an `Ha` passband, regardless of which physical Ha filter.
+Goals are per `line_name`, not per physical filter — a "240 minutes of Ha" goal is satisfied by any sub frame whose filter has an `Ha` passband, regardless of which physical Ha filter.
 
 ---
 
@@ -5523,54 +5095,13 @@ Note: goals are per `line_name`, not per physical filter. A goal of "240 minutes
 
 A rig is a labeled grouping of equipment. It's the "template" used for new captures and the "best-guess grouping" applied to historical sub frames at ingest time.
 
-```sql
-CREATE TABLE rig (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT,
-    telescope_id INTEGER REFERENCES telescope(id),
-    telescope_configuration_id INTEGER REFERENCES telescope_configuration(id),
-    camera_id INTEGER REFERENCES camera(id),
-    mount_id INTEGER REFERENCES mount(id),
-    filter_wheel_id INTEGER REFERENCES filter_wheel(id),
-    focuser_id INTEGER REFERENCES focuser(id),
-    oag_id INTEGER REFERENCES oag(id),
-    guide_scope_id INTEGER REFERENCES guide_scope(id),
-    guide_camera_id INTEGER REFERENCES camera(id),
-    capture_computer_id INTEGER REFERENCES computer(id),
-    capture_software_id INTEGER REFERENCES software(id),
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    -- active, source, seed_key, seed_hash omitted: rigs are user-defined, not seed-tracked
-);
-
-CREATE INDEX idx_rig_telescope ON rig(telescope_id);
-CREATE INDEX idx_rig_camera ON rig(camera_id);
-```
+Component FKs: telescope + telescope_configuration, camera, mount, filter_wheel, focuser, oag, guide_scope, guide_camera, capture_computer, capture_software. Rigs are user-defined (no seed-tracking columns). (A `rig` concept already ships — v0.12.0; this is the imaging-core view of it.)
 
 **Constraint:** all component FKs are nullable because rigs vary — a Seestar smart scope has no separate focuser or filter wheel, for example. Validation of "is this rig usable?" is an application concern, not a schema constraint.
 
 #### filter_wheel_filter
 
-Which filters are currently loaded in which position of a rig's filter wheel. This is the table the FITS resolver's line-name path needs.
-
-```sql
-CREATE TABLE filter_wheel_filter (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    rig_id INTEGER NOT NULL REFERENCES rig(id) ON DELETE CASCADE,
-    filter_wheel_id INTEGER NOT NULL REFERENCES filter_wheel(id),
-    position INTEGER NOT NULL CHECK (position > 0),
-    filter_id INTEGER NOT NULL REFERENCES filter(id),
-    installed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    notes TEXT,
-    UNIQUE (rig_id, position),
-    UNIQUE (rig_id, filter_id)                -- a physical filter can only be in one slot at a time per rig
-);
-
-CREATE INDEX idx_filter_wheel_filter_rig ON filter_wheel_filter(rig_id);
-CREATE INDEX idx_filter_wheel_filter_filter ON filter_wheel_filter(filter_id);
-```
+Which filters are currently loaded in which position of a rig's filter wheel — the table the FITS resolver's line-name path needs. Maps rig → wheel position → filter, keyed to the **rig** (not the wheel) so the same wheel moved between rigs is unambiguous. Constraints encode the rules: `position > 0`, `UNIQUE (rig_id, position)` (one filter per slot) and `UNIQUE (rig_id, filter_id)` (a physical filter sits in only one slot per rig at a time).
 
 When Fred swaps filters between rigs or reorders his wheel, this table gets updated. Historical sub frames already have `filter_id` recorded inline (see §6), so past captures are unaffected by current loadout changes.
 
@@ -5584,226 +5115,53 @@ A session is a contiguous period of rig activity — typically one night of imag
 
 Session boundaries are determined by the ingest pipeline, not by the schema. The spec here only describes the storage.
 
-```sql
-CREATE TABLE session (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    rig_id INTEGER REFERENCES rig(id),
-    session_name TEXT,                        -- optional user label
-    start_utc TEXT NOT NULL,
-    end_utc TEXT,                             -- NULL if session is open or unknown end
-    site_name TEXT,
-    site_latitude_deg REAL,
-    site_longitude_deg REAL,
-    site_elevation_m REAL,
-    bortle_class INTEGER CHECK (bortle_class IS NULL OR bortle_class BETWEEN 1 AND 9),
-    conditions_notes TEXT,
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_session_rig ON session(rig_id);
-CREATE INDEX idx_session_start_utc ON session(start_utc);
-```
+Storage: nullable `rig_id`; `start_utc` (required) + `end_utc` (NULL if open/unknown); site fields (`site_name`, lat/lon/elevation, `bortle_class` 1–9); `conditions_notes`. Indexed on rig and on `start_utc`.
 
 #### session_log_file
 
 Raw log files ingested for the session. Retain the originals (or hashed references to them) so reparsing can recover any events we missed on the first pass.
 
-```sql
-CREATE TABLE session_log_file (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
-    source TEXT NOT NULL CHECK (source IN ('nina', 'asiair', 'phd2', 'other')),
-    original_path TEXT NOT NULL,
-    file_hash TEXT NOT NULL,                  -- SHA-256 of contents
-    file_size_bytes INTEGER NOT NULL,
-    covered_start_utc TEXT,                   -- first timestamp in file
-    covered_end_utc TEXT,                     -- last timestamp in file
-    parse_status TEXT NOT NULL DEFAULT 'pending' CHECK (parse_status IN ('pending', 'parsed', 'failed', 'partial')),
-    parse_error TEXT,
-    raw_text BLOB,                            -- optional: store the raw log for reparse; may be large
-    ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (file_hash)
-);
-
-CREATE INDEX idx_session_log_file_session ON session_log_file(session_id);
-```
+Source vocab: `nina | asiair | phd2 | other`. `file_hash` (SHA-256) is `UNIQUE` for idempotent re-ingest. Tracks `covered_start/end_utc` (first/last timestamp in the file), a `parse_status` (`pending | parsed | failed | partial`) + `parse_error`, and an optional `raw_text` BLOB so logs can be re-parsed later without re-importing.
 
 #### session_event
 
 Parsed events from session logs. This is the source for the Gantt timeline visualization.
 
-```sql
-CREATE TABLE session_event (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
-    session_log_file_id INTEGER REFERENCES session_log_file(id),
-    event_utc TEXT NOT NULL,
-    event_type TEXT NOT NULL CHECK (event_type IN (
-        'session_start', 'session_end',
-        'slew_start', 'slew_end',
-        'plate_solve_start', 'plate_solve_end', 'plate_solve_failed',
-        'filter_change',
-        'exposure_start', 'exposure_end',
-        'autofocus_start', 'autofocus_end',
-        'dither',
-        'meridian_flip_start', 'meridian_flip_end',
-        'guiding_start', 'guiding_stop', 'guiding_lost',
-        'cooling_target_reached',
-        'error', 'warning', 'info',
-        'other'
-    )),
-    event_data_json TEXT,                     -- structured per-type payload
-    related_sub_frame_id INTEGER,             -- FK added after sub_frame exists
-    related_filter_id INTEGER REFERENCES filter(id),
-    notes TEXT
-);
+Indexed on `(session_id, event_utc)` and on `event_type`. `event_type` is a closed vocabulary:
 
-CREATE INDEX idx_session_event_session_time ON session_event(session_id, event_utc);
-CREATE INDEX idx_session_event_type ON session_event(event_type);
-```
+`session_start/end`, `slew_start/end`, `plate_solve_start/end/failed`, `filter_change`, `exposure_start/end`, `autofocus_start/end`, `dither`, `meridian_flip_start/end`, `guiding_start/stop/lost`, `cooling_target_reached`, `error`, `warning`, `info`, `other`.
 
-`event_data_json` payloads per event type (documented in the README, not enforced):
+A per-type `event_data_json` payload (documented, not enforced) carries the structured detail, plus `related_sub_frame_id` / `related_filter_id` links. Payload shapes:
 
-- `plate_solve_end`: `{"ra_deg": ..., "dec_deg": ..., "rotation_deg": ..., "pixel_scale_arcsec": ...}`
-- `filter_change`: `{"from_filter_id": ..., "to_filter_id": ..., "position": ...}`
-- `autofocus_end`: `{"initial_hfr": ..., "final_hfr": ..., "steps_moved": ..., "temperature_c": ...}`
-- `dither`: `{"ra_offset_arcsec": ..., "dec_offset_arcsec": ..., "settled_after_seconds": ...}`
-- `error`: `{"message": "...", "source": "..."}`
+- `plate_solve_end`: ra_deg, dec_deg, rotation_deg, pixel_scale_arcsec
+- `filter_change`: from_filter_id, to_filter_id, position
+- `autofocus_end`: initial_hfr, final_hfr, steps_moved, temperature_c
+- `dither`: ra_offset_arcsec, dec_offset_arcsec, settled_after_seconds
+- `error`: message, source
 
 ---
 
 ### 6. Sub frames
 
-The core atom. One row per captured exposure.
+The core atom of the schema.
 
 #### sub_frame
 
-```sql
-CREATE TABLE sub_frame (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+One row per captured exposure — lights, darks, flats, bias all share this table. Key design:
 
-    -- Identity (stable across re-ingest and file movement)
-    content_hash TEXT NOT NULL UNIQUE,        -- SHA-256 of full file contents, hex encoded
+- **Identity:** `content_hash` (SHA-256 of file contents) is `NOT NULL UNIQUE` — re-ingest is idempotent and survives file moves (§2.8).
+- **Grouping (all nullable):** `session_id`, `rig_id`, `project_target_id` — a sub can ingest with partial or no grouping context.
+- **Classification:** `frame_type` ∈ `light | dark | flat | bias | dark_flat | unknown`; `accepted` (0/1) with `rejection_reason` and `rejection_source` ∈ `user | automated | ingest`.
+- **Equipment (all nullable; the resolver fills what it can):** camera, telescope + configuration, filter, mount, filter_wheel, focuser.
+- **Capture settings (from FITS header):** `exposure_seconds > 0`, gain, offset_adu, sensor/set temperature, binning x/y, bit depth, image width/height.
+- **Timing:** `date_obs_utc` (required, ISO 8601) + `obs_mjd` for precise ordering.
+- **Pointing (plate-solved or header):** ra/dec (J2000), rotation, pixel scale, airmass.
+- **Quality metrics (computed at/after ingest):** hfr, star_count, median/background ADU, snr_estimate.
+- **Site:** lat/lon/elevation denormalized from the session so a sub is queryable standalone.
+- **Forensics:** `fits_header_json` (full header) + an `ingestion_run_id` provenance link.
+- **CHECK:** light frames must have a `filter_id`; calibration frames don't.
 
-    -- Grouping (all nullable — ingested subs may not have all context)
-    session_id INTEGER REFERENCES session(id),
-    rig_id INTEGER REFERENCES rig(id),
-    project_target_id INTEGER REFERENCES project_target(id),
-
-    -- Frame classification
-    frame_type TEXT NOT NULL CHECK (frame_type IN ('light', 'dark', 'flat', 'bias', 'dark_flat', 'unknown')),
-    accepted INTEGER NOT NULL DEFAULT 1 CHECK (accepted IN (0,1)),
-    rejection_reason TEXT,
-    rejection_source TEXT CHECK (rejection_source IS NULL OR rejection_source IN ('user', 'automated', 'ingest')),
-
-    -- Equipment (nullable; resolver fills what it can)
-    camera_id INTEGER REFERENCES camera(id),
-    telescope_id INTEGER REFERENCES telescope(id),
-    telescope_configuration_id INTEGER REFERENCES telescope_configuration(id),
-    filter_id INTEGER REFERENCES filter(id),
-    mount_id INTEGER REFERENCES mount(id),
-    filter_wheel_id INTEGER REFERENCES filter_wheel(id),
-    focuser_id INTEGER REFERENCES focuser(id),
-
-    -- Capture settings (from FITS header)
-    exposure_seconds REAL NOT NULL CHECK (exposure_seconds > 0),
-    gain INTEGER,
-    offset_adu INTEGER,
-    sensor_temp_c REAL,
-    set_temp_c REAL,
-    binning_x INTEGER NOT NULL DEFAULT 1,
-    binning_y INTEGER NOT NULL DEFAULT 1,
-    bit_depth INTEGER,
-    image_width_px INTEGER,
-    image_height_px INTEGER,
-
-    -- Timing
-    date_obs_utc TEXT NOT NULL,               -- ISO 8601, from DATE-OBS header
-    obs_mjd REAL,                             -- Modified Julian Date, for precise ordering
-
-    -- Pointing (from plate solve or headers)
-    ra_deg REAL,                              -- J2000, plate-solved if available
-    dec_deg REAL,
-    rotation_deg REAL,
-    pixel_scale_arcsec REAL,
-    airmass REAL,
-
-    -- Quality metrics (computed at ingest or later)
-    hfr REAL,                                 -- half-flux radius, median
-    star_count INTEGER,
-    median_adu REAL,
-    background_adu REAL,
-    snr_estimate REAL,
-
-    -- Site (redundant with session but denormalized for standalone queries)
-    site_latitude_deg REAL,
-    site_longitude_deg REAL,
-    site_elevation_m REAL,
-
-    -- Raw FITS header for forensics / reparse
-    fits_header_json TEXT,                    -- optional: full header as JSON
-
-    -- Provenance
-    ingestion_run_id INTEGER,                 -- FK added later
-    ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-
-    notes TEXT,
-
-    CHECK (
-        -- Light frames must have a filter; calibration frames have frame-type-specific rules
-        (frame_type = 'light' AND filter_id IS NOT NULL)
-        OR (frame_type != 'light')
-    )
-);
-
-CREATE INDEX idx_sub_frame_session ON sub_frame(session_id);
-CREATE INDEX idx_sub_frame_project_target ON sub_frame(project_target_id);
-CREATE INDEX idx_sub_frame_rig ON sub_frame(rig_id);
-CREATE INDEX idx_sub_frame_camera ON sub_frame(camera_id);
-CREATE INDEX idx_sub_frame_filter ON sub_frame(filter_id);
-CREATE INDEX idx_sub_frame_frame_type ON sub_frame(frame_type);
-CREATE INDEX idx_sub_frame_date_obs ON sub_frame(date_obs_utc);
-
--- Composite index for the most common calibration-match query
-CREATE INDEX idx_sub_frame_dark_match
-    ON sub_frame(camera_id, gain, set_temp_c, exposure_seconds, binning_x, binning_y)
-    WHERE frame_type = 'dark';
-
-CREATE INDEX idx_sub_frame_flat_match
-    ON sub_frame(camera_id, gain, filter_id, binning_x, binning_y, telescope_configuration_id)
-    WHERE frame_type = 'flat';
-
-CREATE INDEX idx_sub_frame_bias_match
-    ON sub_frame(camera_id, gain, binning_x, binning_y)
-    WHERE frame_type = 'bias';
-```
-
-**Updated_at trigger** (same pattern as equipment tables):
-
-```sql
-CREATE TRIGGER trg_sub_frame_updated_at
-AFTER UPDATE ON sub_frame
-FOR EACH ROW
-WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE sub_frame SET updated_at = datetime('now') WHERE id = NEW.id;
-END;
-```
-
-Once `sub_frame` exists, add the deferred FKs:
-
-```sql
--- project.cover_sub_frame_id
-ALTER TABLE project ADD COLUMN cover_sub_frame_id INTEGER REFERENCES sub_frame(id);
-
--- session_event.related_sub_frame_id
-ALTER TABLE session_event ADD COLUMN related_sub_frame_id INTEGER REFERENCES sub_frame(id);
-```
-
-(Actually declare both FKs in the original CREATE and drop the forward-reference comment. SQLite is fine with forward references inside a single migration script; just create `sub_frame` before the tables that reference it, or use deferred FKs. Pick the cleaner approach at implementation time.)
+Indexed on the grouping/equipment FKs, `frame_type`, and `date_obs_utc`, plus partial composite indices keyed exactly to the §7 calibration-match queries (dark / flat / bias). An `updated_at` trigger follows the equipment-table convention. `project.cover_sub_frame_id` and `session_event.related_sub_frame_id` are the deferred back-references that resolve once this table exists.
 
 ---
 
@@ -5818,75 +5176,14 @@ No separate table. Calibration frames are `sub_frame` rows with:
 
 #### Calibration matching views
 
-```sql
--- For each light frame, the matching dark frames
-CREATE VIEW matching_darks AS
-SELECT
-    light.id AS light_id,
-    dark.id AS dark_id,
-    dark.date_obs_utc AS dark_date_obs_utc
-FROM sub_frame light
-JOIN sub_frame dark
-  ON dark.frame_type = 'dark'
-  AND dark.camera_id = light.camera_id
-  AND dark.gain = light.gain
-  AND dark.exposure_seconds = light.exposure_seconds
-  AND dark.binning_x = light.binning_x
-  AND dark.binning_y = light.binning_y
-  AND ABS(COALESCE(dark.set_temp_c, -999) - COALESCE(light.set_temp_c, -999)) < 1.0
-WHERE light.frame_type = 'light'
-  AND light.accepted = 1
-  AND dark.accepted = 1;
+A set of views (not materialized tables) expresses calibration matching as queries:
 
--- For each light frame, matching flats
-CREATE VIEW matching_flats AS
-SELECT
-    light.id AS light_id,
-    flat.id AS flat_id,
-    flat.date_obs_utc AS flat_date_obs_utc
-FROM sub_frame light
-JOIN sub_frame flat
-  ON flat.frame_type = 'flat'
-  AND flat.camera_id = light.camera_id
-  AND flat.gain = light.gain
-  AND flat.filter_id = light.filter_id
-  AND flat.binning_x = light.binning_x
-  AND flat.binning_y = light.binning_y
-  AND flat.telescope_configuration_id = light.telescope_configuration_id
-WHERE light.frame_type = 'light'
-  AND light.accepted = 1
-  AND flat.accepted = 1;
+- **`matching_darks`** — dark ↔ light on camera + gain + exposure + binning, with set-temperature matched to **within ±1.0 °C** (not exact equality).
+- **`matching_flats`** — flat ↔ light on camera + gain + filter + binning + **telescope_configuration**.
+- **`matching_bias`** — bias ↔ light on camera + gain + binning.
+- **`calibration_coverage`** — per light frame, booleans for has_dark / has_flat / has_bias.
 
--- For each light frame, matching bias
-CREATE VIEW matching_bias AS
-SELECT
-    light.id AS light_id,
-    bias.id AS bias_id,
-    bias.date_obs_utc AS bias_date_obs_utc
-FROM sub_frame light
-JOIN sub_frame bias
-  ON bias.frame_type = 'bias'
-  AND bias.camera_id = light.camera_id
-  AND bias.gain = light.gain
-  AND bias.binning_x = light.binning_x
-  AND bias.binning_y = light.binning_y
-WHERE light.frame_type = 'light'
-  AND light.accepted = 1
-  AND bias.accepted = 1;
-
--- Summary: does each light have at least one of each calibration type?
-CREATE VIEW calibration_coverage AS
-SELECT
-    light.id AS light_id,
-    light.session_id,
-    light.project_target_id,
-    light.filter_id,
-    EXISTS (SELECT 1 FROM matching_darks md WHERE md.light_id = light.id) AS has_dark,
-    EXISTS (SELECT 1 FROM matching_flats mf WHERE mf.light_id = light.id) AS has_flat,
-    EXISTS (SELECT 1 FROM matching_bias mb WHERE mb.light_id = light.id) AS has_bias
-FROM sub_frame light
-WHERE light.frame_type = 'light';
-```
+All matching views consider only `accepted = 1` frames on both sides.
 
 These are views, not materialized tables. On very large libraries they may get slow; if that happens, the fix is to precompute a `calibration_match` table maintained by triggers. Out of scope for this change.
 
@@ -5900,120 +5197,29 @@ Flat matching includes `telescope_configuration_id` because flats capture optica
 
 Metadata about a PHD2 log file ingested for a session. A single PHD2 log typically spans an entire night and covers all targets imaged that night, so it maps one-to-one with a session (or one-to-many if there are log rotations).
 
-```sql
-CREATE TABLE guiding_log_file (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
-    original_path TEXT NOT NULL,
-    file_hash TEXT NOT NULL,
-    file_size_bytes INTEGER NOT NULL,
-    start_utc TEXT NOT NULL,
-    end_utc TEXT NOT NULL,
-    guide_camera_id INTEGER REFERENCES camera(id),
-    guide_scope_id INTEGER REFERENCES guide_scope(id),
-    oag_id INTEGER REFERENCES oag(id),
-    guide_pixel_scale_arcsec REAL,
-    parse_status TEXT NOT NULL DEFAULT 'pending' CHECK (parse_status IN ('pending', 'parsed', 'failed', 'partial')),
-    ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (file_hash)
-);
-
-CREATE INDEX idx_guiding_log_file_session ON guiding_log_file(session_id);
-```
+Session FK (CASCADE), `file_hash` UNIQUE, `start/end_utc`, guide-equipment FKs (guide camera, guide_scope, oag), `guide_pixel_scale_arcsec`, and a `parse_status` (`pending | parsed | failed | partial`).
 
 #### guiding_sample
 
 Individual PHD2 samples. One row per guide exposure (typically every 1–3 seconds during a session).
 
-```sql
-CREATE TABLE guiding_sample (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    guiding_log_file_id INTEGER NOT NULL REFERENCES guiding_log_file(id) ON DELETE CASCADE,
-    sample_utc TEXT NOT NULL,
-    ra_error_arcsec REAL,
-    dec_error_arcsec REAL,
-    ra_correction REAL,                       -- in PHD2's native units
-    dec_correction REAL,
-    snr REAL,
-    star_mass REAL,
-    frame_number INTEGER
-);
-
--- This index is critical for the per-sub guiding lookup
-CREATE INDEX idx_guiding_sample_log_time
-    ON guiding_sample(guiding_log_file_id, sample_utc);
-
-CREATE INDEX idx_guiding_sample_time ON guiding_sample(sample_utc);
-```
+Columns: `sample_utc`, `ra/dec_error_arcsec`, `ra/dec_correction` (PHD2 native units), `snr`, `star_mass`, `frame_number`. **The `(guiding_log_file_id, sample_utc)` index is critical** — it's what makes the per-sub time-range lookup fast. This is the highest-row-count table in the schema (§2.5), but rows are tiny and SQLite handles millions fine; indexing is the only real concern.
 
 #### dither_event
 
 Distinct dither events from the guiding log. Useful for overlaying on the guiding graph and for splitting RMS calculations around dither settles.
 
-```sql
-CREATE TABLE dither_event (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    guiding_log_file_id INTEGER NOT NULL REFERENCES guiding_log_file(id) ON DELETE CASCADE,
-    dither_utc TEXT NOT NULL,
-    ra_offset_arcsec REAL,
-    dec_offset_arcsec REAL,
-    settle_completed_utc TEXT,
-    settle_failed INTEGER NOT NULL DEFAULT 0 CHECK (settle_failed IN (0,1))
-);
-
-CREATE INDEX idx_dither_event_log_time ON dither_event(guiding_log_file_id, dither_utc);
-```
+Columns: `dither_utc`, `ra/dec_offset_arcsec`, `settle_completed_utc`, `settle_failed` (0/1). Used to overlay dithers on the guiding graph and to split RMS calculations around dither settles.
 
 #### Per-sub guiding lookup
 
-Guiding stats for a specific sub frame are computed on demand from `guiding_sample` filtered by the sub frame's time range:
-
-```sql
--- Example: RMS during a specific sub frame
-SELECT
-    SQRT(AVG(ra_error_arcsec * ra_error_arcsec + dec_error_arcsec * dec_error_arcsec)) AS rms_total,
-    SQRT(AVG(ra_error_arcsec * ra_error_arcsec)) AS rms_ra,
-    SQRT(AVG(dec_error_arcsec * dec_error_arcsec)) AS rms_dec,
-    MAX(ABS(ra_error_arcsec)) AS peak_ra,
-    MAX(ABS(dec_error_arcsec)) AS peak_dec,
-    COUNT(*) AS sample_count
-FROM guiding_sample gs
-JOIN guiding_log_file glf ON glf.id = gs.guiding_log_file_id
-JOIN sub_frame sf ON sf.id = ?
-WHERE glf.session_id = sf.session_id
-  AND gs.sample_utc >= sf.date_obs_utc
-  AND gs.sample_utc < datetime(sf.date_obs_utc, '+' || sf.exposure_seconds || ' seconds');
-```
-
-This is a per-query pattern, not a stored view — parameterized on the sub frame ID.
+Guiding stats for a specific sub frame are computed on demand: select `guiding_sample` rows within the sub's time window (`date_obs_utc` to `date_obs_utc + exposure_seconds`, same session) and aggregate RMS (total / RA / Dec), peak RA/Dec error, and sample count. A parameterized per-query pattern, not a stored view.
 
 ---
 
 ### 9. Autofocus runs
 
-```sql
-CREATE TABLE autofocus_run (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
-    triggered_at_utc TEXT NOT NULL,
-    completed_at_utc TEXT,
-    filter_id INTEGER REFERENCES filter(id),
-    focuser_id INTEGER REFERENCES focuser(id),
-    temperature_c REAL,
-    initial_position INTEGER,
-    final_position INTEGER,
-    initial_hfr REAL,
-    final_hfr REAL,
-    success INTEGER NOT NULL DEFAULT 1 CHECK (success IN (0,1)),
-    trigger_reason TEXT,                      -- "scheduled", "temperature_delta", "hfr_drift", "filter_change", "manual"
-    source TEXT CHECK (source IN ('nina', 'asiair', 'manual', 'other')),
-    raw_json TEXT,                            -- full autofocus JSON from N.I.N.A., preserved for reparse
-    notes TEXT
-);
-
-CREATE INDEX idx_autofocus_run_session ON autofocus_run(session_id);
-CREATE INDEX idx_autofocus_run_triggered_at ON autofocus_run(triggered_at_utc);
-```
+Per autofocus run: session FK, triggered/completed timestamps, filter + focuser, temperature, initial/final focuser position + HFR, `success` (0/1), `trigger_reason` (scheduled / temperature_delta / hfr_drift / filter_change / manual), `source` (`nina | asiair | manual | other`), and `raw_json` (the full N.I.N.A. autofocus JSON, preserved for reparse).
 
 ---
 
@@ -6021,25 +5227,7 @@ CREATE INDEX idx_autofocus_run_triggered_at ON autofocus_run(triggered_at_utc);
 
 A single sub frame may exist in multiple filesystem locations (original on acquisition PC, working copy on Mac, archive on NAS). The `file_location` table tracks all known copies.
 
-```sql
-CREATE TABLE file_location (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sub_frame_id INTEGER NOT NULL REFERENCES sub_frame(id) ON DELETE CASCADE,
-    path TEXT NOT NULL,
-    path_type TEXT NOT NULL CHECK (path_type IN ('original', 'working_copy', 'archive', 'reorganized', 'other')),
-    volume_label TEXT,                        -- "MacSSD", "Synology-NAS", "AX8Max-C"
-    file_size_bytes INTEGER,
-    file_hash TEXT,                           -- should match sub_frame.content_hash when verified
-    file_mtime TEXT,
-    last_verified_at TEXT,
-    last_verified_status TEXT CHECK (last_verified_status IS NULL OR last_verified_status IN ('ok', 'missing', 'hash_mismatch', 'unreadable')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (path)
-);
-
-CREATE INDEX idx_file_location_sub_frame ON file_location(sub_frame_id);
-CREATE INDEX idx_file_location_path_type ON file_location(path_type);
-```
+One row per known copy of a sub frame: `path` (UNIQUE), `path_type` (`original | working_copy | archive | reorganized | other`), `volume_label` (e.g. "MacSSD", "Synology-NAS"), size / hash / mtime, and `last_verified_at` + `last_verified_status` (`ok | missing | hash_mismatch | unreadable`). `file_hash` should match `sub_frame.content_hash` when verified.
 
 **Verification is a background task.** The app periodically re-hashes files (or checks mtime + size as a fast path) and updates `last_verified_status`. If a file is missing from its original location but present on the NAS, the app can still open it — it just picks the best available location.
 
@@ -6047,34 +5235,7 @@ CREATE INDEX idx_file_location_path_type ON file_location(path_type);
 
 ### 11. Ingestion provenance
 
-```sql
-CREATE TABLE ingestion_run (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    finished_at TEXT,
-    source_path TEXT NOT NULL,
-    mode TEXT NOT NULL CHECK (mode IN ('catalog_in_place', 'copy_and_organize', 'reparse')),
-    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
-    files_scanned INTEGER NOT NULL DEFAULT 0,
-    sub_frames_inserted INTEGER NOT NULL DEFAULT 0,
-    sub_frames_updated INTEGER NOT NULL DEFAULT 0,
-    sub_frames_skipped INTEGER NOT NULL DEFAULT 0,
-    errors_count INTEGER NOT NULL DEFAULT 0,
-    errors_json TEXT,
-    notes TEXT
-);
-
-CREATE INDEX idx_ingestion_run_started_at ON ingestion_run(started_at);
-```
-
-Add to `sub_frame` (referenced above):
-
-```sql
--- Already declared in §6 as sub_frame.ingestion_run_id INTEGER
--- Wire up the FK now that ingestion_run exists:
--- In the migration, declare sub_frame AFTER ingestion_run and include:
---   ingestion_run_id INTEGER REFERENCES ingestion_run(id)
-```
+Per ingest run: `source_path`, `mode` (`catalog_in_place | copy_and_organize | reparse`), `status` (`running | completed | failed | cancelled`), and counters (files scanned; sub frames inserted / updated / skipped; errors_count + `errors_json`). `sub_frame.ingestion_run_id` links each sub to the run that ingested it.
 
 ---
 
@@ -6084,71 +5245,17 @@ Add to `sub_frame` (referenced above):
 
 The dashboard Fred wants: "how much Ha do I have on M101?"
 
-```sql
-CREATE VIEW integration_time_per_project_filter AS
-SELECT
-    pt.project_id,
-    pt.id AS project_target_id,
-    pt.panel_name,
-    fp.line_name,
-    COUNT(sf.id) AS accepted_sub_count,
-    SUM(sf.exposure_seconds) AS total_seconds,
-    SUM(sf.exposure_seconds) / 60.0 AS total_minutes,
-    SUM(sf.exposure_seconds) / 3600.0 AS total_hours
-FROM sub_frame sf
-JOIN project_target pt ON pt.id = sf.project_target_id
-JOIN filter f ON f.id = sf.filter_id
-JOIN filter_passband fp ON fp.filter_id = f.id
-WHERE sf.frame_type = 'light'
-  AND sf.accepted = 1
-GROUP BY pt.project_id, pt.id, pt.panel_name, fp.line_name;
-```
+Groups accepted light sub frames by project / target / panel / `line_name` (joining `filter_passband`), summing exposure into seconds / minutes / hours. Only `frame_type='light'` and `accepted=1`.
 
-For a single-band filter ("Ha 7nm"), this produces one row per sub with `line_name = 'Ha'`. For a duoband filter (e.g. Ha+Oiii), **this view will double-count** — one row for Ha, one for Oiii — which is actually what you want for "how much Ha have I captured?" since the sub contributes to both line budgets. Document this behavior explicitly in the README.
+For a single-band filter ("Ha 7nm"), one row per sub with `line_name = 'Ha'`. For a duoband filter (e.g. Ha+Oiii), **this view intentionally double-counts** — one row for Ha, one for Oiii — which is correct for "how much Ha have I captured?" since the sub contributes to both line budgets. Document this behavior explicitly in the README.
 
 #### project_filter_goal_progress
 
-Join goal and actual for dashboard display:
-
-```sql
-CREATE VIEW project_filter_goal_progress AS
-SELECT
-    pt.project_id,
-    pt.id AS project_target_id,
-    pt.panel_name,
-    pfg.line_name,
-    pfg.goal_minutes,
-    COALESCE(itpf.total_minutes, 0) AS actual_minutes,
-    COALESCE(itpf.total_minutes, 0) / pfg.goal_minutes AS completion_ratio
-FROM project_target pt
-JOIN project_filter_goal pfg ON pfg.project_target_id = pt.id
-LEFT JOIN integration_time_per_project_filter itpf
-    ON itpf.project_target_id = pt.id
-   AND itpf.line_name = pfg.line_name;
-```
+Joins each `project_filter_goal` to the actual integration above, yielding `goal_minutes`, `actual_minutes` (0 if none), and a `completion_ratio` — for dashboard display.
 
 #### session_summary
 
-Quick "what happened during this session" rollup:
-
-```sql
-CREATE VIEW session_summary AS
-SELECT
-    s.id AS session_id,
-    s.rig_id,
-    s.start_utc,
-    s.end_utc,
-    (julianday(s.end_utc) - julianday(s.start_utc)) * 24.0 AS duration_hours,
-    COUNT(DISTINCT sf.id) AS total_subs,
-    SUM(CASE WHEN sf.frame_type = 'light' AND sf.accepted = 1 THEN 1 ELSE 0 END) AS accepted_lights,
-    SUM(CASE WHEN sf.frame_type = 'light' AND sf.accepted = 0 THEN 1 ELSE 0 END) AS rejected_lights,
-    SUM(CASE WHEN sf.frame_type = 'light' AND sf.accepted = 1 THEN sf.exposure_seconds ELSE 0 END) / 60.0 AS accepted_minutes,
-    COUNT(DISTINCT sf.project_target_id) AS distinct_targets,
-    COUNT(DISTINCT sf.filter_id) AS distinct_filters
-FROM session s
-LEFT JOIN sub_frame sf ON sf.session_id = s.id
-GROUP BY s.id;
-```
+Quick "what happened during this session" rollup: `duration_hours`, total subs, accepted vs rejected lights, accepted light-minutes, and distinct target / filter counts.
 
 ---
 
@@ -6160,109 +5267,16 @@ This spec does **not** implement the bundle assembler. It declares the contract 
 
 #### Bundle shape — session level
 
-A session bundle is a single JSON document combining: session metadata, equipment details, target breakdown, sub frame statistics, guiding telemetry, focus telemetry, and event timeline.
+A session bundle is one JSON document assembled by a `build_session_context(session_id)` function (not built here). **All timestamps are UTC ISO 8601; all units are explicit in field names.** It carries a `schema_version` plus these sections:
 
-```python
-def build_session_context(session_id: int) -> dict:
-    """
-    Assemble a session into an AI-context-ready dict.
-    All timestamps are UTC ISO 8601. All units are explicit in field names.
-    """
-```
-
-Example output shape (for documentation; not something to implement now):
-
-```json
-{
-  "schema_version": 1,
-  "session": {
-    "id": 123,
-    "start_utc": "2025-03-15T03:14:00Z",
-    "end_utc": "2025-03-15T10:47:00Z",
-    "duration_hours": 7.55,
-    "site": {
-      "latitude_deg": 33.45,
-      "longitude_deg": -112.07,
-      "elevation_m": 340,
-      "bortle_class": 7
-    }
-  },
-  "equipment": {
-    "rig_name": "C11 Primary",
-    "telescope": {
-      "model": "Celestron C11 SCT",
-      "aperture_mm": 280,
-      "optical_design": "SCT",
-      "configuration": "Starizona LF 0.7x",
-      "effective_focal_length_mm": 1960,
-      "effective_focal_ratio": 7.0
-    },
-    "camera": {
-      "model": "ZWO ASI 2600MM Pro",
-      "sensor": "Sony IMX571",
-      "pixel_size_um": 3.76,
-      "resolution_px": [6248, 4176]
-    },
-    "mount": {"model": "WarpAstron WD-20", "type": "Harmonic Equatorial"},
-    "guiding": {"scope_or_oag": "OAG", "camera": "ZWO ASI 178MM", "software": "PHD2"}
-  },
-  "targets": [
-    {
-      "project_name": "M101 Deep",
-      "panel_name": null,
-      "target_primary_name": "M101",
-      "ra_deg": 210.80,
-      "dec_deg": 54.35,
-      "sub_count_this_session": 45,
-      "integration_minutes_this_session": 93.5
-    }
-  ],
-  "subs_summary": {
-    "total": 45,
-    "accepted": 43,
-    "rejected": 2,
-    "rejection_reasons": ["clouds (2)"],
-    "by_filter": [
-      {
-        "filter_model": "Optolong 7nm Ha",
-        "line_name": "Ha",
-        "count": 28,
-        "exposure_seconds_each": 300,
-        "total_minutes": 140,
-        "median_hfr": 1.87,
-        "hfr_range": [1.71, 2.34],
-        "median_star_count": 1847
-      }
-    ]
-  },
-  "guiding": {
-    "total_rms_arcsec": 0.89,
-    "ra_rms_arcsec": 0.62,
-    "dec_rms_arcsec": 0.64,
-    "peak_total_error_arcsec": 2.31,
-    "dither_count": 22,
-    "sample_count": 13500,
-    "notable_spikes": [
-      {"utc": "2025-03-15T05:22:00Z", "peak_arcsec": 4.8, "duration_seconds": 12}
-    ]
-  },
-  "focus": {
-    "autofocus_run_count": 4,
-    "median_final_hfr": 1.82,
-    "temperature_range_c": [8.2, 14.1],
-    "focus_position_drift": 87
-  },
-  "events_timeline": [
-    {"utc": "2025-03-15T03:14:00Z", "type": "session_start"},
-    {"utc": "2025-03-15T03:16:22Z", "type": "plate_solve_end", "ra_deg": 210.81, "dec_deg": 54.34},
-    {"utc": "2025-03-15T03:18:00Z", "type": "autofocus_end", "final_hfr": 1.79},
-    {"utc": "2025-03-15T03:24:15Z", "type": "exposure_start", "filter": "Lum", "exposure_seconds": 120}
-  ],
-  "issues_detected": [
-    {"type": "guiding_spike", "severity": "warning", "utc": "2025-03-15T05:22:00Z", "description": "4.8 arcsec spike, 12s duration"}
-  ]
-}
-```
+- **`session`** — id, start/end_utc, duration_hours, site (lat/lon/elevation, bortle_class).
+- **`equipment`** — rig_name; telescope (model, aperture, optical design, configuration, effective focal length/ratio); camera (model, sensor, pixel size, resolution); mount; guiding (OAG/scope, camera, software).
+- **`targets[]`** — project_name, panel_name, primary object name, ra/dec, sub count + integration minutes this session.
+- **`subs_summary`** — total/accepted/rejected, rejection_reasons, and `by_filter[]` (filter model, line_name, count, exposure each, total minutes, median + range HFR, median star count).
+- **`guiding`** — total/RA/Dec RMS arcsec, peak error, dither count, sample count, notable_spikes[].
+- **`focus`** — autofocus run count, median final HFR, temperature range, focus position drift.
+- **`events_timeline[]`** — `{utc, type, …}` per event.
+- **`issues_detected[]`** — `{type, severity, utc, description}`, produced by the future analysis layer (not stored).
 
 #### Schema implications of this bundle
 
@@ -6282,43 +5296,13 @@ Any future change to the bundle shape bumps `schema_version`. The AI analyzer co
 
 ### 14. Indices
 
-Already declared inline above. Summary of the critical ones:
-
-- `sub_frame.content_hash` — `UNIQUE`, the identity of the frame.
-- `sub_frame(session_id)`, `sub_frame(project_target_id)`, `sub_frame(rig_id)`, `sub_frame(camera_id)`, `sub_frame(filter_id)`, `sub_frame(date_obs_utc)` — standard lookups.
-- `sub_frame(camera_id, gain, set_temp_c, exposure_seconds, binning_x, binning_y) WHERE frame_type = 'dark'` — partial index for dark matching.
-- `sub_frame(camera_id, gain, filter_id, binning_x, binning_y, telescope_configuration_id) WHERE frame_type = 'flat'` — partial index for flat matching.
-- `guiding_sample(guiding_log_file_id, sample_utc)` — the per-sub guiding lookup.
-- `session_event(session_id, event_utc)` — the Gantt timeline query.
-
-Performance is expected to be fine for libraries up to ~100k sub frames without further tuning. Beyond that, some views may need to become materialized tables maintained by triggers.
+Index the obvious paths: `sub_frame.content_hash` (UNIQUE identity), the grouping/equipment FKs, `date_obs_utc`, the partial calibration-match indices (§6/§7), `guiding_sample(guiding_log_file_id, sample_utc)` (§8), and `session_event(session_id, event_utc)` (the Gantt query). Performance is expected to be fine up to ~100k sub frames; beyond that, some views may need to become trigger-maintained materialized tables. The exact index list is settled in the migration.
 
 ---
 
 ### 15. Deliverables
 
-1. **A SQLite migration script** that creates all tables, indices, views, and triggers defined above. Idempotent (`IF NOT EXISTS`). Handle the forward-FK situation (`project.cover_sub_frame_id`, `session_event.related_sub_frame_id`, `sub_frame.ingestion_run_id`) cleanly by ordering CREATE statements so targets exist before references, or by using `ALTER TABLE ADD COLUMN` post-hoc.
-
-2. **Seeded controlled-vocabulary CHECK values** — no data seeding required for this layer. Targets, projects, rigs are all user-created.
-
-3. **README section** covering:
-   - The design decisions from §2 (short version).
-   - The "sub frame is source of truth" principle and why equipment FKs are duplicated on sub_frame rather than being inferred from rig.
-   - The calibration matching view behavior and its limitations.
-   - The `schema_version: 1` contract for AI context bundles.
-   - The duoband double-counting behavior in `integration_time_per_project_filter`.
-   - Which views are expected to become materialized tables if the library grows past ~100k frames.
-
-4. **Tests** — pytest-based, using in-memory SQLite with the full schema:
-   - `test_sub_frame_content_hash_unique.py` — re-ingesting the same content hash is idempotent.
-   - `test_matching_darks_view.py` — dark matching correctly finds matches on gain/temp/exposure/binning and rejects mismatches.
-   - `test_matching_flats_view.py` — flat matching includes telescope_configuration_id in the join.
-   - `test_integration_time_per_project_filter.py` — single-band and duoband filter contribution.
-   - `test_guiding_per_sub_query.py` — per-sub RMS calculation from guiding_sample.
-   - `test_session_summary_view.py` — rollup counts and durations.
-   - `test_project_filter_goal_progress.py` — goal vs actual with NULL-safe LEFT JOIN.
-   - `test_calibration_library_nullable_session.py` — a dark with `session_id = NULL` is valid and matches lights from any session.
-   - `test_sub_frame_partial_equipment.py` — sub frame with some equipment FKs NULL ingests and queries correctly.
+A SQLite migration creating these tables, indices, views, and triggers (idempotent; ordered to handle the forward FKs `project.cover_sub_frame_id`, `session_event.related_sub_frame_id`, `sub_frame.ingestion_run_id`). No data seeding — targets/projects/rigs are user-created. Tests cover the load-bearing behaviors: content-hash idempotency; each calibration-match view (including flat's telescope-configuration join and the ±1 °C dark-temp tolerance); single-band vs duoband integration counting; per-sub guiding RMS; the session-summary rollup; NULL-safe goal-vs-actual; library calibration frames (NULL session) matching any session; and partial-equipment ingest. A README documents the §2 decisions, the sub-frame-is-source-of-truth principle, the calibration-view behavior, the `schema_version: 1` contract, and the duoband double-count.
 
 ---
 
