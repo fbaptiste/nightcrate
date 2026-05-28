@@ -286,8 +286,9 @@ async def query_dsos_in_cone(
         ra_clause = "ra_deg BETWEEN ? AND ?"
         ra_params = (ra_min, ra_max)
 
-    query = (  # nosec B608 — ra_clause is hardcoded SQL, not user input
-        f"SELECT id, primary_designation, obj_type, ra_deg, dec_deg,"
+    query = (
+        # nosec B608 — hardcoded SQL: only ra_clause (a fixed string) is interpolated; all values are bound with ? params
+        f"SELECT id, primary_designation, obj_type, ra_deg, dec_deg,"  # nosec B608
         f" maj_axis_arcmin, min_axis_arcmin, position_angle_deg,"
         f" common_name, constellation, distance_pc, distance_method, mag_b"
         f" FROM dso WHERE active = 1"

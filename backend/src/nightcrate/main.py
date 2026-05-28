@@ -430,5 +430,6 @@ async def health() -> dict:
 
 
 def run() -> None:
-    host = "0.0.0.0" if _LAN_MODE else "127.0.0.1"
+    # Bind-all only in opt-in LAN mode (make dev-lan) for tablet access; defaults to localhost.
+    host = "0.0.0.0" if _LAN_MODE else "127.0.0.1"  # nosec B104 - intentional, LAN mode is opt-in
     uvicorn.run("nightcrate.main:app", host=host, port=8000, reload=True)

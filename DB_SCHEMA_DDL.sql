@@ -1,4 +1,4 @@
--- NightCrate version: 0.36.0
+-- NightCrate version: 0.37.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
