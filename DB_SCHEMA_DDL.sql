@@ -1,4 +1,4 @@
--- NightCrate version: 0.37.0
+-- NightCrate version: 0.38.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1552,3 +1552,86 @@ CREATE TABLE project_dso (
 
 CREATE INDEX idx_project_dso_solve ON project_dso(solve_id);
 CREATE INDEX idx_project_dso_dso ON project_dso(dso_id);
+
+-- v0.38.0: project metadata + manual imaging sessions ------------------------
+
+ALTER TABLE project ADD COLUMN location_id INTEGER REFERENCES location(id);
+
+CREATE TABLE project_rig (
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    rig_id     INTEGER NOT NULL REFERENCES rig(id),
+    PRIMARY KEY (project_id, rig_id)
+);
+CREATE INDEX idx_project_rig_project ON project_rig(project_id);
+CREATE INDEX idx_project_rig_rig ON project_rig(rig_id);
+
+-- Manual capture batch: N identical light subs of one filter. The v0.39.0
+-- ingest will also write to this table (source = 'auto') with user override.
+CREATE TABLE project_session (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id       INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    rig_id           INTEGER REFERENCES rig(id),
+    filter_id        INTEGER REFERENCES filter(id),
+    line_name        TEXT CHECK (line_name IS NULL OR line_name IN (
+                         'Ha', 'Hb', 'Oiii', 'Sii', 'Nii', 'OI',
+                         'Lum', 'R', 'G', 'B', 'R+',
+                         'UVIR', 'LP', 'ND', 'other'
+                     )),
+    exposure_seconds REAL    NOT NULL CHECK (exposure_seconds > 0),
+    gain             INTEGER CHECK (gain IS NULL OR gain >= 0),
+    num_subs         INTEGER NOT NULL CHECK (num_subs > 0),
+    binning          INTEGER CHECK (binning IS NULL OR binning >= 1),
+    session_date     TEXT,    -- ISO date or full ISO datetime; NULL when unknown
+    notes            TEXT,
+    source           TEXT    NOT NULL DEFAULT 'manual'
+                         CHECK (source IN ('manual', 'auto')),
+    created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    CHECK (filter_id IS NOT NULL OR line_name IS NOT NULL)
+);
+CREATE INDEX idx_project_session_project ON project_session(project_id);
+
+CREATE TRIGGER trg_project_session_updated_at
+AFTER UPDATE ON project_session
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE project_session SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
+-- Per-filter integration goals.
+CREATE TABLE project_filter_goal (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id   INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    line_name    TEXT    NOT NULL CHECK (line_name IN (
+                     'Ha', 'Hb', 'Oiii', 'Sii', 'Nii', 'OI',
+                     'Lum', 'R', 'G', 'B', 'R+',
+                     'UVIR', 'LP', 'ND', 'other'
+                 )),
+    goal_minutes REAL    NOT NULL CHECK (goal_minutes > 0),
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (project_id, line_name)
+);
+CREATE INDEX idx_project_filter_goal_project ON project_filter_goal(project_id);
+
+CREATE TRIGGER trg_project_filter_goal_updated_at
+AFTER UPDATE ON project_filter_goal
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE project_filter_goal SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
+-- Persistent project ↔ DSO link (migration 0036). Single source of truth for
+-- "main targets" — solve auto-flag and manual Overview "+" both write here,
+-- and rows survive solve deletion (FK cascades on project, not solve).
+CREATE TABLE project_target (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    dso_id     INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (project_id, dso_id)
+);
+CREATE INDEX idx_project_target_project ON project_target(project_id);
+CREATE INDEX idx_project_target_dso ON project_target(dso_id);

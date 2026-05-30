@@ -30,6 +30,11 @@ export interface ThumbnailCropDef {
   crop_h?: number;
 }
 
+export interface ProjectRigRef {
+  id: number;
+  name: string;
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -37,6 +42,9 @@ export interface Project {
   notes: string | null;
   status: string;
   active: boolean;
+  location_id: number | null;
+  location_name: string | null;
+  rigs: ProjectRigRef[];
   images: ProjectImage[];
   thumbnail_crops: ThumbnailCrop[];
   created_at: string;
@@ -67,6 +75,7 @@ export interface ProjectUpdate {
   description?: string;
   notes?: string;
   status?: string;
+  location_id?: number | null;
 }
 
 // ── Fetch functions ───────────────────────────────────────────────────────
@@ -110,6 +119,17 @@ export async function updateProject(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
+  });
+}
+
+export async function setProjectRigs(
+  id: number,
+  rigIds: number[],
+): Promise<Project> {
+  return apiFetch<Project>(`/projects/${id}/rigs`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rig_ids: rigIds }),
   });
 }
 

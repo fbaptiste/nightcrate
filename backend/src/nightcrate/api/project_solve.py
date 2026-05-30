@@ -76,12 +76,21 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     solve = row_to_dict(solve)
 
     cursor = await conn.execute(
-        f"SELECT pd.dso_id, pd.is_main, {_DSO_COLUMNS}"  # nosec B608 - column list is an internal constant
+        f"SELECT pd.dso_id, {_DSO_COLUMNS}"  # nosec B608 - column list is an internal constant
         " FROM project_dso pd JOIN dso d ON d.id = pd.dso_id"
         " WHERE pd.solve_id = ?",
         (solve["id"],),
     )
     link_rows = [row_to_dict(r) for r in await cursor.fetchall()]
+
+    # is_main now derives from project_target (the persistent source of truth),
+    # so toggling a chip from the Overview and from the Plate Solve tab share
+    # one record AND main flags survive solve deletion.
+    cursor = await conn.execute(
+        "SELECT dso_id FROM project_target WHERE project_id = ?",
+        (project_id,),
+    )
+    main_dso_ids = {r["dso_id"] for r in await cursor.fetchall()}
 
     wcs = _wcs_from_solve(solve)
     dso_dicts = [
@@ -92,7 +101,7 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     # that would otherwise block the event loop on dense fields, so offload it.
     annotated_list = await asyncio.to_thread(project_dsos, wcs, dso_dicts)
     annotated = {a.id: a for a in annotated_list}
-    is_main = {r["dso_id"]: bool(r["is_main"]) for r in link_rows}
+    is_main = {r["dso_id"]: r["dso_id"] in main_dso_ids for r in link_rows}
 
     objects = [
         IdentifiedDso(
@@ -278,6 +287,12 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
                 "INSERT INTO project_dso (solve_id, dso_id, is_main) VALUES (?, ?, ?)",
                 (solve_id, a.id, 1 if a.id == best_id else 0),
             )
+        # Auto-flag the best-guess main into the persistent target table.
+        if best_id is not None:
+            await conn.execute(
+                "INSERT OR IGNORE INTO project_target (project_id, dso_id) VALUES (?, ?)",
+                (project_id, best_id),
+            )
         await conn.commit()
 
         # Pre-render the standalone solve image for the overlay viewer.
@@ -317,12 +332,25 @@ async def set_object_main(
         if solve is None:
             raise HTTPException(status_code=404, detail="No plate solve for this project")
 
+        # Verify the DSO belongs to this solve (gives a clear 404).
         cursor = await conn.execute(
-            "UPDATE project_dso SET is_main = ? WHERE solve_id = ? AND dso_id = ?",
-            (1 if body.is_main else 0, solve["id"], dso_id),
+            "SELECT id FROM project_dso WHERE solve_id = ? AND dso_id = ?",
+            (solve["id"], dso_id),
         )
-        if cursor.rowcount == 0:
+        if await cursor.fetchone() is None:
             raise HTTPException(status_code=404, detail=f"DSO {dso_id} not in this solve")
+
+        # Source of truth for "is main" is project_target; sync that.
+        if body.is_main:
+            await conn.execute(
+                "INSERT OR IGNORE INTO project_target (project_id, dso_id) VALUES (?, ?)",
+                (project_id, dso_id),
+            )
+        else:
+            await conn.execute(
+                "DELETE FROM project_target WHERE project_id = ? AND dso_id = ?",
+                (project_id, dso_id),
+            )
         await conn.commit()
 
         return await _require_response(conn, project_id)

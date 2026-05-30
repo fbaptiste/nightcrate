@@ -29,12 +29,19 @@ class ThumbnailCropDef(BaseModel):
 class ProjectUpdate(BaseModel):
     """Partial metadata update (save-as-you-go). Only the fields present in
     the request body are changed; absent fields are left untouched. Empty
-    strings for description/notes clear them."""
+    strings for description/notes clear them; null location_id clears it."""
 
     name: str | None = None
     description: str | None = None
     notes: str | None = None
     status: str | None = None
+    location_id: int | None = None
+
+
+class ProjectRigsSet(BaseModel):
+    """Replace the full set of rigs associated with a project."""
+
+    rig_ids: list[int]
 
 
 class ImageNotesUpdate(BaseModel):
@@ -72,6 +79,11 @@ class ThumbnailCropResponse(BaseModel):
     crop_h: float
 
 
+class ProjectRigRef(BaseModel):
+    id: int
+    name: str
+
+
 class ProjectResponse(BaseModel):
     id: int
     name: str
@@ -79,6 +91,9 @@ class ProjectResponse(BaseModel):
     notes: str | None
     status: str
     active: bool
+    location_id: int | None
+    location_name: str | None
+    rigs: list[ProjectRigRef]
     images: list[ProjectImageResponse]
     thumbnail_crops: list[ThumbnailCropResponse]
     created_at: str
