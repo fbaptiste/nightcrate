@@ -1,8 +1,12 @@
-"""Manual project ↔ DSO target associations (v0.38.0).
+"""Project ↔ DSO main-target associations (v0.38.0).
 
-Lets the user mark target objects on a project without requiring a plate
-solve. The Overview UI merges these with the solve-identified mains
-(project_dso.is_main = 1) and dedupes by dso_id at the display layer.
+`project_target` is the single source of truth for a project's "main
+targets". Rows are created either manually here (the Overview's "+ Add
+target" affordance) or by `api/project_solve.create_solve` auto-flagging
+its best-guess main object. `api/project_solve._assemble_response`
+derives the per-object `is_main` flag on the solve response from this
+table — so toggling main on the Plate Solve tab and adding via the
+Overview "+" edit the same record, and rows survive `DELETE /solve`.
 """
 
 from __future__ import annotations

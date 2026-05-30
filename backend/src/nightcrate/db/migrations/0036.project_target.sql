@@ -1,9 +1,12 @@
--- Manual project ↔ DSO associations (v0.38.0)
+-- Project ↔ DSO main-target associations (v0.38.0)
 -- depends: 0035.project_sessions
 --
--- Lets a user manually add target objects to a project without requiring a
--- plate solve. The Overview surfaces these alongside the solve-identified
--- mains (project_dso.is_main = 1), deduped by dso_id at the display layer.
+-- Single source of truth for a project's "main targets". Rows are created
+-- either manually (Overview "+ Add target") or by plate-solve auto-flagging
+-- its best-guess main object. The `is_main` flag on the solve response is
+-- derived from this table — toggling main on the Plate Solve tab and adding
+-- via the Overview edit the same record. The FK is to `project`, not to
+-- `project_solve`, so rows survive `DELETE /solve`.
 
 CREATE TABLE IF NOT EXISTS project_target (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
