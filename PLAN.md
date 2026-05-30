@@ -51,7 +51,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.35.0 — Project Shell + Image Management](#v0350--project-shell--image-management) ✅
 - [v0.36.0 — Project Thumbnails + Gallery View](#v0360--project-thumbnails--gallery-view) ✅
 - [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking) ✅
-- [v0.38.0 — Project Metadata Enrichment](#v0380--project-metadata-enrichment)
+- [v0.38.0 — Project Metadata + Manual Imaging Sessions](#v0380--project-metadata--manual-imaging-sessions) ✅
 - [v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline](#v0390--sessions-sub-frames-and-ingest-pipeline)
 - [v0.4x.0 — Mosaic Projects (Arc Capstone)](#v04x0--mosaic-projects-arc-capstone)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
@@ -4622,40 +4622,57 @@ the solution + **every** catalog object in the field; one is auto-flagged main.
 
 ---
 
-## v0.38.0 — Project Metadata Enrichment
+## v0.38.0 — Project Metadata + Manual Imaging Sessions
 
-Projects gain rig, location, date, and per-filter integration time context — all
-manually entered in this version. Automated derivation from sub-frame data comes
-in v0.39.0+.
+Status: Done
+Branch: `v0.38.0/project-metadata-enrichment`
 
-### Schema (migration 0034)
+The version grew substantially past the original "metadata enrichment" plan
+once the manual-entry surface was nailed down with Fred. Per-filter actual
+integration is now **derived** from manually-entered capture batches rather
+than a typed-in number; the resulting `project_session` schema is the
+foundation that v0.39.0's automated ingest will populate (with manual
+override). The retrospective altitude chart was deferred to v0.39.0 — its
+headline value ("highlight actual imaging nights") needs per-session data we
+won't have until then.
 
-- [ ] `project_rig` junction table — project_id FK CASCADE, rig_id FK, UNIQUE (project_id, rig_id). A project can use multiple rigs (Fred's dual-rig setup)
-- [ ] ALTER ADD `location_id` INTEGER REFERENCES location(id) ON DELETE SET NULL on `project`
-- [ ] ALTER ADD `first_session_date` TEXT, `last_session_date` TEXT on `project`
-- [ ] `project_integration` table — project_id FK CASCADE, line_name TEXT CHECK (same closed vocabulary as `filter_passband.line_name`: `Ha`, `Hb`, `Oiii`, `Sii`, `Nii`, `OI`, `Lum`, `R`, `G`, `B`, `UVIR`, `LP`, `ND`, `other`), `actual_minutes` REAL (manual), `goal_minutes` REAL, notes TEXT, UNIQUE (project_id, line_name)
-- [ ] **Manual-overrides contract (decided):** `actual_minutes` here is the *manual* value and always wins for display + progress. v0.39.0+ derives a measured per-filter total from `sub_frame` data, stored **separately** (a view/column — never overwriting this manual column). Effective actual = `COALESCE(project_integration.actual_minutes, derived)`. The future AI bundle carries both with provenance so it can report measured reality even when a manual override is set. Do NOT collapse the two into one mutable column.
+### Schema (migration 0035, 0036)
+
+- [x] `project_rig` junction (project_id FK CASCADE, rig_id FK, PK both) — supports dual-rig projects
+- [x] ALTER `project` ADD `location_id INTEGER REFERENCES location(id)` (no CASCADE — locations soft-delete)
+- [x] `project_session` — manual capture batch (project_id FK CASCADE, optional rig_id/filter_id, line_name from the 15-value passband vocab, exposure_seconds > 0, gain ≥ 0 nullable, num_subs > 0, binning nullable, session_date nullable TEXT, notes, source 'manual'/'auto'). CHECK enforces `filter_id OR line_name`.
+- [x] `project_filter_goal` (project_id FK CASCADE, line_name CHECK, goal_minutes > 0, UNIQUE per project+line)
+- [x] `project_target` (project_id FK CASCADE, dso_id FK CASCADE, UNIQUE) — persistent main targets, **survives plate-solve deletion**. Migration 0036 backfills from existing solve mains.
 
 ### Backend
 
-- [ ] Rig association endpoints: add/remove rigs to/from project (`POST/DELETE /api/projects/{id}/rigs`)
-- [ ] Location association: set/clear location on project (`PATCH /api/projects/{id}` with location_id)
-- [ ] Date range: set/clear first/last session dates (`PATCH /api/projects/{id}`)
-- [ ] Integration time CRUD: `GET/POST/PUT/DELETE /api/projects/{id}/integration` — per-filter entries with actual + goal minutes
-- [ ] Integration time summary endpoint: total actual + per-filter breakdown
-- [ ] Tests: rig/location association, date validation, integration time CRUD + summary
+- [x] `PUT /projects/{id}/rigs` (replace-set; pre-validates rig IDs)
+- [x] `PATCH /projects/{id}` extended to `location_id` (with `get_or_404` pre-validation)
+- [x] Session CRUD (`GET/POST/PATCH/DELETE /projects/{id}/sessions`)
+- [x] Integration summary (`GET /projects/{id}/integration`) — per-line actual/goal, total, derived first/last date. Duo-band filters double-count into both passband lines per spec §12; wall-clock total counts each session once.
+- [x] Goals replace-set (`PUT /projects/{id}/integration/goals`)
+- [x] Target CRUD (`GET/POST/DELETE /projects/{id}/targets`) — manual main-target add/remove
+- [x] Plate-solve refactored so `is_main` derives from `project_target` — toggling main from either tab edits the same record, and deleting the plate solve no longer drops the project's main targets
+- [x] Moon phase naming fix (`services/astronomy.py`): principal phases now span ~1 day (±7°) instead of the textbook ~3.7 days (±22.5°), so "Full Moon"/"New Moon"/quarters each name only ~one calendar day in a daily forecast
+- [x] 40+ new tests (sessions, targets, integration math, duo-band double-count, FK + filter-or-line validation, cascade-on-project-delete)
 
-### Frontend — Overview tab enrichment
+### Frontend
 
-- [ ] Rig selector (multi-select from user's rigs)
-- [ ] Location selector (from user's locations)
-- [ ] Date range display and editor (first/last session dates)
-- [ ] Integration time summary: per-filter bar chart showing hours per filter using the colorblind-safe palette. "4h Ha / 1.5h OIII / 2h SII" at a glance. Manual entry form for adding/editing per-filter time
-- [ ] Contextual visibility chart: if the project has a target (v0.37.0), a location, and session dates — show a retrospective altitude chart for the imaging period. Reuses `services/planner_sky_track.py` with historical dates. Shows object altitude curve, moon phase/position, and highlights actual imaging nights. "Here's what conditions you were working with"
+- [x] **New tab structure**: Overview / Sessions / Plate Solve / Notes
+- [x] Overview redesign: image (520px) left, scrollable description right, then full-width thumbnails, left-aligned integration chart, capped-width Notes section moved to its own tab. Imaging dates derived from session min/max, displayed as plain text under Main targets.
+- [x] **Main targets**: backed by `project_target`. Single source of truth — adding via the "+" on Overview or auto-flagging via plate-solve writes the same record. Per-chip × always available; solve-overlap chips also click through to the Plate Solve tab. Backfill survives solve deletion.
+- [x] **AddTargetDialog** — debounced server-side DSO search (excludes already-selected targets)
+- [x] **Sessions tab** — table + Add/Edit dialog with grouped filter picker ("My Rig" group ranks the project's rig loadout first, then "Bandpass" generics, then other equipment filters sorted by manufacturer). Binning is a select (1x1/2x2/3x3/4x4), defaults to 1x1 on new sessions. Rig defaults to the project's rig when adding.
+- [x] **Integration chart** (custom lightweight bars, colorblind-safe blue fill + theme-neutral goal tick): per-line `Xh Ym / Yh (Z%)` with a left-aligned cap.
+- [x] **Goals editor** — save-as-you-go replace-set; rig-covered bandpasses appear above a divider for quick access.
+- [x] **MarkdownEditor** (`components/common/MarkdownEditor.tsx`) — reusable. Default rendered view (react-markdown + remark-gfm, MUI-themed typography); edit-icon toggles to a raw-markdown TextField. Used for Notes (full-tab) and Description (Overview).
+- [x] **ProjectMetadataSection** — Location selector (single, falls back to a synthetic "(retired)" option if the project's location was later retired) + Rigs multi-select (chip height capped at 22 to match Location)
 
-### Not in scope
+### Not in scope (deferred to v0.39.0+)
 
-Sessions, sub-frames, ingest pipeline, automated integration time from FITS headers, PHD2 tab.
+Sessions/sub-frame ingest pipeline, automated integration time from FITS
+headers, the retrospective altitude chart, PHD2 tab, calibration-frame
+storage (split out as v0.38.1).
 
 ---
 

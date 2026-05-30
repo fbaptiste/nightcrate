@@ -11,6 +11,7 @@ import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import AddIcon from "@mui/icons-material/Add";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RestoreIcon from "@mui/icons-material/Restore";
@@ -38,7 +39,18 @@ import {
 import ImageGalleryStrip from "@/components/projects/ImageGalleryStrip";
 import ThumbnailCropEditor from "@/components/projects/ThumbnailCropEditor";
 import ProjectPlateSolveTab from "@/components/projects/ProjectPlateSolveTab";
+import ProjectSessionsTab from "@/components/projects/ProjectSessionsTab";
+import ProjectMetadataSection from "@/components/projects/ProjectMetadataSection";
+import IntegrationBars from "@/components/projects/IntegrationBars";
+import AddTargetDialog from "@/components/projects/AddTargetDialog";
+import MarkdownEditor from "@/components/common/MarkdownEditor";
 import { getProjectSolve } from "@/api/projectSolve";
+import { getIntegration } from "@/api/projectSessions";
+import {
+  addProjectTarget,
+  listProjectTargets,
+  removeProjectTarget,
+} from "@/api/projectTargets";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,10 +62,6 @@ export default function ProjectDetailPage() {
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
-  const [editingDesc, setEditingDesc] = useState(false);
-  const [descInput, setDescInput] = useState("");
-  const [editingNotes, setEditingNotes] = useState(false);
-  const [notesInput, setNotesInput] = useState("");
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [cropEditorOpen, setCropEditorOpen] = useState(false);
 
@@ -68,7 +76,48 @@ export default function ProjectDetailPage() {
     queryFn: () => getProjectSolve(projectId),
     enabled: !isNaN(projectId),
   });
-  const mainTargets = (solve?.objects ?? []).filter((o) => o.is_main);
+  const { data: integration } = useQuery({
+    queryKey: ["project-integration", projectId],
+    queryFn: () => getIntegration(projectId),
+    enabled: !isNaN(projectId),
+  });
+
+  // Main targets are persistent project_target rows — survive solve deletion;
+  // populated either manually (Overview) or by a plate solve auto-flagging
+  // its best-guess main object.
+  const { data: mainTargets = [] } = useQuery({
+    queryKey: ["project-targets", projectId],
+    queryFn: () => listProjectTargets(projectId),
+    enabled: !isNaN(projectId),
+  });
+
+  // DSOs that the current solve also identified — used to make those chips
+  // clickable to jump to the Plate Solve tab.
+  const solveDsoIds = useMemo(
+    () => new Set((solve?.objects ?? []).map((o) => o.dso_id)),
+    [solve],
+  );
+
+  const [addTargetOpen, setAddTargetOpen] = useState(false);
+
+  const invalidateTargets = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["project-targets", projectId] });
+    // The solve response derives `is_main` from project_target, so refresh it
+    // too — keeps the Plate Solve tab's star toggles in sync.
+    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+  }, [queryClient, projectId]);
+
+  const addTargetMut = useMutation({
+    mutationFn: (dsoId: number) => addProjectTarget(projectId, dsoId),
+    onSuccess: invalidateTargets,
+    onError: (e) => setSnack(String(e)),
+  });
+
+  const removeTargetMut = useMutation({
+    mutationFn: (dsoId: number) => removeProjectTarget(projectId, dsoId),
+    onSuccess: invalidateTargets,
+    onError: (e) => setSnack(String(e)),
+  });
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["project", projectId] });
@@ -218,6 +267,20 @@ export default function ProjectDetailPage() {
   const displayDesc = project.description ?? "";
   const displayNotes = project.notes ?? "";
 
+  const formatDate = (iso: string) =>
+    // Anchor at midday to avoid a timezone day-shift when parsing a bare date.
+    new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  const dateRange =
+    integration?.first_session_date && integration?.last_session_date
+      ? integration.first_session_date === integration.last_session_date
+        ? formatDate(integration.first_session_date)
+        : `${formatDate(integration.first_session_date)} – ${formatDate(integration.last_session_date)}`
+      : null;
+
   return (
     <Box sx={{ p: 3, height: "100%", overflow: "auto" }}>
       {/* Header */}
@@ -241,13 +304,13 @@ export default function ProjectDetailPage() {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
               if (e.key === "Escape") setEditingName(false);
             }}
-            sx={{ flexGrow: 1 }}
+            sx={{ minWidth: 320 }}
           />
         ) : (
           <Typography
             variant="h5"
             fontWeight={600}
-            sx={{ flexGrow: 1, cursor: "pointer" }}
+            sx={{ cursor: "pointer" }}
             onClick={() => {
               setNameInput(project.name);
               setEditingName(true);
@@ -261,6 +324,7 @@ export default function ProjectDetailPage() {
           label={project.status}
           size="small"
           color={PROJECT_STATUS_COLORS[project.status] ?? "default"}
+          sx={{ ml: "100px" }}
         />
 
         {project.active ? (
@@ -287,21 +351,36 @@ export default function ProjectDetailPage() {
       {/* Tabs */}
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
         <Tab label="Overview" />
+        <Tab label="Sessions" />
         <Tab label="Plate Solve" />
+        <Tab label="Notes" />
       </Tabs>
 
-      {tab === 1 && <ProjectPlateSolveTab projectId={projectId} />}
+      {tab === 1 && <ProjectSessionsTab projectId={projectId} />}
+      {tab === 2 && <ProjectPlateSolveTab projectId={projectId} />}
+      {tab === 3 && (
+        <Box sx={{ maxWidth: 820 }}>
+          <MarkdownEditor
+            value={displayNotes}
+            onSave={(next) => {
+              const v = next.trim();
+              if (v !== (project.notes ?? "")) metaMut.mutate({ notes: v });
+            }}
+            placeholder="Click to add notes..."
+          />
+        </Box>
+      )}
 
       {/* Overview tab */}
       {tab === 0 && (
-        <Box>
-          {/* Image + Description side by side */}
-          <Box sx={{ display: "flex", gap: 3, mb: 2 }}>
-            {/* Main image */}
+        <Box sx={{ maxWidth: 1280 }}>
+          {/* Two-column row, sized to the image height so the description
+              scrolls inside its column rather than overflowing below. */}
+          <Box sx={{ display: "flex", gap: 3, mb: 2, height: 520 }}>
             <Box
               sx={{
-                width: 400,
-                height: 400,
+                width: 520,
+                height: 520,
                 flexShrink: 0,
                 borderRadius: 1,
                 overflow: "hidden",
@@ -340,72 +419,75 @@ export default function ProjectDetailPage() {
               )}
             </Box>
 
-            {/* Description */}
-            <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-              <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
-                Description
-              </Typography>
-              {editingDesc ? (
-                <TextField
-                  autoFocus
-                  fullWidth
-                  multiline
-                  minRows={3}
-                  maxRows={12}
-                  size="small"
-                  value={descInput}
-                  onChange={(e) => setDescInput(e.target.value)}
-                  onBlur={() => {
-                    setEditingDesc(false);
-                    const v = descInput.trim();
-                    if (v !== (project.description ?? "")) metaMut.mutate({ description: v });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") setEditingDesc(false);
-                  }}
-                />
-              ) : (
-                <Typography
-                  variant="body2"
-                  sx={{
-                    cursor: "pointer",
-                    color: displayDesc ? "text.primary" : "text.secondary",
-                    whiteSpace: "pre-wrap",
-                    minHeight: 40,
-                    p: 1,
-                    borderRadius: 1,
-                    "&:hover": { bgcolor: "action.hover" },
-                  }}
-                  onClick={() => {
-                    setDescInput(displayDesc);
-                    setEditingDesc(true);
-                  }}
-                >
-                  {displayDesc || "Click to add a description..."}
-                </Typography>
-              )}
-
-              {mainTargets.length > 0 && (
-                <Box sx={{ mt: 1.5 }}>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+            {/* RIGHT: metadata above, scrollable description below */}
+            <Box
+              sx={{
+                flexGrow: 1,
+                minWidth: 0,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <Box sx={{ mb: 1.5 }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
+                  <Typography variant="subtitle2" color="text.secondary">
                     Main targets
                   </Typography>
+                  <IconButton
+                    size="small"
+                    onClick={() => setAddTargetOpen(true)}
+                    aria-label="Add target"
+                  >
+                    <AddIcon fontSize="small" />
+                  </IconButton>
+                </Box>
+                {mainTargets.length > 0 ? (
                   <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                    {mainTargets.map((o) => (
+                    {mainTargets.map((t) => (
                       <Chip
-                        key={o.dso_id}
-                        label={o.common_name ?? o.primary_designation}
+                        key={t.dso_id}
+                        label={t.common_name ?? t.primary_designation}
                         size="small"
-                        onClick={() => setTab(1)}
+                        onClick={solveDsoIds.has(t.dso_id) ? () => setTab(2) : undefined}
+                        onDelete={() => removeTargetMut.mutate(t.dso_id)}
                       />
                     ))}
                   </Box>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No targets yet.
+                  </Typography>
+                )}
+              </Box>
+
+              {dateRange && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+                    Imaging dates
+                  </Typography>
+                  <Typography variant="body2">{dateRange}</Typography>
                 </Box>
               )}
+
+              <Box sx={{ mb: 2 }}>
+                <ProjectMetadataSection project={project} onUpdated={applyProject} />
+              </Box>
+
+              <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>
+                <MarkdownEditor
+                  value={displayDesc}
+                  onSave={(next) => {
+                    const v = next.trim();
+                    if (v !== (project.description ?? "")) metaMut.mutate({ description: v });
+                  }}
+                  placeholder="Add description…"
+                  minHeight={40}
+                />
+              </Box>
             </Box>
           </Box>
 
-          {/* Image gallery strip */}
+          {/* Thumbnails — full width below, given room to grow horizontally */}
           <ImageGalleryStrip
             projectId={projectId}
             images={images}
@@ -425,51 +507,13 @@ export default function ProjectDetailPage() {
             </Button>
           )}
 
-          {/* Notes */}
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
-              Notes
-            </Typography>
-            {editingNotes ? (
-              <TextField
-                autoFocus
-                fullWidth
-                multiline
-                minRows={2}
-                maxRows={10}
-                size="small"
-                value={notesInput}
-                onChange={(e) => setNotesInput(e.target.value)}
-                onBlur={() => {
-                  setEditingNotes(false);
-                  const v = notesInput.trim();
-                  if (v !== (project.notes ?? "")) metaMut.mutate({ notes: v });
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setEditingNotes(false);
-                }}
-              />
-            ) : (
-              <Typography
-                variant="body2"
-                sx={{
-                  cursor: "pointer",
-                  color: displayNotes ? "text.primary" : "text.secondary",
-                  whiteSpace: "pre-wrap",
-                  minHeight: 32,
-                  p: 1,
-                  borderRadius: 1,
-                  "&:hover": { bgcolor: "action.hover" },
-                }}
-                onClick={() => {
-                  setNotesInput(displayNotes);
-                  setEditingNotes(true);
-                }}
-              >
-                {displayNotes || "Click to add notes..."}
-              </Typography>
-            )}
-          </Box>
+          {/* Integration — left-aligned, narrow */}
+          {integration && integration.lines.length > 0 && (
+            <Box sx={{ mt: 3 }}>
+              <IntegrationBars summary={integration} />
+            </Box>
+          )}
+
         </Box>
       )}
 
@@ -504,6 +548,13 @@ export default function ProjectDetailPage() {
         mainImageId={effectiveMainId}
         existingCrops={project.thumbnail_crops}
         onApply={(crops) => cropMut.mutate(crops)}
+      />
+
+      <AddTargetDialog
+        open={addTargetOpen}
+        onClose={() => setAddTargetOpen(false)}
+        onSelect={(dsoId) => addTargetMut.mutateAsync(dsoId)}
+        excludeDsoIds={new Set(mainTargets.map((t: { dso_id: number }) => t.dso_id))}
       />
 
       <Snackbar

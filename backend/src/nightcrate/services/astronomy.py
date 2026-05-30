@@ -257,24 +257,30 @@ def compute_moon_phase_name(time: Time, location: EarthLocation) -> str:
 
 
 def _phase_name_from_delta_lon(delta_lon: float) -> str:
-    """Map ecliptic longitude difference to one of 8 standard phase names."""
-    if delta_lon < 22.5:
+    """Map ecliptic longitude difference to one of 8 standard phase names.
+
+    Principal phases (New, First Quarter, Full, Last Quarter) span a narrow
+    ±7° window (~1.15 days) so each named phase covers about one calendar
+    day in a daily forecast; the surrounding gibbous/crescent labels fill
+    the rest of the ~29.5-day cycle. ±7° (rather than exactly ±6.1° = ±0.5
+    day) guarantees that *some* day catches the principal phase even when
+    the actual peak falls between consecutive midnight samples.
+    """
+    if delta_lon < 7 or delta_lon >= 353:
         return "New Moon"
-    if delta_lon < 67.5:
+    if delta_lon < 83:
         return "Waxing Crescent"
-    if delta_lon < 112.5:
+    if delta_lon < 97:
         return "First Quarter"
-    if delta_lon < 157.5:
+    if delta_lon < 173:
         return "Waxing Gibbous"
-    if delta_lon < 202.5:
+    if delta_lon < 187:
         return "Full Moon"
-    if delta_lon < 247.5:
+    if delta_lon < 263:
         return "Waning Gibbous"
-    if delta_lon < 292.5:
+    if delta_lon < 277:
         return "Last Quarter"
-    if delta_lon < 337.5:
-        return "Waning Crescent"
-    return "New Moon"
+    return "Waning Crescent"
 
 
 def _moon_rise_set(

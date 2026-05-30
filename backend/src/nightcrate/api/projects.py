@@ -18,6 +18,8 @@ from nightcrate.api.project_models import (
     ProjectImageResponse,
     ProjectListItem,
     ProjectResponse,
+    ProjectRigRef,
+    ProjectRigsSet,
     ProjectUpdate,
     ReorderImagesRequest,
     ThumbnailCropResponse,
@@ -79,6 +81,22 @@ def _image_row(d: dict) -> dict:
 async def _fetch_project_with_images(conn, project_id: int) -> ProjectResponse:
     proj = await get_or_404(conn, "project", project_id, "Project")
     bool_fields(proj, "active")
+
+    location_name: str | None = None
+    if proj.get("location_id") is not None:
+        cursor = await conn.execute(
+            "SELECT name FROM location WHERE id = ?", (proj["location_id"],)
+        )
+        loc_row = await cursor.fetchone()
+        location_name = loc_row["name"] if loc_row else None
+
+    cursor = await conn.execute(
+        "SELECT r.id, r.name FROM project_rig pr JOIN rig r ON r.id = pr.rig_id"
+        " WHERE pr.project_id = ? ORDER BY r.sort_order, r.name",
+        (project_id,),
+    )
+    rigs = [ProjectRigRef(**row_to_dict(r)) for r in await cursor.fetchall()]
+
     cursor = await conn.execute(
         "SELECT * FROM project_image WHERE project_id = ? ORDER BY display_order, id",
         (project_id,),
@@ -94,7 +112,9 @@ async def _fetch_project_with_images(conn, project_id: int) -> ProjectResponse:
     crop_rows = await cursor.fetchall()
     crops = [ThumbnailCropResponse(**row_to_dict(r)) for r in crop_rows]
 
-    return ProjectResponse(**proj, images=images, thumbnail_crops=crops)
+    return ProjectResponse(
+        **proj, location_name=location_name, rigs=rigs, images=images, thumbnail_crops=crops
+    )
 
 
 async def _auto_promote_main(conn, project_id: int) -> None:
@@ -294,6 +314,12 @@ async def update_project(project_id: int, body: ProjectUpdate) -> ProjectRespons
                 raise HTTPException(status_code=422, detail=f"Invalid status: {status}")
             sets.append("status = ?")
             params.append(status)
+        if "location_id" in fields:
+            location_id = fields["location_id"]
+            if location_id is not None:
+                await get_or_404(conn, "location", location_id, "Location")
+            sets.append("location_id = ?")
+            params.append(location_id)
 
         if sets:
             params.append(project_id)
@@ -303,6 +329,26 @@ async def update_project(project_id: int, body: ProjectUpdate) -> ProjectRespons
             )
             await conn.commit()
 
+        return await _fetch_project_with_images(conn, project_id)
+
+
+@router.put("/{project_id}/rigs")
+async def set_project_rigs(project_id: int, body: ProjectRigsSet) -> ProjectResponse:
+    """Replace the full set of rigs associated with a project."""
+    rig_ids = list(dict.fromkeys(body.rig_ids))  # dedupe, preserve order
+
+    async with get_db() as conn:
+        await get_or_404(conn, "project", project_id, "Project")
+        for rig_id in rig_ids:
+            await get_or_404(conn, "rig", rig_id, "Rig")
+
+        await conn.execute("DELETE FROM project_rig WHERE project_id = ?", (project_id,))
+        for rig_id in rig_ids:
+            await conn.execute(
+                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+                (project_id, rig_id),
+            )
+        await conn.commit()
         return await _fetch_project_with_images(conn, project_id)
 
 

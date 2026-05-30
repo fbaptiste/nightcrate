@@ -62,6 +62,8 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
 
   const applySolve = (s: ProjectSolve | null) => {
     queryClient.setQueryData(["project-solve", projectId], s);
+    // Solve mains live in project_target — keep the Overview's chips in sync.
+    queryClient.invalidateQueries({ queryKey: ["project-targets", projectId] });
     onMainsChange?.();
   };
 

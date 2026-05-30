@@ -31,7 +31,9 @@ from nightcrate.api import (
     phd2,
     planner,
     plate_solve,
+    project_sessions,
     project_solve,
+    project_targets,
     projects,
     rigs,
     settings,
@@ -412,7 +414,9 @@ app.include_router(planner.router)
 app.include_router(phd2.router)
 app.include_router(plate_solve.router)
 app.include_router(projects.router)
+app.include_router(project_sessions.router)
 app.include_router(project_solve.router)
+app.include_router(project_targets.router)
 app.include_router(settings.router)
 app.include_router(admin.router)
 app.include_router(wishlist.router)

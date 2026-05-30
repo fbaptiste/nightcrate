@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.37.0
+**NightCrate version:** 0.38.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -780,7 +780,12 @@ Omitted from diagrams for readability. Every seedable table carries:
 | Table | Purpose |
 |-------|---------|
 | `project_solve` (migration 0034) | One plate solve per project (`project_id` FK CASCADE `UNIQUE`) of a **standalone** non-gallery image. Stores `image_path`, `image_width`/`image_height`, the WCS solution (`center_ra_deg`/`center_dec_deg` = ASTAP CRVAL, full CD matrix, `crpix1`/`crpix2`) and display fields (`ra_hms`, `dec_dms`, `pixel_scale_arcsec`, `rotation_deg`, `fov_width_arcmin`, `fov_height_arcmin`), `solved_at`. View-only; delete to re-solve. Index on `project_id`. |
-| `project_dso` (migration 0034) | Catalog objects found in a solved frame. `solve_id` FK CASCADE, `dso_id` FK CASCADE, `is_main` (multiple mains allowed), `created_at`, `UNIQUE(solve_id, dso_id)`. **Every** in-FOV object is stored (not just mains) to power a future cross-project DSO search; one is auto-flagged main (nearest frame centre, tie-break largest). Deleting the solve cascades these rows. Indexes on `solve_id` and `dso_id`. |
+| `project_dso` (migration 0034) | Catalog objects found in a solved frame. `solve_id` FK CASCADE, `dso_id` FK CASCADE, `is_main` (vestigial — v0.38.0 derives is_main from `project_target` instead; this column is no longer authoritative), `created_at`, `UNIQUE(solve_id, dso_id)`. **Every** in-FOV object is stored (not just mains) to power a future cross-project DSO search; one is auto-flagged main (nearest frame centre, tie-break largest). Deleting the solve cascades these rows. Indexes on `solve_id` and `dso_id`. |
+| `project_rig` (migration 0035, v0.38.0) | Multi-rig project association. `project_id` FK CASCADE, `rig_id` FK, PRIMARY KEY (both). Indexes on each column. Supports dual-rig projects. |
+| `project.location_id` (migration 0035, v0.38.0) | ALTER ADDed nullable `INTEGER REFERENCES location(id)` on `project`. No CASCADE: locations soft-delete; the row is preserved so references stay valid. |
+| `project_session` (migration 0035, v0.38.0) | Manually-entered capture batch (N identical light subs of one filter). `project_id` FK CASCADE, optional `rig_id`, **`filter_id` OR `line_name`** (CHECK enforced), `exposure_seconds > 0`, `gain` (nullable), `num_subs > 0`, `binning` (nullable), `session_date` (nullable; date or ISO datetime), `notes`, `source` ('manual' \| 'auto'), timestamps with trigger. Derived integration in `api/project_sessions.py:_compute_integration` expands filter_id sessions through `filter_passband` (duo-band double-counts; spec §12). The v0.39.0 ingest pipeline will write to this table with `source='auto'`. |
+| `project_filter_goal` (migration 0035, v0.38.0) | Per-filter integration goal. `project_id` FK CASCADE, `line_name` CHECK (same 15-value vocab as `filter_passband.line_name`), `goal_minutes > 0`, UNIQUE per `(project_id, line_name)`. Drives the per-line goal marker on the Overview's integration bar chart. |
+| `project_target` (migration 0036, v0.38.0) | **Persistent project↔dso link** — the single source of truth for "main targets". `project_id` FK CASCADE, `dso_id` FK CASCADE, UNIQUE per `(project_id, dso_id)`. Migration 0036 backfills from existing `project_dso.is_main = 1` rows. Creating a plate solve auto-inserts its best-guess main here; toggling the star on either the Overview or Plate Solve tab edits the same record. **`project_target` rows survive `DELETE /solve`** (cascade is on project, not solve). Indexes on each column. |
 
 ### Future Tables
 

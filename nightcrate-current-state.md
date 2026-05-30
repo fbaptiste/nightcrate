@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.37.0
+**NightCrate version:** 0.38.0
 
-**Last updated:** 2026-05-28
+**Last updated:** 2026-05-30
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -325,11 +325,13 @@ Imaging project management with **save-as-you-go** editing and pre-calculated im
 - **API (plate solve, v0.37.0):** `POST/GET/DELETE /api/projects/{id}/solve`, `PUT /api/projects/{id}/solve/objects/{dso_id}` (toggle main), `GET /api/projects/{id}/solve/image/{variant}`
 - **Key backend:** `api/projects.py`, `api/project_models.py`, `api/project_solve.py` + `project_solve_models.py` (v0.37.0), `services/project_images.py` (pre-calc), `core/app_config.py` (workspace model)
 - **Key frontend:** `pages/ProjectsPage.tsx`, `pages/ProjectDetailPage.tsx`, `components/projects/{ProjectCard,ProjectGalleryCard,ProjectFormDialog,ImageGalleryStrip,ThumbnailCropEditor,ProjectPlateSolveTab}.tsx`, `components/plate-solve/DsoAnnotationOverlay.tsx` (shared with Image Analyzer), `api/{projects,projectSolve}.ts`
-- **Schema:** migrations 0029 (`project` + `project_image`), 0031 (drop UNIQUE on name), 0032 (`project_thumbnail`), 0033 (drop `staged` column — save-as-you-go), 0034 (`project_solve` + `project_dso`)
+- **Schema:** migrations 0029 (`project` + `project_image`), 0031 (drop UNIQUE on name), 0032 (`project_thumbnail`), 0033 (drop `staged` column — save-as-you-go), 0034 (`project_solve` + `project_dso`), 0035 (`project_rig` + `project.location_id` + `project_session` + `project_filter_goal` — v0.38.0), 0036 (`project_target` — persistent main targets; backfills from existing solve mains)
 
 **v0.36.0 — Thumbnail Crops + Gallery View.** User-defined crop rectangles per thumbnail size (small 1:1, medium 1:1, large 4:3) stored in `project_thumbnail` table. Crop editor dialog with three tabs, draggable/resizable rectangle with aspect-ratio constraint, source image selector. Cropped thumbnails generated server-side and cached on disk at `{project_dir}/thumb_crop_{size}.jpg`. Projects page has three view modes: Gallery (4:3 cards), List (120px medium thumbnail + description), Compact (56px small thumbnail). "Show retired" toggle to view/restore/delete soft-deleted projects.
 
 **v0.37.0 — Target Identification + DSO Linking.** Two parts. (1) **Save-as-you-go refactor** — dropped the stage + Save/Cancel model for immediate persistence (migration 0033 drops `project_image.staged`); rationale: staging doesn't scale to the v0.39.0+ sessions/sub-frames ingest. (2) **Plate-solve DSO linking** — a project gets one standalone (non-gallery) plate-solve image; solving stores the WCS solution (view-only — delete to re-solve) plus **every** in-FOV catalog object in `project_dso` (one auto-flagged main, nearest centre + largest; multi-main via star toggle). Deleting the solve cascades its objects + the rendered image behind a confirm dialog. A "Plate Solve" tab shows the image with a catalog-annotation overlay (shared `DsoAnnotationOverlay` — mains teal / others blue, colorblind-safe), a read-only solution summary, and the object list; mains surface as chips on the Overview. Storing all objects (not just mains) is deliberate — powers a future cross-project DSO search (search/completion UI deferred). Also fixed a pre-existing bug: solving an archive entry failed with "I/O operation on closed file" (header reading closes the BytesIO) — the solver now reads bytes once and hands fresh buffers to each consumer.
+
+**v0.38.0 — Project Metadata + Manual Imaging Sessions.** Substantial expansion of the project domain. New entities: `project_rig` (multi-rig junction), `project.location_id` FK, **`project_session`** (manual capture batches — filter, exposure, gain, sub count, optional date+rig; derived integration), `project_filter_goal` (per-line goals), **`project_target`** (persistent project↔dso link; backfilled from existing solve mains in migration 0036). The detail page is now four tabs (Overview / Sessions / Plate Solve / Notes); the Overview switched to a magazine-style float layout (520-px image left, scrollable description right; full-width thumbnails below; left-aligned integration chart; capped-width sections). **Main targets unified** — `project_target` is the single source of truth; toggling a main on the Plate Solve tab and adding one via "+" on the Overview edit the same row, and `is_main` in the solve response is derived from `project_target` so **main targets survive `DELETE /solve`**. New manual session entry includes a grouped filter picker (My Rig group → Bandpass → other equipment by manufacturer), Binning select (1x1/2x2/3x3/4x4 default 1x1), rig defaults to the project's rig, and a duo-band filter (e.g. Optolong L-eNhance Ha+Oiii) double-counts into both line budgets via `filter_passband` (spec §12) while wall-clock total counts each session once. **Markdown editor** (`components/common/MarkdownEditor.tsx`) — reusable, default rendered view (react-markdown + remark-gfm, MUI-themed sx overrides), edit-icon toggles to a raw TextField. Used by Notes (full-tab) and Overview Description. Also tightened the moon phase namer in `services/astronomy.py` — principal phases (New, First/Last Quarter, Full) now span ~1 day each (±7°) instead of ~3.7 days (±22.5°), so the daily weather forecast no longer shows "Full Moon" for four consecutive days.
 
 ### Plate Solving (ASTAP)
 
@@ -347,7 +349,7 @@ Handles all NightCrate image sources: filesystem files passed directly to ASTAP;
 
 ## Schema state
 
-Current migration: **0034** (`project_solve` + `project_dso`). 34 migrations total (`0001`–`0034`).
+Current migration: **0036** (`project_target`). 36 migrations total (`0001`–`0036`).
 
 **Recent migrations not detailed elsewhere:** 0025 (`target_wishlist` — `target_wishlist`, `wishlist_section`, `target_plan`, `target_plan_date_range` tables for the wishlist + planning system), 0026 (`rig_sort_order` — `sort_order` column on `rig` + `rig_summary` view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
 
