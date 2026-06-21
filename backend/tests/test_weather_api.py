@@ -1,6 +1,6 @@
 """Tests for the weather API endpoints."""
 
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
@@ -256,6 +256,91 @@ async def test_hourly_returns_hours(client):
         assert "aod" in hour
         # Verify dryness is gone
         assert "dryness" not in hour
+
+
+@pytest.mark.anyio
+async def test_hourly_moon_aligned_by_utc_across_timezones(client):
+    """Astro is joined to weather by absolute UTC, not a wall-clock string.
+
+    A remote-observatory location whose display ``timezone`` differs from its
+    ``geo_timezone`` must still get correctly aligned per-hour moon/darkness
+    data. Before the fix the join matched ``"HH:MM"`` strings labelled in two
+    different zones, so the moon columns were silently shifted by the offset.
+    """
+    from nightcrate.services.astronomy import compute_hourly_astro
+
+    # Tokyo coordinates, but the user displays times in Los Angeles.
+    lat, lon, elev = 35.6762, 139.6503, 40.0
+    display_tz = "America/Los_Angeles"
+    geo_tz = "Asia/Tokyo"
+    resp = await client.post(
+        "/api/locations",
+        json={
+            "name": "Remote Rig",
+            "latitude": lat,
+            "longitude": lon,
+            "elevation_m": elev,
+            "timezone": display_tz,
+            "geo_timezone": geo_tz,
+        },
+    )
+    assert resp.status_code == 201
+    loc_id = resp.json()["id"]
+    assert resp.json()["geo_timezone"] == geo_tz
+
+    # Expected astro, indexed by absolute UTC instant (what the endpoint joins on).
+    astro = compute_hourly_astro(
+        latitude=lat,
+        longitude=lon,
+        elevation_m=elev,
+        night_date=date(2026, 4, 13),
+        timezone_str=geo_tz,
+    )
+    assert astro  # the night must resolve for the assertion to mean anything
+    astro_sorted = sorted(astro, key=lambda a: a.time_utc)
+
+    def nearest(utc_dt):
+        best, best_gap = None, timedelta(minutes=31)
+        for a in astro_sorted:
+            gap = abs(a.time_utc - utc_dt)
+            if gap < best_gap:
+                best, best_gap = a, gap
+        return best
+
+    with (
+        patch(
+            "nightcrate.api.weather._fetch_or_cached",
+            new_callable=AsyncMock,
+            return_value=_make_fake_weather(),
+        ),
+        patch(
+            "nightcrate.api.weather._fetch_or_cached_supplementary",
+            new_callable=AsyncMock,
+            return_value=_make_fake_supplementary(),
+        ),
+    ):
+        resp = await client.get(
+            "/api/weather/hourly",
+            params={"location_id": loc_id, "date": "2026-04-13"},
+        )
+
+    assert resp.status_code == 200
+    hours = resp.json()["hours"]
+    assert hours
+
+    display = ZoneInfo(display_tz)
+    checked = 0
+    for hour in hours:
+        if hour["moon_altitude_deg"] is None:
+            continue
+        # Weather time is naive local in the display tz; resolve to UTC.
+        utc_dt = datetime.fromisoformat(hour["time"]).replace(tzinfo=display).astimezone(UTC)
+        expected = nearest(utc_dt)
+        assert expected is not None, f"no astro within 31 min of {utc_dt}"
+        assert hour["moon_altitude_deg"] == pytest.approx(expected.moon_altitude_deg, abs=0.01)
+        assert hour["darkness_category"] == expected.darkness_category
+        checked += 1
+    assert checked > 0
 
 
 # ---------------------------------------------------------------------------

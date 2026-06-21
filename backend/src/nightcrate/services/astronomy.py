@@ -540,10 +540,13 @@ def compute_hourly_astro(
     night_date: date,
     timezone_str: str,
 ) -> list[HourlyAstro]:
-    """Compute hourly astronomical data from sunset to sunrise.
+    """Compute hourly astronomical data across the night.
 
-    Returns one entry per hour covering the full night.
-    Returns empty list if no sunset/sunrise occurs (polar conditions).
+    Returns one entry per hour, padded one hour before sunset through one hour
+    after sunrise so consumers that display a pre-sunset / post-sunrise context
+    column (e.g. the weather Hourly Detail table) have real astro data for every
+    hour they show. Returns empty list if no sunset/sunrise occurs (polar
+    conditions).
     """
     tz = ZoneInfo(timezone_str)
     location = _make_location(latitude, longitude, elevation_m)
@@ -571,17 +574,20 @@ def compute_hourly_astro(
     if sunrise is None:
         return []
 
-    # Generate hourly samples from sunset to sunrise
+    # Generate hourly samples padded one hour before sunset through one hour
+    # after sunrise (the window the weather Hourly Detail table displays).
     sunset_local = sunset.astimezone(tz)
     sunrise_local = sunrise.astimezone(tz)
 
-    # Start at the next full hour after sunset
+    # Start one hour before the next full hour after sunset
     start_hour = sunset_local.replace(minute=0, second=0, microsecond=0)
     if start_hour < sunset_local:
         start_hour += timedelta(hours=1)
+    start_hour -= timedelta(hours=1)
 
-    # End at the hour of sunrise (inclusive)
+    # End one hour after the hour of sunrise (inclusive)
     end_hour = sunrise_local.replace(minute=0, second=0, microsecond=0)
+    end_hour += timedelta(hours=1)
 
     hourly_times_local = []
     current = start_hour

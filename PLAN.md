@@ -52,6 +52,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.36.0 — Project Thumbnails + Gallery View](#v0360--project-thumbnails--gallery-view) ✅
 - [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking) ✅
 - [v0.38.0 — Project Metadata + Manual Imaging Sessions](#v0380--project-metadata--manual-imaging-sessions) ✅
+- [v0.38.1 — Hourly Detail moon/darkness alignment](#v0381--hourly-detail-moondarkness-alignment) ✅
 - [v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline](#v0390--sessions-sub-frames-and-ingest-pipeline)
 - [v0.4x.0 — Mosaic Projects (Arc Capstone)](#v04x0--mosaic-projects-arc-capstone)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
@@ -4672,7 +4673,51 @@ won't have until then.
 
 Sessions/sub-frame ingest pipeline, automated integration time from FITS
 headers, the retrospective altitude chart, PHD2 tab, calibration-frame
-storage (split out as v0.38.1).
+storage (split out into a later patch).
+
+---
+
+## v0.38.1 — Hourly Detail moon/darkness alignment
+
+Status: Done
+Branch: `v0.38.1/hourly-moon-alignment`
+
+Bug-fix patch. Fred spotted the Weather → Hourly Detail **Moon Quality** row
+reading 100 in the first (pre-dark) column even though the moon was already up
+and setting. Two related defects in `api/weather.py:get_hourly` and the astro
+data it joins against:
+
+1. **Pre-sunset/post-sunrise hours had no astro data.** The hourly table pads
+   its window to sunset−1h … sunrise+1h, but `compute_hourly_astro` only emitted
+   entries from the first full hour after sunset through the sunrise hour. The
+   uncovered context hours fell through the `moon_alt is None` branch, which
+   conflated "no data" with "moon below horizon" → a spurious Moon Quality of
+   100 (and a skewed Imaging Quality).
+2. **The astro↔weather join matched wall-clock `"HH:MM"` strings across two
+   timezones.** Weather is fetched in the display `timezone`; astro is computed
+   in `geo_timezone`. When they differ (the supported remote-observatory setup)
+   the join silently grabbed the wrong hour, shifting moon altitude, moon
+   quality, darkness category, and Imaging Quality by the offset.
+
+### Backend
+
+- [x] `compute_hourly_astro` (`services/astronomy.py`) now pads its hourly grid
+  one hour before sunset through one hour after sunrise, so every displayed hour
+  has real astro data.
+- [x] `get_hourly` (`api/weather.py`) joins astro to weather by **absolute UTC
+  instant** (nearest-match within ~30 min via bisect) instead of an `"HH:MM"`
+  string, fixing the cross-timezone misalignment. The `moon_alt is None` guard
+  stays as harmless defense-in-depth.
+
+### Tests
+
+- [x] `test_astronomy.py` — padded range now covers the pre-sunset and
+  post-sunrise context hours with real moon altitude.
+- [x] `test_weather_api.py` — Tokyo-site / Los-Angeles-display location asserts
+  per-hour moon/darkness align to the correct UTC instant (fails on the old
+  HH:MM join, which placed the moon at +29.5° when it was actually −58.9°).
+- [x] `test_imaging_quality.py` — pinned `_moon_score`: moon up at 44%
+  illumination → 56; moon down → 100; full moon up → 0.
 
 ---
 
