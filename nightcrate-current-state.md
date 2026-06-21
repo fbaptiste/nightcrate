@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.38.0
+**NightCrate version:** 0.38.1
 
-**Last updated:** 2026-05-30
+**Last updated:** 2026-06-20
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -242,6 +242,7 @@ Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsig
 - **API:** `/api/weather/forecast`, `/api/weather/hourly/{date}`, `/api/weather/methodology`
 - **Data sources:** Open-Meteo (standard + ECMWF for PWV + Air Quality for AOD)
 - **Key backend:** `services/weather.py`, `services/astronomy.py`, `services/seeing.py`, `services/transparency.py`, `services/dew.py`, `services/imaging_quality.py`
+- **Hourly astro↔weather join is by absolute UTC** (nearest-match), not wall-clock `HH:MM`, so the per-hour moon/darkness columns stay correct when a location's display `timezone` differs from its `geo_timezone` (remote-observatory setups). `compute_hourly_astro` pads its grid ±1h so the table's pre-sunset / post-sunrise context columns have real astro data (v0.38.1).
 - **Reference:** `docs/weather-algorithms.md`
 
 ### Settings and admin

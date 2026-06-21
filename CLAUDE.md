@@ -399,6 +399,7 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
 
 ### Weather Forecast
 - Two timezones per location: `geo_timezone` (auto-derived from coords via `timezonefinder`, used for noon-to-noon astro windows and the lunar 48 h grid) and `timezone` (user's display preference, used for Open-Meteo API + display formatting). **Don't conflate them** — remote-observatory operators legitimately want display in their home timezone while astro computes against site coordinates.
+- **Hourly Detail joins astro to weather by absolute UTC, never wall-clock `HH:MM`.** Weather rows are labelled in the display `timezone`; astro in `geo_timezone`. A string-time join silently grabs the wrong hour whenever the two differ (it shifts moon/darkness/quality by the offset). `api/weather.py:get_hourly` matches on `HourlyAstro.time_utc` via a bisect nearest-match; `compute_hourly_astro` pads its grid ±1h so every displayed hour (incl. the pre-sunset / post-sunrise context columns) has real data. A missing astro hour must NOT be treated as "moon below horizon" — that produced a spurious Moon Quality of 100 in the first column (v0.38.1).
 - Quality scoring uses a **colorblind-safe sequential blue palette** (darker = better). Cloud gating: all non-sky factors multiplied by `√(sky_clarity / 100)`.
 - Supplementary data writes (PWV, AOD) are **non-fatal** — wrap in try/except and serve stale data rather than 5xx.
 - Forecast covers 8 days (`forecast_days=8`) so the last night's sunrise window is included.

@@ -154,6 +154,47 @@ class TestHourlyAstro:
                 "night",
             )
 
+    def test_hourly_pads_pre_sunset_and_post_sunrise(self):
+        """The grid extends one hour before sunset and after sunrise.
+
+        The weather Hourly Detail table shows a pre-sunset / post-sunrise
+        context column; those hours must carry real astro data so the moon-up
+        test isn't silently defaulted to "moon down" (which produced a spurious
+        Moon Quality of 100 in the first column).
+        """
+        from datetime import datetime, timedelta
+
+        lat, lon, elev = 33.2558, -116.3753, 236.0
+        night_date = date(2026, 3, 15)
+        tz = "America/Los_Angeles"
+        hours = compute_hourly_astro(
+            latitude=lat,
+            longitude=lon,
+            elevation_m=elev,
+            night_date=night_date,
+            timezone_str=tz,
+        )
+        night = compute_night_summary(
+            latitude=lat,
+            longitude=lon,
+            elevation_m=elev,
+            night_date=night_date,
+            timezone_str=tz,
+        )
+
+        first_utc = hours[0].time_utc
+        last_utc = hours[-1].time_utc
+        # First sample is at/before sunset, last is after sunrise (context hours)
+        assert first_utc <= night.sunset
+        assert last_utc > night.sunrise
+        # Padding is about one hour, not arbitrarily wide
+        assert night.sunset - first_utc <= timedelta(hours=2)
+        assert last_utc - night.sunrise <= timedelta(hours=2)
+        # The padded hours still carry real moon altitude
+        assert isinstance(first_utc, datetime)
+        assert isinstance(hours[0].moon_altitude_deg, float)
+        assert isinstance(hours[-1].moon_altitude_deg, float)
+
     def test_polar_hourly_returns_empty(self):
         """Polar conditions with no sunset should return empty list."""
         hours = compute_hourly_astro(

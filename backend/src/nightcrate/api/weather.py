@@ -1,6 +1,7 @@
 """Weather forecast API — integrates weather, astronomy, seeing, and imaging quality."""
 
 import asyncio
+import bisect
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
@@ -674,10 +675,32 @@ async def get_hourly(
             hours=[],
         )
 
-    # Lookup astro data by HH:MM local time
-    astro_by_time: dict[str, object] = {}
-    for a in astro_hours:
-        astro_by_time[a.time_local] = a
+    # Index astro data by absolute UTC instant. Weather hours are labelled in the
+    # display timezone while astro is computed in the site (geo) timezone, so a
+    # wall-clock "HH:MM" join would misalign whenever the two zones differ (the
+    # supported remote-observatory setup). Match on the absolute moment instead.
+    astro_sorted = sorted(astro_hours, key=lambda a: a.time_utc)
+    astro_utc_dts = [a.time_utc for a in astro_sorted]
+
+    def _astro_at(utc_dt: datetime):
+        """Nearest astro entry to an absolute UTC instant, within ~half an hour.
+
+        With the padded hourly grids the match is exact when display and geo
+        timezones share whole-hour offsets, and at most ~30 min apart for the
+        rare fractional-offset zones.
+        """
+        if not astro_utc_dts:
+            return None
+        idx = bisect.bisect_left(astro_utc_dts, utc_dt)
+        best = None
+        best_gap = timedelta(minutes=31)
+        for i in (idx - 1, idx):
+            if 0 <= i < len(astro_utc_dts):
+                gap = abs(astro_utc_dts[i] - utc_dt)
+                if gap < best_gap:
+                    best_gap = gap
+                    best = astro_sorted[i]
+        return best
 
     # Window: sunset - 1h through sunrise + 1h for pre/post context
     sunset_local = night.sunset.astimezone(tz)
@@ -714,9 +737,10 @@ async def get_hourly(
         prev_h = matched[idx - 1][1] if idx > 0 else None
         seeing = _compute_seeing(h, prev_h)
 
-        weather_dt = datetime.fromisoformat(h.time)
-        hhmm = weather_dt.strftime("%H:%M")
-        astro = astro_by_time.get(hhmm)
+        # Weather timestamps are naive local time in the display timezone;
+        # resolve to UTC before matching against the astro series.
+        weather_dt = datetime.fromisoformat(h.time).replace(tzinfo=tz)
+        astro = _astro_at(weather_dt.astimezone(UTC))
 
         # Sky clarity (weighted by cloud layers)
         sky_clarity_val = compute_sky_clarity(

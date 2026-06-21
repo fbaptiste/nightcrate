@@ -1,6 +1,7 @@
 """Tests for composite imaging quality score."""
 
 from nightcrate.services.imaging_quality import (
+    _moon_score,
     compute_imaging_quality,
     compute_sky_clarity,
 )
@@ -380,6 +381,41 @@ class TestEdgeCases:
         )
         assert result.overall == 0
         assert result.label == "Poor"
+
+
+class TestHourlyMoonScore:
+    """Per-hour moon score as the weather Hourly Detail computes it.
+
+    Each hour passes darkness_hours=1.0 and moonless_dark_hours=0.0 when the moon
+    is up, 1.0 when it's down (api/weather.py:get_hourly).
+    """
+
+    def test_moon_up_scores_by_illumination(self):
+        """Moon up at 44% illumination → (1 - 0.44) * 100 = 56 (Fred's screenshot)."""
+        score = _moon_score(
+            moonless_dark_hours=0.0,
+            darkness_hours=1.0,
+            moon_illumination_pct=44.0,
+        )
+        assert round(score) == 56
+
+    def test_moon_down_scores_100(self):
+        """Moon below the horizon → no penalty."""
+        score = _moon_score(
+            moonless_dark_hours=1.0,
+            darkness_hours=1.0,
+            moon_illumination_pct=44.0,
+        )
+        assert score == 100.0
+
+    def test_full_moon_up_zero(self):
+        """A 100%-lit moon above the horizon zeroes the moon score."""
+        score = _moon_score(
+            moonless_dark_hours=0.0,
+            darkness_hours=1.0,
+            moon_illumination_pct=100.0,
+        )
+        assert score == 0.0
 
 
 class TestSkyClarityPartialLayers:
