@@ -152,26 +152,6 @@ Heavy (bundles entire Chromium, 100MB+ installers, hundreds of MB RAM). Tauri is
 
 ---
 
-## Business Model
-
-- Indie software product, not a startup
-- Likely pricing: [redacted] ([redacted] range) or [redacted] ([redacted]) — TBD
-- Target market: serious amateur astrophotographers (tens of thousands of potential users)
-- Self-service, no sales calls, good documentation
-- [redacted]: [redacted], not millions
-
----
-
-## Competitive Advantages
-
-- **No direct competitor** doing unified session management with log analysis and image cataloging
-- **Python astronomy ecosystem** gives access to mature, well-tested libraries for FITS handling, plate solving, coordinate systems, etc.
-- **Switching costs** — once someone catalogs their entire imaging library in this tool, migration is painful
-- **Not replaceable by AI** — this is infrastructure and persistent state management, not intelligence/analysis work that an LLM could do on the fly
-- **Mac-first focus** — astrophotography software skews heavily Windows. A tool that works well on Mac (where many imagers do their processing) fills a real gap
-
----
-
 ## Open Design Questions
 
 - **Database choice:** PostgreSQL (Fred's strength, more powerful) vs SQLite (simpler deployment, no separate server process, better for a local desktop app). Leaning SQLite for MVP simplicity.

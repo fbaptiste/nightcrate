@@ -53,7 +53,13 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking) ✅
 - [v0.38.0 — Project Metadata + Manual Imaging Sessions](#v0380--project-metadata--manual-imaging-sessions) ✅
 - [v0.38.1 — Hourly Detail moon/darkness alignment](#v0381--hourly-detail-moondarkness-alignment) ✅
-- [v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline](#v0390--sessions-sub-frames-and-ingest-pipeline)
+- [v0.39.0 — FITS Equipment Resolver](#v0390--fits-equipment-resolver)
+- [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest)
+- [v0.41.0 — Correct + Curate](#v0410--correct--curate)
+- [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
+- [v0.43.0 — Guiding (PHD2) Association](#v0430--guiding-phd2-association)
+- [v0.44.0 — Session Logs + Event Timeline](#v0440--session-logs--event-timeline)
+- [v0.45.0 — AI Context Bundle](#v0450--ai-context-bundle)
 - [v0.4x.0 — Mosaic Projects (Arc Capstone)](#v04x0--mosaic-projects-arc-capstone)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
@@ -4721,35 +4727,192 @@ data it joins against:
 
 ---
 
-## v0.39.0+ — Sessions, Sub-Frames, and Ingest Pipeline
+## Sessions, Sub-Frames & Ingest — version arc
 
-Bridge to the full imaging core schema. Multiple versions will be needed — the exact
-breakdown depends on decisions made during v0.35–v0.38 development. The
-[Imaging Core Schema spec](#imaging-core-schema--rigs-projects-sessions-sub-frames) and
-[FITS Equipment Resolver spec](#fits-equipment-resolver-spec) in this document define the
-target architecture.
+The bridge from manually-entered project metadata (v0.38.0) to **automated ingest of real
+capture data**. This is the largest remaining arc; it spans v0.39.0–v0.45.0 and is the
+foundation the future AI session analyzer consumes. The detailed target architecture lives
+in two specs further down this file — the
+[FITS Equipment Resolver spec](#fits-equipment-resolver-spec) and the
+[Imaging Core Schema spec](#imaging-core-schema--rigs-projects-sessions-sub-frames). The
+versions below are the agreed **roadmap altitude** breakdown; the specs are the deep
+reference, not a per-version checklist.
 
-### High-level scope (multiple versions)
+The driving user workflow: **point a project at one or more folders and have NightCrate
+catalog every file in them** — identifying lights, calibration frames, masters, the
+PixInsight project, and logs — **without relying on folder names** (those are per-user
+nomenclature). Whatever the automated pass identifies must be **user-correctable**.
 
-- [ ] Imaging core schema: `session`, `sub_frame`, `file_location`, `ingestion_run` tables per the Imaging Core Schema spec
-- [ ] FITS equipment resolver: matches FITS header strings to equipment DB rows via alias tables per the FITS Equipment Resolver spec
-- [ ] Directory-scan ingest pipeline: FITS metadata extraction → equipment resolution → session formation → project target assignment → persistence. Content-hash identity for idempotent re-ingest
-- [ ] Session tab on project detail: list of sessions with date, rig, sub-frame count, integration time per filter
-- [ ] Sub-frames tab: DataGrid of individual exposures with FITS metadata, thumbnail preview, accept/reject status
-- [ ] PHD2 tab: guide log data associated with sessions, linked to the existing PHD2 analyzer
-- [ ] Calibration frame matching: darks/flats/bias matched to sessions by camera + gain + temp + exposure + binning (views, not bespoke code)
-- [ ] Automated integration time: derived from actual sub-frame data, stored separately from the v0.38.0 manual column. Per the manual-overrides contract, the manual value always wins for display/progress (`COALESCE(manual, derived)`); the derived value is never written over manual. Both surface in the AI bundle with provenance
+### Arc-wide decisions (settled 2026-06-25)
+
+These apply across the whole arc; individual versions don't re-litigate them.
+
+- **Header-driven classification, never folder names.** Frame type comes from `IMAGETYP`
+  (`Light`/`Dark`/`Flat`/`Bias`), not directory layout. Validated against a real ASIAir
+  Tulip Nebula folder where `raw/H`, `calibration/darks` etc. are just one user's convention.
+- **Commit-then-correct, not preview-then-commit.** Ingest writes immediately; the user
+  reviews and fixes in the grid. Re-ingest is idempotent (content-hash identity) and any
+  frame is deletable, so nothing gets stuck. No staging holding-pen (consistent with the
+  v0.37.0 save-as-you-go projects decision).
+- **Processed/master frames are a first-class category, not skipped.** Stacks/masters route
+  to a `processed_image` table (kept out of `sub_frame` so integration math stays clean).
+  **Any cataloged frame — raw sub or processed — can be promoted into the project's
+  `project_image` gallery.** The `.pxiproject` is cataloged as a project asset.
+- **Projects bind to multiple source folders** (one marked primary; re-scan picks up new
+  files). A file **may** belong to more than one project (catalog is content-hash keyed), but
+  the default is one project per scan — overlap only happens when the user deliberately scans
+  the same files into a second project (honest about framing overlap, e.g. B144 ⊂ Tulip).
+- **Full imaging-core schema lands in one migration up front (v0.40.0).** Guiding/event
+  tables and `processed_image` are created even though later versions populate them — this
+  resolves the forward FKs (`sub_frame.ingestion_run_id`, `project.cover_sub_frame_id`,
+  `session_event.related_sub_frame_id`) cleanly and sidesteps SQLite's awkward
+  ALTER-to-add-FK. Precedent: the alias tables have sat unused in the schema since migration
+  0005. Per the forward-only migration policy, this commits these shapes now.
+
+### Cross-version behavior to honor (flagged, not re-decided)
+
+- **Session formation:** group subs by rig + observing night (noon-to-noon in the site
+  timezone). Simultaneous dual-rig imaging = two separate sessions — never conflate rigs.
+- **Target assignment:** lights attach to the project's existing `project_target`; the
+  `OBJECT` header is stored as a hint only (real data: `OBJECT='Barnard 144'` under a "Tulip
+  Nebula" project).
+- **Telescope resolution is weak for ASIAir:** `TELESCOP` often carries the *mount*
+  (`'ZWO AM5'`), not the OTA; `FOCALLEN` is the real optical-config signal. Many telescope
+  values will legitimately land in the unresolved queue — expected, not a bug.
+- **Two-camera-same-model** (identical `INSTRUME` across both ASI 2600MM Pro bodies) is a
+  documented limitation until rig-matching gets real (v0.41.0). Until then the alias resolves
+  to whichever camera the alias points at; disambiguation is the ingest/rig layer's job.
+- **Stack/master detection signals** for routing to `processed_image`: `NCOMBINE` /
+  `STACKCNT` / PixInsight processing history / `IMAGETYP='Master Light'`. The master →
+  source-subs linkage is deferred; early versions just catalog masters with filter/type/
+  provenance.
+
+---
+
+## v0.39.0 — FITS Equipment Resolver
+
+**Status:** Up next.
+
+Deterministic string→equipment-row lookup: given a FITS header value (`INSTRUME`,
+`TELESCOP`, `FILTER`), return the matching equipment row — or record it as unresolved. The
+dependency the ingest pipeline sits on top of. Full detail in the
+[FITS Equipment Resolver spec](#fits-equipment-resolver-spec).
+
+- [ ] Resolver service (`services/equipment_resolver.py` shape): `normalize_alias`,
+      `canonicalize_line_name`, `EquipmentResolver(conn)` with `resolve_camera` /
+      `resolve_telescope` / `resolve_filter`, plus the `confirm_unresolved_observation`
+      promotion utility. Pure service — must not import from `api/`.
+- [ ] Four outcomes: `resolved` / `resolved_retired` / `unresolved` / `ambiguous`. Unresolved
+      records into `unresolved_equipment_observation`; never raises.
+- [ ] Line-name canonicalization table (code-level, closed) + rig-scoped filter resolution
+      with the forward-compatible `filter_wheel_filter` stub (missing-table → warn + fall
+      through to unresolved).
+- [ ] **No migration** — alias tables + `unresolved_equipment_observation` already exist
+      (migration 0005). **No seed — aliases start empty;** the unresolved queue bootstraps
+      everything on first ingest.
+- [ ] Caller owns the transaction (resolver writes `last_seen_at` / observations but never
+      commits).
+- [ ] Tests: normalization rules, every line-name mapping, all four outcomes, missing-
+      `filter_wheel_filter` fallback, promotion, no-auto-commit guarantee. README section.
+
+## v0.40.0 — Catalog a Folder (read-only ingest)
+
+**Status:** Planned. The largest single version in the arc — it lands the schema *and* the
+end-to-end catalog pass, so the user can point a project at a folder and see everything
+filed correctly.
+
+- [ ] **Full imaging-core schema in one migration** per the
+      [Imaging Core Schema spec](#imaging-core-schema--rigs-projects-sessions-sub-frames):
+      `session`, `sub_frame`, `file_location`, `ingestion_run`, `processed_image`, plus the
+      (initially empty) guiding and session-event tables, and the calibration/integration
+      views. Idempotent; ordered to resolve the forward FKs.
+- [ ] Project ↔ source-folder binding: a project references **multiple** folders (one
+      primary), persisted for re-scan.
+- [ ] Directory-scan ingest pipeline: scan → extract FITS metadata → **classify by
+      `IMAGETYP`** → resolve equipment (v0.39.0 resolver) → content-hash → form sessions →
+      assign lights to the project's `project_target` → persist. Idempotent re-ingest keyed on
+      content hash. Runs on the asyncio task queue + `ProcessPoolExecutor` (CPU-bound parse).
+- [ ] Whole-folder bucketing: raw subs → `sub_frame`; masters/stacks → `processed_image`
+      (stack detection); `.pxiproject` → project asset; log files recognized and parked
+      (parsed in v0.43/0.44); unrecognized → "other".
+- [ ] `file_location` rows for every cataloged file (path, volume, size, hash, mtime).
+- [ ] `ingestion_run` provenance: counts scanned / inserted / updated / skipped / errors.
+- [ ] **Read-only** catalog view on the project: bucketed counts + a DataGrid of frames with
+      FITS metadata and thumbnail preview. No editing, no gallery promotion, no Sessions tab
+      yet (v0.41.0).
+- [ ] Tests: content-hash idempotency, `IMAGETYP` classification incl. the flat-dark case,
+      partial-equipment ingest (NULL FKs), stack detection, multi-folder scan, session
+      formation.
+
+## v0.41.0 — Correct + Curate
+
+**Status:** Planned. Makes the catalog trustworthy and turns it into curated project content.
+
+- [ ] Edit a frame's `frame_type`; accept/reject with reason; reassign session / target;
+      bulk operations across a selection.
+- [ ] Fix mis-resolved equipment on a frame; **unresolved-alias review UI** — the
+      `unresolved_equipment_observation` queue becomes a "map these to equipment" screen that
+      inserts confirmed aliases (the resolver never auto-confirms).
+- [ ] Rig assignment + the two-camera-same-model disambiguation (match resolved equipment
+      against known rig configurations).
+- [ ] **Promote any frame (raw sub or processed) into the `project_image` gallery** — the
+      bridge from catalog to the existing display gallery.
+- [ ] Sessions tab: list of sessions with date, rig, sub count, integration per filter.
+
+## v0.42.0 — Calibration Matching + Derived Integration
+
+**Status:** Planned. Delivers the cross-domain payoff — coverage + real integration totals.
+
+- [ ] Calibration-matching **views** (not bespoke code): `matching_darks` (camera + gain +
+      exposure + binning, set-temp within ±1 °C; never matched on filter), `matching_flats`
+      (camera + gain + filter + binning + telescope_configuration), `matching_bias`,
+      `calibration_coverage`. All consider only `accepted = 1` frames.
+- [ ] `integration_time_per_project_filter` view; duoband filters intentionally double-count
+      per `line_name`.
+- [ ] **Derived integration** from actual sub-frame data, stored separately from the v0.38.0
+      manual column. Manual always wins for display/progress (`COALESCE(manual, derived)`);
+      derived never overwrites manual. Both surface in the AI bundle with provenance.
+- [ ] Per-light calibration-coverage indicators; derived actuals in the integration bar
+      chart against `project_filter_goal`.
+
+## v0.43.0 — Guiding (PHD2) Association
+
+**Status:** Planned. Reuses the shipped PHD2 parser service; isolated from the rest.
+
+- [ ] Populate `guiding_log_file` / `guiding_sample` / `dither_event` from PHD2 logs ingested
+      per session.
+- [ ] Per-sub guiding lookup: aggregate RMS (total / RA / Dec), peak error, sample count over
+      the sub's time window — parameterized query, not a stored column.
+- [ ] PHD2 tab on the project linking to the existing PHD2 analyzer.
+
+## v0.44.0 — Session Logs + Event Timeline
+
+**Status:** Planned. ASIAir log-format research lands here (sample: the Tulip
+`Autorun_Log_*.txt`).
+
+- [ ] ASIAir Autorun + N.I.N.A. session-log parsers → `session_event`; `autofocus_run` from
+      N.I.N.A. autofocus JSON.
+- [ ] Gantt session-timeline visualization (captures overlaid with guiding + altitude).
+
+## v0.45.0 — AI Context Bundle
+
+**Status:** Planned. The load-bearing goal the whole data model was designed for.
+
+- [ ] `build_session_context(session_id)` / project-level assembler producing the structured
+      JSON bundle (§13 of the Imaging Core Schema spec), `schema_version: 1`. All timestamps
+      UTC ISO 8601; all units explicit in field names.
+- [ ] Assembled by queries against existing tables — no reshaping. Issue-detection layer
+      remains out of scope (schema supports the queries it will want).
 
 ### Future features (not yet versioned)
 
+- `processed_image` provenance: which subs → which stack → which final (master↔source linkage
+  deferred from v0.40.0).
 - Project slideshow with metadata overlays (year/month, rig, location, integration time)
 - Custom catalogs / user-created collections of projects
-- Curated observing lists (Herschel 400, Messier Marathon) via `observing_list` + `observing_list_member` schema
+- Curated observing lists (Herschel 400, Messier Marathon) via `observing_list` +
+  `observing_list_member` schema
 - Advanced plate-solve-based search (any object in the solved FOV, not just linked DSOs)
-- Session timeline visualization (Gantt chart of a night's captures overlaid with guiding + altitude)
-- N.I.N.A. log parser integration (sequence timeline, autofocus events, meridian flips)
-- ASIAIR log parser integration (deferred until format stabilizes and sample logs are available)
-- Processed image provenance (which subs → which stack → which final)
 - Export / sharing / potential Astrobin integration
 - "Send to project" from target planner (create project pre-populated with target info)
 
@@ -4758,9 +4921,9 @@ target architecture.
 ## v0.4x.0 — Mosaic Projects (Arc Capstone)
 
 Multi-panel mosaic support — the projects arc's capstone. Deferred to the **end** of the
-arc (exact version number depends on how v0.39.0+ splits) because per-panel integration
-roll-up ("panel 3 needs more Ha") is only meaningful once `sub_frame` data exists. Until
-this version, a project is single-target-per-link (one `project_target` per distinct DSO).
+arc (after v0.45.0) because per-panel integration roll-up ("panel 3 needs more Ha") is only
+meaningful once `sub_frame` data exists. Until this version, a project is
+single-target-per-link (one `project_target` per distinct DSO).
 
 This version aligns `project_target` toward the mosaic-aware shape in the
 [Imaging Core Schema spec §3](#imaging-core-schema--rigs-projects-sessions-sub-frames)
