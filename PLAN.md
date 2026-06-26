@@ -53,7 +53,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.37.0 — Target Identification + DSO Linking](#v0370--target-identification--dso-linking) ✅
 - [v0.38.0 — Project Metadata + Manual Imaging Sessions](#v0380--project-metadata--manual-imaging-sessions) ✅
 - [v0.38.1 — Hourly Detail moon/darkness alignment](#v0381--hourly-detail-moondarkness-alignment) ✅
-- [v0.39.0 — FITS Equipment Resolver](#v0390--fits-equipment-resolver)
+- [v0.39.0 — FITS Equipment Resolver](#v0390--fits-equipment-resolver) ✅
 - [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest)
 - [v0.41.0 — Correct + Curate](#v0410--correct--curate)
 - [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
@@ -4791,29 +4791,34 @@ These apply across the whole arc; individual versions don't re-litigate them.
 
 ## v0.39.0 — FITS Equipment Resolver
 
-**Status:** Up next.
+**Status:** Done. Branch `v0.39.0/fits-equipment-resolver`.
 
 Deterministic string→equipment-row lookup: given a FITS header value (`INSTRUME`,
 `TELESCOP`, `FILTER`), return the matching equipment row — or record it as unresolved. The
 dependency the ingest pipeline sits on top of. Full detail in the
 [FITS Equipment Resolver spec](#fits-equipment-resolver-spec).
 
-- [ ] Resolver service (`services/equipment_resolver.py` shape): `normalize_alias`,
+- [x] Resolver service (`services/equipment_resolver.py`): `normalize_alias`,
       `canonicalize_line_name`, `EquipmentResolver(conn)` with `resolve_camera` /
       `resolve_telescope` / `resolve_filter`, plus the `confirm_unresolved_observation`
-      promotion utility. Pure service — must not import from `api/`.
-- [ ] Four outcomes: `resolved` / `resolved_retired` / `unresolved` / `ambiguous`. Unresolved
+      promotion utility. Pure service — does not import from `api/`.
+- [x] Four outcomes: `resolved` / `resolved_retired` / `unresolved` / `ambiguous`. Unresolved
       records into `unresolved_equipment_observation`; never raises.
-- [ ] Line-name canonicalization table (code-level, closed) + rig-scoped filter resolution
-      with the forward-compatible `filter_wheel_filter` stub (missing-table → warn + fall
-      through to unresolved).
-- [ ] **No migration** — alias tables + `unresolved_equipment_observation` already exist
-      (migration 0005). **No seed — aliases start empty;** the unresolved queue bootstraps
-      everything on first ingest.
-- [ ] Caller owns the transaction (resolver writes `last_seen_at` / observations but never
-      commits).
-- [ ] Tests: normalization rules, every line-name mapping, all four outcomes, missing-
-      `filter_wheel_filter` fallback, promotion, no-auto-commit guarantee. README section.
+- [x] Line-name canonicalization table (code-level, closed). **As built: rig-scoped filter
+      resolution joins the existing `rig_filter_slot` (migration 0009), not the
+      `filter_wheel_filter` stub the spec described** — that table never materialized, while
+      `rig_filter_slot` already maps a rig's loaded filters, so line-name→filter resolution is
+      live and tested now. A missing-table `OperationalError` still warns + falls through to
+      unresolved as a safety net.
+- [x] **No migration** — alias tables + `unresolved_equipment_observation` already exist
+      (migration 0005), so spec §11's "small migration" was stale. **No seed — aliases start
+      empty;** the unresolved queue bootstraps everything on first ingest.
+- [x] Caller owns the transaction (resolver writes `last_seen_at` / observations but never
+      commits) — verified by a rollback test.
+- [x] Tests: normalization rules, every line-name mapping, all four outcomes, missing-
+      `rig_filter_slot` fallback, promotion, no-auto-commit guarantee. **72 tests, 100% module
+      coverage.** Resolver documented in CLAUDE.md (Feature areas) + `nightcrate-current-state.md`
+      rather than the user-facing README (no user surface / new dependency in this version).
 
 ## v0.40.0 — Catalog a Folder (read-only ingest)
 
