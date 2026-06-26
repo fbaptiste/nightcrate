@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.38.1
+**NightCrate version:** 0.39.0
 
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-25
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -345,6 +345,17 @@ Handles all NightCrate image sources: filesystem files passed directly to ASTAP;
 - **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing + temp file pipeline + header passthrough), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (endpoints), `services/coordinate_format.py` (`format_ra_hms`, `format_dec_dms`)
 - **Key frontend:** `components/plate-solve/PlateSolveDialog.tsx` (tab UI + equipment hints + results table + copy), `pages/SettingsPage.tsx` (`AstapPathSection` with browse + validation), `api/plateSolve.ts`
 - **Settings:** `astap_executable_path` (KV table, no migration)
+
+### FITS Equipment Resolver (v0.39.0) — first ingest-arc component
+
+**Status:** `[shipped]` (backend service only — no API/UI surface yet)
+
+Deterministic string→equipment-row resolver: the foundation the v0.40.0+ folder-ingest pipeline sits on. Takes raw FITS header values (`INSTRUME` / `TELESCOP` / `FILTER`), normalizes them (NFKC → strip → collapse whitespace → drop control/zero-width chars → lowercase, punctuation preserved), and exact-matches against the FITS alias tables (no fuzzy matching). Four outcomes: `resolved`, `resolved_retired` (alias points at an `active=0` row), `unresolved` (records into `unresolved_equipment_observation` with a `seen_count`), `ambiguous` (a filter line name matched more than one filter in the rig). `FILTER` headers additionally canonicalize through a closed code-level line-name map (`Ha`/`Oiii`/…) and scope to the capturing rig's loaded filters via the existing `rig_filter_slot` table. Promotion of an observation to a confirmed alias is human-only (`confirm_unresolved_observation`); the resolver never auto-confirms. Caller owns the transaction. No migration and no seed — the alias + observation tables exist since migration 0005 and bootstrap empty.
+
+- **Route / API:** none yet — pure service consumed by the ingest pipeline (v0.40.0+)
+- **Key backend:** `services/equipment_resolver.py` (`normalize_alias`, `canonicalize_line_name`, `EquipmentResolver`, `RigContext`, `ResolverStats`, `confirm_unresolved_observation`)
+- **Tests:** `tests/test_equipment_resolver.py` — 72 tests, 100% module coverage
+- **Known limitation:** two physically distinct same-model cameras share one alias → resolves to whichever camera the alias points at; rig-level disambiguation deferred to v0.41.0
 
 ---
 

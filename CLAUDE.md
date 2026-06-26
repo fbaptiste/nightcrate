@@ -367,6 +367,16 @@ For full feature inventory and per-version history see `nightcrate-current-state
 - Junction tables delete-and-reinsert only for parents that were inserted/updated.
 - First-run vs update modes; missing CSV files fail loud at startup.
 
+### Equipment Resolver (v0.39.0)
+- **Pure service** `services/equipment_resolver.py` — maps raw FITS header strings (`INSTRUME` / `TELESCOP` / `FILTER`) to equipment rows. **Must not import from `api/`.** The ingest pipeline (v0.40.0+) is its only caller; no API/UI yet.
+- **Exact-match only after normalization** — `normalize_alias` (NFKC → strip → collapse whitespace → drop control/zero-width chars → lowercase; punctuation **preserved**). No fuzzy matching, ever. A miss is a normal outcome, never an exception.
+- **Caller owns the transaction.** The resolver writes (`last_seen_at` bumps, `unresolved_equipment_observation` upserts, confirmed-alias inserts on promotion) but never `commit()`/`rollback()`s.
+- **Four outcomes:** `resolved` / `resolved_retired` (alias → `active=0` row, still returned) / `unresolved` (records an observation) / `ambiguous` (a line name matched >1 filter in the rig).
+- **Filter line names** canonicalize via a closed code-level map (`Ha`, `Oiii`, …) then scope to the capturing rig's filters through **`rig_filter_slot`** (NOT a `filter_wheel_filter` table — that never existed). `resolve_filter` order: exact alias → rig-scoped line name → unresolved. Needs a `RigContext(rig_id=…)`; without it, line-name resolution is skipped.
+- **Never auto-confirms.** Alias promotion (`confirmed=1`) is human-only via `confirm_unresolved_observation`. The resolver only ever inserts `confirmed=0`-equivalent observations into the queue.
+- **Two-camera-same-model limitation (documented, unsolved here):** identical `INSTRUME` across two physical bodies resolves to whichever camera the single alias points at; rig-level disambiguation is the ingest layer's job (v0.41.0).
+- **No migration / no seed** — alias tables + `unresolved_equipment_observation` exist since migration 0005; aliases start empty and the unresolved queue bootstraps on first ingest.
+
 ### DSO Catalog
 - **No vendored DSO data.** Repo ships only NightCrate editorial CSVs (CC0). OpenNGC, Sharpless, Barnard, 50 MGC, Wikidata data downloads to `APP_DIR/catalogs/` on user demand from Admin → Catalogs.
 - **Source layering precedence is structural, not enforced**: `curated > 50 MGC > redshift`. Each augmenter writes only `WHERE distance_pc IS NULL`, so earlier stages never get clobbered.
