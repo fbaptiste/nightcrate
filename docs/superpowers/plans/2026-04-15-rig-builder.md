@@ -89,7 +89,7 @@ BASE = {
     "name": "Backyard Observatory",
     "latitude": 33.45,
     "longitude": -112.07,
-    "timezone": "America/Phoenix",
+    "timezone": "America/Denver",
 }
 
 

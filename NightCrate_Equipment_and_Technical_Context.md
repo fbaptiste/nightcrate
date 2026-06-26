@@ -6,7 +6,7 @@ Reference document for development. Describes the developer's actual imaging set
 
 ## Imaging Rigs
 
-Fred runs a dual-rig backyard observatory in a suburban site. Both rigs operate simultaneously. Acquisition happens on dedicated Windows mini-PCs at the scope; all post-capture processing happens on a separate Mac.
+Fred runs a dual-rig backyard observatory at a suburban site. Both rigs operate simultaneously. Acquisition happens on dedicated Windows mini-PCs at the scope; all post-capture processing happens on a separate Mac.
 
 ### Rig 1: C11 (Primary Deep-Sky Rig)
 
@@ -136,7 +136,7 @@ NightCrate will parse FITS headers to extract metadata. Key headers from ZWO cam
 | `BITPIX` | Bit depth | `16` |
 | `AIRMASS` | Atmospheric airmass | `1.23` |
 | `SITEELEV` | Site elevation (m) | Varies |
-| `SITELAT` / `SITELONG` | Site coordinates | [redacted] |
+| `SITELAT` / `SITELONG` | Site coordinates | Decimal or sexagesimal |
 
 **N.I.N.A.-specific FITS keywords:** N.I.N.A. adds its own extended headers (prefixed with `NINA-` or similar) that may include sequence name, autofocus state, rotator angle, filter wheel position, and other metadata. These are non-standard but valuable.
 
@@ -231,7 +231,7 @@ Fred uses specific exposure ratios based on sensor characteristics.
 
 ## Processing Software & Workflow
 
-Fred processes exclusively in **PixInsight** on Mac (Apple Silicon, [redacted] RAM). The processing workflow is documented separately in `Broadband_LRGB_Processing_Workflow.md`.
+Fred processes exclusively in **PixInsight** on a Mac. The processing workflow is documented separately in `Broadband_LRGB_Processing_Workflow.md`.
 
 **Key tools in the processing chain:**
 - PixInsight (core platform)
@@ -249,7 +249,7 @@ Fred processes exclusively in **PixInsight** on Mac (Apple Silicon, [redacted] R
 
 ## Color Blindness Context
 
-Fred is red-green color blind. This affects:
+NightCrate must be usable by red-green color blind users (a core accessibility requirement). This affects:
 - Any color-coded UI elements in NightCrate should use a color-blind-friendly palette (avoid red/green distinctions; use blue/orange, or add pattern/shape differentiation)
 - If NightCrate ever adds image preview features with auto-stretch, consider providing numerical readouts alongside visual displays
 - The processing workflow document already uses numbers-based color assessment methods (CIE L*a*b* extraction, Statistics process medians) — any future NightCrate color analysis features should follow this pattern
@@ -260,11 +260,9 @@ Fred is red-green color blind. This affects:
 
 | Component | Detail |
 |-----------|--------|
-| **Home network** | [redacted-gateway] gateway |
-| **ISP** | [redacted-ISP] with IPv6 via DHCPv6 |
-| **NAS** | Synology (on home network, used for data storage) |
-| **Remote access** | Tailscale + [redacted-VPN] configured and working |
-| **Data transfer** | Acquisition PCs → Mac via local network; raw data eventually archived to Synology NAS |
+| **NAS** | Network-attached storage on the local network, used for data storage |
+| **Remote access** | VPN-based remote access (e.g. Tailscale) |
+| **Data transfer** | Acquisition PCs → Mac via local network; raw data eventually archived to the NAS |
 
 **NightCrate implication:** Data may live in multiple locations — local SSD on the Mac, Synology NAS, or even still on the acquisition PC. The app should handle paths flexibly and ideally support network/mounted volumes as data sources.
 
@@ -272,11 +270,11 @@ Fred is red-green color blind. This affects:
 
 ## Observatory Location
 
-- **Location:** a suburban site (backyard observatory)
+- **Location:** Suburban backyard observatory
 - **Bortle class:** Likely 6–7 (suburban)
 - **Typical conditions:** Excellent seeing many nights; monsoon season (July–September) largely shuts down imaging; light pollution is a factor, making narrowband filters valuable
 
-**NightCrate implication:** Auto-detecting Bortle class from coordinates is a planned feature. suburban coordinates should return Bortle 6–7.
+**NightCrate implication:** Auto-detecting Bortle class from coordinates is a planned feature. Suburban coordinates should return Bortle 6–7.
 
 ---
 

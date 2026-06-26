@@ -2206,7 +2206,7 @@ hourly timeline. See `docs/target-planner.md` for architecture.
 
 ### Tests
 
-- [x] `tests/services/test_planner_visibility.py` — 16 tests incl. Phoenix 2026-04-19 regression, southern target never rising, polar-summer empty-snapshot, custom-horizon-vs-flat comparison, cache reuse + invalidation on `updated_at` change, azimuth-interpolation bracketed by degree markers.
+- [x] `tests/services/test_planner_visibility.py` — 16 tests incl. mid-latitude 2026-04-19 regression, southern target never rising, polar-summer empty-snapshot, custom-horizon-vs-flat comparison, cache reuse + invalidation on `updated_at` change, azimuth-interpolation bracketed by degree markers.
 - [x] `tests/services/test_planner_sky_track.py` — sample count, array lengths, horizon flat-vs-custom, twilight boundaries, moon phase.
 - [x] `tests/services/test_planner_coverage.py` — FOV coverage including null-axis fallback, clipped-on-minor, zero-FOV rejection, frames_well band.
 - [x] `tests/services/test_planner_thumbnails.py` — 9 tests across cache hit/miss, color→red fallback, double-failure recording, error-backoff short-circuit, LRU eviction, clear-cache, FOV sizing.
@@ -5572,7 +5572,7 @@ Extend the same pattern to other equipment types — allow one or more URLs on c
 
 ### AI Analysis (Post-MVP)
 
-- **AI session analyzer:** Claude-based analysis of session telemetry, guiding logs, and final images to provide improvement feedback. Monetized via [redacted] or subscription.
+- **AI session analyzer:** Claude-based analysis of session telemetry, guiding logs, and final images to provide improvement feedback.
 - **Data model designed for AI-readiness:** MVP data model serializable into coherent context windows for AI analysis.
 
 ### FITS Header Database Storage (Ingestion Pipeline)

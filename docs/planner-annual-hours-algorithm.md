@@ -592,7 +592,7 @@ Worst-case linear-interpolation error over half a 5-minute segment
           = ½ · 3.0 × 10⁻⁴ °/s² · 150² s²
           ≈ 3.4 arc-min at (φ = 0°, δ = 0°)
 
-At Phoenix (φ = 33.4°) viewing a mid-declination target
+At a mid-northern site (φ = 33.4°) viewing a mid-declination target
 (`cos(φ)·cos(δ) ≈ 0.77`) the bound is ≈ 2.6 arc-min. Real observations
 are much more benign because `ε_max` only applies at the single
 transit instant — away from transit the curvature drops and the
@@ -767,7 +767,7 @@ module-level function whose arguments are all plain data
 date objects pickle fine; threshold and mode are a float and a
 string literal).
 
-Observed wall-clock on a mid-range Mac (example, M64, LRGB mode,
+Observed wall-clock on a mid-range Mac (M64 example, LRGB mode,
 full 365-day year):
 
 | Workers | Wall time |
@@ -1077,8 +1077,8 @@ sample-counting produced (±2.5 min) is eliminated.
 ## 18. Worked example
 
 **Target:** M 64 (Black Eye Galaxy) — α = 12ʰ 56ᵐ 44.4ˢ, δ = +21°40′58″.
-**Location:** Phoenix — φ = 33.4484°, λ = −112.0740°, h_obs = 331 m,
-timezone `America/Phoenix` (no DST).
+**Location:** Example site — φ = 33.45°, λ = −112.07°, h_obs = 331 m,
+no DST.
 **Year:** 2026 (non-leap).
 **Mode:** `lrgb`, threshold `A = 30°`.
 

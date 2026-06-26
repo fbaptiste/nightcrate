@@ -335,7 +335,7 @@ All three use the default weights (2, 1, 1.5, 1) unless noted.
 
 ### Example 1 — M42 in Askar V @ 600 mm on a new-moon January night
 
-- Location: Phoenix, AZ
+- Location: example site (~33°N)
 - Astro-dark window: 18:54 → 05:48 (~11 h)
 - Moon: 5%, sets at 19:30
 - Telescope: Askar V at 600 mm
@@ -375,7 +375,7 @@ project, not a single-frame target." A user with
 
 ### Example 3 — NGC 7000 in Askar V @ 400 mm, August, full moon, Ha only
 
-- Location: Phoenix, AZ
+- Location: example site (~33°N)
 - Astro-dark window: 21:34 → 04:32 (~7 h)
 - Moon: 100%, up all night, mean separation 95°
 - Telescope: Askar V at 400 mm (with reducer)

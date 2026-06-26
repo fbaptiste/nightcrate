@@ -5,10 +5,8 @@
 **NightCrate** is a desktop application for astrophotographers to record, organize, catalog, and analyze their imaging sessions. The app ingests raw imaging data directories and associated log files, automatically extracting metadata and building a searchable, organized library of all imaging work.
 
 - **Name:** NightCrate
-- **Domains owned:** [redacted-domain], [redacted-domain], [redacted-domain]
-- **Related brand:** Fred's YouTube channel "[redacted-brand]"
 
-This is an indie software project, not a [redacted] startup. The goal is to build a useful tool for the astrophotography community that can generate [redacted] as part of a [redacted] from traditional software engineering.
+This is a free, open-source (MIT) project. The goal is simply to build a genuinely useful tool for the astrophotography community — a niche that's underserved by existing software.
 
 ---
 
@@ -32,7 +30,7 @@ Nobody is combining FITS header metadata, guiding logs, and session logs into a 
 
 - Serious amateur astrophotographers using dedicated imaging rigs (mount + scope + camera + guide scope)
 - Users of N.I.N.A. and ASIAir initially, expanding to smart scope users (Seestar, Dwarflab) later
-- The market is small (low hundreds of thousands globally) but passionate and willing to pay for quality tools
+- The market is small (low hundreds of thousands globally) but passionate and underserved by existing tools
 
 ---
 
@@ -72,9 +70,8 @@ Heavy (bundles entire Chromium, 100MB+ installers, hundreds of MB RAM). Tauri is
 ## Fred's Background
 
 - Primary expertise: Python, PostgreSQL, data modeling, cybersecurity
-- Currently employed as a software engineer but [redacted]
+- Software engineer by profession
 - Active astrophotographer using N.I.N.A. for capture and PixInsight for processing
-- Color blind (relevant context for potential future features)
 - Will heavily leverage Claude Code for development, particularly on the React frontend
 
 ---

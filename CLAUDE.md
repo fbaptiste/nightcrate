@@ -181,7 +181,7 @@ The app is a **cross-platform local-first desktop application** (Mac, Windows, L
 
 ## UI/UX Requirements
 
-- **Color-blind-friendly palette required** — Fred is red-green color blind. Use blue/orange instead of red/green; add pattern/shape differentiation where color alone would be used. Approved trio: blue / orange / teal. Reject purple + amber as too similar.
+- **Color-blind-friendly palette required** (red-green colorblind accessibility is a core constraint) — use blue/orange instead of red/green; add pattern/shape differentiation where color alone would be used. Approved trio: blue / orange / teal. Reject purple + amber as too similar.
 - **No question-mark icons** for help affordances; **no underlines on tooltips**; **theme-aware colors everywhere** (don't hardcode `#fff` / `#000` / raw hex — use MUI theme tokens like `common.white`, `common.black`, `primary.main`, `action.hover`, etc.).
 - **Catalog by reference (don't move files)** is the default. File reorganization/copy is optional.
 - **Hex colors must be 6-digit** (`#888888`, never `#888`) — gradient code appends alpha suffixes that break with 3-digit hex.
