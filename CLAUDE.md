@@ -27,6 +27,46 @@ bad astronomy, incorrect calculations, and sloppy unit handling.
 They won't tolerate dumbed-down UX, but they also won't read
 documentation — the app needs to be discoverable and self-evident.
 
+## Public Repository — Privacy & Sensitive Data
+
+**This is a PUBLIC, open-source repository.** Everything committed —
+code, docs, comments, commit messages, test fixtures — is world-readable
+and effectively permanent (it survives in git history even if later
+"removed"). Treat every commit as a public publication.
+
+**Never commit personal or sensitive data.** This includes, but is not
+limited to:
+
+- **Personal location** — home/observatory address, city/state,
+  precise coordinates, or anything that pinpoints where the maintainer
+  lives. (The test suite's reference location `33.4484, -112.0740` /
+  `America/Phoenix` is a public civic centroid kept intentionally — fine
+  to reuse for tests, but do **not** add finer or home-specific coords.)
+- **Network / infrastructure** — ISP, home-network topology, gateway/NAS
+  brands, hostnames, IP addresses, VPN/remote-access setup.
+- **Identity / contact / brand** — personal emails, phone numbers, owned
+  domains, social/YouTube channels, real names of non-maintainers.
+- **Financial / business** — pricing, revenue, monetization plans,
+  income goals, employment/career details. This project is free and
+  MIT-licensed; it has no business model to document.
+- **Personal hardware & health** — specific personal machine specs,
+  medical/health characteristics. (Accessibility *requirements* like a
+  colorblind-safe palette are fine; frame them as project constraints,
+  not personal facts about an individual.)
+- **Secrets** — API keys, tokens, passwords, TLS private keys, `.env`
+  files. (`.gitignore` already covers `.env`, `frontend/.certs/`, and
+  `*.db`/`*.sqlite` — do not un-ignore these or commit their contents.)
+
+**In examples, tests, and docs, use generic placeholders** — a neutral
+example site, `example.com`, illustrative specs — never the maintainer's
+real personal details. If a task seems to require real personal data in
+a committed file, stop and ask rather than guessing.
+
+If you ever notice sensitive data already present (in a diff you're about
+to commit, or in existing files), flag it before committing. Scrubbing it
+from history after the fact requires a disruptive `filter-repo` rewrite —
+far better to never commit it.
+
 ## How to Engage as a Product Partner
 
 You are not just implementing code — you are co-developing a
@@ -234,6 +274,11 @@ Before committing, all applicable checks must pass:
 
 **Frontend (from `frontend/`):**
 5. `npm run build` — TypeScript compilation + production build
+
+**Privacy (public repo):**
+6. Scan the diff for personal/sensitive data before committing — see
+   "Public Repository — Privacy & Sensitive Data". No real location,
+   network, identity, financial, or secret data in any committed file.
 
 **Test quality expectations:**
 - New code must include tests covering happy paths, edge cases, and error conditions
