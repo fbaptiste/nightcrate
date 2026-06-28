@@ -303,8 +303,17 @@ SELECT
     COALESCE(
         (SELECT sf.project_id FROM sub_frame sf WHERE sf.id = fl.sub_frame_id),
         (SELECT pi.project_id FROM processed_image pi WHERE pi.id = fl.processed_image_id),
-        (SELECT p.project_id FROM project_source_folder p
-             WHERE substr(fl.path, 1, length(p.path)) = p.path LIMIT 1)
+        -- Only TRULY standalone rows resolve by folder. A linked-but-dropped row
+        -- (its sub/processed resolved to no project) stays NULL and is filtered out,
+        -- rather than surviving with a dangling FK. The prefix is matched WITH a
+        -- trailing separator so a sibling folder sharing a name prefix (e.g. a file
+        -- under /data/M31_old can't be claimed by a folder bound as /data/M31) —
+        -- mirrors remove_folder's runtime rstrip('/')+'/' prefix.
+        (CASE WHEN fl.sub_frame_id IS NULL AND fl.processed_image_id IS NULL THEN
+            (SELECT p.project_id FROM project_source_folder p
+                 WHERE substr(fl.path, 1, length(rtrim(p.path, '/')) + 1)
+                       = rtrim(p.path, '/') || '/' LIMIT 1)
+         END)
     ) AS project_id,
     fl.path, fl.category, fl.sub_frame_id, fl.processed_image_id, fl.path_type,
     fl.volume_label, fl.size_bytes, fl.file_hash, fl.mtime, fl.last_verified_at,
@@ -313,8 +322,11 @@ FROM _file_location_legacy fl
 WHERE COALESCE(
         (SELECT sf.project_id FROM sub_frame sf WHERE sf.id = fl.sub_frame_id),
         (SELECT pi.project_id FROM processed_image pi WHERE pi.id = fl.processed_image_id),
-        (SELECT p.project_id FROM project_source_folder p
-             WHERE substr(fl.path, 1, length(p.path)) = p.path LIMIT 1)
+        (CASE WHEN fl.sub_frame_id IS NULL AND fl.processed_image_id IS NULL THEN
+            (SELECT p.project_id FROM project_source_folder p
+                 WHERE substr(fl.path, 1, length(rtrim(p.path, '/')) + 1)
+                       = rtrim(p.path, '/') || '/' LIMIT 1)
+         END)
     ) IS NOT NULL;
 
 DROP TABLE _file_location_legacy;
