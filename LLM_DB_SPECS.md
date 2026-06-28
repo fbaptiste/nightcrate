@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.39.0
+**NightCrate version:** 0.40.0
 
 ## Overview
 
@@ -316,3 +316,113 @@ equipment seed loader's hash contract.
 - `dso_catalog_source` — loader registry. Stores the sha256 of each source file; matching hashes on subsequent startup skip reloading. v0.15.0 registers 5 additional sources: `vizier_sharpless`, `vizier_barnard` (fetched from CDS VizieR via a 3-mirror fallback), `github_50mgc` (50 MGC FITS fetched from github.com/davidohlson/50MGC rather than VizieR because CDS was flaky), `nightcrate_augment`, `nightcrate_sharpless_crossref`, `nightcrate_barnard_crossref` (bundled in-repo under `backend/src/nightcrate/data/catalogs/nightcrate/`). v0.20.0 (migration 0022) widens the `category` CHECK to include `'wikidata'` and registers two more sources: `wikidata_external_refs` (SPARQL fetch from `query.wikidata.org`, CC0) and `nightcrate_external_refs` (editorial CSV overrides).
 - `dso_external_ref` (v0.20.0, migration 0022) — external-knowledge-base links per DSO: Wikidata QIDs (`provider='wikidata'`, no language) and Wikipedia article URLs (`provider='wikipedia', language='en'`). One row per `(dso_id, provider, language)` (UNIQUE); a partial unique index on `(provider, language, identifier) WHERE provider != 'wikipedia'` keeps QIDs globally unique while admitting multi-object Wikipedia articles (Stephan's Quintet). Wikidata QIDs are stored silently for future features; only Wikipedia chips render in the MVP UI. Loader matches Wikidata records to DSOs via `dso_designation.search_key` (P528/P972 canonical form plus P3208/P4095/P6340 direct-ID shortcuts); ambiguous cross-references skip (CSV override is the escape hatch).
 - `thumbnail_cache` (v0.16.0 migration 0017, extended by v0.17.0 migration 0018) — metadata for the Target Planner's LRU thumbnail cache. Files live on disk under `APP_DIR/thumbnails/`; rows carry the `dso_id` FK (cascade-delete), `variant` (`list`/`detail`/`rig_framed`/`fov_simulator`), dimensions, nullable `fov_major_deg_x1000` / `fov_minor_deg_x1000` (rounded deg × 1000 as int for rig-dependent variants), `source` (`dss2_color`/`dss2_red`/`dss2_blue`/`placeholder`), byte size, fetched/last-access timestamps, and a nullable `fetch_error` (non-null rows are backoff sentinels that expire after 1 hour). Unique index wraps the FOV columns in `COALESCE(..,-1)` so rig-independent + rig-dependent entries share a namespace. Not seed-loaded — populated entirely by runtime fetches from CDS Aladin's hips2fits.
+
+---
+
+## Imaging-Core / Ingest tables (v0.40.0, migration 0037 — EMPTY, runtime-populated)
+
+**All tables below start EMPTY and are populated by the ingest pipeline at
+runtime — they are NEVER seeded.** Do **not** author CSV files for them; they
+carry no `seed_key`/`seed_hash` and are not part of the equipment seed loader's
+hash contract. `sub_frame` is the core atom (lights/darks/flats/bias share it via
+`frame_type`); `session` is the AUTO/ingest rig-night grouping (distinct from the
+manual `project_session`). Identity is `content_hash` (SHA-256) so re-ingest is
+idempotent. Several tables (`session_log_file`, `session_event`, `autofocus_run`,
+`guiding_log_file`, `guiding_sample`, `dither_event`) are created here but stay
+empty until v0.43/0.44 parsers land.
+
+```sql
+-- All FKs nullable unless marked. Common columns omitted for brevity.
+
+CREATE TABLE ingestion_run (project_id FK CASCADE, source_path TEXT,
+    mode CHECK ('catalog_in_place','copy_and_organize','reparse'),
+    status CHECK ('running','completed','failed','cancelled'),
+    files_scanned INT, subs_inserted INT, subs_updated INT, subs_skipped INT,
+    errors_count INT, errors_json TEXT, started_at TEXT, finished_at TEXT);
+
+CREATE TABLE session (project_id FK CASCADE, rig_id FK, start_utc TEXT NOT NULL,
+    end_utc TEXT, site_name TEXT, latitude REAL CHECK(-90..90),
+    longitude REAL CHECK(-180..180), elevation_m REAL,
+    bortle_class INT CHECK(1..9), conditions_notes TEXT,
+    created_at, updated_at);  -- updated_at trigger
+
+CREATE TABLE processed_image (project_id FK CASCADE, content_hash TEXT UNIQUE,
+    image_kind CHECK ('master','stack','processed','other'),
+    frame_type CHECK ('light','dark','flat','bias','dark_flat','unknown'),
+    filter_id FK, line_name CHECK (15-value bandpass vocab), camera_id FK,
+    telescope_id FK, ncombine INT, date_obs_utc TEXT, image_width INT,
+    image_height INT, fits_header_json TEXT, ingestion_run_id FK SET NULL,
+    created_at, updated_at);  -- updated_at trigger
+
+CREATE TABLE sub_frame (content_hash TEXT UNIQUE,  -- SHA-256, idempotent
+    session_id FK SET NULL, rig_id FK, project_target_id FK SET NULL,
+    ingestion_run_id FK SET NULL,
+    frame_type CHECK ('light','dark','flat','bias','dark_flat','unknown') DEFAULT 'unknown',
+    accepted INT CHECK(0,1) DEFAULT 1, rejection_reason TEXT,
+    rejection_source CHECK ('user','automated','ingest'),
+    camera_id FK, telescope_id FK, telescope_configuration_id FK, filter_id FK,
+    mount_id FK, filter_wheel_id FK, focuser_id FK,
+    exposure_seconds REAL CHECK(>=0) DEFAULT 0,  -- bias ~0 is legal
+    gain REAL, offset_adu REAL, sensor_temp_c REAL, set_temp_c REAL,
+    binning_x INT, binning_y INT, bit_depth INT, image_width INT, image_height INT,
+    date_obs_utc TEXT NOT NULL,  -- mtime fallback so ingest never fails
+    obs_mjd REAL, ra_deg REAL, dec_deg REAL, rotation_deg REAL,
+    pixel_scale_arcsec REAL, airmass REAL,
+    hfr REAL, star_count INT, median_adu REAL, background_adu REAL, snr_estimate REAL,
+    latitude REAL, longitude REAL, elevation_m REAL,
+    object_hint TEXT, filter_name_hint TEXT,  -- raw OBJECT/FILTER headers
+    fits_header_json TEXT, created_at, updated_at);  -- updated_at trigger
+    -- NO light-needs-filter CHECK: ingest must tolerate partial equipment.
+    -- Partial composite indices for calibration matching (light/dark/flat/bias).
+
+CREATE TABLE file_location (path TEXT UNIQUE,
+    category CHECK ('sub_frame','processed','pxiproject','log','other'),
+    sub_frame_id FK CASCADE, processed_image_id FK CASCADE,
+    path_type CHECK ('original','working_copy','archive','reorganized','other'),
+    volume_label TEXT, size_bytes INT, file_hash TEXT, mtime TEXT,
+    last_verified_at TEXT,
+    last_verified_status CHECK ('ok','missing','hash_mismatch','unreadable'));
+
+-- Created empty; parsed v0.43/0.44.
+CREATE TABLE session_log_file (session_id FK CASCADE, file_hash TEXT UNIQUE,
+    path TEXT, source CHECK ('nina','asiair','phd2','other'),
+    covered_start_utc TEXT, covered_end_utc TEXT,
+    parse_status CHECK ('pending','parsed','failed','partial'),
+    parse_error TEXT, raw_text BLOB);
+
+CREATE TABLE session_event (session_id FK CASCADE, event_utc TEXT,
+    event_type CHECK (22 values: session/slew/plate_solve/filter_change/
+        exposure/autofocus/dither/meridian_flip/guiding/cooling/error/warning/info/other),
+    event_data_json TEXT, related_sub_frame_id FK SET NULL, related_filter_id FK);
+
+CREATE TABLE autofocus_run (session_id FK CASCADE, filter_id FK, focuser_id FK,
+    triggered_at_utc TEXT, completed_at_utc TEXT, temperature_c REAL,
+    initial_position INT, final_position INT, initial_hfr REAL, final_hfr REAL,
+    success INT CHECK(0,1),
+    trigger_reason CHECK ('scheduled','temperature_delta','hfr_drift','filter_change','manual'),
+    source CHECK ('nina','asiair','manual','other'), raw_json TEXT);
+
+CREATE TABLE guiding_log_file (session_id FK CASCADE, file_hash TEXT UNIQUE,
+    path TEXT, start_utc TEXT, end_utc TEXT, guide_camera_id FK,
+    guide_scope_id FK, oag_id FK, guide_pixel_scale_arcsec REAL,
+    parse_status CHECK ('pending','parsed','failed','partial'));
+
+CREATE TABLE guiding_sample (guiding_log_file_id FK CASCADE NOT NULL,
+    sample_utc TEXT NOT NULL, ra_error_arcsec REAL, dec_error_arcsec REAL,
+    ra_correction REAL, dec_correction REAL, snr REAL, star_mass REAL,
+    frame_number INT);  -- index (log_file, sample_utc) for per-sub RMS
+
+CREATE TABLE dither_event (guiding_log_file_id FK CASCADE NOT NULL,
+    dither_utc TEXT NOT NULL, ra_offset_arcsec REAL, dec_offset_arcsec REAL,
+    settle_completed_utc TEXT, settle_failed INT CHECK(0,1) DEFAULT 0);
+
+CREATE TABLE project_source_folder (project_id FK CASCADE NOT NULL, path TEXT NOT NULL,
+    is_primary INT CHECK(0,1) DEFAULT 0, added_at TEXT,
+    UNIQUE (project_id, path));  -- partial unique idx: one primary per project
+
+-- ALTER: project gains nullable cover_sub_frame_id INTEGER REFERENCES sub_frame(id).
+
+-- VIEWS (not tables): matching_darks, matching_flats, matching_bias,
+-- calibration_coverage, integration_time_per_project_filter,
+-- project_filter_goal_progress, session_summary.
+```

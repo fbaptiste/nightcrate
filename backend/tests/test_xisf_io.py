@@ -306,6 +306,34 @@ class TestReadHeader:
         assert "FILTER" in keys
         assert "EXPTIME" in keys
 
+    def test_geometry_surfaced_as_naxis(self, tmp_path):
+        # XISF keeps dimensions in the geometry attribute, not as FITS keywords;
+        # read_header should derive NAXIS1/NAXIS2 from it.
+        data = np.zeros((48, 64), dtype=np.uint16)  # H=48, W=64
+        xisf_bytes = _make_xisf(64, 48, 1, "UInt16", data.tobytes())
+        path = tmp_path / "geom.xisf"
+        path.write_bytes(xisf_bytes)
+
+        cards = {c["key"]: c["value"] for c in read_header(path)}
+        assert cards["NAXIS1"] == "64"
+        assert cards["NAXIS2"] == "48"
+
+    def test_naxis_fits_keyword_wins_over_geometry(self, tmp_path):
+        # A real NAXIS1 FITSKeyword must not be overwritten by the geometry value.
+        data = np.zeros((48, 64), dtype=np.uint16)
+        xisf_bytes = _make_xisf(
+            64,
+            48,
+            1,
+            "UInt16",
+            data.tobytes(),
+            fits_keywords=[("NAXIS1", "64", "Width")],
+        )
+        path = tmp_path / "geom2.xisf"
+        path.write_bytes(xisf_bytes)
+        naxis1 = [c for c in read_header(path) if c["key"] == "NAXIS1"]
+        assert len(naxis1) == 1  # not duplicated
+
     def test_fits_keyword_values_have_quotes_stripped(self, tmp_path):
         """XISF FITSKeyword values with embedded quotes should be stripped."""
         data = np.zeros((4, 4), dtype=np.uint16)

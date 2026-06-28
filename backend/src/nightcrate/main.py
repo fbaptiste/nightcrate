@@ -27,6 +27,7 @@ from nightcrate.api import (
     files,
     horizons,
     images,
+    ingest,
     locations,
     phd2,
     planner,
@@ -414,6 +415,7 @@ app.include_router(planner.router)
 app.include_router(phd2.router)
 app.include_router(plate_solve.router)
 app.include_router(projects.router)
+app.include_router(ingest.router)
 app.include_router(project_sessions.router)
 app.include_router(project_solve.router)
 app.include_router(project_targets.router)

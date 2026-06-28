@@ -38,6 +38,7 @@ import {
 } from "@/api/projects";
 import ImageGalleryStrip from "@/components/projects/ImageGalleryStrip";
 import ThumbnailCropEditor from "@/components/projects/ThumbnailCropEditor";
+import ProjectCatalogTab from "@/components/projects/ProjectCatalogTab";
 import ProjectPlateSolveTab from "@/components/projects/ProjectPlateSolveTab";
 import ProjectSessionsTab from "@/components/projects/ProjectSessionsTab";
 import ProjectMetadataSection from "@/components/projects/ProjectMetadataSection";
@@ -352,13 +353,15 @@ export default function ProjectDetailPage() {
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
         <Tab label="Overview" />
         <Tab label="Sessions" />
+        <Tab label="Catalog" />
         <Tab label="Plate Solve" />
         <Tab label="Notes" />
       </Tabs>
 
       {tab === 1 && <ProjectSessionsTab projectId={projectId} />}
-      {tab === 2 && <ProjectPlateSolveTab projectId={projectId} />}
-      {tab === 3 && (
+      {tab === 2 && <ProjectCatalogTab projectId={projectId} />}
+      {tab === 3 && <ProjectPlateSolveTab projectId={projectId} />}
+      {tab === 4 && (
         <Box sx={{ maxWidth: 820 }}>
           <MarkdownEditor
             value={displayNotes}
@@ -448,7 +451,7 @@ export default function ProjectDetailPage() {
                         key={t.dso_id}
                         label={t.common_name ?? t.primary_designation}
                         size="small"
-                        onClick={solveDsoIds.has(t.dso_id) ? () => setTab(2) : undefined}
+                        onClick={solveDsoIds.has(t.dso_id) ? () => setTab(3) : undefined}
                         onDelete={() => removeTargetMut.mutate(t.dso_id)}
                       />
                     ))}

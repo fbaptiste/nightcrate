@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.39.0
+**NightCrate version:** 0.40.0
 
-**Last updated:** 2026-06-25
+**Last updated:** 2026-06-27
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -29,7 +29,7 @@
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn.
 - **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, scipy (FFT pipeline, Akima interpolation), sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI Material 7 + MUI X Community v8 (DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand 5 for state, TanStack Query 5 for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder. KaTeX + react-katex for math rendering. Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0034.project_solve.sql`. Pydantic for all data models.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0038.sub_frame_filter_hint.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `make dev-lan` binds to `0.0.0.0` + serves Vite over HTTPS (auto-picks `frontend/.certs/{cert,key}.pem` if present, else `@vitejs/plugin-basic-ssl` self-signed) so iPad/Android tablets can reach NightCrate over the LAN. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -357,11 +357,24 @@ Deterministic string→equipment-row resolver: the foundation the v0.40.0+ folde
 - **Tests:** `tests/test_equipment_resolver.py` — 72 tests, 100% module coverage
 - **Known limitation:** two physically distinct same-model cameras share one alias → resolves to whichever camera the alias points at; rig-level disambiguation deferred to v0.41.0
 
+### Folder Ingest + Imaging-Core Schema (v0.40.0)
+
+**Status:** `[shipped]`
+
+Point a project at one or more source folders and catalog every file in them, classified by FITS `IMAGETYP` (never folder names). Migration 0037 lands the full imaging-core schema: `session` (auto rig-night grouping, distinct from the manual `project_session`), `sub_frame` (content-hash-identified core atom, all equipment FKs nullable), `processed_image` (masters/stacks), `file_location` (every cataloged file, any category), `ingestion_run` (provenance), `project_source_folder`, the empty guiding/session-event/session-log/autofocus tables (forward-FK placeholders for v0.43/0.44), and the calibration-matching + integration views. The ingest pipeline (pure `services/ingest_{scanner,classify,sessions,models}.py` + `api/ingest.py` boundary) walks folders, parses headers in a `ProcessPoolExecutor`, resolves equipment (v0.39.0 resolver), content-hash UPSERTs (idempotent re-ingest), forms noon-to-noon sessions, and assigns lights to the project target. Lights ingest even when the filter doesn't resolve — `sub_frame.filter_name_hint` keeps the raw `FILTER` (no light-needs-filter CHECK); v0.41.0 maps the physical filter. Read-only "Catalog" tab has 7 category sub-tabs (Lights/Darks/Flats/Bias/Dark Flats/Masters/Others, counts in labels) over a reusable full-height grid: frame tabs from `catalog/frames?frame_type=`, Masters from `catalog/masters` (processed images), Others from `catalog/others` (logs/pxiproject/other files + unknown subs with a Type column). Per-row thumbnails are served by a dedicated cheap endpoint (`services/catalog_thumbnail.py` decimates the raw array before rendering — a 26 MP sub thumbnails in ~0.07 s — applies the AutoSTF stretch in **pure numpy** because the mlx GPU backend is not thread-safe and segfaults under the grid's concurrent renders; caches a small JPEG on disk by content hash; concurrency-bounded, lazy-loaded). Dark-flats are inferred by exposure (a `DARK` matching a flat's exposure, not a light's, becomes `dark_flat`); darks/dark-flats/bias are stored filterless. No editing/curation yet (v0.41.0).
+
+- **Route:** Project detail → "Catalog" tab (5th tab)
+- **API:** folders CRUD + `PUT .../folders/{fid}/primary`; `POST .../ingest`; `GET .../catalog/summary`, `.../catalog/frames` (`?frame_type=`), `.../catalog/masters`, `.../catalog/others`, `.../catalog/frames/{id}/thumbnail`, `.../catalog/masters/{id}/thumbnail`
+- **Key backend:** `api/ingest.py`, `services/ingest_scanner.py`, `services/ingest_classify.py`, `services/ingest_sessions.py`, `services/ingest_models.py`, `services/catalog_thumbnail.py`, `db/migrations/0037.imaging_core.sql` + `0038.sub_frame_filter_hint.sql`
+- **Key frontend:** `components/projects/ProjectCatalogTab.tsx` (7 sub-tabs) + `components/projects/CatalogGrid.tsx`, `api/projectCatalog.ts`; folder picker is the shared `components/fits/FileBrowser` in `directoryMode` (same browser as Image Analyzer / PHD2)
+- **Tests:** `tests/test_imaging_schema.py` (20), `tests/test_ingest.py` (47, incl. thumbnail service + endpoint) — 90%+ module coverage
+- **Known limitations:** rig not yet resolved (filter line-name scoping mostly returns unresolved → NULL `filter_id`, kept as hint); single-flight ingest (one at a time); standard image exports (TIFF/PNG/JPG) parked as "other" until gallery promotion in v0.41.0
+
 ---
 
 ## Schema state
 
-Current migration: **0036** (`project_target`). 36 migrations total (`0001`–`0036`).
+Current migration: **0038** (`sub_frame_filter_hint`). 38 migrations total (`0001`–`0038`).
 
 **Recent migrations not detailed elsewhere:** 0025 (`target_wishlist` — `target_wishlist`, `wishlist_section`, `target_plan`, `target_plan_date_range` tables for the wishlist + planning system), 0026 (`rig_sort_order` — `sort_order` column on `rig` + `rig_summary` view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
 
@@ -377,6 +390,9 @@ Current migration: **0036** (`project_target`). 36 migrations total (`0001`–`0
 - **Weather (migration 0008):** `weather_cache` — forecast/archive/openmeteo_aq/ecmwf_pwv source-keyed cache
 - **Rigs (migrations 0009–0010, 0013, 0024, 0026):** `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view — user-composed imaging templates. `rig_summary` view has been rebuilt four times: 0010 (expose `telescope_id`), 0013 (expose `sensor_adc_bit_depth`), 0024 (expose `mount_drive_type` + `mount_worm_period_seconds`), 0026 (expose `sort_order`).
 - **Mount worm period (migration 0024, v0.26.0):** ALTER adds `mount.worm_period_seconds REAL`. Rebuilds `rig_summary` to expose `mount_drive_type` + `mount_worm_period_seconds`. Backfills 24 worm-drive seed mounts via direct UPDATE statements (sidesteps the seed loader's user-modified hash check, which would otherwise refuse to update existing rows after `worm_period_seconds` was added to mount's `seeded_fields`).
+- **Projects (migrations 0029–0036):** `project`, `project_image`, `project_thumbnail`, `project_solve`, `project_dso`, `project_rig`, `project_session` (manual capture batches), `project_filter_goal`, `project_target` — see the Projects feature section above for the per-migration breakdown.
+- **Imaging core (migration 0037, v0.40.0):** the folder-ingest schema — `session` (auto rig-night grouping; nullable rig/site), `sub_frame` (content-hash UNIQUE identity, all equipment FKs nullable, `filter_name_hint`, no light-needs-filter CHECK), `processed_image` (masters/stacks), `file_location` (every cataloged file; `category` + nullable `sub_frame_id`/`processed_image_id`), `ingestion_run` (provenance counters), `project_source_folder` (one-primary partial unique index), plus the **empty** `session_log_file`/`session_event`/`autofocus_run`/`guiding_log_file`/`guiding_sample`/`dither_event` tables (forward-FK placeholders, populated v0.43/0.44). Adds `project.cover_sub_frame_id`. Views: `matching_darks`/`matching_flats`/`matching_bias`/`calibration_coverage`, `integration_time_per_project_filter` (duoband double-counts per line), `project_filter_goal_progress`, `session_summary`. `updated_at` triggers on `session`/`sub_frame`/`processed_image`.
+- **sub_frame filter hint (migration 0038, v0.40.0):** adds `sub_frame.filter_name_hint` and drops the light-needs-filter CHECK via the SQLite table-rewrite pattern (rename → recreate → copy → drop, mirroring 0022). Lands as a separate forward migration because 0037 had already been applied to a running dev DB with the original shape — yoyo never re-runs an applied migration, so the correction must be a new one to converge all DBs. Re-scan after upgrade to ingest lights that the old CHECK rejected.
 
 Authoritative DDL in `DB_SCHEMA_DDL.sql`. ER diagrams in `DB_SCHEMA.md`. LLM-facing seed-data + abbreviated-schema reference (for CSV authoring in Claude Desktop) in `LLM_DB_SPECS.md` at the repo root.
 

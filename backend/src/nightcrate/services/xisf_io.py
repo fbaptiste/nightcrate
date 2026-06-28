@@ -283,8 +283,27 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
             }
         )
 
-    # XISF properties (supplement with mapped names if not already in FITS keywords)
+    # Geometry → NAXIS keywords. XISF keeps image dimensions in the Image
+    # `geometry="W:H:C"` attribute, not as FITS keywords; surface them so any
+    # FITS-oriented consumer (ingest dimensions, header view) sees the size.
+    # Only added when absent — real FITSKeyword NAXIS cards always win.
     existing_keys = {c["key"] for c in cards}
+    geom_parts = img_elem.get("geometry", "").split(":")
+    if len(geom_parts) >= 2:
+        for axis_key, raw in (("NAXIS1", geom_parts[0]), ("NAXIS2", geom_parts[1])):
+            if axis_key in existing_keys or not raw.isdigit():
+                continue
+            cards.append(
+                {
+                    "key": axis_key,
+                    "value": raw,
+                    "comment": "XISF: geometry",
+                    "description": get_keyword_description(axis_key),
+                }
+            )
+            existing_keys.add(axis_key)
+
+    # XISF properties (supplement with mapped names if not already in FITS keywords)
     prop_map = {
         "Instrument:Camera:Name": "INSTRUME",
         "Instrument:Filter:Name": "FILTER",
