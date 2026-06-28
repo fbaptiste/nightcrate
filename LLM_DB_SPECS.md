@@ -326,8 +326,12 @@ runtime — they are NEVER seeded.** Do **not** author CSV files for them; they
 carry no `seed_key`/`seed_hash` and are not part of the equipment seed loader's
 hash contract. `sub_frame` is the core atom (lights/darks/flats/bias share it via
 `frame_type`); `session` is the AUTO/ingest rig-night grouping (distinct from the
-manual `project_session`). Identity is `content_hash` (SHA-256) so re-ingest is
-idempotent. Several tables (`session_log_file`, `session_event`, `autofocus_run`,
+manual `project_session`). **Each project owns its files (migration 0040):**
+`sub_frame`, `processed_image`, and `file_location` all carry `project_id NOT NULL`
+(CASCADE), with per-project identity (`UNIQUE(project_id, content_hash)` /
+`UNIQUE(project_id, path)`) — re-ingest is idempotent within a project; the same file
+in two projects is two independent rows. Several tables (`session_log_file`,
+`session_event`, `autofocus_run`,
 `guiding_log_file`, `guiding_sample`, `dither_event`) are created here but stay
 empty until v0.43/0.44 parsers land.
 
@@ -346,7 +350,8 @@ CREATE TABLE session (project_id FK CASCADE, rig_id FK, start_utc TEXT NOT NULL,
     bortle_class INT CHECK(1..9), conditions_notes TEXT,
     created_at, updated_at);  -- updated_at trigger
 
-CREATE TABLE processed_image (project_id FK CASCADE, content_hash TEXT UNIQUE,
+CREATE TABLE processed_image (project_id FK CASCADE NOT NULL, content_hash TEXT,
+    UNIQUE(project_id, content_hash),  -- migration 0040: per-project identity
     image_kind CHECK ('master','stack','processed','other'),
     frame_type CHECK ('light','dark','flat','bias','dark_flat','unknown'),
     filter_id FK, line_name CHECK (15-value bandpass vocab), camera_id FK,
@@ -354,7 +359,8 @@ CREATE TABLE processed_image (project_id FK CASCADE, content_hash TEXT UNIQUE,
     image_width INT, image_height INT, fits_header_json TEXT, ingestion_run_id FK SET NULL,
     created_at, updated_at);  -- updated_at trigger
 
-CREATE TABLE sub_frame (content_hash TEXT UNIQUE,  -- SHA-256, idempotent
+CREATE TABLE sub_frame (project_id FK CASCADE NOT NULL, content_hash TEXT,
+    UNIQUE(project_id, content_hash),  -- migration 0040: SHA-256, per-project identity
     session_id FK SET NULL, rig_id FK, project_target_id FK SET NULL,
     ingestion_run_id FK SET NULL,
     frame_type CHECK ('light','dark','flat','bias','dark_flat','unknown') DEFAULT 'unknown',
@@ -375,7 +381,8 @@ CREATE TABLE sub_frame (content_hash TEXT UNIQUE,  -- SHA-256, idempotent
     -- NO light-needs-filter CHECK: ingest must tolerate partial equipment.
     -- Partial composite indices for calibration matching (light/dark/flat/bias).
 
-CREATE TABLE file_location (path TEXT UNIQUE,
+CREATE TABLE file_location (project_id FK CASCADE NOT NULL, path TEXT,
+    UNIQUE(project_id, path),  -- migration 0040: per-project identity
     category CHECK ('sub_frame','processed','pxiproject','log','other'),
     sub_frame_id FK CASCADE, processed_image_id FK CASCADE,
     path_type CHECK ('original','working_copy','archive','reorganized','other'),

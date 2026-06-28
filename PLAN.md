@@ -4927,6 +4927,19 @@ folder and see everything filed correctly.
       illumination as background shading and solid new-moon (below) / full-moon (above) markers the
       hover scrubber snaps to. Backend `compute_moon_year` + `derive_phase_dates` reuse the cached
       annual-hours moon computation; `GET /api/planner/moon-year`.
+- [x] **As built (ownership rework, migration 0040, after design discussion with Fred):** dropped
+      the global-identity model for an explicit per-project one. `sub_frame`, `processed_image`, and
+      `file_location` each gained `project_id NOT NULL` (CASCADE) and per-project identity
+      (`UNIQUE(project_id, content_hash)` / `UNIQUE(project_id, path)`). Each project owns its own
+      row for a file; the same physical file cataloged into two projects is two independent rows (the
+      old global `content_hash UNIQUE` silently reassigned it to whichever project scanned last).
+      Removed the path-prefix `_project_file_scope` and the indirect `sub_frame →
+      ingestion_run.project_id` scoping — every catalog query is now a plain `project_id` match.
+      Migration follows the 0038 table-rewrite template; backfills `project_id` from
+      ingestion_run/session/source-folder prefix and drops project-less orphans (verified on the
+      populated dev DB). "Have I imaged this object?" is answered by `project_dso`, not frame identity.
+      Calibration-match view scoping (within-project vs shared library) deferred to v0.41.0+ when the
+      views get a UI.
 
 ## v0.41.0 — Correct + Curate
 

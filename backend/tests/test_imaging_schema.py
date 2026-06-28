@@ -122,8 +122,13 @@ async def graph():
 
 
 async def _insert_sub(conn: aiosqlite.Connection, **kw) -> int:
-    """Insert a sub_frame with sensible defaults; overrides via kwargs. Returns id."""
+    """Insert a sub_frame with sensible defaults; overrides via kwargs. Returns id.
+
+    project_id is NOT NULL (each project owns its files); when not given it defaults
+    to the fixture's single project.
+    """
     row = {
+        "project_id": None,
         "content_hash": f"hash-{next(_HASH_COUNTER)}",
         "frame_type": "light",
         "accepted": 1,
@@ -141,6 +146,9 @@ async def _insert_sub(conn: aiosqlite.Connection, **kw) -> int:
         "date_obs_utc": "2026-03-15T23:00:00",
     }
     row.update(kw)
+    if row["project_id"] is None:
+        cur = await conn.execute("SELECT id FROM project ORDER BY id LIMIT 1")
+        row["project_id"] = (await cur.fetchone())[0]
     cols = ", ".join(row.keys())
     placeholders = ", ".join("?" for _ in row)
     cur = await conn.execute(
@@ -193,8 +201,21 @@ class TestSchemaObjects:
     async def test_content_hash_unique(self, graph):
         conn, ids = graph
         await _insert_sub(conn, content_hash="dup", frame_type="bias", camera_id=ids["camera"])
+        # Same (project_id, content_hash) collides — re-ingest stays idempotent per project.
         with pytest.raises(aiosqlite.IntegrityError):
             await _insert_sub(conn, content_hash="dup", frame_type="bias", camera_id=ids["camera"])
+        # But the SAME content_hash under a DIFFERENT project is its own independent
+        # row: each project owns its files, nothing is shared (v0.40.0).
+        cur = await conn.execute("INSERT INTO project (name) VALUES ('Other Project')")
+        other_project = cur.lastrowid
+        other_id = await _insert_sub(
+            conn,
+            project_id=other_project,
+            content_hash="dup",
+            frame_type="bias",
+            camera_id=ids["camera"],
+        )
+        assert other_id > 0
 
     async def test_light_ingests_without_resolved_filter(self, graph):
         conn, ids = graph

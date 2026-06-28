@@ -163,10 +163,10 @@ async def set_primary_folder(project_id: int, folder_id: int) -> SourceFolder:
 async def remove_folder(project_id: int, folder_id: int) -> None:
     """Unbind a source folder AND drop everything cataloged from under it.
 
-    Cataloged files are matched by path prefix (no DB-level folder FK exists).
-    A sub/master that also has a file_location under another still-bound folder
-    survives the orphan sweep; only items left with no file_location are deleted.
-    Auto-sessions emptied by the removal are dropped too.
+    Cataloged files are matched by path prefix within this project (each project
+    owns its own file rows). A sub/master that also has a file_location under
+    another still-bound folder survives the orphan sweep; only items left with no
+    file_location are deleted. Auto-sessions emptied by the removal are dropped too.
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
@@ -177,16 +177,13 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
         prefix = folder["path"].rstrip("/") + "/"
 
         await conn.execute(
-            "DELETE FROM file_location WHERE substr(path, 1, length(?)) = ?",
-            (prefix, prefix),
+            "DELETE FROM file_location WHERE project_id = ? AND substr(path, 1, length(?)) = ?",
+            (project_id, prefix, prefix),
         )
         # Orphan sweep: drop this project's subs/masters now lacking any file.
         await conn.execute(
-            "DELETE FROM sub_frame WHERE id IN ("
-            "  SELECT sf.id FROM sub_frame sf "
-            "  JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
-            "  WHERE r.project_id = ? "
-            "    AND NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.sub_frame_id = sf.id))",
+            "DELETE FROM sub_frame WHERE project_id = ? "
+            "AND NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.sub_frame_id = sub_frame.id)",
             (project_id,),
         )
         await conn.execute(
@@ -358,7 +355,7 @@ async def _ingest_folder(
     # Non-image categories: park a file_location row (no entity link).
     for entry in entries:
         if entry.category in (CATEGORY_PXIPROJECT, CATEGORY_LOG, CATEGORY_OTHER):
-            await _upsert_plain_location(conn, entry)
+            await _upsert_plain_location(conn, project_id, entry)
 
     # Header-bearing files: parse in parallel, then persist on the main process.
     to_parse = header_bearing(entries)
@@ -447,7 +444,7 @@ async def _persist_parsed(
         "UPDATE sub_frame SET session_id = ?, project_target_id = ? WHERE id = ?",
         (session_id, assigned_target, sub_id),
     )
-    await _link_file_location(conn, result, "sub_frame", sub_id)
+    await _link_file_location(conn, project_id, result, "sub_frame", sub_id)
 
 
 async def _upsert_sub_frame(
@@ -464,7 +461,10 @@ async def _upsert_sub_frame(
     date_obs,
 ) -> tuple[int, bool]:
     content_hash = result["content_hash"]
-    cursor = await conn.execute("SELECT id FROM sub_frame WHERE content_hash = ?", (content_hash,))
+    cursor = await conn.execute(
+        "SELECT id FROM sub_frame WHERE project_id = ? AND content_hash = ?",
+        (project_id, content_hash),
+    )
     existing = await cursor.fetchone()
 
     # Filters only matter for lights and flats. Darks / dark-flats / bias are
@@ -496,6 +496,7 @@ async def _upsert_sub_frame(
     }
 
     if existing is None:
+        cols["project_id"] = project_id
         cols["content_hash"] = content_hash
         names = ", ".join(cols)
         placeholders = ", ".join("?" for _ in cols)
@@ -529,7 +530,8 @@ async def _upsert_processed(
 ) -> None:
     content_hash = result["content_hash"]
     cursor = await conn.execute(
-        "SELECT id FROM processed_image WHERE content_hash = ?", (content_hash,)
+        "SELECT id FROM processed_image WHERE project_id = ? AND content_hash = ?",
+        (project_id, content_hash),
     )
     existing = await cursor.fetchone()
     # No rig context for masters → filter_id rarely resolves. Fall back to the
@@ -544,7 +546,6 @@ async def _upsert_processed(
         or _as_int(raw_header.get("NIMAGES"))
     )
     cols = {
-        "project_id": project_id,
         "image_kind": "master",
         "frame_type": frame_type,
         "filter_id": filter_id,
@@ -560,6 +561,9 @@ async def _upsert_processed(
         "ingestion_run_id": run_id,
     }
     if existing is None:
+        # project_id + content_hash are identity (per-project); set on INSERT only,
+        # never re-assigned on UPDATE — mirrors _upsert_sub_frame.
+        cols["project_id"] = project_id
         cols["content_hash"] = content_hash
         names = ", ".join(cols)
         placeholders = ", ".join("?" for _ in cols)
@@ -577,19 +581,21 @@ async def _upsert_processed(
         )
         pid = existing["id"]
         counters["updated"] += 1
-    await _link_file_location(conn, result, "processed", pid)
+    await _link_file_location(conn, project_id, result, "processed", pid)
 
 
-async def _link_file_location(conn, result, category, entity_id) -> None:
+async def _link_file_location(conn, project_id, result, category, entity_id) -> None:
     # col is one of two literals chosen above — never user input.
     col = "sub_frame_id" if category == "sub_frame" else "processed_image_id"
     await conn.execute(
-        f"INSERT INTO file_location (path, category, {col}, file_hash, size_bytes, mtime) "  # nosec B608 - col is a fixed literal, not user input
-        f"VALUES (?, ?, ?, ?, ?, ?) "
-        f"ON CONFLICT(path) DO UPDATE SET category = excluded.category, "
+        "INSERT INTO file_location "  # nosec B608 - col is a fixed literal, not user input
+        f"(project_id, path, category, {col}, file_hash, size_bytes, mtime) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(project_id, path) DO UPDATE SET category = excluded.category, "
         f"{col} = excluded.{col}, file_hash = excluded.file_hash, "
-        f"size_bytes = excluded.size_bytes, mtime = excluded.mtime",
+        "size_bytes = excluded.size_bytes, mtime = excluded.mtime",
         (
+            project_id,
             result["path"],
             category,
             entity_id,
@@ -600,12 +606,13 @@ async def _link_file_location(conn, result, category, entity_id) -> None:
     )
 
 
-async def _upsert_plain_location(conn, entry) -> None:
+async def _upsert_plain_location(conn, project_id, entry) -> None:
     await conn.execute(
-        "INSERT INTO file_location (path, category, size_bytes, mtime) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(path) DO UPDATE SET category = excluded.category, "
+        "INSERT INTO file_location (project_id, path, category, size_bytes, mtime) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(project_id, path) DO UPDATE SET category = excluded.category, "
         "size_bytes = excluded.size_bytes, mtime = excluded.mtime",
-        (entry.path, entry.category, entry.size_bytes or None, entry.mtime),
+        (project_id, entry.path, entry.category, entry.size_bytes or None, entry.mtime),
     )
 
 
@@ -627,18 +634,15 @@ async def _reclassify_dark_flats(conn, project_id: int) -> None:
     await conn.execute(
         "UPDATE sub_frame SET frame_type = 'dark_flat' WHERE id IN ("
         "  SELECT sf.id FROM sub_frame sf "
-        "  JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
-        "  WHERE r.project_id = ? AND sf.frame_type = 'dark' AND sf.exposure_seconds > 0 "
+        "  WHERE sf.project_id = ? AND sf.frame_type = 'dark' AND sf.exposure_seconds > 0 "
         "    AND EXISTS ("
         "      SELECT 1 FROM sub_frame f "
-        "      JOIN ingestion_run rf ON rf.id = f.ingestion_run_id "
-        "      WHERE rf.project_id = ? AND f.frame_type = 'flat' "
+        "      WHERE f.project_id = ? AND f.frame_type = 'flat' "
         "        AND f.exposure_seconds BETWEEN sf.exposure_seconds * 0.8 "
         "                                   AND sf.exposure_seconds * 1.25) "
         "    AND NOT EXISTS ("
         "      SELECT 1 FROM sub_frame l "
-        "      JOIN ingestion_run rl ON rl.id = l.ingestion_run_id "
-        "      WHERE rl.project_id = ? AND l.frame_type = 'light' "
+        "      WHERE l.project_id = ? AND l.frame_type = 'light' "
         "        AND l.exposure_seconds BETWEEN sf.exposure_seconds * 0.8 "
         "                                   AND sf.exposure_seconds * 1.25)"
         ")",
@@ -714,26 +718,6 @@ async def _project_single_target(conn, project_id) -> int | None:
     return rows[0]["id"] if len(rows) == 1 else None
 
 
-async def _project_file_scope(conn, project_id: int) -> tuple[str, list]:
-    """SQL predicate + params limiting `file_location` rows to files under the
-    project's source folders. `file_location` has no project link (it's global —
-    standalone non-frame files carry no FK), so non-frame counts/listings are
-    scoped by path prefix against the project's bound folders. Exact-prefix match
-    (`substr`) so underscores/percent in real paths can't act as LIKE wildcards.
-    Returns a clause that matches NOTHING when the project has no folders."""
-    cursor = await conn.execute(
-        "SELECT path FROM project_source_folder WHERE project_id = ?", (project_id,)
-    )
-    prefixes = [r["path"].rstrip("/") + "/" for r in await cursor.fetchall()]
-    if not prefixes:
-        return "0", []
-    clause = "(" + " OR ".join("substr(path, 1, length(?)) = ?" for _ in prefixes) + ")"
-    params: list = []
-    for p in prefixes:
-        params.extend([p, p])
-    return clause, params
-
-
 # ── Catalog (read-only) ───────────────────────────────────────────────────────
 
 
@@ -743,9 +727,8 @@ async def catalog_summary(project_id: int) -> CatalogSummary:
         await get_or_404(conn, "project", project_id, "Project")
         s = CatalogSummary()
         cursor = await conn.execute(
-            "SELECT frame_type, COUNT(*) AS n FROM sub_frame sf "
-            "JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
-            "WHERE r.project_id = ? GROUP BY frame_type",
+            "SELECT frame_type, COUNT(*) AS n FROM sub_frame "
+            "WHERE project_id = ? GROUP BY frame_type",
             (project_id,),
         )
         by_type = {row["frame_type"]: row["n"] for row in await cursor.fetchall()}
@@ -762,14 +745,12 @@ async def catalog_summary(project_id: int) -> CatalogSummary:
         s.sessions = await _count(
             conn, "SELECT COUNT(*) FROM session WHERE project_id = ?", (project_id,)
         )
-        # Non-frame file counts (pxiproject/log/other) scoped to files under the
-        # project's source folders (file_location has no project FK — see
-        # _project_file_scope). file_clause is a generated literal; values bound.
-        file_clause, file_params = await _project_file_scope(conn, project_id)
+        # Non-frame file counts (pxiproject/log/other) — each project owns its
+        # file_location rows, so scope is a plain project_id match.
         cursor = await conn.execute(
-            "SELECT category, COUNT(*) AS n FROM file_location "  # nosec B608
-            f"WHERE {file_clause} GROUP BY category",
-            file_params,
+            "SELECT category, COUNT(*) AS n FROM file_location "
+            "WHERE project_id = ? GROUP BY category",
+            (project_id,),
         )
         cat = {row["category"]: row["n"] for row in await cursor.fetchall()}
         s.pxiprojects = cat.get("pxiproject", 0)
@@ -824,10 +805,10 @@ async def catalog_frames(
         await get_or_404(conn, "project", project_id, "Project")
         total = await _count(
             conn,
-            "SELECT COUNT(*) FROM sub_frame sf JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
+            "SELECT COUNT(*) FROM sub_frame sf "
             "LEFT JOIN filter f ON f.id = sf.filter_id "
             # nosec B608 - clauses are fixed literals; values are parameterized
-            f"WHERE r.project_id = ?{type_clause}{filter_clause}",
+            f"WHERE sf.project_id = ?{type_clause}{filter_clause}",
             (project_id, *type_params, *filter_params),
         )
         cursor = await conn.execute(
@@ -836,11 +817,10 @@ async def catalog_frames(
             "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.camera_id, "
             "sf.telescope_id, sf.accepted, fl.path AS path, fl.size_bytes AS file_size_bytes "
             "FROM sub_frame sf "
-            "JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
             "LEFT JOIN filter f ON f.id = sf.filter_id "
             "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
             # nosec B608 - clauses are fixed literals; values are parameterized
-            f"WHERE r.project_id = ?{type_clause}{filter_clause} "
+            f"WHERE sf.project_id = ?{type_clause}{filter_clause} "
             f"GROUP BY sf.id {order_clause} LIMIT ? OFFSET ?",
             (project_id, *type_params, *filter_params, limit, offset),
         )
@@ -863,9 +843,8 @@ async def catalog_filter_summary(
             "SELECT COALESCE(f.model_name, sf.filter_name_hint) AS filter_name, "
             "COUNT(*) AS n, COALESCE(SUM(sf.exposure_seconds), 0) AS total "
             "FROM sub_frame sf "
-            "JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
             "LEFT JOIN filter f ON f.id = sf.filter_id "
-            "WHERE r.project_id = ? AND sf.frame_type = ? "
+            "WHERE sf.project_id = ? AND sf.frame_type = ? "
             "GROUP BY filter_name ORDER BY filter_name",
             (project_id, frame_type),
         )
@@ -917,25 +896,21 @@ async def catalog_others(
     """Catch-all: PixInsight projects, logs, other files, and unknown-type subs."""
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
-        # Non-frame files under the project's source folders (file_location has no
-        # project FK — scoped by path prefix, see _project_file_scope) + this
-        # project's unknown-type subs. file_clause is a generated literal; values bound.
-        file_clause, file_params = await _project_file_scope(conn, project_id)
+        # Non-frame files owned by this project + this project's unknown-type subs.
         file_rows = await (
             await conn.execute(
-                "SELECT id, category, path, size_bytes, mtime FROM file_location "  # nosec B608
-                f"WHERE category IN ('pxiproject', 'log', 'other') AND {file_clause} "
+                "SELECT id, category, path, size_bytes, mtime FROM file_location "
+                "WHERE project_id = ? AND category IN ('pxiproject', 'log', 'other') "
                 "ORDER BY category, path",
-                file_params,
+                (project_id,),
             )
         ).fetchall()
         unknown_rows = await (
             await conn.execute(
                 "SELECT sf.id, sf.date_obs_utc, fl.path AS path "
                 "FROM sub_frame sf "
-                "JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
                 "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
-                "WHERE r.project_id = ? AND sf.frame_type = 'unknown' "
+                "WHERE sf.project_id = ? AND sf.frame_type = 'unknown' "
                 "GROUP BY sf.id ORDER BY sf.id",
                 (project_id,),
             )
@@ -999,9 +974,8 @@ async def catalog_frame_thumbnail(project_id: int, frame_id: int):
         cursor = await conn.execute(
             "SELECT sf.content_hash, fl.path AS path "
             "FROM sub_frame sf "
-            "JOIN ingestion_run r ON r.id = sf.ingestion_run_id "
             "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
-            "WHERE sf.id = ? AND r.project_id = ? "
+            "WHERE sf.id = ? AND sf.project_id = ? "
             "ORDER BY fl.id LIMIT 1",
             (frame_id, project_id),
         )

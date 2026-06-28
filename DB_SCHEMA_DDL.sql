@@ -1689,8 +1689,9 @@ CREATE INDEX idx_session_start ON session(start_utc);
 -- Processed images (§2.9 promoted to first-class) — stacks / masters / finals.
 CREATE TABLE processed_image (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id       INTEGER REFERENCES project(id) ON DELETE CASCADE,
-    content_hash     TEXT    NOT NULL UNIQUE,
+    -- Ownership (migration 0040): each project owns its own row for a file.
+    project_id       INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    content_hash     TEXT    NOT NULL,
     image_kind       TEXT    NOT NULL DEFAULT 'master'
                          CHECK (image_kind IN ('master', 'stack', 'processed', 'other')),
     frame_type       TEXT    CHECK (frame_type IS NULL OR frame_type IN
@@ -1711,7 +1712,8 @@ CREATE TABLE processed_image (
     fits_header_json TEXT,
     ingestion_run_id INTEGER REFERENCES ingestion_run(id) ON DELETE SET NULL,
     created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (project_id, content_hash)  -- migration 0040: per-project identity
 );
 CREATE INDEX idx_processed_image_project ON processed_image(project_id);
 CREATE INDEX idx_processed_image_filter ON processed_image(filter_id);
@@ -1720,8 +1722,11 @@ CREATE INDEX idx_processed_image_filter ON processed_image(filter_id);
 CREATE TABLE sub_frame (
     id                       INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Identity (§2.8): SHA-256 of file contents; re-ingest is idempotent.
-    content_hash             TEXT    NOT NULL UNIQUE,
+    -- Ownership (migration 0040): each project owns its own row for a file.
+    project_id               INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+
+    -- Identity (§2.8): SHA-256 of file contents; re-ingest is idempotent per project.
+    content_hash             TEXT    NOT NULL,
 
     -- Grouping (all nullable; a sub can ingest with partial/no context).
     session_id               INTEGER REFERENCES session(id) ON DELETE SET NULL,
@@ -1792,9 +1797,12 @@ CREATE TABLE sub_frame (
     fits_header_json         TEXT,
 
     created_at               TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at               TEXT    NOT NULL DEFAULT (datetime('now'))
+    updated_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+
+    UNIQUE (project_id, content_hash)  -- migration 0040: per-project identity
 );
 
+CREATE INDEX idx_sub_frame_project ON sub_frame(project_id);
 CREATE INDEX idx_sub_frame_session ON sub_frame(session_id);
 CREATE INDEX idx_sub_frame_rig ON sub_frame(rig_id);
 CREATE INDEX idx_sub_frame_target ON sub_frame(project_target_id);
@@ -1824,7 +1832,9 @@ CREATE INDEX idx_sub_frame_match_bias
 -- rows may share a sub_frame_id (same sub in several places).
 CREATE TABLE file_location (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    path                 TEXT    NOT NULL UNIQUE,
+    -- Ownership (migration 0040): each project owns its own row for a path.
+    project_id           INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    path                 TEXT    NOT NULL,
     category             TEXT    NOT NULL DEFAULT 'other'
                              CHECK (category IN
                                  ('sub_frame', 'processed', 'pxiproject', 'log', 'other')),
@@ -1840,8 +1850,10 @@ CREATE TABLE file_location (
     last_verified_at     TEXT,
     last_verified_status TEXT    CHECK (last_verified_status IS NULL OR last_verified_status IN
                              ('ok', 'missing', 'hash_mismatch', 'unreadable')),
-    created_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (project_id, path)  -- migration 0040: per-project identity
 );
+CREATE INDEX idx_file_location_project ON file_location(project_id);
 CREATE INDEX idx_file_location_sub_frame ON file_location(sub_frame_id);
 CREATE INDEX idx_file_location_processed ON file_location(processed_image_id);
 CREATE INDEX idx_file_location_hash ON file_location(file_hash);

@@ -464,6 +464,39 @@ class TestIngestEndToEnd:
         frames = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()["rows"]
         assert frames[0]["path"].startswith(str(b))
 
+    async def test_same_file_in_two_projects_creates_two_rows(self, client, tmp_path):
+        # The same physical file cataloged into two DIFFERENT projects yields two
+        # independent rows — each project owns its files, nothing is shared. Under
+        # the old global model the second ingest silently reassigned the single
+        # global row, so the first project would have shown 0 lights.
+        import shutil
+
+        a = tmp_path / "ownA"
+        a.mkdir()
+        b = tmp_path / "ownB"
+        b.mkdir()
+        _write_fits(a / "light.fits", imagetyp="LIGHT", filt="Ha", exptime=300.0)
+        shutil.copy(a / "light.fits", b / "light.fits")  # identical bytes → same hash
+
+        pid_a = await _make_project(client, "OwnA")
+        pid_b = await _make_project(client, "OwnB")
+        await client.post(f"/api/projects/{pid_a}/folders", json={"path": str(a)})
+        await client.post(f"/api/projects/{pid_b}/folders", json={"path": str(b)})
+        await client.post(f"/api/projects/{pid_a}/ingest")
+        await client.post(f"/api/projects/{pid_b}/ingest")
+
+        # Each project independently shows exactly one light.
+        assert (await client.get(f"/api/projects/{pid_a}/catalog/summary")).json()["lights"] == 1
+        assert (await client.get(f"/api/projects/{pid_b}/catalog/summary")).json()["lights"] == 1
+
+        # Distinct rows, each owned by its project (different ids, paths under each folder).
+        fa = (await client.get(f"/api/projects/{pid_a}/catalog/frames")).json()["rows"]
+        fb = (await client.get(f"/api/projects/{pid_b}/catalog/frames")).json()["rows"]
+        assert len(fa) == 1 and len(fb) == 1
+        assert fa[0]["id"] != fb[0]["id"]
+        assert fa[0]["path"].startswith(str(a))
+        assert fb[0]["path"].startswith(str(b))
+
     async def test_lights_ingest_with_null_filter(self, client, imaging_folder):
         # Aliases are empty → filter_id stays NULL, but the raw FILTER is kept as
         # the hint and the light still catalogs as a light.
