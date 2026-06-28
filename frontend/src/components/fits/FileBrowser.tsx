@@ -52,6 +52,12 @@ interface Props {
   title?: string;
   /** Empty-state message. Defaults to image-viewer wording. */
   emptyMessage?: string;
+  /**
+   * Select a directory instead of a file. The primary action returns the
+   * currently-displayed directory path (`onSelect(dir)`); file rows become
+   * non-selectable context. Archives / PixInsight projects can't be chosen.
+   */
+  directoryMode?: boolean;
 }
 
 function formatSize(bytes: number): string {
@@ -68,6 +74,7 @@ export function FileBrowser({
   accept,
   title = "Open Image File",
   emptyMessage = "No directories or image files here",
+  directoryMode = false,
 }: Props) {
   const { settings, update } = useSettingsStore();
   const initialPath = settings?.last_browse_path ?? "~";
@@ -221,6 +228,14 @@ export function FileBrowser({
   }
 
   function handleOpen() {
+    if (directoryMode) {
+      // Select the currently-displayed real directory (not archives/projects).
+      if (result?.path && !activeProject && !activeArchive) {
+        onSelect(result.path);
+        onClose();
+      }
+      return;
+    }
     if (selectedFile) {
       onSelect(selectedFile, selectedDisplayName ?? undefined);
       onClose();
@@ -469,14 +484,25 @@ export function FileBrowser({
                 </ListItemButton>
               ))}
 
-              {/* Image files */}
+              {/* Image files (context-only in directory mode) */}
               {result.files.map((file) => (
                 <ListItemButton
                   key={file.path}
                   ref={selectedFile === file.path ? selectedFileRef : undefined}
-                  selected={selectedFile === file.path}
-                  onClick={() => { setSelectedFile(file.path); setSelectedDisplayName(null); }}
-                  onDoubleClick={() => { if (Date.now() - navTimestamp.current > 500) { onSelect(file.path); onClose(); } }}
+                  selected={!directoryMode && selectedFile === file.path}
+                  disableRipple={directoryMode}
+                  onClick={() => {
+                    if (directoryMode) return;
+                    setSelectedFile(file.path);
+                    setSelectedDisplayName(null);
+                  }}
+                  onDoubleClick={() => {
+                    if (directoryMode) return;
+                    if (Date.now() - navTimestamp.current > 500) {
+                      onSelect(file.path);
+                      onClose();
+                    }
+                  }}
                 >
                   <ListItemIcon sx={{ minWidth: 36 }}>
                     <InsertDriveFileIcon fontSize="small" />
@@ -687,8 +713,16 @@ export function FileBrowser({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" onClick={handleOpen} disabled={!selectedFile}>
-          Open
+        <Button
+          variant="contained"
+          onClick={handleOpen}
+          disabled={
+            directoryMode
+              ? !result?.path || !!activeProject || !!activeArchive || loading
+              : !selectedFile
+          }
+        >
+          {directoryMode ? "Select This Folder" : "Open"}
         </Button>
       </DialogActions>
     </Dialog>

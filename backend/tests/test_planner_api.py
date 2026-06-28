@@ -391,6 +391,32 @@ async def test_annual_hours_unknown_dso_returns_404(client: TestClient, seed_db)
     assert response.status_code == 404
 
 
+async def test_moon_year_endpoint_returns_points_and_phases(client: TestClient, seed_db):
+    location_id = seed_db
+    response = client.get(
+        "/api/planner/moon-year",
+        params={"location_id": location_id, "year": 2026},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["year"] == 2026
+    assert data["location_id"] == location_id
+    assert len(data["points"]) == 365
+    assert data["points"][0]["date"] == "2026-01-01"
+    # Illumination spans the full lunar cycle over the year.
+    ills = [p["illumination_pct"] for p in data["points"]]
+    assert min(ills) < 5.0 and max(ills) > 95.0
+    # ~12-13 new/full moons a year, returned as ISO dates.
+    assert 11 <= len(data["new_moons"]) <= 14
+    assert 11 <= len(data["full_moons"]) <= 14
+    assert all(len(d) == 10 for d in data["new_moons"])
+
+
+async def test_moon_year_unknown_location_returns_404(client: TestClient):
+    response = client.get("/api/planner/moon-year", params={"location_id": 999999})
+    assert response.status_code == 404
+
+
 async def test_thumbnail_cache_stats_endpoint(client: TestClient):
     response = client.get("/api/planner/thumbnails/cache/stats")
     assert response.status_code == 200

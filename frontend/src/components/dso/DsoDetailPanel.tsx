@@ -568,11 +568,12 @@ function AnnualHoursSection({ dsoId }: { dsoId: number }) {
   }, [horizons, horizonId]);
 
   const annualHoursQuery = useQuery({
-    queryKey: ["annual-hours", dsoId, locationId, horizonId],
+    queryKey: ["annual-hours", dsoId, locationId, horizonId, "moon"],
     queryFn: () =>
       fetchAnnualHours(dsoId, locationId!, {
         horizonId,
         moonSepDeg: 0,
+        includeMoon: true, // chart draws the Moon-altitude line + illumination
       }),
     enabled: locationId != null,
     staleTime: 5 * 60_000,

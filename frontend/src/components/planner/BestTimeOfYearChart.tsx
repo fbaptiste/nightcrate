@@ -476,6 +476,15 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
           onToggle={() => setShowMoonAlt((v) => !v)}
         />
       </Stack>
+
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: "block", mt: 0.5, fontSize: 11, lineHeight: 1.4 }}
+      >
+        Moon altitude is the Moon&rsquo;s peak height during astronomical darkness
+        each night, so its monthly pattern shifts with the season.
+      </Typography>
     </Box>
   );
 }

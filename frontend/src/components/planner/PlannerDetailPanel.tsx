@@ -273,6 +273,7 @@ export default function PlannerDetailPanel({
       fetchAnnualHours(dsoId as number, previewLocationId as number, {
         horizonId: effectiveHorizon?.id,
         moonSepDeg: 0,
+        includeMoon: true, // chart draws the Moon-altitude line + illumination
         maxIlluminationPct: moonFilterEnabled ? maxIllumination : undefined,
         minSeparationDeg: moonFilterEnabled ? minSeparation : undefined,
         moonCombine: moonFilterEnabled ? moonCombine : undefined,

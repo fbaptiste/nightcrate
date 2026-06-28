@@ -71,6 +71,18 @@ export default function DsoAnnotationOverlay({
           const sinT = Math.sin(theta);
           const edgeR = (a * b) / Math.sqrt(b * b * cosT * cosT + a * a * sinT * sinT);
           const labelOffset = edgeR + gap;
+          // Keep the label inside the frame. For objects far larger than the FOV
+          // (e.g. a multi-degree dark nebula), the natural label offset lands far
+          // off-image and the SVG clips it — so the object looks "not displayed".
+          // Clamp to the right edge (anchored end → text grows inward) when the
+          // offset overflows; normal in-frame labels are unchanged.
+          const rawLabelX = dso.pixel_x + labelOffset;
+          const overflowRight = rawLabelX > imgW - gap;
+          const labelX = overflowRight ? imgW - gap : Math.max(gap, rawLabelX);
+          const labelY = Math.max(
+            fs,
+            Math.min(imgH - gap, dso.pixel_y + fs * 0.35),
+          );
           return (
             <g
               key={dso.id}
@@ -108,8 +120,9 @@ export default function DsoAnnotationOverlay({
                 />
               )}
               <text
-                x={dso.pixel_x + labelOffset}
-                y={dso.pixel_y + fs * 0.35}
+                x={labelX}
+                y={labelY}
+                textAnchor={overflowRight ? "end" : "start"}
                 fill={color}
                 fontSize={fs}
                 fontWeight={isSelected || isMain ? 700 : 500}

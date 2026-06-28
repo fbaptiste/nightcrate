@@ -289,6 +289,7 @@ def _compute_subrange(
     max_illumination_pct: float | None = None,
     min_separation_deg: float | None = None,
     moon_combine: str = "and",
+    include_moon: bool = False,
 ) -> list[tuple[date, float, float, float, float | None, float | None]]:
     """Compute per-night raw hours, filtered hours, and moon illumination.
 
@@ -300,8 +301,10 @@ def _compute_subrange(
     with ``moon_combine`` ("and" or "or"). When moon is below horizon,
     both predicates pass automatically.
 
-    ``moon_sep_deg == 0`` AND no illumination/separation filters
-    disables the moon transform entirely (~30% perf win).
+    ``moon_sep_deg == 0`` AND no illumination/separation filters AND
+    ``include_moon`` False disables the moon transform entirely (~30% perf win).
+    ``include_moon`` forces moon altitude + illumination to be computed for
+    display (the annual chart) without re-enabling the separation filter.
     """
     import warnings
 
@@ -311,7 +314,7 @@ def _compute_subrange(
 
     apply_moon = moon_sep_deg > 0.0
     apply_filter = max_illumination_pct is not None or min_separation_deg is not None
-    need_moon = apply_moon or apply_filter
+    need_moon = apply_moon or apply_filter or include_moon
     coord = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
     earth_loc = _make_earth_location(location)
     tz = ZoneInfo(location.timezone)
@@ -609,6 +612,7 @@ def _cache_key(
     max_illumination_pct: float | None,
     min_separation_deg: float | None,
     moon_combine: str,
+    include_moon: bool,
 ) -> tuple[Any, ...]:
     return (
         location.id,
@@ -625,6 +629,7 @@ def _cache_key(
         max_illumination_pct,
         min_separation_deg,
         moon_combine,
+        include_moon,
     )
 
 
@@ -643,6 +648,7 @@ def compute_annual_hours(
     max_illumination_pct: float | None = None,
     min_separation_deg: float | None = None,
     moon_combine: str = "and",
+    include_moon: bool = False,
     max_workers: int | None = None,
 ) -> AnnualHoursTrack:
     if not (0.0 <= moon_sep_deg <= 180.0):
@@ -668,6 +674,7 @@ def compute_annual_hours(
         max_illumination_pct,
         min_separation_deg,
         moon_combine,
+        include_moon,
     )
     with _RESULT_CACHE_LOCK:
         entry = _RESULT_CACHE.get(key)
@@ -689,6 +696,7 @@ def compute_annual_hours(
         max_illumination_pct=max_illumination_pct,
         min_separation_deg=min_separation_deg,
         moon_combine=moon_combine,
+        include_moon=include_moon,
         max_workers=max_workers,
     )
     elapsed = _time.monotonic() - t0
@@ -708,6 +716,71 @@ def compute_annual_hours(
     return track
 
 
+def compute_moon_year(
+    location: PlannerLocation,
+    horizon: PlannerHorizon,
+    year: int,
+    *,
+    max_workers: int | None = None,
+) -> list[MoonDataPoint]:
+    """Per-night Moon peak altitude during astronomical darkness + illumination
+    for a whole year at a location (target-independent).
+
+    Reuses the validated, cached annual-hours moon computation with a throwaway
+    target — the Moon line depends only on location + date, never the target, and
+    the horizon doesn't affect it (it's gated on the sun-dark window). The
+    object-hours of the dummy target are simply discarded.
+    """
+    track = compute_annual_hours(
+        location,
+        horizon,
+        year,
+        (0, 0.0, 0.0),
+        moon_sep_deg=0.0,
+        include_moon=True,
+        max_workers=max_workers,
+    )
+    return track.moon_data
+
+
+_NEW_MOON_MAX_ILLUM = 5.0  # daily-sampled illumination is <1% at new moon
+_FULL_MOON_MIN_ILLUM = 95.0  # ... and >99% at full
+
+
+def derive_phase_dates(
+    moon_data: list[MoonDataPoint],
+) -> tuple[list[date], list[date]]:
+    """New- and full-moon dates from the nightly illumination series.
+
+    A new moon is a strict local minimum below ``_NEW_MOON_MAX_ILLUM``; a full moon
+    a strict local maximum above ``_FULL_MOON_MIN_ILLUM``. The illumination
+    threshold lets year-boundary days (Jan 1 / Dec 31 — only one neighbour) be
+    detected without spuriously flagging a mid-cycle endpoint. One of each per
+    lunation (~12-13/year); day-level precision, which is all the markers need.
+    """
+    new_moons: list[date] = []
+    full_moons: list[date] = []
+    n = len(moon_data)
+    for i in range(n):
+        cur = moon_data[i].illumination_pct
+        left = moon_data[i - 1].illumination_pct if i > 0 else None
+        right = moon_data[i + 1].illumination_pct if i < n - 1 else None
+        d = moon_data[i].date
+        if (
+            cur < _NEW_MOON_MAX_ILLUM
+            and (left is None or cur < left)
+            and (right is None or cur < right)
+        ):
+            new_moons.append(d)
+        elif (
+            cur > _FULL_MOON_MIN_ILLUM
+            and (left is None or cur > left)
+            and (right is None or cur > right)
+        ):
+            full_moons.append(d)
+    return new_moons, full_moons
+
+
 def _compute_annual_hours_uncached(
     location: PlannerLocation,
     horizon: PlannerHorizon,
@@ -720,6 +793,7 @@ def _compute_annual_hours_uncached(
     max_illumination_pct: float | None = None,
     min_separation_deg: float | None = None,
     moon_combine: str = "and",
+    include_moon: bool = False,
     max_workers: int | None = None,
 ) -> AnnualHoursTrack:
     year_start = date(year, 1, 1)
@@ -739,6 +813,7 @@ def _compute_annual_hours_uncached(
             max_illumination_pct,
             min_separation_deg,
             moon_combine,
+            include_moon,
         )
     else:
         n_workers = min(n_workers, n_days)
@@ -760,6 +835,7 @@ def _compute_annual_hours_uncached(
                 max_illumination_pct,
                 min_separation_deg,
                 moon_combine,
+                include_moon,
             )
             for start_d, end_d in chunks
         ]

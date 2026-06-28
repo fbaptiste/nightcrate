@@ -54,7 +54,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.38.0 — Project Metadata + Manual Imaging Sessions](#v0380--project-metadata--manual-imaging-sessions) ✅
 - [v0.38.1 — Hourly Detail moon/darkness alignment](#v0381--hourly-detail-moondarkness-alignment) ✅
 - [v0.39.0 — FITS Equipment Resolver](#v0390--fits-equipment-resolver) ✅
-- [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest)
+- [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest) ✅
 - [v0.41.0 — Correct + Curate](#v0410--correct--curate)
 - [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
 - [v0.43.0 — Guiding (PHD2) Association](#v0430--guiding-phd2-association)
@@ -4822,32 +4822,124 @@ dependency the ingest pipeline sits on top of. Full detail in the
 
 ## v0.40.0 — Catalog a Folder (read-only ingest)
 
-**Status:** Planned. The largest single version in the arc — it lands the schema *and* the
-end-to-end catalog pass, so the user can point a project at a folder and see everything
-filed correctly.
+**Status:** Done. Branch `v0.40.0/catalog-a-folder`. The largest single version in the arc —
+it landed the schema *and* the end-to-end catalog pass, so the user can point a project at a
+folder and see everything filed correctly.
 
-- [ ] **Full imaging-core schema in one migration** per the
+- [x] **Full imaging-core schema in one migration** (`0037.imaging_core.sql`) per the
       [Imaging Core Schema spec](#imaging-core-schema--rigs-projects-sessions-sub-frames):
       `session`, `sub_frame`, `file_location`, `ingestion_run`, `processed_image`, plus the
-      (initially empty) guiding and session-event tables, and the calibration/integration
-      views. Idempotent; ordered to resolve the forward FKs.
-- [ ] Project ↔ source-folder binding: a project references **multiple** folders (one
-      primary), persisted for re-scan.
-- [ ] Directory-scan ingest pipeline: scan → extract FITS metadata → **classify by
+      (initially empty) guiding (`guiding_log_file`/`guiding_sample`/`dither_event`),
+      session-log/event (`session_log_file`/`session_event`), and `autofocus_run` tables, the
+      `project_source_folder` table, the `project.cover_sub_frame_id` ALTER, and the
+      calibration/integration views. Idempotent; ordered to resolve the forward FKs.
+- [x] Project ↔ source-folder binding: a project references **multiple** folders (one
+      primary), persisted for re-scan. One-primary enforced by a partial unique index.
+- [x] Directory-scan ingest pipeline: scan → extract FITS metadata → **classify by
       `IMAGETYP`** → resolve equipment (v0.39.0 resolver) → content-hash → form sessions →
       assign lights to the project's `project_target` → persist. Idempotent re-ingest keyed on
-      content hash. Runs on the asyncio task queue + `ProcessPoolExecutor` (CPU-bound parse).
-- [ ] Whole-folder bucketing: raw subs → `sub_frame`; masters/stacks → `processed_image`
-      (stack detection); `.pxiproject` → project asset; log files recognized and parked
-      (parsed in v0.43/0.44); unrecognized → "other".
-- [ ] `file_location` rows for every cataloged file (path, volume, size, hash, mtime).
-- [ ] `ingestion_run` provenance: counts scanned / inserted / updated / skipped / errors.
-- [ ] **Read-only** catalog view on the project: bucketed counts + a DataGrid of frames with
-      FITS metadata and thumbnail preview. No editing, no gallery promotion, no Sessions tab
-      yet (v0.41.0).
-- [ ] Tests: content-hash idempotency, `IMAGETYP` classification incl. the flat-dark case,
-      partial-equipment ingest (NULL FKs), stack detection, multi-folder scan, session
-      formation.
+      content hash. CPU-bound parse fans out via `ProcessPoolExecutor`; one ingest at a time
+      (single-flight, 409 if busy).
+- [x] Whole-folder bucketing: raw subs → `sub_frame`; masters/stacks → `processed_image`
+      (stack detection via `NCOMBINE`/`STACKCNT`/master `IMAGETYP`/PI history); `.pxiproject` →
+      project asset; log files recognized and parked (parsed in v0.43/0.44); unrecognized → "other".
+- [x] `file_location` rows for every cataloged file. **As built: generalized beyond "copies
+      of a sub" — carries `category` + nullable `sub_frame_id`/`processed_image_id`** so
+      pxiprojects/logs/other are cataloged as standalone rows.
+- [x] `ingestion_run` provenance: counts scanned / inserted / updated / skipped / errors.
+- [x] **Read-only** catalog view on the project: bucketed count chips + a DataGrid of frames
+      with per-row thumbnails. New "Catalog" tab. No editing/gallery promotion/Sessions tab yet
+      (v0.41.0).
+- [x] **As built: dedicated catalog-thumbnail endpoint** (`services/catalog_thumbnail.py` +
+      `GET .../catalog/frames/{id}/thumbnail`). Decimates the raw array before rendering (a
+      26 MP sub thumbnails in ~0.07 s vs the full-image endpoint that loads+stretches all
+      26 MP and resets the backend across a grid), caches a small JPEG on disk by content hash,
+      bounds renders (Semaphore 3), lazy-loaded per visible row. **Renders the AutoSTF stretch
+      in pure numpy** — the mlx GPU backend is NOT thread-safe and the grid's concurrent renders
+      segfaulted the process (reproduced on a crafted PixInsight-style XISF: 9 concurrent renders
+      → SIGSEGV with mlx, clean with numpy; 96 concurrent renders pass with the fix). Regression
+      test guards the GPU path. (Two earlier cuts — full-image endpoint, then mlx-backed
+      thumbnailer — passed synthetic tests but crashed on real 26 MP XISF.)
+- [x] **As built: dropped the light-needs-filter CHECK + added `sub_frame.filter_name_hint`.**
+      At v0.40.0 a light's `filter_id` is routinely NULL (rig assignment is v0.41.0, aliases
+      start empty); the raw `FILTER` header is kept as the hint so lights catalog correctly,
+      and v0.41.0 maps the physical filter + back-fills integration. Ingest never fails on
+      partial equipment. **Shipped as forward migration `0038` (not an edit to 0037):** the
+      dev DB had already applied 0037's original shape via `make dev`'s reload, so the column +
+      CHECK-drop had to converge through a new migration (SQLite table-rewrite). Verified on a
+      simulated already-migrated DB (data preserved, CHECK gone, lights ingest).
+- [x] **As built (post-testing refinements):** (1) count chips filter the grid by `frame_type`
+      ("All" clears; asset chips info-only); (2) the frames grid fills the container height and
+      resizes with the window; (3) **dark-flats inferred by exposure** — a `DARK` matching a
+      flat's exposure and not a light's becomes `dark_flat` (`_reclassify_dark_flats`,
+      project-scoped), since ASIAir labels dark-flats plain `DARK`; (4) darks/dark-flats/bias are
+      stored **filterless** (stray `FILTER` headers nulled; calibration darks never match on
+      filter). Folder picker reuses the shared `FileBrowser` (`directoryMode`).
+- [x] **As built (catalog redesign, after real-data testing):** the single grid + pills became
+      **7 category sub-tabs** (Lights/Darks/Flats/Bias/Dark Flats/Masters/Others over a reusable
+      `CatalogGrid`). New `catalog/masters` (processed images — Type/filter/NCombine, with
+      thumbnails) and `catalog/others` (logs/pxiproject/other files + unknown subs, Type column)
+      endpoints. **Dark-flat reclassification made tolerant** (±20 % ratio, not exact) — real
+      ASIAir flats auto-expose (2.208 s) while dark-flats use the nominal setting (2.2 s), so
+      exact match never fired. **Master `frame_type` parsed** from `"Master Dark"`/`"Master Flat"`
+      so masters are visible + typed (they were `processed_image` rows the frames grid never
+      showed, with NULL frame_type). Verified end-to-end on crafted real-like data: Dark Flats
+      9 / Darks 0, Masters tab shows Master: Dark/Flat, Others shows Log/PixInsight/Other.
+- [x] Tests: content-hash idempotency, `IMAGETYP` classification incl. flat-dark, partial-
+      equipment ingest (NULL FKs), stack detection, multi-folder scan, session formation
+      (noon-to-noon, rig separation, tz), every calibration/integration view, folder-binding
+      CRUD, catalog summary/frames. **62 new tests (20 schema + 42 ingest), 94% module
+      coverage.** (Plus, in the card-redesign + fixes + calculator pass: per-filter pills,
+      filter-name scope, frame dimensions/size, flats filter-sort, folder-removal purge,
+      single-folder scan, master filter/dimensions, XISF AstrometricSolution → WCS, `project_dsos`
+      off-frame exclusion, `include_moon`, and `compute_moon_year`/`derive_phase_dates` + the
+      `/moon-year` endpoint.)
+- [x] **As built: ingest ProcessPool is per-run, shut down in `finally` (not a persistent
+      global).** Found during Playwright e2e: a lingering spawn pool's workers block
+      `uvicorn --reload` restarts and wedge the whole event loop. Per-run shutdown fixes it;
+      verified live (0 lingering workers post-run, health/renders stay responsive).
+- [x] **End-to-end verified with Playwright** against a synthetic ASIAir-style folder on an
+      isolated throwaway workspace: count chips, frames grid, per-row metadata, and
+      `filter_name_hint` (Ha/Oiii with NULL `filter_id`) all correct; decoy folder names
+      ignored; master routed out of the frames grid.
+- [x] **As built (card-based catalog UI, after real-data testing on a 304-light project):** the
+      DataGrid was replaced by a **card-based infinite-scroll list** — MUI X Community caps the
+      DataGrid at 100 rows/page, which silently hid most frames. Each card shows a thumbnail,
+      filename + full directory path (start-truncated on overflow, tooltip = full path),
+      filter/object, exposure(s)/gain/set-temp/binning, **dimensions + file size**, and the date in
+      the project's display timezone. Filter pills filter the list (count only on Lights,
+      +integration on Flats); Flats sort by filter, others by path (raw vs PixInsight stages bunch).
+      Masters show filter (FILTER → `line_name`), dimensions, and **integration time**
+      (`total_exposure_seconds`, migration `0039`, from `PCL:TotalExposureTime`). Per-folder +
+      auto-on-add **Re-scan**; removing a folder **purges** its cataloged items (orphan sweep).
+      XISF pixel dimensions surfaced from the geometry attribute.
+- [x] **As built (pre-existing bug fixes folded in):** (1) the planner/DSO "Best time of year"
+      Moon-altitude line was blank — moon math was gated behind the moon filter; added an
+      `include_moon` display flag so the chart's altitude + illumination compute. (2) Plate-solve /
+      Image-Analyzer Identify showed "N identified, fewer drawn" — `project_dsos` margin tightened to
+      the drawn semi-major (off-frame points excluded so count == drawn) AND annotation labels clamp
+      into the frame (a multi-degree nebula's label sat off-image). (3) PixInsight-solved **XISF now
+      detects WCS** — `xisf_io.read_header` reconstructs FITS WCS cards from the
+      `PCL:AstrometricSolution` properties (CD = matrix as-is, CRPIX 0→1-based; verified against an
+      ASTAP solve of the same frame).
+- [x] **As built: new "Moon Altitude (Year)" calculator** (Sky Conditions). For the selected
+      location, plots the Moon's peak altitude during astronomical darkness across a year, with
+      illumination as background shading and solid new-moon (below) / full-moon (above) markers the
+      hover scrubber snaps to. Backend `compute_moon_year` + `derive_phase_dates` reuse the cached
+      annual-hours moon computation; `GET /api/planner/moon-year`.
+- [x] **As built (ownership rework, migration 0040, after design discussion with Fred):** dropped
+      the global-identity model for an explicit per-project one. `sub_frame`, `processed_image`, and
+      `file_location` each gained `project_id NOT NULL` (CASCADE) and per-project identity
+      (`UNIQUE(project_id, content_hash)` / `UNIQUE(project_id, path)`). Each project owns its own
+      row for a file; the same physical file cataloged into two projects is two independent rows (the
+      old global `content_hash UNIQUE` silently reassigned it to whichever project scanned last).
+      Removed the path-prefix `_project_file_scope` and the indirect `sub_frame →
+      ingestion_run.project_id` scoping — every catalog query is now a plain `project_id` match.
+      Migration follows the 0038 table-rewrite template; backfills `project_id` from
+      ingestion_run/session/source-folder prefix and drops project-less orphans (verified on the
+      populated dev DB). "Have I imaged this object?" is answered by `project_dso`, not frame identity.
+      Calibration-match view scoping (within-project vs shared library) deferred to v0.41.0+ when the
+      views get a UI.
 
 ## v0.41.0 — Correct + Curate
 

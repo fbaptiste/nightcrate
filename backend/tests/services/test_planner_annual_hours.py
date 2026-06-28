@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
-from nightcrate.services.planner_annual_hours import compute_annual_hours
+from nightcrate.services.planner_annual_hours import (
+    MoonDataPoint,
+    compute_annual_hours,
+    compute_moon_year,
+    derive_phase_dates,
+)
 from nightcrate.services.planner_visibility import PlannerHorizon, PlannerLocation
 
 PHOENIX = PlannerLocation(
@@ -79,6 +86,94 @@ def test_response_echoes_horizon_and_moon(m42_narrowband_30, m42_lrgb_30):
     assert m42_narrowband_30.flat_altitude_deg == 30.0
     assert m42_narrowband_30.moon_sep_deg == 0.0
     assert m42_lrgb_30.moon_sep_deg == 60.0
+
+
+def test_no_moon_data_without_filter_or_include(m42_narrowband_30):
+    # moon_sep_deg=0 + no filter + include_moon False → moon math skipped (perf
+    # path): altitude/illumination stay None so the chart legend has no data.
+    assert all(m.max_altitude_deg is None for m in m42_narrowband_30.moon_data)
+
+
+def test_include_moon_populates_altitude_and_illumination():
+    # The annual chart forces moon computation for display via include_moon.
+    track = compute_annual_hours(PHOENIX, FLAT_30, 2026, M42, moon_sep_deg=0.0, include_moon=True)
+    assert len(track.moon_data) == len(track.points)
+    alts = [m.max_altitude_deg for m in track.moon_data if m.max_altitude_deg is not None]
+    illums = [m.illumination_pct for m in track.moon_data]
+    # Most nights have the moon up at some point during darkness → real altitudes,
+    # and illumination cycles 0→100 over the lunar month (not all zero).
+    assert len(alts) > 300
+    assert max(alts) > 20.0
+    assert max(illums) > 90.0
+    assert min(illums) < 10.0
+
+
+@pytest.fixture(scope="module")
+def moon_year_phoenix():
+    return compute_moon_year(PHOENIX, FLAT_30, 2026)
+
+
+def test_moon_year_shape_and_ranges(moon_year_phoenix):
+    md = moon_year_phoenix
+    assert len(md) == 365  # 2026 is not a leap year
+    alts = [m.max_altitude_deg for m in md if m.max_altitude_deg is not None]
+    assert alts and max(alts) <= 90.0
+    assert max(alts) > 60.0  # the Moon transits high at some point in the year
+    ills = [m.illumination_pct for m in md]
+    assert min(ills) < 5.0  # reaches new moon
+    assert max(ills) > 95.0  # reaches full moon
+
+
+def test_derive_phase_dates_detects_year_boundary_extrema():
+    # A new moon on the first day and a full moon on the last day (only one
+    # neighbour each) must still be detected — the illumination threshold makes
+    # the one-sided boundary check safe.
+    d0 = date(2026, 1, 1)
+    illums = [0.4, 18.0, 55.0, 88.0, 99.6]  # new at index 0, full at index 4
+    md = [
+        MoonDataPoint(
+            date=d0 + timedelta(days=i),
+            illumination_pct=v,
+            min_separation_deg=None,
+            max_altitude_deg=None,
+        )
+        for i, v in enumerate(illums)
+    ]
+    new_moons, full_moons = derive_phase_dates(md)
+    assert new_moons == [d0]
+    assert full_moons == [d0 + timedelta(days=4)]
+
+
+def test_derive_phase_dates_ignores_mid_cycle_endpoints():
+    # An endpoint that is NOT near new/full (mid-cycle) must not be flagged.
+    d0 = date(2026, 1, 1)
+    illums = [52.0, 60.0, 75.0, 60.0, 48.0]  # endpoints ~50%, no true extremum
+    md = [
+        MoonDataPoint(
+            date=d0 + timedelta(days=i),
+            illumination_pct=v,
+            min_separation_deg=None,
+            max_altitude_deg=None,
+        )
+        for i, v in enumerate(illums)
+    ]
+    new_moons, full_moons = derive_phase_dates(md)
+    assert new_moons == []
+    assert full_moons == []  # 75% peak is below the 95% full-moon threshold
+
+
+def test_derive_phase_dates(moon_year_phoenix):
+    new_moons, full_moons = derive_phase_dates(moon_year_phoenix)
+    # A year holds ~12-13 lunations of each phase.
+    assert 11 <= len(new_moons) <= 14
+    assert 11 <= len(full_moons) <= 14
+    by_date = {m.date: m.illumination_pct for m in moon_year_phoenix}
+    # New moons sit at illumination minima, full moons at maxima.
+    assert all(by_date[d] < 5.0 for d in new_moons)
+    assert all(by_date[d] > 95.0 for d in full_moons)
+    # Phases alternate and stay ordered through the year.
+    assert new_moons == sorted(new_moons)
+    assert full_moons == sorted(full_moons)
 
 
 def test_hours_are_non_negative_and_within_night_length(m42_narrowband_30):

@@ -209,6 +209,22 @@ class AnnualHoursResponse(BaseModel):
     moon_data: list[MoonDataPoint]
 
 
+class MoonYearPoint(BaseModel):
+    date: str
+    max_altitude_deg: float | None  # peak Moon altitude during astro darkness
+    illumination_pct: float
+
+
+class MoonYearResponse(BaseModel):
+    year: int
+    location_id: int
+    location_name: str
+    timezone: str
+    points: list[MoonYearPoint]
+    new_moons: list[str]  # ISO dates — dark-sky imaging windows
+    full_moons: list[str]
+
+
 class ThumbnailCacheStats(BaseModel):
     total_bytes: int
     row_count: int

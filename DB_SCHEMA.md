@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.39.0
+**NightCrate version:** 0.40.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -646,6 +646,167 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 ---
 
+## 14. Imaging Core (v0.40.0)
+
+The Sessions / Sub-Frames / Ingest schema (migration 0037). `sub_frame` is the core atom — lights, darks, flats, and bias all share it, distinguished by `frame_type`. `session` is the AUTO/ingest rig-night grouping (distinct from the MANUAL `project_session` of migration 0035). Several tables (`session_log_file`, `session_event`, `autofocus_run`, `guiding_log_file`, `guiding_sample`, `dither_event`) are created EMPTY here and populated by later versions (v0.43/0.44). `project` also gains a nullable `cover_sub_frame_id INTEGER REFERENCES sub_frame(id)`. **Migration 0040 reworked ownership:** `sub_frame`, `processed_image`, and `file_location` each gained `project_id NOT NULL` (CASCADE) and per-project identity (`UNIQUE(project_id, content_hash)` / `UNIQUE(project_id, path)`) — each project owns its own row for a file; the same physical file cataloged into two projects is two independent rows.
+
+```mermaid
+erDiagram
+    project {
+        INTEGER id PK
+        INTEGER cover_sub_frame_id FK "v0.40.0 ALTER, nullable"
+    }
+
+    ingestion_run {
+        INTEGER id PK
+        INTEGER project_id FK
+        TEXT source_path
+        TEXT mode "CHECK: catalog_in_place, copy_and_organize, reparse"
+        TEXT status "CHECK: running, completed, failed, cancelled"
+        INTEGER files_scanned
+        INTEGER subs_inserted
+        TEXT started_at
+        TEXT finished_at
+    }
+
+    session {
+        INTEGER id PK
+        INTEGER project_id FK
+        INTEGER rig_id FK
+        TEXT start_utc
+        TEXT end_utc
+        REAL latitude "CHECK -90..90"
+        REAL longitude "CHECK -180..180"
+        INTEGER bortle_class "CHECK 1..9"
+    }
+
+    processed_image {
+        INTEGER id PK
+        INTEGER project_id FK "NOT NULL, owns the row"
+        TEXT content_hash "UNIQUE(project_id, content_hash)"
+        TEXT image_kind "CHECK: master, stack, processed, other"
+        TEXT frame_type "CHECK: light, dark, flat, bias, dark_flat, unknown"
+        INTEGER filter_id FK
+        TEXT line_name "CHECK: 15 bandpass values"
+        INTEGER camera_id FK
+        INTEGER ingestion_run_id FK
+    }
+
+    sub_frame {
+        INTEGER id PK
+        INTEGER project_id FK "NOT NULL, owns the row"
+        TEXT content_hash "SHA-256; UNIQUE(project_id, content_hash)"
+        INTEGER session_id FK "SET NULL"
+        INTEGER rig_id FK
+        INTEGER project_target_id FK "SET NULL"
+        INTEGER ingestion_run_id FK "SET NULL"
+        TEXT frame_type "CHECK: light, dark, flat, bias, dark_flat, unknown"
+        INTEGER accepted "CHECK 0/1"
+        INTEGER camera_id FK
+        INTEGER filter_id FK
+        REAL exposure_seconds "CHECK >= 0"
+        REAL gain
+        REAL set_temp_c
+        TEXT date_obs_utc "NOT NULL (mtime fallback)"
+        TEXT object_hint
+        TEXT filter_name_hint
+    }
+
+    file_location {
+        INTEGER id PK
+        INTEGER project_id FK "NOT NULL, owns the row"
+        TEXT path "UNIQUE(project_id, path)"
+        TEXT category "CHECK: sub_frame, processed, pxiproject, log, other"
+        INTEGER sub_frame_id FK "CASCADE"
+        INTEGER processed_image_id FK "CASCADE"
+        TEXT path_type "CHECK: original, working_copy, archive, ..."
+        TEXT file_hash
+        TEXT last_verified_status "CHECK: ok, missing, hash_mismatch, unreadable"
+    }
+
+    session_log_file {
+        INTEGER id PK
+        INTEGER session_id FK
+        TEXT file_hash UK
+        TEXT source "CHECK: nina, asiair, phd2, other"
+        TEXT parse_status "CHECK: pending, parsed, failed, partial"
+    }
+
+    session_event {
+        INTEGER id PK
+        INTEGER session_id FK
+        TEXT event_utc
+        TEXT event_type "CHECK: 22 values"
+        INTEGER related_sub_frame_id FK "SET NULL"
+        INTEGER related_filter_id FK
+    }
+
+    autofocus_run {
+        INTEGER id PK
+        INTEGER session_id FK
+        INTEGER filter_id FK
+        INTEGER focuser_id FK
+        REAL final_hfr
+        TEXT source "CHECK: nina, asiair, manual, other"
+    }
+
+    guiding_log_file {
+        INTEGER id PK
+        INTEGER session_id FK
+        TEXT file_hash UK
+        INTEGER guide_camera_id FK
+        INTEGER guide_scope_id FK
+        INTEGER oag_id FK
+        TEXT parse_status "CHECK: pending, parsed, failed, partial"
+    }
+
+    guiding_sample {
+        INTEGER id PK
+        INTEGER guiding_log_file_id FK "CASCADE"
+        TEXT sample_utc
+        REAL ra_error_arcsec
+        REAL dec_error_arcsec
+        REAL snr
+    }
+
+    dither_event {
+        INTEGER id PK
+        INTEGER guiding_log_file_id FK "CASCADE"
+        TEXT dither_utc
+        INTEGER settle_failed "CHECK 0/1"
+    }
+
+    project_source_folder {
+        INTEGER id PK
+        INTEGER project_id FK "CASCADE"
+        TEXT path
+        INTEGER is_primary "CHECK 0/1, one primary per project"
+    }
+
+    project ||--o{ ingestion_run : "ingested in"
+    project ||--o{ session : "has"
+    project ||--o{ processed_image : "has"
+    project ||--o{ project_source_folder : "binds"
+    rig ||--o{ session : "captured on"
+    ingestion_run ||--o{ sub_frame : "produces"
+    ingestion_run ||--o{ processed_image : "produces"
+    session ||--o{ sub_frame : "groups"
+    project_target ||--o{ sub_frame : "targets"
+    sub_frame ||--o{ file_location : "located at"
+    processed_image ||--o{ file_location : "located at"
+    session ||--o{ session_log_file : "logged by"
+    session ||--o{ session_event : "timeline"
+    sub_frame ||--o{ session_event : "related to"
+    session ||--o{ autofocus_run : "focused via"
+    session ||--o{ guiding_log_file : "guided by"
+    guiding_log_file ||--o{ guiding_sample : "samples"
+    guiding_log_file ||--o{ dither_event : "dithers"
+```
+
+In addition, the migration creates calibration-matching and integration **views** (not tables): `matching_darks`, `matching_flats`, `matching_bias`, `calibration_coverage`, `integration_time_per_project_filter`, `project_filter_goal_progress`, and `session_summary`. See the Table Summary below and `DB_SCHEMA_DDL.sql` for the full definitions.
+
+---
+
 ## Table Summary
 
 ### Existing Tables (v0.1.0–v0.7.0)
@@ -787,9 +948,32 @@ Omitted from diagrams for readability. Every seedable table carries:
 | `project_filter_goal` (migration 0035, v0.38.0) | Per-filter integration goal. `project_id` FK CASCADE, `line_name` CHECK (same 15-value vocab as `filter_passband.line_name`), `goal_minutes > 0`, UNIQUE per `(project_id, line_name)`. Drives the per-line goal marker on the Overview's integration bar chart. |
 | `project_target` (migration 0036, v0.38.0) | **Persistent project↔dso link** — the single source of truth for "main targets". `project_id` FK CASCADE, `dso_id` FK CASCADE, UNIQUE per `(project_id, dso_id)`. Migration 0036 backfills from existing `project_dso.is_main = 1` rows. Creating a plate solve auto-inserts its best-guess main here; toggling the star on either the Overview or Plate Solve tab edits the same record. **`project_target` rows survive `DELETE /solve`** (cascade is on project, not solve). Indexes on each column. |
 
-### Future Tables
+### v0.40.0 — Imaging Core (12 tables + 1 ALTER + 7 views, migration 0037)
 
 | Table | Purpose |
 |-------|---------|
-| `session` | Single-night imaging sessions |
-| `sub_frame` | Individual FITS exposures linked to session + rig |
+| `ingestion_run` | One row per catalog/ingest pass. `project_id` FK CASCADE, `source_path`, `mode` CHECK (`catalog_in_place`/`copy_and_organize`/`reparse`), `status` CHECK (`running`/`completed`/`failed`/`cancelled`), running counters (`files_scanned`, `subs_inserted`, `subs_updated`, `subs_skipped`, `errors_count`), `errors_json`, `started_at`/`finished_at`. Provenance for every sub_frame / processed_image (§11). |
+| `session` | **AUTO/ingest rig-night grouping** of sub frames (distinct from the MANUAL `project_session`). `project_id` FK CASCADE, `rig_id` FK, `start_utc` (NOT NULL)/`end_utc`, site fields (`site_name`, `latitude` CHECK ±90, `longitude` CHECK ±180, `elevation_m`, `bortle_class` CHECK 1–9), `conditions_notes`, timestamps with `updated_at` trigger. Indexes on project, rig, start (§5). |
+| `processed_image` | Stacks / masters / finished images promoted to first-class. `project_id` FK NOT NULL CASCADE (each project owns its row — migration 0040), `UNIQUE(project_id, content_hash)`, `image_kind` CHECK (`master`/`stack`/`processed`/`other`), nullable `frame_type` + `line_name` (15-value vocab) + `filter_id`/`camera_id`/`telescope_id` FKs, `ncombine`, `total_exposure_seconds` (migration 0039 — integration time for masters), `date_obs_utc`, dimensions, `fits_header_json`, `ingestion_run_id` FK SET NULL, timestamps with trigger. |
+| `sub_frame` | **The core atom** — lights, darks, flats, bias share this table via `frame_type` CHECK (`light`/`dark`/`flat`/`bias`/`dark_flat`/`unknown`). `project_id` FK NOT NULL CASCADE (each project owns its row — migration 0040); `UNIQUE(project_id, content_hash)` (SHA-256, idempotent re-ingest *per project*). Nullable grouping FKs: `session_id` (SET NULL), `rig_id`, `project_target_id` (SET NULL), `ingestion_run_id` (SET NULL). `accepted` 0/1 + `rejection_reason`/`rejection_source` CHECK. Nullable equipment FKs (camera, telescope, telescope_configuration, filter, mount, filter_wheel, focuser). Capture settings (`exposure_seconds` CHECK ≥ 0 — bias may be ~0, gain, offset_adu, temps, binning, bit_depth, dimensions). `date_obs_utc` NOT NULL (mtime fallback) + `obs_mjd`. Pointing (ra/dec/rotation/pixel_scale/airmass). Quality metrics (hfr, star_count, …; NULL in v0.40.0). Denormalized site. `object_hint`/`filter_name_hint` (raw headers, kept so lights catalog before filter_id resolves in v0.41.0) + `fits_header_json`. Timestamps with trigger. **No light-needs-filter CHECK** — ingest must never fail on partial equipment. Many single + four partial composite calibration-match indexes (§6). |
+| `file_location` | One row per cataloged file (any category), optionally linked to the sub_frame / processed_image it represents (multiple rows may share a sub_frame). `project_id` FK NOT NULL CASCADE (each project owns its row — migration 0040), `UNIQUE(project_id, path)`, `category` CHECK (`sub_frame`/`processed`/`pxiproject`/`log`/`other`), `sub_frame_id`/`processed_image_id` FKs CASCADE, `path_type` CHECK, `volume_label`, `size_bytes`, `file_hash`, `mtime`, `last_verified_at`/`last_verified_status` CHECK (`ok`/`missing`/`hash_mismatch`/`unreadable`) (§10). |
+| `session_log_file` | **Empty in v0.40.0** (parsed v0.44.0). `session_id` FK CASCADE, `file_hash` UNIQUE, `path`, `source` CHECK (`nina`/`asiair`/`phd2`/`other`), covered start/end UTC, `parse_status` CHECK, `parse_error`, `raw_text` BLOB. |
+| `session_event` | **Empty in v0.40.0** (v0.44.0). Session timeline event. `session_id` FK CASCADE, `event_utc`, `event_type` CHECK (22 values: session/slew/plate_solve/filter_change/exposure/autofocus/dither/meridian_flip/guiding/cooling/error/…), `event_data_json`, `related_sub_frame_id` FK SET NULL, `related_filter_id` FK. Index on (session, event_utc) + type. |
+| `autofocus_run` | **Empty in v0.40.0** (v0.44.0). `session_id` FK CASCADE, `filter_id`/`focuser_id` FKs, triggered/completed UTC, `temperature_c`, initial/final position + hfr, `success` 0/1, `trigger_reason` CHECK, `source` CHECK, `raw_json` (§9). |
+| `guiding_log_file` | **Empty in v0.40.0** (PHD2 parse v0.43.0). `session_id` FK CASCADE, `file_hash` UNIQUE, `path`, start/end UTC, `guide_camera_id`/`guide_scope_id`/`oag_id` FKs, `guide_pixel_scale_arcsec`, `parse_status` CHECK (§8). |
+| `guiding_sample` | **Empty in v0.40.0** (v0.43.0). `guiding_log_file_id` FK CASCADE, `sample_utc`, RA/Dec error + correction (arcsec), `snr`, `star_mass`, `frame_number`. Index on (log_file, sample_utc) for per-sub time-range RMS lookups (§8/§14). |
+| `dither_event` | **Empty in v0.40.0** (v0.43.0). `guiding_log_file_id` FK CASCADE, `dither_utc`, RA/Dec offset arcsec, `settle_completed_utc`, `settle_failed` 0/1. |
+| `project_source_folder` | Project ↔ source-folder binding. `project_id` FK CASCADE, `path`, `is_primary` 0/1 with partial unique index enforcing at most one primary per project, `UNIQUE(project_id, path)`, `added_at`. |
+| `project.cover_sub_frame_id` | ALTER ADDed nullable `INTEGER REFERENCES sub_frame(id)` on `project` — deferred back-reference resolved now that `sub_frame` exists. |
+
+### v0.40.0 — Imaging Core Views (7)
+
+| View | Purpose |
+|------|---------|
+| `matching_darks` | `(light_id, dark_id)` pairs: dark matches light on camera + gain + exposure + binning, with set_temp within ±1.0 °C (never on filter). Both sides `accepted = 1`. |
+| `matching_flats` | `(light_id, flat_id)` pairs: flat matches on camera + gain + filter + binning + telescope_configuration (optical-train state matters). Both sides accepted. |
+| `matching_bias` | `(light_id, bias_id)` pairs: bias matches on camera + gain + binning. Both sides accepted. |
+| `calibration_coverage` | Per accepted light: `has_dark`/`has_flat`/`has_bias` (1/0) via EXISTS over the three match views. |
+| `integration_time_per_project_filter` | Integration grouped by project / target / `line_name` (joined through `filter_passband`, `active = 1`); a duo/tri-band filter intentionally double-counts one row per line. Sums seconds/minutes/hours + sub_count over accepted lights. |
+| `project_filter_goal_progress` | Per-project per-line goal vs actual (NULL-safe): joins `project_filter_goal` (keyed `project_id, line_name`) to the integration view; emits `goal_minutes`, `actual_minutes`, `completion_ratio`. |
+| `session_summary` | Per-session rollup: duration_hours, total_subs, accepted/rejected lights, accepted_light_minutes, distinct targets/filters. |

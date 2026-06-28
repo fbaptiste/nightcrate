@@ -45,6 +45,7 @@ export const CALCULATOR_GROUPS: CalcGroup[] = [
     id: "group-sky",
     label: "Sky Conditions",
     items: [
+      { id: "moon-altitude", label: "Moon Altitude (Year)", aware: true },
       { id: "sqm-bortle", label: "SQM / Bortle / NELM" },
       { id: "temperature", label: "Temperature" },
     ],

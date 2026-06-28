@@ -30,8 +30,13 @@ def _make_xisf(
     compression: str = "",
     fits_keywords: list[tuple[str, str, str]] | None = None,
     properties: list[tuple[str, str, str]] | None = None,
+    extra_xml: str = "",
 ) -> bytes:
-    """Build a minimal valid XISF file in memory."""
+    """Build a minimal valid XISF file in memory.
+
+    ``extra_xml`` is injected verbatim inside the <Image> element (for Property
+    elements whose payload lives in element text, e.g. base64 vectors/matrices).
+    """
     geom = f"{width}:{height}:{channels}" if channels > 1 else f"{width}:{height}:1"
     color_space = "RGB" if channels == 3 else "Gray"
 
@@ -45,6 +50,7 @@ def _make_xisf(
     if properties:
         for pid, ptype, pval in properties:
             prop_xml += f'<Property id="{pid}" type="{ptype}" value="{pval}" />\n'
+    prop_xml += extra_xml
 
     # Data will be placed at offset = 16 + header_len (aligned to 4096 for realism)
     # We'll compute the actual offset after knowing header size
@@ -306,6 +312,34 @@ class TestReadHeader:
         assert "FILTER" in keys
         assert "EXPTIME" in keys
 
+    def test_geometry_surfaced_as_naxis(self, tmp_path):
+        # XISF keeps dimensions in the geometry attribute, not as FITS keywords;
+        # read_header should derive NAXIS1/NAXIS2 from it.
+        data = np.zeros((48, 64), dtype=np.uint16)  # H=48, W=64
+        xisf_bytes = _make_xisf(64, 48, 1, "UInt16", data.tobytes())
+        path = tmp_path / "geom.xisf"
+        path.write_bytes(xisf_bytes)
+
+        cards = {c["key"]: c["value"] for c in read_header(path)}
+        assert cards["NAXIS1"] == "64"
+        assert cards["NAXIS2"] == "48"
+
+    def test_naxis_fits_keyword_wins_over_geometry(self, tmp_path):
+        # A real NAXIS1 FITSKeyword must not be overwritten by the geometry value.
+        data = np.zeros((48, 64), dtype=np.uint16)
+        xisf_bytes = _make_xisf(
+            64,
+            48,
+            1,
+            "UInt16",
+            data.tobytes(),
+            fits_keywords=[("NAXIS1", "64", "Width")],
+        )
+        path = tmp_path / "geom2.xisf"
+        path.write_bytes(xisf_bytes)
+        naxis1 = [c for c in read_header(path) if c["key"] == "NAXIS1"]
+        assert len(naxis1) == 1  # not duplicated
+
     def test_fits_keyword_values_have_quotes_stripped(self, tmp_path):
         """XISF FITSKeyword values with embedded quotes should be stripped."""
         data = np.zeros((4, 4), dtype=np.uint16)
@@ -328,6 +362,101 @@ class TestReadHeader:
         instrume_card = next(c for c in cards if c["key"] == "INSTRUME")
         assert filter_card["value"] == "Ha"
         assert instrume_card["value"] == "ZWO ASI2600MM Pro"
+
+
+class TestAstrometricWcs:
+    """PixInsight AstrometricSolution → synthetic FITS WCS cards."""
+
+    @staticmethod
+    def _astro_xml(crval, crpix, cd, projection="Gnomonic"):
+        import base64
+
+        def b(vals):
+            return base64.b64encode(struct.pack(f"<{len(vals)}d", *vals)).decode()
+
+        return (
+            f'<Property id="PCL:AstrometricSolution:ProjectionSystem" type="String">'
+            f"{projection}</Property>"
+            '<Property id="PCL:AstrometricSolution:ReferenceCelestialCoordinates"'
+            f' type="F64Vector" length="2" location="inline:base64">{b(crval)}</Property>'
+            '<Property id="PCL:AstrometricSolution:ReferenceImageCoordinates"'
+            f' type="F64Vector" length="2" location="inline:base64">{b(crpix)}</Property>'
+            '<Property id="PCL:AstrometricSolution:LinearTransformationMatrix"'
+            f' type="F64Matrix" rows="2" columns="2" location="inline:base64">{b(cd)}</Property>'
+        )
+
+    def test_reconstructs_wcs(self, tmp_path):
+        from nightcrate.services.image_annotations import build_wcs, detect_wcs_from_cards
+
+        data = np.zeros((800, 1000), dtype=np.uint16)
+        crval = [300.0, 35.0]
+        crpix = [499.0, 399.0]  # PI 0-based reference pixel
+        cd = [1e-5, -3e-4, 3e-4, 1e-5]  # row-major CD1_1, CD1_2, CD2_1, CD2_2
+        xisf = _make_xisf(
+            1000, 800, 1, "UInt16", data.tobytes(), extra_xml=self._astro_xml(crval, crpix, cd)
+        )
+        path = tmp_path / "astro.xisf"
+        path.write_bytes(xisf)
+
+        wp = detect_wcs_from_cards(read_header(path))
+        assert wp is not None
+        assert wp.crval1 == pytest.approx(300.0)
+        assert wp.crval2 == pytest.approx(35.0)
+        assert wp.crpix1 == pytest.approx(500.0)  # PI 0-based + 1 → FITS 1-based
+        assert wp.crpix2 == pytest.approx(400.0)
+        assert wp.cd1_1 == pytest.approx(1e-5)
+        assert wp.cd1_2 == pytest.approx(-3e-4)
+        assert wp.cd2_1 == pytest.approx(3e-4)
+        assert wp.cd2_2 == pytest.approx(1e-5)
+        # Round trip: the 0-based reference pixel maps back to CRVAL.
+        center = build_wcs(wp).pixel_to_world(crpix[0], crpix[1])
+        assert center.ra.deg == pytest.approx(300.0, abs=1e-3)
+        assert center.dec.deg == pytest.approx(35.0, abs=1e-3)
+
+    def test_real_fits_wcs_keyword_wins(self, tmp_path):
+        # A genuine FITSKeyword WCS value is not overwritten by the synthesized one.
+        data = np.zeros((800, 1000), dtype=np.uint16)
+        xisf = _make_xisf(
+            1000,
+            800,
+            1,
+            "UInt16",
+            data.tobytes(),
+            fits_keywords=[("CRVAL1", "42.0", "")],
+            extra_xml=self._astro_xml([300.0, 35.0], [499.0, 399.0], [1e-5, -3e-4, 3e-4, 1e-5]),
+        )
+        path = tmp_path / "astro_realwcs.xisf"
+        path.write_bytes(xisf)
+        crval1 = [c for c in read_header(path) if c["key"] == "CRVAL1"]
+        assert len(crval1) == 1
+        assert crval1[0]["value"] == "42.0"
+
+    def test_non_gnomonic_skipped(self, tmp_path):
+        from nightcrate.services.image_annotations import detect_wcs_from_cards
+
+        data = np.zeros((800, 1000), dtype=np.uint16)
+        xisf = _make_xisf(
+            1000,
+            800,
+            1,
+            "UInt16",
+            data.tobytes(),
+            extra_xml=self._astro_xml(
+                [300.0, 35.0], [499.0, 399.0], [1e-5, -3e-4, 3e-4, 1e-5], projection="Orthographic"
+            ),
+        )
+        path = tmp_path / "astro_ortho.xisf"
+        path.write_bytes(xisf)
+        assert detect_wcs_from_cards(read_header(path)) is None
+
+    def test_plain_xisf_has_no_wcs(self, tmp_path):
+        from nightcrate.services.image_annotations import detect_wcs_from_cards
+
+        data = np.zeros((4, 4), dtype=np.uint16)
+        xisf = _make_xisf(4, 4, 1, "UInt16", data.tobytes())
+        path = tmp_path / "plain.xisf"
+        path.write_bytes(xisf)
+        assert detect_wcs_from_cards(read_header(path)) is None
 
 
 class TestListExtensions:

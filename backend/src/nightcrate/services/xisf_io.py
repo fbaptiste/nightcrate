@@ -5,6 +5,7 @@ Supports: UInt16/Float32, Gray/RGB, uncompressed/zlib/lz4/lz4-hc/zstd (±shuffle
 """
 
 import base64
+import logging
 import struct
 import zlib
 from pathlib import Path
@@ -18,6 +19,8 @@ import zstandard
 
 from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
+
+logger = logging.getLogger("nightcrate")
 
 XISF_MAGIC = b"XISF0100"
 XISF_NS = "http://www.pixinsight.com/xisf"
@@ -255,12 +258,88 @@ def _extract_property_value(prop: Element) -> str:
     return prop.text
 
 
+def _astrometric_wcs_cards(img_elem: Element, existing_keys: set[str]) -> list[dict]:
+    """Reconstruct standard FITS WCS cards from a PixInsight AstrometricSolution.
+
+    PixInsight stores its plate solution as ``PCL:AstrometricSolution:*``
+    properties (base64-encoded F64 vectors/matrix), never as FITS WCS keywords,
+    so a PI-solved XISF otherwise reads as "no WCS". For the linear (Gnomonic /
+    TAN) part this maps directly to a FITS CD-matrix WCS:
+
+    - ``ReferenceCelestialCoordinates`` (RA, Dec deg) -> CRVAL1/2
+    - ``ReferenceImageCoordinates`` (PI 0-based pixel) -> CRPIX1/2 (+1 -> FITS 1-based)
+    - ``LinearTransformationMatrix`` (row-major 2x2, deg/px) -> CD1_1..CD2_2
+    - ``ProjectionSystem == "Gnomonic"`` -> CTYPE RA---TAN / DEC--TAN
+
+    Verified against an independent ASTAP solve of the same frame: the matrix is
+    used as-is (no transpose, no y-flip) and CRVAL matches directly; only the
+    1-based pixel-origin shift is applied. Higher-order SplineWorldTransformation
+    is ignored (the linear term is sub-arcsec-accurate for annotation). Cards are
+    emitted only for keys not already present so real FITSKeyword WCS wins.
+    """
+    props: dict[str, Element] = {}
+    for prop in img_elem.iter(_tag("Property")):
+        pid = prop.get("id", "")
+        if pid.startswith("PCL:AstrometricSolution:"):
+            props[pid.split(":")[-1]] = prop
+
+    proj = props.get("ProjectionSystem")
+    if proj is None or _extract_property_value(proj).strip().lower() != "gnomonic":
+        return []  # only linear TAN is supported
+
+    def _doubles(key: str) -> list[float] | None:
+        prop = props.get(key)
+        if prop is None or not prop.text:
+            return None
+        try:
+            raw = base64.b64decode(prop.text)
+            return list(struct.unpack(f"<{len(raw) // 8}d", raw))
+        except Exception as exc:  # noqa: BLE001 - malformed property → drop WCS, don't crash
+            logger.debug("[xisf-wcs] could not decode AstrometricSolution:%s: %s", key, exc)
+            return None
+
+    crval = _doubles("ReferenceCelestialCoordinates")
+    crpix = _doubles("ReferenceImageCoordinates")
+    cd = _doubles("LinearTransformationMatrix")  # row-major [CD1_1, CD1_2, CD2_1, CD2_2]
+    if (
+        crval is None
+        or crpix is None
+        or cd is None
+        or len(crval) < 2
+        or len(crpix) < 2
+        or len(cd) < 4
+    ):
+        return []
+
+    derived = {
+        "CTYPE1": "RA---TAN",
+        "CTYPE2": "DEC--TAN",
+        "CRVAL1": repr(crval[0]),
+        "CRVAL2": repr(crval[1]),
+        "CRPIX1": repr(crpix[0] + 1.0),  # PI 0-based pixel center -> FITS 1-based
+        "CRPIX2": repr(crpix[1] + 1.0),
+        "CD1_1": repr(cd[0]),
+        "CD1_2": repr(cd[1]),
+        "CD2_1": repr(cd[2]),
+        "CD2_2": repr(cd[3]),
+    }
+    return [
+        {"key": k, "value": v, "comment": "XISF: AstrometricSolution", "description": ""}
+        for k, v in derived.items()
+        if k not in existing_keys
+    ]
+
+
 def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
     """Read metadata as {key, value, comment} dicts.
 
-    First extracts <FITSKeyword> elements (same format as FITS headers).
-    Then extracts <Property> elements with scalar values, mapping XISF property IDs
-    to equivalent FITS-style keywords for display.
+    1. <FITSKeyword> elements (same format as FITS headers).
+    2. NAXIS1/NAXIS2 derived from the Image `geometry` attribute (when absent).
+    3. <Property> elements with scalar values, mapping XISF property IDs to
+       equivalent FITS-style keywords for display.
+    4. Synthetic FITS WCS cards reconstructed from a PixInsight
+       `PCL:AstrometricSolution` (see `_astrometric_wcs_cards`).
+    Steps 2-4 only add keys that aren't already present (real FITSKeyword wins).
     """
     root, _ = _parse_xml_header(source)
 
@@ -283,8 +362,27 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
             }
         )
 
-    # XISF properties (supplement with mapped names if not already in FITS keywords)
+    # Geometry → NAXIS keywords. XISF keeps image dimensions in the Image
+    # `geometry="W:H:C"` attribute, not as FITS keywords; surface them so any
+    # FITS-oriented consumer (ingest dimensions, header view) sees the size.
+    # Only added when absent — real FITSKeyword NAXIS cards always win.
     existing_keys = {c["key"] for c in cards}
+    geom_parts = img_elem.get("geometry", "").split(":")
+    if len(geom_parts) >= 2:
+        for axis_key, raw in (("NAXIS1", geom_parts[0]), ("NAXIS2", geom_parts[1])):
+            if axis_key in existing_keys or not raw.isdigit():
+                continue
+            cards.append(
+                {
+                    "key": axis_key,
+                    "value": raw,
+                    "comment": "XISF: geometry",
+                    "description": get_keyword_description(axis_key),
+                }
+            )
+            existing_keys.add(axis_key)
+
+    # XISF properties (supplement with mapped names if not already in FITS keywords)
     prop_map = {
         "Instrument:Camera:Name": "INSTRUME",
         "Instrument:Filter:Name": "FILTER",
@@ -323,6 +421,10 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
                     "description": get_keyword_description(prop_id),
                 }
             )
+
+    # Synthesize FITS WCS cards from a PixInsight astrometric solution, if any
+    # (real FITSKeyword WCS already in existing_keys wins).
+    cards.extend(_astrometric_wcs_cards(img_elem, existing_keys))
 
     return cards
 
