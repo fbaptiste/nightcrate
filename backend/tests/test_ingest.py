@@ -16,6 +16,7 @@ import pytest
 from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.api.ingest import _observing_window_utc
 from nightcrate.main import app
 from nightcrate.services.ingest_classify import (
     CATEGORY_LOG,
@@ -142,6 +143,22 @@ class TestSessionFormation:
         assert k_none == (None, "2026-03-15")
         assert k_rig == (3, "2026-03-15")
         assert k_none != k_rig
+
+    def test_observing_window_utc_uses_site_offset(self):
+        # Local noon-to-noon in the site tz, converted to UTC — NOT a literal
+        # noon-UTC stamp (the old bug). Phoenix is UTC-7 → local noon = 19:00 UTC.
+        start, end = _observing_window_utc("2026-03-15", "America/Phoenix")
+        assert start == "2026-03-15T19:00:00+00:00"
+        assert end == "2026-03-16T19:00:00+00:00"
+
+    def test_observing_window_utc_defaults_to_utc(self):
+        start, end = _observing_window_utc("2026-03-15", None)
+        assert start == "2026-03-15T12:00:00+00:00"
+        assert end == "2026-03-16T12:00:00+00:00"
+
+    def test_observing_window_utc_bad_zone_falls_back(self):
+        start, _ = _observing_window_utc("2026-03-15", "Not/AZone")
+        assert start == "2026-03-15T12:00:00+00:00"
 
 
 # ── Scanner + worker (no DB) ─────────────────────────────────────────────────
@@ -791,3 +808,32 @@ class TestClassificationRefinements:
         assert "Log" in labels
         assert "PixInsight Project" in labels
         assert "Other" in labels
+
+    async def test_non_frame_counts_are_project_scoped(self, client, tmp_path):
+        # file_location has no project FK; non-frame counts/listings must be scoped
+        # to the project's source folders (path prefix), not workspace-wide.
+        a = tmp_path / "projA"
+        a.mkdir()
+        _write_fits(a / "a_light.fits", imagetyp="LIGHT", filt="Ha")
+        (a / "Autorun_Log_A.txt").write_text("log a\n")
+        b = tmp_path / "projB"
+        b.mkdir()
+        _write_fits(b / "b_light.fits", imagetyp="LIGHT", filt="Oiii")
+        (b / "Autorun_Log_B.txt").write_text("log b\n")
+        (b / "Autorun_Log_B2.txt").write_text("log b2\n")
+
+        pa = await _make_project(client, "ScopeA")
+        await client.post(f"/api/projects/{pa}/folders", json={"path": str(a)})
+        await client.post(f"/api/projects/{pa}/ingest")
+        pb = await _make_project(client, "ScopeB")
+        await client.post(f"/api/projects/{pb}/folders", json={"path": str(b)})
+        await client.post(f"/api/projects/{pb}/ingest")
+
+        sa = (await client.get(f"/api/projects/{pa}/catalog/summary")).json()
+        sb = (await client.get(f"/api/projects/{pb}/catalog/summary")).json()
+        assert sa["logs"] == 1  # only projA's log, not projB's two
+        assert sb["logs"] == 2
+        # Others listing is likewise scoped to each project's folder.
+        oa = (await client.get(f"/api/projects/{pa}/catalog/others")).json()["rows"]
+        assert all("/projA/" in r["path"] for r in oa if r["path"])
+        assert all("/projB/" not in (r["path"] or "") for r in oa)

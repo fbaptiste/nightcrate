@@ -743,25 +743,40 @@ def compute_moon_year(
     return track.moon_data
 
 
+_NEW_MOON_MAX_ILLUM = 5.0  # daily-sampled illumination is <1% at new moon
+_FULL_MOON_MIN_ILLUM = 95.0  # ... and >99% at full
+
+
 def derive_phase_dates(
     moon_data: list[MoonDataPoint],
 ) -> tuple[list[date], list[date]]:
     """New- and full-moon dates from the nightly illumination series.
 
-    Illumination is smooth and monotonic between new and full, so a strict local
-    minimum is a new moon and a strict local maximum a full moon — one of each per
-    lunation (~12-13/year). Day-level precision, which is all the markers need.
+    A new moon is a strict local minimum below ``_NEW_MOON_MAX_ILLUM``; a full moon
+    a strict local maximum above ``_FULL_MOON_MIN_ILLUM``. The illumination
+    threshold lets year-boundary days (Jan 1 / Dec 31 — only one neighbour) be
+    detected without spuriously flagging a mid-cycle endpoint. One of each per
+    lunation (~12-13/year); day-level precision, which is all the markers need.
     """
     new_moons: list[date] = []
     full_moons: list[date] = []
-    for i in range(1, len(moon_data) - 1):
-        prev = moon_data[i - 1].illumination_pct
+    n = len(moon_data)
+    for i in range(n):
         cur = moon_data[i].illumination_pct
-        nxt = moon_data[i + 1].illumination_pct
+        left = moon_data[i - 1].illumination_pct if i > 0 else None
+        right = moon_data[i + 1].illumination_pct if i < n - 1 else None
         d = moon_data[i].date
-        if cur < prev and cur <= nxt:
+        if (
+            cur < _NEW_MOON_MAX_ILLUM
+            and (left is None or cur < left)
+            and (right is None or cur < right)
+        ):
             new_moons.append(d)
-        elif cur > prev and cur >= nxt:
+        elif (
+            cur > _FULL_MOON_MIN_ILLUM
+            and (left is None or cur > left)
+            and (right is None or cur > right)
+        ):
             full_moons.append(d)
     return new_moons, full_moons
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from nightcrate.services.planner_annual_hours import (
+    MoonDataPoint,
     compute_annual_hours,
     compute_moon_year,
     derive_phase_dates,
@@ -119,6 +122,44 @@ def test_moon_year_shape_and_ranges(moon_year_phoenix):
     ills = [m.illumination_pct for m in md]
     assert min(ills) < 5.0  # reaches new moon
     assert max(ills) > 95.0  # reaches full moon
+
+
+def test_derive_phase_dates_detects_year_boundary_extrema():
+    # A new moon on the first day and a full moon on the last day (only one
+    # neighbour each) must still be detected — the illumination threshold makes
+    # the one-sided boundary check safe.
+    d0 = date(2026, 1, 1)
+    illums = [0.4, 18.0, 55.0, 88.0, 99.6]  # new at index 0, full at index 4
+    md = [
+        MoonDataPoint(
+            date=d0 + timedelta(days=i),
+            illumination_pct=v,
+            min_separation_deg=None,
+            max_altitude_deg=None,
+        )
+        for i, v in enumerate(illums)
+    ]
+    new_moons, full_moons = derive_phase_dates(md)
+    assert new_moons == [d0]
+    assert full_moons == [d0 + timedelta(days=4)]
+
+
+def test_derive_phase_dates_ignores_mid_cycle_endpoints():
+    # An endpoint that is NOT near new/full (mid-cycle) must not be flagged.
+    d0 = date(2026, 1, 1)
+    illums = [52.0, 60.0, 75.0, 60.0, 48.0]  # endpoints ~50%, no true extremum
+    md = [
+        MoonDataPoint(
+            date=d0 + timedelta(days=i),
+            illumination_pct=v,
+            min_separation_deg=None,
+            max_altitude_deg=None,
+        )
+        for i, v in enumerate(illums)
+    ]
+    new_moons, full_moons = derive_phase_dates(md)
+    assert new_moons == []
+    assert full_moons == []  # 75% peak is below the 95% full-moon threshold
 
 
 def test_derive_phase_dates(moon_year_phoenix):

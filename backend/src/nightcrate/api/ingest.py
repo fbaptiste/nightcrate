@@ -19,7 +19,9 @@ import asyncio
 import json
 import logging
 import os
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -68,6 +70,7 @@ _LOG_PREFIX = "[ingest]"
 # Module-level tuple: ruff format strips parens from inline ``except (A, B):`` on
 # py3.14, producing invalid Py2 syntax. Referencing a constant sidesteps it.
 _COERCE_ERRORS = (TypeError, ValueError)
+_BAD_ZONE = (ZoneInfoNotFoundError, ValueError)
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
@@ -289,6 +292,13 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
                     counters,
                 )
             await _reclassify_dark_flats(conn, project_id)
+            # Drop auto-sessions left with no sub_frames (e.g. orphaned when a
+            # re-scan recomputes start_utc, or a folder's frames were removed).
+            await conn.execute(
+                "DELETE FROM session WHERE project_id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM sub_frame sf WHERE sf.session_id = session.id)",
+                (project_id,),
+            )
             status = "completed"
         except Exception as exc:  # noqa: BLE001 - record failure on the run, re-raise after commit
             logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
@@ -431,7 +441,7 @@ async def _persist_parsed(
 
     # Session formation: (rig_id, observing night). rig is NULL at v0.40.0.
     key = session_key(None, date_obs, tz_name)
-    session_id = await _ensure_session(conn, project_id, key)
+    session_id = await _ensure_session(conn, project_id, key, tz_name)
     assigned_target = target_id if frame_type == "light" else None
     await conn.execute(
         "UPDATE sub_frame SET session_id = ?, project_target_id = ? WHERE id = ?",
@@ -636,9 +646,27 @@ async def _reclassify_dark_flats(conn, project_id: int) -> None:
     )
 
 
-async def _ensure_session(conn, project_id, key) -> int:
+def _observing_window_utc(night: str, tz_name: str | None) -> tuple[str, str]:
+    """UTC bounds of the noon-to-noon observing night `night` (local date in the
+    site's geo timezone). The previous code stamped a literal noon-UTC, which is
+    wrong for any non-UTC site (e.g. UTC-7 → real window start is 19:00 UTC);
+    v0.43's PHD2 time-range association needs the true UTC window."""
+    try:
+        tz = ZoneInfo(tz_name) if tz_name else UTC
+    except _BAD_ZONE:
+        tz = UTC
+    d = date.fromisoformat(night)
+    start = datetime(d.year, d.month, d.day, 12, 0, tzinfo=tz)
+    nxt = d + timedelta(days=1)
+    end = datetime(nxt.year, nxt.month, nxt.day, 12, 0, tzinfo=tz)
+    return start.astimezone(UTC).isoformat(), end.astimezone(UTC).isoformat()
+
+
+async def _ensure_session(conn, project_id, key, tz_name: str | None) -> int:
     rig_id, night = key
-    start_utc = f"{night}T12:00:00+00:00"
+    start_utc, end_utc = _observing_window_utc(night, tz_name)
+    # Identity is (project, observing-night start, rig); start_utc is deterministic
+    # per (night, geo-tz) so re-ingest dedupes to the same row.
     cursor = await conn.execute(
         "SELECT id FROM session WHERE project_id = ? AND start_utc = ? AND rig_id IS ?",
         (project_id, start_utc, rig_id),
@@ -647,8 +675,8 @@ async def _ensure_session(conn, project_id, key) -> int:
     if row is not None:
         return row["id"]
     cursor = await conn.execute(
-        "INSERT INTO session (project_id, rig_id, start_utc) VALUES (?, ?, ?)",
-        (project_id, rig_id, start_utc),
+        "INSERT INTO session (project_id, rig_id, start_utc, end_utc) VALUES (?, ?, ?, ?)",
+        (project_id, rig_id, start_utc, end_utc),
     )
     return cursor.lastrowid
 
@@ -686,6 +714,26 @@ async def _project_single_target(conn, project_id) -> int | None:
     return rows[0]["id"] if len(rows) == 1 else None
 
 
+async def _project_file_scope(conn, project_id: int) -> tuple[str, list]:
+    """SQL predicate + params limiting `file_location` rows to files under the
+    project's source folders. `file_location` has no project link (it's global —
+    standalone non-frame files carry no FK), so non-frame counts/listings are
+    scoped by path prefix against the project's bound folders. Exact-prefix match
+    (`substr`) so underscores/percent in real paths can't act as LIKE wildcards.
+    Returns a clause that matches NOTHING when the project has no folders."""
+    cursor = await conn.execute(
+        "SELECT path FROM project_source_folder WHERE project_id = ?", (project_id,)
+    )
+    prefixes = [r["path"].rstrip("/") + "/" for r in await cursor.fetchall()]
+    if not prefixes:
+        return "0", []
+    clause = "(" + " OR ".join("substr(path, 1, length(?)) = ?" for _ in prefixes) + ")"
+    params: list = []
+    for p in prefixes:
+        params.extend([p, p])
+    return clause, params
+
+
 # ── Catalog (read-only) ───────────────────────────────────────────────────────
 
 
@@ -714,12 +762,14 @@ async def catalog_summary(project_id: int) -> CatalogSummary:
         s.sessions = await _count(
             conn, "SELECT COUNT(*) FROM session WHERE project_id = ?", (project_id,)
         )
-        # Non-frame file counts (pxiproject/log/other) are WORKSPACE-WIDE, not
-        # project-scoped: standalone file_location rows have no project link
-        # (file_location is global — one workspace, one user). Frame counts above
-        # ARE project-scoped via ingestion_run.
+        # Non-frame file counts (pxiproject/log/other) scoped to files under the
+        # project's source folders (file_location has no project FK — see
+        # _project_file_scope). file_clause is a generated literal; values bound.
+        file_clause, file_params = await _project_file_scope(conn, project_id)
         cursor = await conn.execute(
-            "SELECT category, COUNT(*) AS n FROM file_location GROUP BY category"
+            "SELECT category, COUNT(*) AS n FROM file_location "  # nosec B608
+            f"WHERE {file_clause} GROUP BY category",
+            file_params,
         )
         cat = {row["category"]: row["n"] for row in await cursor.fetchall()}
         s.pxiprojects = cat.get("pxiproject", 0)
@@ -867,14 +917,16 @@ async def catalog_others(
     """Catch-all: PixInsight projects, logs, other files, and unknown-type subs."""
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
-        # Non-frame files cataloged anywhere (file_location is global) + this
-        # project's unknown-type subs. file_location has no project scope, so the
-        # file rows are project-agnostic (acceptable: one workspace, one user).
+        # Non-frame files under the project's source folders (file_location has no
+        # project FK — scoped by path prefix, see _project_file_scope) + this
+        # project's unknown-type subs. file_clause is a generated literal; values bound.
+        file_clause, file_params = await _project_file_scope(conn, project_id)
         file_rows = await (
             await conn.execute(
-                "SELECT id, category, path, size_bytes, mtime FROM file_location "
-                "WHERE category IN ('pxiproject', 'log', 'other') "
-                "ORDER BY category, path"
+                "SELECT id, category, path, size_bytes, mtime FROM file_location "  # nosec B608
+                f"WHERE category IN ('pxiproject', 'log', 'other') AND {file_clause} "
+                "ORDER BY category, path",
+                file_params,
             )
         ).fetchall()
         unknown_rows = await (

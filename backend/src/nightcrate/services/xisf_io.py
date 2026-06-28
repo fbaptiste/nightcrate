@@ -5,6 +5,7 @@ Supports: UInt16/Float32, Gray/RGB, uncompressed/zlib/lz4/lz4-hc/zstd (±shuffle
 """
 
 import base64
+import logging
 import struct
 import zlib
 from pathlib import Path
@@ -18,6 +19,8 @@ import zstandard
 
 from nightcrate.services.fits_header_map import get_keyword_description
 from nightcrate.services.imaging import normalize_to_01, reshape_color
+
+logger = logging.getLogger("nightcrate")
 
 XISF_MAGIC = b"XISF0100"
 XISF_NS = "http://www.pixinsight.com/xisf"
@@ -291,7 +294,8 @@ def _astrometric_wcs_cards(img_elem: Element, existing_keys: set[str]) -> list[d
         try:
             raw = base64.b64decode(prop.text)
             return list(struct.unpack(f"<{len(raw) // 8}d", raw))
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - malformed property → drop WCS, don't crash
+            logger.debug("[xisf-wcs] could not decode AstrometricSolution:%s: %s", key, exc)
             return None
 
     crval = _doubles("ReferenceCelestialCoordinates")
