@@ -42,6 +42,8 @@ from nightcrate.api.planner_models import (
     CacheClearResponse,
     DarkWindowOut,
     DimensionBreakdownOut,
+    MoonYearPoint,
+    MoonYearResponse,
     NearbyDsoItem,
     NearbyDsosResponse,
     PlannerDesignation,
@@ -64,7 +66,11 @@ from nightcrate.api.planner_models import (
 from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import sky_tile_cache, thumbnails
-from nightcrate.services.planner_annual_hours import compute_annual_hours
+from nightcrate.services.planner_annual_hours import (
+    compute_annual_hours,
+    compute_moon_year,
+    derive_phase_dates,
+)
 from nightcrate.services.planner_now_status import compute_now_status
 from nightcrate.services.planner_scoring import (
     ScoringInput,
@@ -1217,6 +1223,13 @@ async def target_annual_hours(
     max_illumination_pct: float | None = Query(None, ge=0.0, le=100.0),
     min_separation_deg: float | None = Query(None, ge=0.0, le=180.0),
     moon_combine: str = Query("and"),
+    include_moon: bool = Query(
+        False,
+        description=(
+            "Compute moon altitude + illumination for display even when no moon "
+            "filter is active (the annual chart's Moon-altitude line needs it)."
+        ),
+    ),
 ) -> AnnualHoursResponse:
     async with get_db() as conn:
         location = await _load_planner_location(conn, location_id)
@@ -1251,6 +1264,7 @@ async def target_annual_hours(
             max_illumination_pct=max_illumination_pct,
             min_separation_deg=min_separation_deg,
             moon_combine=moon_combine,
+            include_moon=include_moon,
             max_workers=max_workers,
         )
 
@@ -1276,6 +1290,59 @@ async def target_annual_hours(
             )
             for m in track.moon_data
         ],
+    )
+
+
+@router.get("/moon-year", response_model=MoonYearResponse)
+async def moon_year(
+    location_id: int,
+    year: int | None = Query(
+        None,
+        description="Calendar year. Defaults to the current year in the location's timezone.",
+    ),
+    horizon_id: int | None = Query(
+        None, description="Ignored for the Moon line; accepted for parity with annual-hours."
+    ),
+) -> MoonYearResponse:
+    """Per-night Moon peak altitude during darkness + illumination for a year,
+    plus new- and full-moon dates. Target-independent (Sky Conditions calculator)."""
+    async with get_db() as conn:
+        location = await _load_planner_location(conn, location_id)
+        horizon = await _load_planner_horizon(conn, location_id, horizon_id)
+        cursor = await conn.execute("SELECT name FROM location WHERE id = ?", (location_id,))
+        name_row = await cursor.fetchone()
+    location_name = name_row["name"] if name_row else f"Location {location_id}"
+
+    if year is None:
+        year = datetime.now(ZoneInfo(location.timezone)).year
+
+    settings = await get_settings()
+    configured_workers = settings.max_worker_cores
+    if configured_workers is None:
+        configured_workers = max(1, (os.cpu_count() or 2) - 1)
+    max_workers = max(1, int(configured_workers))
+
+    async with _annual_hours_semaphore:
+        moon_data = await asyncio.to_thread(
+            compute_moon_year, location, horizon, year, max_workers=max_workers
+        )
+    new_moons, full_moons = derive_phase_dates(moon_data)
+
+    return MoonYearResponse(
+        year=year,
+        location_id=location_id,
+        location_name=location_name,
+        timezone=location.timezone,
+        points=[
+            MoonYearPoint(
+                date=m.date.isoformat(),
+                max_altitude_deg=m.max_altitude_deg,
+                illumination_pct=m.illumination_pct,
+            )
+            for m in moon_data
+        ],
+        new_moons=[d.isoformat() for d in new_moons],
+        full_moons=[d.isoformat() for d in full_moons],
     )
 
 

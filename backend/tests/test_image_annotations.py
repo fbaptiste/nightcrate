@@ -218,6 +218,32 @@ class TestProjectDsos:
         assert len(results) == 1
         assert results[0].ellipse_semi_major_px is None
 
+    def test_offframe_point_excluded_but_extended_overlap_included(self):
+        # An object whose center projects just outside the frame: a point object
+        # is excluded (would be clipped by the overlay → must not be counted),
+        # while a large object whose extent still overlaps the frame is kept.
+        wcs = build_wcs(ORION_WCS)
+        coord = wcs.pixel_to_world(ORION_WCS.naxis1 + 30, 500)  # 30 px past right edge
+        ra, dec = float(coord.ra.deg), float(coord.dec.deg)
+        base = {
+            "obj_type": "G",
+            "type_group": "Galaxy",
+            "ra_deg": ra,
+            "dec_deg": dec,
+            "min_axis_arcmin": None,
+            "position_angle_deg": None,
+            "common_name": None,
+            "constellation": None,
+            "distance_pc": None,
+            "distance_method": None,
+            "mag_b": None,
+        }
+        point = {**base, "id": 10, "primary_designation": "Point", "maj_axis_arcmin": None}
+        extended = {**base, "id": 11, "primary_designation": "BigNeb", "maj_axis_arcmin": 60.0}
+        ids = {r.id for r in project_dsos(ORION_WCS, [point, extended])}
+        assert 10 not in ids  # off-frame point: not drawable → excluded
+        assert 11 in ids  # extent overlaps the frame → kept
+
     def test_ellipse_dimensions_scale_with_angular_size(self):
         small = {
             "id": 10,

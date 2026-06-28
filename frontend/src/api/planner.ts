@@ -322,6 +322,8 @@ export interface AnnualHoursParams {
   maxIlluminationPct?: number | null;
   minSeparationDeg?: number | null;
   moonCombine?: "and" | "or";
+  /** Force moon altitude + illumination for the chart even with no moon filter. */
+  includeMoon?: boolean;
 }
 
 export function fetchAnnualHours(
@@ -336,9 +338,37 @@ export function fetchAnnualHours(
   if (params.maxIlluminationPct != null) qs.set("max_illumination_pct", String(params.maxIlluminationPct));
   if (params.minSeparationDeg != null) qs.set("min_separation_deg", String(params.minSeparationDeg));
   if (params.moonCombine) qs.set("moon_combine", params.moonCombine);
+  if (params.includeMoon) qs.set("include_moon", "true");
   return apiFetch<AnnualHoursResponse>(
     `/planner/targets/${dsoId}/annual-hours?${qs.toString()}`,
   );
+}
+
+// ── Moon altitude (year) calculator ─────────────────────────────────────────
+
+export interface MoonYearPoint {
+  date: string; // ISO date
+  max_altitude_deg: number | null; // peak Moon altitude during astro darkness
+  illumination_pct: number;
+}
+
+export interface MoonYearResponse {
+  year: number;
+  location_id: number;
+  location_name: string;
+  timezone: string;
+  points: MoonYearPoint[];
+  new_moons: string[]; // ISO dates — dark-sky imaging windows
+  full_moons: string[];
+}
+
+export function fetchMoonYear(
+  locationId: number,
+  year?: number,
+): Promise<MoonYearResponse> {
+  const qs = new URLSearchParams({ location_id: String(locationId) });
+  if (year) qs.set("year", String(year));
+  return apiFetch<MoonYearResponse>(`/planner/moon-year?${qs.toString()}`);
 }
 
 export interface ThumbnailCacheStats {

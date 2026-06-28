@@ -255,6 +255,77 @@ def _extract_property_value(prop: Element) -> str:
     return prop.text
 
 
+def _astrometric_wcs_cards(img_elem: Element, existing_keys: set[str]) -> list[dict]:
+    """Reconstruct standard FITS WCS cards from a PixInsight AstrometricSolution.
+
+    PixInsight stores its plate solution as ``PCL:AstrometricSolution:*``
+    properties (base64-encoded F64 vectors/matrix), never as FITS WCS keywords,
+    so a PI-solved XISF otherwise reads as "no WCS". For the linear (Gnomonic /
+    TAN) part this maps directly to a FITS CD-matrix WCS:
+
+    - ``ReferenceCelestialCoordinates`` (RA, Dec deg) -> CRVAL1/2
+    - ``ReferenceImageCoordinates`` (PI 0-based pixel) -> CRPIX1/2 (+1 -> FITS 1-based)
+    - ``LinearTransformationMatrix`` (row-major 2x2, deg/px) -> CD1_1..CD2_2
+    - ``ProjectionSystem == "Gnomonic"`` -> CTYPE RA---TAN / DEC--TAN
+
+    Verified against an independent ASTAP solve of the same frame: the matrix is
+    used as-is (no transpose, no y-flip) and CRVAL matches directly; only the
+    1-based pixel-origin shift is applied. Higher-order SplineWorldTransformation
+    is ignored (the linear term is sub-arcsec-accurate for annotation). Cards are
+    emitted only for keys not already present so real FITSKeyword WCS wins.
+    """
+    props: dict[str, Element] = {}
+    for prop in img_elem.iter(_tag("Property")):
+        pid = prop.get("id", "")
+        if pid.startswith("PCL:AstrometricSolution:"):
+            props[pid.split(":")[-1]] = prop
+
+    proj = props.get("ProjectionSystem")
+    if proj is None or _extract_property_value(proj).strip().lower() != "gnomonic":
+        return []  # only linear TAN is supported
+
+    def _doubles(key: str) -> list[float] | None:
+        prop = props.get(key)
+        if prop is None or not prop.text:
+            return None
+        try:
+            raw = base64.b64decode(prop.text)
+            return list(struct.unpack(f"<{len(raw) // 8}d", raw))
+        except Exception:
+            return None
+
+    crval = _doubles("ReferenceCelestialCoordinates")
+    crpix = _doubles("ReferenceImageCoordinates")
+    cd = _doubles("LinearTransformationMatrix")  # row-major [CD1_1, CD1_2, CD2_1, CD2_2]
+    if (
+        crval is None
+        or crpix is None
+        or cd is None
+        or len(crval) < 2
+        or len(crpix) < 2
+        or len(cd) < 4
+    ):
+        return []
+
+    derived = {
+        "CTYPE1": "RA---TAN",
+        "CTYPE2": "DEC--TAN",
+        "CRVAL1": repr(crval[0]),
+        "CRVAL2": repr(crval[1]),
+        "CRPIX1": repr(crpix[0] + 1.0),  # PI 0-based pixel center -> FITS 1-based
+        "CRPIX2": repr(crpix[1] + 1.0),
+        "CD1_1": repr(cd[0]),
+        "CD1_2": repr(cd[1]),
+        "CD2_1": repr(cd[2]),
+        "CD2_2": repr(cd[3]),
+    }
+    return [
+        {"key": k, "value": v, "comment": "XISF: AstrometricSolution", "description": ""}
+        for k, v in derived.items()
+        if k not in existing_keys
+    ]
+
+
 def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
     """Read metadata as {key, value, comment} dicts.
 
@@ -342,6 +413,10 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
                     "description": get_keyword_description(prop_id),
                 }
             )
+
+    # Synthesize FITS WCS cards from a PixInsight astrometric solution, if any
+    # (real FITSKeyword WCS already in existing_keys wins).
+    cards.extend(_astrometric_wcs_cards(img_elem, existing_keys))
 
     return cards
 

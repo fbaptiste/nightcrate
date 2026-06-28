@@ -4889,7 +4889,11 @@ folder and see everything filed correctly.
       equipment ingest (NULL FKs), stack detection, multi-folder scan, session formation
       (noon-to-noon, rig separation, tz), every calibration/integration view, folder-binding
       CRUD, catalog summary/frames. **62 new tests (20 schema + 42 ingest), 94% module
-      coverage.**
+      coverage.** (Plus, in the card-redesign + fixes + calculator pass: per-filter pills,
+      filter-name scope, frame dimensions/size, flats filter-sort, folder-removal purge,
+      single-folder scan, master filter/dimensions, XISF AstrometricSolution → WCS, `project_dsos`
+      off-frame exclusion, `include_moon`, and `compute_moon_year`/`derive_phase_dates` + the
+      `/moon-year` endpoint.)
 - [x] **As built: ingest ProcessPool is per-run, shut down in `finally` (not a persistent
       global).** Found during Playwright e2e: a lingering spawn pool's workers block
       `uvicorn --reload` restarts and wedge the whole event loop. Per-run shutdown fixes it;
@@ -4898,6 +4902,31 @@ folder and see everything filed correctly.
       isolated throwaway workspace: count chips, frames grid, per-row metadata, and
       `filter_name_hint` (Ha/Oiii with NULL `filter_id`) all correct; decoy folder names
       ignored; master routed out of the frames grid.
+- [x] **As built (card-based catalog UI, after real-data testing on a 304-light project):** the
+      DataGrid was replaced by a **card-based infinite-scroll list** — MUI X Community caps the
+      DataGrid at 100 rows/page, which silently hid most frames. Each card shows a thumbnail,
+      filename + full directory path (start-truncated on overflow, tooltip = full path),
+      filter/object, exposure(s)/gain/set-temp/binning, **dimensions + file size**, and the date in
+      the project's display timezone. Filter pills filter the list (count only on Lights,
+      +integration on Flats); Flats sort by filter, others by path (raw vs PixInsight stages bunch).
+      Masters show filter (FILTER → `line_name`), dimensions, and **integration time**
+      (`total_exposure_seconds`, migration `0039`, from `PCL:TotalExposureTime`). Per-folder +
+      auto-on-add **Re-scan**; removing a folder **purges** its cataloged items (orphan sweep).
+      XISF pixel dimensions surfaced from the geometry attribute.
+- [x] **As built (pre-existing bug fixes folded in):** (1) the planner/DSO "Best time of year"
+      Moon-altitude line was blank — moon math was gated behind the moon filter; added an
+      `include_moon` display flag so the chart's altitude + illumination compute. (2) Plate-solve /
+      Image-Analyzer Identify showed "N identified, fewer drawn" — `project_dsos` margin tightened to
+      the drawn semi-major (off-frame points excluded so count == drawn) AND annotation labels clamp
+      into the frame (a multi-degree nebula's label sat off-image). (3) PixInsight-solved **XISF now
+      detects WCS** — `xisf_io.read_header` reconstructs FITS WCS cards from the
+      `PCL:AstrometricSolution` properties (CD = matrix as-is, CRPIX 0→1-based; verified against an
+      ASTAP solve of the same frame).
+- [x] **As built: new "Moon Altitude (Year)" calculator** (Sky Conditions). For the selected
+      location, plots the Moon's peak altitude during astronomical darkness across a year, with
+      illumination as background shading and solid new-moon (below) / full-moon (above) markers the
+      hover scrubber snaps to. Backend `compute_moon_year` + `derive_phase_dates` reuse the cached
+      annual-hours moon computation; `GET /api/planner/moon-year`.
 
 ## v0.41.0 — Correct + Curate
 

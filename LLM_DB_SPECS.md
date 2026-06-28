@@ -350,8 +350,8 @@ CREATE TABLE processed_image (project_id FK CASCADE, content_hash TEXT UNIQUE,
     image_kind CHECK ('master','stack','processed','other'),
     frame_type CHECK ('light','dark','flat','bias','dark_flat','unknown'),
     filter_id FK, line_name CHECK (15-value bandpass vocab), camera_id FK,
-    telescope_id FK, ncombine INT, date_obs_utc TEXT, image_width INT,
-    image_height INT, fits_header_json TEXT, ingestion_run_id FK SET NULL,
+    telescope_id FK, ncombine INT, total_exposure_seconds REAL, date_obs_utc TEXT,
+    image_width INT, image_height INT, fits_header_json TEXT, ingestion_run_id FK SET NULL,
     created_at, updated_at);  -- updated_at trigger
 
 CREATE TABLE sub_frame (content_hash TEXT UNIQUE,  -- SHA-256, idempotent

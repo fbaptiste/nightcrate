@@ -1704,6 +1704,7 @@ CREATE TABLE processed_image (
     camera_id        INTEGER REFERENCES camera(id),
     telescope_id     INTEGER REFERENCES telescope(id),
     ncombine         INTEGER,
+    total_exposure_seconds REAL,  -- migration 0039: integration time for masters
     date_obs_utc     TEXT,
     image_width      INTEGER,
     image_height     INTEGER,

@@ -18,6 +18,7 @@ import FileSizeCalc from "@/components/calculators/FileSizeCalc";
 import AirmassCalc from "@/components/calculators/AirmassCalc";
 import SqmBortleCalc from "@/components/calculators/SqmBortleCalc";
 import TemperatureCalc from "@/components/calculators/TemperatureCalc";
+import MoonAltitudeCalc from "@/components/calculators/MoonAltitudeCalc";
 
 const DEFAULT_CALC = "lat-long";
 
@@ -41,6 +42,8 @@ function renderCalculator(calcId: string) {
       return <FileSizeCalc />;
     case "airmass":
       return <AirmassCalc />;
+    case "moon-altitude":
+      return <MoonAltitudeCalc />;
     case "sqm-bortle":
       return <SqmBortleCalc />;
     case "temperature":

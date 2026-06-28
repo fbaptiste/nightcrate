@@ -174,10 +174,16 @@ def project_dsos(
         if np.isnan(x) or np.isnan(y):
             continue
 
+        # Keep an object only if its drawn extent actually overlaps the frame.
+        # maj_axis_arcmin is the FULL major axis, so /2 is the semi-major radius
+        # the overlay actually draws; 0 for a point. A small object whose center
+        # is off-frame is excluded, so the "identified" count matches what's drawn
+        # (the SVG clips to the image); a large nebula centered just off-frame but
+        # reaching in still qualifies.
         maj_arcmin = dso.get("maj_axis_arcmin")
-        margin = 50.0
+        margin = 0.0
         if maj_arcmin is not None and pixel_scale_deg > 0:
-            margin = max(margin, (maj_arcmin / 60.0) / pixel_scale_deg)
+            margin = (maj_arcmin / 60.0) / pixel_scale_deg / 2.0
 
         if x < -margin or x > params.naxis1 + margin:
             continue
