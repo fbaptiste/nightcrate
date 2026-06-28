@@ -1,9 +1,10 @@
 /**
  * Standalone Moon-altitude-over-the-year chart for the Sky Conditions
  * calculator. Plots the Moon's peak altitude during astronomical darkness each
- * night (left axis, 0–90°) and its illumination fraction (right axis, 0–100%),
- * with new- and full-moon markers along the bottom that the hover scrubber
- * snaps to. D3 patterns mirror the planner's BestTimeOfYearChart.
+ * night (left axis, 0–90°), illumination as per-night background shading
+ * (brighter = fuller), and solid new-moon (below) / full-moon (above) markers
+ * the hover scrubber snaps to. D3 patterns mirror the planner's
+ * BestTimeOfYearChart.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";

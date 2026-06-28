@@ -329,9 +329,13 @@ def _astrometric_wcs_cards(img_elem: Element, existing_keys: set[str]) -> list[d
 def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
     """Read metadata as {key, value, comment} dicts.
 
-    First extracts <FITSKeyword> elements (same format as FITS headers).
-    Then extracts <Property> elements with scalar values, mapping XISF property IDs
-    to equivalent FITS-style keywords for display.
+    1. <FITSKeyword> elements (same format as FITS headers).
+    2. NAXIS1/NAXIS2 derived from the Image `geometry` attribute (when absent).
+    3. <Property> elements with scalar values, mapping XISF property IDs to
+       equivalent FITS-style keywords for display.
+    4. Synthetic FITS WCS cards reconstructed from a PixInsight
+       `PCL:AstrometricSolution` (see `_astrometric_wcs_cards`).
+    Steps 2-4 only add keys that aren't already present (real FITSKeyword wins).
     """
     root, _ = _parse_xml_header(source)
 

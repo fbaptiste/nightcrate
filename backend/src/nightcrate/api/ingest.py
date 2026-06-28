@@ -714,7 +714,10 @@ async def catalog_summary(project_id: int) -> CatalogSummary:
         s.sessions = await _count(
             conn, "SELECT COUNT(*) FROM session WHERE project_id = ?", (project_id,)
         )
-        # File-category counts are run-scoped via the same project's runs.
+        # Non-frame file counts (pxiproject/log/other) are WORKSPACE-WIDE, not
+        # project-scoped: standalone file_location rows have no project link
+        # (file_location is global — one workspace, one user). Frame counts above
+        # ARE project-scoped via ingestion_run.
         cursor = await conn.execute(
             "SELECT category, COUNT(*) AS n FROM file_location GROUP BY category"
         )
@@ -1068,15 +1071,6 @@ def _as_int(value) -> int | None:
         return None
     try:
         return int(float(value))
-    except _COERCE_ERRORS:
-        return None
-
-
-def _as_float(value) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
     except _COERCE_ERRORS:
         return None
 
