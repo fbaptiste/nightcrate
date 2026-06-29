@@ -217,7 +217,9 @@ class AnnualHoursResponse(BaseModel):
     # Location-tz "tonight" date (ISO), or None when not in the plotted year.
     # Lets the chart anchor its "today" marker to the matching night instead
     # of the current UTC instant (which mis-snaps to the next day in the
-    # evening, since each point is anchored at noon UTC).
+    # evening). Each consumer pairs this date with its own point anchor
+    # (BestTimeOfYearChart uses noon UTC; PlanAssignmentEditor / PlanSparkline
+    # use midnight UTC) — what matters is the marker and points share an anchor.
     today: str | None
     points: list[AnnualHoursPoint]
     filtered_points: list[AnnualHoursPoint]

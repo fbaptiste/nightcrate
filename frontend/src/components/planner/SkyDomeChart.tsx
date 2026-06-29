@@ -12,7 +12,7 @@
  * numeric Moon separation is always shown in the readout.
  */
 import Box from "@mui/material/Box";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import type { SkyDialSample, SkyPathPoint } from "./skyDial";
 import SkyDialReadout from "./SkyDialReadout";
@@ -45,8 +45,9 @@ export default function SkyDomeChart({
 }: Props) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const ringColor = isDark ? "rgba(255, 255, 255, 0.26)" : "rgba(0, 0, 0, 0.22)";
-  const rimColor = isDark ? "rgba(255, 255, 255, 0.45)" : "rgba(0, 0, 0, 0.40)";
+  const neutral = isDark ? theme.palette.common.white : theme.palette.common.black;
+  const ringColor = alpha(neutral, isDark ? 0.26 : 0.22);
+  const rimColor = alpha(neutral, isDark ? 0.45 : 0.4);
   const labelColor = theme.palette.text.secondary;
 
   const cx = size / 2;

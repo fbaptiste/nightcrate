@@ -11,7 +11,7 @@
  * tilted back and rotated a few degrees so it reads as a 3-D object.
  */
 import Box from "@mui/material/Box";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import type { SkyDialSample, SkyPathPoint } from "./skyDial";
 import SkyDialReadout from "./SkyDialReadout";
@@ -32,12 +32,15 @@ const FLOOR_ID = "sky-dome-3d-floor";
 const BACKRIM_ID = "sky-dome-3d-backrim";
 const FRONTRIM_ID = "sky-dome-3d-frontrim";
 
-// Diagram is a night-sky scene: dark backdrop + vibrant fills in both themes.
-const BACKDROP = "#0a0e16";
+// The 3-D dome is a deliberately theme-independent illustration: a fixed
+// night-sky scene that reads identically in light and dark mode (a light
+// backdrop would wash out the translucent glass). Its scene colours are
+// centralised named constants here — the same fixed-palette approach as
+// lib/rigColors.ts — rather than MUI theme tokens. Universal neutrals
+// (white labels/glints, black outlines) DO come from the theme, in-component.
+const BACKDROP = "#0a0e16"; // near-black card the dome sits on
 const EQUATOR = "rgb(150, 232, 250)"; // bright cyan horizon/rim line
-const GRID = "rgba(205, 242, 252, 0.32)";
-const AXIS = "rgba(14, 10, 4, 0.72)"; // dark axes on the tan floor
-const LABEL = "#ffffff";
+const GRID = "rgba(205, 242, 252, 0.32)"; // pale-cyan alt-az grid on the glass
 
 export default function SkyDome3DChart({
   targetAz,
@@ -50,7 +53,11 @@ export default function SkyDome3DChart({
   moonPath,
   size = 220,
 }: Props) {
-  useTheme();
+  const theme = useTheme();
+  // Universal neutrals from the theme (the scene palette above is fixed).
+  const white = theme.palette.common.white;
+  const axisColor = alpha(theme.palette.common.black, 0.72); // axes on the floor
+  const outline = (o: number) => alpha(theme.palette.common.black, o); // bead/dot edges
 
   const pad = 26; // room around the dome for the labels on the backdrop
   const R = size / 2 - pad;
@@ -135,7 +142,7 @@ export default function SkyDome3DChart({
       const s = proj(p.az, p.alt);
       if (last && Math.hypot(s.x - last.x, s.y - last.y) < 3.6) continue;
       last = s;
-      const A = p.az * DEG;
+      const A = (p.az + AZ_OFFSET) * DEG; // match proj()/isNear() — same rotation
       const h = p.alt * DEG;
       const depth = Math.cos(h) * Math.cos(A) * COS_PHI - Math.sin(h) * SIN_PHI;
       out.push({ x: s.x, y: s.y, op: Math.max(0.62, Math.min(1, 0.86 - 0.26 * depth)) });
@@ -245,8 +252,8 @@ export default function SkyDome3DChart({
 
         {/* Ground plane + base cross-axes. */}
         <ellipse cx={cx} cy={cy} rx={R} ry={ry} fill={`url(#${FLOOR_ID})`} />
-        <line x1={fN.x} y1={fN.y} x2={fS.x} y2={fS.y} stroke={AXIS} strokeWidth={1} />
-        <line x1={fE.x} y1={fE.y} x2={fW.x} y2={fW.y} stroke={AXIS} strokeWidth={1} />
+        <line x1={fN.x} y1={fN.y} x2={fS.x} y2={fS.y} stroke={axisColor} strokeWidth={1} />
+        <line x1={fE.x} y1={fE.y} x2={fW.x} y2={fW.y} stroke={axisColor} strokeWidth={1} />
 
         {/* Back equator (behind the glass, dashed, fading). */}
         <path d={backHorizon} fill="none" stroke={`url(#${BACKRIM_ID})`} strokeWidth={1.4} strokeDasharray="3,3" />
@@ -273,32 +280,32 @@ export default function SkyDome3DChart({
         {mMer.near.map((d, i) => (
           <path key={`mmn${i}`} d={d} fill="none" stroke={RIG_ORANGE} strokeOpacity={0.9} strokeWidth={2} strokeLinecap="round" />
         ))}
-        {moonUp && <circle cx={mFoot.x} cy={mFoot.y} r={2.8} fill={RIG_ORANGE} stroke="rgba(0,0,0,0.5)" strokeWidth={0.6} />}
+        {moonUp && <circle cx={mFoot.x} cy={mFoot.y} r={2.8} fill={RIG_ORANGE} stroke={outline(0.5)} strokeWidth={0.6} />}
         {tMer.far.map((d, i) => (
           <path key={`tmf${i}`} d={d} fill="none" stroke={RIG_BLUE} strokeOpacity={0.4} strokeWidth={1.5} strokeLinecap="round" />
         ))}
         {tMer.near.map((d, i) => (
           <path key={`tmn${i}`} d={d} fill="none" stroke={RIG_BLUE} strokeOpacity={0.95} strokeWidth={2} strokeLinecap="round" />
         ))}
-        {targetUp && <circle cx={tFoot.x} cy={tFoot.y} r={2.8} fill={RIG_BLUE} stroke="rgba(0,0,0,0.55)" strokeWidth={0.6} />}
+        {targetUp && <circle cx={tFoot.x} cy={tFoot.y} r={2.8} fill={RIG_BLUE} stroke={outline(0.55)} strokeWidth={0.6} />}
 
         {/* Body path dots — bold, dark-outlined so they read on the glass. */}
         {mDots.map((d, i) => (
-          <circle key={`md${i}`} cx={d.x} cy={d.y} r={2.4} fill={RIG_ORANGE} fillOpacity={d.op} stroke="rgba(0,0,0,0.5)" strokeWidth={0.6} />
+          <circle key={`md${i}`} cx={d.x} cy={d.y} r={2.4} fill={RIG_ORANGE} fillOpacity={d.op} stroke={outline(0.5)} strokeWidth={0.6} />
         ))}
         {tDots.map((d, i) => (
-          <circle key={`td${i}`} cx={d.x} cy={d.y} r={2.4} fill={RIG_BLUE} fillOpacity={d.op} stroke="rgba(0,0,0,0.6)" strokeWidth={0.6} />
+          <circle key={`td${i}`} cx={d.x} cy={d.y} r={2.4} fill={RIG_BLUE} fillOpacity={d.op} stroke={outline(0.6)} strokeWidth={0.6} />
         ))}
 
         {/* Moon marker (drawn first so the target wins on overlap). */}
         <g opacity={moonUp ? 1 : 0.45}>
-          <circle cx={mPos.x} cy={mPos.y} r={6.5} fill={RIG_ORANGE} fillOpacity={moonOpacity} stroke="rgba(0,0,0,0.6)" strokeWidth={1.25} strokeDasharray={moonUp ? undefined : "2,2"} />
-          {moonUp && <circle cx={mPos.x - 2} cy={mPos.y - 2} r={1.8} fill="#ffffff" fillOpacity={0.6} />}
+          <circle cx={mPos.x} cy={mPos.y} r={6.5} fill={RIG_ORANGE} fillOpacity={moonOpacity} stroke={outline(0.6)} strokeWidth={1.25} strokeDasharray={moonUp ? undefined : "2,2"} />
+          {moonUp && <circle cx={mPos.x - 2} cy={mPos.y - 2} r={1.8} fill={white} fillOpacity={0.6} />}
         </g>
         {/* Target marker. */}
         <g opacity={targetUp ? 1 : 0.5}>
-          <circle cx={tPos.x} cy={tPos.y} r={5.5} fill={RIG_BLUE} stroke="rgba(0,0,0,0.65)" strokeWidth={1.5} />
-          {targetUp && <circle cx={tPos.x - 1.6} cy={tPos.y - 1.6} r={1.6} fill="#ffffff" fillOpacity={0.7} />}
+          <circle cx={tPos.x} cy={tPos.y} r={5.5} fill={RIG_BLUE} stroke={outline(0.65)} strokeWidth={1.5} />
+          {targetUp && <circle cx={tPos.x - 1.6} cy={tPos.y - 1.6} r={1.6} fill={white} fillOpacity={0.7} />}
         </g>
 
         {/* Compass labels — white with a dark halo, just outside the rim. */}
@@ -313,7 +320,7 @@ export default function SkyDome3DChart({
               key={c.label}
               x={f.x + (dx / len) * off}
               y={f.y + (dy / len) * off}
-              fill={LABEL}
+              fill={white}
               fillOpacity={c.major ? 1 : 0.8}
               stroke={BACKDROP}
               strokeWidth={c.major ? 2.6 : 2.2}
