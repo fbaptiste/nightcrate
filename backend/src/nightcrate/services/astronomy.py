@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import astropy.units as u
 import numpy as np
-from astropy.coordinates import AltAz, EarthLocation, get_body
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
 
 # ── Sun altitude thresholds (degrees) ────────────────────────────────────────
@@ -94,6 +94,39 @@ def _make_location(latitude: float, longitude: float, elevation_m: float | None)
     """Create an EarthLocation, defaulting elevation to 0 if None."""
     elev = elevation_m if elevation_m is not None else 0.0
     return EarthLocation(lat=latitude * u.deg, lon=longitude * u.deg, height=elev * u.m)
+
+
+def tonight_date(location_tz: str) -> date:
+    """Local "tonight" — today's date in the location's timezone.
+
+    If you open the app at 2 AM on 2026-04-20, "tonight" still means the
+    evening that just ended (2026-04-19 → 2026-04-20). To keep the UX
+    intuitive, we roll back by 12 hours before taking the date, so the UI
+    stays on "tonight" until local noon. This is the single source of truth
+    for "what night is it" — the planner, wishlist calendar, and any chart's
+    "today" marker must all derive their current-date anchor from here, NOT
+    from the raw UTC instant (which lands a day ahead in the evening, since
+    local date != UTC date once it's past ~17:00 in the Americas).
+    """
+    now_local = datetime.now(ZoneInfo(location_tz))
+    anchor = now_local - timedelta(hours=12)
+    return anchor.date()
+
+
+def direction_only(body: SkyCoord) -> SkyCoord:
+    """Strip the distance from a ``get_body()`` result for angular separation.
+
+    ``get_body("moon"/"sun", ...)`` returns a geocentric (GCRS) coordinate that
+    carries a finite distance. Computing ``target.separation(body)`` against an
+    ICRS catalog coordinate transforms that distance-bearing point into the
+    target's barycentric ICRS frame, which **shifts the origin by ~1 AU** and
+    corrupts the apparent direction — the resulting separation is several
+    degrees wrong and barely changes across a night (a classic astropy
+    footgun). Re-wrapping the body as a unit-spherical coordinate (ra/dec only,
+    no distance) makes the separation a pure on-sky direction angle, which is
+    what every caller here actually wants.
+    """
+    return SkyCoord(body.ra, body.dec, frame=body.frame)
 
 
 def _make_time_grid(start_utc: datetime, end_utc: datetime, n_samples: int) -> Time:

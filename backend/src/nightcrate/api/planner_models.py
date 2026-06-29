@@ -156,6 +156,15 @@ class SingleTargetScoreResponse(BaseModel):
     score_pct: int | None
     quality_label: str | None
     score_breakdown: ScoreBreakdownOut | None
+    # Visibility summary for the same (dso, location, horizon, date) — lets the
+    # detail panel populate its fact grid for an object that isn't in the
+    # currently-loaded list page (e.g. switched to via the FOV annotation).
+    hours_visible: float | None = None
+    max_altitude_deg: float | None = None
+    peak_time_utc: str | None = None
+    transit_time_utc: str | None = None
+    altitude_at_transit_deg: float | None = None
+    min_moon_separation_deg: float | None = None
 
 
 class TwilightBandsOut(BaseModel):
@@ -175,6 +184,7 @@ class SkyTrackResponse(BaseModel):
     object_altitude_deg: list[float]
     object_azimuth_deg: list[float]
     moon_altitude_deg: list[float]
+    moon_azimuth_deg: list[float]
     moon_separation_deg: list[float]
     horizon_altitude_at_object_az: list[float]
     twilight: TwilightBandsOut
@@ -204,6 +214,11 @@ class AnnualHoursResponse(BaseModel):
     horizon_name: str
     flat_altitude_deg: float | None
     moon_sep_deg: float
+    # Location-tz "tonight" date (ISO), or None when not in the plotted year.
+    # Lets the chart anchor its "today" marker to the matching night instead
+    # of the current UTC instant (which mis-snaps to the next day in the
+    # evening, since each point is anchored at noon UTC).
+    today: str | None
     points: list[AnnualHoursPoint]
     filtered_points: list[AnnualHoursPoint]
     moon_data: list[MoonDataPoint]

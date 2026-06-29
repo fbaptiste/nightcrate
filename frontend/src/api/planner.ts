@@ -233,6 +233,7 @@ export interface SkyTrackResponse {
   object_altitude_deg: number[];
   object_azimuth_deg: number[];
   moon_altitude_deg: number[];
+  moon_azimuth_deg: number[];
   moon_separation_deg: number[];
   horizon_altitude_at_object_az: number[];
   twilight: TwilightBands;
@@ -247,6 +248,14 @@ export interface SingleTargetScoreResponse {
   score_pct: number | null;
   quality_label: QualityLabel | null;
   score_breakdown: ScoreBreakdown | null;
+  /** Visibility facts for the same (dso, location, horizon, date) — lets the
+   *  detail panel fill its fact grid for an object not in the loaded list. */
+  hours_visible: number | null;
+  max_altitude_deg: number | null;
+  peak_time_utc: string | null;
+  transit_time_utc: string | null;
+  altitude_at_transit_deg: number | null;
+  min_moon_separation_deg: number | null;
 }
 
 export interface SingleTargetScoreParams {
@@ -310,6 +319,8 @@ export interface AnnualHoursResponse {
   horizon_name: string;
   flat_altitude_deg: number | null;
   moon_sep_deg: number;
+  /** Location-tz "tonight" date (ISO), or null when outside the plotted year. */
+  today: string | null;
   points: AnnualHoursPoint[];
   filtered_points: AnnualHoursPoint[];
   moon_data: MoonDataPoint[];

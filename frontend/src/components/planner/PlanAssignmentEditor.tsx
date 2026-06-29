@@ -106,6 +106,10 @@ export default function PlanAssignmentEditor({ open, dsoId, dsoName, existingPla
       fetchAnnualHours(dsoId, locationId as number, {
         horizonId: horizonId as number,
         moonSepDeg: 0,
+        // Always compute Moon data so the tooltip shows real illumination /
+        // separation / altitude even when the avoidance filter is off. The
+        // filter params below only gate the *effective-hours* curve.
+        includeMoon: true,
         maxIlluminationPct: moonFilterEnabled ? maxIllumination : undefined,
         minSeparationDeg: moonFilterEnabled ? minSeparation : undefined,
         moonCombine: moonFilterEnabled ? moonCombine : undefined,
@@ -572,8 +576,16 @@ function InteractiveAnnualChart({
     return d.toISOString().slice(0, 10);
   };
 
+  // Points are anchored at UTC midnight (`new Date(p.date)`), so the label
+  // MUST render in UTC — otherwise browsers west of Greenwich shift every
+  // date back a day, mislabeling each point (and the today marker) by one.
   const formatDateLabel = (d: Date): string =>
-    d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    });
 
   const hoursAtX = (x: number): { hours: number; idx: number } => {
     const t = xScale.invert(x);
@@ -718,7 +730,9 @@ function InteractiveAnnualChart({
   const rangeColor = `${RIG_BLUE}33`;
   const dragColor = isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.08)";
   const threshColor = isDark ? "#ffffff66" : "#00000044";
-  const todayX = xScale(new Date());
+  // Anchor "today" to the backend location-tz date, not the raw UTC instant
+  // (which lands a day ahead in the evening). null if outside the plotted year.
+  const todayX = track.today ? xScale(new Date(track.today)) : null;
 
   return (
     <Box ref={wrapperRef} sx={{ width: "100%", userSelect: "none", position: "relative" }}>
@@ -806,7 +820,7 @@ function InteractiveAnnualChart({
           )}
 
           {/* Today line */}
-          {todayX >= 0 && todayX <= innerW && (
+          {todayX != null && todayX >= 0 && todayX <= innerW && (
             <line
               x1={todayX}
               y1={0}

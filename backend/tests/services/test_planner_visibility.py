@@ -226,6 +226,18 @@ def test_moon_separation_positive_when_visible():
         assert 0.0 <= vis.min_moon_separation_deg <= 180.0
 
 
+def test_min_moon_separation_pinned_corrected():
+    # Regression guard for the GCRS-distance separation bug (see
+    # astronomy.direction_only): the buggy code transformed the
+    # distance-bearing Moon into the target's ICRS frame, shifting the
+    # origin ~1 AU and producing a materially wrong separation. M51 from
+    # Phoenix on 2026-04-19 is ~95° from the Moon at closest approach.
+    snap = _snapshot([M51])
+    vis = snap.per_dso[M51.dso_id]
+    assert vis.min_moon_separation_deg is not None
+    assert vis.min_moon_separation_deg == pytest.approx(95.2, abs=0.7)
+
+
 def test_empty_dso_list():
     snap = _snapshot([])
     assert snap.per_dso == {}

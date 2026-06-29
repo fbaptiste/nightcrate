@@ -42,7 +42,7 @@ import BestTimeOfYearChart from "./BestTimeOfYearChart";
 import MoonFilterControls from "./MoonFilterControls";
 import { ScoreBreakdownSection } from "./ScoreBreakdownSection";
 import { ScoreChip } from "./ScoreChip";
-import SkyPositionGraph from "./SkyPositionGraph";
+import SkyPositionView from "./SkyPositionView";
 import FovSimulator from "./FovSimulator";
 import { renderHorizonMenuItems } from "./horizonMenuItems";
 
@@ -285,6 +285,13 @@ export default function PlannerDetailPanel({
 
   const open = dsoId != null;
   const dso = dsoQuery.data;
+
+  // Visibility facts + score source. Prefer the per-DSO score fetch (always
+  // for the current dsoId + preview context); fall back to the list row while
+  // it loads. Using the fetch means the fact grid + Score still render when
+  // the object isn't in the loaded list page (e.g. switched via the FOV
+  // annotation), and stays consistent with any panel rig/horizon override.
+  const facts = previewScoreQuery.data ?? target;
 
   // Derive [major, minor] FOV (sorted) and name from the preview rig —
   // ``Rig.calculators.field_of_view_deg`` is raw (width, height) from
@@ -571,8 +578,8 @@ export default function PlannerDetailPanel({
             <Fact
               label="Hours visible"
               value={
-                target?.hours_visible != null
-                  ? `${target.hours_visible.toFixed(1)} h`
+                facts?.hours_visible != null
+                  ? `${facts.hours_visible.toFixed(1)} h`
                   : "—"
               }
             />
@@ -584,9 +591,9 @@ export default function PlannerDetailPanel({
                 "higher — see the Meridian row for that."
               }
               value={
-                target?.max_altitude_deg != null && target.peak_time_utc != null
-                  ? `${target.max_altitude_deg.toFixed(0)}° @ ${formatLocalTime(
-                      target.peak_time_utc,
+                facts?.max_altitude_deg != null && facts.peak_time_utc != null
+                  ? `${facts.max_altitude_deg.toFixed(0)}° @ ${formatLocalTime(
+                      facts.peak_time_utc,
                       tz,
                     )}`
                   : "—"
@@ -595,10 +602,10 @@ export default function PlannerDetailPanel({
             <Fact
               label="Meridian"
               value={
-                target?.altitude_at_transit_deg != null &&
-                target.transit_time_utc != null
-                  ? `${target.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocalTime(
-                      target.transit_time_utc,
+                facts?.altitude_at_transit_deg != null &&
+                facts.transit_time_utc != null
+                  ? `${facts.altitude_at_transit_deg.toFixed(0)}° @ ${formatLocalTime(
+                      facts.transit_time_utc,
                       tz,
                     )}`
                   : "—"
@@ -607,8 +614,8 @@ export default function PlannerDetailPanel({
             <Fact
               label="Moon separation"
               value={
-                target?.min_moon_separation_deg != null
-                  ? `${target.min_moon_separation_deg.toFixed(0)}°`
+                facts?.min_moon_separation_deg != null
+                  ? `${facts.min_moon_separation_deg.toFixed(0)}°`
                   : "—"
               }
             />
@@ -637,10 +644,8 @@ export default function PlannerDetailPanel({
             designation pills. */}
 
         {/* ── Score Breakdown (collapsed by default, pill always visible) ── */}
-        {target && (() => {
-          const scoreItem = previewScoreQuery.data
-            ? { ...target, score_pct: previewScoreQuery.data.score_pct, quality_label: previewScoreQuery.data.quality_label, score_breakdown: previewScoreQuery.data.score_breakdown }
-            : target;
+        {(previewScoreQuery.data ?? target) && (() => {
+          const scoreItem = previewScoreQuery.data ?? target!;
           return (
             <Box sx={{ mt: 2 }}>
               <Stack direction="row" alignItems="center" gap={0.5} sx={{ cursor: "pointer" }} onClick={() => setScoreOpen((v) => !v)}>
@@ -682,7 +687,7 @@ export default function PlannerDetailPanel({
                 <CircularProgress size={24} />
               </Box>
             ) : skyTrackQuery.data ? (
-              <SkyPositionGraph track={skyTrackQuery.data} tz={tz} />
+              <SkyPositionView track={skyTrackQuery.data} tz={tz} />
             ) : null}
           </Collapse>
         </Box>

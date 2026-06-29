@@ -277,6 +277,8 @@ export interface CalendarResponse {
   rig_name: string;
   horizon_id: number;
   horizon_name: string;
+  /** Location-tz "tonight" date (ISO) — anchor for the today marker. */
+  today: string;
   months: string[];
   targets: CalendarTargetRow[];
   sections: SectionResponse[];

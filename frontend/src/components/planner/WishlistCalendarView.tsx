@@ -56,11 +56,6 @@ function toRefDate(iso: string): Date {
   const d = new Date(`${iso}T00:00:00Z`);
   return new Date(Date.UTC(REF_YEAR, d.getUTCMonth(), d.getUTCDate()));
 }
-
-function toRefNow(): Date {
-  const d = new Date();
-  return new Date(Date.UTC(REF_YEAR, d.getUTCMonth(), d.getUTCDate()));
-}
 const SNAP_PX = 8;
 
 interface HoverInfo {
@@ -400,7 +395,9 @@ function CalendarChart({
     d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
 
-  const todayXPx = x(toRefNow());
+  // Anchor "today" to the location-tz date from the backend, not the raw UTC
+  // instant (which lands a day ahead in the evening). See toRefDate.
+  const todayXPx = x(toRefDate(data.today));
 
   const handleHover = (svg: SVGSVGElement, clientX: number, clientY: number) => {
     const rect = svg.getBoundingClientRect();
@@ -679,7 +676,7 @@ function CalendarChart({
                 fontSize={9}
                 fill={isDark ? "#999999" : "#666666"}
               >
-                {toRefNow().toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}
+                {toRefDate(data.today).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}
               </text>
             </g>
           )}

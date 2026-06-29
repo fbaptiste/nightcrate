@@ -108,6 +108,19 @@ def test_include_moon_populates_altitude_and_illumination():
     assert min(illums) < 10.0
 
 
+def test_annual_min_separation_pinned_corrected():
+    # Regression guard for the GCRS-distance separation bug (see
+    # astronomy.direction_only): the closest Moon approach to M42 during
+    # darkness on 2026-01-15 from Phoenix is ~146°. The pre-fix code,
+    # which transformed the distance-bearing Moon into the target's ICRS
+    # frame, reported a materially origin-shifted value.
+    track = compute_annual_hours(PHOENIX, FLAT_30, 2026, M42, moon_sep_deg=0.0, include_moon=True)
+    by_date = {p.date.isoformat(): track.moon_data[i] for i, p in enumerate(track.points)}
+    sep = by_date["2026-01-15"].min_separation_deg
+    assert sep is not None
+    assert sep == pytest.approx(145.9, abs=0.7)
+
+
 @pytest.fixture(scope="module")
 def moon_year_phoenix():
     return compute_moon_year(PHOENIX, FLAT_30, 2026)

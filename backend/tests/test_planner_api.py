@@ -333,8 +333,39 @@ async def test_sky_track_endpoint_returns_arrays(client: TestClient, seed_db):
     assert len(data["times_utc"]) > 0
     assert len(data["object_altitude_deg"]) == len(data["times_utc"])
     assert len(data["moon_altitude_deg"]) == len(data["times_utc"])
+    assert len(data["moon_azimuth_deg"]) == len(data["times_utc"])
+    assert all(0.0 <= az < 360.0 for az in data["moon_azimuth_deg"])
     assert len(data["horizon_altitude_at_object_az"]) == len(data["times_utc"])
     assert data["twilight"]["sunset_utc"] is not None
+
+
+async def test_score_endpoint_includes_visibility_facts(client: TestClient, seed_db):
+    # The detail panel reads its fact grid from this endpoint when the DSO
+    # isn't in the loaded list page (switched via the FOV annotation), so the
+    # score response must carry the visibility summary, not just the score.
+    location_id = seed_db
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = (await cursor.fetchone())["id"]
+
+    response = client.get(
+        f"/api/planner/targets/{m42}/score",
+        params={"location_id": location_id, "date": "2026-04-19"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    for key in (
+        "hours_visible",
+        "max_altitude_deg",
+        "peak_time_utc",
+        "transit_time_utc",
+        "altitude_at_transit_deg",
+        "min_moon_separation_deg",
+    ):
+        assert key in data
+    # M42 transits at this date/location, so the meridian facts resolve.
+    assert data["altitude_at_transit_deg"] is not None
+    assert data["transit_time_utc"] is not None
 
 
 async def test_annual_hours_endpoint_returns_one_point_per_night(client: TestClient, seed_db):
@@ -364,6 +395,12 @@ async def test_annual_hours_endpoint_returns_one_point_per_night(client: TestCli
     assert data["points"][0]["date"] == "2026-01-01"
     assert data["points"][-1]["date"] == "2026-12-31"
     assert all(0.0 <= p["hours"] <= 14.0 for p in data["points"])
+    # The chart anchors its "today" marker to this location-tz date so it
+    # lines up with the dome/sky-track. Null unless tonight is in this year.
+    assert "today" in data
+    if data["today"] is not None:
+        assert data["today"].startswith("2026-")
+        assert data["points"][0]["date"] <= data["today"] <= data["points"][-1]["date"]
 
 
 async def test_annual_hours_unknown_horizon_returns_404(client: TestClient, seed_db):

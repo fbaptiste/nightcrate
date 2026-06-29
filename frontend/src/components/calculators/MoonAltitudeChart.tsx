@@ -140,10 +140,13 @@ export default function MoonAltitudeChart({ data, height = 300 }: Props) {
     const p = data.points[idx];
     setHover({
       xPx,
+      // Points are anchored at noon UTC; render in UTC so the label can't
+      // drift a day in far-east timezones (UTC+12/+13).
       dateLabel: layout.dates[idx].toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: "UTC",
       }),
       altitudeDeg: p.max_altitude_deg,
       illuminationPct: p.illumination_pct,

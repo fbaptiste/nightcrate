@@ -51,6 +51,7 @@ from nightcrate.api.wishlist_models import (
     MoonPhaseMonth as MoonPhaseMonthOut,
 )
 from nightcrate.db.session import get_db
+from nightcrate.services.astronomy import tonight_date
 
 logger = logging.getLogger(__name__)
 
@@ -687,24 +688,26 @@ async def get_calendar_data(
         _generate_month_labels,
     )
 
+    sm: date | None = None
     if start_month:
         try:
             sm = date.fromisoformat(f"{start_month}-01")
         except ValueError:
             raise HTTPException(status_code=422, detail="start_month must be YYYY-MM")
-    else:
-        sm = date(date.today().year, 1, 1)
-        months = 12
 
     async with get_db() as conn:
         loc_cursor = await conn.execute(
-            "SELECT name FROM location WHERE id = ? AND active = 1",
+            "SELECT name, timezone FROM location WHERE id = ? AND active = 1",
             (location_id,),
         )
         loc_row = await loc_cursor.fetchone()
         if loc_row is None:
             raise HTTPException(status_code=404, detail=f"Location {location_id} not found")
         location_name = loc_row["name"]
+        # "Tonight" in the location's timezone — the calendar's today marker
+        # anchors to this (NOT the raw UTC instant, which is a day ahead in the
+        # evening). Same source of truth as the planner. See tonight_date.
+        today = tonight_date(loc_row["timezone"])
 
         rig_cursor = await conn.execute(
             "SELECT name FROM rig WHERE id = ? AND active = 1",
@@ -736,6 +739,11 @@ async def get_calendar_data(
         ranges_by_plan = await _load_date_ranges(conn, all_plan_ids)
         sections = await _load_sections(conn)
 
+    # Default the window to the current local year when no start_month given.
+    if sm is None:
+        sm = date(today.year, 1, 1)
+        months = 12
+
     plans_with_ranges = [r for r in plan_rows if ranges_by_plan.get(int(r["plan_id"]))]
 
     empty = CalendarResponse(
@@ -745,6 +753,7 @@ async def get_calendar_data(
         rig_name=rig_name,
         horizon_id=0,
         horizon_name="",
+        today=today.isoformat(),
         months=[],
         targets=[],
         sections=[],
@@ -778,6 +787,7 @@ async def get_calendar_data(
         rig_name=rig_name,
         horizon_id=0,
         horizon_name="",
+        today=today.isoformat(),
         months=month_labels,
         targets=targets_out,
         sections=sections,
