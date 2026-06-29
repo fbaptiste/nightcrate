@@ -55,6 +55,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.38.1 — Hourly Detail moon/darkness alignment](#v0381--hourly-detail-moondarkness-alignment) ✅
 - [v0.39.0 — FITS Equipment Resolver](#v0390--fits-equipment-resolver) ✅
 - [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest) ✅
+- [v0.40.1 — Planner Sky Position (Target vs Moon)](#v0401--planner-sky-position-target-vs-moon)
 - [v0.41.0 — Correct + Curate](#v0410--correct--curate)
 - [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
 - [v0.43.0 — Guiding (PHD2) Association](#v0430--guiding-phd2-association)
@@ -4940,6 +4941,46 @@ folder and see everything filed correctly.
       populated dev DB). "Have I imaged this object?" is answered by `project_dso`, not frame identity.
       Calibration-match view scoping (within-project vs shared library) deferred to v0.41.0+ when the
       views get a UI.
+
+## v0.40.1 — Planner Sky Position (Target vs Moon)
+
+**Status:** Planned. A small, self-contained Planner visualization (next up). Adds a sky-position
+view to the target detail panel: an **azimuth compass** showing the target's and the Moon's compass
+bearings side by side, paired with a **tonight altitude-vs-time chart** overlaying the target's
+altitude, the Moon's altitude, and the twilight/astro-dark bands. Inspiration: the compact
+"compass + altitude curve" detail row some planners show (see the M81 reference). Orthogonal to the
+ingest arc — does not touch the catalog/sessions schema.
+
+**Why it's valuable:** answers "is the Moon near my target tonight, and where are both in the sky?"
+at a glance, in the planning moment. The compass makes Moon-avoidance spatially obvious (e.g. a
+circumpolar northern target with the Moon low in the south reads instantly as "opposite side of the
+sky"). Complements — does not replace — the numeric angular separation already computed at closest
+approach.
+
+**Mostly assembly of data we already compute** (the visibility sampler already produces target
+alt/az across the dark window; we already have the Moon path + illumination + astro-dark windows;
+D3 patterns exist in `MoonAltitudeChart` / `BestTimeOfYearChart`). The genuinely new piece is the
+small compass dial.
+
+- [ ] **Backend:** surface, for the selected target + location + date, a sampled series of
+      `(time, target_az, target_alt, moon_az, moon_alt, moon_illum, separation_deg)` across the
+      astro-dark window. Reuse the existing visibility sampler (which already computes azimuth) +
+      Moon path; cache with the existing planner key pattern. Pure service in `services/planner_*`;
+      likely folded into the detail-panel/score fetch rather than a new endpoint.
+- [ ] **Frontend — azimuth compass** (`components/planner/SkyDomeChart.tsx` or similar): N-up dashed
+      dial; **blue wedge = target bearing**, **orange wedge = Moon bearing** (the approved
+      colorblind-safe pairing); azimuth readout. Moon glyph sized/shaded by illumination.
+- [ ] **Frontend — tonight altitude chart:** target altitude (highlighted during astro-dark),
+      Moon altitude overlay, twilight band shading. Confirm what the detail panel already renders
+      before rebuilding.
+- [ ] **Scrubber link (the payoff the static reference can't do):** drag a time cursor on the
+      altitude chart and the compass wedges + readouts update live; reuse the `useLatestRef` /
+      hover-scrubber pattern + touch handling from the existing charts.
+- [ ] **Correctness / edge cases:** the compass shows **azimuth (bearing) only — not true angular
+      separation** (two points at the same azimuth but different altitudes are far apart); always
+      keep showing the computed `separation_deg`. Handle target/Moon below the horizon (clip/fade),
+      circumpolar targets, **southern-hemisphere azimuth orientation**, and **polar latitudes with
+      no astro dark** (degrade gracefully). Verify against the existing closest-approach separation.
 
 ## v0.41.0 — Correct + Curate
 
