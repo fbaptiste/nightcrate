@@ -56,7 +56,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.39.0 — FITS Equipment Resolver](#v0390--fits-equipment-resolver) ✅
 - [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest) ✅
 - [v0.40.1 — Planner Sky Position (Target vs Moon)](#v0401--planner-sky-position-target-vs-moon) ✅
-- [v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links](#v0402--planner-sort-tooltips--tonight-cross-links)
+- [v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links](#v0402--planner-sort-tooltips--tonight-cross-links) ✅
 - [v0.40.3 — Plan a Night (pick any date)](#v0403--plan-a-night-pick-any-date)
 - [v0.41.0 — Correct + Curate](#v0410--correct--curate)
 - [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
@@ -4983,24 +4983,36 @@ persisted in `localStorage`, default Flat):
 
 ## v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links
 
-**Status:** Planned. Orthogonal UX interlude — no schema change, no migration,
-no backend change, no new dependency.
+**Status:** ✅ Complete. **Branch:** `v0.40.2/planner-sort-tooltips-tonight-cross-links`.
+Orthogonal UX interlude — no schema change, no migration, no backend change, no
+new dependency. Pure frontend.
 
-Two small planner/Tonight quality-of-life features:
+**Sort-selector tooltips** (`lib/plannerSortFields.ts` + `components/planner/PlannerSortPanel.tsx`):
+- [x] Added a `description` field to every `PlannerSortField` plus a
+      `sortFieldDescription()` helper (returns `""` for unknown fields so it
+      drops straight into a MUI `Tooltip` title).
+- [x] Wrapped all three pill surfaces with a `Tooltip` showing that one-liner —
+      the "Available (click to add)" chips, the active "Sort by" pills, and the
+      collapsed-summary chips. One shared panel → works identically in both
+      Tonight and Full Catalog views; backend sort metadata unchanged.
+- [x] `coverage_pct` description corrected to "field-of-view frame fill" (it's
+      rig FOV coverage, not dark-window coverage).
 
-1. **Sort-selector tooltips.** Every planner sort option — the "Available"
-   chips, the active "Sort by" pills, and the collapsed summary chips — gets a
-   one-line explanatory tooltip, in both Tonight and Full Catalog views.
-   Descriptions live on the `plannerSortFields` registry (`description` +
-   `sortFieldDescription()`); the backend sort metadata is unchanged.
-
-2. **Tonight cross-links.** From "Tonight at a Glance" (`/tonight`): the Moon
-   title + Moon icon link to the Moon Altitude (Year) calculator with the
-   selected date's year pre-selected (location already shared via the
-   calculators store); the Imaging-quality title + score circle link to the
-   Weather page with the selected location + date pre-selected. Uses the
-   `useSearchParams` read-then-clear pre-select pattern; the Weather date
-   applies only when it falls inside the 8-day forecast window.
+**Tonight cross-links** (`components/calculators/TonightCalc.tsx`):
+- [x] Moon panel title + phase icon deep-link to the Moon Altitude (Year)
+      calculator (`/calculators/moon-altitude?year=<Y>`) for the selected date's
+      year; location rides along via the shared calculators store.
+      `MoonAltitudeCalc` reads `?year` and clears it (read-then-clear).
+- [x] Imaging-quality title + score circle deep-link to the Weather page
+      (`/weather?location=<id>&date=<date>`). `WeatherPage` reads the params,
+      pre-selects the location, and applies the date **only once its forecast
+      confirms the date is inside the 8-day window** (held as `pendingDate`
+      until the forecast loads; a future date past the window is dropped).
+      Params cleared after read via `useSearchParams` (the established
+      read-then-clear pattern).
+- [x] Verified end-to-end with Playwright (tooltips in both planner modes; both
+      cross-links pre-select correctly and clear the URL; out-of-window date
+      dropped); zero console errors.
 
 ## v0.40.3 — Plan a Night (pick any date)
 

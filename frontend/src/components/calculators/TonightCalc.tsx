@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
+import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
@@ -140,6 +142,15 @@ export default function TonightCalc() {
     );
   }
 
+  // Cross-links from this overview into the deeper tools, carrying the
+  // selected date. The Moon panel opens the Moon Altitude (Year)
+  // calculator for the selected date's year (location is already shared
+  // through the calculators store); the Imaging-quality panel opens the
+  // Weather page pre-selected to this location + date — the Weather page
+  // applies the date only when it falls inside its 8-day forecast window.
+  const moonYearHref = `/calculators/moon-altitude?year=${date.slice(0, 4)}`;
+  const weatherHref = `/weather?location=${locationId}&date=${date}`;
+
   return (
     <Stack spacing={3}>
       <Typography variant="h5">Tonight at a Glance</Typography>
@@ -179,9 +190,18 @@ export default function TonightCalc() {
             flexDirection: "column",
           }}
         >
-          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-            Imaging quality
-          </Typography>
+          <Tooltip title="Open this date on the Weather page">
+            <Link
+              component={RouterLink}
+              to={weatherHref}
+              variant="subtitle1"
+              underline="hover"
+              color="inherit"
+              sx={{ display: "block", mb: 2, fontWeight: 600, width: "fit-content" }}
+            >
+              Imaging quality
+            </Link>
+          </Tooltip>
           <Box
             sx={{
               flex: 1,
@@ -196,13 +216,19 @@ export default function TonightCalc() {
                   No imaging window for this date.
                 </Typography>
               ) : (
-                <QualityBadge
-                  score={tonightForecast.imaging_quality}
-                  label={tonightForecast.imaging_quality_label}
-                  size="medium"
-                  showLabel
-                  tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. See the Weather page for the full breakdown.`}
-                />
+                <Link
+                  component={RouterLink}
+                  to={weatherHref}
+                  sx={{ display: "inline-flex", lineHeight: 0, borderRadius: "50%" }}
+                >
+                  <QualityBadge
+                    score={tonightForecast.imaging_quality}
+                    label={tonightForecast.imaging_quality_label}
+                    size="medium"
+                    showLabel
+                    tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. Click to open the Weather page.`}
+                  />
+                </Link>
               )
             ) : forecast ? (
               <Typography variant="body2" color="text.secondary">
@@ -267,20 +293,37 @@ export default function TonightCalc() {
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
-          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-            Moon
-          </Typography>
+          <Tooltip title="Open the Moon Altitude (Year) calculator">
+            <Link
+              component={RouterLink}
+              to={moonYearHref}
+              variant="subtitle1"
+              underline="hover"
+              color="inherit"
+              sx={{ display: "block", mb: 2, fontWeight: 600, width: "fit-content" }}
+            >
+              Moon
+            </Link>
+          </Tooltip>
           <Stack
             direction={{ xs: "column", sm: "row" }}
             spacing={3}
             alignItems={{ xs: "flex-start", sm: "center" }}
           >
             <Stack direction="row" spacing={2} alignItems="center">
-              <MoonPhaseIcon
-                phaseName={data?.moon_phase_name ?? "new"}
-                illuminationPct={data?.moon_illumination_pct ?? 0}
-                sx={{ fontSize: 56 }}
-              />
+              <Tooltip title="Open the Moon Altitude (Year) calculator">
+                <Link
+                  component={RouterLink}
+                  to={moonYearHref}
+                  sx={{ display: "inline-flex", lineHeight: 0, color: "inherit" }}
+                >
+                  <MoonPhaseIcon
+                    phaseName={data?.moon_phase_name ?? "new"}
+                    illuminationPct={data?.moon_illumination_pct ?? 0}
+                    sx={{ fontSize: 56 }}
+                  />
+                </Link>
+              </Tooltip>
               <Box>
                 <Typography
                   variant="h6"

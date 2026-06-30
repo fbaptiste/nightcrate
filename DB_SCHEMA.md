@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.40.0
+**NightCrate version:** 0.40.2
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
