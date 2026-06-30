@@ -45,7 +45,7 @@ import { fetchHorizons, type Horizon } from "@/api/horizons";
 import PlannerSortPanel from "@/components/planner/PlannerSortPanel";
 import { renderHorizonMenuItems } from "@/components/planner/horizonMenuItems";
 import { serializeSort } from "@/lib/plannerSortFields";
-import { todayInTimezone } from "@/lib/timezoneDate";
+import { tonightDate } from "@/lib/timezoneDate";
 import { fetchPlannerTargets } from "@/api/planner";
 import { FilterIntentSelect } from "@/components/planner/FilterIntentSelect";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -232,12 +232,15 @@ export default function PlannerPage() {
   // when the resulting string is empty.
   // Plan-a-Night date: ``selectedDate`` is null for tonight (the backend then
   // defaults to tonight). ``isToday`` gates the now-status sort option, which is
-  // meaningless for any night that isn't tonight.
+  // meaningless for any night that isn't tonight. Both anchor to ``tonightDate``
+  // (the 12 h-rollback observing night) so the displayed default + the
+  // now-status gate agree with the backend's ``tonight_date`` — NOT the plain
+  // calendar date, which would drift a day ahead between midnight and noon.
   const activeLocation = locationsQuery.data?.find((l) => l.id === locationId);
   const locationTz =
     activeLocation?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const planDate = selectedDate ?? todayInTimezone(locationTz);
-  const isToday = selectedDate === null || selectedDate === todayInTimezone(locationTz);
+  const planDate = selectedDate ?? tonightDate(locationTz);
+  const isToday = selectedDate === null || selectedDate === tonightDate(locationTz);
   const sortParam = serializeSort(sortBy, restrictTonight, rigId != null, isToday);
   const debouncedSearch = useDebounce(searchQuery.trim(), 250);
 

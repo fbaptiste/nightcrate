@@ -17,9 +17,9 @@ interface PlannerState {
   filterIntent: FilterLine[];
   activeTab: PlannerTab;
   searchQuery: string;
-  // ISO YYYY-MM-DD; null = tonight. Ephemeral like searchQuery — the one
-  // planner control intentionally NOT persisted via usePlannerSettingsSync
-  // (it carries "now" meaning the others don't; resets to tonight each session).
+  // ISO YYYY-MM-DD; null = tonight. Ephemeral (like searchQuery) — deliberately
+  // NOT persisted via usePlannerSettingsSync; it carries "now" meaning, so it
+  // resets to tonight each session.
   selectedDate: string | null;
   typeFilter: string[];
   catalogFilter: string[];

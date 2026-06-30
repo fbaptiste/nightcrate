@@ -6,7 +6,7 @@
 
 **NightCrate version:** 0.40.3
 
-**Last updated:** 2026-06-30
+**Last updated:** 2026-06-29
 
 **Last full repo snapshot:** 2026-05-19
 

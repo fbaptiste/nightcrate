@@ -35,7 +35,7 @@ import { type Rig } from "@/api/rigs";
 import { type Location } from "@/api/locations";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { displayConstellation } from "@/lib/constellations";
-import { todayInTimezone } from "@/lib/timezoneDate";
+import { tonightDate } from "@/lib/timezoneDate";
 import { formatDistance } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { DsoExternalRefs } from "@/components/dso/DsoExternalRefs";
@@ -415,7 +415,7 @@ export default function PlannerDetailPanel({
               variant="standard"
               value={
                 previewDate ??
-                todayInTimezone(
+                tonightDate(
                   previewLocation?.timezone ??
                     Intl.DateTimeFormat().resolvedOptions().timeZone,
                 )
