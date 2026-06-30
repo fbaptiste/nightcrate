@@ -56,6 +56,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.39.0 — FITS Equipment Resolver](#v0390--fits-equipment-resolver) ✅
 - [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest) ✅
 - [v0.40.1 — Planner Sky Position (Target vs Moon)](#v0401--planner-sky-position-target-vs-moon) ✅
+- [v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links](#v0402--planner-sort-tooltips--tonight-cross-links)
 - [v0.41.0 — Correct + Curate](#v0410--correct--curate)
 - [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
 - [v0.43.0 — Guiding (PHD2) Association](#v0430--guiding-phd2-association)
@@ -4978,6 +4979,27 @@ persisted in `localStorage`, default Flat):
       (hours, max alt, meridian, moon sep) so the detail panel renders fully for a DSO that isn't
       in the loaded list page. Plan editor also always requests `include_moon` so the tooltip shows
       real Moon data with the avoidance filter off.
+
+## v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links
+
+**Status:** Planned. Orthogonal UX interlude — no schema change, no migration,
+no backend change, no new dependency.
+
+Two small planner/Tonight quality-of-life features:
+
+1. **Sort-selector tooltips.** Every planner sort option — the "Available"
+   chips, the active "Sort by" pills, and the collapsed summary chips — gets a
+   one-line explanatory tooltip, in both Tonight and Full Catalog views.
+   Descriptions live on the `plannerSortFields` registry (`description` +
+   `sortFieldDescription()`); the backend sort metadata is unchanged.
+
+2. **Tonight cross-links.** From "Tonight at a Glance" (`/tonight`): the Moon
+   title + Moon icon link to the Moon Altitude (Year) calculator with the
+   selected date's year pre-selected (location already shared via the
+   calculators store); the Imaging-quality title + score circle link to the
+   Weather page with the selected location + date pre-selected. Uses the
+   `useSearchParams` read-then-clear pre-select pattern; the Weather date
+   applies only when it falls inside the 8-day forecast window.
 
 ## v0.41.0 — Correct + Curate
 
