@@ -28,6 +28,10 @@ export interface PlannerSortField {
   description: string;
   tonightOnly?: boolean;
   rigOnly?: boolean;
+  /** Hide unless the selected night is today — for fields that are only
+   *  meaningful "right now" (now_status). Independent of ``tonightOnly``:
+   *  now_status is both Tonight-mode-only AND today-only. */
+  todayOnly?: boolean;
 }
 
 export const PLANNER_SORT_FIELDS: PlannerSortField[] = [
@@ -112,6 +116,7 @@ export const PLANNER_SORT_FIELDS: PlannerSortField[] = [
     label: "Now status",
     description: "Whether the target is up, rising, or already set right now.",
     tonightOnly: true,
+    todayOnly: true,
   },
   // v0.21.0 — 0-100 quality score; gated targets (null score) sort
   // last regardless of direction per the planner's nulls-last policy.
@@ -139,30 +144,36 @@ export function sortFieldDescription(field: string): string {
   return BY_FIELD[field]?.description ?? "";
 }
 
-/** ``true`` when the field is allowed for the current mode + rig
+/** ``true`` when the field is allowed for the current mode + rig + date
  *  state. Used both to gate the Available pill set AND to drop
- *  inapplicable entries from the serialized query string. */
+ *  inapplicable entries from the serialized query string. ``isToday``
+ *  defaults to ``true`` so callers that don't care about the date (the
+ *  Full Catalog path, where tonight-only fields are already gated) keep
+ *  their old behavior. */
 export function sortFieldAvailable(
   field: string,
   restrictTonight: boolean,
   rigSelected: boolean,
+  isToday = true,
 ): boolean {
   const meta = BY_FIELD[field];
   if (!meta) return false;
   if (meta.tonightOnly && !restrictTonight) return false;
   if (meta.rigOnly && !rigSelected) return false;
+  if (meta.todayOnly && !isToday) return false;
   return true;
 }
 
 /** Serialize a sort-entry list as the ``sort`` query param, filtering
- *  out entries that aren't applicable under the current mode / rig. */
+ *  out entries that aren't applicable under the current mode / rig / date. */
 export function serializeSort(
   entries: SortEntry[],
   restrictTonight: boolean,
   rigSelected: boolean,
+  isToday = true,
 ): string | null {
   const applicable = entries.filter((e) =>
-    sortFieldAvailable(e.field, restrictTonight, rigSelected),
+    sortFieldAvailable(e.field, restrictTonight, rigSelected, isToday),
   );
   if (applicable.length === 0) return null;
   return applicable.map((e) => `${e.field}:${e.dir}`).join(",");

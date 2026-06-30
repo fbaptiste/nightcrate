@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.40.2
+**NightCrate version:** 0.40.3
 
-**Last updated:** 2026-06-29
+**Last updated:** 2026-06-30
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -152,9 +152,11 @@ Each location owns ≥1 horizon: at most one **custom** polyline shape (imported
 - **Key frontend:** `components/locations/LocationHorizonsSection.tsx` (v0.20.0 rewrite — operates on staged state owned by `LocationsPage`), `components/locations/horizonStaging.ts` (v0.20.0 — StagedHorizon + lifecycle helpers + save-dispatch planner), plus the unchanged editor dialog components (`HorizonEditor`, `HorizonChart`, etc.). Shared `components/planner/horizonMenuItems.tsx` renders the Custom/Artificial grouped dropdown for both the planner main page and the detail panel.
 - **Schema:** migrations `0014.location_horizon.sql` (original 1:1) + `0021.location_horizon_multi.sql` (reshapes to 1:N with partial unique indexes on `is_default` and `type='custom'`). v0.20.0 extends `LocationCreate` with optional `horizons: list[HorizonCreate] | None` for atomic create.
 
-### Target Planner (v0.16.0–v0.21.0 + v0.30.0 wishlist + v0.31.0 moon quality + v0.40.1–v0.40.2 polish)
+### Target Planner (v0.16.0–v0.21.0 + v0.30.0 wishlist + v0.31.0 moon quality + v0.40.1–v0.40.3 polish)
 
 **Status:** `[shipped]`
+
+**Plan a Night (v0.40.3).** The Tonight tab is now **"Plan a Night"** with a date selector (native `type="date"`, before the Location selector) — the planner plans for **any** night, not just tonight. The backend was already date-parametric (a `date` param threads through the visibility snapshot, scoring, sky-track, and moon calc; the snapshot LRU key includes the date), so this was almost pure frontend. The date is an **ephemeral** store field (`selectedDate`, NOT in `usePlannerSettingsSync` — mirrors `searchQuery`; resets to tonight each session). It carries into the detail panel as a per-item `previewDate` override (the preview-override pattern). `now_status` is meaningless off-today: the **backend nulls it** (`list_targets` gate on `is_requested_today`) so the grid glyph auto-hides, and the frontend drops its **sort option** via a `todayOnly` field flag + an `isToday` arg threaded through `sortFieldAvailable`/`serializeSort`/`PlannerSortPanel`. `todayInTimezone` now lives in shared `lib/timezoneDate.ts`.
 
 Location-driven "what's up tonight" page at `/planner`. Lists every active DSO geometrically visible during astronomical darkness, scored by a transparent 0–100 quality algorithm (v0.21.0); optional rig selection adds FOV coverage, a "Size in frame" coverage-range filter (dual-thumb slider), an "In my rig" thumbnail showing the object framed by the rig's sensor, and a rotatable FOV Simulator in the detail panel.
 

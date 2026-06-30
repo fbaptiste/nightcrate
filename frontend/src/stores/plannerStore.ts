@@ -17,6 +17,10 @@ interface PlannerState {
   filterIntent: FilterLine[];
   activeTab: PlannerTab;
   searchQuery: string;
+  // ISO YYYY-MM-DD; null = tonight. Ephemeral like searchQuery — the one
+  // planner control intentionally NOT persisted via usePlannerSettingsSync
+  // (it carries "now" meaning the others don't; resets to tonight each session).
+  selectedDate: string | null;
   typeFilter: string[];
   catalogFilter: string[];
   constellationFilter: string[];
@@ -35,6 +39,7 @@ interface PlannerState {
   setFilterIntent: (intent: FilterLine[]) => void;
   setActiveTab: (tab: PlannerTab) => void;
   setSearchQuery: (q: string) => void;
+  setSelectedDate: (d: string | null) => void;
   setTypeFilter: (f: string[]) => void;
   setCatalogFilter: (f: string[]) => void;
   setConstellationFilter: (f: string[]) => void;
@@ -58,6 +63,7 @@ export const usePlannerStore = create<PlannerState>()((set) => ({
   filterIntent: [],
   activeTab: "tonight" as PlannerTab,
   searchQuery: "",
+  selectedDate: null,
   typeFilter: [],
   catalogFilter: [],
   constellationFilter: [],
@@ -76,6 +82,7 @@ export const usePlannerStore = create<PlannerState>()((set) => ({
   setFilterIntent: (intent) => set({ filterIntent: intent }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSearchQuery: (q) => set({ searchQuery: q }),
+  setSelectedDate: (d) => set({ selectedDate: d }),
   setTypeFilter: (f) => set({ typeFilter: f }),
   setCatalogFilter: (f) => set({ catalogFilter: f }),
   setConstellationFilter: (f) => set({ constellationFilter: f }),

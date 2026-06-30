@@ -14,6 +14,7 @@ import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
 import { useCalculatorLocation } from "@/components/calculators/CalculatorLocationBar";
 import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
 import QualityBadge from "@/components/weather/QualityBadge";
+import { todayInTimezone } from "@/lib/timezoneDate";
 
 const DASH = "—";
 
@@ -52,27 +53,6 @@ function moonPhaseDescription(name: string | null | undefined): string {
     MOON_PHASE_DESCRIPTIONS[name.toLowerCase()] ??
     "Phase of the Moon as seen from Earth — describes how much of the lit hemisphere is currently visible."
   );
-}
-
-/** Today's date (YYYY-MM-DD) in the given IANA timezone. */
-function todayInTimezone(timezone: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date());
-    const y = parts.find((p) => p.type === "year")?.value ?? "";
-    const m = parts.find((p) => p.type === "month")?.value ?? "";
-    const d = parts.find((p) => p.type === "day")?.value ?? "";
-    if (y && m && d) return `${y}-${m}-${d}`;
-  } catch {
-    // fall through
-  }
-  const now = new Date();
-  const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 /** Hours (float) → "Nh MM m" rounded to the nearest minute. */

@@ -66,6 +66,9 @@ interface Props {
   onSortChange: (next: SortEntry[]) => void;
   restrictTonight: boolean;
   rigSelected: boolean;
+  /** Whether the planner's selected night is today. Gates today-only
+   *  fields (now_status). Defaults to true (Full Catalog never sets a date). */
+  isToday?: boolean;
 }
 
 export default function PlannerSortPanel({
@@ -73,6 +76,7 @@ export default function PlannerSortPanel({
   onSortChange,
   restrictTonight,
   rigSelected,
+  isToday = true,
 }: Props) {
   const [expanded, setExpanded] = useState(true);
 
@@ -83,11 +87,13 @@ export default function PlannerSortPanel({
 
   const used = new Set(sortBy.map((e) => e.field));
   const available = PLANNER_SORT_FIELDS.filter(
-    (f) => sortFieldAvailable(f.field, restrictTonight, rigSelected) && !used.has(f.field),
+    (f) =>
+      sortFieldAvailable(f.field, restrictTonight, rigSelected, isToday) &&
+      !used.has(f.field),
   );
 
   const visibleSortBy = sortBy.filter((e) =>
-    sortFieldAvailable(e.field, restrictTonight, rigSelected),
+    sortFieldAvailable(e.field, restrictTonight, rigSelected, isToday),
   );
   const sortByIds = visibleSortBy.map((e) => e.field);
 
