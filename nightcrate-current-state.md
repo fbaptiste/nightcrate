@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.40.0
+**NightCrate version:** 0.40.2
 
-**Last updated:** 2026-06-28
+**Last updated:** 2026-06-29
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -152,7 +152,7 @@ Each location owns ≥1 horizon: at most one **custom** polyline shape (imported
 - **Key frontend:** `components/locations/LocationHorizonsSection.tsx` (v0.20.0 rewrite — operates on staged state owned by `LocationsPage`), `components/locations/horizonStaging.ts` (v0.20.0 — StagedHorizon + lifecycle helpers + save-dispatch planner), plus the unchanged editor dialog components (`HorizonEditor`, `HorizonChart`, etc.). Shared `components/planner/horizonMenuItems.tsx` renders the Custom/Artificial grouped dropdown for both the planner main page and the detail panel.
 - **Schema:** migrations `0014.location_horizon.sql` (original 1:1) + `0021.location_horizon_multi.sql` (reshapes to 1:N with partial unique indexes on `is_default` and `type='custom'`). v0.20.0 extends `LocationCreate` with optional `horizons: list[HorizonCreate] | None` for atomic create.
 
-### Target Planner (v0.16.0–v0.21.0 + v0.30.0 wishlist + v0.31.0 moon quality)
+### Target Planner (v0.16.0–v0.21.0 + v0.30.0 wishlist + v0.31.0 moon quality + v0.40.1–v0.40.2 polish)
 
 **Status:** `[shipped]`
 
@@ -161,6 +161,8 @@ Location-driven "what's up tonight" page at `/planner`. Lists every active DSO g
 **v0.21.0 scoring algorithm.** Per-target 0–100 score with an `Excellent / Good / Fair / Poor` colored chip on every Tonight-mode card + detail header, plus a "Score breakdown" section at the bottom of the detail panel showing per-dimension bars + human-readable inputs (or gate-failure reasons for unscored targets). Pipeline is two hard gates → four quality dimensions (**observability** altitude-weighted hours; **meridian timing** peak-vs-dark-midpoint; **moon impact** phase × proximity × filter-sensitivity with a limiting-filter rule; **frame fit** Gaussian on coverage) → weighted geometric mean. 25 new user-tunable settings (weights, 7 moon sensitivities, 7 moon min-separations, cluster modifier, frame-fit ideal+spread, 3 chip thresholds, 2 hard-gate caps) in a collapsible Settings accordion with tooltips. A new filter-intent multi-select (Ha/SII/OIII/L/R/G/B) on the planner page drives the moon dimension — empty selection neutralizes it. Filter intent persists via Zustand (imaging habits are stable). Scoring is backend-only, pure-function over the visibility snapshot's retained time-series arrays; a single-target `GET /api/planner/targets/{dso_id}/score` endpoint refetches when the detail panel's panel-local rig / horizon / location differ from the page's. Anytime mode has no score (the algorithm is tonight-scoped by construction). Full algorithm reference in `docs/planner-scoring.md`.
 
 **v0.19.0 rewrite.** Three big reshapes shipped together. (1) Locations gained **multi-horizon** (one optional custom polyline + any number of artificial flat-altitude rows, with exactly one `is_default`). Every compute path takes a `PlannerHorizon` value object; the old `planner_min_altitude_deg` fallback setting is gone. Third dropdown (Location · **Horizon** · Rig) in both the main page and the detail panel; changing location resets the horizon to that location's default. (2) **Multi-sort panel** replaces the DataGrid's single-column header sort — collapsible accordion with a `SortableContext` "Sort by" area (drag to reorder) and an "Available" chip list (click to add). 14 sort fields via `PLANNER_SORT_FIELDS`; backend stable Timsort per key, nulls + empty strings always last. `sortBy` persists in `plannerStore` (Zustand persist v3). (3) **Card-based list** replaces the DataGrid row layout — one card per DSO with thumbnail + rig-framed thumbnail + info block + tonight-line visibility stats; the whole card is clickable (opens detail panel). Opaque custom loading overlay on the Paper wrapper sidesteps MUI X's linear-progress-in-column-header artifact during refetches.
+
+**Sort tooltips (v0.40.2).** Every sort option carries a one-line explanatory tooltip drawn from the `plannerSortFields` registry (`description` + `sortFieldDescription()`) — on the "Available" chips, the active "Sort by" pills, and the collapsed-summary chips, identically in Tonight and Full Catalog views. Frontend-only; backend sort metadata unchanged.
 
 **Now-status fix (v0.19.0).** `compute_now_status` takes both `astro_dark_start_utc` and `astro_dark_end_utc`. Decision tree: post-dawn returns empty; daytime-before-tonight samples only the dark-window interval (with "up" never firing); inside astro-dark samples `now → dark_end`. Earlier bug sampled `now → dark_end` unconditionally, surfacing "set" for objects that had set in the morning but would re-rise during tonight's session.
 
@@ -264,7 +266,7 @@ Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsig
 
 Standalone mini-app with astronomer/astrophotographer utilities grouped into four categories. Each calculator is backed by its own API endpoint so the math is equally usable from any external client — the frontend does no math beyond live-tick display.
 
-**Calculators:** Lat/Long Converter (sexagesimal ↔ decimal), RA/Dec ↔ Alt/Az (location-aware, astropy-backed), Clocks (Local / UTC / LST / JD / MJD + Location's Display Timezone + Location Timezone; drag-to-reorder), Tonight at a Glance, Angular Units, Linear Units, Pixel Scale, Field of View, File Size, Airmass (Kasten-Young), SQM / Bortle / NELM, Temperature, **Moon Altitude (Year)** (v0.40.0 — location-aware; the Moon's peak altitude during astro darkness across a year with illumination shading + new/full-moon markers; D3 chart, backed by `GET /api/planner/moon-year` reusing the cached annual-hours moon path). **Tonight at a Glance** was promoted to its own top-level nav entry in v0.27.0 (`/tonight` route, `TonightPage.tsx`).
+**Calculators:** Lat/Long Converter (sexagesimal ↔ decimal), RA/Dec ↔ Alt/Az (location-aware, astropy-backed), Clocks (Local / UTC / LST / JD / MJD + Location's Display Timezone + Location Timezone; drag-to-reorder), Tonight at a Glance, Angular Units, Linear Units, Pixel Scale, Field of View, File Size, Airmass (Kasten-Young), SQM / Bortle / NELM, Temperature, **Moon Altitude (Year)** (v0.40.0 — location-aware; the Moon's peak altitude during astro darkness across a year with illumination shading + new/full-moon markers; D3 chart, backed by `GET /api/planner/moon-year` reusing the cached annual-hours moon path). **Tonight at a Glance** was promoted to its own top-level nav entry in v0.27.0 (`/tonight` route, `TonightPage.tsx`). **v0.40.2 cross-links:** the Tonight Moon panel (title + phase icon) deep-links to Moon Altitude (Year) for the selected date's year (location rides the shared calculators store), and the Imaging-quality panel (title + score circle) deep-links to the Weather page pre-selected to the location + date — both via the read-then-clear `useSearchParams` pattern (`MoonAltitudeCalc` reads `?year`; `WeatherPage` reads `?location`/`?date` and applies the date only once its forecast confirms it falls inside the 8-day window).
 
 - **Route:** `/calculators[/:calcId]`
 - **API:** `/api/calculators/*` (13 endpoints)

@@ -23,36 +23,105 @@ export interface SortEntry {
 export interface PlannerSortField {
   field: string;
   label: string;
+  /** One-line explanation of what the field means, shown as a tooltip
+   *  on every pill (Available, active Sort-by, collapsed summary). */
+  description: string;
   tonightOnly?: boolean;
   rigOnly?: boolean;
 }
 
 export const PLANNER_SORT_FIELDS: PlannerSortField[] = [
-  { field: "primary_designation", label: "Designation" },
-  { field: "common_name", label: "Common name" },
-  { field: "constellation", label: "Constellation" },
-  { field: "obj_type", label: "Type" },
-  { field: "mag_v", label: "Mag V" },
-  { field: "maj_axis_arcmin", label: "Size" },
-  { field: "distance_pc", label: "Distance" },
-  { field: "hours_visible", label: "Hours visible", tonightOnly: true },
-  { field: "max_altitude_deg", label: "Max altitude", tonightOnly: true },
+  {
+    field: "primary_designation",
+    label: "Designation",
+    description: "Primary catalog designation (e.g. M 31, NGC 7000).",
+  },
+  {
+    field: "common_name",
+    label: "Common name",
+    description: "Popular name, where the object has one (e.g. Andromeda Galaxy).",
+  },
+  {
+    field: "constellation",
+    label: "Constellation",
+    description: "Constellation the target lies in.",
+  },
+  {
+    field: "obj_type",
+    label: "Type",
+    description: "Object type — galaxy, nebula, open or globular cluster, and so on.",
+  },
+  {
+    field: "mag_v",
+    label: "Mag V",
+    description: "Visual magnitude; lower numbers are brighter.",
+  },
+  {
+    field: "maj_axis_arcmin",
+    label: "Size",
+    description: "Apparent size along the major axis, in arcminutes.",
+  },
+  {
+    field: "distance_pc",
+    label: "Distance",
+    description: "Distance from Earth, in parsecs.",
+  },
+  {
+    field: "hours_visible",
+    label: "Hours visible",
+    description:
+      "Hours the target stays above your horizon during tonight's astro-dark window.",
+    tonightOnly: true,
+  },
+  {
+    field: "max_altitude_deg",
+    label: "Max altitude",
+    description:
+      "Highest altitude the target reaches during tonight's astro-dark window.",
+    tonightOnly: true,
+  },
   {
     field: "altitude_at_transit_deg",
     label: "Meridian altitude",
+    description:
+      "Altitude when the target crosses the meridian (its highest point on the sky) — pure geometry, independent of tonight's dark window.",
     tonightOnly: true,
   },
-  { field: "transit_time_utc", label: "Meridian time", tonightOnly: true },
+  {
+    field: "transit_time_utc",
+    label: "Meridian time",
+    description: "Clock time the target crosses the meridian (transits) tonight.",
+    tonightOnly: true,
+  },
   {
     field: "min_moon_separation_deg",
     label: "Moon separation",
+    description:
+      "Closest the Moon comes to the target while it's visible — larger is better.",
     tonightOnly: true,
   },
-  { field: "coverage_pct", label: "Coverage %", rigOnly: true },
-  { field: "now_status", label: "Now status", tonightOnly: true },
+  {
+    field: "coverage_pct",
+    label: "Coverage %",
+    description:
+      "How much of your selected rig's field of view the target fills.",
+    rigOnly: true,
+  },
+  {
+    field: "now_status",
+    label: "Now status",
+    description: "Whether the target is up, rising, or already set right now.",
+    tonightOnly: true,
+  },
   // v0.21.0 — 0-100 quality score; gated targets (null score) sort
   // last regardless of direction per the planner's nulls-last policy.
-  { field: "score_pct", label: "Score", tonightOnly: true },
+  {
+    field: "score_pct",
+    label: "Score",
+    description:
+      "Overall 0–100 imaging-quality score blending altitude, Moon, and meridian timing.",
+    tonightOnly: true,
+  },
 ];
 
 const BY_FIELD: Record<string, PlannerSortField> = Object.fromEntries(
@@ -61,6 +130,13 @@ const BY_FIELD: Record<string, PlannerSortField> = Object.fromEntries(
 
 export function sortFieldLabel(field: string): string {
   return BY_FIELD[field]?.label ?? field;
+}
+
+/** One-line tooltip description for a sort field, or "" for an unknown
+ *  field (so callers can pass it straight to a MUI ``Tooltip`` title —
+ *  an empty title renders no tooltip). */
+export function sortFieldDescription(field: string): string {
+  return BY_FIELD[field]?.description ?? "";
 }
 
 /** ``true`` when the field is allowed for the current mode + rig

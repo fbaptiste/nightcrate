@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Checkbox from "@mui/material/Checkbox";
@@ -53,6 +54,11 @@ export default function WeatherPage() {
   const [locationId, setLocationId] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [includeMoon, setIncludeMoon] = useState<boolean | null>(null);
+  // Date deep-linked from "Tonight at a Glance", held until the matching
+  // forecast loads so we can confirm it's inside the 8-day window.
+  const [pendingDate, setPendingDate] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { pathname } = useLocation();
 
   const settings = useSettingsStore((s) => s.settings);
   const units: WeatherUnits = settings?.weather_units ?? "metric";
@@ -93,12 +99,55 @@ export default function WeatherPage() {
     }
   }, [defaultLocation, locationId]);
 
+  // Deep-link from "Tonight at a Glance": ``?location=ID&date=YYYY-MM-DD``
+  // pre-selects the location now and stashes the date until its forecast
+  // loads. Declared after the default-location effect so its location
+  // wins the first-mount tick. Params are cleared once read so a reload
+  // doesn't re-pin a stale selection.
+  //
+  // Gated on the active route: WeatherPage is a *persistent* (always-
+  // mounted) page, so without this guard the effect would fire on every
+  // app-wide URL change and clear any ``?location``/``?date`` it saw —
+  // clobbering a future page that legitimately uses those params (e.g.
+  // v0.40.3's planner date selector). Only act when Weather is on top.
+  useEffect(() => {
+    if (pathname !== "/weather") return;
+    const locParam = searchParams.get("location");
+    const dateParam = searchParams.get("date");
+    if (locParam === null && dateParam === null) return;
+    const id = locParam !== null ? Number.parseInt(locParam, 10) : NaN;
+    if (Number.isFinite(id) && id !== locationId) {
+      setLocationId(id);
+      setSelectedDate(null);
+      const loc = locations.find((l) => l.id === id);
+      if (loc) setActivity(`Weather — ${loc.name}`);
+    }
+    if (dateParam !== null) setPendingDate(dateParam);
+    setSearchParams({}, { replace: true });
+  }, [pathname, searchParams, setSearchParams, locationId, locations]);
+
+  // Apply the deep-linked date once the matching location's forecast has
+  // loaded — but only when it's one of the forecast days (inside the
+  // 8-day window). A future date past the window is silently dropped.
+  useEffect(() => {
+    if (pendingDate === null || !forecast) return;
+    if (forecast.days.some((d) => d.date === pendingDate)) {
+      setActivity(`Weather — Hourly ${pendingDate}`);
+      setSelectedDate(pendingDate);
+    }
+    setPendingDate(null);
+  }, [pendingDate, forecast]);
+
   // Reset selectedDate when location changes
   const handleLocationChange = (id: number) => {
     const loc = locations.find((l) => l.id === id);
     if (loc) setActivity(`Weather — ${loc.name}`);
     setLocationId(id);
     setSelectedDate(null);
+    // Abandon any not-yet-applied deep-linked date — a manual location
+    // pick supersedes it, so it must not land on this new location once
+    // its forecast loads.
+    setPendingDate(null);
   };
 
   const handleDaySelect = (date: string) => {

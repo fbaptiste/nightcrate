@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
@@ -20,6 +21,22 @@ import MoonAltitudeChart from "@/components/calculators/MoonAltitudeChart";
 export default function MoonAltitudeCalc() {
   const { locationId } = useCalculatorLocation();
   const [year, setYear] = useState(() => new Date().getFullYear());
+
+  // Deep-link from "Tonight at a Glance": ``?year=YYYY`` pre-selects the
+  // year, then the param is cleared so a manual ±year step or a reload
+  // doesn't snap back. Location arrives via the shared calculators store,
+  // so only the year needs threading. Read-then-clear pattern mirrors the
+  // equipment list's ``?select=`` handling.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const yearParam = searchParams.get("year");
+    if (yearParam == null) return;
+    const parsed = Number.parseInt(yearParam, 10);
+    if (Number.isFinite(parsed) && parsed >= 1900 && parsed <= 3000) {
+      setYear(parsed);
+    }
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const query = useQuery({
     queryKey: ["moon-year", locationId, year],

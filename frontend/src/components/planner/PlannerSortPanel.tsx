@@ -54,6 +54,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   PLANNER_SORT_FIELDS,
   sortFieldAvailable,
+  sortFieldDescription,
   sortFieldLabel,
   type SortDir,
   type SortEntry,
@@ -130,22 +131,23 @@ export default function PlannerSortPanel({
   const summary = visibleSortBy.length === 0 ? null : (
     <Stack direction="row" gap={0.5} flexWrap="wrap">
       {visibleSortBy.map((e) => (
-        <Chip
-          key={e.field}
-          size="small"
-          label={
-            <Stack direction="row" alignItems="center" gap={0.25} sx={{ fontSize: "0.75rem" }}>
-              {sortFieldLabel(e.field)}
-              {e.dir === "asc" ? (
-                <ArrowUpwardIcon sx={{ fontSize: "0.85rem" }} />
-              ) : (
-                <ArrowDownwardIcon sx={{ fontSize: "0.85rem" }} />
-              )}
-            </Stack>
-          }
-          variant="outlined"
-          sx={{ borderRadius: 1 }}
-        />
+        <Tooltip key={e.field} title={sortFieldDescription(e.field)}>
+          <Chip
+            size="small"
+            label={
+              <Stack direction="row" alignItems="center" gap={0.25} sx={{ fontSize: "0.75rem" }}>
+                {sortFieldLabel(e.field)}
+                {e.dir === "asc" ? (
+                  <ArrowUpwardIcon sx={{ fontSize: "0.85rem" }} />
+                ) : (
+                  <ArrowDownwardIcon sx={{ fontSize: "0.85rem" }} />
+                )}
+              </Stack>
+            }
+            variant="outlined"
+            sx={{ borderRadius: 1 }}
+          />
+        </Tooltip>
       ))}
     </Stack>
   );
@@ -260,17 +262,18 @@ export default function PlannerSortPanel({
               ) : (
                 <Stack direction="row" gap={0.75} flexWrap="wrap">
                   {available.map((f) => (
-                    <Chip
-                      key={f.field}
-                      label={f.label}
-                      size="small"
-                      variant="outlined"
-                      onClick={() => addEntry(f.field)}
-                      sx={{
-                        borderRadius: 1,
-                        cursor: "pointer",
-                      }}
-                    />
+                    <Tooltip key={f.field} title={f.description}>
+                      <Chip
+                        label={f.label}
+                        size="small"
+                        variant="outlined"
+                        onClick={() => addEntry(f.field)}
+                        sx={{
+                          borderRadius: 1,
+                          cursor: "pointer",
+                        }}
+                      />
+                    </Tooltip>
                   ))}
                 </Stack>
               )}
@@ -347,9 +350,11 @@ function SortByPill({
       >
         <DragIndicatorIcon fontSize="small" />
       </IconButton>
-      <Typography variant="body2" sx={{ px: 0.5, fontSize: "0.8rem" }}>
-        {sortFieldLabel(field)}
-      </Typography>
+      <Tooltip title={sortFieldDescription(field)}>
+        <Typography variant="body2" sx={{ px: 0.5, fontSize: "0.8rem" }}>
+          {sortFieldLabel(field)}
+        </Typography>
+      </Tooltip>
       <Tooltip
         title={dir === "asc" ? "Ascending (click to flip)" : "Descending (click to flip)"}
       >
