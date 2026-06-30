@@ -76,14 +76,15 @@ export const PLANNER_SORT_FIELDS: PlannerSortField[] = [
   {
     field: "max_altitude_deg",
     label: "Max altitude",
-    description: "Highest altitude the target reaches tonight.",
+    description:
+      "Highest altitude the target reaches during tonight's astro-dark window.",
     tonightOnly: true,
   },
   {
     field: "altitude_at_transit_deg",
     label: "Meridian altitude",
     description:
-      "Altitude as the target crosses the meridian — its highest point of the night.",
+      "Altitude when the target crosses the meridian (its highest point on the sky) — pure geometry, independent of tonight's dark window.",
     tonightOnly: true,
   },
   {

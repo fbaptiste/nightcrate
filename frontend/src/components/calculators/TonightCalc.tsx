@@ -195,9 +195,15 @@ export default function TonightCalc() {
               component={RouterLink}
               to={weatherHref}
               variant="subtitle1"
-              underline="hover"
+              underline="none"
               color="inherit"
-              sx={{ display: "block", mb: 2, fontWeight: 600, width: "fit-content" }}
+              sx={{
+                display: "block",
+                mb: 2,
+                fontWeight: 600,
+                width: "fit-content",
+                "&:hover": { color: "primary.main" },
+              }}
             >
               Imaging quality
             </Link>
@@ -219,6 +225,7 @@ export default function TonightCalc() {
                 <Link
                   component={RouterLink}
                   to={weatherHref}
+                  underline="none"
                   sx={{ display: "inline-flex", lineHeight: 0, borderRadius: "50%" }}
                 >
                   <QualityBadge
@@ -298,9 +305,15 @@ export default function TonightCalc() {
               component={RouterLink}
               to={moonYearHref}
               variant="subtitle1"
-              underline="hover"
+              underline="none"
               color="inherit"
-              sx={{ display: "block", mb: 2, fontWeight: 600, width: "fit-content" }}
+              sx={{
+                display: "block",
+                mb: 2,
+                fontWeight: 600,
+                width: "fit-content",
+                "&:hover": { color: "primary.main" },
+              }}
             >
               Moon
             </Link>
@@ -315,6 +328,7 @@ export default function TonightCalc() {
                 <Link
                   component={RouterLink}
                   to={moonYearHref}
+                  underline="none"
                   sx={{ display: "inline-flex", lineHeight: 0, color: "inherit" }}
                 >
                   <MoonPhaseIcon
