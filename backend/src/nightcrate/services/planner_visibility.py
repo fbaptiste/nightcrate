@@ -40,7 +40,7 @@ import numpy as np  # noqa: E402
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body  # noqa: E402
 from astropy.time import Time, TimeDelta  # noqa: E402
 
-from nightcrate.services.astronomy import compute_illumination_pct  # noqa: E402
+from nightcrate.services.astronomy import compute_illumination_pct, direction_only  # noqa: E402
 from nightcrate.services.horizon import resolve_horizon_altitude  # noqa: E402
 
 # 5-minute sampling for the planner visibility snapshot. Precision on
@@ -478,8 +478,10 @@ def compute_visibility_snapshot(
     # Moon is a single (T,) path shared across DSOs.
     moon_coord = get_body("moon", times, earth_loc)
     # SkyCoord.separation returns an Angle — convert to deg. Broadcasting
-    # coords[:, None] against moon_coord[None, :] yields (N, T).
-    sep = coords[:, None].separation(moon_coord[None, :]).deg
+    # coords[:, None] against the (distance-stripped) moon direction[None, :]
+    # yields (N, T). The distance must be stripped — see direction_only().
+    moon_dir = direction_only(moon_coord)
+    sep = coords[:, None].separation(moon_dir[None, :]).deg
     moon_sep = np.asarray(sep)
     # Moon altitude (T,) — reuse the same AltAz frame the DSOs were
     # transformed through so moon-up vs moon-down matches the sampling

@@ -201,6 +201,9 @@ class CalendarResponse(BaseModel):
     rig_name: str
     horizon_id: int
     horizon_name: str
+    # Location-tz "tonight" date (ISO) — the calendar's today marker anchors
+    # to this so it lands on the right month/day in the evening.
+    today: str
     months: list[str]
     targets: list[CalendarTargetRow]
     sections: list[SectionResponse]

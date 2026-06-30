@@ -54,7 +54,22 @@ def test_all_parallel_arrays_same_length(track):
     assert len(track.object_altitude_deg) == n
     assert len(track.object_azimuth_deg) == n
     assert len(track.moon_altitude_deg) == n
+    assert len(track.moon_azimuth_deg) == n
+    assert len(track.moon_separation_deg) == n
     assert len(track.horizon_altitude_at_object_az) == n
+
+
+def test_moon_azimuth_in_range(track):
+    # Azimuth is a compass bearing measured 0 = N, increasing through E.
+    assert all(0.0 <= az < 360.0 for az in track.moon_azimuth_deg)
+
+
+def test_moon_azimuth_pinned(track):
+    # Pinned against the computed track for Phoenix on 2026-04-19: the
+    # Moon starts the night low in the west (~280°) and has swung round
+    # to the NE (~37°) by the post-dawn edge of the display window.
+    assert track.moon_azimuth_deg[0] == pytest.approx(280.11, abs=0.5)
+    assert track.moon_azimuth_deg[-1] == pytest.approx(36.9, abs=0.5)
 
 
 def test_horizon_flat_when_artificial(track):
@@ -74,6 +89,24 @@ def test_twilight_bands_have_core_boundaries(track):
 
 def test_moon_phase_populated(track):
     assert 0.0 <= track.moon_phase_pct <= 100.0
+
+
+def test_moon_separation_varies_across_night(track):
+    # Regression guard for the GCRS-distance separation bug: the buggy
+    # code transformed the distance-bearing Moon into the target's ICRS
+    # frame, shifting the origin ~1 AU and freezing the separation
+    # (range < 0.3° across a whole night, value ~3-4x too large). The
+    # correct on-sky separation moves by several degrees as the Moon
+    # tracks along its orbit + parallax. See astronomy.direction_only.
+    sep = track.moon_separation_deg
+    assert max(sep) - min(sep) > 1.0
+
+
+def test_moon_separation_pinned(track):
+    # Hand-verified corrected values for M42 from Phoenix on 2026-04-19
+    # (distance stripped). The pre-fix bug reported ~122° here, frozen.
+    assert track.moon_separation_deg[0] == pytest.approx(37.85, abs=0.5)
+    assert track.moon_separation_deg[-1] == pytest.approx(34.32, abs=0.5)
 
 
 def test_custom_horizon_flows_through_to_track():

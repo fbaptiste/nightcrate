@@ -19,6 +19,9 @@ interface Props {
   track: SkyTrackResponse;
   tz: string;
   height?: number;
+  /** Broadcasts the cursor's sample index as the user hovers/scrubs
+   *  (``null`` on leave) so a paired sky-position dial can track it. */
+  onActiveIndexChange?: (idx: number | null) => void;
 }
 
 // Object + moon colours reuse the canonical rig palette — keeps the
@@ -118,6 +121,7 @@ export default function SkyPositionGraph({
   // the sunset label, then now closest to the chart. Chart data area
   // stays its historic 222 px tall.
   height = 346,
+  onActiveIndexChange,
 }: Props) {
   const theme = useTheme();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -331,6 +335,12 @@ export default function SkyPositionGraph({
       aboveHorizon: objAlt > horizon,
       snapLabel,
     });
+    onActiveIndexChange?.(clamped);
+  }
+
+  function clearHover() {
+    setHover(null);
+    onActiveIndexChange?.(null);
   }
 
   // Every hour, not every-other-hour. ``d3.timeHour.range`` returns
@@ -345,10 +355,10 @@ export default function SkyPositionGraph({
         width={width}
         height={height}
         onMouseMove={(e) => handleHover(e.currentTarget, e.clientX)}
-        onMouseLeave={() => setHover(null)}
+        onMouseLeave={clearHover}
         onTouchStart={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
         onTouchMove={(e) => { e.preventDefault(); handleHover(e.currentTarget, e.touches[0].clientX); }}
-        onTouchEnd={() => setHover(null)}
+        onTouchEnd={clearHover}
         style={{ display: "block", touchAction: "none", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
       >
         {/* Twilight bands */}

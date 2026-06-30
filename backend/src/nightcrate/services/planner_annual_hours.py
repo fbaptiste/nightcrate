@@ -56,6 +56,7 @@ import numpy as np
 from astropy.coordinates import AltAz, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
 
+from nightcrate.services.astronomy import direction_only
 from nightcrate.services.horizon import resolve_horizon_altitude
 from nightcrate.services.planner_visibility import (
     PlannerHorizon,
@@ -357,7 +358,10 @@ def _compute_subrange(
         moon_body = get_body("moon", times, earth_loc)
         moon_altaz = moon_body.transform_to(altaz_frame)
         moon_alt = np.asarray(moon_altaz.alt.deg)
-        moon_sep = np.asarray(coord.separation(moon_body).deg)
+        # Strip the Moon's distance before separating — see direction_only().
+        moon_sep = np.asarray(coord.separation(direction_only(moon_body)).deg)
+        # sun_body and moon_body share the GCRS frame, so their elongation is
+        # unaffected by the origin-shift footgun (no cross-frame transform).
         elongation = np.asarray(sun_body.separation(moon_body).deg)
         illum_pct = (1.0 - np.cos(np.radians(elongation))) / 2.0 * 100.0
     else:

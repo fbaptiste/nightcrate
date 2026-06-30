@@ -168,6 +168,26 @@ async def seed_dso_and_location():
     }
 
 
+def test_calendar_today_is_location_tz_date(client, seed_dso_and_location):
+    # The calendar's "today" marker must anchor to the location-tz date (the
+    # same `tonight_date` the planner/annual chart uses), NOT the raw UTC
+    # instant — otherwise the marker lands a day ahead in the evening.
+    from nightcrate.services.astronomy import tonight_date
+
+    ids = seed_dso_and_location
+    resp = client.get(
+        "/api/planner/wishlist/calendar",
+        params={
+            "location_id": ids["location_id"],
+            "horizon_id": ids["horizon_id"],
+            "rig_id": ids["rig_id"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["today"] == tonight_date("America/Phoenix").isoformat()
+
+
 # ── Favorites CRUD ───────────────────────────────────────────────────────────
 
 

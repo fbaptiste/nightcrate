@@ -69,7 +69,10 @@ export default function PlanSparkline({
       .y((d) => yScale(d.hours))
       .curve(d3.curveMonotoneX);
 
-    return { xScale, yScale, pathD: line(pts), todayX: xScale(new Date()) };
+    // Anchor "today" to the backend location-tz date, not the raw UTC instant
+    // (which lands a day ahead in the evening). null if outside the year.
+    const todayX = data.today ? xScale(new Date(data.today)) : null;
+    return { xScale, yScale, pathD: line(pts), todayX };
   }, [data, width, height]);
 
   if (isLoading) {
@@ -107,7 +110,7 @@ export default function PlanSparkline({
         );
       })}
       {/* Today line */}
-      {layout.todayX >= PADDING && layout.todayX <= width - PADDING && (
+      {layout.todayX != null && layout.todayX >= PADDING && layout.todayX <= width - PADDING && (
         <line
           x1={layout.todayX}
           y1={PADDING}

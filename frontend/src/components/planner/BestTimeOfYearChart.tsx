@@ -117,11 +117,9 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
 
     let snapXPx: number | null = null;
     let snapIdx: number | null = null;
-    if (todayXPx != null && Math.abs(mx - todayXPx) <= TODAY_SNAP_PX) {
+    if (todayXPx != null && todayDate != null && Math.abs(mx - todayXPx) <= TODAY_SNAP_PX) {
       snapXPx = todayXPx;
-      snapIdx = d3
-        .bisector((d: Date) => d)
-        .center(layout.dates, new Date());
+      snapIdx = d3.bisector((d: Date) => d).center(layout.dates, todayDate);
     }
 
     const t = layout.x.invert(mx);
@@ -134,10 +132,13 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
       xPx: snapXPx ?? layout.x(layout.dates[clamped]),
       yPxRaw: layout.y(Math.max(0, Math.min(layout.yMax, rawP.hours))),
       yPxWeighted: layout.y(Math.max(0, Math.min(layout.yMax, weightedP?.hours ?? rawP.hours))),
+      // Points are anchored at noon UTC; render in UTC so the label can't
+      // drift a day in far-east timezones (UTC+12/+13).
       dateLabel: layout.dates[clamped].toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: "UTC",
       }),
       rawHours: rawP.hours,
       weightedHours: weightedP?.hours ?? rawP.hours,
@@ -166,14 +167,24 @@ export default function BestTimeOfYearChart({ track, height = 200 }: Props) {
     [layout.dates],
   );
 
+  // "Tonight" anchored to noon UTC, matching how each point is built
+  // (`${p.date}T12:00:00Z`). Backend supplies the location-tz date so this
+  // lines up with the dome/sky-track — using the raw `Date.now()` instant
+  // mis-snaps to the next day in the evening (current UTC is past the
+  // following noon-UTC point).
+  const todayDate = useMemo(
+    () => (track.today ? new Date(`${track.today}T12:00:00Z`) : null),
+    [track.today],
+  );
+
   const todayXPx = useMemo(() => {
-    if (layout.dates.length === 0) return null;
-    const now = Date.now();
+    if (layout.dates.length === 0 || todayDate == null) return null;
+    const t = todayDate.getTime();
     const tmin = layout.dates[0].getTime();
     const tmax = layout.dates[layout.dates.length - 1].getTime();
-    if (now < tmin || now > tmax) return null;
-    return layout.x(new Date(now));
-  }, [layout]);
+    if (t < tmin || t > tmax) return null;
+    return layout.x(todayDate);
+  }, [layout, todayDate]);
 
   const yTicks = useMemo(() => {
     const step = layout.yMax > 16 ? 4 : layout.yMax > 8 ? 2 : 1;

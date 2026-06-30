@@ -20,7 +20,7 @@ import numpy as np
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
 
-from nightcrate.services.astronomy import compute_illumination_pct
+from nightcrate.services.astronomy import compute_illumination_pct, direction_only
 from nightcrate.services.horizon import resolve_horizon_altitude
 from nightcrate.services.planner_visibility import (
     PlannerHorizon,
@@ -69,6 +69,7 @@ class SkyTrack:
     object_altitude_deg: list[float]
     object_azimuth_deg: list[float]
     moon_altitude_deg: list[float]
+    moon_azimuth_deg: list[float]
     moon_separation_deg: list[float]
     horizon_altitude_at_object_az: list[float]
     twilight: TwilightBands
@@ -231,7 +232,9 @@ def compute_sky_track(
     moon = get_body("moon", times, earth_loc)
     moon_altaz = moon.transform_to(altaz_frame)
     moon_alt = np.asarray(moon_altaz.alt.deg)
-    moon_sep = np.asarray(coord.separation(moon).deg)
+    moon_az = np.asarray(moon_altaz.az.deg)
+    # Strip the Moon's distance before separating — see direction_only().
+    moon_sep = np.asarray(coord.separation(direction_only(moon)).deg)
 
     horizon_alt = resolve_horizon_altitude(
         horizon.type, horizon.flat_altitude_deg, horizon.points, obj_az
@@ -293,6 +296,7 @@ def compute_sky_track(
         object_altitude_deg=[round(float(v), 2) for v in obj_alt],
         object_azimuth_deg=[round(float(v), 2) for v in obj_az],
         moon_altitude_deg=[round(float(v), 2) for v in moon_alt],
+        moon_azimuth_deg=[round(float(v), 2) for v in moon_az],
         moon_separation_deg=[round(float(v), 2) for v in moon_sep],
         horizon_altitude_at_object_az=[round(float(v), 2) for v in horizon_alt],
         twilight=bands,

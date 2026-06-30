@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -66,6 +66,7 @@ from nightcrate.api.planner_models import (
 from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import sky_tile_cache, thumbnails
+from nightcrate.services.astronomy import tonight_date
 from nightcrate.services.planner_annual_hours import (
     compute_annual_hours,
     compute_moon_year,
@@ -455,18 +456,9 @@ async def _load_dso_metadata(conn, dso_ids: list[int]) -> dict[int, dict]:
 
 # ── Tonight-date helper ──────────────────────────────────────────────────────
 
-
-def _tonight_date(location_tz: str) -> date:
-    """Local "tonight" — today's date in the location's timezone.
-
-    If you open the planner at 2 AM on 2026-04-20, "tonight" still
-    means the evening that just ended (2026-04-19 → 2026-04-20). To
-    keep the UX intuitive, we roll back by 12 hours before taking the
-    date, so the UI stays on "tonight" until local noon.
-    """
-    now_local = datetime.now(ZoneInfo(location_tz))
-    anchor = now_local - timedelta(hours=12)
-    return anchor.date()
+# Single source of truth lives in services.astronomy; aliased here so the many
+# existing _tonight_date(...) call sites are unchanged.
+_tonight_date = tonight_date
 
 
 # ── Core /targets endpoint ───────────────────────────────────────────────────
@@ -1120,6 +1112,14 @@ async def score_single_target(
         score_pct=score.score_pct,
         quality_label=score.quality_label,
         score_breakdown=_score_breakdown_to_out(score),
+        # Visibility facts so the panel renders fully even when this DSO
+        # isn't in the loaded list page.
+        hours_visible=vis.hours_visible if vis is not None else None,
+        max_altitude_deg=vis.max_altitude_deg if vis is not None else None,
+        peak_time_utc=vis.peak_time_utc.isoformat() if vis is not None else None,
+        transit_time_utc=vis.transit_time_utc.isoformat() if vis is not None else None,
+        altitude_at_transit_deg=vis.altitude_at_transit_deg if vis is not None else None,
+        min_moon_separation_deg=(vis.min_moon_separation_deg if vis is not None else None),
     )
 
 
@@ -1167,6 +1167,7 @@ async def target_sky_track(
         object_altitude_deg=track.object_altitude_deg,
         object_azimuth_deg=track.object_azimuth_deg,
         moon_altitude_deg=track.moon_altitude_deg,
+        moon_azimuth_deg=track.moon_azimuth_deg,
         moon_separation_deg=track.moon_separation_deg,
         horizon_altitude_at_object_az=track.horizon_altitude_at_object_az,
         twilight=TwilightBandsOut(
@@ -1268,6 +1269,12 @@ async def target_annual_hours(
             max_workers=max_workers,
         )
 
+    # "Tonight" in the location's timezone — same anchor as the sky-track /
+    # dome — so the chart's today marker lines up with the matching night.
+    # Only meaningful when it falls inside the plotted year.
+    tonight = _tonight_date(location.timezone)
+    today_iso = tonight.isoformat() if tonight.year == track.year else None
+
     return AnnualHoursResponse(
         dso_id=track.dso_id,
         year=track.year,
@@ -1276,6 +1283,7 @@ async def target_annual_hours(
         horizon_name=track.horizon_name,
         flat_altitude_deg=track.flat_altitude_deg,
         moon_sep_deg=track.moon_sep_deg,
+        today=today_iso,
         points=[AnnualHoursPointOut(date=p.date.isoformat(), hours=p.hours) for p in track.points],
         filtered_points=[
             AnnualHoursPointOut(date=p.date.isoformat(), hours=p.hours)

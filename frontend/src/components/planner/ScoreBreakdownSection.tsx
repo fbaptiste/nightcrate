@@ -15,8 +15,10 @@ import type {
 } from "@/api/planner";
 
 
+// Only the score fields are read — accept any item that carries them
+// (the list row OR the single-target score response).
 interface Props {
-  item: PlannerTargetItem;
+  item: Pick<PlannerTargetItem, "score_pct" | "score_breakdown">;
 }
 
 export function ScoreBreakdownSection({ item }: Props) {
