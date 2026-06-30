@@ -57,6 +57,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.40.0 — Catalog a Folder (read-only ingest)](#v0400--catalog-a-folder-read-only-ingest) ✅
 - [v0.40.1 — Planner Sky Position (Target vs Moon)](#v0401--planner-sky-position-target-vs-moon) ✅
 - [v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links](#v0402--planner-sort-tooltips--tonight-cross-links)
+- [v0.40.3 — Plan a Night (pick any date)](#v0403--plan-a-night-pick-any-date)
 - [v0.41.0 — Correct + Curate](#v0410--correct--curate)
 - [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
 - [v0.43.0 — Guiding (PHD2) Association](#v0430--guiding-phd2-association)
@@ -5000,6 +5001,40 @@ Two small planner/Tonight quality-of-life features:
    Weather page with the selected location + date pre-selected. Uses the
    `useSearchParams` read-then-clear pre-select pattern; the Weather date
    applies only when it falls inside the 8-day forecast window.
+
+## v0.40.3 — Plan a Night (pick any date)
+
+**Status:** Planned. Orthogonal UX interlude — no schema change, no migration,
+no backend compute work. The planner backend is **already date-parametric**: a
+`date` param threads end-to-end through the visibility snapshot, scoring,
+sky-track and moon calculations (every quantity is computed for the chosen
+`night_date`), and the snapshot cache key already includes the date. This is
+almost entirely frontend plumbing to expose the date the backend already
+accepts.
+
+Lets the planner plan for **any night**, not just tonight (e.g. next month's new
+moon).
+
+- **"Plan a Night" tab.** The dynamic "Tonight from {Location}" tab is renamed
+  **Plan a Night** — it's no longer tonight-only.
+- **Date selector in the controls bar**, immediately before the Location
+  selector (Plan-a-Night mode only — date is meaningless in Full Catalog).
+  Native `type="date"` picker (the established pattern). Defaults to **tonight**
+  in the location's timezone and resets there each session — the one planner
+  control that intentionally does NOT persist, since it carries "now" meaning
+  the others don't. The "Astro dark / Moon %" header strip already recomputes
+  for the chosen night.
+- **Date carries into the detail panel** with its own per-item date override
+  above the Location indicator, following the existing preview-override pattern
+  (local to the panel; never changes the main planner date).
+- **Now-status hidden for non-today dates.** The "up / rising / set right now"
+  indicator and its sort option drop out when the selected date isn't today
+  (meaningless — and misleading — for a future night), reusing the same hiding
+  mechanism as tonight-only fields in Full Catalog mode.
+
+Year charts (Best Time of Year, annual hours) are date-independent and
+untouched. Optional: bump the visibility snapshot cache (4-entry LRU) if
+date-stepping proves to thrash it.
 
 ## v0.41.0 — Correct + Curate
 

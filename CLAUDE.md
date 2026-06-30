@@ -131,6 +131,13 @@ UI/UX engineering, astrophotography, and astronomy.
   helper functions) are your calls unless the spec says otherwise.
 - Small bug fixes and refactors don't need architectural review.
 
+### How to ask for a decision
+
+When you need Fred's input on a choice, always: (1) present the concrete
+options, (2) state which one you recommend, and (3) explain why. Ask
+decisions **one at a time**, not batched, so each can be weighed on its own
+— this applies to plan-mode clarifications and any in-flight choice.
+
 ### What "critical thinking" looks like here
 
 - Check whether a change affects the data model's future
