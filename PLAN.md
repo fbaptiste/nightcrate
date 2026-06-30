@@ -5036,6 +5036,9 @@ Year charts (Best Time of Year, annual hours) are date-independent and
 untouched. Optional: bump the visibility snapshot cache (4-entry LRU) if
 date-stepping proves to thrash it.
 
+Implementation design (file-by-file plumbing, reusable assets, verification):
+see `docs/v0.40.3-plan-a-night-design.md`.
+
 ## v0.41.0 — Correct + Curate
 
 **Status:** Planned. Makes the catalog trustworthy and turns it into curated project content.
