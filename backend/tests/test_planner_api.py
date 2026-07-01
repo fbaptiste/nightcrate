@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -139,6 +141,54 @@ async def test_targets_endpoint_returns_snapshot(client: TestClient, seed_db):
     # FAINT-1 (z=18) should be filterable out via max_magnitude.
     designations = {item["primary_designation"] for item in data["items"]}
     assert designations.issubset({"M 42", "FAINT-1", "NGC 281"})
+
+
+async def test_now_status_suppressed_for_non_today_date(client: TestClient, seed_db, monkeypatch):
+    """``now_status`` (up/rising/set *right now*) is only meaningful when the
+    requested night is today; for any other date the backend must return it as
+    ``None``.
+
+    Determinism: ``now_status`` normally depends on the real wall clock relative
+    to the night's dark window, so we pin "today" via ``_tonight_date`` and force
+    ``compute_now_status`` to a sentinel. Both requests use mid-January nights one
+    day apart, where M 42 is well-placed over Phoenix all night — so visibility is
+    held constant and the ONLY variable is whether the date equals today.
+    """
+    location_id = seed_db
+    fixed_today = date(2026, 1, 15)
+    monkeypatch.setattr("nightcrate.api.planner._tonight_date", lambda _tz: fixed_today)
+
+    def fake_now_status(_loc, _hor, coords, *, astro_dark_start_utc, astro_dark_end_utc):
+        return {d.dso_id: "up" for d in coords}
+
+    monkeypatch.setattr("nightcrate.api.planner.compute_now_status", fake_now_status)
+
+    common = {
+        "location_id": location_id,
+        "min_hours": 0.0,
+        "max_magnitude": 20.0,
+        "min_size_arcmin": 0.0,
+    }
+
+    def m42(items):
+        return next((i for i in items if i["primary_designation"] == "M 42"), None)
+
+    # Requested date IS today → now_status computed (sentinel "up").
+    today = client.get("/api/planner/targets", params={**common, "date": fixed_today.isoformat()})
+    assert today.status_code == 200
+    today_m42 = m42(today.json()["items"])
+    assert today_m42 is not None, "M 42 should be visible over Phoenix in mid-January"
+    assert today_m42["now_status"] == "up"
+
+    # One night later (not today) → now_status suppressed to None, even though
+    # M 42 is still visible.
+    other = client.get("/api/planner/targets", params={**common, "date": "2026-01-16"})
+    assert other.status_code == 200
+    other_items = other.json()["items"]
+    other_m42 = m42(other_items)
+    assert other_m42 is not None, "M 42 should still be visible the next night"
+    assert other_m42["now_status"] is None
+    assert all(item["now_status"] is None for item in other_items)
 
 
 async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_db):

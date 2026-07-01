@@ -166,7 +166,7 @@ export default function PlannerTargetCard({
         <Stack direction="row" gap={2} alignItems="flex-start">
           {/* DSS2 thumbnail with now-status glyph pinned top-left. */}
           <Box sx={{ position: "relative", flexShrink: 0 }}>
-            <ThumbnailCell dsoId={item.dso_id} size={96} />
+            <ThumbnailCell dsoId={item.dso_id} size={96} lazy />
             {restrictTonight && item.now_status && (
               <Box
                 sx={{
@@ -197,6 +197,7 @@ export default function PlannerTargetCard({
                 fovMajorDeg={rigFovMajorDeg!}
                 fovMinorDeg={rigFovMinorDeg!}
                 aspectRatio={rigAspect!}
+                lazy
               />
               <Typography
                 variant="caption"

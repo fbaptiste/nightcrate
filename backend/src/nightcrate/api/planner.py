@@ -608,7 +608,12 @@ async def list_targets(
         # night-date anchor (only used for the response's ``date``
         # field — no visibility computation consumes it).
         tz_for_date = location.timezone if location is not None else "UTC"
-        night_date = date_ if date_ is not None else _tonight_date(tz_for_date)
+        tonight = _tonight_date(tz_for_date)
+        night_date = date_ if date_ is not None else tonight
+        # "Now status" (up/rising/set *right now*) is only meaningful when
+        # the requested night IS tonight — for any other date the current
+        # instant says nothing about that night, so we suppress it below.
+        is_requested_today = night_date == tonight
         dsos = await _load_dso_coords(conn)
 
     # "Anytime" mode skips the visibility snapshot entirely — the
@@ -736,7 +741,13 @@ async def list_targets(
     # after the filter loop below. The common big-win narrowing is
     # the search box; faceted-filter narrowing happens in the loop.
     now_status_by_dso: dict[int, str] = {}
-    if restrict_tonight and location is not None and horizon is not None and snapshot is not None:
+    if (
+        restrict_tonight
+        and is_requested_today
+        and location is not None
+        and horizon is not None
+        and snapshot is not None
+    ):
         candidate_ids = set(visible_ids)
         if search_match_ids is not None:
             candidate_ids &= search_match_ids

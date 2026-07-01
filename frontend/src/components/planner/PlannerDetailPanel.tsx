@@ -17,6 +17,7 @@ import IconButton from "@mui/material/IconButton";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
@@ -34,6 +35,7 @@ import { type Rig } from "@/api/rigs";
 import { type Location } from "@/api/locations";
 import { usePlannerStore } from "@/stores/plannerStore";
 import { displayConstellation } from "@/lib/constellations";
+import { tonightDate } from "@/lib/timezoneDate";
 import { formatDistance } from "@/lib/distanceFormat";
 import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { DsoExternalRefs } from "@/components/dso/DsoExternalRefs";
@@ -62,6 +64,10 @@ interface Props {
    *  from this value. Panel-local overrides NEVER propagate back to
    *  the parent (grid stays on the parent's choice). */
   selectedRigId: number | null;
+  /** Night the parent page has selected (ISO YYYY-MM-DD; null = tonight).
+   *  The preview date input starts from this value; panel-local overrides
+   *  NEVER propagate back to the parent (grid stays on the parent's date). */
+  selectedDate: string | null;
   /** Full rig list for the dropdown. */
   rigs: Rig[];
   /** Swap the dialog to a different DSO (triggered by the FOV
@@ -142,6 +148,7 @@ export default function PlannerDetailPanel({
   locations,
   selectedHorizonId,
   selectedRigId,
+  selectedDate,
   rigs,
   onSelectDso,
   onClose,
@@ -161,13 +168,15 @@ export default function PlannerDetailPanel({
     selectedHorizonId,
   );
   const [previewRigId, setPreviewRigId] = useState<number | null>(selectedRigId);
+  const [previewDate, setPreviewDate] = useState<string | null>(selectedDate);
   useEffect(() => {
     if (dsoId != null) {
       setPreviewLocationId(selectedLocationId);
       setPreviewHorizonId(selectedHorizonId);
       setPreviewRigId(selectedRigId);
+      setPreviewDate(selectedDate);
     }
-  }, [dsoId, selectedLocationId, selectedHorizonId, selectedRigId]);
+  }, [dsoId, selectedLocationId, selectedHorizonId, selectedRigId, selectedDate]);
 
   const previewLocation = locations.find((l) => l.id === previewLocationId) ?? null;
   const tz = previewLocation?.timezone ?? "UTC";
@@ -207,12 +216,19 @@ export default function PlannerDetailPanel({
     horizons.find((h) => h.id === previewHorizonId) ?? defaultHorizon;
 
   const skyTrackQuery = useQuery({
-    queryKey: ["sky-track", dsoId, previewLocationId, effectiveHorizon?.id ?? null],
+    queryKey: [
+      "sky-track",
+      dsoId,
+      previewLocationId,
+      effectiveHorizon?.id ?? null,
+      previewDate,
+    ],
     queryFn: () =>
       fetchSkyTrack(
         dsoId as number,
         previewLocationId as number,
         effectiveHorizon?.id ?? null,
+        previewDate ?? undefined,
       ),
     enabled:
       dsoId != null && previewLocationId != null && effectiveHorizon != null,
@@ -232,6 +248,7 @@ export default function PlannerDetailPanel({
       effectiveHorizon?.id ?? null,
       previewRigId,
       filterIntent,
+      previewDate,
     ],
     queryFn: () =>
       fetchSingleTargetScore(dsoId as number, {
@@ -239,6 +256,7 @@ export default function PlannerDetailPanel({
         horizonId: effectiveHorizon?.id ?? null,
         rigId: previewRigId,
         filterIntent,
+        date: previewDate,
       }),
     enabled:
       dsoId != null && previewLocationId != null && effectiveHorizon != null,
@@ -388,6 +406,28 @@ export default function PlannerDetailPanel({
           alignItems="flex-end"
           sx={{ lineHeight: 1.3 }}
         >
+          <Stack direction="row" gap={0.75} alignItems="center">
+            <Typography variant="caption" color="text.secondary">
+              Date
+            </Typography>
+            <TextField
+              type="date"
+              variant="standard"
+              value={
+                previewDate ??
+                tonightDate(
+                  previewLocation?.timezone ??
+                    Intl.DateTimeFormat().resolvedOptions().timeZone,
+                )
+              }
+              onChange={(e) => setPreviewDate(e.target.value || null)}
+              slotProps={{
+                inputLabel: { shrink: true },
+                htmlInput: { "aria-label": "Preview date" },
+              }}
+              sx={{ minWidth: 140, "& input": { fontSize: "0.75rem" } }}
+            />
+          </Stack>
           {locations.length > 0 && (
             <Stack direction="row" gap={0.75} alignItems="center">
               <Typography variant="caption" color="text.secondary">

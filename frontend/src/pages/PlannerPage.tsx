@@ -45,6 +45,7 @@ import { fetchHorizons, type Horizon } from "@/api/horizons";
 import PlannerSortPanel from "@/components/planner/PlannerSortPanel";
 import { renderHorizonMenuItems } from "@/components/planner/horizonMenuItems";
 import { serializeSort } from "@/lib/plannerSortFields";
+import { tonightDate } from "@/lib/timezoneDate";
 import { fetchPlannerTargets } from "@/api/planner";
 import { FilterIntentSelect } from "@/components/planner/FilterIntentSelect";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -94,6 +95,8 @@ export default function PlannerPage() {
   const setFilterIntent = usePlannerStore((s) => s.setFilterIntent);
   const searchQuery = usePlannerStore((s) => s.searchQuery);
   const setSearchQuery = usePlannerStore((s) => s.setSearchQuery);
+  const selectedDate = usePlannerStore((s) => s.selectedDate);
+  const setSelectedDate = usePlannerStore((s) => s.setSelectedDate);
   const activeTab = usePlannerStore((s) => s.activeTab);
   const setActiveTab = usePlannerStore((s) => s.setActiveTab);
   const restrictTonight = activeTab === "tonight";
@@ -227,7 +230,18 @@ export default function PlannerPage() {
   // aren't applicable in the current mode / rig state are filtered
   // out by ``serializeSort`` — the backend's own default kicks in
   // when the resulting string is empty.
-  const sortParam = serializeSort(sortBy, restrictTonight, rigId != null);
+  // Plan-a-Night date: ``selectedDate`` is null for tonight (the backend then
+  // defaults to tonight). ``isToday`` gates the now-status sort option, which is
+  // meaningless for any night that isn't tonight. Both anchor to ``tonightDate``
+  // (the 12 h-rollback observing night) so the displayed default + the
+  // now-status gate agree with the backend's ``tonight_date`` — NOT the plain
+  // calendar date, which would drift a day ahead between midnight and noon.
+  const activeLocation = locationsQuery.data?.find((l) => l.id === locationId);
+  const locationTz =
+    activeLocation?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const planDate = selectedDate ?? tonightDate(locationTz);
+  const isToday = selectedDate === null || selectedDate === tonightDate(locationTz);
+  const sortParam = serializeSort(sortBy, restrictTonight, rigId != null, isToday);
   const debouncedSearch = useDebounce(searchQuery.trim(), 250);
 
 
@@ -251,6 +265,7 @@ export default function PlannerPage() {
         coverageRange,
         q: debouncedSearch || null,
         restrictTonight,
+        selectedDate,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sortParam,
@@ -285,6 +300,9 @@ export default function PlannerPage() {
           coverageEnabled && coverageRange[1] < 200 ? coverageRange[1] : null,
         q: debouncedSearch || null,
         restrict_tonight: restrictTonight,
+        // null = tonight (backend defaults to tonight_date); only Tonight
+        // mode is date-aware (Full Catalog has no visibility/date context).
+        date: restrictTonight ? selectedDate : null,
         limit: pagination.pageSize,
         offset: pagination.page * pagination.pageSize,
         sort: sortParam,
@@ -315,9 +333,7 @@ export default function PlannerPage() {
     catalogFilter.length > 0 ||
     constellationFilter.length > 0;
 
-  const activeLocation = locationsQuery.data?.find((l) => l.id === locationId);
   const tz = activeLocation?.timezone ?? "UTC";
-  const locationName = activeLocation?.name ?? null;
   const data = targetsQuery.data;
 
   // Block the UI behind the filter bar / grid when we can't reasonably
@@ -373,9 +389,9 @@ export default function PlannerPage() {
           }}
           aria-label="Planner scope"
         >
-          <Tooltip title="Objects visible tonight during astronomical darkness from your selected location, filtered by hours, magnitude, size, and scored for imaging quality" arrow>
+          <Tooltip title="Objects visible on the selected night during astronomical darkness from your selected location, filtered by hours, magnitude, size, and scored for imaging quality" arrow>
             <ToggleButton value="tonight" sx={{ textTransform: "none", px: 2 }}>
-              {locationName ? `Tonight from ${locationName}` : "Tonight"}
+              Plan a Night
             </ToggleButton>
           </Tooltip>
           <Tooltip title="Browse all objects in the DSO catalog regardless of location, date, or visibility — no scoring, no tonight-specific filters" arrow>
@@ -517,8 +533,24 @@ export default function PlannerPage() {
           </Tooltip>
         </Stack>
         <Collapse in={filtersOpen} unmountOnExit>
-        {/* Row 1: Location + Horizon + Rig (with FOV) + Filter intent */}
+        {/* Row 1: Date + Location + Horizon + Rig (with FOV) + Filter intent */}
         <Stack direction="row" gap={2} flexWrap="wrap" alignItems="flex-start">
+          {restrictTonight && (
+            <TextField
+              type="date"
+              size="small"
+              label="Date"
+              value={planDate}
+              onChange={(e) => {
+                // Empty (input cleared) → null = tonight, which re-seeds the
+                // displayed value back to today in the location's timezone.
+                setSelectedDate(e.target.value || null);
+                setPagination((p) => ({ ...p, page: 0 }));
+              }}
+              slotProps={{ inputLabel: { shrink: true } }}
+              sx={{ minWidth: { xs: 140, sm: 160 } }}
+            />
+          )}
           {restrictTonight && (
             <FormControl size="small" sx={{ minWidth: { xs: 140, sm: 180 } }}>
               <InputLabel>Location</InputLabel>
@@ -856,6 +888,7 @@ export default function PlannerPage() {
           }}
           restrictTonight={restrictTonight}
           rigSelected={rigId != null}
+          isToday={isToday}
         />
         </Collapse>
       </Paper>
@@ -974,6 +1007,7 @@ export default function PlannerPage() {
         locations={locationsQuery.data ?? []}
         selectedHorizonId={horizonId}
         selectedRigId={rigId}
+        selectedDate={selectedDate}
         rigs={rigsQuery.data ?? []}
         onSelectDso={(id) => setDetailId(id)}
         onClose={() => setDetailId(null)}
