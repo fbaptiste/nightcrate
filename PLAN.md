@@ -5044,6 +5044,14 @@ plumbing, plus one small backend correctness gate.
       its **sort option** via a new `todayOnly` field flag + an `isToday` arg
       threaded through `sortFieldAvailable` / `serializeSort` / `PlannerSortPanel`.
 - [x] `todayInTimezone` lifted from `TonightCalc.tsx` to shared `lib/timezoneDate.ts`.
+- [x] **Lazy-load planner thumbnails.** Related follow-on: date-stepping surfaces
+      many new objects, each triggering a cold-cache DSS2 fetch. `ThumbnailCell`
+      gained a `lazy` prop (planner grid only) that defers mounting the `<img>` +
+      miss/poll cycle until the cell nears the viewport via an
+      **IntersectionObserver** (native `loading="lazy"` is unreliable in the app's
+      nested `overflow:auto` scroller — it never fires on inner-container scroll).
+      First paint now fetches only the visible tiles (~4 vs ~100+); the rest load
+      as you scroll.
 - [x] Regression test: `/targets?date=<non-today>` returns `now_status=null`
       (visibility held constant via monkeypatched `_tonight_date` + `compute_now_status`).
 - [x] Verified end-to-end with Playwright (future date re-fetches list + header

@@ -63,6 +63,12 @@ interface Props {
    *  + next-poll cadence`` overhead that pollers pay. Omit for
    *  list/detail thumbnails. */
   waitMs?: number;
+  /** Defer mounting the `<img>` (and the whole miss/poll cycle) until the
+   *  cell scrolls near the viewport, via an IntersectionObserver. Off by
+   *  default (eager). Enable for long scrolling grids like the planner
+   *  list, where most cards start below the fold and eager-loading all
+   *  of them floods the backend + CDS on first paint. */
+  lazy?: boolean;
 }
 
 const MAX_RETRIES = 30;
@@ -91,6 +97,7 @@ export default function ThumbnailCell({
   fit = "cover",
   onReady,
   waitMs,
+  lazy = false,
 }: Props) {
   // ``version`` starts at 1 (never 0) so the URL always carries a
   // ``&__v=N`` cache-buster. Without it, ThumbnailCell's initial
@@ -112,6 +119,15 @@ export default function ThumbnailCell({
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // Lazy tiles mount their <img> (and start the miss/poll cycle) only once
+  // the cell scrolls near the viewport. We drive this with an
+  // IntersectionObserver rather than native ``loading="lazy"`` because the
+  // app's content scrolls inside an ``overflow:auto`` container, not the
+  // document — and native lazy loading is unreliable in nested scrollers
+  // (it defers on first paint but never fires on inner-container scroll, so
+  // the lower cards would spin forever). Eager cells start ``inView``.
+  const [inView, setInView] = useState(!lazy);
 
   // Schedule the next retry under the shared backoff schedule, or mark
   // the cell as failed once the retry budget is exhausted. Idempotent —
@@ -177,6 +193,28 @@ export default function ThumbnailCell({
     };
   }, []);
 
+  // Lazy tiles: watch for the cell approaching the viewport, then mount the
+  // <img> once. A generous rootMargin pre-loads a screen ahead so tiles are
+  // ready by the time they scroll in. root=null (viewport) correctly handles
+  // the nested scroll container. Once in view we stop observing — thumbnails
+  // never need to unload.
+  useEffect(() => {
+    if (!lazy || inView) return;
+    const el = wrapperRef.current;
+    if (el == null) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [lazy, inView]);
+
   const src = `${thumbnailUrl(dsoId, variant, {
     fovMajorDeg,
     fovMinorDeg,
@@ -233,43 +271,56 @@ export default function ThumbnailCell({
   }
 
   return (
-    <Box sx={wrapperSx}>
-      <img
-        ref={imgRef}
-        onLoad={(e) => handleImageResolved(e.currentTarget)}
-        onError={handleImageError}
-        src={src}
-        width={typeof renderWidth === "number" ? renderWidth : undefined}
-        height={typeof renderHeight === "number" ? renderHeight : undefined}
-        alt=""
-        loading="eager"
-        style={{
-          display: "block",
-          width: "100%",
-          height: "100%",
-          objectFit: fit,
-          borderRadius: fill ? 0 : 4,
-          background: "rgba(0, 0, 0, 0.05)",
-          userSelect: fill ? "none" : undefined,
-          pointerEvents: fill ? "none" : undefined,
-        }}
-      />
-      {loading && (
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            // Dark scrim so the spinner reads on any background tint.
-            bgcolor: "rgba(0, 0, 0, 0.18)",
-            pointerEvents: "none",
-            borderRadius: fill ? 0 : 0.5,
-          }}
-        >
-          <CircularProgress size={fill ? 36 : 20} thickness={4} color="inherit" />
-        </Box>
+    <Box
+      ref={wrapperRef}
+      sx={{
+        ...wrapperSx,
+        // Neutral placeholder tint for a not-yet-mounted lazy tile (and
+        // behind the image while it loads).
+        bgcolor: "action.hover",
+        borderRadius: fill ? 0 : 0.5,
+      }}
+    >
+      {inView && (
+        <>
+          <img
+            ref={imgRef}
+            onLoad={(e) => handleImageResolved(e.currentTarget)}
+            onError={handleImageError}
+            src={src}
+            width={typeof renderWidth === "number" ? renderWidth : undefined}
+            height={typeof renderHeight === "number" ? renderHeight : undefined}
+            alt=""
+            loading="eager"
+            style={{
+              display: "block",
+              width: "100%",
+              height: "100%",
+              objectFit: fit,
+              borderRadius: fill ? 0 : 4,
+              background: "rgba(0, 0, 0, 0.05)",
+              userSelect: fill ? "none" : undefined,
+              pointerEvents: fill ? "none" : undefined,
+            }}
+          />
+          {loading && (
+            <Box
+              sx={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                // Dark scrim so the spinner reads on any background tint.
+                bgcolor: "rgba(0, 0, 0, 0.18)",
+                pointerEvents: "none",
+                borderRadius: fill ? 0 : 0.5,
+              }}
+            >
+              <CircularProgress size={fill ? 36 : 20} thickness={4} color="inherit" />
+            </Box>
+          )}
+        </>
       )}
     </Box>
   );
