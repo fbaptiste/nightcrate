@@ -58,10 +58,13 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.40.1 — Planner Sky Position (Target vs Moon)](#v0401--planner-sky-position-target-vs-moon) ✅
 - [v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links](#v0402--planner-sort-tooltips--tonight-cross-links) ✅
 - [v0.40.3 — Plan a Night (pick any date)](#v0403--plan-a-night-pick-any-date) ✅
-- [v0.41.0 — Correct + Curate](#v0410--correct--curate)
+- [v0.41.0 — Equipment Resolution + Rig Attribution](#v0410--equipment-resolution--rig-attribution)
+- [v0.41.1 — Catalog Corrections + Embedded Image Analyzer](#v0411--catalog-corrections--embedded-image-analyzer)
+- [v0.41.2 — Frame Quality Metrics](#v0412--frame-quality-metrics)
+- [v0.41.3 — Curated Content](#v0413--curated-content)
 - [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
-- [v0.43.0 — Guiding (PHD2) Association](#v0430--guiding-phd2-association)
-- [v0.44.0 — Session Logs + Event Timeline](#v0440--session-logs--event-timeline)
+- [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
+- [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
 - [v0.45.0 — AI Context Bundle](#v0450--ai-context-bundle)
 - [v0.4x.0 — Mosaic Projects (Arc Capstone)](#v04x0--mosaic-projects-arc-capstone)
 - [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
@@ -4771,6 +4774,13 @@ These apply across the whole arc; individual versions don't re-litigate them.
   `session_event.related_sub_frame_id`) cleanly and sidesteps SQLite's awkward
   ALTER-to-add-FK. Precedent: the alias tables have sat unused in the schema since migration
   0005. Per the forward-only migration policy, this commits these shapes now.
+- **Catalog and correlate — don't curate for processing (settled 2026-07-08).** Sub
+  culling/weighting is PixInsight/Siril territory. Projects assemble the record — rig,
+  weather, guiding, sub frames, processed images — and correct *catalog* facts (frame
+  type, session, target, equipment), never processing decisions. **No accept/reject
+  workflow**; the `accepted` / `rejection_reason` / `rejection_source` columns stay in the
+  schema, dormant (all frames `accepted = 1`), so the views work unchanged and the UI
+  could return later without a migration.
 
 ### Cross-version behavior to honor (flagged, not re-decided)
 
@@ -4941,8 +4951,8 @@ folder and see everything filed correctly.
       Migration follows the 0038 table-rewrite template; backfills `project_id` from
       ingestion_run/session/source-folder prefix and drops project-less orphans (verified on the
       populated dev DB). "Have I imaged this object?" is answered by `project_dso`, not frame identity.
-      Calibration-match view scoping (within-project vs shared library) deferred to v0.41.0+ when the
-      views get a UI.
+      Calibration-match view scoping settled 2026-07-08: stays within-project, no shared
+      calibration library — see the decision note under v0.42.0.
 
 ## v0.40.1 — Planner Sky Position (Target vs Moon)
 
@@ -5063,59 +5073,191 @@ Year charts (Best Time of Year, annual hours) are date-independent and untouched
 The visibility-snapshot LRU (4 entries) was left as-is — bump only if date-stepping
 proves to thrash it.
 
-## v0.41.0 — Correct + Curate
+## v0.41.0 — Equipment Resolution + Rig Attribution
 
-**Status:** Planned. Makes the catalog trustworthy and turns it into curated project content.
+**Status:** Planned. First of four v0.41.x chunks (the old "Correct + Curate" version was
+split 2026-07-08 so each chunk lands with a manually-testable UI surface). This one makes
+the cataloged data *right* — equipment, rig, and filter attribution — before any editing
+UI is built on top of it.
 
-- [ ] Edit a frame's `frame_type`; accept/reject with reason; reassign session / target;
-      bulk operations across a selection.
-- [ ] Fix mis-resolved equipment on a frame; **unresolved-alias review UI** — the
-      `unresolved_equipment_observation` queue becomes a "map these to equipment" screen that
-      inserts confirmed aliases (the resolver never auto-confirms).
-- [ ] Rig assignment + the two-camera-same-model disambiguation (match resolved equipment
-      against known rig configurations).
+- [ ] **Unresolved-alias review UI** — the `unresolved_equipment_observation` queue becomes
+      a "map this header string to equipment" screen; confirming inserts the alias (the
+      resolver never auto-confirms). Lives on Admin (the queue is global, not per-project),
+      with a pending-count badge.
+- [ ] **Rig attribution, project-scoped.** Matching runs ONLY against the rigs assigned to
+      the project (`project_rig`); a project with no rigs assigned gets no discovery at all.
+      Discriminators beyond `INSTRUME` (identical across two same-model camera bodies):
+      `FOCALLEN` vs the rig's telescope configuration, and filter line names vs the rig's
+      `rig_filter_slot` loadout. Outcomes: single match → attribute; no match or
+      both-rigs-match → leave NULL and surface as "unattributed" (never guess).
+- [ ] **"Re-run equipment resolution" button** on the Catalog tab — idempotent per-project
+      pass that re-resolves equipment on all cataloged frames and back-fills `filter_id`
+      from `filter_name_hint` via newly confirmed aliases + rig scoping. Usable at any time
+      (e.g., right after assigning a rig to the project or confirming aliases).
+- [ ] **Per-frame manual override** (rig / camera / filter). Overrides win over any later
+      re-run — track the attribution source so automated passes never clobber user edits
+      (mechanism decided at implementation).
+- [ ] UI to verify: alias review screen; equipment/filter chips on catalog cards; re-run
+      button + result summary; override menu.
+
+## v0.41.1 — Catalog Corrections + Embedded Image Analyzer
+
+**Status:** Planned. The correction layer over the (now correctly attributed) catalog.
+Per the arc-wide "catalog and correlate" decision (2026-07-08), there is **no
+accept/reject workflow** here — corrections fix catalog facts, not processing decisions.
+
+- [ ] Edit a frame's `frame_type`; reassign session / target; bulk operations across a
+      selection (catalog *corrections* only).
+- [ ] **Embedded Image Analyzer** (replaces an earlier deep-link idea — navigation must
+      stay inside the project). Refactor `ImageAnalyzerPage` into an embeddable view whose
+      Zustand store is provided via context instead of the module-level singleton; the
+      standalone page keeps the global store and behaves exactly as today. In a project,
+      an "open" action on any catalog card (frames, masters, others) or gallery image opens
+      the analyzer as a **full-screen overlay** — the URL stays on `/projects/:id`, close
+      returns to the catalog in place — handing every project file the full existing
+      toolset (stretch, stats, histogram, pixel inspector, aberration inspector, Identify,
+      header viewer) for free.
+- [ ] **Prev/next stepping** inside the overlay, walking the launching list (respecting
+      the active filter pill + sort) — inspect a night's subs one after another without
+      leaving the project.
+- [ ] UI to verify: corrections + bulk ops on the Catalog tab; overlay open/close returns
+      in place; prev/next honors the filtered list.
+
+## v0.41.2 — Frame Quality Metrics
+
+**Status:** Planned. Batch quality analysis reusing the aberration-inspector machinery —
+fills the `sub_frame` quality columns (`hfr`, `star_count`, `median_adu`,
+`background_adu`, `snr_estimate`) that shipped empty in migration 0037. No migration.
+
+- [ ] **"Analyze frames" button** on the Catalog tab → single-flight batch pass (same
+      lock/status pattern as ingest, own run type): per light (optionally flats), load
+      pixels at native resolution (HFR cannot run on decimated data), run
+      `services/aberration.py:detect_stars()` + `services/imaging.py:compute_image_stats()`
+      (both already pure functions), UPDATE the quality columns. **Numpy-only in a per-run
+      ProcessPool** (mlx is not safe on concurrent paths; per-run pools per the ingest
+      precedent). Skips already-analyzed rows unless forced; progress via run counters.
+- [ ] Catalog cards show HFR / star count; quality sort + filter (worst-first for quick
+      inspection). Quality here is **catalog metadata** — it feeds the session timeline
+      (v0.43/v0.44) and the context bundle (v0.45), and helps spot problem frames to
+      inspect in the embedded analyzer; it is NOT a culling workflow (see the arc-wide
+      "catalog and correlate" decision).
+- [ ] PixInsight-processed files may carry SSWEIGHT / PSF metrics in headers — import when
+      present as a cheap complement (see "FITS Header Database Storage" in Future Features).
+- [ ] UI to verify: button + progress, quality values on cards, quality sort.
+
+## v0.41.3 — Curated Content
+
+**Status:** Planned. The catalog-to-display bridge.
+
 - [ ] **Promote any frame (raw sub or processed) into the `project_image` gallery** — the
       bridge from catalog to the existing display gallery.
-- [ ] Sessions tab: list of sessions with date, rig, sub count, integration per filter.
+- [ ] **Sessions tab** for auto (ingest) sessions: date, rig, sub count, integration per
+      filter. One Sessions tab listing auto + manual rows with source badges; manual
+      continues to win the integration display until v0.42.0's COALESCE lands.
+- [ ] UI to verify: promote action + gallery result; the merged Sessions tab.
 
 ## v0.42.0 — Calibration Matching + Derived Integration
 
 **Status:** Planned. Delivers the cross-domain payoff — coverage + real integration totals.
 
-- [ ] Calibration-matching **views** (not bespoke code): `matching_darks` (camera + gain +
-      exposure + binning, set-temp within ±1 °C; never matched on filter), `matching_flats`
-      (camera + gain + filter + binning + telescope_configuration), `matching_bias`,
-      `calibration_coverage`. All consider only `accepted = 1` frames.
-- [ ] `integration_time_per_project_filter` view; duoband filters intentionally double-count
-      per `line_name`.
+**Settled (2026-07-08): calibration matching stays per-project; no shared
+calibration-library feature.** Flats + flat-darks are shot fresh for every project (camera
+angle and dust motes change), and each rig has its own master darks — the only calibration
+that travels between projects is a master dark or two, and binding its folder to a project
+is a trivial one-time action. Do not re-open this.
+
+- [ ] The calibration-matching + integration **views already shipped in migration 0037**
+      (`matching_darks` — camera + gain + exposure + binning, set-temp ±1 °C, never filter;
+      `matching_flats` — adds filter + telescope_configuration; `matching_bias`;
+      `calibration_coverage`; `integration_time_per_project_filter` with the intentional
+      duoband double-count; all `accepted = 1` only). v0.42.0's work is the UI + derived
+      integration on top of them, not creating them.
 - [ ] **Derived integration** from actual sub-frame data, stored separately from the v0.38.0
       manual column. Manual always wins for display/progress (`COALESCE(manual, derived)`);
-      derived never overwrites manual. Both surface in the AI bundle with provenance.
+      derived never overwrites manual. Both surface in the context bundle with provenance.
+      With no rejection workflow (arc decision 2026-07-08), derived counts **every**
+      cataloged light — i.e. *captured* integration, slightly above what survives into a
+      stack. Where the published number should reflect the stacked subset, the manual
+      session entry wins via the COALESCE rule; document this in the UI tooltip.
 - [ ] Per-light calibration-coverage indicators; derived actuals in the integration bar
       chart against `project_filter_goal`.
 
-## v0.43.0 — Guiding (PHD2) Association
+## v0.43.0 — Guiding (PHD2) Association + Session Timeline v1
 
-**Status:** Planned. Reuses the shipped PHD2 parser service; isolated from the rest.
+**Status:** Planned. Reuses the shipped PHD2 parser service. The session timeline
+(settled 2026-07-08; supersedes the old v0.44 "Gantt" idea) is this version's
+manually-testable UI.
 
 - [ ] Populate `guiding_log_file` / `guiding_sample` / `dither_event` from PHD2 logs ingested
       per session.
 - [ ] Per-sub guiding lookup: aggregate RMS (total / RA / Dec), peak error, sample count over
       the sub's time window — parameterized query, not a stored column.
-- [ ] PHD2 tab on the project linking to the existing PHD2 analyzer.
+- [ ] **Embedded PHD2 analyzer** — same store-decoupling refactor as the v0.41.1 Image
+      Analyzer (view component + context-provided store; the standalone `/phd2-analyzer`
+      page is unchanged). **No linking out** — it opens as an overlay inside the project,
+      per session with that night's log preloaded, and pre-scoped to a time range via the
+      chart's existing scroll-to-time handle when arriving from a sub or the timeline.
+- [ ] **Session timeline v1** — Sessions tab → click a session → that night's timeline.
+      **Vertical, time-proportional**: time flows down at true scale (default density
+      sized so a thumbnail fits a typical sub — roughly a 5–6 k px scroll for a full
+      night); idle stretches > ~10 min fold into labeled gap bands. Left: time axis.
+      Middle: continuous RA/Dec **guiding strip** — a purpose-built rotated chart drawn
+      from `guiding_sample` (decimated server-side; a 2 s-cadence night is ~14 k points) —
+      with dither markers. Right: **sub blocks** spanning their exposure windows
+      (thumbnail, filter chip, exposure, HFR when v0.41.2 has run). Click a sub → embedded
+      Image Analyzer overlay (prev/next walks the session in time order); click the
+      guiding strip → embedded PHD2 analyzer pre-scoped to that window. The existing PHD2
+      `TimeSeriesChart` stays untouched — reuse is at the data layer and via the embedded
+      analyzer, not by rotating the chart.
+- [ ] **Sky-context strips** — no new parsers needed; all from the existing
+      date-parametric astronomy services: twilight shading on the time axis (sunset →
+      astro dark → sunrise), **target-altitude curve**, **moon altitude +
+      moon–target separation** curves (the `compute_sky_track` machinery, incl.
+      `direction_only`), per-night **illumination badge**, and moonrise/set +
+      computed-transit markers.
+- [ ] UI to verify: timeline renders a real ingested night; guiding strip aligns with sub
+      blocks; sky strips match the planner's numbers for the same night; both
+      click-throughs; gap folding.
 
-## v0.44.0 — Session Logs + Event Timeline
+## v0.44.0 — Session Logs + Session Timeline v2
 
 **Status:** Planned. ASIAir log-format research lands here (sample: the Tulip
 `Autorun_Log_*.txt`).
 
 - [ ] ASIAir Autorun + N.I.N.A. session-log parsers → `session_event`; `autofocus_run` from
       N.I.N.A. autofocus JSON.
-- [ ] Gantt session-timeline visualization (captures overlaid with guiding + altitude).
+- [ ] **Session timeline v2** — enrich the v0.43 timeline with what the parsers unlock:
+      autofocus runs, meridian flips, filter changes, plate-solve failures, and
+      errors/warnings as markers on the time axis, plus capture-setting anomalies (a
+      mid-session gain/offset/binning change, derived from sub headers — no parser
+      needed). (Supersedes the earlier "Gantt visualization" idea; the sky-context
+      strips — target/moon altitude, separation, twilight — ship with v1.)
+- [ ] **Conditions strip** — hourly weather for the session's night + site (cloud cover,
+      humidity, wind) fetched via the already-integrated Open-Meteo **archive** endpoint
+      and rendered as a thin band on the timeline. This is the projects surface doing what
+      it exists to do: rig + weather + guiding + subs joined in one view — the cross-domain
+      correlation no other tool has.
+- [ ] **Frame-quality trend column** (when v0.41.2 metrics exist): per-sub HFR — focus
+      drift becomes visible between autofocus markers — plus star count and background
+      ADU (passing clouds show as star-count dips; moonrise lifts the background, lining
+      up with the moon strip and conditions band).
+- [ ] **Thermal + dew band**: per-sub sensor temp vs set point (header data, flags a
+      struggling cooler) and ambient temperature / dew-point spread from the conditions
+      data, with dew-risk shading via the existing `services/dew.py` classification.
+- [ ] **Guiding cloud indicator**: PHD2 star-mass / SNR dips (already stored per sample
+      on `guiding_sample`) as a thin band — the classic passing-cloud signature at
+      guide-camera cadence, independent of (and finer-grained than) the hourly weather.
+- [ ] **Crosshair readout + strip toggles**: a hover crosshair reads out every strip at
+      that instant; strips are individually toggleable (defaults ON: guiding, subs, sky
+      context, events; opt-in: trends, thermal, conditions) so the timeline stays legible.
 
 ## v0.45.0 — AI Context Bundle
 
-**Status:** Planned. The load-bearing goal the whole data model was designed for.
+**Status:** Planned. The load-bearing goal the whole data model was designed for. **Note
+(2026-07-08): the bundle itself is an AI-agnostic serialization contract** — a structured
+JSON export of a session/project. No AI features ship with it; those stay unversioned
+under [Future features (not yet versioned)](#future-features-not-yet-versioned) until
+they're properly defined.
 
 - [ ] `build_session_context(session_id)` / project-level assembler producing the structured
       JSON bundle (§13 of the Imaging Core Schema spec), `schema_version: 1`. All timestamps
@@ -5132,8 +5274,40 @@ proves to thrash it.
 - Curated observing lists (Herschel 400, Messier Marathon) via `observing_list` +
   `observing_list_member` schema
 - Advanced plate-solve-based search (any object in the solved FOV, not just linked DSOs)
-- Export / sharing / potential Astrobin integration
+- Export / sharing / potential Astrobin integration (auto-generate the acquisition table
+  from derived integration)
 - "Send to project" from target planner (create project pre-populated with target info)
+- Home dashboard — cross-project integration totals, goal progress, recent sessions /
+  ingests (the Home page is currently a static welcome)
+- Global catalog search across projects (object / filter / date) + "already imaged" badges
+  in the planner (the data has been accumulating in `project_dso` since v0.37.0)
+- Equipment usage stats (exposure counts / hours per camera, filter, mount) derived from
+  `sub_frame`
+- File verification background task (`file_location` verification fields exist since
+  migration 0037) — a "verify catalog" integrity check for NAS/archive users
+- Database backup/export affordance on Admin — catalog export to CSV/JSON + DB snapshot
+- Smart-scope ingest (Seestar / Dwarf) — beginner-market expansion; post-arc strategic
+  decision
+
+#### AI-powered features (post-arc, deliberately unversioned)
+
+Captured 2026-07-08. None of these are committed — they stay here until the ingest arc is
+done and the use cases are properly defined. All consume the v0.45.0 bundle or the catalog
+schema as-is; none require reshaping data.
+
+- **AI session analyzer** — feed the v0.45.0 bundle to Claude for "what limited this
+  session / what should I improve" (the original post-MVP goal).
+- **AI-assisted alias mapping** — *suggestions only* for the unresolved-equipment queue;
+  a human always confirms (consistent with the resolver's never-auto-confirm rule).
+- **Natural-language catalog search** — "Ha subs of the Tulip from last October with RMS
+  under 0.6" translated to catalog queries.
+- **Acquisition advisor** — combine per-filter goal gaps + planner visibility + weather
+  forecast into "you need 3 h more Oiii on the Tulip; the next suitable nights are …".
+- **Issue detection** on session data (guiding spikes ↔ wind gusts, HFR drift ↔
+  temperature) — deterministic rules first, AI narrative on top later.
+- **Bundle enhancement: conditions.** Join historical weather (the Open-Meteo archive
+  endpoint is already integrated) + moon altitude/separation into the session bundle so
+  any analyzer — human or AI — sees the conditions alongside the telemetry.
 
 ---
 
@@ -5470,7 +5644,7 @@ PHD2 logs contain thousands of samples per night. Storing them in their own tabl
 
 #### 2.6 Session events are a separate table
 
-N.I.N.A. and ASIAIR session logs are timelines of events: filter change at 03:14, autofocus at 03:22, plate solve at 03:23, exposure start at 03:24, and so on. Parsing these into a `session_event` table enables the Gantt timeline visualization Fred wants. The raw log files are also retained (`session_log_file`) so reparsing can recover any event types we missed.
+N.I.N.A. and ASIAIR session logs are timelines of events: filter change at 03:14, autofocus at 03:22, plate solve at 03:23, exposure start at 03:24, and so on. Parsing these into a `session_event` table enables the session-timeline visualization (v0.43/v0.44). The raw log files are also retained (`session_log_file`) so reparsing can recover any event types we missed.
 
 #### 2.7 No plate_solve table — plate solve results live on sub_frame
 
@@ -5552,7 +5726,7 @@ Source vocab: `nina | asiair | phd2 | other`. `file_hash` (SHA-256) is `UNIQUE` 
 
 #### session_event
 
-Parsed events from session logs. This is the source for the Gantt timeline visualization.
+Parsed events from session logs. This is the source for the session-timeline visualization.
 
 Indexed on `(session_id, event_utc)` and on `event_type`. `event_type` is a closed vocabulary:
 
@@ -5723,7 +5897,7 @@ Any future change to the bundle shape bumps `schema_version`. The AI analyzer co
 
 ### 14. Indices
 
-Index the obvious paths: `sub_frame.content_hash` (UNIQUE identity), the grouping/equipment FKs, `date_obs_utc`, the partial calibration-match indices (§6/§7), `guiding_sample(guiding_log_file_id, sample_utc)` (§8), and `session_event(session_id, event_utc)` (the Gantt query). Performance is expected to be fine up to ~100k sub frames; beyond that, some views may need to become trigger-maintained materialized tables. The exact index list is settled in the migration.
+Index the obvious paths: `sub_frame.content_hash` (UNIQUE identity), the grouping/equipment FKs, `date_obs_utc`, the partial calibration-match indices (§6/§7), `guiding_sample(guiding_log_file_id, sample_utc)` (§8), and `session_event(session_id, event_utc)` (the timeline query). Performance is expected to be fine up to ~100k sub frames; beyond that, some views may need to become trigger-maintained materialized tables. The exact index list is settled in the migration.
 
 ---
 
