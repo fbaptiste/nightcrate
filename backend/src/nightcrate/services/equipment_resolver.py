@@ -276,10 +276,24 @@ class EquipmentResolver:
         # 2. Line-name canonicalization scoped to the capturing rig's filters.
         #    Reuse the already-normalized value rather than re-normalizing.
         line_name = _line_name_from_normalized(normalized)
-        if line_name is not None and rig_context is not None:
-            scoped = await self._resolve_filter_by_line_name(line_name, normalized, rig_context)
-            if scoped is not None:
-                return _finish(scoped, stats)
+        if line_name is not None:
+            if rig_context is not None:
+                scoped = await self._resolve_filter_by_line_name(line_name, normalized, rig_context)
+                if scoped is not None:
+                    return _finish(scoped, stats)
+            # Line names are slot labels, not model names — never queue them as
+            # unresolved observations (v0.41.0). A global "Ha" → one-physical-
+            # filter alias would be wrong for any dual-rig user; rig scoping is
+            # the only correct resolution, and the catalog's hint chip already
+            # points the user at rig assignment.
+            return _finish(
+                ResolveResult(
+                    status="unresolved",
+                    normalized_alias=normalized,
+                    message=f"line name '{line_name}' needs a rig context to resolve",
+                ),
+                stats,
+            )
 
         # 3. Unresolved — record the observation.
         miss = await self._record_unresolved("filter", normalized, header_value or "", source)

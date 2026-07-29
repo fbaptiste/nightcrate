@@ -1,8 +1,11 @@
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
+import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import TuneIcon from "@mui/icons-material/Tune";
+import { memo } from "react";
 import {
   catalogThumbnailUrl,
   masterThumbnailUrl,
@@ -161,18 +164,59 @@ const CARD_SX = {
 
 // ── cards ─────────────────────────────────────────────────────────────────────
 
-export function FrameCard({
+/** Filter chip — filled when resolved to a physical filter, outlined when the
+ * value is still just the raw FITS header hint. */
+function FilterChip({ row }: { row: CatalogFrame }) {
+  if (!row.filter_name) return null;
+  const resolved = row.filter_id != null;
+  const source = row.filter_source === "user" ? " (manual override)" : "";
+  return (
+    <Tooltip
+      title={
+        resolved
+          ? `Filter: ${row.filter_name}${source}`
+          : "Raw FILTER header value — not yet mapped to a physical filter. " +
+            "Assign a rig to the project (or confirm an alias on Admin), then re-run resolution."
+      }
+    >
+      <Chip
+        size="small"
+        variant={resolved ? "filled" : "outlined"}
+        color="primary"
+        label={row.filter_name}
+      />
+    </Tooltip>
+  );
+}
+
+function RigChip({ row }: { row: CatalogFrame }) {
+  if (!row.rig_name) return null;
+  const source = row.rig_source === "user" ? " (manual override)" : "";
+  return (
+    <Tooltip title={`Attributed rig${source}`}>
+      <Chip size="small" variant="outlined" label={row.rig_name} />
+    </Tooltip>
+  );
+}
+
+// Memoized: the catalog is an infinite-scroll list that can hold thousands of
+// cards, and opening/closing the override dialog re-renders the whole tab.
+// `row` identity is stable from the query cache and `onEditEquipment` is a
+// stable setter, so memo makes that toggle O(1) instead of O(loaded cards).
+function FrameCardImpl({
   row,
   projectId,
   tz,
   showFilter,
   showObject,
+  onEditEquipment,
 }: {
   row: CatalogFrame;
   projectId: number;
   tz: string;
   showFilter: boolean;
   showObject: boolean;
+  onEditEquipment?: (row: CatalogFrame) => void;
 }) {
   const capture = joinDot([
     formatSubExposure(row.exposure_seconds) || null,
@@ -189,11 +233,10 @@ export function FrameCard({
       <Thumb src={catalogThumbnailUrl(projectId, row.id)} />
       <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.25 }}>
         <FileNameBlock path={row.path} />
-        {(showFilter || showObject) && (
+        {(showFilter || showObject || row.rig_name) && (
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.25, minWidth: 0 }}>
-            {showFilter && row.filter_name && (
-              <Chip size="small" variant="outlined" color="primary" label={row.filter_name} />
-            )}
+            {showFilter && <FilterChip row={row} />}
+            <RigChip row={row} />
             {showObject && row.object_hint && (
               <Typography sx={{ fontSize: 13, ...ELLIPSIS }}>{row.object_hint}</Typography>
             )}
@@ -205,11 +248,23 @@ export function FrameCard({
           {formatDate(row.date_obs_utc, tz)}
         </Typography>
       </Box>
+      {onEditEquipment && (
+        <Tooltip title="Equipment attribution (rig / camera / filter)">
+          <IconButton
+            size="small"
+            aria-label="edit equipment attribution"
+            onClick={() => onEditEquipment(row)}
+            sx={{ alignSelf: "flex-start", ml: "auto" }}
+          >
+            <TuneIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      )}
     </Paper>
   );
 }
 
-export function MasterCard({
+function MasterCardImpl({
   row,
   projectId,
   tz,
@@ -246,7 +301,7 @@ export function MasterCard({
   );
 }
 
-export function OtherCard({
+function OtherCardImpl({
   row,
   tz,
 }: {
@@ -267,3 +322,7 @@ export function OtherCard({
     </Paper>
   );
 }
+
+export const FrameCard = memo(FrameCardImpl);
+export const MasterCard = memo(MasterCardImpl);
+export const OtherCard = memo(OtherCardImpl);

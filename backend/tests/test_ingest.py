@@ -16,7 +16,6 @@ import pytest
 from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
-from nightcrate.api.ingest import _observing_window_utc
 from nightcrate.main import app
 from nightcrate.services.ingest_classify import (
     CATEGORY_LOG,
@@ -33,6 +32,7 @@ from nightcrate.services.ingest_scanner import (
     scan_directory,
 )
 from nightcrate.services.ingest_sessions import observing_night, session_key
+from nightcrate.services.ingest_sessions import observing_window_utc as _observing_window_utc
 
 # ── Pure: extension classification ───────────────────────────────────────────
 

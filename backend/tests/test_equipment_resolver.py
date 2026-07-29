@@ -363,18 +363,23 @@ class TestResolveFilter:
         assert result.status == "ambiguous"
         assert result.equipment_id is None
 
-    async def test_line_name_without_rig_context_unresolved(self, equipment):
+    async def test_line_name_without_rig_context_unresolved_not_queued(self, equipment):
+        # v0.41.0: line names are slot labels, not model names — a global
+        # "Ha" → one-physical-filter alias would be wrong for dual-rig users,
+        # so line-name values never enter the unresolved-observation queue.
         conn, _ = equipment
         before = await _observation_count(conn)
         result = await EquipmentResolver(conn).resolve_filter("Ha")
         assert result.status == "unresolved"
-        assert await _observation_count(conn) == before + 1
+        assert await _observation_count(conn) == before
 
-    async def test_line_name_rig_without_matching_slot_unresolved(self, equipment):
+    async def test_line_name_rig_without_matching_slot_unresolved_not_queued(self, equipment):
         conn, ids = equipment
+        before = await _observation_count(conn)
         ctx = RigContext(rig_id=ids["rig_empty"])
         result = await EquipmentResolver(conn).resolve_filter("Ha", rig_context=ctx)
         assert result.status == "unresolved"
+        assert await _observation_count(conn) == before
 
     @pytest.mark.parametrize("blank", ["", "   ", None])
     async def test_blank_filter_is_unresolved_without_observation(self, equipment, blank):

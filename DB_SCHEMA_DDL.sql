@@ -1,4 +1,4 @@
--- NightCrate version: 0.40.3
+-- NightCrate version: 0.41.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1744,6 +1744,10 @@ CREATE TABLE sub_frame (
                                      rejection_source IN ('user', 'automated', 'ingest')),
 
     -- Equipment (all nullable; the resolver fills what it can).
+    -- Per-field attribution source (migration 0041): 'auto' = resolver /
+    -- rig-attribution pass (a re-run may overwrite), 'user' = manual override
+    -- (automated passes must never clobber it). Only the three user-overridable
+    -- attributions carry a source column; telescope stays purely automated.
     camera_id                INTEGER REFERENCES camera(id),
     telescope_id             INTEGER REFERENCES telescope(id),
     telescope_configuration_id INTEGER REFERENCES telescope_configuration(id),
@@ -1751,6 +1755,13 @@ CREATE TABLE sub_frame (
     mount_id                 INTEGER REFERENCES mount(id),
     filter_wheel_id          INTEGER REFERENCES filter_wheel(id),
     focuser_id               INTEGER REFERENCES focuser(id),
+
+    rig_source               TEXT    NOT NULL DEFAULT 'auto'
+                                 CHECK (rig_source IN ('auto', 'user')),
+    camera_source            TEXT    NOT NULL DEFAULT 'auto'
+                                 CHECK (camera_source IN ('auto', 'user')),
+    filter_source            TEXT    NOT NULL DEFAULT 'auto'
+                                 CHECK (filter_source IN ('auto', 'user')),
 
     -- Capture settings (from FITS header). Bias frames legitimately have ~0
     -- exposure, so the constraint is >= 0 (the spec's >0 was light-centric).

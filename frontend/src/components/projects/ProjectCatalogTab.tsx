@@ -19,8 +19,10 @@ import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import CatalogCardList from "./CatalogCardList";
+import EquipmentOverrideDialog from "./EquipmentOverrideDialog";
 import {
   formatExposure,
   FrameCard,
@@ -36,6 +38,7 @@ import {
   fetchCatalogSummary,
   listFolders,
   removeFolder,
+  rerunResolution,
   startIngest,
   type CatalogFrame,
   type CatalogMaster,
@@ -164,6 +167,28 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     onError: (e: Error) => setSnack(e.message),
   });
 
+  // Re-run equipment resolution (v0.41.0): re-resolves cameras/telescopes/
+  // filters via the alias tables and attributes rigs project-wide. Idempotent —
+  // use it after assigning a rig or confirming aliases on Admin.
+  const rerunMut = useMutation({
+    mutationFn: () => rerunResolution(projectId),
+    onSuccess: (s) => {
+      invalidateCatalog();
+      setSnack(
+        `Resolution re-run: ${s.rigs_attributed}/${s.frames_processed} frames ` +
+          `attributed to a rig, ${s.filters_resolved} filters resolved` +
+          (s.cameras_rig_corrected
+            ? `, ${s.cameras_rig_corrected} cameras corrected via rig`
+            : "") +
+          ` (${s.frames_changed} changed)`,
+      );
+    },
+    onError: (e: Error) => setSnack(e.message),
+  });
+
+  // Per-frame equipment override dialog.
+  const [overrideFrame, setOverrideFrame] = useState<CatalogFrame | null>(null);
+
   const othersCount = summary
     ? summary.pxiprojects + summary.logs + summary.other + summary.unknown_frames
     : 0;
@@ -193,6 +218,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         tz={tz}
         showFilter={tab === "light" || tab === "flat"}
         showObject={tab === "light"}
+        onEditEquipment={setOverrideFrame}
       />
     );
   };
@@ -256,6 +282,24 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         >
           Add folder
         </Button>
+        <Tooltip title="Re-resolve equipment and attribute rigs across everything already cataloged — run after assigning a rig to the project or confirming equipment aliases on Admin. Manual overrides are never touched.">
+          <span>
+            <Button
+              startIcon={
+                rerunMut.isPending ? (
+                  <CircularProgress size={14} />
+                ) : (
+                  <TravelExploreIcon />
+                )
+              }
+              variant="outlined"
+              onClick={() => rerunMut.mutate()}
+              disabled={rerunMut.isPending || ingestMut.isPending}
+            >
+              {rerunMut.isPending ? "Resolving…" : "Re-run resolution"}
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
 
       {/* Category sub-tabs */}
@@ -321,6 +365,23 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         directoryMode
         title="Add source folder"
         emptyMessage="No subfolders here"
+      />
+      {/* Keyed so each frame gets a fresh instance. The dialog resets its field
+          state in an effect, which runs AFTER the first render — without the key,
+          reopening on a different frame briefly shows the previous frame's dirty
+          state with Save enabled, and saving in that window would write the old
+          picks to the new frame. Same reason FovSimulator is keyed in
+          PlannerDetailPanel. */}
+      <EquipmentOverrideDialog
+        key={overrideFrame?.id ?? "none"}
+        open={overrideFrame !== null}
+        onClose={() => setOverrideFrame(null)}
+        projectId={projectId}
+        frame={overrideFrame}
+        onSaved={() => {
+          invalidateCatalog();
+          setSnack("Attribution saved — this frame's overrides are protected from re-runs");
+        }}
       />
       <Snackbar
         open={snack !== null}

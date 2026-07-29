@@ -58,7 +58,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.40.1 — Planner Sky Position (Target vs Moon)](#v0401--planner-sky-position-target-vs-moon) ✅
 - [v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links](#v0402--planner-sort-tooltips--tonight-cross-links) ✅
 - [v0.40.3 — Plan a Night (pick any date)](#v0403--plan-a-night-pick-any-date) ✅
-- [v0.41.0 — Equipment Resolution + Rig Attribution](#v0410--equipment-resolution--rig-attribution)
+- [v0.41.0 — Equipment Resolution + Rig Attribution](#v0410--equipment-resolution--rig-attribution) ✅
 - [v0.41.1 — Catalog Corrections + Embedded Image Analyzer](#v0411--catalog-corrections--embedded-image-analyzer)
 - [v0.41.2 — Frame Quality Metrics](#v0412--frame-quality-metrics)
 - [v0.41.3 — Curated Content](#v0413--curated-content)
@@ -5075,30 +5075,97 @@ proves to thrash it.
 
 ## v0.41.0 — Equipment Resolution + Rig Attribution
 
-**Status:** Planned. First of four v0.41.x chunks (the old "Correct + Curate" version was
-split 2026-07-08 so each chunk lands with a manually-testable UI surface). This one makes
-the cataloged data *right* — equipment, rig, and filter attribution — before any editing
-UI is built on top of it.
+**Status:** Done. **Branch:** `v0.41.0/equipment-resolution-rig-attribution`. First of four
+v0.41.x chunks (the old "Correct + Curate" version was split 2026-07-08 so each chunk lands
+with a manually-testable UI surface). This one makes the cataloged data *right* —
+equipment, rig, and filter attribution — before any editing UI is built on top of it.
 
-- [ ] **Unresolved-alias review UI** — the `unresolved_equipment_observation` queue becomes
-      a "map this header string to equipment" screen; confirming inserts the alias (the
-      resolver never auto-confirms). Lives on Admin (the queue is global, not per-project),
-      with a pending-count badge.
-- [ ] **Rig attribution, project-scoped.** Matching runs ONLY against the rigs assigned to
-      the project (`project_rig`); a project with no rigs assigned gets no discovery at all.
-      Discriminators beyond `INSTRUME` (identical across two same-model camera bodies):
-      `FOCALLEN` vs the rig's telescope configuration, and filter line names vs the rig's
-      `rig_filter_slot` loadout. Outcomes: single match → attribute; no match or
-      both-rigs-match → leave NULL and surface as "unattributed" (never guess).
-- [ ] **"Re-run equipment resolution" button** on the Catalog tab — idempotent per-project
-      pass that re-resolves equipment on all cataloged frames and back-fills `filter_id`
-      from `filter_name_hint` via newly confirmed aliases + rig scoping. Usable at any time
-      (e.g., right after assigning a rig to the project or confirming aliases).
-- [ ] **Per-frame manual override** (rig / camera / filter). Overrides win over any later
-      re-run — track the attribution source so automated passes never clobber user edits
-      (mechanism decided at implementation).
-- [ ] UI to verify: alias review screen; equipment/filter chips on catalog cards; re-run
-      button + result summary; override menu.
+- [x] **Unresolved-alias review UI** — the `unresolved_equipment_observation` queue becomes
+      a "map this header string to equipment" screen on Admin (the queue is global, not
+      per-project) with a pending-count chip; confirming inserts the alias (the resolver
+      never auto-confirms); dismiss drops the row (it reappears if a later scan sees the
+      value again). `api/equipment_aliases.py` +
+      `components/admin/EquipmentAliasesSection.tsx`.
+- [x] **Rig attribution, project-scoped** (`services/rig_attribution.py`, pure service).
+      Matching runs ONLY against the rigs assigned to the project (`project_rig`); no rigs
+      assigned → no discovery. Signals eliminate candidates — camera, `FOCALLEN` vs the
+      rig's telescope configuration (±5 %), filter line names / user-set filter vs the
+      rig's `rig_filter_slot` loadout; exactly one survivor → attributed, else NULL (never
+      guess). **As built — camera twin semantics:** `camera` has
+      `UNIQUE(manufacturer_id, model_name)`, so two physical bodies of one model are two
+      rows with distinct names; the "same-model twin" test is therefore
+      `(manufacturer_id, sensor_id)` equality (deterministic, no string similarity). A
+      twin never eliminates a rig, and once a rig is attributed by other signals the
+      frame's camera is **corrected to the rig's actual body** — the §7 two-camera
+      disambiguation payoff, pinned by tests.
+- [x] **Attribution runs automatically as an ingest post-pass** (not only on demand) —
+      after `_reclassify_dark_flats`, every scan re-resolves + attributes + **re-keys
+      auto-sessions to (rig, observing night)** and sweeps emptied sessions, so dual-rig
+      nights split into per-rig sessions as the spec requires. `ensure_session` /
+      `observing_window_utc` moved from `api/ingest.py` into `services/ingest_sessions.py`
+      (service-layer purity for the shared caller).
+- [x] **"Re-run resolution" button** on the Catalog tab — same idempotent pass via
+      `POST /projects/{id}/resolution/rerun` (shares the ingest single-flight lock),
+      back-fills `filter_id` from `filter_name_hint`, returns an `AttributionSummary`
+      surfaced as a toast. Masters re-resolve too (line-name scope only when the project
+      has exactly one rig).
+- [x] **Per-frame manual override** — `PATCH .../catalog/frames/{id}/equipment`
+      (rig / camera / filter, explicit null = "none", `reset_to_auto` hands a field back).
+      Migration `0041` adds `rig_source` / `camera_source` / `filter_source`
+      (`'auto'|'user'`) to `sub_frame`; re-runs skip user-sourced fields and the re-scan
+      UPDATE guards them with SQL CASE. A rig override re-keys the frame's session.
+      Validation: any existing rig is allowed (the user is the authority, even one not
+      assigned to the project); filter on a calibration frame → 422. Frontend:
+      `EquipmentOverrideDialog` (per-field "manual" chip → "→ auto" reset), catalog cards
+      gained a resolved-vs-hint filter chip (filled vs outlined + tooltip), a rig chip,
+      and the attribution-edit button.
+- [x] **As built — line names never enter the unresolved queue.** `resolve_filter` no
+      longer records `Ha`/`Oiii`/… observations: a global "Ha → one physical filter" alias
+      would be wrong for any dual-rig user (rig scoping is the only correct resolution),
+      and the queue would re-nag on every scan. The catalog's hint-chip tooltip points at
+      rig assignment instead. Resolver test updated to pin the new behavior.
+- [x] Migration 0041 verified against a **populated 0040-state DB** (columns added,
+      defaults backfilled, data preserved, CHECK enforced) per the forward-migration
+      policy — plus fresh-build via the test harness.
+- [x] Tests: 26 new in `tests/test_rig_attribution.py` (pure `match_rig` elimination incl.
+      twin + tolerance boundaries; end-to-end single-rig attribution + filter back-fill +
+      session keying; two-camera disambiguation by focal length; ambiguous stays NULL;
+      re-run idempotency; alias list/confirm/dismiss incl. 409/404; override protection
+      across re-run AND re-scan; reset-to-auto refill; session re-key on override;
+      filter-on-dark 422). 259 targeted tests green.
+- [x] **End-to-end verified with Playwright** on an isolated throwaway workspace (fresh
+      seeded DB via scratch `$HOME`): ingest of a synthetic ASIAir-style folder attributed
+      the rig + back-filled `Ha` → the physical filter on first scan; Admin queue showed
+      the camera + `ZWO AM5` (mount-in-TELESCOP, expected unresolved); mapping the camera
+      alias + "Re-run resolution" resolved cameras project-wide; the override dialog
+      round-trip (filter override → "manual" chip → survives re-run) all correct; zero
+      console errors.
+- [x] Rideralong fix: AdminPage's database list rendered a `<div>` inside `ListItemText`'s
+      `<p>` secondary (React hydration warning on every Admin visit) — now
+      `slotProps={{ secondary: { component: "div" } }}`.
+- [x] **Code-review fixes (4, all found by the review pass on PR #6):**
+      (1) **Legacy line-name rows could still become a global alias.** v0.40.x queued
+      `Ha`/`Oiii`/`Sii` into the unresolved queue (ingest never passed a `RigContext`),
+      so the new Admin screen would have invited confirming exactly the alias this
+      version forbids. Migration **0042** purges the unresolved line-name rows
+      (resolved rows untouched) and the confirm endpoint now 422s on a canonical line
+      name; a test pins the migration's SQL list to `_LINE_NAME_MAP`.
+      (2) **`load_project_rigs` ignored `rig.single_filter_id`**, so a wheel-less rig had
+      an empty filter set and the filter signal could never eliminate it.
+      (3) **The camera-twin correction was gated behind `rig_source != 'user'`** — it now
+      runs whenever the rig is known, auto or user-pinned (a user-set *camera* is still
+      never touched), which is the case where it matters most.
+      (4) **`EquipmentOverrideDialog` reset its fields in an effect while permanently
+      mounted** — now keyed on the frame id, per the `FovSimulator` precedent; without it,
+      reopening on another frame briefly showed the previous frame's dirty state with Save
+      enabled. Migration 0042 verified on a populated 0041-state DB; 7 new tests (33 total
+      in `test_rig_attribution.py`).
+- [x] Cleanup pass at finalize: extracted `sweep_empty_sessions` into
+      `services/ingest_sessions.py` (the empty-auto-session DELETE had three copies);
+      dropped write-only `RigCandidate.name`, the single-use `has_slots` property, the
+      `_KIND_TABLE` identity map, and the uncalled `include_resolved` query param (which
+      carried a `nosec` on a concatenated WHERE); memoized the three catalog card
+      components so opening the override dialog no longer re-renders every loaded card.
 
 ## v0.41.1 — Catalog Corrections + Embedded Image Analyzer
 
