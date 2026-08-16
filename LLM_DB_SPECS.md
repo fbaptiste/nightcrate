@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.40.3
+**NightCrate version:** 0.41.0
 
 ## Overview
 
@@ -368,6 +368,11 @@ CREATE TABLE sub_frame (project_id FK CASCADE NOT NULL, content_hash TEXT,
     rejection_source CHECK ('user','automated','ingest'),
     camera_id FK, telescope_id FK, telescope_configuration_id FK, filter_id FK,
     mount_id FK, filter_wheel_id FK, focuser_id FK,
+    -- migration 0041: per-field attribution source; 'user' is never clobbered
+    -- by an automated re-resolution pass.
+    rig_source CHECK ('auto','user') NOT NULL DEFAULT 'auto',
+    camera_source CHECK ('auto','user') NOT NULL DEFAULT 'auto',
+    filter_source CHECK ('auto','user') NOT NULL DEFAULT 'auto',
     exposure_seconds REAL CHECK(>=0) DEFAULT 0,  -- bias ~0 is legal
     gain REAL, offset_adu REAL, sensor_temp_c REAL, set_temp_c REAL,
     binning_x INT, binning_y INT, bit_depth INT, image_width INT, image_height INT,

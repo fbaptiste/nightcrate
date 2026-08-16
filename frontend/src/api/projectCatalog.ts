@@ -44,7 +44,7 @@ export interface CatalogFrame {
   kind: string;
   frame_type: string | null;
   path: string | null;
-  filter_name: string | null;
+  filter_name: string | null; // resolved model name, else raw header hint
   object_hint: string | null;
   exposure_seconds: number | null;
   gain: number | null;
@@ -57,6 +57,37 @@ export interface CatalogFrame {
   camera_id: number | null;
   telescope_id: number | null;
   accepted: boolean | null;
+  // Attribution (v0.41.0)
+  filter_id: number | null;
+  filter_model: string | null; // set only when filter_id resolved
+  camera_model: string | null;
+  rig_id: number | null;
+  rig_name: string | null;
+  rig_source: "auto" | "user" | null;
+  camera_source: "auto" | "user" | null;
+  filter_source: "auto" | "user" | null;
+}
+
+export interface AttributionSummary {
+  rigs_considered: number;
+  frames_processed: number;
+  frames_changed: number;
+  rigs_attributed: number;
+  cameras_rig_corrected: number;
+  cameras_resolved: number;
+  telescopes_resolved: number;
+  filters_resolved: number;
+  masters_processed: number;
+  masters_changed: number;
+}
+
+export type OverridableField = "rig_id" | "camera_id" | "filter_id";
+
+export interface EquipmentOverride {
+  rig_id?: number | null;
+  camera_id?: number | null;
+  filter_id?: number | null;
+  reset_to_auto?: OverridableField[];
 }
 
 export interface CatalogFramesPage {
@@ -154,6 +185,29 @@ export function startIngest(
   return apiFetch<IngestStatus>(`/projects/${projectId}/ingest${q}`, {
     method: "POST",
   });
+}
+
+/** Re-resolve equipment + attribute rigs across the whole project catalog. */
+export function rerunResolution(projectId: number): Promise<AttributionSummary> {
+  return apiFetch<AttributionSummary>(`/projects/${projectId}/resolution/rerun`, {
+    method: "POST",
+  });
+}
+
+/** Manually override a frame's rig / camera / filter attribution. */
+export function overrideFrameEquipment(
+  projectId: number,
+  frameId: number,
+  body: EquipmentOverride,
+): Promise<CatalogFrame> {
+  return apiFetch<CatalogFrame>(
+    `/projects/${projectId}/catalog/frames/${frameId}/equipment`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export function fetchCatalogSummary(

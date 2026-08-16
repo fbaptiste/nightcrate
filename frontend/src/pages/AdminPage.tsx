@@ -43,6 +43,7 @@ import {
 } from "@/api/admin";
 import CatalogsAdminSection from "@/components/dso/CatalogsAdminSection";
 import CachesAdminSection from "@/components/admin/CachesAdminSection";
+import EquipmentAliasesSection from "@/components/admin/EquipmentAliasesSection";
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return "unknown";
@@ -493,6 +494,9 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
                   }}
                 >
                   <ListItemText
+                    // The secondary wraps a Box (a <div>) — render the wrapper
+                    // as a <div> too, or React warns about <div> inside <p>.
+                    slotProps={{ secondary: { component: "div" } }}
                     primary={
                       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                         <Typography variant="body2" fontWeight={500} sx={{ fontStyle: db.available ? "normal" : "italic" }}>
@@ -735,6 +739,8 @@ export function AdminPage() {
           </Box>
         )}
       </Paper>
+
+      <EquipmentAliasesSection />
 
       <CatalogsAdminSection />
 

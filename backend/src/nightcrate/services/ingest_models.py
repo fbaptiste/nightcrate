@@ -1,6 +1,8 @@
-"""Pydantic shapes for the directory-scan ingest pipeline + read-only catalog."""
+"""Pydantic shapes for the directory-scan ingest pipeline + catalog."""
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -34,6 +36,21 @@ class IngestStatus(BaseModel):
     message: str | None = None
 
 
+class AttributionSummary(BaseModel):
+    """Result of a rig-attribution / equipment re-resolution pass (v0.41.0)."""
+
+    rigs_considered: int = 0
+    frames_processed: int = 0
+    frames_changed: int = 0
+    rigs_attributed: int = 0
+    cameras_rig_corrected: int = 0
+    cameras_resolved: int = 0
+    telescopes_resolved: int = 0
+    filters_resolved: int = 0
+    masters_processed: int = 0
+    masters_changed: int = 0
+
+
 class CatalogSummary(BaseModel):
     """Bucketed counts for the read-only catalog view."""
 
@@ -52,13 +69,13 @@ class CatalogSummary(BaseModel):
 
 
 class CatalogFrame(BaseModel):
-    """One row in the catalog DataGrid (a sub_frame or processed_image)."""
+    """One row in the catalog card list (a sub_frame or processed_image)."""
 
     id: int
     kind: str  # "sub_frame" | "processed_image"
     frame_type: str | None = None
     path: str | None = None
-    filter_name: str | None = None
+    filter_name: str | None = None  # resolved model name, else raw header hint
     object_hint: str | None = None
     exposure_seconds: float | None = None
     gain: float | None = None
@@ -71,6 +88,33 @@ class CatalogFrame(BaseModel):
     camera_id: int | None = None
     telescope_id: int | None = None
     accepted: bool | None = None
+    # Attribution (v0.41.0) — resolved display names + per-field source flags.
+    filter_id: int | None = None
+    filter_model: str | None = None  # set only when filter_id resolved
+    camera_model: str | None = None
+    rig_id: int | None = None
+    rig_name: str | None = None
+    rig_source: str | None = None  # 'auto' | 'user'
+    camera_source: str | None = None
+    filter_source: str | None = None
+
+
+OverridableField = Literal["rig_id", "camera_id", "filter_id"]
+
+
+class EquipmentOverride(BaseModel):
+    """Per-frame manual attribution override (v0.41.0).
+
+    A field present in the request body is applied verbatim (including an
+    explicit ``null`` = "this frame has no X") and its ``*_source`` flips to
+    ``'user'`` so automated passes never clobber it. ``reset_to_auto`` flips a
+    field back to automated control — the next re-run refills it.
+    """
+
+    rig_id: int | None = None
+    camera_id: int | None = None
+    filter_id: int | None = None
+    reset_to_auto: list[OverridableField] = []
 
 
 class CatalogFramesPage(BaseModel):

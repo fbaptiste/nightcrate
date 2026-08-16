@@ -1,16 +1,20 @@
-"""Directory-scan ingest pipeline + read-only catalog endpoints (v0.40.0).
+"""Directory-scan ingest pipeline + catalog endpoints (v0.40.0, v0.41.0).
 
 The HTTP/DB boundary for cataloging a folder. Orchestrates:
 
     scan (fast walk) -> ProcessPool header parse -> equipment resolution
     -> content-hash UPSERT into sub_frame / processed_image / file_location
-    -> session formation -> light-to-target assignment -> ingestion_run counters
+    -> session formation -> light-to-target assignment -> rig attribution
+    -> ingestion_run counters
 
 This module owns the transaction; the pure services (ingest_scanner,
-ingest_classify, ingest_sessions, equipment_resolver) never commit. One ingest
-runs at a time per process (global single-flight, 409 if busy).
+ingest_classify, ingest_sessions, equipment_resolver, rig_attribution) never
+commit. One ingest runs at a time per process (global single-flight, 409 if
+busy).
 
-Catalog read endpoints are deliberately read-only — editing/curation is v0.41.0.
+Catalog endpoints are read-only except for the v0.41.0 per-frame equipment
+override (rig / camera / filter); frame_type corrections, session/target
+reassignment, and bulk operations are v0.41.1.
 """
 
 from __future__ import annotations
@@ -19,9 +23,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -44,6 +46,7 @@ from nightcrate.services.ingest_classify import (
     classify_frame,
 )
 from nightcrate.services.ingest_models import (
+    AttributionSummary,
     CatalogFilterStat,
     CatalogFrame,
     CatalogFramesPage,
@@ -52,6 +55,7 @@ from nightcrate.services.ingest_models import (
     CatalogOther,
     CatalogOthersPage,
     CatalogSummary,
+    EquipmentOverride,
     IngestStatus,
     SourceFolder,
     SourceFolderCreate,
@@ -62,7 +66,12 @@ from nightcrate.services.ingest_scanner import (
     parse_image_file,
     scan_directory,
 )
-from nightcrate.services.ingest_sessions import session_key
+from nightcrate.services.ingest_sessions import (
+    ensure_session,
+    session_key,
+    sweep_empty_sessions,
+)
+from nightcrate.services.rig_attribution import rerun_resolution
 
 logger = logging.getLogger("nightcrate.ingest")
 _LOG_PREFIX = "[ingest]"
@@ -70,7 +79,6 @@ _LOG_PREFIX = "[ingest]"
 # Module-level tuple: ruff format strips parens from inline ``except (A, B):`` on
 # py3.14, producing invalid Py2 syntax. Referencing a constant sidesteps it.
 _COERCE_ERRORS = (TypeError, ValueError)
-_BAD_ZONE = (ZoneInfoNotFoundError, ValueError)
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
@@ -191,13 +199,8 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
             "AND NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.processed_image_id = id)",
             (project_id,),
         )
-        # Drop auto-sessions emptied by the removal (manual project_session is a
-        # different table and untouched).
-        await conn.execute(
-            "DELETE FROM session WHERE project_id = ? "
-            "AND NOT EXISTS (SELECT 1 FROM sub_frame sf WHERE sf.session_id = session.id)",
-            (project_id,),
-        )
+        # Drop auto-sessions emptied by the removal.
+        await sweep_empty_sessions(conn, project_id)
         await conn.execute("DELETE FROM project_source_folder WHERE id = ?", (folder_id,))
         await conn.commit()
 
@@ -250,6 +253,26 @@ async def start_ingest(
         return await _run_ingest(project_id, folders)
 
 
+@router.post("/{project_id}/resolution/rerun", response_model=AttributionSummary)
+async def rerun_project_resolution(project_id: int) -> AttributionSummary:
+    """Re-resolve equipment + attribute rigs across the project's catalog.
+
+    Idempotent; usable any time (after confirming aliases, assigning a rig, …).
+    Shares the ingest single-flight lock so it never races a running scan.
+    Fields manually overridden (``*_source = 'user'``) are never touched.
+    """
+    if _INGEST_LOCK.locked():
+        raise HTTPException(status_code=409, detail="An ingest is already running")
+    async with _INGEST_LOCK:
+        async with get_db() as conn:
+            await conn.execute("PRAGMA foreign_keys = ON")
+            await get_or_404(conn, "project", project_id, "Project")
+            tz_name = await _project_geo_timezone(conn, project_id)
+            summary = await rerun_resolution(conn, project_id, tz_name=tz_name)
+            await conn.commit()
+        return summary
+
+
 async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
     settings = await get_settings()
     configured = settings.max_worker_cores
@@ -289,13 +312,10 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
                     counters,
                 )
             await _reclassify_dark_flats(conn, project_id)
-            # Drop auto-sessions left with no sub_frames (e.g. orphaned when a
-            # re-scan recomputes start_utc, or a folder's frames were removed).
-            await conn.execute(
-                "DELETE FROM session WHERE project_id = ? AND NOT EXISTS "
-                "(SELECT 1 FROM sub_frame sf WHERE sf.session_id = session.id)",
-                (project_id,),
-            )
+            # Attribute rigs + back-fill filters project-wide (v0.41.0). Also
+            # re-keys sessions to (rig, night) and sweeps emptied auto-sessions
+            # (which covers re-scans that orphaned a session's frames).
+            await rerun_resolution(conn, project_id, tz_name=tz_name)
             status = "completed"
         except Exception as exc:  # noqa: BLE001 - record failure on the run, re-raise after commit
             logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
@@ -397,8 +417,10 @@ async def _persist_parsed(
     telescope = await resolver.resolve_telescope(
         meta.get("telescope_name"), source="nina", stats=stats
     )
-    # No rig context yet (rig assignment is v0.41.0); filter line-name scoping is
-    # skipped, so lights routinely resolve to NULL — kept as filter_name_hint.
+    # No rig context here: attribution needs the whole folder parsed first, so it
+    # runs as a post-pass (rerun_resolution) once this loop finishes. Filter
+    # line-name scoping is therefore skipped and lights routinely resolve to
+    # NULL — kept as filter_name_hint, which the post-pass back-fills from.
     filt = await resolver.resolve_filter(meta.get("filter_name"), source="nina", stats=stats)
 
     date_obs = _coerce_date_obs(meta.get("date_obs"), result["mtime"])
@@ -436,9 +458,10 @@ async def _persist_parsed(
     )
     counters["inserted" if was_insert else "updated"] += 1
 
-    # Session formation: (rig_id, observing night). rig is NULL at v0.40.0.
+    # Session formation: (rig_id, observing night). rig is NULL at persist time;
+    # the post-ingest rerun_resolution pass attributes rigs and re-keys sessions.
     key = session_key(None, date_obs, tz_name)
-    session_id = await _ensure_session(conn, project_id, key, tz_name)
+    session_id = await ensure_session(conn, project_id, key, tz_name)
     assigned_target = target_id if frame_type == "light" else None
     await conn.execute(
         "UPDATE sub_frame SET session_id = ?, project_target_id = ? WHERE id = ?",
@@ -506,7 +529,15 @@ async def _upsert_sub_frame(
         )
         return cursor.lastrowid, True
 
-    set_clause = ", ".join(f"{k} = ?" for k in cols)
+    # Re-scan must never clobber a manual override (migration 0041): equipment
+    # fields guarded by a *_source column only update while still 'auto'.
+    protected = {"camera_id": "camera_source", "filter_id": "filter_source"}
+    set_clause = ", ".join(
+        f"{k} = CASE WHEN {protected[k]} = 'user' THEN {k} ELSE ? END"
+        if k in protected
+        else f"{k} = ?"
+        for k in cols
+    )
     await conn.execute(
         f"UPDATE sub_frame SET {set_clause} WHERE id = ?",  # nosec B608 - column names from fixed internal dict, not user input
         (*cols.values(), existing["id"]),
@@ -650,41 +681,6 @@ async def _reclassify_dark_flats(conn, project_id: int) -> None:
     )
 
 
-def _observing_window_utc(night: str, tz_name: str | None) -> tuple[str, str]:
-    """UTC bounds of the noon-to-noon observing night `night` (local date in the
-    site's geo timezone). The previous code stamped a literal noon-UTC, which is
-    wrong for any non-UTC site (e.g. UTC-7 → real window start is 19:00 UTC);
-    v0.43's PHD2 time-range association needs the true UTC window."""
-    try:
-        tz = ZoneInfo(tz_name) if tz_name else UTC
-    except _BAD_ZONE:
-        tz = UTC
-    d = date.fromisoformat(night)
-    start = datetime(d.year, d.month, d.day, 12, 0, tzinfo=tz)
-    nxt = d + timedelta(days=1)
-    end = datetime(nxt.year, nxt.month, nxt.day, 12, 0, tzinfo=tz)
-    return start.astimezone(UTC).isoformat(), end.astimezone(UTC).isoformat()
-
-
-async def _ensure_session(conn, project_id, key, tz_name: str | None) -> int:
-    rig_id, night = key
-    start_utc, end_utc = _observing_window_utc(night, tz_name)
-    # Identity is (project, observing-night start, rig); start_utc is deterministic
-    # per (night, geo-tz) so re-ingest dedupes to the same row.
-    cursor = await conn.execute(
-        "SELECT id FROM session WHERE project_id = ? AND start_utc = ? AND rig_id IS ?",
-        (project_id, start_utc, rig_id),
-    )
-    row = await cursor.fetchone()
-    if row is not None:
-        return row["id"]
-    cursor = await conn.execute(
-        "INSERT INTO session (project_id, rig_id, start_utc, end_utc) VALUES (?, ?, ?, ?)",
-        (project_id, rig_id, start_utc, end_utc),
-    )
-    return cursor.lastrowid
-
-
 async def _project_display_tz(conn, project_id: int) -> str:
     """The IANA timezone for displaying dates: the project location's *display*
     timezone (``location.timezone``), or UTC if the project has no location."""
@@ -812,21 +808,89 @@ async def catalog_frames(
             (project_id, *type_params, *filter_params),
         )
         cursor = await conn.execute(
-            "SELECT sf.id, sf.frame_type, sf.filter_name_hint, f.model_name AS filter_model, "
-            "sf.object_hint, sf.exposure_seconds, sf.gain, sf.set_temp_c, sf.binning_x, "
-            "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.camera_id, "
-            "sf.telescope_id, sf.accepted, fl.path AS path, fl.size_bytes AS file_size_bytes "
-            "FROM sub_frame sf "
-            "LEFT JOIN filter f ON f.id = sf.filter_id "
-            "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
+            _FRAME_SELECT
             # nosec B608 - clauses are fixed literals; values are parameterized
-            f"WHERE sf.project_id = ?{type_clause}{filter_clause} "
+            + f"WHERE sf.project_id = ?{type_clause}{filter_clause} "
             f"GROUP BY sf.id {order_clause} LIMIT ? OFFSET ?",
             (project_id, *type_params, *filter_params, limit, offset),
         )
         rows = [_catalog_frame(row_to_dict(r)) for r in await cursor.fetchall()]
         tz = await _project_display_tz(conn, project_id)
         return CatalogFramesPage(rows=rows, total=total, timezone=tz)
+
+
+@router.patch("/{project_id}/catalog/frames/{frame_id}/equipment", response_model=CatalogFrame)
+async def override_frame_equipment(
+    project_id: int, frame_id: int, body: EquipmentOverride
+) -> CatalogFrame:
+    """Manually override a frame's rig / camera / filter attribution.
+
+    Fields present in the body are applied verbatim (explicit ``null`` = "none")
+    and marked ``*_source = 'user'`` so re-scans and re-runs never clobber them.
+    ``reset_to_auto`` hands a field back to automated control (the next re-run
+    refills it). A rig change re-keys the frame's auto-session.
+    """
+    sent = body.model_fields_set
+    fields = [f for f in ("rig_id", "camera_id", "filter_id") if f in sent]
+    if not fields and not body.reset_to_auto:
+        raise HTTPException(status_code=422, detail="No override fields provided")
+
+    async with get_db() as conn:
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await get_or_404(conn, "project", project_id, "Project")
+        cursor = await conn.execute(
+            "SELECT id, frame_type, date_obs_utc, session_id, rig_id "
+            "FROM sub_frame WHERE id = ? AND project_id = ?",
+            (frame_id, project_id),
+        )
+        frame = await cursor.fetchone()
+        if frame is None:
+            raise HTTPException(status_code=404, detail="Frame not found")
+
+        updates: dict[str, object] = {}
+        for f in fields:
+            value = getattr(body, f)
+            if value is not None:
+                table = f.removesuffix("_id")
+                await get_or_404(conn, table, value, table.capitalize())
+            if (
+                f == "filter_id"
+                and value is not None
+                and frame["frame_type"] not in ("light", "flat")
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Only lights and flats carry a filter (frame is {frame['frame_type']})",
+                )
+            updates[f] = value
+            updates[f"{f.removesuffix('_id')}_source"] = "user"
+        for f in body.reset_to_auto:
+            updates[f"{f.removesuffix('_id')}_source"] = "auto"
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        await conn.execute(
+            f"UPDATE sub_frame SET {set_clause} WHERE id = ?",  # nosec B608 - column names from a fixed internal allow-list, not user input
+            (*updates.values(), frame_id),
+        )
+
+        # A rig change moves the frame to its (rig, night) session.
+        new_rig = updates.get("rig_id", frame["rig_id"])
+        if new_rig != frame["rig_id"]:
+            tz_name = await _project_geo_timezone(conn, project_id)
+            key = session_key(new_rig, frame["date_obs_utc"], tz_name)
+            session_id = await ensure_session(conn, project_id, key, tz_name)
+            await conn.execute(
+                "UPDATE sub_frame SET session_id = ? WHERE id = ?",
+                (session_id, frame_id),
+            )
+            await sweep_empty_sessions(conn, project_id)
+
+        await conn.commit()
+        cursor = await conn.execute(
+            _FRAME_SELECT + "WHERE sf.id = ? GROUP BY sf.id",  # nosec B608 - fixed literal
+            (frame_id,),
+        )
+        return _catalog_frame(row_to_dict(await cursor.fetchone()))
 
 
 @router.get("/{project_id}/catalog/filter-summary", response_model=list[CatalogFilterStat])
@@ -1037,6 +1101,23 @@ def _write_cache_atomic(cache_path: Path, data: bytes) -> None:
         logger.warning("%s could not cache thumbnail %s: %s", _LOG_PREFIX, cache_path.name, exc)
 
 
+# Shared frame projection: the list endpoint and the single-frame refetch (after
+# an override) must return identical shapes.
+_FRAME_SELECT = (
+    "SELECT sf.id, sf.frame_type, sf.filter_name_hint, f.model_name AS filter_model, "
+    "sf.object_hint, sf.exposure_seconds, sf.gain, sf.set_temp_c, sf.binning_x, "
+    "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.camera_id, "
+    "sf.telescope_id, sf.accepted, sf.filter_id, sf.rig_id, r.name AS rig_name, "
+    "c.model_name AS camera_model, sf.rig_source, sf.camera_source, sf.filter_source, "
+    "fl.path AS path, fl.size_bytes AS file_size_bytes "
+    "FROM sub_frame sf "
+    "LEFT JOIN filter f ON f.id = sf.filter_id "
+    "LEFT JOIN rig r ON r.id = sf.rig_id "
+    "LEFT JOIN camera c ON c.id = sf.camera_id "
+    "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
+)
+
+
 def _catalog_frame(d: dict) -> CatalogFrame:
     binning = None
     if d.get("binning_x") and d.get("binning_y"):
@@ -1059,6 +1140,14 @@ def _catalog_frame(d: dict) -> CatalogFrame:
         camera_id=d.get("camera_id"),
         telescope_id=d.get("telescope_id"),
         accepted=bool(d["accepted"]) if d.get("accepted") is not None else None,
+        filter_id=d.get("filter_id"),
+        filter_model=d.get("filter_model"),
+        camera_model=d.get("camera_model"),
+        rig_id=d.get("rig_id"),
+        rig_name=d.get("rig_name"),
+        rig_source=d.get("rig_source"),
+        camera_source=d.get("camera_source"),
+        filter_source=d.get("filter_source"),
     )
 
 
