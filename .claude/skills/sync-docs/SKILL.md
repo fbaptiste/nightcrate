@@ -1,6 +1,6 @@
 ---
 name: sync-docs
-description: Use when a work session is ending, before committing, or when asked to update docs — syncs PLAN.md, CLAUDE.md, README.md, DB_SCHEMA.md, DB_SCHEMA_DDL.sql, LLM_DB_SPECS.md, and nightcrate-current-state.md to reflect actual work done
+description: Use when a work session is ending, before committing, or when asked to update docs — syncs PLAN.md, CLAUDE.md, README.md, DB_SCHEMA.md, DB_SCHEMA_DDL.sql, LLM_DB_SPECS.md, nightcrate-current-state.md, and the ~/dev/context project note to reflect actual work done
 ---
 
 # Sync Docs
@@ -69,7 +69,13 @@ Update project documentation to reflect work actually done in the current sessio
    - Check existing memories in the project's auto-memory `MEMORY.md` (under `~/.claude/projects/`) — update stale ones, don't duplicate
    - Only save things useful in future sessions, not ephemeral task details
 
-10. **Report** — Summarize what was updated and what was skipped (with reason).
+10. **Context note** (`~/dev/context/projects/nightcrate.md`) — a cross-project note that lives outside the repo. Refresh it whenever the branch changed the picture of where the project stands:
+   - Read `~/.claude/commands/update-context.md` and follow the instructions in its body, treating `$1` as `nightcrate`. That file is the single source of truth for the note's format and rules — do not restate them here, and re-read it each time in case it changed. It is marked user-invocable-only, so follow it as a document; do not try to invoke it as a slash command.
+   - If that file is missing, fall back to: rewrite `## Current state` as 150–250 words of prose grounded in the repo as it actually is, append one dated line to `## Log`, set `updated:` to today's date, and leave `## Decisions` and `## Open questions` untouched.
+   - `sync-docs` runs *before* the version bump in `finalize-session`, so state the **target** version being finalized, not whatever `VERSION` still says.
+   - This note is not part of the repo — never stage or commit it.
+
+11. **Report** — Summarize what was updated and what was skipped (with reason).
 
 ## Rules
 
