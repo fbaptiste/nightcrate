@@ -6,9 +6,11 @@ ways to get one:
 * **Manual** (``source='manual'``) — the user enters it. This is the only path for
   a project whose subs aren't cataloged (or aren't available at all).
 * **Derived** (``source='auto'``) — ``POST /sessions/derive`` rebuilds one row per
-  (observing night, filter, exposure, gain, binning) from the project's cataloged
-  light frames. Explicit and user-initiated; ingest never does this on its own.
-  Derived rows are read-only, because the next derive replaces them.
+  (observing night, rig, filter, exposure, gain, binning) from the project's
+  cataloged light frames. The rig is what splits a simultaneous dual-rig night
+  into two sessions rather than colliding them into one. Explicit and
+  user-initiated; ingest never does this on its own. Derived rows are read-only,
+  because the next derive replaces them.
 
 Per-filter integration is computed here from the sessions (exposure x sub count).
 Per-filter goals were removed in v0.41.1 — this is a read-out, not a tracker.

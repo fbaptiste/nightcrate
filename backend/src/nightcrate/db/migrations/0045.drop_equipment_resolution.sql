@@ -19,7 +19,8 @@
 -- they guarded. DROP COLUMN is safe for all three: SQLite refuses it only when the
 -- column is a PK/UNIQUE, indexed, or named in a view or trigger, and none of them
 -- is any of those. Their column-level CHECK is folded into the column definition
--- and removed with it. (Requires SQLite >= 3.35; the repo already requires 3.25+.)
+-- and removed with it. (DROP COLUMN needs SQLite >= 3.35, released 2021-03;
+-- Python 3.14 bundles 3.50, so every supported runtime already has it.)
 -- The classification source columns from 0043 (frame_type_source,
 -- project_target_source) are NOT affected — hand-correcting a frame's type or
 -- target stays.

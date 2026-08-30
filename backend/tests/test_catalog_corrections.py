@@ -169,6 +169,37 @@ class TestFrameTypeCorrection:
         rows = [r for r in await _frames(client, pid, frame_type="light") if r["id"] == light["id"]]
         assert rows and rows[0]["filter_name"] == "Ha"
 
+    async def test_target_on_a_calibration_frame_422(self, client, tmp_path):
+        """Only lights carry a target. The automatic path enforces this, so the
+        manual path must too — the removed equipment override had the same guard
+        for filter_id and losing it would let the two disagree."""
+        pid, _ = await _setup(client, tmp_path, name="TargetOnDark")
+        dark = (await _frames(client, pid, frame_type="dark"))[0]
+        dso_id = (await _seed_dsos(1))[0]
+        target_id = await _add_target(client, pid, dso_id)
+
+        resp = await client.patch(
+            f"/api/projects/{pid}/catalog/frames/{dark['id']}/classification",
+            json={"project_target_id": target_id},
+        )
+        assert resp.status_code == 422
+        assert "Only lights carry a target" in resp.json()["detail"]
+
+        # Clearing it on a calibration frame is still fine (explicit null = none).
+        resp = await client.patch(
+            f"/api/projects/{pid}/catalog/frames/{dark['id']}/classification",
+            json={"project_target_id": None},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # And correcting the type to light in the SAME request is allowed.
+        resp = await client.patch(
+            f"/api/projects/{pid}/catalog/frames/{dark['id']}/classification",
+            json={"frame_type": "light", "project_target_id": target_id},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["project_target_id"] == target_id
+
     async def test_null_frame_type_422(self, client, tmp_path):
         pid, _ = await _setup(client, tmp_path, name="TypeNull")
         light = (await _frames(client, pid, frame_type="light"))[0]

@@ -77,13 +77,8 @@ from nightcrate.services.ingest_scanner import (
 from nightcrate.services.ingest_sessions import (
     assign_rigs_and_sessions,
     project_geo_timezone,
-    sweep_empty_sessions,
 )
 from nightcrate.services.line_names import canonicalize_line_name
-
-# Module-level tuple: ruff format strips parens from inline ``except (A, B):`` on
-# py3.14, producing invalid Py2 syntax. Referencing a constant sidesteps it.
-_JSON_ERRORS = (TypeError, ValueError)
 
 logger = logging.getLogger("nightcrate.ingest")
 _LOG_PREFIX = "[ingest]"
@@ -255,9 +250,13 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
             "AND NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.processed_image_id = id)",
             (project_id,),
         )
-        # Drop auto-sessions emptied by the removal.
-        await sweep_empty_sessions(conn, project_id)
         await conn.execute("DELETE FROM project_source_folder WHERE id = ?", (folder_id,))
+        # A sub that survived via a file_location under another still-bound folder
+        # may have been getting its rig from the folder just removed, so re-pick
+        # rig + session rather than only sweeping. This also drops emptied sessions.
+        await assign_rigs_and_sessions(
+            conn, project_id, await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
 
 
@@ -544,7 +543,7 @@ async def _upsert_sub_frame(
     # when one was set. Recomputing it here rather than freezing it means a frame
     # corrected *to* light or flat gets its filter name back, which a one-way
     # freeze would have withheld forever (and matching_flats joins on it).
-    hint = cols.pop("filter_name_hint")
+    cols.pop("filter_name_hint")  # rebuilt below from the effective frame type
     raw_hint = _as_str(meta.get("filter_name"))
     set_clause = ", ".join(
         "frame_type = CASE WHEN frame_type_source = 'user' THEN frame_type ELSE ? END"
@@ -553,13 +552,11 @@ async def _upsert_sub_frame(
         for k in cols
     )
     await conn.execute(
-        # nosec B608 - column names from a fixed internal dict, not user input
-        f"UPDATE sub_frame SET {set_clause}, filter_name_hint = CASE WHEN "
+        f"UPDATE sub_frame SET {set_clause}, filter_name_hint = CASE WHEN "  # nosec B608 - set_clause is built from a fixed internal column dict; every value is parameterized
         "(CASE WHEN frame_type_source = 'user' THEN frame_type ELSE ? END) "
         "IN ('light', 'flat') THEN ? ELSE NULL END WHERE id = ?",
         (*cols.values(), frame_type, raw_hint, existing["id"]),
     )
-    cols["filter_name_hint"] = hint  # restore for the caller's view of the dict
     return existing["id"], False
 
 
@@ -787,7 +784,7 @@ async def catalog_frames(
         type_clause = " AND sf.frame_type = ?"
         type_params = (frame_type,)
     # Optional filter-name scope (clicking a Lights/Flats filter pill). Matches the
-    # same COALESCE(model, hint) the pills are grouped by.
+    # same filter_name_hint the pills are grouped by.
     filter_clause = ""
     filter_params: tuple = ()
     if filter_name:
@@ -843,7 +840,7 @@ def _header_filter_name(fits_header_json: str | None) -> str | None:
         return None
     try:
         header = json.loads(fits_header_json)
-    except _JSON_ERRORS:
+    except _COERCE_ERRORS:  # JSONDecodeError subclasses ValueError
         return None
     return _as_str(extract_metadata(header).get("filter_name"))
 
@@ -882,6 +879,16 @@ async def _apply_correction(conn, project_id: int, frame_id: int, body: FrameCor
 
     if "project_target_id" in sent:
         if body.project_target_id is not None:
+            # Only lights have a target — the automatic path enforces this
+            # (`_persist_parsed` assigns one only when frame_type == 'light'), so
+            # the manual path has to as well or the two disagree. Checked against
+            # the *effective* type, which may be corrected in this same request.
+            effective_type = updates.get("frame_type", frame["frame_type"])
+            if effective_type != "light":
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Only lights carry a target (frame is {effective_type})",
+                )
             cursor = await conn.execute(
                 "SELECT id FROM project_target WHERE id = ? AND project_id = ?",
                 (body.project_target_id, project_id),
@@ -1152,7 +1159,7 @@ def _write_cache_atomic(cache_path: Path, data: bytes) -> None:
 
 
 # Shared frame projection: the list endpoint and the single-frame refetch (after
-# an override) must return identical shapes.
+# a correction) must return identical shapes.
 _FRAME_SELECT = (
     "SELECT sf.id, sf.frame_type, sf.filter_name_hint, "
     "sf.object_hint, sf.exposure_seconds, sf.gain, sf.set_temp_c, sf.binning_x, "

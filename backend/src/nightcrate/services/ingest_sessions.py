@@ -1,4 +1,4 @@
-"""Session-formation helpers for the ingest pipeline (v0.40.0).
+"""Session-formation helpers for the ingest pipeline (v0.40.0, v0.41.1).
 
 A session is one night of imaging on a project, per rig. Subs are grouped by
 observing night — the noon-to-noon civil date in the site timezone — so an
@@ -16,7 +16,9 @@ service→api import.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiosqlite
@@ -24,6 +26,19 @@ import aiosqlite
 # Module-level tuple: ruff format strips parens from inline ``except (A, B):`` on
 # py3.14, producing invalid Py2 syntax. Referencing a constant sidesteps it.
 _BAD_ZONE = (ZoneInfoNotFoundError, ValueError)
+
+
+def folder_prefix(path: str) -> str:
+    """A source folder's path with a trailing OS separator, for prefix matching.
+
+    Built here rather than in SQL because paths are stored with the OS-native
+    separator — a hardcoded ``'/'`` silently matches nothing on Windows.
+    """
+    return os.path.join(str(Path(path)), "")
+
+
+def row_dict(row) -> dict:
+    return {k: row[k] for k in row.keys()}
 
 
 def observing_night(date_obs_utc: str, tz_name: str | None) -> str:
@@ -102,19 +117,32 @@ async def assign_rigs_and_sessions(
 
     Caller owns the transaction.
     """
-    # One statement, not one per frame: for each sub frame pick the rig of the
-    # longest bound-folder path that prefixes any of its file locations.
-    await conn.execute(
-        "UPDATE sub_frame SET rig_id = ("
-        "  SELECT psf.rig_id FROM project_source_folder psf"
-        "  JOIN file_location fl ON fl.sub_frame_id = sub_frame.id"
-        "                       AND fl.project_id = psf.project_id"
-        "  WHERE substr(fl.path, 1, length(rtrim(psf.path, '/')) + 1)"
-        "        = rtrim(psf.path, '/') || '/'"
-        "  ORDER BY length(rtrim(psf.path, '/')) DESC LIMIT 1"
-        ") WHERE project_id = ?",
-        (project_id,),
+    # Clear, then apply each folder shortest-path-first so the innermost binding
+    # lands last and wins. One statement per bound folder (a handful), not per
+    # frame.
+    #
+    # The prefix is built in PYTHON, not SQL: paths are stored with the OS-native
+    # separator, so an `rtrim(path, '/') || '/'` comparison would never match on
+    # Windows and rig tagging would silently do nothing there. os.path.join(p, "")
+    # appends the right separator on every platform. Comparing a fixed-length
+    # substring also keeps `_` and `%` in real paths from acting as LIKE wildcards
+    # — the same reason api/ingest.py:remove_folder avoids LIKE.
+    await conn.execute("UPDATE sub_frame SET rig_id = NULL WHERE project_id = ?", (project_id,))
+    cursor = await conn.execute(
+        "SELECT path, rig_id FROM project_source_folder WHERE project_id = ?", (project_id,)
     )
+    folders = [row_dict(r) for r in await cursor.fetchall()]
+    for folder in sorted(folders, key=lambda f: len(f["path"])):
+        if folder["rig_id"] is None:
+            continue
+        prefix = folder_prefix(folder["path"])
+        await conn.execute(
+            "UPDATE sub_frame SET rig_id = ? WHERE project_id = ? AND id IN ("
+            "  SELECT fl.sub_frame_id FROM file_location fl"
+            "  WHERE fl.project_id = ? AND fl.sub_frame_id IS NOT NULL"
+            "    AND substr(fl.path, 1, ?) = ?)",
+            (folder["rig_id"], project_id, project_id, len(prefix), prefix),
+        )
 
     # Re-key sessions. The distinct (rig, night) set is tens of entries even for a
     # multi-year project, so group first and issue one ensure_session per group —

@@ -8,6 +8,8 @@ Two layers:
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 
 from nightcrate.db.session import get_db
 from nightcrate.main import app
+from nightcrate.services.ingest_sessions import folder_prefix
 from nightcrate.services.session_derivation import (
     coerce_binning,
     coerce_gain,
@@ -620,6 +623,90 @@ class TestFolderRigTag:
         # And a re-scan is stable rather than flip-flopping.
         await client.post(f"/api/projects/{pid}/ingest")
         assert await rigs_by_file() == {"outer.fits": outer_rig, "inner.fits": inner_rig}
+
+    async def test_removing_a_folder_repicks_the_rig_of_surviving_frames(
+        self, client, tmp_path: Path
+    ):
+        """A sub can survive folder removal via a second file_location under
+        another still-bound folder (same content hash = one sub_frame, two paths).
+        If the removed folder was the one supplying its rig, the rig must be
+        re-picked — not left pointing at a folder that no longer exists."""
+        pid = await _make_project(client, "SurvivingRig")
+        rig_a, rig_b = await _seed_rig("Rig A"), await _seed_rig("Rig B")
+
+        folder_a, folder_b = tmp_path / "a", tmp_path / "b"
+        folder_a.mkdir()
+        folder_b.mkdir()
+        _write_fits(folder_a / "sub.fits")
+        shutil.copy(folder_a / "sub.fits", folder_b / "sub.fits")  # identical bytes
+
+        a_resp = await client.post(
+            f"/api/projects/{pid}/folders", json={"path": str(folder_a), "rig_id": rig_a}
+        )
+        await client.post(
+            f"/api/projects/{pid}/folders", json={"path": str(folder_b), "rig_id": rig_b}
+        )
+        await client.post(f"/api/projects/{pid}/ingest")
+
+        async def state() -> tuple[int, int | None]:
+            async with get_db() as conn:
+                cur = await conn.execute(
+                    "SELECT id, rig_id FROM sub_frame WHERE project_id = ?", (pid,)
+                )
+                rows = await cur.fetchall()
+                return len(rows), (rows[0]["rig_id"] if rows else None)
+
+        count, rig = await state()
+        assert count == 1, "identical bytes dedupe to one sub_frame with two locations"
+        assert rig in (rig_a, rig_b)
+
+        # Remove whichever folder currently supplies the rig; the sub survives via
+        # the other location and must pick that folder's rig up.
+        remove_id = a_resp.json()["id"] if rig == rig_a else None
+        if remove_id is None:
+            listing = await client.get(f"/api/projects/{pid}/folders")
+            remove_id = next(f["id"] for f in listing.json() if f["rig_id"] == rig)
+        resp = await client.delete(f"/api/projects/{pid}/folders/{remove_id}")
+        assert resp.status_code == 204, resp.text
+
+        count, new_rig = await state()
+        assert count == 1, "the sub survives via its other file_location"
+        assert new_rig != rig, "the removed folder's rig must not linger"
+        assert new_rig in (rig_a, rig_b)
+
+    def test_folder_prefix_uses_the_os_separator(self):
+        """Paths are stored with the OS-native separator, so the prefix must be
+        built in Python. A hardcoded '/' matches nothing on Windows and rig
+        tagging would silently never apply there."""
+        assert folder_prefix("/data/rig-b") == os.path.join("/data/rig-b", "")
+        assert folder_prefix("/data/rig-b").endswith(os.sep)
+        # A trailing separator on the stored path must not double up.
+        assert folder_prefix("/data/rig-b" + os.sep) == folder_prefix("/data/rig-b")
+
+    async def test_underscores_in_paths_are_not_wildcards(self, client, tmp_path: Path):
+        """The match is a fixed-length substring compare, not LIKE — otherwise `_`
+        and `%` in real folder names would act as wildcards and a sibling folder
+        would capture another's frames."""
+        pid = await _make_project(client, "Wildcards")
+        rig = await _seed_rig("Wildcard Rig")
+        tagged = tmp_path / "M101_C11"
+        sibling = tmp_path / "M101xC11"  # `_` as a LIKE wildcard would match this
+        tagged.mkdir()
+        sibling.mkdir()
+        _write_fits(tagged / "a.fits")
+        _write_fits(sibling / "b.fits")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(tagged), "rig_id": rig})
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(sibling)})
+        await client.post(f"/api/projects/{pid}/ingest")
+
+        async with get_db() as conn:
+            cur = await conn.execute(
+                "SELECT fl.path, sf.rig_id FROM sub_frame sf "
+                "JOIN file_location fl ON fl.sub_frame_id = sf.id WHERE sf.project_id = ?",
+                (pid,),
+            )
+            got = {Path(r["path"]).name: r["rig_id"] for r in await cur.fetchall()}
+        assert got == {"a.fits": rig, "b.fits": None}
 
     async def test_unknown_rig_404s(self, client, tmp_path: Path):
         pid = await _make_project(client, "Derive Test")

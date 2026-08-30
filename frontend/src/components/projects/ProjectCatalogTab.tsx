@@ -522,7 +522,15 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         frameIds={correctTarget === "bulk" ? [...selected] : []}
         onSaved={(updated) => {
           if (updated) {
-            patchFrameRow(updated);
+            // A frame_type correction moves the frame to a different category
+            // tab, so patching it in place would leave a stale card behind in
+            // this one while the header counts already moved. Only the in-place
+            // patch is safe when the type didn't change.
+            if (correctTarget !== "bulk" && updated.frame_type !== correctTarget?.frame_type) {
+              invalidateCatalog();
+            } else {
+              patchFrameRow(updated);
+            }
             setSnack("Classification saved — this frame is protected from re-scans");
           } else {
             // Bulk changes move frames between category tabs, so the counts and
