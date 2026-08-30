@@ -467,43 +467,6 @@ LOAD_ORDER: list[SeedableTable] = [
             "manufacturer_seed_key": "manufacturer",
         },
     ),
-    # ------------------------------------------------------------------
-    # 26-28: Alias tables
-    #
-    # Alias tables have a different structure from standard seeded tables:
-    #   - No seed_key / seed_hash columns — identified by the alias text
-    #     (UNIQUE constraint on alias).
-    #   - No active column; have first_seen_at / last_seen_at instead.
-    #   - The loader uses `alias` as the natural key for upserts.
-    #   - source is included as a seeded field (value: 'seed').
-    # ------------------------------------------------------------------
-    # 26: camera_alias
-    SeedableTable(
-        table_name="camera_alias",
-        csv_filename="camera_alias.csv",
-        seeded_fields=("camera_id", "alias", "source", "confirmed"),
-        fk_columns={
-            "camera_seed_key": "camera",
-        },
-    ),
-    # 27: telescope_alias
-    SeedableTable(
-        table_name="telescope_alias",
-        csv_filename="telescope_alias.csv",
-        seeded_fields=("telescope_id", "alias", "source", "confirmed"),
-        fk_columns={
-            "telescope_seed_key": "telescope",
-        },
-    ),
-    # 28: filter_alias
-    SeedableTable(
-        table_name="filter_alias",
-        csv_filename="filter_alias.csv",
-        seeded_fields=("filter_id", "alias", "source", "confirmed"),
-        fk_columns={
-            "filter_seed_key": "filter",
-        },
-    ),
 ]
 
 # ---------------------------------------------------------------------------

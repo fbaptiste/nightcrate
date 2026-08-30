@@ -2,7 +2,6 @@ import Box from "@mui/material/Box";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { RIG_BLUE } from "@/lib/rigColors";
-import { lineLabel } from "@/lib/lineNames";
 import type { IntegrationSummary } from "@/api/projectSessions";
 
 export function formatHoursMinutes(minutes: number): string {
@@ -14,100 +13,82 @@ export function formatHoursMinutes(minutes: number): string {
   return `${h}h ${m}m`;
 }
 
+const ELLIPSIS = {
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+} as const;
+
 interface Props {
   summary: IntegrationSummary;
 }
 
-// Per-filter integration: a horizontal bar of actual time with a goal marker.
-// Blue fill / neutral goal tick keep it colorblind-safe (no red/green).
+// Per-filter integration: a horizontal bar of actual time per filter. A read-out,
+// not a tracker — per-filter goals were removed in v0.41.1. Blue fill keeps it
+// colorblind-safe (no red/green).
 export default function IntegrationBars({ summary }: Props) {
   if (summary.lines.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
-        No integration yet. Add imaging sessions to track time per filter.
+        No integration yet. Add an imaging session, or derive sessions from your cataloged
+        sub frames, to track time per filter.
       </Typography>
     );
   }
 
-  // Scale every bar against the largest actual-or-goal value across all lines.
-  const scale = Math.max(
-    1,
-    ...summary.lines.map((l) => Math.max(l.actual_minutes, l.goal_minutes ?? 0)),
-  );
+  // Scale every bar against the largest value, so the longest bar fills the track.
+  const scale = Math.max(1, ...summary.lines.map((l) => l.actual_minutes));
 
   return (
-    <Box sx={{ maxWidth: 520 }}>
+    <Box sx={{ maxWidth: 560 }}>
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
         Integration — {formatHoursMinutes(summary.total_actual_minutes)} total
       </Typography>
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {summary.lines.map((line) => {
-          const actualPct = (line.actual_minutes / scale) * 100;
-          const goalPct = line.goal_minutes ? (line.goal_minutes / scale) * 100 : null;
-          const valueText =
-            line.goal_minutes != null
-              ? `${formatHoursMinutes(line.actual_minutes)} / ${formatHoursMinutes(
-                  line.goal_minutes,
-                )} (${Math.round((line.actual_minutes / line.goal_minutes) * 100)}%)`
-              : formatHoursMinutes(line.actual_minutes);
+        {summary.lines.map((line) => (
+          <Box key={line.label} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {/* The label is a free string — a canonical bandpass, or a filter
+                name straight from the FITS header. Truncate rather than wrap. */}
+            <Tooltip title={line.label} placement="left">
+              <Typography
+                variant="body2"
+                sx={{ width: 120, flexShrink: 0, fontWeight: 600, cursor: "default", ...ELLIPSIS }}
+              >
+                {line.label}
+              </Typography>
+            </Tooltip>
 
-          return (
-            <Box key={line.line_name} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Tooltip title={lineLabel(line.line_name)} placement="left">
-                <Typography
-                  variant="body2"
-                  sx={{ width: 44, flexShrink: 0, fontWeight: 600, cursor: "default" }}
-                >
-                  {line.line_name}
-                </Typography>
-              </Tooltip>
-
+            <Box
+              sx={{
+                position: "relative",
+                flexGrow: 1,
+                height: 18,
+                borderRadius: 0.5,
+                bgcolor: "action.hover",
+                overflow: "hidden",
+              }}
+            >
               <Box
                 sx={{
-                  position: "relative",
-                  flexGrow: 1,
-                  height: 18,
+                  position: "absolute",
+                  inset: 0,
+                  width: `${Math.min((line.actual_minutes / scale) * 100, 100)}%`,
+                  bgcolor: RIG_BLUE,
                   borderRadius: 0.5,
-                  bgcolor: "action.hover",
-                  overflow: "hidden",
                 }}
-              >
-                <Box
-                  sx={{
-                    position: "absolute",
-                    inset: 0,
-                    width: `${Math.min(actualPct, 100)}%`,
-                    bgcolor: RIG_BLUE,
-                    borderRadius: 0.5,
-                  }}
-                />
-                {goalPct != null && (
-                  <Tooltip title={`Goal: ${formatHoursMinutes(line.goal_minutes!)}`}>
-                    <Box
-                      sx={{
-                        position: "absolute",
-                        top: -2,
-                        bottom: -2,
-                        left: `${Math.min(goalPct, 100)}%`,
-                        width: 2,
-                        bgcolor: "text.primary",
-                      }}
-                    />
-                  </Tooltip>
-                )}
-              </Box>
-
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ width: 150, flexShrink: 0, textAlign: "left" }}
-              >
-                {valueText}
-              </Typography>
+              />
             </Box>
-          );
-        })}
+
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ width: 120, flexShrink: 0, textAlign: "left" }}
+            >
+              {formatHoursMinutes(line.actual_minutes)}
+            </Typography>
+          </Box>
+        ))}
       </Box>
     </Box>
   );

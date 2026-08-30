@@ -25,6 +25,9 @@ class TargetCreate(BaseModel):
 
 
 class TargetResponse(BaseModel):
+    # The project_target PK. sub_frame.project_target_id references it, so the
+    # catalog's per-frame target correction (v0.41.1) needs it on the wire.
+    id: int
     dso_id: int
     primary_designation: str
     common_name: str | None
@@ -35,7 +38,7 @@ class TargetResponse(BaseModel):
 
 
 _TARGET_SELECT = (
-    "SELECT pt.dso_id, pt.created_at,"
+    "SELECT pt.id, pt.dso_id, pt.created_at,"
     " d.primary_designation, d.common_name, d.obj_type, d.ra_deg, d.dec_deg"
     " FROM project_target pt JOIN dso d ON d.id = pt.dso_id"
 )

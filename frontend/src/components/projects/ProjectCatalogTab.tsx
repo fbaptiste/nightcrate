@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -7,8 +7,12 @@ import {
 } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
+import MenuItem from "@mui/material/MenuItem";
+import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
+import { fetchRigs } from "@/api/rigs";
 import IconButton from "@mui/material/IconButton";
 import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
@@ -19,10 +23,10 @@ import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import CatalogCardList from "./CatalogCardList";
-import EquipmentOverrideDialog from "./EquipmentOverrideDialog";
+import AnalyzerOverlay, { type AnalyzerItem } from "./AnalyzerOverlay";
+import FrameCorrectionsDialog from "./FrameCorrectionsDialog";
 import {
   formatExposure,
   FrameCard,
@@ -38,7 +42,7 @@ import {
   fetchCatalogSummary,
   listFolders,
   removeFolder,
-  rerunResolution,
+  setFolderRig,
   startIngest,
   type CatalogFrame,
   type CatalogMaster,
@@ -75,10 +79,29 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // Active filter-pill scope on the Lights / Flats lists (null = show all).
   const [filterName, setFilterName] = useState<string | null>(null);
 
+  // Multi-select for bulk corrections. Cleared whenever the visible set changes,
+  // so a hidden selection can never be acted on by mistake.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
   const changeTab = (next: TabKey) => {
     setTab(next);
     setFilterName(null);
+    setSelected(new Set());
   };
+
+  const changeFilterPill = (next: string | null) => {
+    setFilterName(next);
+    setSelected(new Set());
+  };
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const { data: folders = [] } = useQuery({
     queryKey: ["project-folders", projectId],
@@ -109,7 +132,11 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       return loaded < (allPages[0]?.total ?? 0) ? loaded : undefined;
     },
   });
-  const items: CatalogItem[] = data?.pages.flatMap((p) => p.rows) ?? [];
+  // Memoized: `items` feeds `analyzerItems` -> `openInAnalyzer` -> every card's
+  // `onOpen`. A fresh array each render would change that prop's identity and
+  // defeat memo(FrameCard) for every loaded card on every checkbox tick and every
+  // analyzer prev/next step.
+  const items: CatalogItem[] = useMemo(() => data?.pages.flatMap((p) => p.rows) ?? [], [data]);
   const tz = data?.pages[0]?.timezone ?? "UTC";
 
   // Per-filter pills (count + total exposure) for the Lights & Flats tabs.
@@ -128,6 +155,40 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryClient.invalidateQueries({
       queryKey: ["project-catalog-filters", projectId],
     });
+  };
+
+  /** Counts only — the row itself is patched in place by `patchFrameRow`. */
+  const invalidateCounts = () => {
+    queryClient.invalidateQueries({
+      queryKey: ["project-catalog-summary", projectId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: ["project-catalog-filters", projectId],
+    });
+  };
+
+  /** Replace one row in the loaded pages instead of refetching the whole
+   *  infinite query. A full invalidate refetches EVERY page already loaded, so
+   *  editing one card after scrolling 20 pages cost 20 round-trips. */
+  const patchFrameRow = (updated: CatalogFrame) => {
+    queryClient.setQueryData<{ pages: CatalogPage[]; pageParams: unknown[] }>(
+      ["project-catalog", projectId, tab, filterName],
+      (old) =>
+        old
+          ? {
+              ...old,
+              pages: old.pages.map((p) => ({
+                ...p,
+                rows: p.rows.map((r) =>
+                  "kind" in r && r.kind === "sub_frame" && r.id === updated.id
+                    ? updated
+                    : r,
+                ),
+              })),
+            }
+          : old,
+    );
+    invalidateCounts();
   };
 
   const invalidateFolders = () =>
@@ -167,27 +228,51 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     onError: (e: Error) => setSnack(e.message),
   });
 
-  // Re-run equipment resolution (v0.41.0): re-resolves cameras/telescopes/
-  // filters via the alias tables and attributes rigs project-wide. Idempotent —
-  // use it after assigning a rig or confirming aliases on Admin.
-  const rerunMut = useMutation({
-    mutationFn: () => rerunResolution(projectId),
-    onSuccess: (s) => {
-      invalidateCatalog();
+  // Classification corrections: a frame for single-frame mode, or "bulk".
+  // Rigs available to tag a source folder with. The user declares which rig shot a
+  // folder; nothing infers it from a header.
+  const { data: rigs = [] } = useQuery({ queryKey: ["rigs"], queryFn: () => fetchRigs(true) });
+  const folderRigMut = useMutation({
+    mutationFn: ({ folderId, rigId }: { folderId: number; rigId: number | null }) =>
+      setFolderRig(projectId, folderId, rigId),
+    onSuccess: (f) => {
+      // Only the folder list changes on screen — no card renders a rig, so
+      // invalidating the infinite catalog query would refetch every loaded page
+      // for nothing.
+      queryClient.invalidateQueries({ queryKey: ["project-folders", projectId] });
       setSnack(
-        `Resolution re-run: ${s.rigs_attributed}/${s.frames_processed} frames ` +
-          `attributed to a rig, ${s.filters_resolved} filters resolved` +
-          (s.cameras_rig_corrected
-            ? `, ${s.cameras_rig_corrected} cameras corrected via rig`
-            : "") +
-          ` (${s.frames_changed} changed)`,
+        f.rig_name
+          ? `Folder tagged ${f.rig_name} — its frames and sessions were re-keyed`
+          : "Folder rig cleared",
       );
     },
     onError: (e: Error) => setSnack(e.message),
   });
 
-  // Per-frame equipment override dialog.
-  const [overrideFrame, setOverrideFrame] = useState<CatalogFrame | null>(null);
+  const [correctTarget, setCorrectTarget] = useState<CatalogFrame | "bulk" | null>(null);
+
+  // Embedded analyzer overlay. Stepping walks this list, so it inherits the
+  // active tab + filter pill for free.
+  const [analyzerIndex, setAnalyzerIndex] = useState<number | null>(null);
+  const analyzerItems: AnalyzerItem[] = useMemo(
+    () =>
+      items
+        .filter((i): i is CatalogFrame => "kind" in i && i.kind === "sub_frame" && !!i.path)
+        .map((f) => ({
+          id: f.id,
+          path: f.path as string,
+          name: f.path!.split("/").pop() ?? String(f.id),
+        })),
+    [items],
+  );
+
+  const openInAnalyzer = useCallback(
+    (row: CatalogFrame) => {
+      const at = analyzerItems.findIndex((i) => i.id === row.id);
+      if (at >= 0) setAnalyzerIndex(at);
+    },
+    [analyzerItems],
+  );
 
   const othersCount = summary
     ? summary.pxiprojects + summary.logs + summary.other + summary.unknown_frames
@@ -211,17 +296,24 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     if (tab === "others") {
       return <OtherCard row={item as CatalogOther} tz={tz} />;
     }
+    const row = item as CatalogFrame;
     return (
       <FrameCard
-        row={item as CatalogFrame}
+        row={row}
         projectId={projectId}
         tz={tz}
         showFilter={tab === "light" || tab === "flat"}
         showObject={tab === "light"}
-        onEditEquipment={setOverrideFrame}
+        onCorrect={setCorrectTarget}
+        onOpen={openInAnalyzer}
+        selected={selected.has(row.id)}
+        onToggleSelect={toggleSelect}
       />
     );
   };
+
+  const frameTab = tab !== "masters" && tab !== "others";
+  const allSelected = frameTab && items.length > 0 && selected.size === items.length;
 
   return (
     <Box
@@ -264,6 +356,31 @@ export default function ProjectCatalogTab({ projectId }: Props) {
               >
                 {scanning ? "Scanning…" : "Re-scan"}
               </Button>
+              <Tooltip title="Which rig shot this folder. Frames inherit it, a dual-rig night splits into one session per rig, and calibration frames only match lights from the same rig. Leave blank if you'd rather not say.">
+                <TextField
+                  select
+                  size="small"
+                  label="Rig"
+                  value={f.rig_id ?? ""}
+                  onChange={(e) =>
+                    folderRigMut.mutate({
+                      folderId: f.id,
+                      rigId: e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                  disabled={folderRigMut.isPending}
+                  sx={{ minWidth: 160 }}
+                >
+                  <MenuItem value="">
+                    <em>Not stated</em>
+                  </MenuItem>
+                  {rigs.map((r) => (
+                    <MenuItem key={r.id} value={r.id}>
+                      {r.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Tooltip>
               <Tooltip title="Remove folder">
                 <IconButton size="small" onClick={() => removeMut.mutate(f.id)}>
                   <DeleteIcon fontSize="small" />
@@ -282,24 +399,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         >
           Add folder
         </Button>
-        <Tooltip title="Re-resolve equipment and attribute rigs across everything already cataloged — run after assigning a rig to the project or confirming equipment aliases on Admin. Manual overrides are never touched.">
-          <span>
-            <Button
-              startIcon={
-                rerunMut.isPending ? (
-                  <CircularProgress size={14} />
-                ) : (
-                  <TravelExploreIcon />
-                )
-              }
-              variant="outlined"
-              onClick={() => rerunMut.mutate()}
-              disabled={rerunMut.isPending || ingestMut.isPending}
-            >
-              {rerunMut.isPending ? "Resolving…" : "Re-run resolution"}
-            </Button>
-          </span>
-        </Tooltip>
       </Stack>
 
       {/* Category sub-tabs */}
@@ -323,7 +422,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
           {filterStats.map((s) => {
             const name = s.filter_name ?? "—";
-            const selected = filterName === s.filter_name;
+            const active = filterName === s.filter_name;
             const label =
               tab === "flat"
                 ? `${name} · ${s.count} · ${formatExposure(s.total_seconds)}`
@@ -333,13 +432,54 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                 key={name}
                 size="small"
                 clickable
-                variant={selected ? "filled" : "outlined"}
+                variant={active ? "filled" : "outlined"}
                 color="primary"
                 label={label}
-                onClick={() => setFilterName(selected ? null : s.filter_name)}
+                onClick={() => changeFilterPill(active ? null : s.filter_name)}
               />
             );
           })}
+        </Stack>
+      )}
+
+      {/* Selection / bulk-correction bar — only on the frame tabs. */}
+      {frameTab && items.length > 0 && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{
+            mb: 1,
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+            bgcolor: selected.size > 0 ? "action.selected" : "transparent",
+          }}
+        >
+          <Checkbox
+            size="small"
+            checked={allSelected}
+            indeterminate={selected.size > 0 && !allSelected}
+            onChange={() =>
+              setSelected(allSelected ? new Set() : new Set(items.map((i) => i.id)))
+            }
+            inputProps={{ "aria-label": "select all loaded frames" }}
+          />
+          <Typography variant="body2" color="text.secondary">
+            {selected.size > 0
+              ? `${selected.size} selected`
+              : `Select frames to correct in bulk`}
+          </Typography>
+          {selected.size > 0 && (
+            <>
+              <Button size="small" variant="outlined" onClick={() => setCorrectTarget("bulk")}>
+                Correct {selected.size}
+              </Button>
+              <Button size="small" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </>
+          )}
         </Stack>
       )}
 
@@ -371,16 +511,36 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           reopening on a different frame briefly shows the previous frame's dirty
           state with Save enabled, and saving in that window would write the old
           picks to the new frame. Same reason FovSimulator is keyed in
-          PlannerDetailPanel. */}
-      <EquipmentOverrideDialog
-        key={overrideFrame?.id ?? "none"}
-        open={overrideFrame !== null}
-        onClose={() => setOverrideFrame(null)}
+          PlannerDetailPanel. "bulk" is its own key so switching between a single
+          frame and the bulk action re-seeds the fields. */}
+      <FrameCorrectionsDialog
+        key={correctTarget === "bulk" ? "bulk" : (correctTarget?.id ?? "none")}
+        open={correctTarget !== null}
+        onClose={() => setCorrectTarget(null)}
         projectId={projectId}
-        frame={overrideFrame}
-        onSaved={() => {
-          invalidateCatalog();
-          setSnack("Attribution saved — this frame's overrides are protected from re-runs");
+        frame={correctTarget === "bulk" ? null : correctTarget}
+        frameIds={correctTarget === "bulk" ? [...selected] : []}
+        onSaved={(updated) => {
+          if (updated) {
+            patchFrameRow(updated);
+            setSnack("Classification saved — this frame is protected from re-scans");
+          } else {
+            // Bulk changes move frames between category tabs, so the counts and
+            // the list itself both shift — a full refresh is correct here.
+            invalidateCatalog();
+            setSelected(new Set());
+            setSnack(`Corrected ${selected.size} frames`);
+          }
+        }}
+      />
+      <AnalyzerOverlay
+        open={analyzerIndex !== null}
+        onClose={() => setAnalyzerIndex(null)}
+        items={analyzerItems}
+        index={analyzerIndex ?? 0}
+        onIndexChange={setAnalyzerIndex}
+        onNeedMore={() => {
+          if (hasNextPage && !isFetchingNextPage) fetchNextPage();
         }}
       />
       <Snackbar

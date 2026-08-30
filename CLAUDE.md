@@ -377,43 +377,112 @@ For full feature inventory and per-version history see `nightcrate-current-state
 - Junction tables delete-and-reinsert only for parents that were inserted/updated.
 - First-run vs update modes; missing CSV files fail loud at startup.
 
-### Equipment Resolver (v0.39.0)
-- **Pure service** `services/equipment_resolver.py` — maps raw FITS header strings (`INSTRUME` / `TELESCOP` / `FILTER`) to equipment rows. **Must not import from `api/`.** Callers: the ingest pipeline (v0.40.0+) and the v0.41.0 attribution pass; the unresolved queue got its API/UI in v0.41.0 (`api/equipment_aliases.py`).
-- **Exact-match only after normalization** — `normalize_alias` (NFKC → strip → collapse whitespace → drop control/zero-width chars → lowercase; punctuation **preserved**). No fuzzy matching, ever. A miss is a normal outcome, never an exception.
-- **Caller owns the transaction.** The resolver writes (`last_seen_at` bumps, `unresolved_equipment_observation` upserts, confirmed-alias inserts on promotion) but never `commit()`/`rollback()`s.
-- **Four outcomes:** `resolved` / `resolved_retired` (alias → `active=0` row, still returned) / `unresolved` (records an observation) / `ambiguous` (a line name matched >1 filter in the rig).
-- **Filter line names** canonicalize via a closed code-level map (`Ha`, `Oiii`, …) then scope to the capturing rig's filters through **`rig_filter_slot`** (NOT a `filter_wheel_filter` table — that never existed). `resolve_filter` order: exact alias → rig-scoped line name → unresolved. Needs a `RigContext(rig_id=…)`; without it, line-name resolution is skipped.
-- **Line names never enter the unresolved queue (v0.41.0).** `resolve_filter` records no observation for a canonical line name (`Ha`, `Oiii`, …). A confirmed alias is global, so "Ha → one physical filter" would be wrong for any dual-rig user — rig scoping via `rig_filter_slot` is the only correct resolution — and the queue would re-nag on every scan. Only genuinely unknown `FILTER` strings queue up.
-- **Never auto-confirms.** Alias promotion (`confirmed=1`) is human-only via `confirm_unresolved_observation`. The resolver only ever inserts `confirmed=0`-equivalent observations into the queue.
-- **Two-camera-same-model:** identical `INSTRUME` across two physical bodies resolves to whichever camera the single alias points at — the resolver alone cannot do better. **Solved one layer up in v0.41.0** by `services/rig_attribution.py`, which corrects the camera to the attributed rig's actual body.
-- **No migration / no seed** — alias tables + `unresolved_equipment_observation` exist since migration 0005; aliases start empty and the unresolved queue bootstraps on first ingest.
-
 ### Folder Ingest + Imaging-Core Schema (v0.40.0)
 - **Imaging-core schema** (migration 0037; ownership reworked by 0040): `session` (auto/ingest rig-night grouping — NOT the manual `project_session` from 0035), `sub_frame` (the core atom), `processed_image` (masters/stacks), `file_location` (one row per cataloged file, **any** category, nullable `sub_frame_id`/`processed_image_id`), `ingestion_run` (provenance), `project_source_folder`, plus the **empty** guiding/session-event/session-log/autofocus tables (created up front to resolve forward FKs; populated v0.43/0.44), and the calibration-matching + integration **views**.
 - **Projects own their files (migration 0040).** Each cataloged row belongs to exactly the project that cataloged it: `sub_frame`, `processed_image`, and `file_location` all carry `project_id NOT NULL` (`ON DELETE CASCADE`). Identity is **per-project** — `UNIQUE(project_id, content_hash)` on sub_frame/processed_image, `UNIQUE(project_id, path)` on file_location. The same physical file cataloged into two projects becomes **two independent rows** (no shared row, no global identity). Re-scan stays idempotent *within* a project. There is no path-prefix project scoping anymore (the old `_project_file_scope` is gone); every catalog query is a plain `WHERE project_id = ?`. "Have I imaged this object?" is answered by the plate-solve / `project_dso` layer, not frame identity.
 - **Header-driven classification, never folder names** — `frame_type` from `IMAGETYP` (`api`-side via `services/ingest_classify.py`); masters/stacks detected via `NCOMBINE`/`STACKCNT`/master `IMAGETYP`/PI history → `processed_image`. Reuses `services/fits_header_map.py:extract_metadata`/`normalize_frame_type`.
 - **Dark-flats are inferred by exposure, not header.** Capture software (ASIAir) labels dark-flats just `IMAGETYP=DARK` — indistinguishable from real darks per-file. After ingest, `api/ingest.py:_reclassify_dark_flats` (project-scoped, idempotent) promotes a `dark` → `dark_flat` when its exposure matches a flat in the project and not any light (tolerant **±20 % exposure ratio** — ASIAir auto-exposes flats e.g. 2.208 s while dark-flats use the nominal 2.2 s, so exact/ms match never fires). Real darks (matching the lights' exposure) and master darks (`processed_image`) are untouched.
-- **Darks/dark-flats/bias are filterless.** `_upsert_sub_frame` nulls `filter_id` + `filter_name_hint` for any frame_type not in `(light, flat)` — calibration darks are never matched on filter, so a stray `FILTER` header is dropped. Only lights and flats carry a filter.
-- **NO light-needs-filter CHECK; `sub_frame.filter_name_hint` holds the raw `FILTER`.** At v0.40.0 a light's `filter_id` is routinely NULL (no rig context → resolver can't scope line names; aliases empty). Ingest must never fail on partial equipment — every equipment FK is nullable. **v0.41.0's attribution pass back-fills `filter_id` from the hint** once the frame's rig is known; the hint column stays as the forensic record and the catalog card renders resolved-vs-hint differently (filled vs outlined chip).
-- **Pure services + one DB/HTTP boundary.** `ingest_scanner.py` (walk + picklable `parse_image_file` ProcessPool worker), `ingest_classify.py`, `ingest_sessions.py` (noon-to-noon observing-night grouping in the site `geo_timezone`; dual-rig = separate sessions, NULL-rig is its own bucket — also owns `ensure_session` / `observing_window_utc`, moved out of `api/ingest.py` in v0.41.0 so the attribution service can share them without importing `api/`) — none import from `api/`. `api/ingest.py` owns the transaction, runs the resolver, content-hash UPSERTs, forms sessions, writes provenance. Single-flight ingest (one at a time, 409 if busy).
+- **Darks/dark-flats/bias are filterless.** `_upsert_sub_frame` nulls `filter_name_hint` for any frame_type not in `(light, flat)` — calibration darks are never matched on filter, so a stray `FILTER` header is dropped. Only lights and flats carry a filter.
+- **NO light-needs-filter CHECK; `sub_frame.filter_name_hint` holds the `FILTER` header.** Ingest must never fail on partial equipment — every equipment FK is nullable, and since v0.41.1 they are all permanently NULL. The hint is the filter fact (see the v0.41.1 section below).
+- **Pure services + one DB/HTTP boundary.** `ingest_scanner.py` (walk + picklable `parse_image_file` ProcessPool worker), `ingest_classify.py`, `ingest_sessions.py` (noon-to-noon observing-night grouping in the site `geo_timezone`; also owns `ensure_session` / `observing_window_utc` / `project_geo_timezone`, so `api/ingest.py` and `services/session_derivation.py` share them without a service→api import) — none import from `api/`. `api/ingest.py` owns the transaction, content-hash UPSERTs, forms sessions, writes provenance. Single-flight ingest (one at a time, 409 if busy).
 - **Idempotent re-ingest** keyed on `(project_id, content_hash)` (UPSERT). Re-scan of a project's folder updates rows; counts never grow. **Tests must give synthetic FITS unique pixel data** — byte-identical files in the *same* project correctly dedupe to one row (the same bytes in two *different* projects are two rows, by design).
 - **Calibration views** (`matching_darks`/`flats`/`bias`, `calibration_coverage`): darks match camera+gain+exposure+binning + set-temp ±1 °C (never on filter); flats add filter + `telescope_configuration_id`; all `accepted=1` both sides. Integration view double-counts duoband filters per `line_name` by design.
-- **Read-only catalog UI**: `ProjectCatalogTab.tsx` (5th project tab) — folder binding uses the **shared `components/fits/FileBrowser` in `directoryMode`** (same browser as Image Analyzer / PHD2 — do NOT build a separate folder picker); per-folder + auto-on-add Re-scan; then **7 category sub-tabs** (Lights/Darks/Flats/Bias/Dark Flats/Masters/Others, count in each label) over a **card-based infinite-scroll list** (`CatalogCardList` + `CatalogCards`, NOT a DataGrid — MUI X Community caps at 100 rows/page, see [[feedback-mui-datagrid-row-cap]]). Frame tabs → `catalog/frames?frame_type=` (filter pills add `?filter_name=`); **Masters** → `catalog/masters` (processed_image, Type/filter/integration); **Others** → `catalog/others` (file_location pxiproject/log/other + unknown-type subs). All catalog counts/listings scope via a plain `file_location.project_id` / `sub_frame.project_id` match (migration 0040 gave every cataloged row a `project_id`; the old path-prefix `_project_file_scope` is gone). v0.41.0 added equipment overrides + a re-run button; `frame_type` edits, session/target reassignment, and bulk ops are v0.41.1.
+- **Read-only catalog UI**: `ProjectCatalogTab.tsx` (5th project tab) — folder binding uses the **shared `components/fits/FileBrowser` in `directoryMode`** (same browser as Image Analyzer / PHD2 — do NOT build a separate folder picker); per-folder + auto-on-add Re-scan; then **7 category sub-tabs** (Lights/Darks/Flats/Bias/Dark Flats/Masters/Others, count in each label) over a **card-based infinite-scroll list** (`CatalogCardList` + `CatalogCards`, NOT a DataGrid — MUI X Community caps at 100 rows/page, see [[feedback-mui-datagrid-row-cap]]). Frame tabs → `catalog/frames?frame_type=` (filter pills add `?filter_name=`); **Masters** → `catalog/masters` (processed_image, Type/filter/integration); **Others** → `catalog/others` (file_location pxiproject/log/other + unknown-type subs). All catalog counts/listings scope via a plain `file_location.project_id` / `sub_frame.project_id` match (migration 0040 gave every cataloged row a `project_id`; the old path-prefix `_project_file_scope` is gone). v0.41.1 added frame-type/target corrections (single + bulk) and the embedded analyzer overlay; the equipment-override dialog and "Re-run resolution" button it also once carried were removed with the resolver.
 - **Catalog thumbnails use a dedicated cheap endpoint, NOT `/api/images/image`.** `GET /api/projects/{id}/catalog/frames/{frame_id}/thumbnail` → `services/catalog_thumbnail.py:render_thumbnail_bytes` **decimates the raw array before any work** (a 26 MP sub renders in ~0.07 s vs the full-image endpoint that loads+stretches all 26 MP and resets the backend when a grid draws many). Result is a tiny JPEG cached on disk under `APP_DIR/catalog_thumbnails/{content_hash}_{px}.jpg` (stable across DB recreation), bounded by `_THUMB_SEM` (Semaphore 3). Grid cells use `loading="lazy"` so only visible rows fetch. **Never point a many-row grid at the full-image render endpoint.**
 - **The thumbnail render is PURE NUMPY and must stay that way — mlx (Apple Metal) is NOT thread-safe.** `render_thumbnail_bytes` replicates the AutoSTF stretch (`_stf_params` + `_stretch_u8`) in numpy and must NOT call `imaging.stretch_plane` / `resolve_auto_stretch` (which route through `get_array_module()` → mlx). The catalog grid renders several thumbnails concurrently via `asyncio.to_thread`; concurrent mlx calls from worker threads **segfault the whole process** (reproduced: 9 concurrent XISF renders → SIGSEGV with mlx, clean with numpy). A regression test (`test_render_never_uses_gpu_backend`) patches `get_array_module` to fail if the thumbnail path ever reaches it. **General gotcha: do NOT call the GPU backend (`get_array_module`) from `asyncio.to_thread`/multi-threaded paths.** The image-analyzer render is mlx-backed but safe only because it runs one-at-a-time.
 - **`FileBrowser` `directoryMode` prop:** when set, the shared browser selects the current directory (`onSelect(result.path)`), the action button reads "Select This Folder", file rows are context-only, and archives/PixInsight projects aren't selectable. Keeps one browser component everywhere.
 - **ProcessPool is per-run, shut down in a `finally` (`make_pool`, NOT a persistent global).** A long-lived spawn `ProcessPoolExecutor` leaves worker processes alive after the run; under `uvicorn --reload` (i.e. `make dev`) those orphaned children block a clean restart and **wedge the whole event loop** (every endpoint hangs, including `/api/health`). The `~1 s` spawn cost per ingest is negligible. **Caveat:** `services/planner_annual_hours.py` still uses a *persistent* global pool — same latent risk under `--reload`; migrate it to per-run if it ever wedges dev.
 
-### Rig Attribution + Equipment Corrections (v0.41.0)
-- **Pure service** `services/rig_attribution.py` — "which of this project's rigs captured this frame?" plus a re-resolution pass over everything already cataloged. **Must not import from `api/`; caller owns the transaction** (same contract as the resolver). `api/ingest.py` is the boundary.
-- **Project-scoped, never global.** Candidates are exactly the rigs in `project_rig`. **A project with no rigs assigned gets no attribution at all** — that's the designed behavior, not a bug to patch around.
-- **Eliminate, never guess.** Each signal can only *remove* a candidate: camera identity, `FOCALLEN` vs the rig's `telescope_configuration` (**±5 %** — header FOCALLEN is nominal, e.g. ASIAir's "600", while the config carries the measured 608 mm; equality never matches, and ±5 % still cleanly separates a C11 at 2800 mm from an Askar V at 600 mm), and filter line names vs the rig's `rig_filter_slot` loadout. **Exactly one survivor → attribute; zero or several → leave NULL.** A single-rig project therefore attributes everything that doesn't contradict that rig — which is what assigning the rig *means*.
-- **Same-model camera twins are keyed on `(manufacturer_id, sensor_id)`, not name similarity.** `camera` has `UNIQUE(manufacturer_id, model_name)`, so two physical bodies of one model are two rows with distinct names — string comparison would be guesswork. A twin never eliminates a rig, and once the rig is attributed by other signals **the frame's camera is corrected to that rig's actual body**. This is the payoff that closes the v0.39.0 two-camera limitation; pinned by tests.
-- **Attribution is an ingest post-pass, not just a button.** Every scan runs it after `_reclassify_dark_flats`, and it **re-keys auto-sessions to (rig, observing night)** and sweeps emptied sessions — that's what makes a dual-rig night split into two sessions. Same code path as the manual `POST /projects/{id}/resolution/rerun` (shares the ingest single-flight lock), so the two can never drift.
-- **User overrides are sacred (migration 0041).** `sub_frame.rig_source` / `camera_source` / `filter_source` are `'auto' | 'user'`. Every automated pass skips `'user'` fields, and the re-scan UPDATE guards them with SQL `CASE` — **both paths must be updated together** if you add another overridable field. `PATCH .../catalog/frames/{id}/equipment` sets them; explicit `null` means "none", `reset_to_auto` hands a field back to the resolver. Any existing rig is accepted (the user is the authority, even one not assigned to the project); a filter on a calibration frame is 422. A rig override re-keys that frame's session.
-- **Alias review is global, so it lives on Admin, not the project.** `api/equipment_aliases.py` (list / confirm / dismiss) + `components/admin/EquipmentAliasesSection.tsx`. Confirming inserts the alias — **the resolver still never auto-confirms**. Dismiss just drops the row; it reappears if a later scan sees the value again. Expect mounts to show up here (`TELESCOP` often carries the mount, e.g. `ZWO AM5`).
-- **A canonical line name can never become an alias — enforced in two places.** `resolve_filter` stopped *recording* them (above), the confirm endpoint **422s** if the observation's normalized alias canonicalizes to a line name, and migration 0042 purged the rows v0.40.x had already queued (ingest never passed a `RigContext`, so every scan filed `Ha`/`Oiii`/`Sii`). An alias is global; only `rig_filter_slot` scoping can resolve a bandpass correctly for a dual-rig user. Migration 0042 restates `_LINE_NAME_MAP`'s keys in SQL — a test pins the two together, so **add a spelling to the map and the test tells you to update the migration list**.
-- **A rig's filters come from `rig_filter_slot` OR `rig.single_filter_id`** — the two are mutually exclusive (enforced in `api/rigs.py`). `load_project_rigs` must read both; loading only slots leaves a wheel-less rig with an empty filter set, and the filter signal then silently can't eliminate it.
+### Catalog Corrections + Derived Sessions (v0.41.1)
+- **No automatic equipment identification, by design.** v0.39.0's FITS-header → equipment-row
+  resolver and v0.41.0's rig-attribution pass were **removed** in v0.41.1, along with the
+  global alias review queue and the per-frame equipment override. Per-frame
+  camera/telescope/filter attribution was a large, fragile surface for very little user value.
+  **Do not reintroduce header→equipment resolution.** Equipment now comes from exactly two
+  *declared* facts: the rigs assigned to the project (`project_rig`, Overview picker), and the
+  rig tagged on each bound source folder (`project_source_folder.rig_id`). Migration 0046
+  dropped every other equipment FK from `sub_frame` / `processed_image`.
+- **`project_source_folder.rig_id` is the one equipment fact ingest records — and the user
+  declares it.** Frames found beneath a tagged folder inherit it into `sub_frame.rig_id`,
+  sessions key on **(project, observing night, rig)** so a simultaneous dual-rig night splits,
+  the calibration views scope on it so one rig's darks never calibrate another's lights, and
+  the session derivation splits on it. NULL means "not stated" and is a valid answer — a NULL
+  rig is its own bucket everywhere (the SQL is `IS`, not `=`, precisely so NULL matches NULL).
+- **`services/ingest_sessions.py:assign_rigs_and_sessions` is the SINGLE owner of both
+  `sub_frame.rig_id` and `sub_frame.session_id`.** Ingest calls it once after every folder is
+  walked; the folder add/PATCH endpoints call it too. Do **not** assign either field per file
+  during the walk: a frame's rig depends on which bound folder *innermost* contains it, which
+  isn't knowable until every folder is on the table. **Longest-prefix wins** — bind `/data` to
+  rig A and `/data/rig-b` to rig B and the nested files must get rig B regardless of which
+  folder was added, scanned or tagged last. A per-frame rule gets this wrong in three
+  different ways (last-added-wins on scan, parent-steals-child on tag, flip-flop on re-scan);
+  a regression test pins all three. The pass is set-based: one UPDATE for the rig, then one
+  `ensure_session` per distinct (rig, night) — a per-frame loop measured ~100× slower.
+- **Calibration matching is keyed on header facts (migration 0046).** `matching_darks` —
+  exposure + gain + binning + set-temp ±1 °C, never filter; `matching_flats` — gain + binning +
+  `filter_name_hint`, never exposure (a flat's exposure comes from the panel); `matching_bias`
+  — gain + binning. All scoped to project **and** rig, all `accepted = 1` both sides. **The
+  cautionary tale:** the original views compared `d.camera_id = l.camera_id` with a plain `=`;
+  once equipment identification went away and every `camera_id` was NULL, `NULL = NULL` is NULL
+  rather than TRUE, so the join failed before reaching the exposure test and every view
+  silently returned zero rows. If you add a nullable term to a match view, use `IS`.
+  `integration_time_per_project_filter` was dropped — integration has one source of truth now,
+  the derived `project_session` rows.
+- **`sub_frame.filter_name_hint` is the only filter fact.** It holds the FITS `FILTER` header,
+  already normalized to a display short-form by `services/fits_header_map.py:FILTER_NAME_ALIASES`
+  (so it reads `Red` / `Lum`, not `R` / `L`). It drives the catalog filter pills, the card's
+  filter chip, and the session-derivation grouping. There is no resolved-vs-hint distinction any
+  more — one plain outlined chip.
+- **The bandpass vocabulary lives in `services/line_names.py`** — `LINE_NAMES` (the closed
+  15-value CHECK vocabulary, mirrored by `frontend/src/lib/lineNames.ts` and migration 0005),
+  plus `canonicalize_line_name` / `normalize_label`. It is a **service**, not an api module,
+  because `session_derivation` needs it and services may not import from `api/`.
+  `api/project_session_models.py` imports `LINE_NAMES` from there. Keep it separate from
+  `fits_header_map.FILTER_NAME_ALIASES` — different map, different purpose.
+- **Sessions derive on demand only — ingest never creates them.** Scanning a folder catalogs
+  frames and stops. `POST /projects/{id}/sessions/derive` → `services/session_derivation.py`
+  (pure service, caller owns the transaction) replaces every `project_session` row with
+  `source='auto'` and leaves `source='manual'` rows alone. This is deliberate: a project may
+  legitimately hold no subs at all (the user doesn't have them, or doesn't want them in the
+  project) and still keep a full hand-entered session record. **Do not wire the derive into
+  `_run_ingest`.**
+- **Derived grain: one row per (observing night, rig, filter, exposure, gain, binning).** The
+  rig comes from the frame (its folder's tag), falling back to the project's rig when it has
+  exactly one. Grouping is on the *canonical* filter key (`canonicalize_line_name(hint)` else `normalize_label(hint)`)
+  so `Ha` and `H-alpha` in one night collapse to one row. Watch the column-shape mismatches —
+  `sub_frame.gain` is REAL vs `project_session.gain` INTEGER (round, and group on the coerced
+  value); `binning_x`/`binning_y` vs a single `binning` (NULL when asymmetric); and
+  `project_session.exposure_seconds CHECK (> 0)` vs `sub_frame`'s `>= 0`, so a light with no
+  EXPTIME is **skipped and counted**, never allowed to abort the INSERT.
+- **`project_session.filter_label` (migration 0044) carries the header filter name;
+  `line_name` is still set** (canonical, or `'other'`) purely so the existing
+  `CHECK (filter_id IS NOT NULL OR line_name IS NOT NULL)` holds without a table rewrite. The
+  UI renders `filter_label` first — a derived `L-eXtreme` row must not display as `other`.
+- **Derived rows are read-only** — `PATCH`/`DELETE` on a `source='auto'` row is a **409**, and
+  the table renders no edit/delete actions for them. Editing a row the next derive replaces is
+  a lie; the escape hatch is to correct the frames on the Catalog tab and re-derive.
+- **Integration is a read-out, not a tracker.** Per-filter goals (`project_filter_goal`, the
+  goal tick, the `%` complete) are gone. `IntegrationLine.label` is a **free string**, not the
+  closed vocabulary: a session groups under its canonical `line_name`, except a derived row
+  whose header name didn't canonicalize, which groups under `filter_label` so `L-eXtreme`
+  doesn't collapse into `other`. Ordering is server-side (`LINE_NAMES` order, then labels A–Z).
+- **Sessions are keyed on (project, observing night, rig).** `ingest_sessions.ensure_session`
+  takes a night string plus the folder's rig. Its lookup uses `rig_id IS ?` (NULL-safe) and
+  `ORDER BY id LIMIT 1`, because a DB written before v0.41.1 can hold more than one row per
+  key — the extras empty out and `sweep_empty_sessions` removes them.
+- **Frame-classification corrections stay** (migration 0043): `frame_type` and
+  `project_target_id` are hand-correctable with `*_source` guards, single and bulk
+  (`PATCH .../classification`, `POST .../bulk-classification`). Both are re-derived on every
+  scan — `_reclassify_dark_flats` is heuristic (±20 % exposure), and `_persist_parsed` writes a
+  NULL target for any project without exactly one — so without the guards a re-scan would wipe
+  them.
+- **`filter_name_hint` is DERIVED, never guarded.** It is a function of (header `FILTER`,
+  *effective* frame type), where effective means the corrected type when one was set. Both
+  `_upsert_sub_frame` and `_apply_correction` recompute it **in both directions**. Freezing it
+  behind `frame_type_source = 'user'` looks tempting and is a trap: a frame corrected *to*
+  light or flat would keep a NULL hint forever, and `matching_flats` joins on this column, so
+  that frame would silently never match a flat. `_header_filter_name` reads the stored
+  `fits_header_json` (not the file) so a correction works with the source volume offline.
 
 ### DSO Catalog
 - **No vendored DSO data.** Repo ships only NightCrate editorial CSVs (CC0). OpenNGC, Sharpless, Barnard, 50 MGC, Wikidata data downloads to `APP_DIR/catalogs/` on user demand from Admin → Catalogs.
@@ -488,9 +557,9 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
 - **DSO linking (v0.37.0).** Solving stores the WCS solution (view-only — delete to re-solve) plus **every** in-FOV catalog object in `project_dso` (not just mains — this powers a future cross-project DSO search), auto-flagging one main (nearest frame centre, tie-break largest); the user can star several. Deleting the solve cascades the objects and removes the rendered display image, behind a confirm dialog. `api/project_solve.py` reuses `run_plate_solve` + the cone query + `image_annotations.project_dsos`; overlay pixel coords are reprojected from the stored WCS on read (offloaded to a thread to keep the loop free).
 - **Shared overlay.** `components/plate-solve/DsoAnnotationOverlay.tsx` (image + SVG annotations) is used by both the Image Analyzer Identify tab and the project Plate Solve tab. Mains render teal, others blue (colorblind-safe).
 - **Main targets are `project_target` (v0.38.0, migration 0036).** Persistent project↔dso link — one source of truth for both the Overview's "Main targets" chips and the Plate Solve tab's star toggle. Creating a solve auto-inserts its best-guess main into `project_target`; the tab toggle adds/removes there. Migration 0036 backfills from existing `project_dso.is_main = 1` rows. The `is_main` flag on the solve response is **derived** from `project_target`, so chips/star stay in sync and **main targets survive `DELETE /solve`** (the solve cascades `project_dso` only; `project_target` lives on `project`, FK CASCADE on project).
-- **Manual imaging sessions (v0.38.0, migration 0035).** `project_session` is a manually-entered capture batch (one filter, exposure, gain, sub count, optional date, optional rig) — actual integration is **derived** as `Σ(exposure_seconds × num_subs)`, never typed. The v0.39.0 ingest pipeline will write to the same table (`source='auto'`) with user override. `CHECK(filter_id IS NOT NULL OR line_name IS NOT NULL)` — a session is either a specific equipment filter or a generic bandpass line. The integration view in `api/project_sessions.py:_compute_integration` expands filter_id sessions through `filter_passband` so a duo-band filter (Ha+Oiii) double-counts into both line budgets (spec §12); the wall-clock total counts each session once.
-- **Per-filter goals** live in `project_filter_goal(project_id, line_name, goal_minutes)`. The integration bar chart pairs derived actuals with these goals (left-aligned, blue fill + theme-neutral goal tick, `Xh Ym / Yh (Z%)`).
-- **Closed bandpass vocabulary** mirrors `filter_passband.line_name` exactly (15 values incl. `R+`). Single source: migration 0005's CHECK. Python copy in `api/project_session_models.py:LINE_NAMES`; TS copy in `frontend/src/lib/lineNames.ts`. Adding a value = update all three (and update any seeded data).
+- **Imaging sessions (v0.38.0, migration 0035).** `project_session` is a capture batch (one filter, exposure, gain, sub count, optional date, optional rig) — actual integration is **derived** as `Σ(exposure_seconds × num_subs)`, never typed. Rows are hand-entered (`source='manual'`) or rebuilt from the catalog by the v0.41.1 derive pass (`source='auto'`); see the v0.41.1 section. `CHECK(filter_id IS NOT NULL OR line_name IS NOT NULL)` — a session is either a specific equipment filter or a generic bandpass line. The integration view in `api/project_sessions.py:_compute_integration` expands filter_id sessions through `filter_passband` so a duo-band filter (Ha+Oiii) double-counts into both line budgets (spec §12); the wall-clock total counts each session once.
+- **Per-filter goals were removed in v0.41.1** (`project_filter_goal` dropped in migration 0045). The integration bar chart is a totals read-out — blue fill, no goal tick, no percentage.
+- **Closed bandpass vocabulary** mirrors `filter_passband.line_name` exactly (15 values incl. `R+`). Single source: migration 0005's CHECK. Python copy in `services/line_names.py:LINE_NAMES` (moved there in v0.41.1 so the pure derivation service can use it); TS copy in `frontend/src/lib/lineNames.ts`. Adding a value = update all three (and update any seeded data).
 - **Reusable `MarkdownEditor`** at `frontend/src/components/common/MarkdownEditor.tsx` — default rendered view (react-markdown + remark-gfm, MUI-themed `& p`/`& h*`/`& pre`/etc. sx overrides); edit-icon toggles to a raw markdown TextField; `onSave` fires only on real changes. Used by Notes (full-tab) and Overview Description. Optional `label` prop renders inline with the toggle button when needed.
 
 ### Weather Forecast

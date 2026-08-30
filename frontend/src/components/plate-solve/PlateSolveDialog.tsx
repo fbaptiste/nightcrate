@@ -30,6 +30,7 @@ import {
   fetchSolveProgress,
   validateReferenceImage,
   cancelSolve,
+  type PlateSolveRequest,
   type PlateSolveResult,
 } from "@/api/plateSolve";
 import { FileBrowser } from "@/components/fits/FileBrowser";
@@ -55,6 +56,12 @@ interface Props {
   headerPixelSize: number | null;
   headerBinning: number | null;
   onSolved?: (result: PlateSolveResult) => void;
+  /** Overrides how the solve is actually run. Defaults to the display-only
+   *  `/plate-solve/solve` endpoint used by the Image Analyzer. The project
+   *  Plate Solve tab passes a function that persists via
+   *  `POST /projects/{id}/solve` instead, so both places share this hint UI
+   *  rather than growing a second one that drifts. */
+  solveFn?: (req: PlateSolveRequest) => Promise<PlateSolveResult>;
 }
 
 type EquipmentMode = "rig" | "equipment" | "manual";
@@ -85,6 +92,7 @@ export function PlateSolveDialog({
   headerPixelSize,
   headerBinning,
   onSolved,
+  solveFn,
 }: Props) {
   const { settings } = useSettingsStore();
 
@@ -312,7 +320,7 @@ export function PlateSolveDialog({
       const solveHdu = isReference ? 0 : hdu;
       const mode = hasCoordinates ? "near" : "blind";
 
-      const res = await plateSolve({
+      const req: PlateSolveRequest = {
         image_path: solveImagePath,
         hdu: solveHdu,
         mode,
@@ -320,7 +328,8 @@ export function PlateSolveDialog({
         dec_hint: effectiveDec,
         fov_hint: fovInfo?.fovH ?? undefined,
         timeout: isBlind ? 300 : 180,
-      });
+      };
+      const res = await (solveFn ?? plateSolve)(req);
       if (!abortRef.current) {
         setResult(res);
         if (res.solved && onSolved) onSolved(res);
@@ -356,6 +365,7 @@ export function PlateSolveDialog({
     isBlind,
     onSolved,
     onClose,
+    solveFn,
   ]);
 
   const handleCopy = useCallback(() => {

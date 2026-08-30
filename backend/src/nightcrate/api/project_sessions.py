@@ -1,10 +1,17 @@
-"""Project imaging-session + integration + filter-goal endpoints (v0.38.0).
+"""Project imaging-session + integration endpoints (v0.38.0, reshaped v0.41.1).
 
-A session is a manually-entered capture batch (N identical light subs of one
-filter). Per-filter ACTUAL integration is derived here from the sessions
-(exposure x sub count); goals are entered separately. The v0.39.0 ingest
-pipeline will store individual file-backed sub_frames and COALESCE over these
-manual values.
+A session is a capture batch: N identical light subs of one filter. There are two
+ways to get one:
+
+* **Manual** (``source='manual'``) — the user enters it. This is the only path for
+  a project whose subs aren't cataloged (or aren't available at all).
+* **Derived** (``source='auto'``) — ``POST /sessions/derive`` rebuilds one row per
+  (observing night, filter, exposure, gain, binning) from the project's cataloged
+  light frames. Explicit and user-initiated; ingest never does this on its own.
+  Derived rows are read-only, because the next derive replaces them.
+
+Per-filter integration is computed here from the sessions (exposure x sub count).
+Per-filter goals were removed in v0.41.1 — this is a read-out, not a tracker.
 """
 
 from __future__ import annotations
@@ -16,7 +23,6 @@ from fastapi import APIRouter, HTTPException
 from nightcrate.api._common import get_or_404, row_to_dict
 from nightcrate.api.project_session_models import (
     LINE_NAMES,
-    FilterGoalsSet,
     IntegrationLine,
     IntegrationSummary,
     SessionCreate,
@@ -24,6 +30,9 @@ from nightcrate.api.project_session_models import (
     SessionUpdate,
 )
 from nightcrate.db.session import get_db
+from nightcrate.services.ingest_sessions import project_geo_timezone
+from nightcrate.services.session_derivation import derive_sessions
+from nightcrate.services.session_derivation_models import DerivationSummary
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
@@ -48,6 +57,11 @@ _SESSION_SELECT = (
     " LEFT JOIN filter f ON f.id = ps.filter_id"
 )
 
+_DERIVED_IS_READ_ONLY = (
+    "Derived sessions are rebuilt from this project's cataloged sub frames. "
+    "Correct the frames on the Catalog tab and re-derive, or add a manual session."
+)
+
 
 def _session_response(d: dict) -> SessionResponse:
     d["integration_minutes"] = round(d["exposure_seconds"] * d["num_subs"] / 60.0, 2)
@@ -70,6 +84,22 @@ async def _validate_fks(conn, *, rig_id: int | None, filter_id: int | None) -> N
         await get_or_404(conn, "rig", rig_id, "Rig")
     if filter_id is not None:
         await get_or_404(conn, "filter", filter_id, "Filter")
+
+
+async def _get_editable(conn, project_id: int, session_id: int) -> dict:
+    """Fetch a session for mutation, 404 if it isn't the project's and 409 if it
+    is derived — editing a row the next derive will replace is a lie."""
+    cursor = await conn.execute(
+        "SELECT * FROM project_session WHERE id = ? AND project_id = ?",
+        (session_id, project_id),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    existing = row_to_dict(row)
+    if existing["source"] == "auto":
+        raise HTTPException(status_code=409, detail=_DERIVED_IS_READ_ONLY)
+    return existing
 
 
 # ── Sessions CRUD ────────────────────────────────────────────────────────────
@@ -116,20 +146,29 @@ async def create_session(project_id: int, body: SessionCreate) -> SessionRespons
         return await _fetch_session(conn, project_id, session_id)
 
 
+@router.post("/{project_id}/sessions/derive")
+async def derive_project_sessions(project_id: int) -> DerivationSummary:
+    """Rebuild the project's derived sessions from its cataloged light frames.
+
+    Replaces every ``source='auto'`` row; ``source='manual'`` rows are untouched.
+    Never runs on its own — ingest catalogs frames and stops there.
+    """
+    async with get_db() as conn:
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await get_or_404(conn, "project", project_id, "Project")
+        tz_name = await project_geo_timezone(conn, project_id)
+        summary = await derive_sessions(conn, project_id, tz_name=tz_name)
+        await conn.commit()
+        return summary
+
+
 @router.patch("/{project_id}/sessions/{session_id}")
 async def update_session(project_id: int, session_id: int, body: SessionUpdate) -> SessionResponse:
     fields = body.model_dump(exclude_unset=True)
 
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
-        cursor = await conn.execute(
-            "SELECT * FROM project_session WHERE id = ? AND project_id = ?",
-            (session_id, project_id),
-        )
-        existing = await cursor.fetchone()
-        if existing is None:
-            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
-        existing = row_to_dict(existing)
+        existing = await _get_editable(conn, project_id, session_id)
 
         for required in ("exposure_seconds", "num_subs"):
             if required in fields and fields[required] is None:
@@ -165,22 +204,38 @@ async def update_session(project_id: int, session_id: int, body: SessionUpdate) 
 @router.delete("/{project_id}/sessions/{session_id}", status_code=204)
 async def delete_session(project_id: int, session_id: int) -> None:
     async with get_db() as conn:
-        cursor = await conn.execute(
-            "SELECT id FROM project_session WHERE id = ? AND project_id = ?",
-            (session_id, project_id),
-        )
-        if await cursor.fetchone() is None:
-            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        await _get_editable(conn, project_id, session_id)
         await conn.execute("DELETE FROM project_session WHERE id = ?", (session_id,))
         await conn.commit()
 
 
-# ── Integration summary + goals ─────────────────────────────────────────────
+# ── Integration summary ──────────────────────────────────────────────────────
+
+
+def _integration_label(session: dict) -> str:
+    """The bar this session's time counts toward.
+
+    A derived session whose header filter name isn't a recognized bandpass carries
+    ``line_name = 'other'`` (purely to satisfy the table CHECK) plus the real name
+    in ``filter_label``. Grouping every such filter under one "other" bar would be
+    useless, so the label wins in exactly that case.
+    """
+    if session["line_name"] == "other" and session.get("filter_label"):
+        return session["filter_label"]
+    return session["line_name"]
+
+
+def _label_order(label: str) -> tuple[int, str]:
+    """Canonical bandpasses in vocabulary order, then raw filter names A-Z."""
+    try:
+        return (LINE_NAMES.index(label), "")
+    except ValueError:
+        return (len(LINE_NAMES), label.lower())
 
 
 async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
     cursor = await conn.execute(
-        "SELECT filter_id, line_name, exposure_seconds, num_subs, session_date"
+        "SELECT id, filter_id, line_name, filter_label, exposure_seconds, num_subs, session_date"
         " FROM project_session WHERE project_id = ?",
         (project_id,),
     )
@@ -189,6 +244,8 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
     # Map each specific-filter session to its bandpass line(s). A duo-band
     # filter (Ha+Oiii) maps to BOTH — sub time counts toward each line budget,
     # which is correct for "how much Ha do I have?" (spec §12, documented).
+    # Only a manually-entered session can carry a filter_id; a derived one has
+    # no equipment identification, so its passbands are genuinely unknown.
     filter_ids = {s["filter_id"] for s in sessions if s["filter_id"] is not None}
     passband_lines: dict[int, list[str]] = defaultdict(list)
     if filter_ids:
@@ -202,7 +259,7 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
             passband_lines[r["filter_id"]].append(r["line_name"])
 
     actual_sec: dict[str, float] = defaultdict(float)
-    session_count: dict[str, int] = defaultdict(int)
+    nights: dict[str, set[str]] = defaultdict(set)
     sub_count: dict[str, int] = defaultdict(int)
     total_sec = 0.0
     dates: list[str] = []
@@ -213,33 +270,28 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
         if s["session_date"]:
             dates.append(s["session_date"][:10])
         if s["filter_id"] is not None:
-            lines = passband_lines.get(s["filter_id"], [])
+            labels = passband_lines.get(s["filter_id"], [])
         elif s["line_name"] is not None:
-            lines = [s["line_name"]]
+            labels = [_integration_label(s)]
         else:
-            lines = []
-        for line in lines:
-            actual_sec[line] += secs
-            session_count[line] += 1
-            sub_count[line] += s["num_subs"]
+            labels = []
+        # Derived rows split one night into several rows (per exposure/gain), so
+        # counting rows would overstate nights — count the distinct dates, with
+        # each undated row standing alone.
+        night = s["session_date"][:10] if s["session_date"] else f"row:{s['id']}"
+        for label in labels:
+            actual_sec[label] += secs
+            nights[label].add(night)
+            sub_count[label] += s["num_subs"]
 
-    cursor = await conn.execute(
-        "SELECT line_name, goal_minutes FROM project_filter_goal WHERE project_id = ?",
-        (project_id,),
-    )
-    goals = {r["line_name"]: r["goal_minutes"] for r in await cursor.fetchall()}
-
-    present = set(actual_sec) | set(goals)
     lines = [
         IntegrationLine(
-            line_name=line,
-            actual_minutes=round(actual_sec[line] / 60.0, 2),
-            goal_minutes=goals.get(line),
-            session_count=session_count[line],
-            sub_count=sub_count[line],
+            label=label,
+            actual_minutes=round(actual_sec[label] / 60.0, 2),
+            session_count=len(nights[label]),
+            sub_count=sub_count[label],
         )
-        for line in LINE_NAMES
-        if line in present
+        for label in sorted(actual_sec, key=_label_order)
     ]
 
     return IntegrationSummary(
@@ -254,23 +306,4 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
 async def get_integration(project_id: int) -> IntegrationSummary:
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
-        return await _compute_integration(conn, project_id)
-
-
-@router.put("/{project_id}/integration/goals")
-async def set_filter_goals(project_id: int, body: FilterGoalsSet) -> IntegrationSummary:
-    """Replace the full set of per-filter goals for a project."""
-    # Last value wins for a repeated line_name (UNIQUE (project_id, line_name)).
-    goals = {g.line_name: g.goal_minutes for g in body.goals}
-
-    async with get_db() as conn:
-        await get_or_404(conn, "project", project_id, "Project")
-        await conn.execute("DELETE FROM project_filter_goal WHERE project_id = ?", (project_id,))
-        for line_name, goal_minutes in goals.items():
-            await conn.execute(
-                "INSERT INTO project_filter_goal (project_id, line_name, goal_minutes)"
-                " VALUES (?, ?, ?)",
-                (project_id, line_name, goal_minutes),
-            )
-        await conn.commit()
         return await _compute_integration(conn, project_id)

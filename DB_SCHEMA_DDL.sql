@@ -1,4 +1,4 @@
--- NightCrate version: 0.41.0
+-- NightCrate version: 0.41.1
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -820,63 +820,6 @@ BEGIN
 END;
 
 -- ============================================================
--- FITS INGEST ALIAS TABLES
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS camera_alias (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    camera_id INTEGER NOT NULL REFERENCES camera(id) ON DELETE CASCADE,
-    alias TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK (source IN ('seed', 'nina', 'asiair', 'user', 'manual')),
-    confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)),
-    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_camera_alias_camera ON camera_alias(camera_id);
-
-CREATE TABLE IF NOT EXISTS telescope_alias (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    telescope_id INTEGER NOT NULL REFERENCES telescope(id) ON DELETE CASCADE,
-    alias TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK (source IN ('seed', 'nina', 'asiair', 'user', 'manual')),
-    confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)),
-    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_telescope_alias_telescope ON telescope_alias(telescope_id);
-
-CREATE TABLE IF NOT EXISTS filter_alias (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filter_id INTEGER NOT NULL REFERENCES filter(id) ON DELETE CASCADE,
-    alias TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK (source IN ('seed', 'nina', 'asiair', 'user', 'manual')),
-    confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)),
-    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_filter_alias_filter ON filter_alias(filter_id);
-
-CREATE TABLE IF NOT EXISTS unresolved_equipment_observation (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    equipment_kind TEXT NOT NULL CHECK (equipment_kind IN ('camera', 'telescope', 'filter')),
-    normalized_alias TEXT NOT NULL,
-    original_observation TEXT NOT NULL,
-    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    seen_count INTEGER NOT NULL DEFAULT 1,
-    source TEXT NOT NULL CHECK (source IN ('nina', 'asiair', 'user', 'manual')),
-    resolved_to_equipment_id INTEGER,
-    resolved_at TEXT,
-    UNIQUE (equipment_kind, normalized_alias)
-);
-
-CREATE INDEX IF NOT EXISTS idx_unresolved_equipment_observation_kind
-    ON unresolved_equipment_observation(equipment_kind, resolved_at);
-
--- ============================================================
 -- VIEWS
 -- ============================================================
 
@@ -1144,7 +1087,7 @@ CREATE INDEX idx_location_horizon_point_azimuth
 -- ── DSO Catalog (migration 0015) ───────────────────────────────────────────
 -- Deep-sky object catalog (v0.14.0 MVP). Canonical `dso` row per physical
 -- object; `dso_designation` attaches catalog-specific identifiers to it
--- (same shape as camera ↔ camera_alias). `dso_catalog_source` registers
+-- (one canonical row, many identifiers). `dso_catalog_source` registers
 -- which file each row came from and stores the file's sha256 for
 -- hash-based change detection on reload.
 --
@@ -1565,8 +1508,10 @@ CREATE TABLE project_rig (
 CREATE INDEX idx_project_rig_project ON project_rig(project_id);
 CREATE INDEX idx_project_rig_rig ON project_rig(rig_id);
 
--- Manual capture batch: N identical light subs of one filter. The v0.39.0
--- ingest will also write to this table (source = 'auto') with user override.
+-- A capture batch: N identical light subs of one filter. Either hand-entered
+-- (source = 'manual') or rebuilt from the project's cataloged light frames by
+-- the v0.41.1 derive pass (source = 'auto', one row per observing night ×
+-- filter × exposure × gain × binning). Derived rows are read-only over the API.
 CREATE TABLE project_session (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id       INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -1581,6 +1526,10 @@ CREATE TABLE project_session (
     gain             INTEGER CHECK (gain IS NULL OR gain >= 0),
     num_subs         INTEGER NOT NULL CHECK (num_subs > 0),
     binning          INTEGER CHECK (binning IS NULL OR binning >= 1),
+    filter_label     TEXT,    -- migration 0044: the header filter name a derived
+                              -- session was grouped on (e.g. 'Red', 'L-eXtreme').
+                              -- line_name is still set (canonical, else 'other'),
+                              -- so the filter-or-line CHECK below still holds.
     session_date     TEXT,    -- ISO date or full ISO datetime; NULL when unknown
     notes            TEXT,
     source           TEXT    NOT NULL DEFAULT 'manual'
@@ -1597,30 +1546,6 @@ FOR EACH ROW
 WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE project_session SET updated_at = datetime('now') WHERE id = NEW.id;
-END;
-
--- Per-filter integration goals.
-CREATE TABLE project_filter_goal (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id   INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    line_name    TEXT    NOT NULL CHECK (line_name IN (
-                     'Ha', 'Hb', 'Oiii', 'Sii', 'Nii', 'OI',
-                     'Lum', 'R', 'G', 'B', 'R+',
-                     'UVIR', 'LP', 'ND', 'other'
-                 )),
-    goal_minutes REAL    NOT NULL CHECK (goal_minutes > 0),
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (project_id, line_name)
-);
-CREATE INDEX idx_project_filter_goal_project ON project_filter_goal(project_id);
-
-CREATE TRIGGER trg_project_filter_goal_updated_at
-AFTER UPDATE ON project_filter_goal
-FOR EACH ROW
-WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE project_filter_goal SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
 -- Persistent project ↔ DSO link (migration 0036). Single source of truth for
@@ -1696,14 +1621,13 @@ CREATE TABLE processed_image (
                          CHECK (image_kind IN ('master', 'stack', 'processed', 'other')),
     frame_type       TEXT    CHECK (frame_type IS NULL OR frame_type IN
                          ('light', 'dark', 'flat', 'bias', 'dark_flat', 'unknown')),
-    filter_id        INTEGER REFERENCES filter(id),
+    -- Bandpass canonicalized from the FILTER header. Migration 0046 dropped the
+    -- camera / telescope / filter FKs — masters carry no equipment identification.
     line_name        TEXT    CHECK (line_name IS NULL OR line_name IN (
                          'Ha', 'Hb', 'Oiii', 'Sii', 'Nii', 'OI',
                          'Lum', 'R', 'G', 'B', 'R+',
                          'UVIR', 'LP', 'ND', 'other'
                      )),
-    camera_id        INTEGER REFERENCES camera(id),
-    telescope_id     INTEGER REFERENCES telescope(id),
     ncombine         INTEGER,
     total_exposure_seconds REAL,  -- migration 0039: integration time for masters
     date_obs_utc     TEXT,
@@ -1716,7 +1640,6 @@ CREATE TABLE processed_image (
     UNIQUE (project_id, content_hash)  -- migration 0040: per-project identity
 );
 CREATE INDEX idx_processed_image_project ON processed_image(project_id);
-CREATE INDEX idx_processed_image_filter ON processed_image(filter_id);
 
 -- Sub frames (§6) — the core atom; lights + darks + flats + bias share this table.
 CREATE TABLE sub_frame (
@@ -1730,7 +1653,7 @@ CREATE TABLE sub_frame (
 
     -- Grouping (all nullable; a sub can ingest with partial/no context).
     session_id               INTEGER REFERENCES session(id) ON DELETE SET NULL,
-    rig_id                   INTEGER REFERENCES rig(id),
+    rig_id                   INTEGER REFERENCES rig(id),  -- from the source folder's tag
     project_target_id        INTEGER REFERENCES project_target(id) ON DELETE SET NULL,
     ingestion_run_id         INTEGER REFERENCES ingestion_run(id) ON DELETE SET NULL,
 
@@ -1743,25 +1666,23 @@ CREATE TABLE sub_frame (
     rejection_source         TEXT    CHECK (rejection_source IS NULL OR
                                      rejection_source IN ('user', 'automated', 'ingest')),
 
-    -- Equipment (all nullable; the resolver fills what it can).
-    -- Per-field attribution source (migration 0041): 'auto' = resolver /
-    -- rig-attribution pass (a re-run may overwrite), 'user' = manual override
-    -- (automated passes must never clobber it). Only the three user-overridable
-    -- attributions carry a source column; telescope stays purely automated.
-    camera_id                INTEGER REFERENCES camera(id),
-    telescope_id             INTEGER REFERENCES telescope(id),
-    telescope_configuration_id INTEGER REFERENCES telescope_configuration(id),
-    filter_id                INTEGER REFERENCES filter(id),
-    mount_id                 INTEGER REFERENCES mount(id),
-    filter_wheel_id          INTEGER REFERENCES filter_wheel(id),
-    focuser_id               INTEGER REFERENCES focuser(id),
+    -- Classification source (migration 0043): 'user' marks a hand correction that
+    -- no automated pass may clobber. Both values are re-derived on EVERY scan —
+    -- _reclassify_dark_flats re-runs the heuristic dark -> dark_flat promotion, and
+    -- _persist_parsed writes a NULL target for any project without exactly one main
+    -- — so without these guards a re-scan would silently wipe a correction.
+    frame_type_source        TEXT    NOT NULL DEFAULT 'auto'
+                                 CHECK (frame_type_source IN ('auto', 'user')),
+    project_target_source    TEXT    NOT NULL DEFAULT 'auto'
+                                 CHECK (project_target_source IN ('auto', 'user')),
 
-    rig_source               TEXT    NOT NULL DEFAULT 'auto'
-                                 CHECK (rig_source IN ('auto', 'user')),
-    camera_source            TEXT    NOT NULL DEFAULT 'auto'
-                                 CHECK (camera_source IN ('auto', 'user')),
-    filter_source            TEXT    NOT NULL DEFAULT 'auto'
-                                 CHECK (filter_source IN ('auto', 'user')),
+    -- Equipment: rig ONLY, and it is inherited from the frame's source folder,
+    -- which the USER tagged (project_source_folder.rig_id). Nothing is inferred
+    -- from a header. Migration 0046 dropped camera/telescope/telescope_config/
+    -- filter/mount/filter_wheel/focuser, and 0045 dropped migration 0041's
+    -- rig_source / camera_source / filter_source, when automatic equipment
+    -- identification was removed. Sessions key on this rig and calibration
+    -- matching scopes on it, so a dual-rig night never conflates.
 
     -- Capture settings (from FITS header). Bias frames legitimately have ~0
     -- exposure, so the constraint is >= 0 (the spec's >0 was light-centric).
@@ -1800,9 +1721,11 @@ CREATE TABLE sub_frame (
     longitude                REAL,
     elevation_m              REAL,
 
-    -- Forensics / hints. object_hint is the raw OBJECT header; filter_name_hint
-    -- is the raw FILTER header, kept so a light catalogs with its filter name
-    -- even before the physical filter_id resolves (rig assignment is v0.41.0).
+    -- Forensics / hints. object_hint is the raw OBJECT header. filter_name_hint
+    -- is the FILTER header (normalized to a display short-form by
+    -- services/fits_header_map.py:FILTER_NAME_ALIASES) and, since v0.41.1, the
+    -- ONLY filter fact a cataloged frame carries — it drives the catalog filter
+    -- pills and the session-derivation grouping.
     object_hint              TEXT,
     filter_name_hint         TEXT,
     fits_header_json         TEXT,
@@ -1818,24 +1741,22 @@ CREATE INDEX idx_sub_frame_session ON sub_frame(session_id);
 CREATE INDEX idx_sub_frame_rig ON sub_frame(rig_id);
 CREATE INDEX idx_sub_frame_target ON sub_frame(project_target_id);
 CREATE INDEX idx_sub_frame_run ON sub_frame(ingestion_run_id);
-CREATE INDEX idx_sub_frame_camera ON sub_frame(camera_id);
-CREATE INDEX idx_sub_frame_telescope ON sub_frame(telescope_id);
-CREATE INDEX idx_sub_frame_filter ON sub_frame(filter_id);
 CREATE INDEX idx_sub_frame_frame_type ON sub_frame(frame_type);
 CREATE INDEX idx_sub_frame_date_obs ON sub_frame(date_obs_utc);
 
--- Partial composite indices keyed to the calibration-match queries (§6/§7).
+-- Partial composite indices keyed to the calibration-match queries (migration 0046:
+-- header facts scoped to project + rig, not equipment FKs).
 CREATE INDEX idx_sub_frame_match_light
-    ON sub_frame(camera_id, gain, exposure_seconds, binning_x, binning_y)
+    ON sub_frame(project_id, rig_id, gain, exposure_seconds, binning_x, binning_y)
     WHERE frame_type = 'light' AND accepted = 1;
 CREATE INDEX idx_sub_frame_match_dark
-    ON sub_frame(camera_id, gain, exposure_seconds, binning_x, binning_y, set_temp_c)
+    ON sub_frame(project_id, rig_id, gain, exposure_seconds, binning_x, binning_y, set_temp_c)
     WHERE frame_type = 'dark' AND accepted = 1;
 CREATE INDEX idx_sub_frame_match_flat
-    ON sub_frame(camera_id, gain, filter_id, binning_x, binning_y, telescope_configuration_id)
+    ON sub_frame(project_id, rig_id, gain, filter_name_hint, binning_x, binning_y)
     WHERE frame_type = 'flat' AND accepted = 1;
 CREATE INDEX idx_sub_frame_match_bias
-    ON sub_frame(camera_id, gain, binning_x, binning_y)
+    ON sub_frame(project_id, rig_id, gain, binning_x, binning_y)
     WHERE frame_type = 'bias' AND accepted = 1;
 
 -- File locations (§10, generalized) — one row per cataloged file (any category),
@@ -1983,6 +1904,12 @@ CREATE TABLE project_source_folder (
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
     path       TEXT    NOT NULL,
     is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+    -- migration 0046: which rig shot this folder. USER-DECLARED — the one piece of
+    -- equipment the ingest records, and nothing infers it from a header. Frames
+    -- found beneath inherit it into sub_frame.rig_id, sessions key on it (so a
+    -- simultaneous dual-rig night splits), and the calibration views scope on it.
+    -- NULL means "not stated", which is a valid answer.
+    rig_id     INTEGER REFERENCES rig(id),
     added_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE (project_id, path)
 );
@@ -2020,17 +1947,24 @@ BEGIN
     UPDATE processed_image SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
--- Calibration-matching views (§7). All consider only accepted = 1 frames on both
--- sides. These are views, not materialized tables.
+-- Calibration-matching views (rebuilt by migration 0046). All consider only
+-- accepted = 1 frames on both sides, and all scope to the same project AND the
+-- same rig — the rig being the source folder's user-declared tag, so one rig's
+-- calibration never calibrates another's lights. These are views, not tables.
+--
+-- Matching is on the capture settings the FITS header gives us. The camera term
+-- the original views carried is gone: within a project on one rig the camera is
+-- fixed, so it added nothing once equipment identification was removed.
 
--- Darks match on camera + gain + exposure + binning, with set temperature within
--- ±1.0 °C (never matched on filter).
+-- Darks: same exposure, gain and binning, set temperature within ±1.0 °C. Never
+-- matched on filter — calibration darks are filterless by definition.
 CREATE VIEW matching_darks AS
 SELECT l.id AS light_id, d.id AS dark_id
 FROM sub_frame l
 JOIN sub_frame d
     ON  d.frame_type = 'dark' AND d.accepted = 1
-    AND d.camera_id = l.camera_id
+    AND d.project_id = l.project_id
+    AND d.rig_id IS l.rig_id
     AND d.gain IS l.gain
     AND d.exposure_seconds = l.exposure_seconds
     AND d.binning_x IS l.binning_x
@@ -2041,34 +1975,35 @@ JOIN sub_frame d
     )
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
--- Flats match on camera + gain + filter + binning + telescope configuration
--- (optical-train state matters; a flat at native FL doesn't calibrate a 0.7x light).
+-- Flats: same gain, binning and FILTER header. Not matched on exposure — a flat's
+-- exposure is set by the panel, not the target.
 CREATE VIEW matching_flats AS
 SELECT l.id AS light_id, f.id AS flat_id
 FROM sub_frame l
 JOIN sub_frame f
     ON  f.frame_type = 'flat' AND f.accepted = 1
-    AND f.camera_id = l.camera_id
+    AND f.project_id = l.project_id
+    AND f.rig_id IS l.rig_id
     AND f.gain IS l.gain
-    AND f.filter_id = l.filter_id
+    AND f.filter_name_hint IS l.filter_name_hint
     AND f.binning_x IS l.binning_x
     AND f.binning_y IS l.binning_y
-    AND f.telescope_configuration_id IS l.telescope_configuration_id
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
--- Bias match on camera + gain + binning.
+-- Bias: same gain and binning only (zero-length exposure, no filter).
 CREATE VIEW matching_bias AS
 SELECT l.id AS light_id, b.id AS bias_id
 FROM sub_frame l
 JOIN sub_frame b
     ON  b.frame_type = 'bias' AND b.accepted = 1
-    AND b.camera_id = l.camera_id
+    AND b.project_id = l.project_id
+    AND b.rig_id IS l.rig_id
     AND b.gain IS l.gain
     AND b.binning_x IS l.binning_x
     AND b.binning_y IS l.binning_y
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
--- Per accepted light frame: does it have at least one matching dark / flat / bias?
+-- Per-light coverage flags over the three match views.
 CREATE VIEW calibration_coverage AS
 SELECT
     l.id AS light_id,
@@ -2081,40 +2016,10 @@ SELECT
 FROM sub_frame l
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
--- Integration time grouped by project / target / line_name. A duoband filter
--- (two passband rows) INTENTIONALLY double-counts — one row per line — which is
--- correct for "how much Ha have I captured?".
-CREATE VIEW integration_time_per_project_filter AS
-SELECT
-    pt.project_id          AS project_id,
-    sf.project_target_id   AS project_target_id,
-    fp.line_name           AS line_name,
-    SUM(sf.exposure_seconds)          AS total_seconds,
-    SUM(sf.exposure_seconds) / 60.0   AS total_minutes,
-    SUM(sf.exposure_seconds) / 3600.0 AS total_hours,
-    COUNT(*)                          AS sub_count
-FROM sub_frame sf
-JOIN filter_passband fp ON fp.filter_id = sf.filter_id AND fp.active = 1
-LEFT JOIN project_target pt ON pt.id = sf.project_target_id
-WHERE sf.frame_type = 'light' AND sf.accepted = 1
-GROUP BY pt.project_id, sf.project_target_id, fp.line_name;
-
--- Per-project per-line goal vs actual (NULL-safe). Goals are keyed (project_id,
--- line_name) per the shipped project_filter_goal shape; actuals sum across targets.
-CREATE VIEW project_filter_goal_progress AS
-SELECT
-    g.id           AS goal_id,
-    g.project_id   AS project_id,
-    g.line_name    AS line_name,
-    g.goal_minutes AS goal_minutes,
-    COALESCE(SUM(i.total_minutes), 0) AS actual_minutes,
-    CASE WHEN g.goal_minutes > 0
-         THEN COALESCE(SUM(i.total_minutes), 0) / g.goal_minutes
-         ELSE NULL END AS completion_ratio
-FROM project_filter_goal g
-LEFT JOIN integration_time_per_project_filter i
-    ON i.project_id = g.project_id AND i.line_name = g.line_name
-GROUP BY g.id;
+-- NOTE: `integration_time_per_project_filter` was dropped in migration 0046.
+-- Integration has a single source of truth — `project_session` rows derived by
+-- services/session_derivation.py. A parallel sub-frame-level view keyed on a
+-- header string would be a second, subtly different answer to the same question.
 
 -- "What happened during this session" rollup.
 CREATE VIEW session_summary AS
@@ -2135,7 +2040,7 @@ SELECT
     SUM(CASE WHEN sf.frame_type = 'light' AND sf.accepted = 1
              THEN sf.exposure_seconds ELSE 0 END) / 60.0 AS accepted_light_minutes,
     COUNT(DISTINCT sf.project_target_id) AS distinct_targets,
-    COUNT(DISTINCT sf.filter_id)         AS distinct_filters
+    COUNT(DISTINCT sf.filter_name_hint)  AS distinct_filters
 FROM session s
 LEFT JOIN sub_frame sf ON sf.session_id = s.id
 GROUP BY s.id;

@@ -23,9 +23,6 @@ from nightcrate.seed_loader.registry import LOAD_ORDER, SeedableTable
 _INT_TYPES = {"INTEGER", "INT", "SMALLINT", "TINYINT", "MEDIUMINT", "BIGINT"}
 _REAL_TYPES = {"REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL"}
 
-# Alias table names (no seed_key/seed_hash)
-_ALIAS_SUFFIX = "_alias"
-
 
 def _get_column_types(conn: sqlite3.Connection, table_name: str) -> dict[str, str]:
     """Return {column_name: 'int'|'real'|'text'} for every column in *table_name*.
@@ -121,10 +118,6 @@ def _build_incoming(
             incoming[field_name] = _convert_value(raw, type_tag)
 
     return incoming if ok else None
-
-
-def _is_alias_table(table: SeedableTable) -> bool:
-    return table.table_name.endswith(_ALIAS_SUFFIX)
 
 
 def _is_child_table(table: SeedableTable) -> bool:
@@ -242,16 +235,6 @@ def load_all(
                 fk_map=fk_map,
                 col_types=col_types,
                 inserted_or_updated=inserted_or_updated,
-                report=report,
-                errors=errors,
-            )
-        elif _is_alias_table(table):
-            _load_alias_table(
-                conn=conn,
-                table=table,
-                rows=rows,
-                fk_map=fk_map,
-                col_types=col_types,
                 report=report,
                 errors=errors,
             )
@@ -430,7 +413,7 @@ def _load_regular_table(
                 table_inserted_or_updated.add(seed_key)
                 table_report.updated += 1
 
-    # Orphan detection (update mode only, for regular non-alias non-junction tables)
+    # Orphan detection (update mode only, for regular non-junction tables)
     if effective_mode == "update" and csv_seed_keys:
         placeholders = ",".join("?" for _ in csv_seed_keys)
         orphan_rows = conn.execute(
@@ -697,63 +680,5 @@ def _load_child_table(
                 ).fetchall()
                 for orphan in orphan_rows:
                     table_report.orphaned.append(orphan["seed_key"])
-
-    report.per_table[table.table_name] = table_report
-
-
-# ---------------------------------------------------------------------------
-# Alias table loader
-# ---------------------------------------------------------------------------
-
-
-def _load_alias_table(
-    conn: sqlite3.Connection,
-    table: SeedableTable,
-    rows: list[dict],
-    fk_map: dict[tuple[str, str], int],
-    col_types: dict[str, str],
-    report: SeedReport,
-    errors: list[SeedError],
-) -> None:
-    """Alias tables: INSERT OR IGNORE keyed by alias (UNIQUE). Append-only."""
-    table_report = TableReport()
-
-    for row in rows:
-        alias_val = row.get("alias")
-        incoming = _build_incoming(
-            row=row,
-            table=table,
-            col_types=col_types,
-            fk_map=fk_map,
-            conn=conn,
-            errors=errors,
-            seed_key=alias_val,  # type: ignore[arg-type]
-        )
-        if incoming is None:
-            continue
-
-        # Alias rows always have source = 'seed' from the CSV
-        cols = list(incoming.keys())
-        vals = list(incoming.values())
-        placeholders = ", ".join("?" for _ in cols)
-        col_str = ", ".join(cols)
-        try:
-            cur = conn.execute(
-                f"INSERT OR IGNORE INTO {table.table_name} ({col_str}) VALUES ({placeholders})",
-                vals,
-            )
-            if cur.rowcount == 1:
-                table_report.inserted += 1
-            else:
-                table_report.unchanged += 1
-        except sqlite3.IntegrityError as exc:
-            errors.append(
-                SeedError(
-                    table=table.table_name,
-                    seed_key=alias_val,
-                    message=f"Alias INSERT failed: {exc}",
-                    exception=str(exc),
-                )
-            )
 
     report.per_table[table.table_name] = table_report

@@ -1,5 +1,5 @@
 """Tests for v0.38.0 project metadata: rig association, location, manual
-imaging sessions, per-filter integration summary, and filter goals."""
+imaging sessions and the per-filter integration summary."""
 
 from __future__ import annotations
 
@@ -344,7 +344,7 @@ class TestIntegration:
             json={"line_name": "Oiii", "exposure_seconds": 600, "num_subs": 5},
         )
         summary = (await client.get(f"/api/projects/{pid}/integration")).json()
-        by_line = {ln["line_name"]: ln for ln in summary["lines"]}
+        by_line = {ln["label"]: ln for ln in summary["lines"]}
         assert by_line["Ha"]["actual_minutes"] == 100.0
         assert by_line["Ha"]["sub_count"] == 20
         assert by_line["Ha"]["session_count"] == 2
@@ -360,7 +360,7 @@ class TestIntegration:
             json={"filter_id": fid, "exposure_seconds": 300, "num_subs": 10},
         )
         summary = (await client.get(f"/api/projects/{pid}/integration")).json()
-        by_line = {ln["line_name"]: ln for ln in summary["lines"]}
+        by_line = {ln["label"]: ln for ln in summary["lines"]}
         for line in lines:
             assert by_line[line]["actual_minutes"] == 50.0
         # Wall-clock total counts the batch once, NOT once per line.
@@ -410,65 +410,4 @@ class TestIntegration:
             )
         summary = (await client.get(f"/api/projects/{pid}/integration")).json()
         # Canonical LINE_NAMES order: Ha ... Lum ... B
-        assert [ln["line_name"] for ln in summary["lines"]] == ["Ha", "Lum", "B"]
-
-
-# ── Filter goals ────────────────────────────────────────────────────────────
-
-
-class TestFilterGoals:
-    async def test_set_goals_appear_in_summary(self, client: AsyncClient):
-        pid = await _make_project(client)
-        resp = await client.put(
-            f"/api/projects/{pid}/integration/goals",
-            json={"goals": [{"line_name": "Ha", "goal_minutes": 240}]},
-        )
-        assert resp.status_code == 200
-        by_line = {ln["line_name"]: ln for ln in resp.json()["lines"]}
-        assert by_line["Ha"]["goal_minutes"] == 240.0
-        assert by_line["Ha"]["actual_minutes"] == 0.0  # goal with no sessions yet
-
-    async def test_goals_replace_set(self, client: AsyncClient):
-        pid = await _make_project(client)
-        await client.put(
-            f"/api/projects/{pid}/integration/goals",
-            json={"goals": [{"line_name": "Ha", "goal_minutes": 240}]},
-        )
-        resp = await client.put(
-            f"/api/projects/{pid}/integration/goals",
-            json={"goals": [{"line_name": "Oiii", "goal_minutes": 120}]},
-        )
-        by_line = {ln["line_name"]: ln for ln in resp.json()["lines"]}
-        assert "Ha" not in by_line  # replaced
-        assert by_line["Oiii"]["goal_minutes"] == 120.0
-
-    async def test_goal_invalid_line_422(self, client: AsyncClient):
-        pid = await _make_project(client)
-        resp = await client.put(
-            f"/api/projects/{pid}/integration/goals",
-            json={"goals": [{"line_name": "Zz", "goal_minutes": 60}]},
-        )
-        assert resp.status_code == 422
-
-    async def test_goal_nonpositive_422(self, client: AsyncClient):
-        pid = await _make_project(client)
-        resp = await client.put(
-            f"/api/projects/{pid}/integration/goals",
-            json={"goals": [{"line_name": "Ha", "goal_minutes": 0}]},
-        )
-        assert resp.status_code == 422
-
-    async def test_goal_duplicate_line_last_wins(self, client: AsyncClient):
-        pid = await _make_project(client)
-        resp = await client.put(
-            f"/api/projects/{pid}/integration/goals",
-            json={
-                "goals": [
-                    {"line_name": "Ha", "goal_minutes": 100},
-                    {"line_name": "Ha", "goal_minutes": 300},
-                ]
-            },
-        )
-        assert resp.status_code == 200
-        by_line = {ln["line_name"]: ln for ln in resp.json()["lines"]}
-        assert by_line["Ha"]["goal_minutes"] == 300.0
+        assert [ln["label"] for ln in summary["lines"]] == ["Ha", "Lum", "B"]

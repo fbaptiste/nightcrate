@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.41.0
+**NightCrate version:** 0.41.1
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -560,78 +560,7 @@ erDiagram
 
 ---
 
-## 12. FITS Ingest Alias Tables
-
-For auto-resolving FITS header values to equipment rows. Alias tables carry `source`, `confirmed`, and timestamp tracking. `unresolved_equipment_observation` records unknown header values pending user review.
-
-```mermaid
-erDiagram
-    camera {
-        INTEGER id PK
-        TEXT model_name
-    }
-
-    telescope {
-        INTEGER id PK
-        TEXT model_name
-    }
-
-    filter {
-        INTEGER id PK
-        TEXT model_name
-    }
-
-    camera_alias {
-        INTEGER id PK
-        INTEGER camera_id FK
-        TEXT alias UK "normalized, lowercase"
-        TEXT source "CHECK: seed, nina, asiair, user, manual"
-        INTEGER confirmed "boolean"
-        TEXT first_seen_at
-        TEXT last_seen_at
-    }
-
-    telescope_alias {
-        INTEGER id PK
-        INTEGER telescope_id FK
-        TEXT alias UK
-        TEXT source "CHECK: seed, nina, asiair, user, manual"
-        INTEGER confirmed "boolean"
-        TEXT first_seen_at
-        TEXT last_seen_at
-    }
-
-    filter_alias {
-        INTEGER id PK
-        INTEGER filter_id FK
-        TEXT alias UK
-        TEXT source "CHECK: seed, nina, asiair, user, manual"
-        INTEGER confirmed "boolean"
-        TEXT first_seen_at
-        TEXT last_seen_at
-    }
-
-    unresolved_equipment_observation {
-        INTEGER id PK
-        TEXT equipment_kind "CHECK: camera, telescope, filter"
-        TEXT normalized_alias
-        TEXT original_observation
-        TEXT first_seen_at
-        TEXT last_seen_at
-        INTEGER seen_count
-        TEXT source "CHECK: nina, asiair, user, manual"
-        INTEGER resolved_to_equipment_id
-        TEXT resolved_at
-    }
-
-    camera ||--o{ camera_alias : "known as"
-    telescope ||--o{ telescope_alias : "known as"
-    filter ||--o{ filter_alias : "known as"
-```
-
----
-
-## 13. Global Columns (on every equipment and lookup table)
+## 12. Global Columns (on every equipment and lookup table)
 
 Omitted from diagrams for readability. Every seedable table carries:
 
@@ -646,9 +575,9 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 ---
 
-## 14. Imaging Core (v0.40.0)
+## 13. Imaging Core (v0.40.0)
 
-The Sessions / Sub-Frames / Ingest schema (migration 0037). `sub_frame` is the core atom — lights, darks, flats, and bias all share it, distinguished by `frame_type`. `session` is the AUTO/ingest rig-night grouping (distinct from the MANUAL `project_session` of migration 0035). Several tables (`session_log_file`, `session_event`, `autofocus_run`, `guiding_log_file`, `guiding_sample`, `dither_event`) are created EMPTY here and populated by later versions (v0.43/0.44). `project` also gains a nullable `cover_sub_frame_id INTEGER REFERENCES sub_frame(id)`. **Migration 0040 reworked ownership:** `sub_frame`, `processed_image`, and `file_location` each gained `project_id NOT NULL` (CASCADE) and per-project identity (`UNIQUE(project_id, content_hash)` / `UNIQUE(project_id, path)`) — each project owns its own row for a file; the same physical file cataloged into two projects is two independent rows. **Migration 0041 (v0.41.0)** ALTER-adds `rig_source` / `camera_source` / `filter_source` (`auto`|`user`, default `auto`) to `sub_frame` so a manual equipment override survives every later automated re-resolution pass.
+The Sessions / Sub-Frames / Ingest schema (migration 0037). `sub_frame` is the core atom — lights, darks, flats, and bias all share it, distinguished by `frame_type`. `session` is the ingest's per-observing-night grouping (distinct from `project_session` of migration 0035, which is the user-facing capture batch). Several tables (`session_log_file`, `session_event`, `autofocus_run`, `guiding_log_file`, `guiding_sample`, `dither_event`) are created EMPTY here and populated by later versions (v0.43/0.44). `project` also gains a nullable `cover_sub_frame_id INTEGER REFERENCES sub_frame(id)`. **Migration 0040 reworked ownership:** `sub_frame`, `processed_image`, and `file_location` each gained `project_id NOT NULL` (CASCADE) and per-project identity (`UNIQUE(project_id, content_hash)` / `UNIQUE(project_id, path)`) — each project owns its own row for a file; the same physical file cataloged into two projects is two independent rows. **Migration 0043 (v0.41.1)** ALTER-adds `frame_type_source` / `project_target_source` (`auto`|`user`, default `auto`) so a hand-corrected frame type or target survives every re-scan. **Migrations 0044–0046 (v0.41.1)** removed automatic equipment identification: 0044 cleared every equipment FK, 0045 dropped migration 0041's `rig_source` / `camera_source` / `filter_source` along with the four alias/observation tables, and **0046** dropped the equipment FK columns themselves (all but `rig_id`) plus `integration_time_per_project_filter`, rebuilt the calibration views on header facts, and added **`project_source_folder.rig_id`** — the user-declared rig tag that frames inherit, sessions key on, and calibration matching scopes to.
 
 ```mermaid
 erDiagram
@@ -704,9 +633,8 @@ erDiagram
         INTEGER accepted "CHECK 0/1"
         INTEGER camera_id FK
         INTEGER filter_id FK
-        TEXT rig_source "CHECK: auto, user (v0.41.0)"
-        TEXT camera_source "CHECK: auto, user (v0.41.0)"
-        TEXT filter_source "CHECK: auto, user (v0.41.0)"
+        TEXT frame_type_source "CHECK: auto, user (v0.41.1)"
+        TEXT project_target_source "CHECK: auto, user (v0.41.1)"
         REAL exposure_seconds "CHECK >= 0"
         REAL gain
         REAL set_temp_c
@@ -806,7 +734,7 @@ erDiagram
     guiding_log_file ||--o{ dither_event : "dithers"
 ```
 
-In addition, the migration creates calibration-matching and integration **views** (not tables): `matching_darks`, `matching_flats`, `matching_bias`, `calibration_coverage`, `integration_time_per_project_filter`, `project_filter_goal_progress`, and `session_summary`. See the Table Summary below and `DB_SCHEMA_DDL.sql` for the full definitions.
+In addition, the migration creates calibration-matching and integration **views** (not tables): `matching_darks`, `matching_flats`, `matching_bias`, `calibration_coverage`, and `session_summary`. In v0.41.1 `project_filter_goal_progress` was dropped with the goals feature and `integration_time_per_project_filter` was dropped in migration 0046 (integration's single source of truth is now the derived `project_session` rows); the four calibration views were **rebuilt** by 0046 on header facts scoped to project + rig. See the Table Summary below and `DB_SCHEMA_DDL.sql` for the full definitions.
 
 ---
 
@@ -867,10 +795,6 @@ In addition, the migration creates calibration-matching and integration **views*
 
 | Table | Purpose |
 |-------|---------|
-| `camera_alias` | INSTRUME header → camera row |
-| `telescope_alias` | TELESCOP header → telescope row |
-| `filter_alias` | FILTER header → filter row |
-| `unresolved_equipment_observation` | Unknown header values pending user review |
 
 ### v0.8.0 — Views (1)
 
@@ -896,7 +820,7 @@ In addition, the migration creates calibration-matching and integration **views*
 
 ### v0.12.0 — "My Equipment" flag
 
-`is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0,1))` added to 10 owned equipment tables (`camera`, `telescope`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`) with a partial index `idx_<table>_mine ON <table>(is_mine) WHERE is_mine = 1` on each. Sensors, lookup tables, junction tables, child tables, and alias tables are not touched — sensors aren't owned standalone. The flag is not tracked by the seed loader's hash contract, so marking a seeded item as mine does not trigger re-seed.
+`is_mine INTEGER NOT NULL DEFAULT 0 CHECK(is_mine IN (0,1))` added to 10 owned equipment tables (`camera`, `telescope`, `filter`, `mount`, `focuser`, `filter_wheel`, `oag`, `guide_scope`, `computer`, `software`) with a partial index `idx_<table>_mine ON <table>(is_mine) WHERE is_mine = 1` on each. Sensors, lookup tables, junction tables, and child tables are not touched — sensors aren't owned standalone. The flag is not tracked by the seed loader's hash contract, so marking a seeded item as mine does not trigger re-seed.
 
 ### v0.13.0 — Custom Horizons (2 tables)
 
@@ -947,8 +871,8 @@ In addition, the migration creates calibration-matching and integration **views*
 | `project_dso` (migration 0034) | Catalog objects found in a solved frame. `solve_id` FK CASCADE, `dso_id` FK CASCADE, `is_main` (vestigial — v0.38.0 derives is_main from `project_target` instead; this column is no longer authoritative), `created_at`, `UNIQUE(solve_id, dso_id)`. **Every** in-FOV object is stored (not just mains) to power a future cross-project DSO search; one is auto-flagged main (nearest frame centre, tie-break largest). Deleting the solve cascades these rows. Indexes on `solve_id` and `dso_id`. |
 | `project_rig` (migration 0035, v0.38.0) | Multi-rig project association. `project_id` FK CASCADE, `rig_id` FK, PRIMARY KEY (both). Indexes on each column. Supports dual-rig projects. |
 | `project.location_id` (migration 0035, v0.38.0) | ALTER ADDed nullable `INTEGER REFERENCES location(id)` on `project`. No CASCADE: locations soft-delete; the row is preserved so references stay valid. |
-| `project_session` (migration 0035, v0.38.0) | Manually-entered capture batch (N identical light subs of one filter). `project_id` FK CASCADE, optional `rig_id`, **`filter_id` OR `line_name`** (CHECK enforced), `exposure_seconds > 0`, `gain` (nullable), `num_subs > 0`, `binning` (nullable), `session_date` (nullable; date or ISO datetime), `notes`, `source` ('manual' \| 'auto'), timestamps with trigger. Derived integration in `api/project_sessions.py:_compute_integration` expands filter_id sessions through `filter_passband` (duo-band double-counts; spec §12). The v0.39.0 ingest pipeline will write to this table with `source='auto'`. |
-| `project_filter_goal` (migration 0035, v0.38.0) | Per-filter integration goal. `project_id` FK CASCADE, `line_name` CHECK (same 15-value vocab as `filter_passband.line_name`), `goal_minutes > 0`, UNIQUE per `(project_id, line_name)`. Drives the per-line goal marker on the Overview's integration bar chart. |
+| `project_session` (migration 0035, v0.38.0; `filter_label` added 0044, v0.41.1) | A capture batch (N identical light subs of one filter). `project_id` FK CASCADE, optional `rig_id`, **`filter_id` OR `line_name`** (CHECK enforced), `exposure_seconds > 0`, `gain` (nullable), `num_subs > 0`, `binning` (nullable), `filter_label` (nullable — the header filter name a derived row was grouped on), `session_date` (nullable; date or ISO datetime), `notes`, `source` ('manual' \| 'auto'), timestamps with trigger. Rows are either hand-entered (`manual`) or rebuilt from the project's cataloged light frames by `services/session_derivation.py` (`auto`, one row per observing night × filter × exposure × gain × binning); derived rows are read-only over the API (409 on PATCH/DELETE). Integration in `api/project_sessions.py:_compute_integration` expands filter_id sessions through `filter_passband` (duo-band double-counts; spec §12). |
+| `project_filter_goal` (migration 0035, v0.38.0) | **Dropped in v0.41.1 (migration 0045)** along with the per-filter goals feature. The integration bars are a totals read-out now, not a tracker. |
 | `project_target` (migration 0036, v0.38.0) | **Persistent project↔dso link** — the single source of truth for "main targets". `project_id` FK CASCADE, `dso_id` FK CASCADE, UNIQUE per `(project_id, dso_id)`. Migration 0036 backfills from existing `project_dso.is_main = 1` rows. Creating a plate solve auto-inserts its best-guess main here; toggling the star on either the Overview or Plate Solve tab edits the same record. **`project_target` rows survive `DELETE /solve`** (cascade is on project, not solve). Indexes on each column. |
 
 ### v0.40.0 — Imaging Core (12 tables + 1 ALTER + 7 views, migration 0037)
@@ -958,7 +882,7 @@ In addition, the migration creates calibration-matching and integration **views*
 | `ingestion_run` | One row per catalog/ingest pass. `project_id` FK CASCADE, `source_path`, `mode` CHECK (`catalog_in_place`/`copy_and_organize`/`reparse`), `status` CHECK (`running`/`completed`/`failed`/`cancelled`), running counters (`files_scanned`, `subs_inserted`, `subs_updated`, `subs_skipped`, `errors_count`), `errors_json`, `started_at`/`finished_at`. Provenance for every sub_frame / processed_image (§11). |
 | `session` | **AUTO/ingest rig-night grouping** of sub frames (distinct from the MANUAL `project_session`). `project_id` FK CASCADE, `rig_id` FK, `start_utc` (NOT NULL)/`end_utc`, site fields (`site_name`, `latitude` CHECK ±90, `longitude` CHECK ±180, `elevation_m`, `bortle_class` CHECK 1–9), `conditions_notes`, timestamps with `updated_at` trigger. Indexes on project, rig, start (§5). |
 | `processed_image` | Stacks / masters / finished images promoted to first-class. `project_id` FK NOT NULL CASCADE (each project owns its row — migration 0040), `UNIQUE(project_id, content_hash)`, `image_kind` CHECK (`master`/`stack`/`processed`/`other`), nullable `frame_type` + `line_name` (15-value vocab) + `filter_id`/`camera_id`/`telescope_id` FKs, `ncombine`, `total_exposure_seconds` (migration 0039 — integration time for masters), `date_obs_utc`, dimensions, `fits_header_json`, `ingestion_run_id` FK SET NULL, timestamps with trigger. |
-| `sub_frame` | **The core atom** — lights, darks, flats, bias share this table via `frame_type` CHECK (`light`/`dark`/`flat`/`bias`/`dark_flat`/`unknown`). `project_id` FK NOT NULL CASCADE (each project owns its row — migration 0040); `UNIQUE(project_id, content_hash)` (SHA-256, idempotent re-ingest *per project*). Nullable grouping FKs: `session_id` (SET NULL), `rig_id`, `project_target_id` (SET NULL), `ingestion_run_id` (SET NULL). `accepted` 0/1 + `rejection_reason`/`rejection_source` CHECK. Nullable equipment FKs (camera, telescope, telescope_configuration, filter, mount, filter_wheel, focuser) + per-field attribution source `rig_source`/`camera_source`/`filter_source` CHECK (`auto`/`user`) (migration 0041 — automated re-runs never clobber a `user` field). Capture settings (`exposure_seconds` CHECK ≥ 0 — bias may be ~0, gain, offset_adu, temps, binning, bit_depth, dimensions). `date_obs_utc` NOT NULL (mtime fallback) + `obs_mjd`. Pointing (ra/dec/rotation/pixel_scale/airmass). Quality metrics (hfr, star_count, …; NULL in v0.40.0). Denormalized site. `object_hint`/`filter_name_hint` (raw headers, kept so a light catalogs before its `filter_id` resolves; v0.41.0's attribution pass back-fills `filter_id` from the hint once a rig is attributed) + `fits_header_json`. Timestamps with trigger. **No light-needs-filter CHECK** — ingest must never fail on partial equipment. Many single + four partial composite calibration-match indexes (§6). |
+| `sub_frame` | **The core atom** — lights, darks, flats, bias share this table via `frame_type` CHECK (`light`/`dark`/`flat`/`bias`/`dark_flat`/`unknown`). `project_id` FK NOT NULL CASCADE (each project owns its row — migration 0040); `UNIQUE(project_id, content_hash)` (SHA-256, idempotent re-ingest *per project*). Nullable grouping FKs: `session_id` (SET NULL), `rig_id`, `project_target_id` (SET NULL), `ingestion_run_id` (SET NULL). `accepted` 0/1 + `rejection_reason`/`rejection_source` CHECK. **Equipment is `rig_id` only** — inherited from the frame's source folder, which the *user* tagged (`project_source_folder.rig_id`); nothing is inferred from a header. Migration 0046 dropped camera/telescope/telescope_configuration/filter/mount/filter_wheel/focuser, and 0045 dropped the `rig_source`/`camera_source`/`filter_source` guards along with the per-frame override they protected. Classification source columns `frame_type_source`/`project_target_source` CHECK (`auto`/`user`) (migration 0043) DO remain — a hand-corrected frame type or target survives every re-scan. Capture settings (`exposure_seconds` CHECK ≥ 0 — bias may be ~0, gain, offset_adu, temps, binning, bit_depth, dimensions). `date_obs_utc` NOT NULL (mtime fallback) + `obs_mjd`. Pointing (ra/dec/rotation/pixel_scale/airmass). Quality metrics (hfr, star_count, …; NULL in v0.40.0). Denormalized site. `object_hint` (raw OBJECT header) / `filter_name_hint` (the FILTER header, normalized to a display short-form — since v0.41.1 the ONLY filter fact a frame carries, driving the catalog filter pills and the session-derivation grouping) + `fits_header_json`. Timestamps with trigger. **No light-needs-filter CHECK** — ingest must never fail on partial equipment. Many single + four partial composite calibration-match indexes (§6). |
 | `file_location` | One row per cataloged file (any category), optionally linked to the sub_frame / processed_image it represents (multiple rows may share a sub_frame). `project_id` FK NOT NULL CASCADE (each project owns its row — migration 0040), `UNIQUE(project_id, path)`, `category` CHECK (`sub_frame`/`processed`/`pxiproject`/`log`/`other`), `sub_frame_id`/`processed_image_id` FKs CASCADE, `path_type` CHECK, `volume_label`, `size_bytes`, `file_hash`, `mtime`, `last_verified_at`/`last_verified_status` CHECK (`ok`/`missing`/`hash_mismatch`/`unreadable`) (§10). |
 | `session_log_file` | **Empty in v0.40.0** (parsed v0.44.0). `session_id` FK CASCADE, `file_hash` UNIQUE, `path`, `source` CHECK (`nina`/`asiair`/`phd2`/`other`), covered start/end UTC, `parse_status` CHECK, `parse_error`, `raw_text` BLOB. |
 | `session_event` | **Empty in v0.40.0** (v0.44.0). Session timeline event. `session_id` FK CASCADE, `event_utc`, `event_type` CHECK (22 values: session/slew/plate_solve/filter_change/exposure/autofocus/dither/meridian_flip/guiding/cooling/error/…), `event_data_json`, `related_sub_frame_id` FK SET NULL, `related_filter_id` FK. Index on (session, event_utc) + type. |
@@ -977,16 +901,30 @@ In addition, the migration creates calibration-matching and integration **views*
 | `matching_flats` | `(light_id, flat_id)` pairs: flat matches on camera + gain + filter + binning + telescope_configuration (optical-train state matters). Both sides accepted. |
 | `matching_bias` | `(light_id, bias_id)` pairs: bias matches on camera + gain + binning. Both sides accepted. |
 | `calibration_coverage` | Per accepted light: `has_dark`/`has_flat`/`has_bias` (1/0) via EXISTS over the three match views. |
-| `integration_time_per_project_filter` | Integration grouped by project / target / `line_name` (joined through `filter_passband`, `active = 1`); a duo/tri-band filter intentionally double-counts one row per line. Sums seconds/minutes/hours + sub_count over accepted lights. |
-| `project_filter_goal_progress` | Per-project per-line goal vs actual (NULL-safe): joins `project_filter_goal` (keyed `project_id, line_name`) to the integration view; emits `goal_minutes`, `actual_minutes`, `completion_ratio`. |
 | `session_summary` | Per-session rollup: duration_hours, total_subs, accepted/rejected lights, accepted_light_minutes, distinct targets/filters. |
 
-### v0.41.0 — Attribution Source (3 ALTERs, migration 0041)
+### v0.41.0 — Attribution Source (3 ALTERs, migration 0041) — **removed in v0.41.1**
+
+`sub_frame.rig_source` / `camera_source` / `filter_source` guarded a per-frame equipment
+override against the automated re-resolution pass. Migration 0045 dropped all three when
+automatic equipment identification was removed.
+
+### v0.41.1 — Classification Source (2 ALTERs, migration 0043)
 
 | Column | Purpose |
 |--------|---------|
-| `sub_frame.rig_source` | `TEXT NOT NULL DEFAULT 'auto'` CHECK (`auto`/`user`). `auto` = written by the resolver / rig-attribution pass (a re-run may overwrite it); `user` = set by a manual override, and every automated pass must skip it. |
-| `sub_frame.camera_source` | Same contract for `camera_id`. |
-| `sub_frame.filter_source` | Same contract for `filter_id`. |
+| `sub_frame.frame_type_source` | `TEXT NOT NULL DEFAULT 'auto'` CHECK (`auto`/`user`). `user` marks a hand-corrected frame type; `_reclassify_dark_flats` and the re-scan UPDATE both skip it. Needed because the dark → dark_flat promotion is heuristic (±20 % exposure match) and re-runs on every scan. |
+| `sub_frame.project_target_source` | Same contract for `project_target_id`. `_persist_parsed` assigns the project's single target to each light and writes NULL when the project has zero or several — which would wipe a manual assignment on a multi-target project. |
 
-Only the three user-overridable attributions carry a source column — `telescope_id` / `telescope_configuration_id` stay purely automated (they follow from the attributed rig). Existing rows default to `'auto'`: everything written before v0.41.0 was resolver-written.
+### v0.41.1 — Session Derivation + Equipment-Resolution Removal (migrations 0044–0046)
+
+| Migration | Change |
+|-----------|--------|
+| `0044.session_derivation` | ALTER-adds `project_session.filter_label`. Clears `session.rig_id` and every equipment FK on `sub_frame` / `processed_image` — nothing writes them any more, so the partly-populated values (including a handful of manual overrides) are cleared rather than left as half-truths. |
+| `0045.drop_equipment_resolution` | Drops `project_filter_goal` + `project_filter_goal_progress` (goals feature), the three alias tables + `unresolved_equipment_observation` (alias review queue), and `sub_frame.rig_source` / `camera_source` / `filter_source`. |
+| `0046.header_keyed_calibration` | Rebuilds `matching_darks` / `matching_flats` / `matching_bias` / `calibration_coverage` on header facts (exposure, gain, binning, set-temp ±1 °C, `filter_name_hint`) scoped to project **and rig**; drops `integration_time_per_project_filter`; drops the remaining equipment FKs on `sub_frame` / `processed_image` (keeping `rig_id`); adds `project_source_folder.rig_id`. Views must be dropped before the columns they name. |
+
+**Why 0046 was needed:** the original views compared `d.camera_id = l.camera_id` with a plain
+`=`. Once 0044 cleared every `camera_id`, that comparison is `NULL` rather than TRUE, so the
+join failed before it ever reached the exposure test and every view silently returned zero
+rows. Nullable terms in a match view must use `IS`.

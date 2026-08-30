@@ -7,6 +7,10 @@ export interface SourceFolder {
   project_id: number;
   path: string;
   is_primary: boolean;
+  /** Which rig shot the frames under this folder — declared by the user, never
+   *  inferred. Frames inherit it, sessions split on it, calibration scopes on it. */
+  rig_id: number | null;
+  rig_name: string | null;
   added_at: string;
 }
 
@@ -44,7 +48,7 @@ export interface CatalogFrame {
   kind: string;
   frame_type: string | null;
   path: string | null;
-  filter_name: string | null; // resolved model name, else raw header hint
+  filter_name: string | null; // the FITS FILTER header value
   object_hint: string | null;
   exposure_seconds: number | null;
   gain: number | null;
@@ -54,40 +58,31 @@ export interface CatalogFrame {
   image_height: number | null;
   file_size_bytes: number | null;
   date_obs_utc: string | null;
-  camera_id: number | null;
-  telescope_id: number | null;
   accepted: boolean | null;
-  // Attribution (v0.41.0)
-  filter_id: number | null;
-  filter_model: string | null; // set only when filter_id resolved
-  camera_model: string | null;
-  rig_id: number | null;
-  rig_name: string | null;
-  rig_source: "auto" | "user" | null;
-  camera_source: "auto" | "user" | null;
-  filter_source: "auto" | "user" | null;
+  // Classification (v0.41.1) — hand-correctable, guarded by a source flag.
+  project_target_id: number | null;
+  target_name: string | null;
+  frame_type_source: "auto" | "user" | null;
+  project_target_source: "auto" | "user" | null;
 }
 
-export interface AttributionSummary {
-  rigs_considered: number;
-  frames_processed: number;
-  frames_changed: number;
-  rigs_attributed: number;
-  cameras_rig_corrected: number;
-  cameras_resolved: number;
-  telescopes_resolved: number;
-  filters_resolved: number;
-  masters_processed: number;
-  masters_changed: number;
-}
+/** The sub_frame.frame_type CHECK vocabulary (migration 0037). */
+export const FRAME_TYPES = [
+  "light",
+  "dark",
+  "flat",
+  "bias",
+  "dark_flat",
+  "unknown",
+] as const;
+export type FrameTypeName = (typeof FRAME_TYPES)[number];
 
-export type OverridableField = "rig_id" | "camera_id" | "filter_id";
+export type CorrectableField = "frame_type" | "project_target_id";
 
-export interface EquipmentOverride {
-  rig_id?: number | null;
-  camera_id?: number | null;
-  filter_id?: number | null;
-  reset_to_auto?: OverridableField[];
+export interface FrameCorrection {
+  frame_type?: FrameTypeName | null;
+  project_target_id?: number | null;
+  reset_to_auto?: CorrectableField[];
 }
 
 export interface CatalogFramesPage {
@@ -142,6 +137,20 @@ export function listFolders(projectId: number): Promise<SourceFolder[]> {
   return apiFetch<SourceFolder[]>(`/projects/${projectId}/folders`);
 }
 
+/** Tag a source folder with the rig that shot it (null clears it). Re-tags the
+ *  frames already cataloged beneath it — no re-scan needed. */
+export function setFolderRig(
+  projectId: number,
+  folderId: number,
+  rigId: number | null,
+): Promise<SourceFolder> {
+  return apiFetch<SourceFolder>(`/projects/${projectId}/folders/${folderId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rig_id: rigId }),
+  });
+}
+
 export function addFolder(
   projectId: number,
   path: string,
@@ -187,25 +196,34 @@ export function startIngest(
   });
 }
 
-/** Re-resolve equipment + attribute rigs across the whole project catalog. */
-export function rerunResolution(projectId: number): Promise<AttributionSummary> {
-  return apiFetch<AttributionSummary>(`/projects/${projectId}/resolution/rerun`, {
-    method: "POST",
-  });
-}
-
-/** Manually override a frame's rig / camera / filter attribution. */
-export function overrideFrameEquipment(
+/** Manually correct a frame's type / target. */
+export function correctFrameClassification(
   projectId: number,
   frameId: number,
-  body: EquipmentOverride,
+  body: FrameCorrection,
 ): Promise<CatalogFrame> {
   return apiFetch<CatalogFrame>(
-    `/projects/${projectId}/catalog/frames/${frameId}/equipment`,
+    `/projects/${projectId}/catalog/frames/${frameId}/classification`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    },
+  );
+}
+
+/** Apply one classification correction to several frames (all-or-nothing). */
+export function bulkCorrectFrames(
+  projectId: number,
+  frameIds: number[],
+  body: FrameCorrection,
+): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>(
+    `/projects/${projectId}/catalog/frames/bulk-classification`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, frame_ids: frameIds }),
     },
   );
 }

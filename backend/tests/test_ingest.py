@@ -31,7 +31,7 @@ from nightcrate.services.ingest_scanner import (
     parse_image_file,
     scan_directory,
 )
-from nightcrate.services.ingest_sessions import observing_night, session_key
+from nightcrate.services.ingest_sessions import observing_night
 from nightcrate.services.ingest_sessions import observing_window_utc as _observing_window_utc
 
 # ── Pure: extension classification ───────────────────────────────────────────
@@ -136,13 +136,6 @@ class TestSessionFormation:
 
     def test_invalid_tz_falls_back_to_utc(self):
         assert observing_night("2026-03-15T22:00:00+00:00", "Not/AZone") == "2026-03-15"
-
-    def test_session_key_separates_rigs(self):
-        k_none = session_key(None, "2026-03-15T22:00:00+00:00", "UTC")
-        k_rig = session_key(3, "2026-03-15T22:00:00+00:00", "UTC")
-        assert k_none == (None, "2026-03-15")
-        assert k_rig == (3, "2026-03-15")
-        assert k_none != k_rig
 
     def test_observing_window_utc_uses_site_offset(self):
         # Local noon-to-noon in the site tz, converted to UTC — NOT a literal
@@ -351,7 +344,7 @@ class TestIngestEndToEnd:
         assert summary["logs"] == 1
         assert summary["pxiprojects"] == 1
         assert summary["other"] == 1  # notes.md
-        # One observing night, one rig bucket (NULL) → one session.
+        # One observing night → one session.
         assert summary["sessions"] == 1
 
     async def test_idempotent_reingest(self, client, imaging_folder):
@@ -498,8 +491,8 @@ class TestIngestEndToEnd:
         assert fb[0]["path"].startswith(str(b))
 
     async def test_lights_ingest_with_null_filter(self, client, imaging_folder):
-        # Aliases are empty → filter_id stays NULL, but the raw FILTER is kept as
-        # the hint and the light still catalogs as a light.
+        # Nothing identifies equipment, so the FILTER header IS the filter fact:
+        # it is stored as filter_name_hint and surfaces as the frame's filter_name.
         pid = await _make_project(client, "PartialEq")
         await client.post(f"/api/projects/{pid}/folders", json={"path": str(imaging_folder)})
         await client.post(f"/api/projects/{pid}/ingest")
@@ -766,8 +759,8 @@ class TestClassificationRefinements:
             assert r["file_size_bytes"] > 0
 
     async def test_master_filter_and_dimensions(self, client, tmp_path):
-        # A master flat carries FILTER + NAXIS → Masters tab shows bandpass +
-        # dimensions even without rig context (filter_id won't resolve).
+        # A master flat carries FILTER + NAXIS → Masters tab shows the bandpass
+        # canonicalized from FILTER, plus dimensions from NAXIS.
         folder = tmp_path / "MMeta"
         folder.mkdir()
         _write_fits(

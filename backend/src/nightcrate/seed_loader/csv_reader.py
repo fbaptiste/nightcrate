@@ -11,9 +11,6 @@ from pathlib import Path
 
 from nightcrate.seed_loader.registry import SeedableTable
 
-# Alias table names — these have no seed_key column; identified by alias text.
-_ALIAS_TABLE_SUFFIX = "_alias"
-
 
 def read_seed_csv(csv_path: Path, table: SeedableTable) -> list[dict[str, str | None]]:
     """Read a seed CSV file and return a list of row dictionaries.
@@ -45,15 +42,9 @@ def read_seed_csv(csv_path: Path, table: SeedableTable) -> list[dict[str, str | 
 def _has_seed_key(table: SeedableTable) -> bool:
     """Return True if this table has a seed_key column.
 
-    Alias tables are identified by the alias text (UNIQUE constraint on alias)
-    and have no seed_key / seed_hash columns. Junction tables also have no
-    seed_key column.
+    Junction tables have no seed_key column; every other seeded table does.
     """
-    if table.is_junction:
-        return False
-    if table.table_name.endswith(_ALIAS_TABLE_SUFFIX):
-        return False
-    return True
+    return not table.is_junction
 
 
 def _expected_columns(table: SeedableTable) -> set[str]:

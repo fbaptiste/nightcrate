@@ -1,33 +1,26 @@
-"""Pydantic models for project sessions, integration, and filter goals (v0.38.0).
+"""Pydantic models for project sessions and integration (v0.38.0).
 
-A "session" here is a manually-entered capture batch: N identical light subs
-of one filter. Per-filter ACTUAL integration is derived from these (exposure x
-sub count); GOALS are entered separately. The v0.39.0 ingest pipeline will
-auto-fill sessions from scanned sub-frames (user can override).
+A "session" is a capture batch: N identical light subs of one filter. It is
+either hand-entered (``source='manual'``) or rebuilt from the project's cataloged
+light frames by the v0.41.1 derive pass (``source='auto'``). Per-filter
+integration is derived from these (exposure x sub count); per-filter goals were
+removed in v0.41.1.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
-# Closed bandpass vocabulary — mirrors filter_passband.line_name (migration 0005).
-LINE_NAMES: tuple[str, ...] = (
-    "Ha",
-    "Hb",
-    "Oiii",
-    "Sii",
-    "Nii",
-    "OI",
-    "Lum",
-    "R",
-    "G",
-    "B",
-    "R+",
-    "UVIR",
-    "LP",
-    "ND",
-    "other",
-)
+from nightcrate.services.line_names import LINE_NAMES
+
+__all__ = [
+    "LINE_NAMES",
+    "IntegrationLine",
+    "IntegrationSummary",
+    "SessionCreate",
+    "SessionResponse",
+    "SessionUpdate",
+]
 
 
 # ── Sessions ──────────────────────────────────────────────────────────────
@@ -77,6 +70,7 @@ class SessionResponse(BaseModel):
     filter_id: int | None
     filter_name: str | None
     line_name: str | None
+    filter_label: str | None
     exposure_seconds: float
     gain: int | None
     num_subs: int
@@ -89,31 +83,22 @@ class SessionResponse(BaseModel):
     updated_at: str
 
 
-# ── Integration goals + summary ─────────────────────────────────────────────
-
-
-class FilterGoal(BaseModel):
-    line_name: str
-    goal_minutes: float = Field(gt=0)
-
-    @model_validator(mode="after")
-    def _check_line(self) -> FilterGoal:
-        if self.line_name not in LINE_NAMES:
-            raise ValueError(f"Invalid line_name: {self.line_name}")
-        return self
-
-
-class FilterGoalsSet(BaseModel):
-    """Replace the full set of per-filter goals for a project."""
-
-    goals: list[FilterGoal]
+# ── Integration summary ─────────────────────────────────────────────────────
 
 
 class IntegrationLine(BaseModel):
-    line_name: str
+    """One bar in the integration read-out.
+
+    ``label`` is a free string, not the closed bandpass vocabulary: a derived
+    session for a filter whose header name isn't a recognized line (``L-eXtreme``)
+    is labelled by that name rather than collapsed into ``other``. Canonical
+    bandpasses sort first, then raw names alphabetically.
+    """
+
+    label: str
     actual_minutes: float
-    goal_minutes: float | None
     session_count: int
+    """Distinct observing nights, not rows — a night split across exposures is one."""
     sub_count: int
 
 

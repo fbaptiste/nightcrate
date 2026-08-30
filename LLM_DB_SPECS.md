@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.41.0
+**NightCrate version:** 0.41.1
 
 ## Overview
 
@@ -111,10 +111,6 @@ CREATE TABLE computer (manufacturer_id FK, form_factor_id FK nullable, model_nam
 CREATE TABLE software (manufacturer_id FK, name TEXT, category CHECK ('capture','guiding',
     'processing','planetarium','plate_solving','utility','other'), website TEXT, notes TEXT);
 
--- ALIAS TABLES (no seed_key column; use alias as natural key)
-CREATE TABLE camera_alias (camera_id FK, alias TEXT UNIQUE, source CHECK, confirmed BOOL);
-CREATE TABLE telescope_alias (telescope_id FK, alias TEXT UNIQUE, source CHECK, confirmed BOOL);
-CREATE TABLE filter_alias (filter_id FK, alias TEXT UNIQUE, source CHECK, confirmed BOOL);
 
 -- ============================================================
 -- USER DATA (NOT seeded — do not author CSV files for these)
@@ -274,20 +270,6 @@ Header: `seed_key,guide_camera_connector_seed_key,imaging_side_connector_seed_ke
 Header: `seed_key,guide_camera_connector_seed_key,manufacturer_seed_key,aperture_mm,focal_length_mm,model_name,notes,weight_g,source_url`
 
 ---
-
-## Alias Tables (not yet populated)
-
-### camera_alias.csv
-Header: `camera_seed_key,alias,confirmed,source`
-Maps FITS INSTRUME header values to cameras. source=seed, confirmed=1.
-
-### telescope_alias.csv
-Header: `telescope_seed_key,alias,confirmed,source`
-Maps FITS TELESCOP header values to telescopes.
-
-### filter_alias.csv
-Header: `filter_seed_key,alias,confirmed,source`
-Maps FITS FILTER header values to filters (e.g., "Ha", "H-alpha", "Halpha" → same filter).
 
 ## User-managed tables (NOT seeded)
 

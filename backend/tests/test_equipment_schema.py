@@ -143,14 +143,10 @@ class TestMigrationApplies:
             "guide_scope",
             "computer",
             "software",
-            "camera_alias",
-            "telescope_alias",
-            "filter_alias",
-            "unresolved_equipment_observation",
         ]
     )
 
-    def test_all_31_tables_exist(self, db_with_equipment_schema):
+    def test_all_27_tables_exist(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
@@ -161,7 +157,7 @@ class TestMigrationApplies:
         # Filter to only equipment-schema tables (exclude earlier migrations)
         equipment_tables = [t for t in table_names if t in self.EXPECTED_TABLES]
         assert equipment_tables == self.EXPECTED_TABLES
-        assert len(equipment_tables) == 31
+        assert len(equipment_tables) == 27
 
     def test_filter_summary_view_exists(self, db_with_equipment_schema):
         conn = db_with_equipment_schema
@@ -569,84 +565,3 @@ class TestFullRoundTrip:
         assert conn.execute("SELECT COUNT(*) FROM guide_scope").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM computer").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM software").fetchone()[0] == 1
-
-
-class TestAliasTables:
-    """Verify alias and unresolved observation tables."""
-
-    def test_camera_alias_insert_and_lookup(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        mfg_id = _insert_manufacturer(conn)
-        sensor_id = _insert_sensor(conn, mfg_id)
-        cam_id = _insert_camera(conn, mfg_id, sensor_id)
-        conn.execute(
-            "INSERT INTO camera_alias (camera_id, alias, source) "
-            "VALUES (?, 'ZWO ASI2600MM Pro', 'nina')",
-            (cam_id,),
-        )
-        row = conn.execute(
-            "SELECT * FROM camera_alias WHERE alias = 'ZWO ASI2600MM Pro'"
-        ).fetchone()
-        assert row["camera_id"] == cam_id
-        assert row["source"] == "nina"
-        assert row["confirmed"] == 0
-
-    def test_alias_unique_constraint(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        mfg_id = _insert_manufacturer(conn)
-        sensor_id = _insert_sensor(conn, mfg_id)
-        cam_id = _insert_camera(conn, mfg_id, sensor_id)
-        conn.execute(
-            "INSERT INTO camera_alias (camera_id, alias, source) VALUES (?, 'DupeAlias', 'nina')",
-            (cam_id,),
-        )
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO camera_alias (camera_id, alias, source) "
-                "VALUES (?, 'DupeAlias', 'user')",
-                (cam_id,),
-            )
-
-    def test_delete_camera_cascades_to_aliases(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        mfg_id = _insert_manufacturer(conn)
-        sensor_id = _insert_sensor(conn, mfg_id)
-        cam_id = _insert_camera(conn, mfg_id, sensor_id)
-        conn.execute(
-            "INSERT INTO camera_alias (camera_id, alias, source) VALUES (?, 'CascadeTest', 'nina')",
-            (cam_id,),
-        )
-        assert conn.execute("SELECT COUNT(*) FROM camera_alias").fetchone()[0] == 1
-        conn.execute("DELETE FROM camera WHERE id = ?", (cam_id,))
-        assert conn.execute("SELECT COUNT(*) FROM camera_alias").fetchone()[0] == 0
-
-    def test_unresolved_observation_upsert(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        # First observation
-        conn.execute(
-            "INSERT INTO unresolved_equipment_observation "
-            "(equipment_kind, normalized_alias, original_observation, source) "
-            "VALUES ('camera', 'zwo asi2600mm pro', "
-            "'ZWO ASI2600MM Pro', 'nina')"
-        )
-        row = conn.execute(
-            "SELECT seen_count FROM unresolved_equipment_observation "
-            "WHERE normalized_alias = 'zwo asi2600mm pro'"
-        ).fetchone()
-        assert row["seen_count"] == 1
-
-        # Upsert — increment seen_count
-        conn.execute(
-            "INSERT INTO unresolved_equipment_observation "
-            "(equipment_kind, normalized_alias, original_observation, source) "
-            "VALUES ('camera', 'zwo asi2600mm pro', "
-            "'ZWO ASI2600MM Pro', 'nina') "
-            "ON CONFLICT(equipment_kind, normalized_alias) DO UPDATE "
-            "SET seen_count = seen_count + 1, "
-            "last_seen_at = datetime('now')"
-        )
-        row = conn.execute(
-            "SELECT seen_count FROM unresolved_equipment_observation "
-            "WHERE normalized_alias = 'zwo asi2600mm pro'"
-        ).fetchone()
-        assert row["seen_count"] == 2

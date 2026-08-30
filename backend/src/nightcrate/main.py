@@ -24,7 +24,6 @@ from nightcrate.api import (
     diagnostics,
     dso,
     equipment,
-    equipment_aliases,
     files,
     horizons,
     images,
@@ -405,7 +404,6 @@ app.include_router(images.router)
 app.include_router(aberration.router)
 app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
-app.include_router(equipment_aliases.router)
 app.include_router(locations.router)
 app.include_router(horizons.router)
 app.include_router(horizons.parse_router)

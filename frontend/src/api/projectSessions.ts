@@ -9,6 +9,7 @@ export interface ProjectSession {
   rig_name: string | null;
   filter_id: number | null;
   filter_name: string | null;
+  filter_label: string | null;
   line_name: string | null;
   exposure_seconds: number;
   gain: number | null;
@@ -16,7 +17,7 @@ export interface ProjectSession {
   binning: number | null;
   session_date: string | null;
   notes: string | null;
-  source: string;
+  source: "manual" | "auto";
   integration_minutes: number;
   created_at: string;
   updated_at: string;
@@ -37,9 +38,11 @@ export interface SessionCreate {
 export type SessionUpdate = Partial<SessionCreate>;
 
 export interface IntegrationLine {
-  line_name: string;
+  /** Canonical bandpass ("Ha") or, for a filter name that isn't one, the name
+   *  itself ("L-eXtreme"). Render verbatim — do not interpret. */
+  label: string;
   actual_minutes: number;
-  goal_minutes: number | null;
+  /** Distinct observing nights, not rows — one night split across exposures is one. */
   session_count: number;
   sub_count: number;
 }
@@ -51,9 +54,14 @@ export interface IntegrationSummary {
   last_session_date: string | null;
 }
 
-export interface FilterGoal {
-  line_name: string;
-  goal_minutes: number;
+export interface DerivationSummary {
+  project_id: number;
+  lights_considered: number;
+  /** Lights with a non-positive exposure — no session can represent them. */
+  lights_skipped: number;
+  sessions_replaced: number;
+  sessions_created: number;
+  manual_sessions_kept: number;
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────
@@ -91,19 +99,16 @@ export function deleteSession(projectId: number, sessionId: number): Promise<voi
   });
 }
 
-// ── Integration + goals ─────────────────────────────────────────────────────
+/** Rebuild the project's derived sessions from its cataloged light frames.
+ *  Replaces every `source: "auto"` row; manual ones are left alone. */
+export function deriveSessions(projectId: number): Promise<DerivationSummary> {
+  return apiFetch<DerivationSummary>(`/projects/${projectId}/sessions/derive`, {
+    method: "POST",
+  });
+}
+
+// ── Integration ─────────────────────────────────────────────────────────────
 
 export function getIntegration(projectId: number): Promise<IntegrationSummary> {
   return apiFetch<IntegrationSummary>(`/projects/${projectId}/integration`);
-}
-
-export function setFilterGoals(
-  projectId: number,
-  goals: FilterGoal[],
-): Promise<IntegrationSummary> {
-  return apiFetch<IntegrationSummary>(`/projects/${projectId}/integration/goals`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ goals }),
-  });
 }
