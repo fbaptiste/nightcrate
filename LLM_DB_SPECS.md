@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.41.1
+**NightCrate version:** 0.41.2
 
 ## Overview
 
@@ -222,24 +222,24 @@ Seed_keys: `focuser.zwo.eaf`, `focuser.zwo.eaf_5v`, `focuser.zwo.eafn`, `focuser
 ### focuser_interface.csv (30 junction rows)
 Header: `focuser_seed_key,interface_seed_key`
 
-### sensor.csv (54 rows)
+### sensor.csv (58 rows)
 Header: `seed_key,manufacturer_seed_key,model_name,sensor_type,pixel_size_um,resolution_x,resolution_y,sensor_width_mm,sensor_height_mm,adc_bit_depth,full_well_capacity_ke,read_noise_low_gain_e,read_noise_high_gain_e,peak_qe_pct,peak_qe_wavelength_nm,bayer_pattern,dual_gain,notes,source_url`
 
 Note: mono and color variants of the same chip need separate rows (sensor_type='mono' vs 'color' with bayer_pattern). `hcg_threshold_gain` exists in the SQL schema but is NOT in the CSV — it is populated only at the camera level.
 
-### camera.csv (190 rows)
+### camera.csv (196 rows)
 Header: `seed_key,manufacturer_seed_key,sensor_seed_key,guide_sensor_seed_key,connector_size_seed_key,model_name,cooled,cooling_delta_c,back_focus_mm,weight_g,tilt_adapter,has_usb_hub,usb_hub_interface_seed_key,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,notes,source_url`
 
 ### camera_interface.csv (144 junction rows)
 Header: `camera_seed_key,interface_seed_key`
 
-### telescope.csv (93 rows)
+### telescope.csv (95 rows)
 Header: `seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,model_name,notes,obstruction_pct,weight_kg,source_url`
 
 ### telescope_connector.csv (50 junction rows)
 Header: `connector_size_seed_key,telescope_seed_key`
 
-### telescope_configuration.csv (130 rows)
+### telescope_configuration.csv (132 rows)
 Header: `seed_key,telescope_seed_key,accessory_name,config_name,effective_back_focus_mm,effective_focal_length_mm,effective_focal_ratio,effective_image_circle_mm,is_native,notes,reduction_factor`
 
 Every telescope MUST have at least one config with `is_native=1` and `reduction_factor=1.0`.
@@ -266,7 +266,7 @@ Header: `filter_wheel_seed_key,interface_seed_key`
 ### oag.csv (13 rows)
 Header: `seed_key,guide_camera_connector_seed_key,imaging_side_connector_seed_key,manufacturer_seed_key,back_focus_contribution_mm,model_name,notes,prism_size_mm,weight_g,source_url`
 
-### guide_scope.csv (8 rows)
+### guide_scope.csv (9 rows)
 Header: `seed_key,guide_camera_connector_seed_key,manufacturer_seed_key,aperture_mm,focal_length_mm,model_name,notes,weight_g,source_url`
 
 ### rig.csv (12 rows)

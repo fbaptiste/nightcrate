@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.41.1
+**NightCrate version:** 0.41.2
 
 **Last updated:** 2026-09-05
 
@@ -101,7 +101,7 @@ No catalog, project, session, or sub-frame management exists yet. The file brows
 
 **Status:** `[shipped]`
 
-Full CRUD for 12 equipment types (camera, sensor, telescope/OTA, filter, mount, focuser, filter wheel, OAG, guide scope, computer, software) plus 10 lookup/reference tables. Fully normalized schema with junction tables for interfaces, child tables for filter passbands and size options, and telescope configurations. Equipment seed loader populates reference data from 30 CSV files on first run with hash-based change detection for re-seeding; **v0.41.1 made that detection survive its own schema changes** — see Schema state. The catalogue was audited and expanded in v0.41.1 (cameras 112 → 190, sensors 41 → 54, telescopes 51 → 93, configurations 84 → 130), and three columns whose meaning was undefined were given one: sensor read noise is now split by conversion gain, `mount.payload_capacity_kg` is instrument-only excluding counterweights (with `payload_capacity_with_cw_kg` beside it), and `peak_qe_pct` is the peak within 400-700nm. The FITS alias tables were dropped in v0.41.1 along with automatic equipment resolution. UI: two-panel layout with TreeView sidebar + DataGrid content area, per-type form dialogs, inline CRUD for lookup tables. Soft delete with optional restore. All seed-tracking columns stripped from API responses.
+Full CRUD for 12 equipment types (camera, sensor, telescope/OTA, filter, mount, focuser, filter wheel, OAG, guide scope, computer, software) plus 10 lookup/reference tables. Fully normalized schema with junction tables for interfaces, child tables for filter passbands and size options, and telescope configurations. Equipment seed loader populates reference data from 30 CSV files on first run with hash-based change detection for re-seeding; **v0.41.1 made that detection survive its own schema changes** — see Schema state. The catalogue was audited and expanded in v0.41.1 (cameras 112 → 196, sensors 41 → 58, telescopes 51 → 95, configurations 84 → 132; v0.41.2 closed the gaps v0.41.1's audit had recorded), and three columns whose meaning was undefined were given one: sensor read noise is now split by conversion gain, `mount.payload_capacity_kg` is instrument-only excluding counterweights (with `payload_capacity_with_cw_kg` beside it), and `peak_qe_pct` is the peak within 400-700nm. The FITS alias tables were dropped in v0.41.1 along with automatic equipment resolution. UI: two-panel layout with TreeView sidebar + DataGrid content area, per-type form dialogs, inline CRUD for lookup tables. Soft delete with optional restore. All seed-tracking columns stripped from API responses.
 
 **My Equipment (v0.12.0):** per-row `is_mine` boolean on 10 owned equipment types with partial indexes, `?mine=true` filter + is_mine-first ordering on list endpoints, `POST /api/equipment/<type>/{id}/mine` toggle, `GET /api/equipment/mine-counts`. UI: clickable star column in lists (optimistic toggle + Snackbar rollback), MineCheckbox in all 10 form dialogs, "MY EQUIPMENT" sidebar group with reactive sub-items, star indicator in rig-builder dropdowns with owned items surfaced at the top.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 from datetime import date, timedelta
 
 import pytest
@@ -436,3 +437,30 @@ def test_new_york_has_no_dst_discontinuities():
         assert abs(h_after - h_day) <= 3.0, (
             f"DST jump after {transition}: day {h_day:.2f} h → next {h_after:.2f} h"
         )
+
+
+class TestWorkerPoolLifetime:
+    """The pool must not outlive the computation that created it.
+
+    A module-level ProcessPoolExecutor leaves spawn workers alive after the run.
+    Under `uvicorn --reload` those orphans block a clean restart and wedge the
+    event loop — every endpoint hangs, /api/health included. This module cached
+    one until v0.41.2; ingest_scanner has always built per-run pools.
+    """
+
+    def test_module_holds_no_pool_between_runs(self):
+        from nightcrate.services import planner_annual_hours as pah
+
+        leaked = [
+            name for name, value in vars(pah).items() if isinstance(value, ProcessPoolExecutor)
+        ]
+        assert leaked == [], f"module-level ProcessPoolExecutor(s): {leaked}"
+
+    def test_make_pool_is_a_context_manager_that_shuts_down(self):
+        from nightcrate.services.planner_annual_hours import _make_pool
+
+        with _make_pool(2) as pool:
+            assert pool.submit(abs, -1).result() == 1
+        # Exiting the `with` shuts it down; submitting after must be refused.
+        with pytest.raises(RuntimeError):
+            pool.submit(abs, -1)

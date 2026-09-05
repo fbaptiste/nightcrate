@@ -40,7 +40,6 @@ date-range chunks aligned on local-noon boundaries.
 
 from __future__ import annotations
 
-import atexit
 import logging
 import multiprocessing as mp
 import threading
@@ -556,45 +555,28 @@ def _compute_subrange(
     ]
 
 
-# ── Long-lived worker pool ─────────────────────────────────────────────────
-#
-# Creating a ``ProcessPoolExecutor`` costs ~1 s per worker (spawn context
-# + astropy import). For a FastAPI server serving per-request year
-# computes, re-creating the pool on every call burns 6–12 s of overhead
-# before the real work starts. Caching a module-level pool keyed on
-# worker count lets the first request pay the cost; every subsequent
-# request reuses the warm workers (astropy already imported).
-#
-# Thread-safe lazy init via ``threading.Lock``. The pool is closed on
-# interpreter shutdown via ``atexit``; uvicorn --reload leaks processes
-# between reloads but production deployments don't reload, so that's
-# acceptable.
-_POOL_LOCK = threading.Lock()
-_POOL: ProcessPoolExecutor | None = None
-_POOL_WORKERS: int = 0
+# ── Worker pool ───────────────────────────────────────────────────────────────
 
 
-def _get_pool(n_workers: int) -> ProcessPoolExecutor:
-    global _POOL, _POOL_WORKERS
-    with _POOL_LOCK:
-        if _POOL is None or _POOL_WORKERS != n_workers:
-            if _POOL is not None:
-                _POOL.shutdown(wait=False, cancel_futures=True)
-            ctx = mp.get_context("spawn")
-            _POOL = ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx)
-            _POOL_WORKERS = n_workers
-        return _POOL
+def _make_pool(n_workers: int) -> ProcessPoolExecutor:
+    """A fresh spawn-context pool for one year computation.
 
+    **Deliberately NOT a persistent module-global pool**, matching
+    ``ingest_scanner.make_pool``. This module used to cache one keyed on worker
+    count, on the reasoning that the ~1 s-per-worker spawn cost should be paid
+    once — and closed it on ``atexit``, noting that ``uvicorn --reload`` leaked
+    processes between reloads but that production does not reload.
 
-def _shutdown_pool() -> None:
-    global _POOL
-    with _POOL_LOCK:
-        if _POOL is not None:
-            _POOL.shutdown(wait=False, cancel_futures=True)
-            _POOL = None
+    That trade was wrong in the direction that matters. The leaked children do
+    not merely linger: they prevent a clean restart and **wedge the event loop**,
+    so every endpoint hangs, ``/api/health`` included. Development is where the
+    reloader runs, which is where the cost lands. The result cache below already
+    absorbs the repeat-request case the pool cache was built for.
 
-
-atexit.register(_shutdown_pool)
+    The caller owns the pool and must close it — use a ``with`` block.
+    """
+    ctx = mp.get_context("spawn")
+    return ProcessPoolExecutor(max_workers=max(1, n_workers), mp_context=ctx)
 
 
 # ── Result cache ──────────────────────────────────────────────────────────────
@@ -825,27 +807,28 @@ def _compute_annual_hours_uncached(
             year_start + timedelta(days=(n_days * i) // n_workers) for i in range(n_workers + 1)
         ]
         chunks = list(zip(bounds[:-1], bounds[1:], strict=True))
-        pool = _get_pool(n_workers)
-        futures = [
-            pool.submit(
-                _compute_subrange,
-                location,
-                horizon,
-                ra_deg,
-                dec_deg,
-                moon_sep_deg,
-                start_d,
-                end_d,
-                max_illumination_pct,
-                min_separation_deg,
-                moon_combine,
-                include_moon,
-            )
-            for start_d, end_d in chunks
-        ]
-        pairs = []
-        for f in futures:
-            pairs.extend(f.result())
+        # `with`, so the workers are gone before this returns — see _make_pool.
+        with _make_pool(n_workers) as pool:
+            futures = [
+                pool.submit(
+                    _compute_subrange,
+                    location,
+                    horizon,
+                    ra_deg,
+                    dec_deg,
+                    moon_sep_deg,
+                    start_d,
+                    end_d,
+                    max_illumination_pct,
+                    min_separation_deg,
+                    moon_combine,
+                    include_moon,
+                )
+                for start_d, end_d in chunks
+            ]
+            pairs = []
+            for f in futures:
+                pairs.extend(f.result())
 
     pairs.sort(key=lambda p: p[0])
     return AnnualHoursTrack(
