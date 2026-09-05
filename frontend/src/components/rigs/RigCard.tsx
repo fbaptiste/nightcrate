@@ -1,4 +1,3 @@
-import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Card from "@mui/material/Card";
@@ -28,22 +27,14 @@ interface RigCardProps {
 
 
 function formatFilterSummary(rig: Rig): string {
-  if (rig.filter_slots.length > 0) {
-    const slotNames = rig.filter_slots
-      .sort((a, b) => a.slot_number - b.slot_number)
-      .map((s) => s.filter_name)
-      .join(" \u00b7 ");
-    return `${rig.filter_wheel_positions}-pos: ${slotNames}`;
+  if (rig.filter_wheel_name) {
+    const count = rig.filter_slots.length;
+    const positions = rig.filter_wheel_positions;
+    const filled = count > 0 ? `${count} of ${positions} filters` : "no filters assigned";
+    return `${rig.filter_wheel_name} \u2014 ${filled}`;
   }
   if (rig.single_filter_name) {
     return `Filter: ${rig.single_filter_name}`;
-  }
-  // A wheel with nothing assigned is not the same as no wheel: saying "No
-  // filter wheel" here contradicted the edit dialog, which showed the wheel
-  // the rig really does have.
-  if (rig.filter_wheel_name) {
-    const positions = rig.filter_wheel_positions;
-    return `${rig.filter_wheel_name}${positions ? ` (${positions}-pos)` : ""} \u2014 no filters assigned`;
   }
   return "No filter wheel";
 }
@@ -59,13 +50,6 @@ export default function RigCard({
   onSetDefault,
   onToggleMine,
 }: RigCardProps) {
-  const calc = rig.calculators;
-  const scale = calc.image_scale_arcsec_per_pixel;
-  const [fovW, fovH] = calc.field_of_view_arcmin;
-  const fl = rig.effective_focal_length_mm;
-  const ratio = rig.effective_focal_ratio;
-  const statsLine = `${fl}mm \u00b7 f/${ratio} \u00b7 ${scale.toFixed(2)}\u2033/px \u00b7 ${fovW.toFixed(1)}\u00d7${fovH.toFixed(1)}\u2032`;
-
   return (
     <Card
       variant="outlined"
@@ -114,51 +98,34 @@ export default function RigCard({
       )}
 
       <CardContent sx={{ pb: 1 }}>
-        {/* Name */}
-        <Typography variant="h6" fontWeight="bold" sx={{ mb: 0.5, pr: 4 }}>
+        <Typography variant="h6" fontWeight="bold" sx={{ mb: 0.25, pr: 10 }}>
           {rig.name}
         </Typography>
 
-        {/* OTA line */}
+        {rig.description && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+            {rig.description}
+          </Typography>
+        )}
+
         <Typography variant="body2" color="text.secondary">
           {rig.telescope_name} &mdash; {rig.telescope_config_name}
         </Typography>
 
-        {/* Stats line (above camera) */}
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {statsLine}
-        </Typography>
-
-        {/* Camera line */}
+        {/* The three optical numbers that identify a rig at a glance. */}
         <Typography variant="body2" color="text.secondary">
-          {rig.camera_name}
+          {rig.aperture_mm}mm aperture &middot; {rig.effective_focal_length_mm}mm
+          &middot; f/{rig.effective_focal_ratio}
         </Typography>
 
-        {/* Filter summary (above mount) */}
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           {formatFilterSummary(rig)}
         </Typography>
 
-        {/* Mount line */}
-        {rig.mount_name && (
-          <Typography variant="body2" color="text.secondary">
-            Mount: {rig.mount_name}
-          </Typography>
-        )}
-
-        {/* Warnings */}
         {rig.warnings.length > 0 && (
-          <Alert
-            severity="warning"
-            variant="outlined"
-            sx={{ mt: 1, py: 0, fontSize: "0.75rem" }}
-          >
-            {rig.warnings.map((w, i) => (
-              <Typography key={i} variant="caption" component="div">
-                {w.message}
-              </Typography>
-            ))}
-          </Alert>
+          <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 1 }}>
+            {rig.warnings.length} warning{rig.warnings.length > 1 ? "s" : ""}
+          </Typography>
         )}
       </CardContent>
 
@@ -166,18 +133,6 @@ export default function RigCard({
         sx={{ px: 2, pt: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* An explicit button, not a star: a star means favourite or default
-            elsewhere in the app, and this is neither — it is membership. */}
-        {onToggleMine && rig.source === "seed" && (
-          <Button
-            size="small"
-            variant={rig.is_mine ? "outlined" : "contained"}
-            onClick={() => onToggleMine(rig.id, !rig.is_mine)}
-            sx={{ textTransform: "none", mr: 0.5 }}
-          >
-            {rig.is_mine ? "Remove from my rigs" : "Add to my rigs"}
-          </Button>
-        )}
         <Tooltip title="Edit" arrow>
           <IconButton size="small" onClick={() => onEdit(rig)}>
             <EditIcon fontSize="small" />
@@ -188,23 +143,31 @@ export default function RigCard({
             <ContentCopyIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        {/* A catalog rig is claimed or released with the star — retiring one
-            makes no sense, and produced a confusing "Retired Rigs" entry for a
-            telescope that still exists. Only self-built rigs retire. */}
-        {rig.source === "user" &&
-          (rig.active ? (
-            <Tooltip title="Delete" arrow>
-              <IconButton size="small" onClick={() => onDelete(rig.id)}>
+        {/* One delete affordance in one place. What it means depends on where
+            the rig came from: a self-built rig retires, a pre-defined one is
+            simply removed from the user's rigs and returns to the New Rig
+            offer list — it is a catalog entry, not something to destroy. */}
+        {rig.source === "seed" ? (
+          onToggleMine && (
+            <Tooltip title="Remove from my rigs" arrow>
+              <IconButton size="small" onClick={() => onToggleMine(rig.id, false)}>
                 <DeleteIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-          ) : (
-            <Tooltip title="Restore" arrow>
-              <IconButton size="small" onClick={() => onRestore(rig.id)}>
-                <RestoreIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          ))}
+          )
+        ) : rig.active ? (
+          <Tooltip title="Delete" arrow>
+            <IconButton size="small" onClick={() => onDelete(rig.id)}>
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : (
+          <Tooltip title="Restore" arrow>
+            <IconButton size="small" onClick={() => onRestore(rig.id)}>
+              <RestoreIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
       </CardActions>
     </Card>
   );

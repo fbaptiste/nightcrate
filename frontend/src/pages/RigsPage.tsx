@@ -30,7 +30,7 @@ import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import RigCard from "@/components/rigs/RigCard";
 import RigFormDialog from "@/components/rigs/RigFormDialog";
 import NewRigDialog from "@/components/rigs/NewRigDialog";
-import CalculatorPanel from "@/components/rigs/CalculatorPanel";
+import RigDetailPanel from "@/components/rigs/RigDetailPanel";
 import { setActivity } from "@/api/client";
 import {
   fetchRigs,
@@ -247,7 +247,14 @@ export default function RigsPage() {
             items={activeRigs.map((r) => r.id)}
             strategy={verticalListSortingStrategy}
           >
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                gap: 2,
+                alignItems: "start",
+              }}
+            >
               {activeRigs.map((rig) => (
                 <SortableRigCard
                   key={rig.id}
@@ -316,7 +323,7 @@ export default function RigsPage() {
           >
             <CloseIcon fontSize="small" />
           </IconButton>
-          {resolvedSelected && <CalculatorPanel rig={resolvedSelected} />}
+          {resolvedSelected && <RigDetailPanel rig={resolvedSelected} />}
         </Paper>
       </Collapse>
 
