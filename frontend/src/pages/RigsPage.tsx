@@ -29,6 +29,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import RigCard from "@/components/rigs/RigCard";
 import RigFormDialog from "@/components/rigs/RigFormDialog";
+import NewRigDialog from "@/components/rigs/NewRigDialog";
 import CalculatorPanel from "@/components/rigs/CalculatorPanel";
 import { setActivity } from "@/api/client";
 import {
@@ -73,17 +74,14 @@ export default function RigsPage() {
   // catalog entry is not a meaningful state — it is either yours or it is not —
   // so a retired one would otherwise vanish into "Retired Rigs", which reads as
   // if the telescope itself had been discontinued.
-  // Anything seeded that isn't currently in the user's active list — which
-  // also catches a claimed-then-retired one, so no rig can fall through every
-  // section and disappear.
-  const catalogRigs = rigs.filter(
+  // Pre-defined rigs the user hasn't adopted are offered by the New Rig dialog,
+  // not listed here — this page is "my rigs" and nothing else. The `active`
+  // term also catches one adopted and then retired before that was disallowed,
+  // so it returns to the offer list rather than disappearing.
+  const availablePredefined = rigs.filter(
     (r) => r.source === "seed" && !(r.active && r.is_mine),
   );
   const retiredRigs = rigs.filter((r) => !r.active && r.source === "user");
-  // Nothing to declutter when the user owns none — open the catalog so the
-  // page isn't just an empty list with the answer hidden behind a disclosure.
-  const [catalogVisible, setCatalogVisible] = useState(false);
-  const showCatalog = catalogVisible || activeRigs.length === 0;
 
   const handleToggleMine = async (id: number, isMine: boolean) => {
     try {
@@ -123,9 +121,21 @@ export default function RigsPage() {
     }
   };
 
+  const [chooserOpen, setChooserOpen] = useState(false);
+
   const handleNewRig = () => {
     setEditingRig(null);
-    setDialogOpen(true);
+    // Nothing left to adopt — don't make the user dismiss an empty chooser.
+    if (availablePredefined.length === 0) {
+      setDialogOpen(true);
+      return;
+    }
+    setChooserOpen(true);
+  };
+
+  const handleChoosePredefined = async (rig: Rig) => {
+    setChooserOpen(false);
+    await handleToggleMine(rig.id, true);
   };
 
   const handleEdit = (rig: Rig) => {
@@ -221,8 +231,8 @@ export default function RigsPage() {
       {/* Empty state */}
       {!isLoading && activeRigs.length === 0 && (
         <Typography color="text.secondary" sx={{ textAlign: "center", mt: 6 }}>
-          None of your own rigs yet. Click &lsquo;New Rig&rsquo; to build one, or
-          add an all-in-one telescope below if you own one.
+          No rigs yet. Click &lsquo;New Rig&rsquo; to add a pre-defined one or
+          build your own.
         </Typography>
       )}
 
@@ -294,42 +304,6 @@ export default function RigsPage() {
         </Box>
       )}
 
-      {/* All-in-one smart telescopes — seeded, claimable, never reorderable
-          (sort_order is for the user's own list). */}
-      {catalogRigs.length > 0 && (
-        <Box sx={{ mt: 4 }}>
-          <Typography
-            variant="subtitle2"
-            sx={{ cursor: "pointer", userSelect: "none", color: "text.secondary", mb: 1 }}
-            onClick={() => setCatalogVisible((v) => !v)}
-          >
-            {showCatalog ? "▾" : "▸"} All-in-one telescopes ({catalogRigs.length})
-          </Typography>
-          {showCatalog && (
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                Pre-built rigs for smart telescopes. Add one to your rigs if you
-                own it.
-              </Typography>
-              {catalogRigs.map((rig) => (
-                <RigCard
-                  key={rig.id}
-                  rig={rig}
-                  selected={resolvedSelected?.id === rig.id}
-                  onSelect={handleSelect}
-                  onEdit={handleEdit}
-                  onClone={handleClone}
-                  onDelete={handleDelete}
-                  onRestore={handleRestore}
-                  onSetDefault={handleSetDefault}
-                  onToggleMine={handleToggleMine}
-                />
-              ))}
-            </Box>
-          )}
-        </Box>
-      )}
-
       {/* Detail panel */}
       <Collapse in={resolvedSelected !== null} timeout="auto" unmountOnExit>
         <Divider sx={{ mt: 3 }} />
@@ -347,6 +321,18 @@ export default function RigsPage() {
       </Collapse>
 
       {/* Rig form dialog */}
+      <NewRigDialog
+        open={chooserOpen}
+        available={availablePredefined}
+        onClose={() => setChooserOpen(false)}
+        onChoosePredefined={handleChoosePredefined}
+        onChooseCustom={() => {
+          setChooserOpen(false);
+          setEditingRig(null);
+          setDialogOpen(true);
+        }}
+      />
+
       <RigFormDialog
         open={dialogOpen}
         rig={editingRig}
