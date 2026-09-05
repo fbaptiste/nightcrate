@@ -165,3 +165,10 @@ telescope_configuration.william_optics.ultracat_131.native,telescope.william_opt
 telescope_configuration.sharpstar.61edph_iii.native,telescope.sharpstar.61edph_iii,,Native f/5.9,,360.0,5.9,,1,Native configuration.,1.0
 telescope_configuration.sharpstar.140ph.native,telescope.sharpstar.140ph,,Native f/6.5,,910.0,6.5,,1,Native configuration.,1.0
 telescope_configuration.sharpstar.20032pnt.native,telescope.sharpstar.20032pnt,,Native f/3.2,,640.0,3.2,,1,Native configuration.,1.0
+# --- Celestron configurations added in the 2026 catalogue audit ---
+telescope_configuration.celestron.c5.native,telescope.celestron.c5,,Native f/9.8,,1250.0,9.8,,1,Classic SCT at native f/9.8; uncorrected field curvature typical of the design,1.0
+telescope_configuration.celestron.c5.f63,telescope.celestron.c5,Celestron f/6.3 Reducer/Corrector (#94175),f/6.3 Reducer,,787.5,6.2,,0,Celestron universal f/6.3 reducer; 0.63x reduction; lands at f/6.2 rather than f/6.3 because the C5 is f/9.8 native and the accessory is named for its result on an f/10 tube; improves but does not eliminate field curvature,0.63
+telescope_configuration.celestron.c9_25.native,telescope.celestron.c9_25,,Native f/10,,2350.0,10.0,,1,Classic SCT at native f/10; uncorrected field curvature typical of the design,1.0
+telescope_configuration.celestron.c9_25.f63,telescope.celestron.c9_25,Celestron f/6.3 Reducer/Corrector (#94175),f/6.3 Reducer,,1480.5,6.3,,0,Celestron universal f/6.3 reducer; 0.63x reduction; improves but does not eliminate field curvature,0.63
+telescope_configuration.celestron.c14.native,telescope.celestron.c14,,Native f/11,,3910.0,11.0,,1,Classic SCT at native f/11; uncorrected field curvature typical of the design,1.0
+telescope_configuration.celestron.rasa_36.native,telescope.celestron.rasa_36,,Native f/2.2,,790.0,2.2,,1,Prime-focus astrograph; the camera sits in the light path ahead of the corrector,1.0
