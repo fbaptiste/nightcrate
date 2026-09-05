@@ -86,3 +86,16 @@ telescope.william_optics.gt71_ii,manufacturer.william_optics,optical_design.trip
 telescope.william_optics.gt81_wifd,manufacturer.william_optics,optical_design.triplet_refractor,81.0,,Gran Turismo 81 WIFD,Triplet APO with the William internal focuser; distinct from the Gran Turismo 81 IV.,,,https://williamoptics.com/collections/telescopes
 telescope.william_optics.z61_ii,manufacturer.william_optics,optical_design.doublet_refractor,61.0,,ZenithStar 61 II,Doublet APO.,,,https://williamoptics.com/collections/telescopes
 telescope.william_optics.z81_wifd,manufacturer.william_optics,optical_design.doublet_refractor,81.0,,ZenithStar 81 WIFD,Doublet APO with the William internal focuser.,,,https://williamoptics.com/collections/telescopes
+# --- Sky-Watcher models added in the 2026 catalogue audit ---
+telescope.skywatcher.esprit_150ed,manufacturer.skywatcher,optical_design.triplet_refractor,150.0,,Esprit 150ED,Triplet super APO; the largest Esprit.,,,https://www.skywatcherusa.com/products/esprit-150edx
+telescope.skywatcher.evolux_62ed,manufacturer.skywatcher,optical_design.doublet_refractor,62.0,,Evolux 62ED,Doublet ED APO; takes an optional dedicated 0.9x reducer/flattener.,,,http://www.skywatcher.com/product/evolux-62ed/
+telescope.skywatcher.evolux_82ed,manufacturer.skywatcher,optical_design.doublet_refractor,82.0,,Evolux 82ED,Doublet ED APO; takes an optional dedicated 0.9x reducer/flattener.,,,http://www.skywatcher.com/product/evolux-82ed/
+telescope.skywatcher.quattro_150p,manufacturer.skywatcher,optical_design.newtonian,150.0,,Quattro 150P,Six-inch imaging Newtonian; the smallest Quattro.,,,https://www.skywatcherusa.com/products/quattro-150p-imaging-newtonian-6
+# --- William Optics Cat / Ultra-Cat line (2026 catalogue audit) ---
+telescope.william_optics.minicat_51,manufacturer.william_optics,optical_design.petzval,51.0,,MiniCat 51 WIFD,Six-element Petzval with two Super ED elements; the shortest of the Cat line.,,,https://williamoptics.com/collections/cat-series
+telescope.william_optics.cat_51_wifd,manufacturer.william_optics,optical_design.petzval,51.0,,Cat 51 WIFD,Four-element Petzval. Same aperture and focal length as the RedCat 51 II under the newer Cat naming; both are kept.,,,https://williamoptics.com/collections/cat-series
+telescope.william_optics.cat_61_wifd,manufacturer.william_optics,optical_design.petzval,61.0,,Cat 61 WIFD,Four-element Petzval.,,,https://williamoptics.com/collections/cat-series
+telescope.william_optics.cat_71_wifd,manufacturer.william_optics,optical_design.petzval,71.0,,Cat 71 WIFD,Four-element Petzval.,,,https://williamoptics.com/collections/cat-series
+telescope.william_optics.cat_91_wifd,manufacturer.william_optics,optical_design.petzval,91.0,,Cat 91 WIFD,Five-element advanced Petzval; sold within the Ultra-Cat range.,,,https://williamoptics.com/collections/cat-series
+telescope.william_optics.ultracat_108,manufacturer.william_optics,optical_design.petzval,108.0,,Ultra-Cat 108,Five-element advanced Petzval.,,,https://williamoptics.com/collections/cat-series
+telescope.william_optics.ultracat_131,manufacturer.william_optics,optical_design.petzval,131.0,,Ultra-Cat 131,Five-element advanced Petzval; the largest Ultra-Cat.,,,https://williamoptics.com/collections/cat-series

@@ -146,3 +146,18 @@ telescope_configuration.william_optics.gt71_ii.native,telescope.william_optics.g
 telescope_configuration.william_optics.gt81_wifd.native,telescope.william_optics.gt81_wifd,,Native f/5.9,,478.0,5.9,,1,Native configuration without reducer or flattener.,1.0
 telescope_configuration.william_optics.z61_ii.native,telescope.william_optics.z61_ii,,Native f/5.9,,360.0,5.9,,1,Native configuration without reducer or flattener.,1.0
 telescope_configuration.william_optics.z81_wifd.native,telescope.william_optics.z81_wifd,,Native f/6.9,,559.0,6.9,,1,Native configuration without reducer or flattener.,1.0
+# --- Sky-Watcher native configurations added in the 2026 catalogue audit ---
+telescope_configuration.skywatcher.esprit_150ed.native,telescope.skywatcher.esprit_150ed,,Native f/7,,1050.0,7.0,,1,Native configuration; the Esprit ships with its own field flattener.,1.0
+telescope_configuration.skywatcher.evolux_62ed.native,telescope.skywatcher.evolux_62ed,,Native f/6.45,,400.0,6.45,,1,Native configuration without the reducer.,1.0
+telescope_configuration.skywatcher.evolux_62ed.reducer,telescope.skywatcher.evolux_62ed,Evolux 0.9x Reducer/Flattener,0.9x Reducer f/5.8,,360.0,5.8,,0,Dedicated 0.9x reducer/flattener; shortens the focal length to 360mm.,0.9
+telescope_configuration.skywatcher.evolux_82ed.native,telescope.skywatcher.evolux_82ed,,Native f/6.45,,530.0,6.45,,1,Native configuration without the reducer.,1.0
+telescope_configuration.skywatcher.evolux_82ed.reducer,telescope.skywatcher.evolux_82ed,Evolux 0.9x Reducer/Flattener,0.9x Reducer f/5.8,,480.0,5.8,,0,Dedicated 0.9x reducer/flattener; shortens the focal length to 480mm.,0.906
+telescope_configuration.skywatcher.quattro_150p.native,telescope.skywatcher.quattro_150p,,Native f/4,,600.0,4.0,,1,Native Newtonian configuration without coma corrector; Sky-Watcher publishes a flat f/4 as with the rest of the Quattro line.,1.0
+# --- William Optics Cat / Ultra-Cat native configurations ---
+telescope_configuration.william_optics.minicat_51.native,telescope.william_optics.minicat_51,,Native f/3.5,,178.0,3.5,,1,Native configuration.,1.0
+telescope_configuration.william_optics.cat_51_wifd.native,telescope.william_optics.cat_51_wifd,,Native f/4.9,,250.0,4.9,,1,Native configuration.,1.0
+telescope_configuration.william_optics.cat_61_wifd.native,telescope.william_optics.cat_61_wifd,,Native f/4.9,,300.0,4.9,,1,Native configuration.,1.0
+telescope_configuration.william_optics.cat_71_wifd.native,telescope.william_optics.cat_71_wifd,,Native f/4.9,,350.0,4.9,,1,Native configuration.,1.0
+telescope_configuration.william_optics.cat_91_wifd.native,telescope.william_optics.cat_91_wifd,,Native f/4.9,,448.0,4.9,,1,Native configuration.,1.0
+telescope_configuration.william_optics.ultracat_108.native,telescope.william_optics.ultracat_108,,Native f/4.8,,518.0,4.8,,1,Native configuration.,1.0
+telescope_configuration.william_optics.ultracat_131.native,telescope.william_optics.ultracat_131,,Native f/4.9,,648.0,4.9,,1,Native configuration.,1.0
