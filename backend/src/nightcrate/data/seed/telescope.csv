@@ -75,3 +75,14 @@ telescope.askar.80phq,manufacturer.askar,optical_design.quadruplet_refractor,80.
 telescope.askar.130phq,manufacturer.askar,optical_design.quadruplet_refractor,130.0,,130PHQ,Quadruplet flat-field APO with two ED elements.,,,https://www.sharpstar-optics.com/
 telescope.askar.151phq,manufacturer.askar,optical_design.quadruplet_refractor,151.0,,151PHQ,Quadruplet flat-field APO with two ED elements; the largest Askar refractor.,,,https://www.sharpstar-optics.com/
 telescope.askar.140apo,manufacturer.askar,optical_design.triplet_refractor,140.0,,140APO,Triplet air-spaced APO.,,,https://www.sharpstar-optics.com/
+# --- William Optics models added in the 2026 catalogue audit ---
+telescope.william_optics.ultracat_56,manufacturer.william_optics,optical_design.petzval,56.0,,Ultra-Cat 56,Petzval astrograph in the Ultra-Cat line.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.ultracat_76,manufacturer.william_optics,optical_design.petzval,76.0,,Ultra-Cat 76,Petzval astrograph in the Ultra-Cat line.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.pleiades_111,manufacturer.william_optics,optical_design.petzval,111.0,,Pleiades 111,Septuplet seven-element Petzval astrograph.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.fluorostar_91,manufacturer.william_optics,optical_design.triplet_refractor,91.0,,Fluorostar 91,Triplet APO in the Fluorostar line; formerly branded FLT.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.fluorostar_120,manufacturer.william_optics,optical_design.triplet_refractor,120.0,,Fluorostar 120,Triplet APO in the Fluorostar line.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.fluorostar_132,manufacturer.william_optics,optical_design.triplet_refractor,132.0,,Fluorostar 132,Triplet APO in the Fluorostar line.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.gt71_ii,manufacturer.william_optics,optical_design.triplet_refractor,71.0,,Gran Turismo 71 II,Triplet APO.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.gt81_wifd,manufacturer.william_optics,optical_design.triplet_refractor,81.0,,Gran Turismo 81 WIFD,Triplet APO with the William internal focuser; distinct from the Gran Turismo 81 IV.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.z61_ii,manufacturer.william_optics,optical_design.doublet_refractor,61.0,,ZenithStar 61 II,Doublet APO.,,,https://williamoptics.com/collections/telescopes
+telescope.william_optics.z81_wifd,manufacturer.william_optics,optical_design.doublet_refractor,81.0,,ZenithStar 81 WIFD,Doublet APO with the William internal focuser.,,,https://williamoptics.com/collections/telescopes

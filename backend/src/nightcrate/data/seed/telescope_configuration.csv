@@ -135,3 +135,14 @@ telescope_configuration.askar.80phq.native,telescope.askar.80phq,,Native f/7.5,,
 telescope_configuration.askar.130phq.native,telescope.askar.130phq,,Native f/7.7,,1000.0,7.7,,1,Native configuration without reducer or extender.,1.0
 telescope_configuration.askar.151phq.native,telescope.askar.151phq,,Native f/7.0,,1057.0,7.0,,1,Native configuration without reducer or extender.,1.0
 telescope_configuration.askar.140apo.native,telescope.askar.140apo,,Native f/7.0,,980.0,7.0,,1,Native configuration without reducer or extender.,1.0
+# --- William Optics native configurations added in the 2026 catalogue audit ---
+telescope_configuration.william_optics.ultracat_56.native,telescope.william_optics.ultracat_56,,Native f/4.8,,269.0,4.8,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.ultracat_76.native,telescope.william_optics.ultracat_76,,Native f/4.8,,365.0,4.8,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.pleiades_111.native,telescope.william_optics.pleiades_111,,Native f/4.8,,528.0,4.8,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.fluorostar_91.native,telescope.william_optics.fluorostar_91,,Native f/5.9,,540.0,5.9,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.fluorostar_120.native,telescope.william_optics.fluorostar_120,,Native f/6.5,,780.0,6.5,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.fluorostar_132.native,telescope.william_optics.fluorostar_132,,Native f/6.9,,910.0,6.9,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.gt71_ii.native,telescope.william_optics.gt71_ii,,Native f/5.9,,419.0,5.9,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.gt81_wifd.native,telescope.william_optics.gt81_wifd,,Native f/5.9,,478.0,5.9,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.z61_ii.native,telescope.william_optics.z61_ii,,Native f/5.9,,360.0,5.9,,1,Native configuration without reducer or flattener.,1.0
+telescope_configuration.william_optics.z81_wifd.native,telescope.william_optics.z81_wifd,,Native f/6.9,,559.0,6.9,,1,Native configuration without reducer or flattener.,1.0
