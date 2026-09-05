@@ -1,0 +1,28 @@
+-- v0.41.1 — payload capacity gets one meaning, plus a column for the other one.
+--
+-- payload_capacity_kg was carrying three incompatible conventions with nothing to
+-- tell them apart. Most rows are instrument-only with counterweights excluded, as
+-- Celestron / Sky-Watcher / Losmandy / Software Bisque / 10Micron all publish. The
+-- harmonic mounts are also counterweight-excluded but carry substantially more WITH
+-- one, so their headline figure understates them. And explore_scientific.iexos100_2
+-- held a TOTAL that counts the counterweights themselves. The same 8 kg reading
+-- therefore meant "8 kg of telescope, counterweights on top" on one row and "8 kg of
+-- telescope AND counterweights combined" on another — roughly half the usable
+-- capacity the number implies. Several makers also publish separate visual and
+-- photographic ratings that differ widely, and the seed took different ones.
+--
+-- Defined from here as: maximum instrument payload EXCLUDING counterweights, taking
+-- the photographic rating wherever a manufacturer publishes visual and photographic
+-- separately. Photographic because this is an imaging application — a mount that is
+-- fine visually at 20 kg may guide badly at 12.
+--
+-- The harmonic mounts' with-counterweight rating is real and worth keeping, so it
+-- gets its own nullable column rather than being folded into the first. Ten rows
+-- have a published figure; the rest stay NULL rather than being inferred.
+--
+-- Structural only. The values live in mount.csv and reach existing databases
+-- through the loader, which still respects rows the user has edited — see the
+-- matching step in seed_loader/rehash.py, and the note in CLAUDE.md on why writing
+-- values directly here (as 0024 did) is the wrong repair.
+
+ALTER TABLE mount ADD COLUMN payload_capacity_with_cw_kg REAL;

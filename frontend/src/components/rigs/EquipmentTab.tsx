@@ -947,6 +947,12 @@ function MountBody({ mount }: { mount: Mount }) {
       {mount.payload_capacity_kg != null && (
         <Field label="Payload Capacity" value={`${mount.payload_capacity_kg} kg`} />
       )}
+      {mount.payload_capacity_with_cw_kg != null && (
+        <Field
+          label="Payload With Counterweight"
+          value={`${mount.payload_capacity_with_cw_kg} kg`}
+        />
+      )}
       {mount.mount_weight_kg != null && (
         <Field label="Mount Weight" value={`${mount.mount_weight_kg} kg`} />
       )}

@@ -180,6 +180,7 @@ def test_first_run_marks_steps_without_touching_anything(seed_db, csv_root):
 
     report = load_all(seed_db, csv_root, mode="first_run")
 
-    assert report.migration_rehashed == {"sensor": 0, "camera": 0}
+    # Derived from the step list so adding a step does not break this test.
+    assert report.migration_rehashed == {s.table: 0 for s in REHASH_STEPS}
     markers = {r["key"] for r in seed_db.execute("SELECT key FROM seed_loader_meta").fetchall()}
     assert {s.key for s in REHASH_STEPS} <= markers

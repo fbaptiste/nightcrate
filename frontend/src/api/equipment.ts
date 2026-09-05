@@ -221,6 +221,7 @@ export interface Mount {
   mount_type: MountType | null;
   model_name: string;
   payload_capacity_kg: number | null;
+  payload_capacity_with_cw_kg: number | null;
   mount_weight_kg: number | null;
   counterweight_required: boolean;
   goto_capable: boolean;
@@ -482,6 +483,7 @@ export interface MountCreate {
   is_mine?: boolean;
   model_name: string;
   payload_capacity_kg?: number | null;
+  payload_capacity_with_cw_kg?: number | null;
   mount_weight_kg?: number | null;
   counterweight_required?: boolean;
   goto_capable?: boolean;

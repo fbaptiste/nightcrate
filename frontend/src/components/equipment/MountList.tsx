@@ -53,7 +53,18 @@ export default function MountList({ mineOnly = false }: { mineOnly?: boolean } =
         <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, columnGap: 4 }}>
           <DetailField label="Manufacturer" value={item.manufacturer.name} />
           <DetailField label="Mount Type" value={item.mount_type?.name ?? null} />
-          <DetailField label="Payload Capacity" value={item.payload_capacity_kg != null ? `${item.payload_capacity_kg}kg` : null} />
+          <DetailField
+            label="Payload Capacity"
+            value={item.payload_capacity_kg != null ? `${item.payload_capacity_kg}kg` : null}
+          />
+          <DetailField
+            label="Payload With Counterweight"
+            value={
+              item.payload_capacity_with_cw_kg != null
+                ? `${item.payload_capacity_with_cw_kg}kg`
+                : null
+            }
+          />
           <DetailField label="Mount Weight" value={item.mount_weight_kg != null ? `${item.mount_weight_kg}kg` : null} />
           <DetailField label="Counterweight Required" value={item.counterweight_required ? "Yes" : "No"} />
           <DetailField label="GoTo Capable" value={item.goto_capable ? "Yes" : "No"} />

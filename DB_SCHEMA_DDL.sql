@@ -524,7 +524,12 @@ CREATE TABLE IF NOT EXISTS mount (
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturer(id),
     mount_type_id INTEGER REFERENCES mount_type(id),
     model_name TEXT NOT NULL,
+    -- Maximum instrument payload EXCLUDING counterweights; the photographic
+    -- rating wherever a manufacturer publishes visual and photographic separately.
     payload_capacity_kg REAL,
+    -- Harmonic mounts carry substantially more with a counterweight fitted.
+    -- NULL where no figure is published.
+    payload_capacity_with_cw_kg REAL,
     mount_weight_kg REAL,
     counterweight_required INTEGER NOT NULL DEFAULT 0 CHECK (counterweight_required IN (0, 1)),
     goto_capable INTEGER NOT NULL DEFAULT 1 CHECK (goto_capable IN (0, 1)),

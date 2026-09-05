@@ -282,6 +282,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "mount_type_id",
             "model_name",
             "payload_capacity_kg",
+            "payload_capacity_with_cw_kg",
             "mount_weight_kg",
             "counterweight_required",
             "goto_capable",

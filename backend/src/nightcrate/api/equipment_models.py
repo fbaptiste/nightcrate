@@ -542,6 +542,7 @@ class MountCreate(BaseModel):
     mount_type_id: int | None = None
     model_name: str
     payload_capacity_kg: float | None = None
+    payload_capacity_with_cw_kg: float | None = None
     mount_weight_kg: float | None = None
     counterweight_required: bool = True
     goto_capable: bool = True
@@ -558,6 +559,7 @@ class MountUpdate(BaseModel):
     mount_type_id: int | None = None
     model_name: str | None = None
     payload_capacity_kg: float | None = None
+    payload_capacity_with_cw_kg: float | None = None
     mount_weight_kg: float | None = None
     counterweight_required: bool | None = None
     goto_capable: bool | None = None
@@ -575,6 +577,7 @@ class MountResponse(BaseModel):
     mount_type: MountTypeResponse | None
     model_name: str
     payload_capacity_kg: float | None
+    payload_capacity_with_cw_kg: float | None
     mount_weight_kg: float | None
     counterweight_required: bool
     goto_capable: bool

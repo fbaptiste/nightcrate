@@ -35,6 +35,7 @@ interface FormState {
   manufacturer_id: number | null;
   mount_type_id: number | null;
   payload_capacity_kg: string;
+  payload_capacity_with_cw_kg: string;
   mount_weight_kg: string;
   counterweight_required: boolean;
   goto_capable: boolean;
@@ -50,6 +51,7 @@ function emptyForm(): FormState {
     manufacturer_id: null,
     mount_type_id: null,
     payload_capacity_kg: "",
+    payload_capacity_with_cw_kg: "",
     mount_weight_kg: "",
     counterweight_required: true,
     goto_capable: true,
@@ -66,6 +68,8 @@ function mountToForm(item: Mount): FormState {
     manufacturer_id: item.manufacturer.id,
     mount_type_id: item.mount_type?.id ?? null,
     payload_capacity_kg: item.payload_capacity_kg != null ? String(item.payload_capacity_kg) : "",
+    payload_capacity_with_cw_kg:
+      item.payload_capacity_with_cw_kg != null ? String(item.payload_capacity_with_cw_kg) : "",
     mount_weight_kg: item.mount_weight_kg != null ? String(item.mount_weight_kg) : "",
     counterweight_required: item.counterweight_required,
     goto_capable: item.goto_capable,
@@ -121,6 +125,7 @@ export default function MountFormDialog({
         manufacturer_id: form.manufacturer_id!,
         mount_type_id: form.mount_type_id,
         payload_capacity_kg: parseOptionalFloat(form.payload_capacity_kg),
+        payload_capacity_with_cw_kg: parseOptionalFloat(form.payload_capacity_with_cw_kg),
         mount_weight_kg: parseOptionalFloat(form.mount_weight_kg),
         counterweight_required: form.counterweight_required,
         goto_capable: form.goto_capable,
@@ -196,13 +201,22 @@ export default function MountFormDialog({
               />
             </Box>
 
-            {/* Row 3: Payload + Mount weight + Periodic error */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 2 }}>
+            {/* Row 3: Payload + Payload with counterweight + Mount weight + Periodic
+                error. Payload capacity excludes counterweights; harmonic mounts carry
+                substantially more with one, which is what the second field holds. */}
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 2 }}>
               <TextField
                 label="Payload Capacity (kg)"
                 type="number"
                 value={form.payload_capacity_kg}
                 onChange={(e) => set("payload_capacity_kg", e.target.value)}
+                slotProps={{ htmlInput: { step: "any" } }}
+              />
+              <TextField
+                label="Payload With CW (kg)"
+                type="number"
+                value={form.payload_capacity_with_cw_kg}
+                onChange={(e) => set("payload_capacity_with_cw_kg", e.target.value)}
                 slotProps={{ htmlInput: { step: "any" } }}
               />
               <TextField

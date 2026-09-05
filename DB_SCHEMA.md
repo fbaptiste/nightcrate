@@ -361,6 +361,7 @@ erDiagram
         INTEGER mount_type_id FK
         TEXT model_name
         REAL payload_capacity_kg
+        REAL payload_capacity_with_cw_kg
         REAL mount_weight_kg
         INTEGER counterweight_required "boolean"
         INTEGER goto_capable "boolean, default 1"

@@ -83,9 +83,21 @@ def _camera_before_0052(row: sqlite3.Row) -> dict:
     return {old_name.get(f, f): row[f] for f in REGISTRY["camera"].seeded_fields}
 
 
+# --- 0053.mount_payload_convention -------------------------------------------
+# payload_capacity_with_cw_kg was added to mount's seeded_fields. Nothing was
+# renamed and no value moved, so the old field set is simply today's without it.
+
+_MOUNT_FIELD_ADDED_0053 = "payload_capacity_with_cw_kg"
+
+
+def _mount_before_0053(row: sqlite3.Row) -> dict:
+    return {f: row[f] for f in REGISTRY["mount"].seeded_fields if f != _MOUNT_FIELD_ADDED_0053}
+
+
 REHASH_STEPS: tuple[RehashStep, ...] = (
     RehashStep("rehash.0052.sensor", "sensor", _sensor_before_0052),
     RehashStep("rehash.0052.camera", "camera", _camera_before_0052),
+    RehashStep("rehash.0053.mount", "mount", _mount_before_0053),
 )
 
 
