@@ -26,17 +26,11 @@ interface RigCardProps {
 }
 
 
+/** Just the count — the wheel, the capacity and the filter names are all in
+ *  the detail panel, where there is room for them to mean something. */
 function formatFilterSummary(rig: Rig): string {
-  if (rig.filter_wheel_name) {
-    const count = rig.filter_slots.length;
-    const filled =
-      count > 0 ? `${count} filter${count === 1 ? "" : "s"}` : "no filters assigned";
-    return `${rig.filter_wheel_name} \u2014 ${filled}`;
-  }
-  if (rig.single_filter_name) {
-    return `Filter: ${rig.single_filter_name}`;
-  }
-  return "No filter wheel";
+  const count = rig.filter_slots.length || (rig.single_filter_name ? 1 : 0);
+  return `Filters: ${count > 0 ? count : "\u2014"}`;
 }
 
 export default function RigCard({
@@ -107,10 +101,6 @@ export default function RigCard({
             {rig.description}
           </Typography>
         )}
-
-        <Typography variant="body2" color="text.secondary">
-          {rig.telescope_name} &mdash; {rig.telescope_config_name}
-        </Typography>
 
         {/* The three optical numbers that identify a rig at a glance. */}
         <Typography variant="body2" color="text.secondary">
