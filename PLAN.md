@@ -5492,8 +5492,9 @@ audit surfaced but did not touch. No migration; no schema change.
       needed new sensors was wrong; only the IMX225 did.
 - [x] **Six cameras added** — Altair GPCAM3 287M, GPCAM2 327C, Hypercam 269C PRO TEC and PRO
       (fan-cooled), plus the two ToupTek guide cameras.
-- [x] **RGGB is family convention here, not a guess.** All 33 seeded colour sensors are RGGB,
-      including the IMX224 / IMX290 / IMX462 siblings of the three new Sony colour parts.
+- [x] **RGGB is family convention here, not a guess.** All 33 colour sensors seeded before this
+      version are RGGB — including the IMX224 / IMX290 / IMX462 siblings of the three new Sony
+      colour parts — and the three added here keep it at 36 for 36.
 
 ### Deferred: the SmartSens SC2210 colour
 
@@ -5523,14 +5524,42 @@ audit surfaced but did not touch. No migration; no schema change.
       reload. That trade was wrong in the direction that matters: the leaked children do not
       merely linger, they block a clean restart and **wedge the event loop** so every endpoint
       hangs, `/api/health` included — and the reloader runs in development, which is where the
-      cost lands. The result cache already absorbs the repeat-request case the pool cache was
-      built for. CLAUDE.md's caveat naming this module as the remaining risk is removed.
+      cost lands. **The premise was wrong too:** that comment put the spawn cost at ~1s per
+      worker and 6-12s per call, but measured on a 16-core M-series Mac under Python 3.14,
+      creating a pool, importing the service module in every worker and shutting it down costs
+      0.25s at 4 workers and 0.37s at 15. The result cache still absorbs a repeat request for
+      the same target outright. CLAUDE.md's caveat naming this module as the remaining risk is
+      replaced by the rule that no persistent pool should exist at all.
 - [x] Landed before v0.41.3, whose batch quality pass adds another pool and whose spec already
       says "per-run pools per the ingest precedent" — the rule is now uniform in the codebase
       before more code follows it.
 - Suspected, never proven: during v0.41.1's finalize the dev backend was serving stale code and
   had not reloaded despite dozens of source edits, which is this failure's signature. It was
   restarted rather than diagnosed, so it stays a lead.
+
+### Code review found four things, all fixed
+
+- [x] **The IMX269 is dual-gain and the row said otherwise.** Altair publish unity gain 282 in
+      HCG and 565 in LCG for the camera it feeds and SharpCap switches modes at gain 200 — only
+      possible on a dual-conversion-gain part. `dual_gain` is now 1. The widely quoted 2.6e read
+      noise is published **without saying which mode it belongs to**, so it is left blank rather
+      than asserted into a column that names a gain point; the fact lives in the note. Recording
+      it as the low-gain figure would have been the exact error migration 0052 existed to fix.
+- [x] **The IMX225 used the recording window, not Sony's effective array** — 1280x960 against
+      1305x977, leaving the row 1.5% short of Sony's own 6.09mm Type 1/3 diagonal. This is the
+      same active-vs-recording split caught on the IMX287 in this version and the IMX662 in
+      v0.41.1; it slipped through here because the row copied its sibling's convention. **The
+      sibling `imx224_color` carried the identical error and is corrected too** — one Sony flyer
+      covers both parts and leaving them inconsistent would be worse than the original mistake.
+- [x] **The UniGuide 32 was filed under `connector_size.t2`.** Every other guide scope in the
+      table takes `1_25_inch`, including its own UniGuide 50 sibling, and the row's own note
+      already said it accepts 1.25 inch cameras.
+- [x] **"All 33 seeded colour sensors are RGGB" counted the state before this version** while
+      claiming the three new rows were among them. 33 before, 36 after.
+- [x] Two reviewers flagged the claim that the result cache "absorbs the repeat-request case the
+      pool cache was built for" as overstated — it is keyed per target, so a different DSO is a
+      miss. Already corrected before they reported, and replaced with the measurement above:
+      the cost they were worried about is 0.3s, not the 6-12s the old comment asserted.
 
 ### Verification
 

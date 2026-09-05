@@ -567,11 +567,19 @@ def _make_pool(n_workers: int) -> ProcessPoolExecutor:
     once — and closed it on ``atexit``, noting that ``uvicorn --reload`` leaked
     processes between reloads but that production does not reload.
 
-    That trade was wrong in the direction that matters. The leaked children do
-    not merely linger: they prevent a clean restart and **wedge the event loop**,
-    so every endpoint hangs, ``/api/health`` included. Development is where the
-    reloader runs, which is where the cost lands. The result cache below already
-    absorbs the repeat-request case the pool cache was built for.
+    That trade was wrong twice over. The leaked children do not merely linger:
+    they prevent a clean restart and **wedge the event loop**, so every endpoint
+    hangs, ``/api/health`` included — and the reloader is a development tool, so
+    the cost lands exactly where the old comment assumed it would not.
+
+    The premise was also wrong. That comment put the spawn cost at ~1 s per worker
+    and 6-12 s per call. Measured on a 16-core M-series Mac under Python 3.14,
+    creating a pool, importing this module in every worker and shutting it down
+    again costs **0.25 s at 4 workers and 0.37 s at 15** — the astropy import the
+    estimate was built around is nowhere near a second. At a third of a second
+    this is below the noise floor of the year computation it precedes, and the
+    result cache below still absorbs a repeat request for the same target
+    outright.
 
     The caller owns the pool and must close it — use a ``with`` block.
     """
