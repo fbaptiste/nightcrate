@@ -108,6 +108,7 @@ export interface Sensor {
   read_noise_low_gain_e: number | null;
   read_noise_high_gain_e: number | null;
   peak_qe_pct: number | null;
+  peak_qe_wavelength_nm: number | null;
   bayer_pattern: string | null;
   dual_gain: boolean;
   notes: string | null;
@@ -394,6 +395,7 @@ export interface SensorCreate {
   read_noise_low_gain_e?: number | null;
   read_noise_high_gain_e?: number | null;
   peak_qe_pct?: number | null;
+  peak_qe_wavelength_nm?: number | null;
   bayer_pattern?: string | null;
   dual_gain?: boolean;
   notes?: string | null;

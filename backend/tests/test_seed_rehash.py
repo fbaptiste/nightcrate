@@ -17,7 +17,7 @@ from nightcrate.seed_loader.rehash import REHASH_STEPS
 
 SENSOR_HEADER = (
     "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,"
-    "full_well_capacity_ke,model_name,notes,peak_qe_pct,pixel_size_um,"
+    "full_well_capacity_ke,model_name,notes,peak_qe_pct,peak_qe_wavelength_nm,pixel_size_um,"
     "read_noise_low_gain_e,read_noise_high_gain_e,resolution_x,resolution_y,"
     "sensor_height_mm,sensor_type,sensor_width_mm,source_url"
 )
@@ -61,7 +61,7 @@ def write(csv_root, filename, header, *rows):
 
 def _sensor_row(read_noise_low: str = "", read_noise_high: str = "") -> str:
     return (
-        f"sensor.imx571,manufacturer.zwo,16,,1,50.0,IMX571,,91.0,3.76,"
+        f"sensor.imx571,manufacturer.zwo,16,,1,50.0,IMX571,,91.0,,3.76,"
         f"{read_noise_low},{read_noise_high},6248,4176,15.7,mono,23.5,"
     )
 

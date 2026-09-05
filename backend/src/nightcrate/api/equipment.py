@@ -309,9 +309,9 @@ async def create_sensor(body: SensorCreate):
                     pixel_size_um, resolution_x, resolution_y,
                     sensor_width_mm, sensor_height_mm, adc_bit_depth,
                     full_well_capacity_ke, read_noise_low_gain_e,
-                    read_noise_high_gain_e, peak_qe_pct,
+                    read_noise_high_gain_e, peak_qe_pct, peak_qe_wavelength_nm,
                     bayer_pattern, dual_gain, notes, source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     body.manufacturer_id,
                     body.model_name,
@@ -326,6 +326,7 @@ async def create_sensor(body: SensorCreate):
                     body.read_noise_low_gain_e,
                     body.read_noise_high_gain_e,
                     body.peak_qe_pct,
+                    body.peak_qe_wavelength_nm,
                     body.bayer_pattern,
                     int(body.dual_gain),
                     body.notes,

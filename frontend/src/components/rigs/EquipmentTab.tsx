@@ -810,7 +810,14 @@ function SensorBody({ sensor, label }: { sensor: Sensor; label?: string }) {
       {sensor.read_noise_high_gain_e != null && (
         <Field label="Read Noise (High Gain)" value={`${sensor.read_noise_high_gain_e} e⁻`} />
       )}
-      {sensor.peak_qe_pct != null && <Field label="Peak QE" value={`${sensor.peak_qe_pct}%`} />}
+      {sensor.peak_qe_pct != null && (
+        <Field
+          label="Peak QE"
+          value={`${sensor.peak_qe_pct}%${
+            sensor.peak_qe_wavelength_nm != null ? ` @ ${sensor.peak_qe_wavelength_nm}nm` : ""
+          }`}
+        />
+      )}
       <Field label="Dual Gain" value={sensor.dual_gain ? "Yes" : "No"} />
       {sensor.notes && <Field label="Notes" value={sensor.notes} />}
     </Subsection>

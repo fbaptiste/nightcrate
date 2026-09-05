@@ -236,7 +236,11 @@ CREATE TABLE IF NOT EXISTS sensor (
     -- so dynamic range must be computed against read_noise_low_gain_e.
     read_noise_low_gain_e REAL,
     read_noise_high_gain_e REAL,
+    -- Peak QE within 400-700nm, and where in that band it sits. Deep-sky imaging
+    -- is a visible-band activity; a near-infrared peak makes mono and colour
+    -- variants look identical and answers a question nobody asked.
     peak_qe_pct REAL,
+    peak_qe_wavelength_nm REAL,
     bayer_pattern TEXT CHECK (bayer_pattern IS NULL OR bayer_pattern IN ('RGGB', 'GRBG', 'GBRG', 'BGGR')),
     dual_gain INTEGER NOT NULL DEFAULT 0 CHECK (dual_gain IN (0, 1)),
     notes TEXT,

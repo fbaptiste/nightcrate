@@ -94,10 +94,23 @@ def _mount_before_0053(row: sqlite3.Row) -> dict:
     return {f: row[f] for f in REGISTRY["mount"].seeded_fields if f != _MOUNT_FIELD_ADDED_0053}
 
 
+# --- 0054.sensor_peak_qe_band ------------------------------------------------
+# peak_qe_wavelength_nm was added to sensor's seeded_fields. A database that
+# predates 0052 is already carried by that step, which re-hashes with today's
+# field set; this one covers a database seeded between the two migrations.
+
+_SENSOR_FIELD_ADDED_0054 = "peak_qe_wavelength_nm"
+
+
+def _sensor_before_0054(row: sqlite3.Row) -> dict:
+    return {f: row[f] for f in REGISTRY["sensor"].seeded_fields if f != _SENSOR_FIELD_ADDED_0054}
+
+
 REHASH_STEPS: tuple[RehashStep, ...] = (
     RehashStep("rehash.0052.sensor", "sensor", _sensor_before_0052),
     RehashStep("rehash.0052.camera", "camera", _camera_before_0052),
     RehashStep("rehash.0053.mount", "mount", _mount_before_0053),
+    RehashStep("rehash.0054.sensor", "sensor", _sensor_before_0054),
 )
 
 

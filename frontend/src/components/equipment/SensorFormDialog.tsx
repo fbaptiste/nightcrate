@@ -45,6 +45,7 @@ interface FormState {
   read_noise_low_gain_e: string;
   read_noise_high_gain_e: string;
   peak_qe_pct: string;
+  peak_qe_wavelength_nm: string;
   bayer_pattern: string;
   dual_gain: boolean;
   notes: string;
@@ -65,6 +66,7 @@ function emptyForm(): FormState {
     read_noise_low_gain_e: "",
     read_noise_high_gain_e: "",
     peak_qe_pct: "",
+    peak_qe_wavelength_nm: "",
     bayer_pattern: "",
     dual_gain: false,
     notes: "",
@@ -88,6 +90,8 @@ function sensorToForm(sensor: Sensor): FormState {
     read_noise_high_gain_e:
       sensor.read_noise_high_gain_e != null ? String(sensor.read_noise_high_gain_e) : "",
     peak_qe_pct: sensor.peak_qe_pct != null ? String(sensor.peak_qe_pct) : "",
+    peak_qe_wavelength_nm:
+      sensor.peak_qe_wavelength_nm != null ? String(sensor.peak_qe_wavelength_nm) : "",
     bayer_pattern: sensor.bayer_pattern ?? "",
     dual_gain: sensor.dual_gain,
     notes: sensor.notes ?? "",
@@ -149,6 +153,7 @@ export default function SensorFormDialog({
         read_noise_low_gain_e: parseOptionalFloat(form.read_noise_low_gain_e),
         read_noise_high_gain_e: parseOptionalFloat(form.read_noise_high_gain_e),
         peak_qe_pct: parseOptionalFloat(form.peak_qe_pct),
+        peak_qe_wavelength_nm: parseOptionalFloat(form.peak_qe_wavelength_nm),
         bayer_pattern: form.sensor_type === "color" && form.bayer_pattern ? form.bayer_pattern : null,
         dual_gain: form.dual_gain,
         notes: form.notes.trim() || null,
@@ -294,8 +299,10 @@ export default function SensorFormDialog({
               />
             </Box>
 
-            {/* Row 5: ADC bit depth + Full well + Peak QE */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 2 }}>
+            {/* Row 5: ADC bit depth + Full well + Peak QE + where that peak sits.
+                Peak QE is the peak within 400-700nm — a near-infrared peak answers a
+                question no deep-sky imager is asking. */}
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 2 }}>
               <TextField
                 label="ADC Bit Depth"
                 type="number"
@@ -315,6 +322,13 @@ export default function SensorFormDialog({
                 type="number"
                 value={form.peak_qe_pct}
                 onChange={(e) => set("peak_qe_pct", e.target.value)}
+                slotProps={{ htmlInput: { step: "any" } }}
+              />
+              <TextField
+                label="Peak QE Wavelength (nm)"
+                type="number"
+                value={form.peak_qe_wavelength_nm}
+                onChange={(e) => set("peak_qe_wavelength_nm", e.target.value)}
                 slotProps={{ htmlInput: { step: "any" } }}
               />
             </Box>

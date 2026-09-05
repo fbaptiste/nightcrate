@@ -225,6 +225,7 @@ class SensorCreate(BaseModel):
     read_noise_low_gain_e: float | None = None
     read_noise_high_gain_e: float | None = None
     peak_qe_pct: float | None = None
+    peak_qe_wavelength_nm: float | None = None
     bayer_pattern: str | None = None
     dual_gain: bool = False
     notes: str | None = None
@@ -245,6 +246,7 @@ class SensorUpdate(BaseModel):
     read_noise_low_gain_e: float | None = None
     read_noise_high_gain_e: float | None = None
     peak_qe_pct: float | None = None
+    peak_qe_wavelength_nm: float | None = None
     bayer_pattern: str | None = None
     dual_gain: bool | None = None
     notes: str | None = None
@@ -266,6 +268,7 @@ class SensorResponse(BaseModel):
     read_noise_low_gain_e: float | None
     read_noise_high_gain_e: float | None
     peak_qe_pct: float | None
+    peak_qe_wavelength_nm: float | None
     bayer_pattern: str | None
     dual_gain: bool
     notes: str | None

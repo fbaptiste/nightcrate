@@ -151,6 +151,7 @@ erDiagram
         REAL read_noise_low_gain_e
         REAL read_noise_high_gain_e
         REAL peak_qe_pct
+        REAL peak_qe_wavelength_nm
         TEXT bayer_pattern "CHECK: RGGB, GRBG, GBRG, BGGR or NULL"
         INTEGER dual_gain "boolean"
         INTEGER hcg_threshold_gain

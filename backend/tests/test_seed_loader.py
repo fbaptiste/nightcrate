@@ -377,8 +377,8 @@ def test_junction_table(seed_db, csv_root):
     write_csv(
         csv_root,
         "sensor.csv",
-        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_low_gain_e,read_noise_high_gain_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm,source_url",
-        "sensor.imx571,manufacturer.zwo,,,0,,IMX571,,,3.76,,,6248,4176,,mono,,",
+        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,model_name,notes,peak_qe_pct,peak_qe_wavelength_nm,pixel_size_um,read_noise_low_gain_e,read_noise_high_gain_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm,source_url",
+        "sensor.imx571,manufacturer.zwo,,,0,,IMX571,,,,3.76,,,6248,4176,,mono,,",
     )
     write_csv(
         csv_root,

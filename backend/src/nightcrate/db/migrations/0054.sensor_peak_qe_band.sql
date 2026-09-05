@@ -1,0 +1,33 @@
+-- v0.41.1 — peak QE says where the peak is.
+--
+-- Quantum efficiency varies with wavelength, so "peak QE" has to state peak WHERE.
+-- Across fourteen mono/colour pairs, mono normally beats colour by 4-15 points
+-- because the Bayer dye array costs light. Three pairs were seeded exactly equal:
+-- IMX174, IMX462 and IMX662. For the last two that is defensible — both are
+-- STARVIS parts marketed on near-infrared sensitivity, where Bayer dyes are largely
+-- transparent, so colour genuinely can match mono at their 91 percent NIR peak.
+-- Under a spectral-peak reading those rows are right; under a visible-light reading
+-- they are wrong. Nothing in the schema said which reading applied.
+--
+-- Defined from here as the peak within 400-700nm. This is a deep-sky imaging
+-- application: visible-band response is what determines exposure, and an NIR peak
+-- answers a question no deep-sky imager is asking while making mono-versus-colour
+-- comparison meaningless. peak_qe_wavelength_nm is added so the figure carries its
+-- own context and this cannot recur; it is NULL everywhere today because no
+-- manufacturer in the catalogue publishes it, and a blank is better than a guess.
+--
+-- The definition invalidates values that are present and plausible-looking, so
+-- sensor.csv blanks them rather than leaving them to be read under a meaning they
+-- were not recorded under: both IMX462 rows, both IMX662 rows, and imx174_color,
+-- which carried the mono variant's 77 percent unchanged — something a Bayer-filtered
+-- sensor cannot match in the visible band.
+--
+-- One identical pair is deliberately left standing. ZWO publish 83 percent for the
+-- ASI676MM and the ASI676MC separately, so both IMX676 rows carry a per-variant
+-- manufacturer figure rather than one value copied across; the rows' notes record
+-- that ZWO quote the same number for both.
+--
+-- Structural only — values reach existing databases through the loader, which still
+-- respects rows the user has edited. See seed_loader/rehash.py.
+
+ALTER TABLE sensor ADD COLUMN peak_qe_wavelength_nm REAL;

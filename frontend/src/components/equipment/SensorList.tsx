@@ -63,7 +63,18 @@ export default function SensorList() {
             label="Read Noise (High Gain)"
             value={item.read_noise_high_gain_e != null ? `${item.read_noise_high_gain_e}e⁻` : null}
           />
-          <DetailField label="Peak QE" value={item.peak_qe_pct != null ? `${item.peak_qe_pct}%` : null} />
+          <DetailField
+            label="Peak QE"
+            value={
+              item.peak_qe_pct != null
+                ? `${item.peak_qe_pct}%${
+                    item.peak_qe_wavelength_nm != null
+                      ? ` @ ${item.peak_qe_wavelength_nm}nm`
+                      : ""
+                  }`
+                : null
+            }
+          />
           <DetailField label="Bayer Pattern" value={item.bayer_pattern ?? null} />
           <DetailField label="Dual Gain" value={item.dual_gain ? "Yes" : "No"} />
           <DetailField label="Notes" value={item.notes ?? null} />

@@ -95,6 +95,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "read_noise_low_gain_e",
             "read_noise_high_gain_e",
             "peak_qe_pct",
+            "peak_qe_wavelength_nm",
             "bayer_pattern",
             "dual_gain",
             "notes",
