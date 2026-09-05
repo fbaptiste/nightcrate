@@ -60,7 +60,8 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.40.3 — Plan a Night (pick any date)](#v0403--plan-a-night-pick-any-date) ✅
 - [v0.41.0 — Equipment Resolution + Rig Attribution](#v0410--equipment-resolution--rig-attribution) ✅
 - [v0.41.1 — Catalog Simplification + Derived Sessions](#v0411--catalog-simplification--derived-sessions) ✅
-- [v0.41.2 — Frame Quality Metrics](#v0412--frame-quality-metrics)
+- [v0.41.2 — Catalogue Gaps + Planner Pool](#v0412--catalogue-gaps--planner-pool) ✅
+- [v0.41.3 — Frame Quality Metrics](#v0413--frame-quality-metrics)
 - [v0.42.0 — Calibration Coverage + Gallery Promotion](#v0420--calibration-coverage--gallery-promotion)
 - [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
 - [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
@@ -5468,7 +5469,108 @@ Hand-entering a session for a night *and* deriving that same night produces two
 workflow makes it unlikely — you either have the subs or you don't — but it should either warn
 on the derive confirm or reconcile.
 
-## v0.41.2 — Frame Quality Metrics
+## v0.41.2 — Catalogue Gaps + Planner Pool
+
+**Status:** Done. **Branch:** `v0.41.2/catalogue-gaps-planner-pool`.
+
+Three loose ends left by v0.41.1's catalogue audit — two data gaps and the one latent bug the
+audit surfaced but did not touch. No migration; no schema change.
+
+### Cameras that were blocked on missing sensors
+
+- [x] **Four sensors added**, because `camera.sensor_seed_key` is a FK and the camera cannot
+      land without one: Sony **IMX287** (mono, Pregius global shutter), **IMX269** (type 4/3),
+      **IMX327** and **IMX225**. Every row satisfies `resolution × pixel_size = dimensions`,
+      and each diagonal matches its stated optical format — 6.27mm for 1/2.9", 21.77mm for
+      type 4/3, 6.45mm for 1/2.8", 6.00mm for 1/3".
+- [x] **The arithmetic caught another bad published figure.** Altair state the IMX269's array
+      as 20.49 × 17.83mm. 5280 × 3.3µm is 17.42 × 13.05mm, whose diagonal is 21.77mm — exactly
+      Sony's own type 4/3 number. The retailer figure is wrong and was not used.
+- [x] **The ToupTek part numbers were not the silicon**, exactly as the plan warned. Neither
+      needed a new sensor row for its own model number: `GPCMOS02000KPA` is an **IMX290 colour**,
+      already seeded, and `GPCMOS01200KPF` is an **IMX225**. The original note claiming both
+      needed new sensors was wrong; only the IMX225 did.
+- [x] **Six cameras added** — Altair GPCAM3 287M, GPCAM2 327C, Hypercam 269C PRO TEC and PRO
+      (fan-cooled), plus the two ToupTek guide cameras.
+- [x] **RGGB is family convention here, not a guess.** All 33 colour sensors seeded before this
+      version are RGGB — including the IMX224 / IMX290 / IMX462 siblings of the three new Sony
+      colour parts — and the three added here keep it at 36 for 36.
+
+### Deferred: the SmartSens SC2210 colour
+
+- [ ] **`sensor.smartsens.sc2210_color` and the Altair 2210C are NOT added.** The schema
+      requires `bayer_pattern` on a colour sensor and no source states it for this part — unlike
+      the Sony parts above there is no seeded colour sibling to argue from, SmartSens is a
+      different maker, and a search returned a conflicting ADC depth (14-bit against the seeded
+      mono row's 12) which undercuts the rest of the retailer data too. `bayer_pattern` is a
+      closed CHECK vocabulary; inventing a value is the failure the audit exists to prevent.
+      Needs the SmartSens datasheet or a driver that reports the pattern.
+
+### Missing William Optics models
+
+- [x] **Gran Turismo 153** (153mm / 1188mm f/7.8) and **Mighty-Cat 71** (71mm / 230mm f/3.2,
+      43.2mm image circle — the fastest scope they build), both with native configurations.
+- [x] **UniGuide 32mm f/3.75** added to `guide_scope.csv`.
+- [x] **The plan's claim that UniGuide 50 was missing was wrong.** It has been seeded all along
+      — in `guide_scope.csv`, which the original grep of `telescope.csv` never looked at. Guide
+      scopes are their own table; check both before calling one absent.
+
+### The last persistent ProcessPool
+
+- [x] **`planner_annual_hours.py` now builds a per-run pool** (`_make_pool`, used in a `with`),
+      matching `ingest_scanner.make_pool`. It previously cached a module-level pool keyed on
+      worker count and closed it on `atexit`, with a comment acknowledging that
+      `uvicorn --reload` leaked processes between reloads but arguing production does not
+      reload. That trade was wrong in the direction that matters: the leaked children do not
+      merely linger, they block a clean restart and **wedge the event loop** so every endpoint
+      hangs, `/api/health` included — and the reloader runs in development, which is where the
+      cost lands. **The premise was wrong too:** that comment put the spawn cost at ~1s per
+      worker and 6-12s per call, but measured on a 16-core M-series Mac under Python 3.14,
+      creating a pool, importing the service module in every worker and shutting it down costs
+      0.25s at 4 workers and 0.37s at 15. The result cache still absorbs a repeat request for
+      the same target outright. CLAUDE.md's caveat naming this module as the remaining risk is
+      replaced by the rule that no persistent pool should exist at all.
+- [x] Landed before v0.41.3, whose batch quality pass adds another pool and whose spec already
+      says "per-run pools per the ingest precedent" — the rule is now uniform in the codebase
+      before more code follows it.
+- Suspected, never proven: during v0.41.1's finalize the dev backend was serving stale code and
+  had not reloaded despite dozens of source edits, which is this failure's signature. It was
+  restarted rather than diagnosed, so it stays a lead.
+
+### Code review found four things, all fixed
+
+- [x] **The IMX269 is dual-gain and the row said otherwise.** Altair publish unity gain 282 in
+      HCG and 565 in LCG for the camera it feeds and SharpCap switches modes at gain 200 — only
+      possible on a dual-conversion-gain part. `dual_gain` is now 1. The widely quoted 2.6e read
+      noise is published **without saying which mode it belongs to**, so it is left blank rather
+      than asserted into a column that names a gain point; the fact lives in the note. Recording
+      it as the low-gain figure would have been the exact error migration 0052 existed to fix.
+- [x] **The IMX225 used the recording window, not Sony's effective array** — 1280x960 against
+      1305x977, leaving the row 1.5% short of Sony's own 6.09mm Type 1/3 diagonal. This is the
+      same active-vs-recording split caught on the IMX287 in this version and the IMX662 in
+      v0.41.1; it slipped through here because the row copied its sibling's convention. **The
+      sibling `imx224_color` carried the identical error and is corrected too** — one Sony flyer
+      covers both parts and leaving them inconsistent would be worse than the original mistake.
+- [x] **The UniGuide 32 was filed under `connector_size.t2`.** Every other guide scope in the
+      table takes `1_25_inch`, including its own UniGuide 50 sibling, and the row's own note
+      already said it accepts 1.25 inch cameras.
+- [x] **"All 33 seeded colour sensors are RGGB" counted the state before this version** while
+      claiming the three new rows were among them. 33 before, 36 after.
+- [x] Two reviewers flagged the claim that the result cache "absorbs the repeat-request case the
+      pool cache was built for" as overstated — it is keyed per target, so a different DSO is a
+      miss. Already corrected before they reported, and replaced with the measurement above:
+      the cost they were worried about is 0.3s, not the 6-12s the old comment asserted.
+
+### Verification
+
+- [x] Seed CSV integrity: column counts, no commas in any field, no duplicate seed keys, no
+      orphan FKs, exactly one native configuration per telescope, `resolution × pixel_size =
+      dimensions` on all four new sensors, focal ratio within tolerance except the 8 documented
+      manufacturer roundings.
+- [x] Backend suite, ruff, bandit, frontend build.
+- [x] Planner suite green with the per-run pool (166 tests).
+
+## v0.41.3 — Frame Quality Metrics
 
 **Status:** Planned. Batch quality analysis reusing the aberration-inspector machinery —
 fills the `sub_frame` quality columns (`hfr`, `star_count`, `median_adu`,
@@ -5555,7 +5657,7 @@ manually-testable UI.
       Middle: continuous RA/Dec **guiding strip** — a purpose-built rotated chart drawn
       from `guiding_sample` (decimated server-side; a 2 s-cadence night is ~14 k points) —
       with dither markers. Right: **sub blocks** spanning their exposure windows
-      (thumbnail, filter chip, exposure, HFR when v0.41.2 has run). Click a sub → embedded
+      (thumbnail, filter chip, exposure, HFR when v0.41.3 has run). Click a sub → embedded
       Image Analyzer overlay (prev/next walks the session in time order); click the
       guiding strip → embedded PHD2 analyzer pre-scoped to that window. The existing PHD2
       `TimeSeriesChart` stays untouched — reuse is at the data layer and via the embedded
@@ -5588,7 +5690,7 @@ manually-testable UI.
       and rendered as a thin band on the timeline. This is the projects surface doing what
       it exists to do: rig + weather + guiding + subs joined in one view — the cross-domain
       correlation no other tool has.
-- [ ] **Frame-quality trend column** (when v0.41.2 metrics exist): per-sub HFR — focus
+- [ ] **Frame-quality trend column** (when v0.41.3 metrics exist): per-sub HFR — focus
       drift becomes visible between autofocus markers — plus star count and background
       ADU (passing clouds show as star-count dips; moonrise lifts the background, lining
       up with the moon strip and conditions band).
