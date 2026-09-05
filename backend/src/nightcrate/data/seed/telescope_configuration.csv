@@ -172,3 +172,8 @@ telescope_configuration.celestron.c9_25.native,telescope.celestron.c9_25,,Native
 telescope_configuration.celestron.c9_25.f63,telescope.celestron.c9_25,Celestron f/6.3 Reducer/Corrector (#94175),f/6.3 Reducer,,1480.5,6.3,,0,Celestron universal f/6.3 reducer; 0.63x reduction; improves but does not eliminate field curvature,0.63
 telescope_configuration.celestron.c14.native,telescope.celestron.c14,,Native f/11,,3910.0,11.0,,1,Classic SCT at native f/11; uncorrected field curvature typical of the design,1.0
 telescope_configuration.celestron.rasa_36.native,telescope.celestron.rasa_36,,Native f/2.2,,790.0,2.2,,1,Prime-focus astrograph; the camera sits in the light path ahead of the corrector,1.0
+# --- Explore Scientific native configurations added in the 2026 catalogue audit ---
+telescope_configuration.explore_scientific.ed140_cf.native,telescope.explore_scientific.ed140_cf,,Native f/6.5,,910.0,6.5,,1,Native configuration.,1.0
+telescope_configuration.explore_scientific.ed152_fcd1.native,telescope.explore_scientific.ed152_fcd1,,Native f/8.0,,1216.0,8.0,,1,Native configuration.,1.0
+telescope_configuration.explore_scientific.mn152_comet_hunter.native,telescope.explore_scientific.mn152_comet_hunter,,Native f/4.8,,730.0,4.8,,1,Native configuration.,1.0
+telescope_configuration.explore_scientific.n208cf.native,telescope.explore_scientific.n208cf,,Native f/3.9,,812.0,3.9,,1,Native configuration.,1.0
