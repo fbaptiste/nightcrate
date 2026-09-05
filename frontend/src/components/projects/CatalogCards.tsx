@@ -177,6 +177,14 @@ function FilterChip({ row }: { row: CatalogFrame }) {
   );
 }
 
+/** Rig chip — inherited from the source folder the user tagged, so it is a
+ * declared fact rather than anything read out of a header. Absent when the
+ * folder carries no rig, which is a valid state ("not stated"). */
+function RigChip({ row }: { row: CatalogFrame }) {
+  if (!row.rig_name) return null;
+  return <Chip size="small" variant="outlined" label={row.rig_name} />;
+}
+
 // Memoized: the catalog is an infinite-scroll list that can hold thousands of
 // cards, and opening/closing the corrections dialog re-renders the whole tab.
 // `row` identity is stable from the query cache and `onCorrect` / `onOpen` are
@@ -233,9 +241,19 @@ function FrameCardImpl({
       <Thumb src={catalogThumbnailUrl(projectId, row.id)} />
       <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.25 }}>
         <FileNameBlock path={row.path} />
-        {(showFilter || showObject) && (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.25, minWidth: 0 }}>
+        {(showFilter || showObject || row.rig_name) && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              mt: 0.25,
+              minWidth: 0,
+              flexWrap: "wrap",
+            }}
+          >
             {showFilter && <FilterChip row={row} />}
+            <RigChip row={row} />
             {showObject && row.object_hint && (
               <Typography sx={{ fontSize: 13, ...ELLIPSIS }}>{row.object_hint}</Typography>
             )}

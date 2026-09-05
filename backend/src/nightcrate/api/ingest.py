@@ -433,7 +433,7 @@ async def _parse_in_pool(entries, pool) -> list[dict]:
 async def _persist_parsed(conn, project_id, run_id, result, target_id, counters) -> None:
     meta = result["meta"]
     raw_header = result["raw_header"]
-    route, frame_type = classify_frame(meta, raw_header)
+    route, frame_type = classify_frame(meta, raw_header, filename=Path(result["path"]).name)
 
     date_obs = _coerce_date_obs(meta.get("date_obs"), result["mtime"])
 
@@ -1166,10 +1166,12 @@ _FRAME_SELECT = (
     "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.accepted, "
     "sf.project_target_id, sf.frame_type_source, sf.project_target_source, "
     "COALESCE(d.common_name, d.primary_designation) AS target_name, "
+    "r.name AS rig_name, "
     "fl.path AS path, fl.size_bytes AS file_size_bytes "
     "FROM sub_frame sf "
     "LEFT JOIN project_target pt ON pt.id = sf.project_target_id "
     "LEFT JOIN dso d ON d.id = pt.dso_id "
+    "LEFT JOIN rig r ON r.id = sf.rig_id "
     "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
 )
 
@@ -1194,6 +1196,7 @@ def _catalog_frame(d: dict) -> CatalogFrame:
         file_size_bytes=d.get("file_size_bytes"),
         date_obs_utc=d.get("date_obs_utc"),
         accepted=bool(d["accepted"]) if d.get("accepted") is not None else None,
+        rig_name=d.get("rig_name"),
         project_target_id=d.get("project_target_id"),
         target_name=d.get("target_name"),
         frame_type_source=d.get("frame_type_source"),

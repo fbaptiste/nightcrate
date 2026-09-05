@@ -2,9 +2,6 @@
 
 Living document tracking implementation status. Check off items as they are completed.
 
-## Project context
-@~/dev/context/projects/nightcrate.md
-
 ## Table of Contents
 
 - [v0.1.0 — Foundation + FITS Viewer](#v010--foundation--fits-viewer) ✅

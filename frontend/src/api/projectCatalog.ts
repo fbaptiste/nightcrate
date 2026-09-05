@@ -59,6 +59,8 @@ export interface CatalogFrame {
   file_size_bytes: number | null;
   date_obs_utc: string | null;
   accepted: boolean | null;
+  /** Rig tagged on this frame's source folder. null = "not stated". */
+  rig_name: string | null;
   // Classification (v0.41.1) — hand-correctable, guarded by a source flag.
   project_target_id: number | null;
   target_name: string | null;
@@ -155,11 +157,12 @@ export function addFolder(
   projectId: number,
   path: string,
   isPrimary = false,
+  rigId: number | null = null,
 ): Promise<SourceFolder> {
   return apiFetch<SourceFolder>(`/projects/${projectId}/folders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, is_primary: isPrimary }),
+    body: JSON.stringify({ path, is_primary: isPrimary, rig_id: rigId }),
   });
 }
 

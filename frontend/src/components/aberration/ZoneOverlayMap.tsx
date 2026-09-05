@@ -185,15 +185,28 @@ export function ZoneOverlayMap({
               top,
               width,
               height,
+              // Deliberately literal white/black rather than theme tokens: these
+              // lines sit on top of image pixels, not on a themed surface, so
+              // they must read against a noisy mid-grey sub as well as against
+              // black sky. The white edge is sandwiched between two dark rings
+              // (one outside, one inside) so one of the pair always contrasts —
+              // a single hairline at low alpha vanishes into background noise.
               border: "1px solid",
-              borderColor: isDragging ? "#ffffff" : isSelected ? "#ffffff" : sq.star_count > 0 ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.15)",
+              borderColor: isDragging
+                ? "#ffffff"
+                : isSelected
+                  ? "#ffffff"
+                  : sq.star_count > 0
+                    ? "rgba(255,255,255,0.95)"
+                    : "rgba(255,255,255,0.6)",
+              boxShadow:
+                "0 0 0 1px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(0,0,0,0.65)",
               bgcolor: isDragging ? "rgba(255,255,255,0.25)" : isSelected ? "rgba(255,255,255,0.2)" : "transparent",
               cursor: isDragging ? "grabbing" : "grab",
               transition: isDragging ? "none" : "border-color 0.15s, background-color 0.15s",
-              opacity: sq.star_count > 0 || isDragging ? 1 : 0.4,
               "&:hover": isDragging ? {} : {
-                borderColor: "rgba(255,255,255,0.7)",
-                bgcolor: "rgba(255,255,255,0.1)",
+                borderColor: "#ffffff",
+                bgcolor: "rgba(255,255,255,0.12)",
               },
             }}
           />

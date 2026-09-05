@@ -162,6 +162,13 @@ Reference documents:
 - `DB_SCHEMA.md` / `DB_SCHEMA_DDL.sql` — authoritative schema docs
 - `LLM_DB_SPECS.md` — LLM-facing seed-data reference (CSV columns, abbreviated schema)
 
+Maintainer's cross-project note, kept outside this repo (other clones won't
+have it — Claude Code silently skips missing imports). Orientation, goals,
+non-goals, and current state; `decisions.md` alongside it records why things
+are the way they are.
+
+@~/dev/context/projects/nightcrate/README.md
+
 ## Planned Stack
 
 - **Backend:** Python + FastAPI
@@ -204,9 +211,12 @@ The app is a **cross-platform local-first desktop application** (Mac, Windows, L
 
 ## Domain Knowledge
 
-**Two imaging rigs run simultaneously:**
-- Rig 1 (C11): N.I.N.A. + PHD2 on Windows mini-PC, ZWO ASI 2600MM Pro, Optolong 7nm narrowband + ZWO LRGB
-- Rig 2 (Askar V): ASIAIR controller + PHD2, ZWO ASI 2600MM Pro, Antlia 3nm narrowband + Optolong LRGB
+**Three imaging rigs, at most two running on a night** — the C6 and Askar V share one AM5 mount, so a simultaneous night is the C11 plus one of them:
+- C6 (current workhorse): ASIAIR Plus + PHD2, ZWO ASI 533MM Pro, Antlia LRGB-V Pro + Antlia 3nm Pro narrowband. **True focal length ~1667mm at f/11** — the published 1500mm f/10 is wrong for this OTA; use the measured value.
+- C11: N.I.N.A. + PHD2 on a Windows mini-PC, ZWO ASI 2600MM Pro, ZWO Premium LRGB + Optolong Ha 7nm / Oiii 6.5nm / Sii 6.5nm (Starizona LCF 0.7x corrector, ~1960mm f/7)
+- Askar V: ASIAIR Plus + PHD2, ZWO ASI 2600MM Pro, ZWO Premium Lum + Optolong RGB + Antlia 3nm Pro narrowband
+
+A filter name alone never identifies a rig — "Ha" is Optolong 7nm on the C11 and Antlia 3nm Pro on the other two. Guiding: OAG on the C11 (ASI 174MM) and C6 (ASI 174MM), 52mm guide scope on the Askar V (ASI 178MM). Full inventory in `NightCrate_Equipment_and_Technical_Context.md`.
 
 **Ingestion sources with different formats:**
 - N.I.N.A. session logs (text) + autofocus JSON files

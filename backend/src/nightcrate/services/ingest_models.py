@@ -91,6 +91,9 @@ class CatalogFrame(BaseModel):
     file_size_bytes: int | None = None
     date_obs_utc: str | None = None
     accepted: bool | None = None
+    # The rig the user tagged on this frame's source folder (v0.41.1). NULL is a
+    # valid answer — "not stated" — and renders as no chip rather than a blank one.
+    rig_name: str | None = None
     # Classification (v0.41.1) — hand-correctable, guarded by a source flag.
     project_target_id: int | None = None
     target_name: str | None = None  # resolved DSO designation for display

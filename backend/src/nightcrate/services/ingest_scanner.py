@@ -44,7 +44,16 @@ def scan_directory(root: str) -> list[ScanEntry]:
 
     `.pxiproject` directories are recorded as a single entry (a project asset),
     not descended into.
+
+    *root* may also address a folder **inside an archive** — either the archive
+    itself (``/data/night.zip``) or a directory within it
+    (``/data/night.zip::lights/ha``). Entries then carry the same ``::`` virtual
+    path the rest of the app uses, and :func:`parse_image_file` reads them
+    straight out of the archive.
     """
+    if _archive_root(root) is not None:
+        return _scan_archive(root)
+
     base = Path(root).expanduser()
     entries: list[ScanEntry] = []
     if not base.exists():
@@ -65,6 +74,65 @@ def scan_directory(root: str) -> list[ScanEntry]:
                 mtime=_iso_mtime(stat.st_mtime),
             )
         )
+    return entries
+
+
+def _archive_root(root: str) -> tuple[Path, str] | None:
+    """Split *root* into (archive, subdir) when it addresses an archive, else None."""
+    from nightcrate.services.archive_io import is_archive
+
+    left, sep, right = root.partition("::")
+    archive = Path(left).expanduser()
+    if not is_archive(archive) or not archive.is_file():
+        return None
+    return archive, right.strip("/") if sep else ""
+
+
+def _scan_archive(root: str) -> list[ScanEntry]:
+    """Walk a directory inside an archive, yielding ``archive::entry`` paths.
+
+    Archives carry no per-entry mtime in the TOC listing we use, so every entry
+    inherits the archive file's own mtime. That only feeds the ``date_obs``
+    fallback for headers with no DATE-OBS — real timestamps still come from the
+    header. Nested archives are catalogued as plain files, never descended into.
+    """
+    from nightcrate.services.archive_io import list_contents
+
+    parsed = _archive_root(root)
+    if parsed is None:
+        return []
+    archive, start = parsed
+    try:
+        mtime = _iso_mtime(archive.stat().st_mtime)
+    except OSError:
+        return []
+
+    entries: list[ScanEntry] = []
+    stack = [start]
+    while stack:
+        subdir = stack.pop()
+        try:
+            children = list_contents(archive, subdir)
+        except (OSError, ValueError) as exc:
+            logger.warning("%s cannot list %s::%s — %s", _LOG_PREFIX, archive, subdir, exc)
+            continue
+        for child in children:
+            name = child["name"]
+            if name.startswith("."):
+                continue
+            entry_path = f"{subdir}/{name}" if subdir else name
+            if child["type"] == "dir":
+                stack.append(entry_path)
+                continue
+            entries.append(
+                ScanEntry(
+                    path=f"{archive}::{entry_path}",
+                    name=name,
+                    category=classify_extension(name, is_dir=False),
+                    size_bytes=child.get("size") or 0,
+                    mtime=mtime,
+                )
+            )
     return entries
 
 
@@ -109,6 +177,9 @@ def parse_image_file(path_str: str) -> dict:
     from nightcrate.services.fits_header_map import extract_metadata
     from nightcrate.services.path_resolver import file_type
 
+    if "::" in path_str:
+        return _parse_archive_entry(path_str)
+
     path = Path(path_str)
     try:
         ftype = file_type(path)
@@ -132,6 +203,45 @@ def parse_image_file(path_str: str) -> dict:
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - any parse failure is a recorded error, not fatal
+        return {"path": path_str, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _parse_archive_entry(path_str: str) -> dict:
+    """Worker branch for ``archive::entry`` paths — same contract as the plain one.
+
+    The entry is extracted **once** and hashed from those bytes; the header gets
+    its own fresh ``BytesIO`` because astropy closes any file object handed to it,
+    so a single buffer cannot serve both consumers.
+    """
+    import hashlib
+    import io
+
+    from nightcrate.services.archive_io import extract_entry
+    from nightcrate.services.fits_header_map import extract_metadata
+    from nightcrate.services.path_resolver import file_type
+
+    archive_str, entry = path_str.rsplit("::", 1)
+    archive = Path(archive_str)
+    try:
+        raw = extract_entry(archive, entry).getvalue()
+        ftype = file_type(Path(entry))
+        if ftype == "xisf":
+            from nightcrate.services.xisf_io import read_header
+        else:
+            from nightcrate.services.fits_io import read_header
+
+        cards = read_header(io.BytesIO(raw))
+        raw_header = {c["key"]: c["value"] for c in cards if c.get("key")}
+        return {
+            "path": path_str,
+            "content_hash": hashlib.sha256(raw).hexdigest(),
+            "size_bytes": len(raw),
+            "mtime": _iso_mtime(archive.stat().st_mtime),
+            "meta": extract_metadata(raw_header),
+            "raw_header": raw_header,
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001 - a bad entry is a recorded error, not fatal
         return {"path": path_str, "error": f"{type(exc).__name__}: {exc}"}
 
 

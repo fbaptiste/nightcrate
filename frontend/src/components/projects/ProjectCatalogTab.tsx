@@ -5,6 +5,11 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import Alert from "@mui/material/Alert";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Checkbox from "@mui/material/Checkbox";
@@ -75,6 +80,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const queryClient = useQueryClient();
   const [snack, setSnack] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // A folder chosen in the browser, held until its rig is declared.
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [pendingRigId, setPendingRigId] = useState<number | "">("");
   const [tab, setTab] = useState<TabKey>("light");
   // Active filter-pill scope on the Lights / Flats lists (null = show all).
   const [filterName, setFilterName] = useState<string | null>(null);
@@ -210,7 +218,8 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     onSettled: () => setScanningFolderId(null),
   });
   const addMut = useMutation({
-    mutationFn: (path: string) => addFolder(projectId, path),
+    mutationFn: ({ path, rigId }: { path: string; rigId: number | null }) =>
+      addFolder(projectId, path, false, rigId),
     onSuccess: (folder) => {
       invalidateFolders();
       setSnack("Folder added — scanning…");
@@ -356,31 +365,29 @@ export default function ProjectCatalogTab({ projectId }: Props) {
               >
                 {scanning ? "Scanning…" : "Re-scan"}
               </Button>
-              <Tooltip title="Which rig shot this folder. Frames inherit it, a dual-rig night splits into one session per rig, and calibration frames only match lights from the same rig. Leave blank if you'd rather not say.">
-                <TextField
-                  select
-                  size="small"
-                  label="Rig"
-                  value={f.rig_id ?? ""}
-                  onChange={(e) =>
-                    folderRigMut.mutate({
-                      folderId: f.id,
-                      rigId: e.target.value === "" ? null : Number(e.target.value),
-                    })
-                  }
-                  disabled={folderRigMut.isPending}
-                  sx={{ minWidth: 160 }}
-                >
-                  <MenuItem value="">
-                    <em>Not stated</em>
+              <TextField
+                select
+                size="small"
+                label="Rig"
+                value={f.rig_id ?? ""}
+                onChange={(e) =>
+                  folderRigMut.mutate({
+                    folderId: f.id,
+                    rigId: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+                disabled={folderRigMut.isPending}
+                sx={{ minWidth: 160 }}
+              >
+                <MenuItem value="">
+                  <em>Not stated</em>
+                </MenuItem>
+                {rigs.map((r) => (
+                  <MenuItem key={r.id} value={r.id}>
+                    {r.name}
                   </MenuItem>
-                  {rigs.map((r) => (
-                    <MenuItem key={r.id} value={r.id}>
-                      {r.name}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              </Tooltip>
+                ))}
+              </TextField>
               <Tooltip title="Remove folder">
                 <IconButton size="small" onClick={() => removeMut.mutate(f.id)}>
                   <DeleteIcon fontSize="small" />
@@ -400,6 +407,31 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           Add folder
         </Button>
       </Stack>
+
+      {/* Unclassified frames would otherwise vanish into Others with no signal:
+          the frame-type tabs all read (0) and the scan looks like it found
+          nothing. Capture software that writes no IMAGETYP is the usual cause. */}
+      {summary && summary.unknown_frames > 0 && tab !== "others" && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2, maxWidth: 900 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => changeTab("others")}
+            >
+              Review
+            </Button>
+          }
+        >
+          {summary.unknown_frames === 1
+            ? "1 frame could not be classified"
+            : `${summary.unknown_frames} frames could not be classified`}{" "}
+          — their headers don't say what kind of frame they are. They're under
+          Others; select them there and set the frame type.
+        </Alert>
+      )}
 
       {/* Category sub-tabs */}
       <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 1 }}>
@@ -501,11 +533,73 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       <FileBrowser
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        onSelect={(path) => addMut.mutate(path)}
+        onSelect={(path) => {
+          // Ask for the rig before adding: the folder's rig is the one equipment
+          // fact ingest records, and frames inherit it the moment they're
+          // scanned. Adding first and tagging afterwards means the first scan
+          // files everything under "not stated".
+          setPendingPath(path);
+          setPendingRigId("");
+        }}
         directoryMode
         title="Add source folder"
         emptyMessage="No subfolders here"
       />
+
+      <Dialog
+        open={pendingPath !== null}
+        onClose={() => setPendingPath(null)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Add source folder</DialogTitle>
+        <DialogContent>
+          <Typography
+            variant="body2"
+            sx={{ color: "text.secondary", wordBreak: "break-all", mb: 2 }}
+          >
+            {pendingPath}
+          </Typography>
+          <TextField
+            select
+            fullWidth
+            size="small"
+            label="Rig"
+            value={pendingRigId}
+            onChange={(e) =>
+              setPendingRigId(e.target.value === "" ? "" : Number(e.target.value))
+            }
+            helperText="Which rig shot this folder. Frames inherit it; you can change it later."
+          >
+            <MenuItem value="">
+              <em>Not stated</em>
+            </MenuItem>
+            {rigs.map((r) => (
+              <MenuItem key={r.id} value={r.id}>
+                {r.name}
+              </MenuItem>
+            ))}
+          </TextField>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingPath(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={addMut.isPending}
+            onClick={() => {
+              if (pendingPath === null) return;
+              addMut.mutate({
+                path: pendingPath,
+                rigId: pendingRigId === "" ? null : pendingRigId,
+              });
+              setPendingPath(null);
+              setPickerOpen(false);
+            }}
+          >
+            Add folder
+          </Button>
+        </DialogActions>
+      </Dialog>
       {/* Keyed so each frame gets a fresh instance. The dialog resets its field
           state in an effect, which runs AFTER the first render — without the key,
           reopening on a different frame briefly shows the previous frame's dirty

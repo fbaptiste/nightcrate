@@ -69,11 +69,12 @@ Update project documentation to reflect work actually done in the current sessio
    - Check existing memories in the project's auto-memory `MEMORY.md` (under `~/.claude/projects/`) — update stale ones, don't duplicate
    - Only save things useful in future sessions, not ephemeral task details
 
-10. **Context note** (`~/dev/context/projects/nightcrate.md`) — a cross-project note that lives outside the repo. Refresh it whenever the branch changed the picture of where the project stands:
+10. **Context note** (`~/dev/context/projects/nightcrate/`) — a cross-project note that lives outside the repo, as a folder: `README.md` (orientation — what/why/goals/non-goals/current state/architecture), `decisions.md` (append-only), `log.md` (machine-written), `research/`. Refresh it whenever the branch changed the picture of where the project stands:
    - Read `~/.claude/commands/update-context.md` and follow the instructions in its body, treating `$1` as `nightcrate`. That file is the single source of truth for the note's format and rules — do not restate them here, and re-read it each time in case it changed. It is marked user-invocable-only, so follow it as a document; do not try to invoke it as a slash command.
-   - If that file is missing, fall back to: rewrite `## Current state` as 150–250 words of prose grounded in the repo as it actually is, append one dated line to `## Log`, set `updated:` to today's date, and leave `## Decisions` and `## Open questions` untouched.
+   - If that file is missing, fall back to: in `README.md`, rewrite `## Current state` as 150–250 words of prose grounded in the repo as it actually is, set `updated:` to today's date, and leave every other section untouched — goals, non-goals, and architecture are Fred's.
+   - **Only `README.md` is in scope for this pass.** `log.md` belongs to the SessionEnd hook; `decisions.md` is append-only and Fred's call — if the branch actually settled a decision (what was chosen, why, what was rejected), say so in the step 11 report and offer to append one dated entry rather than writing it silently.
    - `sync-docs` runs *before* the version bump in `finalize-session`, so state the **target** version being finalized, not whatever `VERSION` still says.
-   - This note is not part of the repo — never stage or commit it.
+   - This note is not part of the repo — never stage or commit it (it has its own git repo at `~/dev/context`).
 
 11. **Report** — Summarize what was updated and what was skipped (with reason).
 

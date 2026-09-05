@@ -64,6 +64,10 @@ interface ConfigEntry {
   dirty: boolean;
   // track whether this existing config should be deleted
   deleted: boolean;
+  /** Set once the user types a focal ratio by hand, which stops it being
+   *  recomputed from aperture + focal length. Published ratios don't always
+   *  equal FL/aperture exactly, so the derived value must stay overridable. */
+  ratioTouched?: boolean;
 }
 
 interface FormState {
@@ -184,6 +188,29 @@ export default function TelescopeFormDialog({
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  /** f/ratio = focal length / aperture. Empty string when either side is
+   *  missing or non-numeric, so the field simply stays as the user left it. */
+  const derivedRatio = (focalLength: string, aperture: string): string => {
+    const fl = parseFloat(focalLength);
+    const ap = parseFloat(aperture);
+    if (!isFinite(fl) || !isFinite(ap) || ap <= 0 || fl <= 0) return "";
+    return String(Math.round((fl / ap) * 100) / 100);
+  };
+
+  /** Recompute every config's ratio that the user hasn't overridden. Used when
+   *  the aperture changes, since aperture is shared by all configurations. */
+  const applyAperture = (aperture: string) => {
+    set("aperture_mm", aperture);
+    setConfigs((prev) =>
+      prev.map((c) => {
+        if (c.ratioTouched) return c;
+        const ratio = derivedRatio(c.effective_focal_length_mm, aperture);
+        if (!ratio || ratio === c.effective_focal_ratio) return c;
+        return { ...c, effective_focal_ratio: ratio, dirty: true };
+      }),
+    );
   };
 
   const setConfig = (index: number, patch: Partial<ConfigEntry>) => {
@@ -365,7 +392,7 @@ export default function TelescopeFormDialog({
                 label="Aperture (mm)"
                 type="number"
                 value={form.aperture_mm}
-                onChange={(e) => set("aperture_mm", e.target.value)}
+                onChange={(e) => applyAperture(e.target.value)}
                 required
                 error={Boolean(errors.aperture_mm)}
                 helperText={errors.aperture_mm}
@@ -520,9 +547,16 @@ export default function TelescopeFormDialog({
                             label="Focal Length (mm)"
                             type="number"
                             value={config.effective_focal_length_mm}
-                            onChange={(e) =>
-                              setConfig(index, { effective_focal_length_mm: e.target.value })
-                            }
+                            onChange={(e) => {
+                              const ratio = derivedRatio(e.target.value, form.aperture_mm);
+                              setConfig(index, {
+                                effective_focal_length_mm: e.target.value,
+                                // Derived unless the user has overridden it.
+                                ...(config.ratioTouched || !ratio
+                                  ? {}
+                                  : { effective_focal_ratio: ratio }),
+                              });
+                            }}
                             required
                             slotProps={{ htmlInput: { step: "any", min: 0 } }}
                           />
@@ -530,11 +564,31 @@ export default function TelescopeFormDialog({
                             label="Focal Ratio (f/)"
                             type="number"
                             value={config.effective_focal_ratio}
-                            onChange={(e) =>
-                              setConfig(index, { effective_focal_ratio: e.target.value })
-                            }
+                            onChange={(e) => {
+                              // Clearing the field hands control back to the
+                              // derivation, which is what the helper text says.
+                              if (e.target.value.trim() === "") {
+                                setConfig(index, {
+                                  effective_focal_ratio: derivedRatio(
+                                    config.effective_focal_length_mm,
+                                    form.aperture_mm,
+                                  ),
+                                  ratioTouched: false,
+                                });
+                                return;
+                              }
+                              setConfig(index, {
+                                effective_focal_ratio: e.target.value,
+                                ratioTouched: true,
+                              });
+                            }}
                             required
                             slotProps={{ htmlInput: { step: "any", min: 0 } }}
+                            helperText={
+                              config.ratioTouched
+                                ? "Overridden — clear it to go back to the calculated value"
+                                : "Calculated from aperture and focal length"
+                            }
                           />
                           <TextField
                             label="Reduction Factor"

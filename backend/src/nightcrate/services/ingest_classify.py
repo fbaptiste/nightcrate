@@ -111,17 +111,88 @@ def is_stack(meta: dict[str, Any], raw_header: dict[str, Any]) -> bool:
     return False
 
 
-def classify_frame(meta: dict[str, Any], raw_header: dict[str, Any]) -> tuple[str, str | None]:
+def classify_frame(
+    meta: dict[str, Any],
+    raw_header: dict[str, Any],
+    *,
+    filename: str | None = None,
+) -> tuple[str, str | None]:
     """Refine a header-bearing image into (route, frame_type).
 
     ``route`` is ``CATEGORY_SUB`` or ``CATEGORY_PROCESSED``. ``frame_type`` is one
-    of FRAME_TYPES for subs (``unknown`` when IMAGETYP is missing/unrecognized);
-    for processed images it carries the best-guess frame type or ``None``.
+    of FRAME_TYPES for subs (``unknown`` when nothing identifies it); for processed
+    images it carries the best-guess frame type or ``None``.
+
+    IMAGETYP always wins. ``filename`` is only consulted when the header omits it
+    entirely — see :func:`_frame_type_without_imagetyp`.
     """
     frame_type = _frame_type_from_header(raw_header, meta)
     if is_stack(meta, raw_header):
         return CATEGORY_PROCESSED, frame_type
+    if frame_type is None:
+        frame_type = _frame_type_without_imagetyp(meta, filename)
     return CATEGORY_SUB, frame_type or "unknown"
+
+
+# Frame-type tokens capture software puts at the head of a filename. Only read
+# when the header carries no IMAGETYP at all.
+_FILENAME_TYPE_TOKENS = {
+    "light": "light",
+    "lights": "light",
+    "dark": "dark",
+    "darks": "dark",
+    "flat": "flat",
+    "flats": "flat",
+    "bias": "bias",
+    "biases": "bias",
+    "offset": "bias",
+    "darkflat": "dark_flat",
+    "flatdark": "dark_flat",
+}
+
+_TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _frame_type_without_imagetyp(meta: dict[str, Any], filename: str | None) -> str | None:
+    """Best-effort frame type for files whose header omits IMAGETYP entirely.
+
+    Smart scopes ship FITS with no IMAGETYP at all (verified on a DWARF mini: a
+    light carries OBJECT / RA / DEC / EXPTIME / FILTER, while its dark and flat
+    carry only the structural keywords plus BAYERPAT). So:
+
+    1. On-sky evidence in the header — a target or coordinates, plus a real
+       exposure — identifies a light. A dark or flat never has those.
+    2. Only when the header is silent do we read the type token at the head of
+       the filename (``dark_exp_60...``, ``flat_gain_2...``, Seestar's
+       ``Light_M31_...``).
+
+    Header evidence deliberately outranks the filename, so a light of "Dark Horse
+    Nebula" is not read as a dark. Anything unmatched stays ``unknown`` rather
+    than being guessed at, and the catalog surfaces it for correction.
+    """
+    if _has_on_sky_evidence(meta):
+        return "light"
+    if not filename:
+        return None
+    stem = filename.rsplit(".", 1)[0].lower()
+    tokens = [tok for tok in _TOKEN_SPLIT_RE.split(stem) if tok]
+    if not tokens:
+        return None
+    if len(tokens) >= 2:
+        pair = _FILENAME_TYPE_TOKENS.get(tokens[0] + tokens[1])
+        if pair:
+            return pair
+    return _FILENAME_TYPE_TOKENS.get(tokens[0])
+
+
+def _has_on_sky_evidence(meta: dict[str, Any]) -> bool:
+    """True when the header says this frame was pointed at something, and exposed."""
+    exposure = _as_float(meta.get("exposure_time"))
+    if exposure is None or exposure <= 0:
+        return False
+    if str(meta.get("object_name") or "").strip():
+        return True
+    return meta.get("ra") is not None and meta.get("dec") is not None
 
 
 # Qualifier words a stacked-master IMAGETYP wraps around the real frame type, e.g.
@@ -160,6 +231,15 @@ def _frame_type_from_header(raw_header: dict[str, Any], meta: dict[str, Any]) ->
 
 def _match_dark_flat(value: str) -> str | None:
     return "dark_flat" if value in _DARK_FLAT_RAW else None
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except _COERCE_ERRORS:
+        return None
 
 
 def _as_int(value: Any) -> int | None:
