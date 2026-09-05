@@ -249,6 +249,7 @@ export default function RigsPage() {
                   onDelete={handleDelete}
                   onRestore={handleRestore}
                   onSetDefault={handleSetDefault}
+                  onToggleMine={handleToggleMine}
                 />
               ))}
             </Box>
@@ -285,6 +286,7 @@ export default function RigsPage() {
                   onDelete={handleDelete}
                   onRestore={handleRestore}
                   onSetDefault={handleSetDefault}
+                  onToggleMine={handleToggleMine}
                 />
               ))}
             </Box>
@@ -383,6 +385,7 @@ function SortableRigCard({
   onDelete,
   onRestore,
   onSetDefault,
+  onToggleMine,
 }: {
   rig: Rig;
   selected: boolean;
@@ -392,6 +395,7 @@ function SortableRigCard({
   onDelete: (id: number) => void;
   onRestore: (id: number) => void;
   onSetDefault: (id: number) => void;
+  onToggleMine: (id: number, isMine: boolean) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: rig.id });
@@ -428,6 +432,7 @@ function SortableRigCard({
           onDelete={onDelete}
           onRestore={onRestore}
           onSetDefault={onSetDefault}
+          onToggleMine={onToggleMine}
         />
       </Box>
     </Box>

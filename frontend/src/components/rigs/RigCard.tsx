@@ -1,5 +1,6 @@
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import Card from "@mui/material/Card";
 import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
@@ -78,25 +79,38 @@ export default function RigCard({
       }}
       onClick={() => onSelect(rig)}
     >
-      {/* Default toggle — upper right */}
-      {rig.active && (
-        <Button
-          size="small"
-          variant={rig.is_default ? "contained" : "outlined"}
-          onClick={(e) => { e.stopPropagation(); onSetDefault(rig.id); }}
-          sx={{
-            position: "absolute",
-            top: 8,
-            right: 8,
-            textTransform: "none",
-            fontSize: "0.7rem",
-            px: 1,
-            py: 0.125,
-            minWidth: 0,
-          }}
-        >
-          default
-        </Button>
+      {/* Default marker — upper right. A state and an action read differently:
+          an outlined vs contained button both labelled "default" was
+          indistinguishable in dark theme, so the wording and the component
+          change, not just the fill. Only shown for rigs the user owns — an
+          unclaimed catalog rig can't be your default. */}
+      {rig.active && rig.is_mine && (
+        rig.is_default ? (
+          <Chip
+            size="small"
+            label="Default"
+            color="primary"
+            sx={{ position: "absolute", top: 8, right: 8, height: 20, fontSize: "0.7rem" }}
+          />
+        ) : (
+          <Button
+            size="small"
+            variant="text"
+            onClick={(e) => { e.stopPropagation(); onSetDefault(rig.id); }}
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              textTransform: "none",
+              fontSize: "0.7rem",
+              px: 1,
+              py: 0.125,
+              minWidth: 0,
+            }}
+          >
+            Set as default
+          </Button>
+        )
       )}
 
       <CardContent sx={{ pb: 1 }}>
@@ -154,7 +168,7 @@ export default function RigCard({
       >
         {/* An explicit button, not a star: a star means favourite or default
             elsewhere in the app, and this is neither — it is membership. */}
-        {onToggleMine && (
+        {onToggleMine && rig.source === "seed" && (
           <Button
             size="small"
             variant={rig.is_mine ? "outlined" : "contained"}
