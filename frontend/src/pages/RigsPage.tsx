@@ -46,8 +46,13 @@ import {
 
 export default function RigsPage() {
   const queryClient = useQueryClient();
+  // The whole catalog, retired rows included: this page owns claiming a
+  // pre-defined rig and un-retiring one. Every other consumer wants only the
+  // user's own kit and asks for ["rigs", "mine"] — a distinct key, because the
+  // two share a prefix but not a result set. Invalidating ["rigs"] still hits
+  // both.
   const { data: rigs = [], isLoading } = useQuery({
-    queryKey: ["rigs"],
+    queryKey: ["rigs", "all"],
     queryFn: () => fetchRigs(false),
   });
 
@@ -362,6 +367,7 @@ export default function RigsPage() {
 
       {/* Rig form dialog */}
       <NewRigDialog
+        key={chooserOpen ? "open" : "closed"}
         open={chooserOpen}
         available={availablePredefined}
         onClose={() => setChooserOpen(false)}

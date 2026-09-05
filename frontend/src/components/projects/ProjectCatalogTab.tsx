@@ -240,7 +240,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // Classification corrections: a frame for single-frame mode, or "bulk".
   // Rigs available to tag a source folder with. The user declares which rig shot a
   // folder; nothing infers it from a header.
-  const { data: rigs = [] } = useQuery({ queryKey: ["rigs"], queryFn: () => fetchRigs(true) });
+  const { data: rigs = [] } = useQuery({ queryKey: ["rigs", "mine"], queryFn: () => fetchRigs(true, true) });
   const folderRigMut = useMutation({
     mutationFn: ({ folderId, rigId }: { folderId: number; rigId: number | null }) =>
       setFolderRig(projectId, folderId, rigId),

@@ -60,7 +60,7 @@ export default function ProjectSessionsTab({ projectId }: Props) {
     queryKey: ["project-integration", projectId],
     queryFn: () => getIntegration(projectId),
   });
-  const { data: rigs = [] } = useQuery({ queryKey: ["rigs"], queryFn: () => fetchRigs(true) });
+  const { data: rigs = [] } = useQuery({ queryKey: ["rigs", "mine"], queryFn: () => fetchRigs(true, true) });
   const { data: filters = [] } = useQuery({
     queryKey: ["filters"],
     queryFn: () => fetchFilters(false, false),

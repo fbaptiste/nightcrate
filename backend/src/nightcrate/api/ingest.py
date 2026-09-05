@@ -76,6 +76,7 @@ from nightcrate.services.ingest_scanner import (
 )
 from nightcrate.services.ingest_sessions import (
     assign_rigs_and_sessions,
+    folder_prefix,
     project_geo_timezone,
 )
 from nightcrate.services.line_names import canonicalize_line_name
@@ -231,9 +232,13 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
         await conn.execute("PRAGMA foreign_keys = ON")
         folder = await _get_folder_or_404(conn, project_id, folder_id)
         # Exact prefix match (folder + separator) so underscores/percent in real
-        # paths can't act as LIKE wildcards. Covers archive/pxiproject virtual
-        # paths too — they start with the on-disk folder path.
-        prefix = folder["path"].rstrip("/") + "/"
+        # paths can't act as LIKE wildcards. folder_prefix picks the separator the
+        # folder's children actually carry: `/` for a plain directory or one
+        # inside an archive, `::` for an archive bound at its root. Building it
+        # here with a hardcoded `/` got both the archive-root case and Windows
+        # wrong, and in both the DELETE simply matched nothing — the folder went
+        # away and its frames stayed behind, invisible to the orphan sweep.
+        prefix = folder_prefix(folder["path"])
 
         await conn.execute(
             "DELETE FROM file_location WHERE project_id = ? AND substr(path, 1, length(?)) = ?",

@@ -140,8 +140,8 @@ export function PlateSolveDialog({
 
   // ── Data queries ──
   const rigsQuery = useQuery({
-    queryKey: ["rigs"],
-    queryFn: () => fetchRigs(),
+    queryKey: ["rigs", "mine"],
+    queryFn: () => fetchRigs(true, true),
     enabled: open && equipmentMode === "rig",
     staleTime: 60_000,
   });

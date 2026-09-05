@@ -23,17 +23,38 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiosqlite
 
+from nightcrate.services.archive_io import is_archive
+
 # Module-level tuple: ruff format strips parens from inline ``except (A, B):`` on
 # py3.14, producing invalid Py2 syntax. Referencing a constant sidesteps it.
 _BAD_ZONE = (ZoneInfoNotFoundError, ValueError)
 
 
 def folder_prefix(path: str) -> str:
-    """A source folder's path with a trailing OS separator, for prefix matching.
+    """A source folder's path with the separator its children actually carry.
 
     Built here rather than in SQL because paths are stored with the OS-native
     separator — a hardcoded ``'/'`` silently matches nothing on Windows.
+
+    Three shapes, because a source folder can be an archive:
+
+    - a plain directory ``/data/lights`` holds ``/data/lights/frame.fits``
+    - a directory *inside* an archive ``/data/n.zip::lights`` holds
+      ``/data/n.zip::lights/frame.fits`` — already past the ``::``, so a plain
+      separator is right, and it must be ``/`` because archive entry paths use
+      ``/`` on every platform
+    - an archive bound at its **root** ``/data/n.zip`` holds
+      ``/data/n.zip::lights/frame.fits`` — the separator is ``::``, not one the
+      filesystem would ever produce
+
+    Getting the third case wrong is silent in both directions: the rig tag never
+    lands on a single frame, and removing the folder deletes no ``file_location``
+    row, so the frames outlive the folder and the orphan sweep never sees them.
     """
+    if "::" in path:
+        return path.rstrip("/") + "/"
+    if is_archive(Path(path)):
+        return path + "::"
     return os.path.join(str(Path(path)), "")
 
 

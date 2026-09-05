@@ -162,8 +162,8 @@ export default function PlannerPage() {
     staleTime: 5 * 60_000,
   });
   const rigsQuery = useQuery({
-    queryKey: ["rigs"],
-    queryFn: () => fetchRigs(true),
+    queryKey: ["rigs", "mine"],
+    queryFn: () => fetchRigs(true, true),
     staleTime: 5 * 60_000,
   });
   // Horizons for the selected location. The grid's visibility

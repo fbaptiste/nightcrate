@@ -92,9 +92,13 @@ def _scan_archive(root: str) -> list[ScanEntry]:
     """Walk a directory inside an archive, yielding ``archive::entry`` paths.
 
     Archives carry no per-entry mtime in the TOC listing we use, so every entry
-    inherits the archive file's own mtime. That only feeds the ``date_obs``
-    fallback for headers with no DATE-OBS — real timestamps still come from the
-    header. Nested archives are catalogued as plain files, never descended into.
+    inherits the archive file's own mtime. For a frame that is only a fallback —
+    a header's DATE-OBS wins. For a log or other non-header file it is the
+    timestamp stored on ``file_location`` and shown in the catalog's Others tab,
+    so it reads as the archive's date rather than the file's own.
+
+    ``.pxiproject`` bundles are recorded as one asset and not descended into,
+    matching ``_walk``. Nested archives are catalogued as plain files.
     """
     from nightcrate.services.archive_io import list_contents
 
@@ -122,6 +126,20 @@ def _scan_archive(root: str) -> list[ScanEntry]:
                 continue
             entry_path = f"{subdir}/{name}" if subdir else name
             if child["type"] == "dir":
+                # A .pxiproject is a directory, but it is one asset — the same
+                # rule _walk applies on the filesystem. Descending into it would
+                # catalog its internals as loose files.
+                if name.lower().endswith(".pxiproject"):
+                    entries.append(
+                        ScanEntry(
+                            path=f"{archive}::{entry_path}",
+                            name=name,
+                            category=classify_extension(name, is_dir=True),
+                            size_bytes=0,
+                            mtime=mtime,
+                        )
+                    )
+                    continue
                 stack.append(entry_path)
                 continue
             entries.append(

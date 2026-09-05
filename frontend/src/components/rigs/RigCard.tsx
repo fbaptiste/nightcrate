@@ -130,14 +130,18 @@ export default function RigCard({
             <ContentCopyIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        {/* One delete affordance in one place. What it means depends on where
-            the rig came from: a self-built rig retires, a pre-defined one is
-            simply removed from the user's rigs and returns to the New Rig
-            offer list — it is a catalog entry, not something to destroy. */}
+        {/* One delete affordance in one place, but three outcomes, and the
+            card cannot tell which it will get: `delete_rig` removes a seeded
+            rig only while it still hashes identical to the CSV, and retires it
+            once the user has edited it — and `source` stays 'seed' through any
+            edit. So the tooltip names both possibilities rather than promising
+            the removal; RigsPage reports which actually happened. */}
         {rig.active ? (
           <Tooltip
             title={
-              rig.source === "seed" ? "Remove from my rigs" : "Delete"
+              rig.source === "seed"
+                ? "Remove from my rigs (retired instead if you have edited it)"
+                : "Delete"
             }
             arrow
           >

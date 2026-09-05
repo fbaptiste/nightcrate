@@ -127,8 +127,45 @@ function emptyConfig(): ConfigEntry {
   };
 }
 
-function configToEntry(c: TelescopeConfiguration): ConfigEntry {
+/** Focal ratio implied by focal length and aperture, to 2dp. "" when either
+ *  side is missing or non-positive. */
+function deriveRatio(focalLength: string, aperture: string): string {
+  const fl = parseFloat(focalLength);
+  const ap = parseFloat(aperture);
+  if (!isFinite(fl) || !isFinite(ap) || ap <= 0 || fl <= 0) return "";
+  return String(Math.round((fl / ap) * 100) / 100);
+}
+
+/** Does a stored ratio look deliberately published rather than derived?
+ *
+ *  Compared numerically with a 1.5% tolerance — the same threshold the seed audit
+ *  uses — so ordinary rounding (a stored f/10 against a computed 10.02) still
+ *  counts as derived, while a real divergence does not.
+ */
+function isPublishedRatio(stored: number, focalLength: string, aperture: string): boolean {
+  const derived = parseFloat(deriveRatio(focalLength, aperture));
+  if (!isFinite(derived) || !isFinite(stored) || stored <= 0) return false;
+  return Math.abs(derived - stored) / stored > 0.015;
+}
+
+/** Build an editable entry from a stored configuration.
+ *
+ *  `ratioTouched` is set when the stored ratio does NOT equal what FL / aperture
+ *  would give, because that divergence is the signature of a deliberate value —
+ *  a manufacturer's published ratio. Sky-Watcher publish the Quattros at a flat
+ *  f/4 against a computed f/3.90, and Unistellar the Odysseys at f/3.9 against
+ *  f/3.76; CLAUDE.md makes the same point about the C6. Leaving the flag unset
+ *  for every stored config meant one edit to the shared Aperture field silently
+ *  recomputed all of them, marked them dirty, and saved the derived value over
+ *  the published one.
+ */
+function configToEntry(c: TelescopeConfiguration, aperture: string): ConfigEntry {
   return {
+    ratioTouched: isPublishedRatio(
+      c.effective_focal_ratio,
+      String(c.effective_focal_length_mm),
+      aperture,
+    ),
     id: c.id,
     config_name: c.config_name,
     accessory_name: c.accessory_name ?? "",
@@ -173,7 +210,9 @@ export default function TelescopeFormDialog({
       if (telescope) {
         setForm(telescopeToForm(telescope));
         setIsMine(telescope.is_mine ?? false);
-        const entries = telescope.configurations.map(configToEntry);
+        const entries = telescope.configurations.map((c) =>
+          configToEntry(c, String(telescope.aperture_mm ?? "")),
+        );
         setConfigs(entries.length > 0 ? entries : [emptyConfig()]);
         setExpandedIndex(0);
       } else {
@@ -192,12 +231,6 @@ export default function TelescopeFormDialog({
 
   /** f/ratio = focal length / aperture. Empty string when either side is
    *  missing or non-numeric, so the field simply stays as the user left it. */
-  const derivedRatio = (focalLength: string, aperture: string): string => {
-    const fl = parseFloat(focalLength);
-    const ap = parseFloat(aperture);
-    if (!isFinite(fl) || !isFinite(ap) || ap <= 0 || fl <= 0) return "";
-    return String(Math.round((fl / ap) * 100) / 100);
-  };
 
   /** Recompute every config's ratio that the user hasn't overridden. Used when
    *  the aperture changes, since aperture is shared by all configurations. */
@@ -206,7 +239,7 @@ export default function TelescopeFormDialog({
     setConfigs((prev) =>
       prev.map((c) => {
         if (c.ratioTouched) return c;
-        const ratio = derivedRatio(c.effective_focal_length_mm, aperture);
+        const ratio = deriveRatio(c.effective_focal_length_mm, aperture);
         if (!ratio || ratio === c.effective_focal_ratio) return c;
         return { ...c, effective_focal_ratio: ratio, dirty: true };
       }),
@@ -548,7 +581,7 @@ export default function TelescopeFormDialog({
                             type="number"
                             value={config.effective_focal_length_mm}
                             onChange={(e) => {
-                              const ratio = derivedRatio(e.target.value, form.aperture_mm);
+                              const ratio = deriveRatio(e.target.value, form.aperture_mm);
                               setConfig(index, {
                                 effective_focal_length_mm: e.target.value,
                                 // Derived unless the user has overridden it.
@@ -569,7 +602,7 @@ export default function TelescopeFormDialog({
                               // derivation, which is what the helper text says.
                               if (e.target.value.trim() === "") {
                                 setConfig(index, {
-                                  effective_focal_ratio: derivedRatio(
+                                  effective_focal_ratio: deriveRatio(
                                     config.effective_focal_length_mm,
                                     form.aperture_mm,
                                   ),

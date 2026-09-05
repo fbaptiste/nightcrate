@@ -123,8 +123,11 @@ def classify_frame(
     of FRAME_TYPES for subs (``unknown`` when nothing identifies it); for processed
     images it carries the best-guess frame type or ``None``.
 
-    IMAGETYP always wins. ``filename`` is only consulted when the header omits it
-    entirely — see :func:`_frame_type_without_imagetyp`.
+    A usable IMAGETYP wins. ``filename`` is consulted only when the header
+    yields no frame type — either because IMAGETYP is absent, or because it is
+    present but says nothing recognisable (blank, or a value outside
+    FRAME_TYPES that is not a master qualifier). See
+    :func:`_frame_type_without_imagetyp`.
     """
     frame_type = _frame_type_from_header(raw_header, meta)
     if is_stack(meta, raw_header):
@@ -135,7 +138,7 @@ def classify_frame(
 
 
 # Frame-type tokens capture software puts at the head of a filename. Only read
-# when the header carries no IMAGETYP at all.
+# when the header yields no frame type — no IMAGETYP, or one that means nothing.
 _FILENAME_TYPE_TOKENS = {
     "light": "light",
     "lights": "light",
@@ -154,7 +157,10 @@ _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _frame_type_without_imagetyp(meta: dict[str, Any], filename: str | None) -> str | None:
-    """Best-effort frame type for files whose header omits IMAGETYP entirely.
+    """Best-effort frame type for files whose header yields no frame type.
+
+    Reached when IMAGETYP is absent, blank, or carries a value that normalises
+    to nothing recognisable.
 
     Smart scopes ship FITS with no IMAGETYP at all (verified on a DWARF mini: a
     light carries OBJECT / RA / DEC / EXPTIME / FILTER, while its dark and flat

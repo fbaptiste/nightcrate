@@ -683,6 +683,33 @@ class TestFolderRigTag:
         # A trailing separator on the stored path must not double up.
         assert folder_prefix("/data/rig-b" + os.sep) == folder_prefix("/data/rig-b")
 
+    def test_folder_prefix_handles_archives(self):
+        """An archive's children are separated by `::`, not by a path separator.
+
+        A folder bound at an archive's ROOT is stored as `/data/n.zip` while its
+        frames are cataloged as `/data/n.zip::lights/frame.fits`. Appending a path
+        separator matches none of them, and the failure is silent in both
+        directions: the rig tag never lands, and removing the folder deletes no
+        file_location row, so the frames outlive their folder.
+        """
+        root = "/data/night.zip"
+        inside = "/data/night.zip::lights"
+        frame = "/data/night.zip::lights/frame.fits"
+
+        assert folder_prefix(root) == "/data/night.zip::"
+        assert frame.startswith(folder_prefix(root))
+
+        # Already past the `::`, so a plain separator is right — and it is always
+        # `/`, because archive entry paths use `/` on every platform.
+        assert folder_prefix(inside) == "/data/night.zip::lights/"
+        assert frame.startswith(folder_prefix(inside))
+
+        # A sibling directory inside the same archive must not be captured.
+        assert not "/data/night.zip::darks/frame.fits".startswith(folder_prefix(inside))
+
+        # A plain directory is unaffected.
+        assert folder_prefix("/data/lights") == os.path.join("/data/lights", "")
+
     async def test_underscores_in_paths_are_not_wildcards(self, client, tmp_path: Path):
         """The match is a fixed-length substring compare, not LIKE — otherwise `_`
         and `%` in real folder names would act as wildcards and a sibling folder

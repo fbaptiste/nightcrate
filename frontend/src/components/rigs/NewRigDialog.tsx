@@ -7,7 +7,7 @@ import Divider from "@mui/material/Divider";
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Rig } from "@/api/rigs";
 
 interface NewRigDialogProps {
@@ -52,10 +52,11 @@ export default function NewRigDialog({
 }: NewRigDialogProps) {
   // A list grows with the catalog and would eventually outrun the dialog, so
   // the choice is a select: one row whatever the catalog holds.
+  // No reset effect here: RigsPage gives this dialog a key tied to `open`, so a
+  // reopen is a fresh mount and `chosenId` starts empty. Resetting in a
+  // useEffect instead would paint one frame carrying the previous selection —
+  // with "Add this rig" already enabled — before the effect cleared it.
   const [chosenId, setChosenId] = useState<number | "">("");
-  useEffect(() => {
-    if (open) setChosenId("");
-  }, [open]);
 
   // The API orders rigs for the user's own list (owned first, then sort_order).
   // That ordering means nothing in a catalog you're picking from, so sort by
