@@ -21,8 +21,6 @@ interface RigCardProps {
   onDelete: (id: number) => void;
   onRestore: (id: number) => void;
   onSetDefault: (id: number) => void;
-  /** Claim/unclaim the rig as the user's own. Omitted where it doesn't apply. */
-  onToggleMine?: (id: number, isMine: boolean) => void;
 }
 
 
@@ -42,7 +40,6 @@ export default function RigCard({
   onDelete,
   onRestore,
   onSetDefault,
-  onToggleMine,
 }: RigCardProps) {
   return (
     <Card
@@ -137,16 +134,13 @@ export default function RigCard({
             the rig came from: a self-built rig retires, a pre-defined one is
             simply removed from the user's rigs and returns to the New Rig
             offer list — it is a catalog entry, not something to destroy. */}
-        {rig.source === "seed" ? (
-          onToggleMine && (
-            <Tooltip title="Remove from my rigs" arrow>
-              <IconButton size="small" onClick={() => onToggleMine(rig.id, false)}>
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )
-        ) : rig.active ? (
-          <Tooltip title="Delete" arrow>
+        {rig.active ? (
+          <Tooltip
+            title={
+              rig.source === "seed" ? "Remove from my rigs" : "Delete"
+            }
+            arrow
+          >
             <IconButton size="small" onClick={() => onDelete(rig.id)}>
               <DeleteIcon fontSize="small" />
             </IconButton>

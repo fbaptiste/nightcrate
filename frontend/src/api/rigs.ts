@@ -269,8 +269,9 @@ export const updateRig = (id: number, data: Partial<RigCreate>) =>
     body: JSON.stringify(data),
   });
 
+/** Removing an untouched pre-defined rig drops it; anything else is retired. */
 export const deleteRig = (id: number) =>
-  apiFetch<void>(`/rigs/${id}`, { method: "DELETE" });
+  apiFetch<{ outcome: "removed" | "retired" }>(`/rigs/${id}`, { method: "DELETE" });
 
 export const restoreRig = (id: number) =>
   apiFetch<Rig>(`/rigs/${id}/restore`, { method: "POST" });

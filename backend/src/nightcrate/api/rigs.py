@@ -3,7 +3,6 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
 
 from nightcrate.api._common import bool_fields, integrity_guard, row_to_dict
 from nightcrate.api.rig_models import (
@@ -16,6 +15,8 @@ from nightcrate.api.rig_models import (
     RigUpdate,
 )
 from nightcrate.db.session import get_db
+from nightcrate.seed_loader.hash import compute_seed_hash
+from nightcrate.seed_loader.registry import REGISTRY
 from nightcrate.services.rig_calculators import (
     compute_rig_calculators,
     resolve_seeing,
@@ -752,18 +753,52 @@ async def update_rig(rig_id: int, body: RigUpdate):
         return await _build_rig_response(conn, rig_row)
 
 
+async def _seeded_rig_is_untouched(conn, rig_id: int) -> bool:
+    """True when *rig_id* is a seeded rig the user has not edited.
+
+    Uses the seed loader's own definition of "user-modified" — rehash the
+    seeded fields as they currently stand and compare against the hash stored
+    when the row was written — so the two agree by construction. If this says
+    untouched, the loader would also happily overwrite the row.
+
+    Note this covers the rig's own fields, not its filter slots: reassigning a
+    filter on a claimed rig is not counted as customisation.
+    """
+    cursor = await conn.execute(
+        "SELECT source, seed_hash, name, description, telescope_configuration_id, "
+        "camera_id, filter_wheel_id, notes FROM rig WHERE id = ?",
+        (rig_id,),
+    )
+    row = await cursor.fetchone()
+    if row is None or row["source"] != "seed" or not row["seed_hash"]:
+        return False
+    current = {f: row[f] for f in REGISTRY["rig"].seeded_fields}
+    return compute_seed_hash(current) == row["seed_hash"]
+
+
 @router.delete("/{rig_id}")
-async def delete_rig(rig_id: int):
-    """Soft-delete a rig (sets active=0)."""
+async def delete_rig(rig_id: int) -> dict:
+    """Remove a rig from the user's list.
+
+    An untouched pre-defined rig is simply dropped — it is a catalog entry, so
+    nothing is lost and it returns to the New Rig offer list. Anything else is
+    retired (active = 0), because a rig the user built, or a pre-defined one
+    they have since edited, holds work that a delete must not throw away.
+    """
     async with get_db() as conn:
         row = await conn.execute("SELECT id FROM rig WHERE id = ?", (rig_id,))
         if await row.fetchone() is None:
             raise HTTPException(status_code=404, detail="Rig not found")
 
-        await conn.execute("UPDATE rig SET active = 0 WHERE id = ?", (rig_id,))
+        if await _seeded_rig_is_untouched(conn, rig_id):
+            await conn.execute("UPDATE rig SET is_mine = 0 WHERE id = ?", (rig_id,))
+            outcome = "removed"
+        else:
+            await conn.execute("UPDATE rig SET active = 0 WHERE id = ?", (rig_id,))
+            outcome = "retired"
         await conn.commit()
 
-    return Response(status_code=204)
+    return {"outcome": outcome}
 
 
 @router.post("/{rig_id}/mine", response_model=RigOut)

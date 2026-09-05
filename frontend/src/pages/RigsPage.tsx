@@ -75,13 +75,13 @@ export default function RigsPage() {
   // so a retired one would otherwise vanish into "Retired Rigs", which reads as
   // if the telescope itself had been discontinued.
   // Pre-defined rigs the user hasn't adopted are offered by the New Rig dialog,
-  // not listed here — this page is "my rigs" and nothing else. The `active`
-  // term also catches one adopted and then retired before that was disallowed,
-  // so it returns to the offer list rather than disappearing.
+  // not listed here — this page is "my rigs" and nothing else. A retired rig is
+  // never on offer: deleting a customised pre-defined rig retires it precisely
+  // so the edits survive, and re-offering it would hide them.
   const availablePredefined = rigs.filter(
-    (r) => r.source === "seed" && !(r.active && r.is_mine),
+    (r) => r.source === "seed" && r.active && !r.is_mine,
   );
-  const retiredRigs = rigs.filter((r) => !r.active && r.source === "user");
+  const retiredRigs = rigs.filter((r) => !r.active);
 
   const handleToggleMine = async (id: number, isMine: boolean) => {
     try {
@@ -166,10 +166,16 @@ export default function RigsPage() {
 
   const handleDelete = async (id: number) => {
     try {
-      await deleteRig(id);
+      const { outcome } = await deleteRig(id);
       if (selectedRig?.id === id) setSelectedRig(null);
       invalidate();
-      showSnack("Rig retired.", "success");
+      // The server decides which happened, so say which rather than guess.
+      showSnack(
+        outcome === "removed"
+          ? "Removed from your rigs."
+          : "Rig retired — it had changes worth keeping.",
+        "success",
+      );
     } catch (err) {
       showSnack(
         err instanceof Error ? err.message : "Delete failed",
@@ -266,7 +272,6 @@ export default function RigsPage() {
                   onDelete={handleDelete}
                   onRestore={handleRestore}
                   onSetDefault={handleSetDefault}
-                  onToggleMine={handleToggleMine}
                 />
               ))}
             </Box>
@@ -303,7 +308,6 @@ export default function RigsPage() {
                   onDelete={handleDelete}
                   onRestore={handleRestore}
                   onSetDefault={handleSetDefault}
-                  onToggleMine={handleToggleMine}
                 />
               ))}
             </Box>
@@ -378,7 +382,6 @@ function SortableRigCard({
   onDelete,
   onRestore,
   onSetDefault,
-  onToggleMine,
 }: {
   rig: Rig;
   selected: boolean;
@@ -388,7 +391,6 @@ function SortableRigCard({
   onDelete: (id: number) => void;
   onRestore: (id: number) => void;
   onSetDefault: (id: number) => void;
-  onToggleMine: (id: number, isMine: boolean) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: rig.id });
@@ -425,7 +427,6 @@ function SortableRigCard({
           onDelete={onDelete}
           onRestore={onRestore}
           onSetDefault={onSetDefault}
-          onToggleMine={onToggleMine}
         />
       </Box>
     </Box>

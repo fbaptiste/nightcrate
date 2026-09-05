@@ -327,6 +327,52 @@ async def test_toggle_mine_unknown_rig_404(client):
     assert resp.status_code == 404
 
 
+# ── Deleting a pre-defined rig ───────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_deleting_an_untouched_predefined_rig_just_removes_it(client):
+    """Nothing to lose — it goes back to being on offer, not into Retired."""
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    await client.post(f"/api/rigs/{s50['id']}/mine", json={"is_mine": True})
+
+    resp = await client.delete(f"/api/rigs/{s50['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "removed"
+
+    after = next(r for r in (await client.get("/api/rigs")).json() if r["id"] == s50["id"])
+    assert after["is_mine"] is False
+    assert after["active"] is True  # still on offer, not retired
+
+
+@pytest.mark.anyio
+async def test_deleting_a_customised_predefined_rig_retires_it(client):
+    """The user's edits must survive a delete, so it retires instead."""
+    rigs = (await client.get("/api/rigs")).json()
+    s30 = next(r for r in rigs if r["name"] == "Seestar S30")
+    await client.post(f"/api/rigs/{s30['id']}/mine", json={"is_mine": True})
+    # Any edit to a seeded field counts — this is the loader's own definition.
+    await client.put(f"/api/rigs/{s30['id']}", json={"name": "S30 (mine)"})
+
+    resp = await client.delete(f"/api/rigs/{s30['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "retired"
+
+    after = next(
+        r for r in (await client.get("/api/rigs?active_only=false")).json() if r["id"] == s30["id"]
+    )
+    assert after["active"] is False
+    assert after["name"] == "S30 (mine)"  # the edit survived
+
+
+@pytest.mark.anyio
+async def test_deleting_a_self_built_rig_always_retires(client, equipment):
+    created = (await client.post("/api/rigs", json=_rig_payload(equipment))).json()
+    resp = await client.delete(f"/api/rigs/{created['id']}")
+    assert resp.json()["outcome"] == "retired"
+
+
 # ── CRUD Tests ───────────────────────────────────────────────────────────────
 
 
@@ -383,7 +429,8 @@ async def test_soft_delete_rig(client, equipment):
     create_resp = await client.post("/api/rigs", json=_rig_payload(equipment))
     rig_id = create_resp.json()["id"]
     resp = await client.delete(f"/api/rigs/{rig_id}")
-    assert resp.status_code == 204
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "retired"
 
     # Should not appear in active list (seeded smart-scope rigs still do)
     active = await client.get("/api/rigs")
