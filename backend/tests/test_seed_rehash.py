@@ -13,7 +13,7 @@ import pytest
 
 from nightcrate.seed_loader.hash import compute_seed_hash
 from nightcrate.seed_loader.loader import load_all
-from nightcrate.seed_loader.rehash import REHASH_STEPS
+from nightcrate.seed_loader.rehash import REHASH_STEPS, apply_rehash_steps
 
 SENSOR_HEADER = (
     "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,"
@@ -184,3 +184,32 @@ def test_first_run_marks_steps_without_touching_anything(seed_db, csv_root):
     assert report.migration_rehashed == {s.table: 0 for s in REHASH_STEPS}
     markers = {r["key"] for r in seed_db.execute("SELECT key FROM seed_loader_meta").fetchall()}
     assert {s.key for s in REHASH_STEPS} <= markers
+
+
+def test_step_waits_for_its_migration(seed_db, csv_root):
+    """A step whose migration has not been applied is skipped, not marked done.
+
+    Marking it would burn the one chance to repair those rows: the step never runs
+    again, and every row in the table stays classified as user-modified.
+
+    Calls apply_rehash_steps directly rather than going through load_all, because a
+    registry naming a column the schema lacks also breaks the loader's own update
+    path further down — a separate sharp edge, and not what this test is about.
+    """
+    write(csv_root, "manufacturer.csv", MFR_HEADER, "manufacturer.zwo,ZWO,,")
+    write(csv_root, "sensor.csv", SENSOR_HEADER, _sensor_row(read_noise_low="3.3"))
+    load_all(seed_db, csv_root, mode="first_run")
+
+    # Put the schema back to before 0052, leaving a row for the step to find.
+    seed_db.execute("DELETE FROM seed_loader_meta WHERE key LIKE 'rehash.%'")
+    seed_db.execute("ALTER TABLE sensor DROP COLUMN read_noise_high_gain_e")
+    seed_db.commit()
+
+    counts = apply_rehash_steps(seed_db)
+
+    assert "sensor" not in counts
+    markers = {r["key"] for r in seed_db.execute("SELECT key FROM seed_loader_meta").fetchall()}
+    sensor_steps = {s.key for s in REHASH_STEPS if s.table == "sensor"}
+    assert not (sensor_steps & markers), "a sensor step was marked before its migration ran"
+    # Steps for tables the migration did reach are unaffected.
+    assert {s.key for s in REHASH_STEPS if s.table != "sensor"} <= markers

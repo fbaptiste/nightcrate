@@ -306,7 +306,7 @@ Before committing, all applicable checks must pass:
 
 ## Gotchas
 
-- **Python 3.14 + ruff format:** ruff format may strip parentheses from `except (ValueError, IndexError):` turning it into Python 2 syntax. Avoid multi-exception `except` clauses; if needed, define a module-level tuple constant and reference it.
+- **Python 3.14 + ruff format:** ruff format strips the parentheses from `except (ValueError, IndexError):`. This is **not** a bug — Python 3.14's PEP 758 allows unparenthesized except groups, and the stripped form compiles and catches identically (verified 2026-09-05: both types caught, an unlisted type still propagates). The parens are cosmetic. Earlier guidance here said the result was Python 2 syntax and told you to avoid multi-exception clauses; that no longer holds. Do keep using a module-level tuple constant where the same exception set is caught in several places, for readability rather than correctness.
 - **JSX Unicode escapes** are not interpreted in attribute strings: `label="°C"` passes 8 literal characters. Wrap in an expression: `label={"°C"}`. HTML entities like `&approx;` / `&asymp;` aren't in React's named-entity table — use `{"≈"}` instead.
 - **MUI `<Typography variant=...>` overrides parent font styles.** A parent Box's `sx={{ fontSize, lineHeight }}` does NOT cascade — the variant brings its own (caption is 12px / 1.66, not the parent's 11 / 1.35). When sizing a fixed-height container by parent font math, force inheritance: `'& .MuiTypography-root': { fontSize: 'inherit', lineHeight: 'inherit' }`.
 - **Migration policy** — never edit existing migration files. Always create new forward migrations (next sequential number in `db/migrations/`). Existing user data (locations, horizons, rigs, plans) must be preserved across upgrades. **This applies even to a migration added earlier in the same unmerged branch:** `make dev` runs `uvicorn --reload`, and every reload calls `apply_migrations()`, so a brand-new migration is applied to the dev DB as soon as a `.py` reload fires. Once applied, yoyo records it by filename and never re-runs it — editing that `.sql` in place silently desyncs the dev DB from the file (the edit only reaches fresh DBs / the test harness, which rebuild from scratch). Symptom: `no such column` / missing-constraint errors that pass all tests but fail on the dev DB. Fix forward with the next migration number (precedent: v0.40.0's 0038 added `sub_frame.filter_name_hint` + dropped a CHECK that 0037 had already shipped to the dev DB). **Verify a forward migration on a DB that already has the prior version applied, not just a fresh build.**
@@ -378,7 +378,21 @@ For full feature inventory and per-version history see `nightcrate-current-state
 - `camera` table carries `effective_*` overrides that win over the underlying sensor's baseline values.
 - Soft-delete via `active = 0`; list endpoints accept `?include_retired=true`.
 - Default-rig enforcement: setting `is_default = 1` clears it on all others in one transaction (`_ensure_single_default`).
-- `is_mine` flag on the 10 owned-equipment tables is **NOT** in `seeded_fields` — toggling does NOT trigger a re-seed.
+- `is_mine` flag on the 10 owned-equipment tables **and on `rig`** (v0.41.1) is **NOT** in `seeded_fields` — toggling does NOT trigger a re-seed.
+- **Three column meanings were defined in v0.41.1 (migrations 0052-0054) — don't undo them.**
+  `sensor` read noise is split into `read_noise_low_gain_e` + `read_noise_high_gain_e` (the camera pair keeps its
+  `effective_` prefix: `effective_read_noise_low_gain_e`). Named by **gain**, not by mode — the ASI1600 / QHY163
+  bodies publish both figures for a Panasonic MN34230 that has no dual-conversion-gain mode at all; whether a
+  discrete switch exists is carried by `dual_gain` + `hcg_threshold_gain`. `full_well_capacity_ke` is the
+  **low-gain** figure, so dynamic range must pair with `read_noise_low_gain_e`.
+  `mount.payload_capacity_kg` is maximum instrument payload **excluding counterweights**, photographic where a
+  maker publishes visual and photographic separately; `payload_capacity_with_cw_kg` holds the harmonic mounts'
+  with-counterweight rating. `sensor.peak_qe_pct` is the peak within **400-700nm** (`peak_qe_wavelength_nm`
+  records where) — a near-infrared peak makes mono and colour variants look identical and answers a question no
+  deep-sky imager is asking.
+- **A `filter_passband` row is one emission line the filter usefully passes, not one physical window.** The
+  L-eNhance passes Ha, Hb and OIII through two windows and needs three rows. Two rows may therefore share a
+  bandwidth — correct input for moon scattering, so **never sum `bandwidth_nm` across rows**.
 - Filter slots (`rig_filter_slot`) require `filter_wheel_id`; clearing the wheel deletes all slots in the same transaction.
 
 ### Seed Loader

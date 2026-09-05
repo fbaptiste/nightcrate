@@ -415,11 +415,12 @@ def _load_regular_table(
                     else:
                         # Genuinely user-modified — leave it alone.
                         #
-                        # A row that is untouched but whose CSV value changed in the
-                        # same release as the field-set change also lands here, and
-                        # stays stranded. That is why a migration changing
-                        # ``seeded_fields`` must ALSO backfill, by direct UPDATE,
-                        # every value that release changes in the same CSVs.
+                        # This test conflates two questions, "was this row edited"
+                        # and "is this row up to date", so a row that is untouched
+                        # but whose CSV value changed in the same release as the
+                        # field-set change lands here too. seed_loader/rehash.py
+                        # answers the first question directly, and a migration that
+                        # renames a seeded field needs a step there.
                         table_report.skipped_user_modified.append(seed_key)
                     continue
 

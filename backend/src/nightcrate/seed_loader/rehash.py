@@ -71,8 +71,13 @@ _CAMERA_RENAMES_0052 = {
 
 def _sensor_before_0052(row: sqlite3.Row) -> dict:
     fields = {f: row[f] for f in _SENSOR_FIELDS_BEFORE_0052 if f != "read_noise_e"}
-    low = row["read_noise_low_gain_e"]
-    fields["read_noise_e"] = low if low is not None else row["read_noise_high_gain_e"]
+    # Both columns are read unconditionally. Short-circuiting on `low` would make
+    # the "has this migration been applied?" guard in apply_rehash_steps depend on
+    # the data rather than the schema: every row having a low-gain value would let
+    # the step complete against a pre-0052 table and mark itself done, burning the
+    # one chance to repair those rows.
+    low, high = row["read_noise_low_gain_e"], row["read_noise_high_gain_e"]
+    fields["read_noise_e"] = low if low is not None else high
     return fields
 
 
@@ -122,32 +127,29 @@ def apply_rehash_steps(conn: sqlite3.Connection) -> dict[str, int]:
     for step in REHASH_STEPS:
         if step.key in done:
             continue
-        current_fields = REGISTRY[step.table].seeded_fields
         rows = conn.execute(
             f"SELECT * FROM {step.table} "  # nosec B608 - table name from internal allow-list
             f"WHERE source = 'seed' AND seed_hash IS NOT NULL"
         ).fetchall()
 
-        rehashed = 0
-        for row in rows:
-            try:
-                before = step.recover(row)
-            except IndexError, KeyError:
-                # The migration this step pairs with has not been applied. Leave
-                # the step unmarked so it runs once the schema catches up.
-                break
-            if compute_seed_hash(before) != row["seed_hash"]:
-                continue  # a real user edit
+        try:
+            untouched = [r for r in rows if compute_seed_hash(step.recover(r)) == r["seed_hash"]]
+        except IndexError:
+            # recover() asked for a column that does not exist, so the migration this
+            # step pairs with has not been applied. Leave the step unmarked and it
+            # runs once the schema catches up.
+            continue
+
+        current_fields = REGISTRY[step.table].seeded_fields
+        for row in untouched:
             conn.execute(
                 f"UPDATE {step.table} SET seed_hash = ? WHERE id = ?",  # nosec B608 - internal allow-list
                 (compute_seed_hash({f: row[f] for f in current_fields}), row["id"]),
             )
-            rehashed += 1
-        else:
-            conn.execute(
-                "INSERT OR REPLACE INTO seed_loader_meta (key, value) VALUES (?, ?)",
-                (step.key, str(rehashed)),
-            )
-            counts[step.table] = counts.get(step.table, 0) + rehashed
+        conn.execute(
+            "INSERT OR REPLACE INTO seed_loader_meta (key, value) VALUES (?, ?)",
+            (step.key, str(len(untouched))),
+        )
+        counts[step.table] = counts.get(step.table, 0) + len(untouched)
 
     return counts

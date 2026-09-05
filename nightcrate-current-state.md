@@ -6,7 +6,7 @@
 
 **NightCrate version:** 0.41.1
 
-**Last updated:** 2026-08-29
+**Last updated:** 2026-09-05
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -101,7 +101,7 @@ No catalog, project, session, or sub-frame management exists yet. The file brows
 
 **Status:** `[shipped]`
 
-Full CRUD for 12 equipment types (camera, sensor, telescope/OTA, filter, mount, focuser, filter wheel, OAG, guide scope, computer, software) plus 10 lookup/reference tables. Fully normalized schema with junction tables for interfaces, child tables for filter passbands and size options, and telescope configurations. Equipment seed loader populates reference data from 31 CSV files on first run with hash-based change detection for re-seeding. FITS alias tables exist for future FITS-to-equipment resolution. UI: two-panel layout with TreeView sidebar + DataGrid content area, per-type form dialogs, inline CRUD for lookup tables. Soft delete with optional restore. All seed-tracking columns stripped from API responses.
+Full CRUD for 12 equipment types (camera, sensor, telescope/OTA, filter, mount, focuser, filter wheel, OAG, guide scope, computer, software) plus 10 lookup/reference tables. Fully normalized schema with junction tables for interfaces, child tables for filter passbands and size options, and telescope configurations. Equipment seed loader populates reference data from 30 CSV files on first run with hash-based change detection for re-seeding; **v0.41.1 made that detection survive its own schema changes** — see Schema state. The catalogue was audited and expanded in v0.41.1 (cameras 112 → 190, sensors 41 → 54, telescopes 51 → 93, configurations 84 → 130), and three columns whose meaning was undefined were given one: sensor read noise is now split by conversion gain, `mount.payload_capacity_kg` is instrument-only excluding counterweights (with `payload_capacity_with_cw_kg` beside it), and `peak_qe_pct` is the peak within 400-700nm. The FITS alias tables were dropped in v0.41.1 along with automatic equipment resolution. UI: two-panel layout with TreeView sidebar + DataGrid content area, per-type form dialogs, inline CRUD for lookup tables. Soft delete with optional restore. All seed-tracking columns stripped from API responses.
 
 **My Equipment (v0.12.0):** per-row `is_mine` boolean on 10 owned equipment types with partial indexes, `?mine=true` filter + is_mine-first ordering on list endpoints, `POST /api/equipment/<type>/{id}/mine` toggle, `GET /api/equipment/mine-counts`. UI: clickable star column in lists (optimistic toggle + Snackbar rollback), MineCheckbox in all 10 form dialogs, "MY EQUIPMENT" sidebar group with reactive sub-items, star indicator in rig-builder dropdowns with owned items surfaced at the top.
 
@@ -117,7 +117,9 @@ User-composed imaging rig templates (one telescope configuration + one camera + 
 
 **Calculators:** Image scale, FOV (arctan formula with sensor-dim fallback), Dawes/Rayleigh limits, sensor coverage, sampling assessment (3-tier: oversampled/well_sampled/undersampled with per-binning recommendations). **Guide suitability:** mode-aware (guide-scope vs OAG), 4-tier rating on `effective_error_main_pixels` (0.6/1.0/1.2 thresholds), 6″/pixel hard cap, binning + centroid accuracy as query params. **Guiding tolerance:** 0.5× / 1.0× / 1.5× main-scale thresholds with plain-language comparison to current guide precision.
 
-**UI:** Card-grid rig list with detail panel that opens on click. Detail panel has three tabs — **Equipment** (tree + detail pane fetching full equipment objects in parallel; shows every field including sensor photometrics, passbands, interfaces), **Imaging** (metrics + sampling chart with seeing slider), **Guiding** (two sub-tabs: Guide System and Guiding Tolerance, each with its own binning selector). Pure D3 charts (SamplingChart, GuideSuitabilityChart). "About this calculator" disclosures with attribution links.
+**Pre-defined rigs (v0.41.1, migrations 0047-0051):** all-in-one smart telescopes are seeded as complete rigs — a Seestar or DWARF has fixed inseparable optics, camera and filter changer, so the rig *is* the product. Twelve ship with their telescope, native configuration, integrated imager and populated internal filter changer. `rig.is_mine` keeps the catalogue out of "my rigs"; New Rig offers them from a dropdown; deleting one that has not been customised returns it to the catalogue rather than retiring a husk. Location was removed from rigs entirely — rigs are not tied to locations.
+
+**UI:** Card-grid rig list with detail panel that opens on click. Cards are a summary (name, description, aperture / focal length / ratio, filter count); the detail panel carries everything else. Detail panel has three tabs — **Equipment** (tree + detail pane fetching full equipment objects in parallel; shows every field including sensor photometrics, passbands, interfaces), **Imaging** (metrics + sampling chart with seeing slider), **Guiding** (two sub-tabs: Guide System and Guiding Tolerance, each with its own binning selector). Pure D3 charts (SamplingChart, GuideSuitabilityChart). "About this calculator" disclosures with attribution links.
 
 - **Route:** `/rigs`
 - **API:** `/api/rigs/*` (CRUD + `clone`, `restore`, `calculators`, `equipment-options`)
@@ -392,7 +394,11 @@ Two things at once: a **strip-out** and a **new capability**.
 
 ## Schema state
 
-Current migration: **0046** (`header_keyed_calibration`). 46 migrations total (`0001`–`0046`).
+Current migration: **0054** (`sensor_peak_qe_band`). 54 migrations total (`0001`–`0054`).
+
+**v0.41.1 equipment-catalogue migrations:** 0047 (`seedable_rigs` — seed columns on `rig`), 0048 (`rig_is_mine`), 0049 (`seed_smart_scope_filter_slots`), 0050 (`rig_summary_source`), 0051 (`passband_bandwidth_nullable` — table rebuild with `filter_summary` dropped and recreated around it), 0052 (`read_noise_by_gain` — splits `sensor.read_noise_e` into low/high gain columns and renames the camera pair off the misleading LCG/HCG spelling), 0053 (`mount_payload_convention` — adds `payload_capacity_with_cw_kg`), 0054 (`sensor_peak_qe_band` — adds `peak_qe_wavelength_nm`).
+
+**The seed-loader hash contract can now be schema-evolved.** A field's *name* is part of the hashed payload, so renaming or adding a `seeded_fields` entry invalidates every row in that table and the loader reads them all as user-edited — permanently, since nothing rewrote `seed_hash`. Two repairs landed with 0052: if a row still hashes to the CSV's own value nobody edited it, so the hash is rewritten in place (`TableReport.rehashed`); and for a release that changes the field set *and* CSV values together, `seed_loader/rehash.py` reconstructs each row's pre-migration hash from values still present under the new names. Writing CSV values into the migration instead (migration 0024's approach) overwrites exactly the rows the hash exists to protect.
 
 **Recent migrations not detailed elsewhere:** 0025 (`target_wishlist` — `target_wishlist`, `wishlist_section`, `target_plan`, `target_plan_date_range` tables for the wishlist + planning system), 0026 (`rig_sort_order` — `sort_order` column on `rig` + `rig_summary` view rebuild), 0027 (`plan_filter_settings` — moon filter + threshold columns on `target_plan`), 0028 (`phd2_recent_files` — `id, path UNIQUE, opened_at` for DB-backed PHD2 recent-files history mirroring the image-analyzer pattern).
 

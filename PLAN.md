@@ -5300,6 +5300,129 @@ survive.
       through the dialog with coordinate + equipment hints instead of firing blind from the
       file browser (which made ASTAP search the whole sky and usually time out).
 
+### Smart telescopes ship as rigs (migrations 0047-0051)
+
+- [x] **`rig` and `rig_filter_slot` became seedable**, but only for all-in-one smart telescopes.
+      A Seestar or DWARF has fixed inseparable optics, camera and filter changer, so the rig *is*
+      the product rather than something the user assembles. Twelve ship ready to use — Seestar
+      S30 / S30 Pro / S50 / S50 Pro, DWARF II and mini, Celestron Origin and Origin Mark II, and
+      the Unistellar eVscope 2 / eQuinox 2 / Odyssey / Odyssey Pro — each with its telescope,
+      native configuration, integrated imager and populated internal changer.
+      `rig` loads **last** in `LOAD_ORDER` because it references almost every other table.
+      `is_default` and `sort_order` are deliberately not seeded: which rig is default is the
+      user's business. Renaming a seeded rig marks it user-modified and the loader leaves it be.
+- [x] **`rig.is_mine` (0048)** so the catalog doesn't clutter "my rigs" — same flag and the same
+      NOT-in-`seeded_fields` treatment as the ten owned-equipment tables. Claiming a catalog rig
+      sets it; retiring one that has not been customised clears it and returns the rig to the
+      pre-defined list rather than leaving a retired husk behind.
+- [x] **`filter_passband.bandwidth_nm` is nullable (0051).** DwarfLab publish the dual-band's
+      lines and not their widths, and a user may well know their filter passes Ha without knowing
+      to how many nanometres. The choice was invent a number or record nothing, and an invented
+      width feeds the per-line moon model quietly. `central_wavelength_nm` stays NOT NULL — it is
+      what identifies the passband. The rebuild has to drop and recreate `filter_summary` first:
+      `ALTER TABLE ... RENAME` rewrites references *inside* existing views, so doing it with the
+      original table already dropped leaves the view pointing at nothing.
+- [x] Also seeded: MLAstro mounts, the ZWO Seestar S50 Pro, and passbands for the smart-scope
+      filters. Blocking filters (UV/IR-cut, light pollution) still carry **no** passband rows —
+      a UV/IR-cut row would invent a line to accumulate hours against.
+
+### The rigs page, reworked
+
+- [x] **Cards are a summary; the detail lives in a panel.** Half-width cards carry name,
+      description, aperture / focal length / ratio and a filter count ("Filters: 3", or a dash) —
+      no OTA string, nothing repeated. Clicking one opens `RigDetailPanel` with everything
+      formatted. The default marker is an unambiguous chip rather than a star: starring stays
+      reserved for favourites and defaults elsewhere in the app.
+- [x] **New Rig offers a dropdown of pre-defined rigs or a custom build** (`NewRigDialog`),
+      alpha-ordered, with a one-line spec under the selector. A list would have outrun the dialog
+      as the catalog grows.
+- [x] **Delete drops an untouched pre-defined rig and retires a customised one.** `rigs.py`
+      reuses `compute_seed_hash` + the registry's `seeded_fields` to tell the two apart and
+      returns `{"outcome": "removed" | "retired"}`.
+- [x] **Location removed from rigs entirely** — rigs are not tied to locations, and the rig
+      calculators were silently using the default location for seeing, which is a hidden
+      parameter and worse than a misplaced control. The Imaging tab already has a seeing slider.
+
+### Equipment catalogue audit
+
+- [x] **Additions, researched against manufacturer pages**: cameras 112 → 190, sensors 41 → 54,
+      telescopes 51 → 93, configurations 84 → 130. ZWO, QHY, Player One, ToupTek, Altair (a
+      manufacturer with nothing in the catalogue at all), Askar, William Optics, Sky-Watcher,
+      Sharpstar, Celestron, Explore Scientific.
+- [x] **Real defects found by arithmetic, not by agreement between sources.** An IMX676 row
+      filled from the IMX571/455 family (impossible 50Ke full well at 2um pixels); an IMX411
+      width that disagreed with its own resolution; a **fabricated** Player One Apollo-M MINI
+      row; 19 telescope rows whose unquoted-CSV commas had silently eaten their weight,
+      obstruction and source URL, costing 14 product links. Search summaries twice blended
+      adjacent rows — the 20032PNT given the 15028HNT's focal length, the William Optics Cat
+      line shifted a row — and the focal-ratio check caught both.
+- [x] **Claude Desktop's verification pass over the pre-existing rows** returned 16 corrections
+      across four handoffs plus a column-semantics spec. All applied. Its working documents are
+      not in the repo; `docs/seed-audit-handoff.md` — the brief that drove it — is, because the
+      checks it describes are reusable: the arithmetic that actually catches errors, the traps
+      already hit on this data, and the hard rules for anything that writes these CSVs.
+- [x] **A passband row is one emission line, not one physical window.** The L-eNhance passes Ha,
+      Hb and OIII through two windows and carried two rows, so integration through it never
+      accumulated against Hb. Nothing sums `bandwidth_nm`, so recording the shared width twice is
+      correct input for moon scattering.
+
+### Column semantics (migrations 0052-0054)
+
+- [x] **Read noise is named by gain, not by mode (0052).** `sensor.read_noise_e` held the
+      low-gain figure on six rows and the high-gain figure on ten, with nothing to say which —
+      an IMX571 looked 4.7x noisier than it is. And `full_well_capacity_ke` is the low-gain
+      figure, so combining the two described a state the sensor cannot occupy: 50000/0.7 is 16.1
+      stops on a 16-bit part. Split into `read_noise_low_gain_e` + `read_noise_high_gain_e`, each
+      value classified by cross-reference against the cameras using it. The camera pair is
+      renamed (`effective_read_noise_lcg_e` → `effective_read_noise_low_gain_e`), which makes
+      four rows true that are wrong today: the ASI1600/QHY163 bodies publish both figures for a
+      Panasonic MN34230, which has no dual-conversion-gain mode at all.
+- [x] **`payload_capacity_kg` gets one meaning (0053)** — maximum instrument payload excluding
+      counterweights, photographic where a maker publishes visual and photographic separately.
+      It was carrying three conventions, so the same 8 kg meant "telescope, counterweights on
+      top" on one row and "telescope *and* counterweights" on another. Adds
+      `payload_capacity_with_cw_kg` for the harmonic mounts, seeded on the ten rows with a
+      published figure.
+- [x] **`peak_qe_pct` is the peak within 400-700nm (0054)**, with `peak_qe_wavelength_nm` beside
+      it so the figure carries its own context. Three mono/colour pairs were seeded identical
+      because 91% is their *near-infrared* peak, where Bayer dyes are transparent. Deep-sky
+      imaging is a visible-band activity; five values that were NIR peaks (or a mono figure
+      copied onto colour) are blanked rather than left to be read under a meaning they were not
+      recorded under.
+
+### The seed loader can now survive its own schema changes
+
+- [x] **The hash contract had no repair path, and the renames above would have been the first
+      thing to need one.** A field's *name* is part of the hashed payload, so renaming or adding
+      a `seeded_fields` entry invalidates every row in the table at once and the loader reads
+      them all as user-edited — permanently, since nothing ever rewrote `seed_hash`. On the real
+      workspace DB that would have stranded 226 rows, silently: reseeding reports success and
+      changes nothing. `HASH_CONTRACT_VERSION` does not catch it (it guards the serialization
+      format, not the field set), and migration 0024's own comment shows the precedent was to
+      accept the damage and defer "a versioned-hash strategy in the loader itself".
+- [x] **Two repairs, in `loader.py` and the new `seed_loader/rehash.py`.** The general one: if a
+      row still hashes to the CSV's own value then nobody edited it, so rewrite the hash
+      (`TableReport.rehashed`). The sharper one, for a release that changes the field set *and*
+      CSV values in the same version: reconstruct the row's **pre-migration** hash from values
+      still present under the new names, and re-hash only what matches. Writing the CSV values
+      into the migration instead — 0024's approach — overwrites exactly the rows the hash exists
+      to protect, so no migration here backfills a value.
+
+### Smaller fixes
+
+- [x] **Source folders inside archives.** `ingest_scanner` walks a zip/tar/7z and catalogs its
+      entries through the existing `archive.zip::entry` virtual-path convention; `FileBrowser` in
+      `directoryMode` lets an archive be selected as a bound folder.
+- [x] **Frames with no `IMAGETYP` fall back to the filename** (`ingest_classify`), which is what
+      made a DWARF folder ingest "find nothing". Header evidence outranks the filename, so a
+      light of the Dark Horse Nebula is not classified as a dark.
+- [x] **The Tonight card is labelled by the darkness actually reached** — it said "ASTRONOMICAL
+      DARK" for a Stockholm June night that never gets there. The number was right; the label
+      was not.
+- [x] Aberration-inspector zone boxes made legible; a maximizable resizable Overview window;
+      focal ratio computed from aperture + focal length in the OTA form; `text.disabled` added to
+      both theme palettes so a disabled tab actually reads as disabled.
+
 ### Migrations
 
 - [x] **0043** `sub_frame_correction_source` — `frame_type_source` / `project_target_source`.
@@ -5314,6 +5437,17 @@ survive.
       `project_source_folder.rig_id`.
 - [x] All three verified on a **copy of the populated dev DB** (already at 0043) as well as a
       fresh build: 2341 sub frames preserved, `foreign_key_check` and `integrity_check` clean.
+- [x] **0047** `seedable_rigs` — `source` / `seed_key` / `seed_hash` on `rig`.
+- [x] **0048** `rig_is_mine`; **0049** `seed_smart_scope_filter_slots`; **0050**
+      `rig_summary_source` exposes the seed columns through the view.
+- [x] **0051** `passband_bandwidth_nullable` — table rebuild, with `filter_summary` dropped and
+      recreated around it.
+- [x] **0052** `read_noise_by_gain`; **0053** `mount_payload_convention`; **0054**
+      `sensor_peak_qe_band`. All three structural only — values reach existing databases through
+      the loader, which still respects rows the user has edited.
+- [x] 0052-0054 verified together on a **copy of the live workspace DB**: 226 rows re-hashed
+      across sensor / camera / mount, every pending correction applied, `skipped_user_modified`
+      down to one genuine local edit, and a second run a clean no-op.
 
 ### Verification
 
