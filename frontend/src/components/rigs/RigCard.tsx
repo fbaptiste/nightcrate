@@ -29,8 +29,8 @@ interface RigCardProps {
 function formatFilterSummary(rig: Rig): string {
   if (rig.filter_wheel_name) {
     const count = rig.filter_slots.length;
-    const positions = rig.filter_wheel_positions;
-    const filled = count > 0 ? `${count} of ${positions} filters` : "no filters assigned";
+    const filled =
+      count > 0 ? `${count} filter${count === 1 ? "" : "s"}` : "no filters assigned";
     return `${rig.filter_wheel_name} \u2014 ${filled}`;
   }
   if (rig.single_filter_name) {
