@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
+  DragOverlay,
   closestCenter,
   PointerSensor,
   useSensor,
@@ -11,7 +12,7 @@ import {
 import {
   SortableContext,
   arrayMove,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -101,8 +102,14 @@ export default function RigsPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+  const draggingRig = draggingId
+    ? rigs.find((r) => r.id === draggingId) ?? null
+    : null;
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
+    setDraggingId(null);
     if (!over || active.id === over.id) return;
     const oldIdx = activeRigs.findIndex((r) => r.id === active.id);
     const newIdx = activeRigs.findIndex((r) => r.id === over.id);
@@ -110,8 +117,11 @@ export default function RigsPage() {
     const reordered = arrayMove(activeRigs, oldIdx, newIdx);
     queryClient.setQueryData<Rig[]>(["rigs"], (prev) => {
       if (!prev) return prev;
-      const retired = prev.filter((r) => !r.active);
-      return [...reordered, ...retired];
+      // Everything that isn't in the reordered list — retired rigs and the
+      // unclaimed pre-defined ones the New Rig dialog offers — must survive,
+      // or they vanish from the cache until the refetch lands.
+      const moved = new Set(reordered.map((r) => r.id));
+      return [...reordered, ...prev.filter((r) => !moved.has(r.id))];
     });
     try {
       await reorderRigs(reordered.map((r) => r.id));
@@ -247,11 +257,13 @@ export default function RigsPage() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
+          onDragStart={(e) => setDraggingId(Number(e.active.id))}
+          onDragCancel={() => setDraggingId(null)}
           onDragEnd={handleDragEnd}
         >
           <SortableContext
             items={activeRigs.map((r) => r.id)}
-            strategy={verticalListSortingStrategy}
+            strategy={rectSortingStrategy}
           >
             <Box
               sx={{
@@ -276,6 +288,23 @@ export default function RigsPage() {
               ))}
             </Box>
           </SortableContext>
+          {/* The card travels with the pointer, leaving its slot free to act as
+              the dashed drop indicator. */}
+          <DragOverlay>
+            {draggingRig && (
+              <Box sx={{ opacity: 0.9, cursor: "grabbing" }}>
+                <RigCard
+                  rig={draggingRig}
+                  onSelect={() => {}}
+                  onEdit={() => {}}
+                  onClone={() => {}}
+                  onDelete={() => {}}
+                  onRestore={() => {}}
+                  onSetDefault={() => {}}
+                />
+              </Box>
+            )}
+          </DragOverlay>
         </DndContext>
       )}
 
@@ -398,11 +427,28 @@ function SortableRigCard({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
   };
 
+  // While this item is being dragged its card rides in the DragOverlay, so the
+  // slot it leaves behind becomes the drop indicator: a dashed rectangle that
+  // moves with the sort as other cards shift around it. Keeping the card
+  // mounted but invisible preserves the slot's exact size.
   return (
-    <Box ref={setNodeRef} style={style} sx={{ display: "flex", alignItems: "stretch" }}>
+    <Box
+      ref={setNodeRef}
+      style={style}
+      sx={{
+        display: "flex",
+        alignItems: "stretch",
+        ...(isDragging && {
+          border: "2px dashed",
+          borderColor: "primary.main",
+          borderRadius: 1,
+          bgcolor: "action.hover",
+          "& > *": { visibility: "hidden" },
+        }),
+      }}
+    >
       <Box
         {...attributes}
         {...listeners}

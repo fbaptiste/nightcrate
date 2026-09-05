@@ -129,6 +129,9 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
           onChange={(_, v: TabKey) => setActiveTab(v)}
           aria-label="rig calculator tabs"
         >
+          {/* Tabs styles its children by cloning them, so a Tab must stay a
+              direct child — wrapping one (in a Tooltip, say) silently costs it
+              the disabled colour and it renders as bright as an active tab. */}
           {TAB_ORDER.map((key) => (
             <Tab
               key={key}
