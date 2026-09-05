@@ -74,3 +74,6 @@ mount.planewave.l350,manufacturer.planewave,mount_type.alt_az,0,Direct drive,1,L
 mount.planewave.l500,manufacturer.planewave,mount_type.alt_az,0,Direct drive,1,L-500,,Direct-drive alt-az mount (EQ wedge optional) for CDK17/20,90,,,
 # --- Move Shoot Move (camera star tracker) ---
 mount.msm.nomad,manufacturer.msm,mount_type.star_tracker,0,,0,Nomad,0.43,Compact camera star tracker with 3-position switch (no GoTo),3.5,,,
+# --- MLAstro (OnStepX harmonic drives) ---
+mount.mlastro.sal_33,manufacturer.mlastro,mount_type.harmonic_eq,0,Harmonic,1,SAL-33,5.3,17:100 harmonic gearboxes on both axes. 15kg visual without counterweight and 20kg with a 5kg one; imaging load is about two thirds of that. Equatorial or alt-az dual mode. The only harmonic mount shipping official OnStepX firmware. Physical RA brake plus back-EMF braking on DEC; FRAM keeps pointing across power cycles. USB-B plus WiFi and Bluetooth. Max slew 4 deg/s. MLAstro advertises low-PE gearboxes but publishes no periodic error figure.,15,,https://mlastro.com/mlastro-sal-33,
+mount.mlastro.one,manufacturer.mlastro,mount_type.harmonic_eq,0,Harmonic,1,MLAstro One,11.0,Larger harmonic mount; formerly the SAL-66. 40kg payload on an 11kg head. Sold in several variants; MLAstro publishes little else so payload and head weight are all that is recorded here.,40,,https://mlastro.com/product/mlastro-one/,

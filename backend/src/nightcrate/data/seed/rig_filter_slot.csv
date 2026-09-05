@@ -19,3 +19,6 @@ rig.zwo.seestar_s30_pro,filter.zwo.seestar_dark,3
 rig.dwarflab.dwarf_mini,filter.dwarflab.cls,1
 rig.dwarflab.dwarf_mini,filter.dwarflab.duo_band,2
 rig.dwarflab.dwarf_mini,filter.dwarflab.dark,3
+rig.zwo.seestar_s50_pro,filter.zwo.seestar_uv_ir_cut,1
+rig.zwo.seestar_s50_pro,filter.zwo.seestar_duo_band,2
+rig.zwo.seestar_s50_pro,filter.zwo.seestar_dark,3

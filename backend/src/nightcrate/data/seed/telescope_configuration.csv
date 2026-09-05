@@ -118,3 +118,9 @@ telescope_configuration.zwo.seestar_s30.native,telescope.zwo.seestar_s30,,Native
 telescope_configuration.zwo.seestar_s30_pro.native,telescope.zwo.seestar_s30_pro,,Native f/5.3,,160.0,5.3,,1,Fixed optics. 4.6 degree diagonal field with the IMX585.,1.0
 telescope_configuration.dwarflab.dwarf_mini.native,telescope.dwarflab.dwarf_mini,,Native f/5,,150.0,5.0,,1,Fixed optics. Roughly 4 arcsec/px and a 2.46 x 1.2 degree field with the IMX662 cropped to 1920x1080.,1.0
 telescope_configuration.dwarflab.dwarf_ii.native,telescope.dwarflab.dwarf_ii,,Native f/4.2,,100.0,4.2,,1,Fixed telephoto optics. Roughly 3 degree field.,1.0
+telescope_configuration.zwo.seestar_s50_pro.native,telescope.zwo.seestar_s50_pro,,Native f/5.2,,260.0,5.2,,1,Fixed optics. 2.8 degree diagonal field with the OS08B10.,1.0
+telescope_configuration.celestron.origin.native,telescope.celestron.origin,,Native f/2.2,,335.0,2.2,,1,Fixed RASA optics. 1.32 x 0.75 degree field with the Mark II's IMX678.,1.0
+telescope_configuration.unistellar.evscope_2.native,telescope.unistellar.evscope_2,,Native f/3.9,,450.0,3.9,,1,Fixed optics. 45.6 x 34.2 arcmin field. Unistellar rounds the ratio to f/4; 450/114 is f/3.95.,1.0
+telescope_configuration.unistellar.equinox_2.native,telescope.unistellar.equinox_2,,Native f/3.9,,450.0,3.9,,1,Fixed optics. 45.6 x 34.2 arcmin field.,1.0
+telescope_configuration.unistellar.odyssey.native,telescope.unistellar.odyssey,,Native f/3.9,,320.0,3.9,,1,Fixed optics. 45 x 33.6 arcmin field. 320/85 is f/3.76; Unistellar publishes f/3.9.,1.0
+telescope_configuration.unistellar.odyssey_pro.native,telescope.unistellar.odyssey_pro,,Native f/3.9,,320.0,3.9,,1,Fixed optics. 45 x 33.6 arcmin field.,1.0
