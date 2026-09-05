@@ -393,8 +393,29 @@ def _load_regular_table(
                 current_hash = compute_seed_hash(current_row)
 
                 if current_hash != existing["seed_hash"]:
-                    # User has modified this row — skip
-                    table_report.skipped_user_modified.append(seed_key)
+                    if current_hash == incoming_hash:
+                        # The row still holds exactly what the CSV says, so nobody
+                        # edited it — the stored hash simply predates a change to
+                        # this table's ``seeded_fields``. A field NAME is part of the
+                        # hashed payload (see hash.compute_seed_hash), so renaming or
+                        # adding a seeded field invalidates every stored hash in the
+                        # table at once, and without this branch every row would be
+                        # read as user-modified and stranded permanently. Rewriting
+                        # the hash touches no value.
+                        conn.execute(
+                            f"UPDATE {table.table_name} SET seed_hash = ? WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
+                            (current_hash, existing_id),
+                        )
+                        table_report.rehashed += 1
+                    else:
+                        # Genuinely user-modified — leave it alone.
+                        #
+                        # A row that is untouched but whose CSV value changed in the
+                        # same release as the field-set change also lands here, and
+                        # stays stranded. That is why a migration changing
+                        # ``seeded_fields`` must ALSO backfill, by direct UPDATE,
+                        # every value that release changes in the same CSVs.
+                        table_report.skipped_user_modified.append(seed_key)
                     continue
 
                 if incoming_hash == existing["seed_hash"]:
@@ -650,7 +671,15 @@ def _load_child_table(
                 current_hash = compute_seed_hash(current_row)
 
                 if current_hash != existing_child["seed_hash"]:
-                    table_report.skipped_user_modified.append(child_seed_key_val)
+                    # Same contract as the regular-table path above.
+                    if current_hash == incoming_hash:
+                        conn.execute(
+                            f"UPDATE {table.table_name} SET seed_hash = ? WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
+                            (current_hash, existing_id),
+                        )
+                        table_report.rehashed += 1
+                    else:
+                        table_report.skipped_user_modified.append(child_seed_key_val)
                     continue
 
                 if incoming_hash == existing_child["seed_hash"]:

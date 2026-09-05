@@ -466,23 +466,27 @@ async def reseed_equipment() -> dict:
     total_inserted = 0
     total_updated = 0
     total_unchanged = 0
+    total_rehashed = 0
     total_skipped = 0
     for table_name, tr in report.per_table.items():
         total_inserted += tr.inserted
         total_updated += tr.updated
         total_unchanged += tr.unchanged
+        total_rehashed += tr.rehashed
         total_skipped += len(tr.skipped_user_modified)
-        if tr.inserted or tr.updated or tr.skipped_user_modified or tr.orphaned:
+        if tr.inserted or tr.updated or tr.rehashed or tr.skipped_user_modified or tr.orphaned:
             summary["tables"][table_name] = {
                 "inserted": tr.inserted,
                 "updated": tr.updated,
                 "unchanged": tr.unchanged,
+                "rehashed": tr.rehashed,
                 "skipped_user_modified": tr.skipped_user_modified,
                 "orphaned": tr.orphaned,
             }
     summary["total_inserted"] = total_inserted
     summary["total_updated"] = total_updated
     summary["total_unchanged"] = total_unchanged
+    summary["total_rehashed"] = total_rehashed
     summary["total_skipped"] = total_skipped
 
     return summary

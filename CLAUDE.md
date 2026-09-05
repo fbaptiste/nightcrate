@@ -383,7 +383,19 @@ For full feature inventory and per-version history see `nightcrate-current-state
 
 ### Seed Loader
 - **`rig` is seeded, but only for all-in-one smart telescopes (v0.41.1, migration 0047).** A Seestar or DWARF has fixed, inseparable optics + camera + filter changer, so the rig *is* the product rather than something the user assembles — it ships ready to use with its telescope, native configuration, integrated imager and internal filter changer all seeded alongside it. Ordinary rigs stay user records. `rig` loads **last** in `LOAD_ORDER` because it references almost every other table. `is_default` and `sort_order` are deliberately **not** seeded fields — which rig is default is the user's business. Renaming a seeded rig marks it user-modified, and the loader leaves it alone from then on.
-- **Hash contract is versioned.** Never expand a table's `seeded_fields` after first seed without a migration that backfills affected rows directly — the loader's user-modified check (`current_hash != stored_hash`) will skip every existing row otherwise. v0.26.0's migration 0024 backfilled `worm_period_seconds` via direct UPDATE statements for this reason.
+- **Hash contract is versioned.** A field *name* is part of the hashed payload, so renaming or
+  adding a `seeded_fields` entry changes the hash of **every row in that table** and the loader's
+  user-modified check (`current_hash != stored_hash`) reads them all as user-edited.
+  v0.41.1 made the loader self-healing: when the stored hash is stale but the row still hashes to
+  the CSV's value (`current_hash == incoming_hash`), nobody edited it, so the hash is rewritten in
+  place and the row stays under management. Reported as `TableReport.rehashed`.
+- **A migration that changes `seeded_fields` MUST also backfill, by direct UPDATE, every value that
+  release changes in the same CSVs.** The self-heal above compares the row against the CSV, so an
+  untouched row whose value *also* changed that release is indistinguishable from a user edit and
+  stays stranded. This is what migration 0024 already did for `worm_period_seconds` — it just
+  predates the repair, and its own comment accepts permanent abandonment of the rows it touched.
+  **Verify on a copy of a database that predates the migration and assert `skipped_user_modified`
+  is empty** — a fresh DB rebuilds from scratch and never exercises this path.
 - Never overwrites `source = 'user'` rows.
 - Junction tables delete-and-reinsert only for parents that were inserted/updated.
 - First-run vs update modes; missing CSV files fail loud at startup.

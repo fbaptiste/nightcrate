@@ -35,6 +35,8 @@ def _format_human(report: SeedReport) -> str:
             parts.append(f"{tr.updated} updated")
         if tr.unchanged:
             parts.append(f"{tr.unchanged} unchanged")
+        if tr.rehashed:
+            parts.append(f"{tr.rehashed} re-hashed (seeded_fields changed)")
         if tr.skipped_user_modified:
             parts.append(f"{len(tr.skipped_user_modified)} skipped (user-modified)")
         if tr.skipped_corrupt:
