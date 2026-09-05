@@ -926,11 +926,21 @@ CREATE TABLE IF NOT EXISTS rig (
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Seed tracking (migration 0047). Rigs are normally user records, but an
+    -- all-in-one smart telescope has fixed, inseparable optics + camera +
+    -- filter changer, so the rig IS the product and ships pre-built. Only
+    -- those are seeded; `source = 'user'` rigs are never touched by the loader.
+    -- is_default and sort_order are deliberately NOT seeded fields.
+    source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('seed', 'user')),
+    seed_key TEXT,
+    seed_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_rig_active ON rig(active);
 CREATE INDEX IF NOT EXISTS idx_rig_default ON rig(is_default) WHERE is_default = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rig_seed_key
+    ON rig(seed_key) WHERE seed_key IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS trg_rig_updated_at
 AFTER UPDATE ON rig

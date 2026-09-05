@@ -189,6 +189,47 @@ def _rig_payload(eq, **overrides):
     return base
 
 
+# ── Seeded smart-telescope rigs ──────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "name,aperture_mm,focal_length_mm,focal_ratio,has_wheel",
+    [
+        ("Seestar S50", 50.0, 250.0, 5.0, True),
+        ("Seestar S30", 30.0, 150.0, 5.0, True),
+        ("Seestar S30 Pro", 30.0, 160.0, 5.3, True),
+        ("DWARF mini", 30.0, 150.0, 5.0, True),
+        # No internal filter changer — its filters are external accessories.
+        ("DWARF II", 24.0, 100.0, 4.2, False),
+    ],
+)
+async def test_seeded_smart_scope_rigs(
+    client, name, aperture_mm, focal_length_mm, focal_ratio, has_wheel
+):
+    """All-in-one scopes ship as ready-made rigs: fixed optics, nothing to assemble."""
+    rigs = (await client.get("/api/rigs")).json()
+    rig = next((r for r in rigs if r["name"] == name), None)
+    assert rig is not None, f"{name} not seeded"
+    assert rig["aperture_mm"] == aperture_mm
+    assert rig["effective_focal_length_mm"] == focal_length_mm
+    assert rig["effective_focal_ratio"] == focal_ratio
+    assert rig["camera_id"] is not None
+    assert (rig["filter_wheel_id"] is not None) is has_wheel
+    # Self-contained: they carry their own mount and do not guide.
+    assert rig["mount_id"] is None
+    assert rig["guide_camera_id"] is None
+
+
+@pytest.mark.anyio
+async def test_seeded_rig_pixel_scale_is_computed(client):
+    """Sanity-check one rig end to end: 2.9um pixels at 250mm is ~2.4 arcsec/px."""
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    scale = s50["calculators"]["image_scale_arcsec_per_pixel"]
+    assert 2.35 < scale < 2.45, scale
+
+
 # ── CRUD Tests ───────────────────────────────────────────────────────────────
 
 
@@ -210,8 +251,10 @@ async def test_list_rigs(client, equipment):
     resp = await client.get("/api/rigs")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 1
-    assert data[0]["name"] == "C11 Deep Sky"
+    # The catalog seeds all-in-one smart-telescope rigs, so assert on the rig
+    # this test created rather than on the total.
+    mine = [r for r in data if r["name"] == "C11 Deep Sky"]
+    assert len(mine) == 1
 
 
 @pytest.mark.anyio
@@ -245,13 +288,13 @@ async def test_soft_delete_rig(client, equipment):
     resp = await client.delete(f"/api/rigs/{rig_id}")
     assert resp.status_code == 204
 
-    # Should not appear in active list
-    list_resp = await client.get("/api/rigs")
-    assert len(list_resp.json()) == 0
+    # Should not appear in active list (seeded smart-scope rigs still do)
+    active = await client.get("/api/rigs")
+    assert not [r for r in active.json() if r["id"] == rig_id]
 
     # Should appear with active_only=false
-    list_resp = await client.get("/api/rigs?active_only=false")
-    assert len(list_resp.json()) == 1
+    all_rigs = await client.get("/api/rigs?active_only=false")
+    assert [r for r in all_rigs.json() if r["id"] == rig_id]
 
 
 @pytest.mark.anyio

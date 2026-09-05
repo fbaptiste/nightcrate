@@ -467,6 +467,36 @@ LOAD_ORDER: list[SeedableTable] = [
             "manufacturer_seed_key": "manufacturer",
         },
     ),
+    # ------------------------------------------------------------------
+    # 26: rig — LAST, because it references almost everything above.
+    #
+    # Only all-in-one smart telescopes are seeded here. Their optics, camera
+    # and filter changer are fixed and inseparable, so the rig is the product
+    # rather than something the user assembles. Ordinary rigs stay user-owned;
+    # the loader never touches `source = 'user'` rows.
+    #
+    # `name` is seeded, so renaming a seeded rig marks it user-modified and it
+    # is left alone from then on — the same contract as every other table.
+    # `is_default` and `sort_order` are deliberately NOT seeded: which rig is
+    # default is the user's business, not the catalog's.
+    # ------------------------------------------------------------------
+    SeedableTable(
+        table_name="rig",
+        csv_filename="rig.csv",
+        seeded_fields=(
+            "name",
+            "description",
+            "telescope_configuration_id",
+            "camera_id",
+            "filter_wheel_id",
+            "notes",
+        ),
+        fk_columns={
+            "telescope_configuration_seed_key": "telescope_configuration",
+            "camera_seed_key": "camera",
+            "filter_wheel_seed_key": "filter_wheel",
+        },
+    ),
 ]
 
 # ---------------------------------------------------------------------------

@@ -382,6 +382,7 @@ For full feature inventory and per-version history see `nightcrate-current-state
 - Filter slots (`rig_filter_slot`) require `filter_wheel_id`; clearing the wheel deletes all slots in the same transaction.
 
 ### Seed Loader
+- **`rig` is seeded, but only for all-in-one smart telescopes (v0.41.1, migration 0047).** A Seestar or DWARF has fixed, inseparable optics + camera + filter changer, so the rig *is* the product rather than something the user assembles — it ships ready to use with its telescope, native configuration, integrated imager and internal filter changer all seeded alongside it. Ordinary rigs stay user records. `rig` loads **last** in `LOAD_ORDER` because it references almost every other table. `is_default` and `sort_order` are deliberately **not** seeded fields — which rig is default is the user's business. Renaming a seeded rig marks it user-modified, and the loader leaves it alone from then on.
 - **Hash contract is versioned.** Never expand a table's `seeded_fields` after first seed without a migration that backfills affected rows directly — the loader's user-modified check (`current_hash != stored_hash`) will skip every existing row otherwise. v0.26.0's migration 0024 backfilled `worm_period_seconds` via direct UPDATE statements for this reason.
 - Never overwrites `source = 'user'` rows.
 - Junction tables delete-and-reinsert only for parents that were inserted/updated.

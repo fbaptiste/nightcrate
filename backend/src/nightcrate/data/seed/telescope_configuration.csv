@@ -112,3 +112,9 @@ telescope_configuration.explore_scientific.ed102_fcd100.0_8x,telescope.explore_s
 # --- Explore Scientific ED127 FCD-100 ---
 telescope_configuration.explore_scientific.ed127_fcd100.native,telescope.explore_scientific.ed127_fcd100,,Native f/7.5,,952.0,7.5,,1,Bare telescope without reducer; FCD-100 triplet APO; inherent field curvature requires a flattener or reducer for imaging,1.0
 telescope_configuration.explore_scientific.ed127_fcd100.0_8x,telescope.explore_scientific.ed127_fcd100,Explore Scientific 0.8x Focal Reducer,0.8x Reducer f/6,,762.0,6.0,,0,Optional Explore Scientific 0.8x focal reducer (sold separately); shared across the FCD100 triplet series,0.8
+# --- Smart-telescope native configurations (fixed optics; nothing to swap) ---
+telescope_configuration.zwo.seestar_s50.native,telescope.zwo.seestar_s50,,Native f/5,,250.0,5.0,,1,Fixed optics. 0.73 x 1.29 degree field with the IMX462.,1.0
+telescope_configuration.zwo.seestar_s30.native,telescope.zwo.seestar_s30,,Native f/5,,150.0,5.0,,1,Fixed optics. 2.46 degree diagonal field with the IMX662.,1.0
+telescope_configuration.zwo.seestar_s30_pro.native,telescope.zwo.seestar_s30_pro,,Native f/5.3,,160.0,5.3,,1,Fixed optics. 4.6 degree diagonal field with the IMX585.,1.0
+telescope_configuration.dwarflab.dwarf_mini.native,telescope.dwarflab.dwarf_mini,,Native f/5,,150.0,5.0,,1,Fixed optics. Roughly 4 arcsec/px and a 2.46 x 1.2 degree field with the IMX662 cropped to 1920x1080.,1.0
+telescope_configuration.dwarflab.dwarf_ii.native,telescope.dwarflab.dwarf_ii,,Native f/4.2,,100.0,4.2,,1,Fixed telephoto optics. Roughly 3 degree field.,1.0
