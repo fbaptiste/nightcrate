@@ -32,6 +32,8 @@ class SeedReport:
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: datetime | None = None
     per_table: dict[str, TableReport] = field(default_factory=dict)
+    # Rows re-hashed by a one-shot rehash step, per table. See seed_loader/rehash.py.
+    migration_rehashed: dict[str, int] = field(default_factory=dict)
     errors: list[SeedError] = field(default_factory=list)
 
     @property

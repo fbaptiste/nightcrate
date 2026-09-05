@@ -105,7 +105,8 @@ export interface Sensor {
   sensor_height_mm: number | null;
   adc_bit_depth: number | null;
   full_well_capacity_ke: number | null;
-  read_noise_e: number | null;
+  read_noise_low_gain_e: number | null;
+  read_noise_high_gain_e: number | null;
   peak_qe_pct: number | null;
   bayer_pattern: string | null;
   dual_gain: boolean;
@@ -133,8 +134,8 @@ export interface Camera {
   usb_hub_interface: ConnectionInterface | null;
   unity_gain: number | null;
   effective_full_well_ke: number | null;
-  effective_read_noise_lcg_e: number | null;
-  effective_read_noise_hcg_e: number | null;
+  effective_read_noise_low_gain_e: number | null;
+  effective_read_noise_high_gain_e: number | null;
   effective_peak_qe_pct: number | null;
   hcg_threshold_gain: number | null;
   notes: string | null;
@@ -389,7 +390,8 @@ export interface SensorCreate {
   sensor_height_mm?: number | null;
   adc_bit_depth?: number | null;
   full_well_capacity_ke?: number | null;
-  read_noise_e?: number | null;
+  read_noise_low_gain_e?: number | null;
+  read_noise_high_gain_e?: number | null;
   peak_qe_pct?: number | null;
   bayer_pattern?: string | null;
   dual_gain?: boolean;
@@ -413,8 +415,8 @@ export interface CameraCreate {
   usb_hub_interface_id?: number | null;
   unity_gain?: number | null;
   effective_full_well_ke?: number | null;
-  effective_read_noise_lcg_e?: number | null;
-  effective_read_noise_hcg_e?: number | null;
+  effective_read_noise_low_gain_e?: number | null;
+  effective_read_noise_high_gain_e?: number | null;
   effective_peak_qe_pct?: number | null;
   hcg_threshold_gain?: number | null;
   notes?: string | null;

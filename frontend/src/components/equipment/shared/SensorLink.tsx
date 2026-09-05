@@ -80,8 +80,17 @@ export default function SensorLink({ sensor }: SensorLinkProps) {
           {sensor.full_well_capacity_ke != null && (
             <PopoverRow label="Full Well" value={`${sensor.full_well_capacity_ke} Ke-`} />
           )}
-          {sensor.read_noise_e != null && (
-            <PopoverRow label="Read Noise" value={`${sensor.read_noise_e} e-`} />
+          {sensor.read_noise_low_gain_e != null && (
+            <PopoverRow
+              label="Read Noise (Low Gain)"
+              value={`${sensor.read_noise_low_gain_e} e-`}
+            />
+          )}
+          {sensor.read_noise_high_gain_e != null && (
+            <PopoverRow
+              label="Read Noise (High Gain)"
+              value={`${sensor.read_noise_high_gain_e} e-`}
+            />
           )}
           {sensor.peak_qe_pct != null && (
             <PopoverRow label="Peak QE" value={`${sensor.peak_qe_pct}%`} />

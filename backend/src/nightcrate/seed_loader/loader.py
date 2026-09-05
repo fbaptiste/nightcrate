@@ -14,6 +14,7 @@ from nightcrate.seed_loader.csv_reader import read_seed_csv
 from nightcrate.seed_loader.hash import HASH_CONTRACT_VERSION, compute_seed_hash
 from nightcrate.seed_loader.models import SeedError, SeedReport, TableReport
 from nightcrate.seed_loader.registry import LOAD_ORDER, SeedableTable
+from nightcrate.seed_loader.rehash import apply_rehash_steps
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -198,6 +199,10 @@ def load_all(
             )
 
     report = SeedReport(mode=effective_mode)
+
+    # Repair hashes invalidated by a migration that changed a table's
+    # seeded_fields, before anything reads them. Idempotent per database.
+    report.migration_rehashed = apply_rehash_steps(conn)
 
     # ------------------------------------------------------------------
     # In-memory FK map: (table_name, seed_key) → id

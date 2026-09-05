@@ -44,7 +44,7 @@ CREATE TABLE filter_type (name TEXT UNIQUE, display_name TEXT, description TEXT)
 CREATE TABLE sensor (manufacturer_id FK, model_name TEXT, sensor_type CHECK ('mono','color'),
     pixel_size_um REAL, resolution_x INT, resolution_y INT, sensor_width_mm REAL,
     sensor_height_mm REAL, adc_bit_depth INT, full_well_capacity_ke REAL,
-    read_noise_e REAL, peak_qe_pct REAL, bayer_pattern CHECK ('RGGB','BGGR','GRBG','GBRG'),
+    read_noise_low_gain_e REAL, read_noise_high_gain_e REAL, peak_qe_pct REAL, bayer_pattern CHECK ('RGGB','BGGR','GRBG','GBRG'),
     dual_gain BOOL, hcg_threshold_gain INT, notes TEXT, source_url TEXT);
 
 CREATE TABLE camera (manufacturer_id FK, sensor_id FK, guide_sensor_id FK nullable,
@@ -52,8 +52,8 @@ CREATE TABLE camera (manufacturer_id FK, sensor_id FK, guide_sensor_id FK nullab
     back_focus_mm REAL, weight_g REAL, tilt_adapter BOOL, has_usb_hub BOOL,
     usb_hub_interface_id FK nullable, unity_gain INT,
     -- Vendor-tuned photometric overrides (camera-level, take precedence over sensor baseline)
-    effective_full_well_ke REAL, effective_read_noise_lcg_e REAL,
-    effective_read_noise_hcg_e REAL, effective_peak_qe_pct REAL, hcg_threshold_gain INT,
+    effective_full_well_ke REAL, effective_read_noise_low_gain_e REAL,
+    effective_read_noise_high_gain_e REAL, effective_peak_qe_pct REAL, hcg_threshold_gain INT,
     notes TEXT, source_url TEXT);
 -- junction: camera_interface (camera_id, interface_id → connection_interface)
 
@@ -223,12 +223,12 @@ Seed_keys: `focuser.zwo.eaf`, `focuser.zwo.eaf_5v`, `focuser.zwo.eafn`, `focuser
 Header: `focuser_seed_key,interface_seed_key`
 
 ### sensor.csv (37 rows)
-Header: `seed_key,manufacturer_seed_key,model_name,sensor_type,pixel_size_um,resolution_x,resolution_y,sensor_width_mm,sensor_height_mm,adc_bit_depth,full_well_capacity_ke,read_noise_e,peak_qe_pct,bayer_pattern,dual_gain,notes,source_url`
+Header: `seed_key,manufacturer_seed_key,model_name,sensor_type,pixel_size_um,resolution_x,resolution_y,sensor_width_mm,sensor_height_mm,adc_bit_depth,full_well_capacity_ke,read_noise_low_gain_e,read_noise_high_gain_e,peak_qe_pct,bayer_pattern,dual_gain,notes,source_url`
 
 Note: mono and color variants of the same chip need separate rows (sensor_type='mono' vs 'color' with bayer_pattern). `hcg_threshold_gain` exists in the SQL schema but is NOT in the CSV — it is populated only at the camera level.
 
 ### camera.csv (101 rows)
-Header: `seed_key,manufacturer_seed_key,sensor_seed_key,guide_sensor_seed_key,connector_size_seed_key,model_name,cooled,cooling_delta_c,back_focus_mm,weight_g,tilt_adapter,has_usb_hub,usb_hub_interface_seed_key,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,notes,source_url`
+Header: `seed_key,manufacturer_seed_key,sensor_seed_key,guide_sensor_seed_key,connector_size_seed_key,model_name,cooled,cooling_delta_c,back_focus_mm,weight_g,tilt_adapter,has_usb_hub,usb_hub_interface_seed_key,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,notes,source_url`
 
 ### camera_interface.csv (144 junction rows)
 Header: `camera_seed_key,interface_seed_key`

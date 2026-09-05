@@ -148,7 +148,8 @@ erDiagram
         REAL sensor_height_mm
         INTEGER adc_bit_depth
         REAL full_well_capacity_ke
-        REAL read_noise_e
+        REAL read_noise_low_gain_e
+        REAL read_noise_high_gain_e
         REAL peak_qe_pct
         TEXT bayer_pattern "CHECK: RGGB, GRBG, GBRG, BGGR or NULL"
         INTEGER dual_gain "boolean"

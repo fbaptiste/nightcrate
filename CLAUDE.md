@@ -389,13 +389,18 @@ For full feature inventory and per-version history see `nightcrate-current-state
   v0.41.1 made the loader self-healing: when the stored hash is stale but the row still hashes to
   the CSV's value (`current_hash == incoming_hash`), nobody edited it, so the hash is rewritten in
   place and the row stays under management. Reported as `TableReport.rehashed`.
-- **A migration that changes `seeded_fields` MUST also backfill, by direct UPDATE, every value that
-  release changes in the same CSVs.** The self-heal above compares the row against the CSV, so an
-  untouched row whose value *also* changed that release is indistinguishable from a user edit and
-  stays stranded. This is what migration 0024 already did for `worm_period_seconds` — it just
-  predates the repair, and its own comment accepts permanent abandonment of the rows it touched.
-  **Verify on a copy of a database that predates the migration and assert `skipped_user_modified`
-  is empty** — a fresh DB rebuilds from scratch and never exercises this path.
+- **A migration that RENAMES a seeded field needs a matching step in
+  `seed_loader/rehash.py`.** The self-heal above compares the row against the CSV, which conflates
+  *was this row edited* with *is this row up to date*; they come apart when the same release also
+  changes CSV values for those rows, and an untouched row is then stranded. A rehash step asks the
+  sharper question — it reconstructs the row's pre-migration hash from the values still present
+  under the new names, and re-hashes only the rows that match. Runs once per database, marked in
+  `seed_loader_meta`. **Do not "fix" this by writing the CSV values into the migration** (0024's
+  approach): that overwrites rows the user has edited, which is what the hash protects.
+- **Verify on a copy of a database that predates the migration and assert `skipped_user_modified`
+  is empty** — a fresh DB rebuilds from scratch and never exercises any of this. The v0.41.1 rename
+  was verified this way against the real workspace DB: 47 sensors + 123 cameras recovered, and the
+  one row left skipped was a genuine local edit.
 - Never overwrites `source = 'user'` rows.
 - Junction tables delete-and-reinsert only for parents that were inserted/updated.
 - First-run vs update modes; missing CSV files fail loud at startup.

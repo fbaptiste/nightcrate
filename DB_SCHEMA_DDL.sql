@@ -230,7 +230,12 @@ CREATE TABLE IF NOT EXISTS sensor (
     sensor_height_mm REAL,
     adc_bit_depth INTEGER,
     full_well_capacity_ke REAL,
-    read_noise_e REAL,
+    -- One figure per conversion gain. A dual-gain sensor has two and they differ
+    -- by up to a factor of five; a single-gain sensor publishes one, recorded in
+    -- whichever column describes it. full_well_capacity_ke is the LOW-gain figure,
+    -- so dynamic range must be computed against read_noise_low_gain_e.
+    read_noise_low_gain_e REAL,
+    read_noise_high_gain_e REAL,
     peak_qe_pct REAL,
     bayer_pattern TEXT CHECK (bayer_pattern IS NULL OR bayer_pattern IN ('RGGB', 'GRBG', 'GBRG', 'BGGR')),
     dual_gain INTEGER NOT NULL DEFAULT 0 CHECK (dual_gain IN (0, 1)),
@@ -282,8 +287,11 @@ CREATE TABLE IF NOT EXISTS camera (
     usb_hub_interface_id INTEGER REFERENCES connection_interface(id),
     unity_gain INTEGER,
     effective_full_well_ke REAL,
-    effective_read_noise_lcg_e REAL,
-    effective_read_noise_hcg_e REAL,
+    -- Named by gain rather than by mode: four seeded cameras publish both figures
+    -- for a Panasonic MN34230, which has no dual-conversion-gain mode at all.
+    -- Whether a discrete switch exists is carried by dual_gain + hcg_threshold_gain.
+    effective_read_noise_low_gain_e REAL,
+    effective_read_noise_high_gain_e REAL,
     effective_peak_qe_pct REAL,
     hcg_threshold_gain INTEGER,
     notes TEXT,

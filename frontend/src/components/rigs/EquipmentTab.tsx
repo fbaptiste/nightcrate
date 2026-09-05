@@ -804,8 +804,11 @@ function SensorBody({ sensor, label }: { sensor: Sensor; label?: string }) {
       {sensor.full_well_capacity_ke != null && (
         <Field label="Full Well" value={`${sensor.full_well_capacity_ke} ke⁻`} />
       )}
-      {sensor.read_noise_e != null && (
-        <Field label="Read Noise" value={`${sensor.read_noise_e} e⁻`} />
+      {sensor.read_noise_low_gain_e != null && (
+        <Field label="Read Noise (Low Gain)" value={`${sensor.read_noise_low_gain_e} e⁻`} />
+      )}
+      {sensor.read_noise_high_gain_e != null && (
+        <Field label="Read Noise (High Gain)" value={`${sensor.read_noise_high_gain_e} e⁻`} />
       )}
       {sensor.peak_qe_pct != null && <Field label="Peak QE" value={`${sensor.peak_qe_pct}%`} />}
       <Field label="Dual Gain" value={sensor.dual_gain ? "Yes" : "No"} />
@@ -832,23 +835,17 @@ function CameraBody({ camera }: { camera: Camera }) {
       )}
       {camera.connector_size && <Field label="Connector" value={camera.connector_size.name} />}
       {camera.unity_gain != null && <Field label="Unity Gain" value={camera.unity_gain} />}
-      {(camera.effective_read_noise_lcg_e != null ||
-        camera.effective_read_noise_hcg_e != null ||
+      {(camera.effective_read_noise_low_gain_e != null ||
+        camera.effective_read_noise_high_gain_e != null ||
         camera.effective_full_well_ke != null ||
         camera.effective_peak_qe_pct != null ||
         camera.hcg_threshold_gain != null) && (
         <Subsection title="Vendor-tuned Specs">
-          {camera.effective_read_noise_lcg_e != null && (
-            <Field
-              label="Read Noise (LCG)"
-              value={`${camera.effective_read_noise_lcg_e} e⁻`}
-            />
+          {camera.effective_read_noise_low_gain_e != null && (
+            <Field label="Read Noise (Low Gain)" value={`${camera.effective_read_noise_low_gain_e} e⁻`} />
           )}
-          {camera.effective_read_noise_hcg_e != null && (
-            <Field
-              label="Read Noise (HCG)"
-              value={`${camera.effective_read_noise_hcg_e} e⁻`}
-            />
+          {camera.effective_read_noise_high_gain_e != null && (
+            <Field label="Read Noise (High Gain)" value={`${camera.effective_read_noise_high_gain_e} e⁻`} />
           )}
           {camera.hcg_threshold_gain != null && (
             <Field label="HCG Threshold Gain" value={camera.hcg_threshold_gain} />

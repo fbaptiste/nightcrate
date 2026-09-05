@@ -377,13 +377,13 @@ def test_junction_table(seed_db, csv_root):
     write_csv(
         csv_root,
         "sensor.csv",
-        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm,source_url",
-        "sensor.imx571,manufacturer.zwo,,,0,,IMX571,,,3.76,,6248,4176,,mono,,",
+        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_low_gain_e,read_noise_high_gain_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm,source_url",
+        "sensor.imx571,manufacturer.zwo,,,0,,IMX571,,,3.76,,,6248,4176,,mono,,",
     )
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,,1,,0,ASI2600MM Pro,,,0,100,,,,,,",
     )
     write_csv(
@@ -414,7 +414,7 @@ def test_junction_table(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,17.5,1,,0,ASI2600MM Pro,,,0,100,,,,,,",
     )
 
@@ -479,7 +479,7 @@ def test_fk_resolution_failure(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.bad,,,manufacturer.zwo,sensor.nonexistent,,,,,,BadCamera,,,,100,,,,,,",
     )
 
@@ -508,7 +508,7 @@ def test_transaction_rollback(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.bad,,,manufacturer.zwo,sensor.ghost,,,,,,GhostCamera,,,,100,,,,,,",
     )
 
