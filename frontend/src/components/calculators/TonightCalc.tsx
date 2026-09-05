@@ -22,7 +22,7 @@ const DASH = "—";
  *  the tallest natural content (the headline-durations panel) with a
  *  small buffer. All five cards (imaging quality, headlines, evening,
  *  morning, moon) use this so the page reads as a tidy grid. */
-const CARD_HEIGHT = 152;
+const CARD_HEIGHT = 168;
 
 /** Concise descriptions of each lunar phase for the moon-phase tooltip.
  *  Keyed lowercase so backend casing variations match. */
@@ -100,6 +100,24 @@ export default function TonightCalc() {
   );
 
   const tz = data?.timezone ?? timezone;
+
+  // The headline duration is whatever depth of darkness the sun actually
+  // reaches, so the label has to follow it. Stockholm on the June solstice
+  // bottoms out at -7.2° — captioning its 2h19m "Sun > 18° below the horizon"
+  // stated something the twilight rows on the same card contradicted.
+  const DARKNESS_LABELS = {
+    astro: { title: "Astronomical dark", caption: "Sun > 18\u00b0 below the horizon" },
+    nautical: {
+      title: "Nautical dark",
+      caption: "Sun > 12\u00b0 below the horizon \u2014 never reaches 18\u00b0 here tonight",
+    },
+    civil: {
+      title: "Civil dark",
+      caption: "Sun > 6\u00b0 below the horizon \u2014 never reaches 12\u00b0 here tonight",
+    },
+    none: { title: "No darkness", caption: "Sun stays within 6\u00b0 of the horizon all night" },
+  } as const;
+  const darkness = DARKNESS_LABELS[data?.deepest_darkness_reached ?? "astro"];
 
   const headlines = useMemo(() => {
     if (!data) {
@@ -251,7 +269,7 @@ export default function TonightCalc() {
                 color="text.secondary"
                 sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
               >
-                Astronomical dark
+                {darkness.title}
               </Typography>
               <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
                 {headlines.astronomical}
@@ -259,9 +277,12 @@ export default function TonightCalc() {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ display: "block", mt: 0.5 }}
+                // Capped so the caption wraps to a second line instead of
+                // stretching the card: the high-latitude wording is much longer
+                // than the plain "Sun > 18°" it replaces on most nights.
+                sx={{ display: "block", mt: 0.5, maxWidth: 260 }}
               >
-                Sun &gt; 18&deg; below the horizon
+                {darkness.caption}
               </Typography>
             </Box>
             <Box>
@@ -436,12 +457,17 @@ export default function TonightCalc() {
         </p>
         <p>
           <strong>Astronomical dark</strong> = total time the sun is more than
-          18&deg; below the horizon during the 24-hour window.
+          18&deg; below the horizon during the 24-hour window. Above roughly
+          48.5&deg; latitude the sun stops reaching &minus;18&deg; around
+          midsummer, so this card reports the deepest darkness that
+          <em>is</em> reached &mdash; nautical (&minus;12&deg;) or civil
+          (&minus;6&deg;) &mdash; and retitles itself accordingly. Stockholm on
+          the June solstice bottoms out at &minus;7.2&deg;.
         </p>
         <p>
-          <strong>Moonless dark</strong> = astronomical dark with the moon
-          additionally below the horizon &mdash; a good proxy for narrowband
-          imaging time when moon illumination is high.
+          <strong>Dark with moon down</strong> = that same darkness window with
+          the moon additionally below the horizon &mdash; a good proxy for
+          narrowband imaging time when moon illumination is high.
         </p>
         <p>
           <strong>Imaging quality</strong> reuses the same composite score the

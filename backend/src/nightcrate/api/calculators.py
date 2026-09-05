@@ -290,6 +290,13 @@ class TonightResponse(BaseModel):
     moonset: str | None
     moon_illumination_pct: float
     moon_phase_name: str
+    # The deepest darkness the sun actually reaches, and how long it lasts.
+    # These are NOT always astronomical dark: above roughly 48.5 degrees the sun
+    # stops reaching -18 near midsummer, and the service falls back to nautical
+    # and then civil. Stockholm on the June solstice bottoms out at -7.2, so its
+    # "dark hours" are a civil window. The caller must read the level before
+    # labelling the number, or it will claim a depth the sun never reached.
+    deepest_darkness_reached: str  # "astro" | "nautical" | "civil" | "none"
     astronomical_dark_hours: float
     moonless_dark_hours: float
 
@@ -340,6 +347,7 @@ async def tonight(
         moonset=night.moon.moonset,
         moon_illumination_pct=night.moon.illumination_pct,
         moon_phase_name=night.moon.phase_name,
+        deepest_darkness_reached=night.deepest_darkness_reached,
         astronomical_dark_hours=night.darkness_hours,
         moonless_dark_hours=night.moonless_dark_hours,
     )
