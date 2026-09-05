@@ -497,6 +497,25 @@ LOAD_ORDER: list[SeedableTable] = [
             "filter_wheel_seed_key": "filter_wheel",
         },
     ),
+    # ------------------------------------------------------------------
+    # 27: rig_filter_slot — junction (rig × filter), carrying slot_number.
+    #
+    # Seeded so a smart telescope arrives with its internal changer populated:
+    # the glass is fixed in the device, so an empty wheel would be wrong rather
+    # than merely incomplete. Delete-and-reinsert per rig, like every junction.
+    # ------------------------------------------------------------------
+    SeedableTable(
+        table_name="rig_filter_slot",
+        csv_filename="rig_filter_slot.csv",
+        seeded_fields=("rig_id", "filter_id", "slot_number"),
+        fk_columns={
+            "rig_seed_key": "rig",
+            "filter_seed_key": "filter",
+        },
+        is_junction=True,
+        junction_parent="rig",
+        junction_key_columns=("rig_id", "filter_id"),
+    ),
 ]
 
 # ---------------------------------------------------------------------------

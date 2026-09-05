@@ -69,8 +69,17 @@ export default function RigsPage() {
   // Seeded all-in-one smart telescopes are a catalog, not the user's kit, so
   // they get their own collapsed section instead of padding out "my rigs".
   const activeRigs = rigs.filter((r) => r.active && r.is_mine);
-  const catalogRigs = rigs.filter((r) => r.active && !r.is_mine);
-  const retiredRigs = rigs.filter((r) => !r.active);
+  // Every unclaimed catalog rig belongs here regardless of `active`. Retiring a
+  // catalog entry is not a meaningful state — it is either yours or it is not —
+  // so a retired one would otherwise vanish into "Retired Rigs", which reads as
+  // if the telescope itself had been discontinued.
+  // Anything seeded that isn't currently in the user's active list — which
+  // also catches a claimed-then-retired one, so no rig can fall through every
+  // section and disappear.
+  const catalogRigs = rigs.filter(
+    (r) => r.source === "seed" && !(r.active && r.is_mine),
+  );
+  const retiredRigs = rigs.filter((r) => !r.active && r.source === "user");
   // Nothing to declutter when the user owns none — open the catalog so the
   // page isn't just an empty list with the answer hidden behind a disclosure.
   const [catalogVisible, setCatalogVisible] = useState(false);
@@ -213,7 +222,7 @@ export default function RigsPage() {
       {!isLoading && activeRigs.length === 0 && (
         <Typography color="text.secondary" sx={{ textAlign: "center", mt: 6 }}>
           None of your own rigs yet. Click &lsquo;New Rig&rsquo; to build one, or
-          star an all-in-one telescope below if you own one.
+          add an all-in-one telescope below if you own one.
         </Typography>
       )}
 
@@ -297,8 +306,8 @@ export default function RigsPage() {
           {showCatalog && (
             <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                Pre-built rigs for smart telescopes. Star one to add it to your
-                rigs.
+                Pre-built rigs for smart telescopes. Add one to your rigs if you
+                own it.
               </Typography>
               {catalogRigs.map((rig) => (
                 <RigCard

@@ -5,8 +5,6 @@ import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
-import StarIcon from "@mui/icons-material/Star";
-import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import Typography from "@mui/material/Typography";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -38,6 +36,13 @@ function formatFilterSummary(rig: Rig): string {
   }
   if (rig.single_filter_name) {
     return `Filter: ${rig.single_filter_name}`;
+  }
+  // A wheel with nothing assigned is not the same as no wheel: saying "No
+  // filter wheel" here contradicted the edit dialog, which showed the wheel
+  // the rig really does have.
+  if (rig.filter_wheel_name) {
+    const positions = rig.filter_wheel_positions;
+    return `${rig.filter_wheel_name}${positions ? ` (${positions}-pos)` : ""} \u2014 no filters assigned`;
   }
   return "No filter wheel";
 }
@@ -147,20 +152,17 @@ export default function RigCard({
         sx={{ px: 2, pt: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* An explicit button, not a star: a star means favourite or default
+            elsewhere in the app, and this is neither — it is membership. */}
         {onToggleMine && (
-          <Tooltip title={rig.is_mine ? "Remove from my rigs" : "This is mine"} arrow>
-            <IconButton
-              size="small"
-              onClick={() => onToggleMine(rig.id, !rig.is_mine)}
-              aria-label={rig.is_mine ? "Remove from my rigs" : "Add to my rigs"}
-            >
-              {rig.is_mine ? (
-                <StarIcon fontSize="small" color="primary" />
-              ) : (
-                <StarOutlineIcon fontSize="small" />
-              )}
-            </IconButton>
-          </Tooltip>
+          <Button
+            size="small"
+            variant={rig.is_mine ? "outlined" : "contained"}
+            onClick={() => onToggleMine(rig.id, !rig.is_mine)}
+            sx={{ textTransform: "none", mr: 0.5 }}
+          >
+            {rig.is_mine ? "Remove from my rigs" : "Add to my rigs"}
+          </Button>
         )}
         <Tooltip title="Edit" arrow>
           <IconButton size="small" onClick={() => onEdit(rig)}>
@@ -172,19 +174,23 @@ export default function RigCard({
             <ContentCopyIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        {rig.active ? (
-          <Tooltip title="Delete" arrow>
-            <IconButton size="small" onClick={() => onDelete(rig.id)}>
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        ) : (
-          <Tooltip title="Restore" arrow>
-            <IconButton size="small" onClick={() => onRestore(rig.id)}>
-              <RestoreIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        )}
+        {/* A catalog rig is claimed or released with the star — retiring one
+            makes no sense, and produced a confusing "Retired Rigs" entry for a
+            telescope that still exists. Only self-built rigs retire. */}
+        {rig.source === "user" &&
+          (rig.active ? (
+            <Tooltip title="Delete" arrow>
+              <IconButton size="small" onClick={() => onDelete(rig.id)}>
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          ) : (
+            <Tooltip title="Restore" arrow>
+              <IconButton size="small" onClick={() => onRestore(rig.id)}>
+                <RestoreIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          ))}
       </CardActions>
     </Card>
   );

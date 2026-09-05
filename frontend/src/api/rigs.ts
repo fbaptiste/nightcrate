@@ -127,6 +127,8 @@ export interface Rig {
   is_default: boolean;
   /** Whether the user owns this rig. Seeded smart-telescope rigs are false. */
   is_mine: boolean;
+  /** "seed" = a catalog rig (all-in-one smart telescope); "user" = self-built. */
+  source: "seed" | "user";
   active: boolean;
   sort_order: number;
   notes: string | null;

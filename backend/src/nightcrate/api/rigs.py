@@ -368,6 +368,7 @@ async def _build_rig_response(
         "filter_slots": filter_slots,
         "is_default": rig_row["is_default"],
         "is_mine": rig_row["is_mine"],
+        "source": rig_row["source"],
         "active": rig_row["active"],
         "sort_order": rig_row.get("sort_order", 0),
         "notes": rig_row.get("notes"),

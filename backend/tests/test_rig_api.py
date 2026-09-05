@@ -222,6 +222,45 @@ async def test_seeded_smart_scope_rigs(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "name,expected_filters",
+    [
+        ("Seestar S50", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
+        ("Seestar S30", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
+        ("Seestar S30 Pro", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
+        ("DWARF mini", ["DWARF CLS", "DWARF Duo-Band", "DWARF Dark"]),
+    ],
+)
+async def test_seeded_rig_filter_slots_are_populated(client, name, expected_filters):
+    """The glass is fixed in the device, so the changer ships filled."""
+    rigs = (await client.get("/api/rigs")).json()
+    rig = next(r for r in rigs if r["name"] == name)
+    slots = sorted(rig["filter_slots"], key=lambda s: s["slot_number"])
+    assert [s["slot_number"] for s in slots] == [1, 2, 3]
+    assert [s["filter_name"] for s in slots] == expected_filters
+
+
+@pytest.mark.anyio
+async def test_seeded_rigs_report_their_source(client, equipment):
+    """The UI needs this to tell a catalog rig from one the user built."""
+    created = (await client.post("/api/rigs", json=_rig_payload(equipment))).json()
+    assert created["source"] == "user"
+
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    assert s50["source"] == "seed"
+
+
+@pytest.mark.anyio
+async def test_dwarf_ii_has_no_filter_slots(client):
+    """It has no internal changer — its filters are external accessories."""
+    rigs = (await client.get("/api/rigs")).json()
+    rig = next(r for r in rigs if r["name"] == "DWARF II")
+    assert rig["filter_slots"] == []
+    assert rig["filter_wheel_id"] is None
+
+
+@pytest.mark.anyio
 async def test_seeded_rig_pixel_scale_is_computed(client):
     """Sanity-check one rig end to end: 2.9um pixels at 250mm is ~2.4 arcsec/px."""
     rigs = (await client.get("/api/rigs")).json()

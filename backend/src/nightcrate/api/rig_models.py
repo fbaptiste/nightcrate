@@ -186,6 +186,10 @@ class RigOut(BaseModel):
     # Whether the user owns this rig. Seeded smart-telescope rigs default to
     # false so they stay out of a list whose purpose is "my rigs".
     is_mine: bool
+    # "seed" for a catalog rig (an all-in-one smart telescope), "user" for one
+    # the user built. The two get different controls: a catalog rig is claimed
+    # or released, never retired.
+    source: str
     active: bool
     sort_order: int
     notes: str | None
