@@ -64,3 +64,14 @@ telescope.unistellar.evscope_2,manufacturer.unistellar,optical_design.newtonian,
 telescope.unistellar.equinox_2,manufacturer.unistellar,optical_design.newtonian,114.0,,eQuinox 2,All-in-one smart telescope. Same 114mm Newtonian optics and imager as the eVscope 2; observed through a phone or tablet rather than an eyepiece.,,9.0,https://www.unistellar.com/expert/
 telescope.unistellar.odyssey,manufacturer.unistellar,optical_design.newtonian,85.0,,Odyssey,All-in-one smart telescope. 85mm; no collimation or focusing to set. Shares optics and imager with the Odyssey Pro.,,4.0,https://shop.unistellar.com/products/odyssey
 telescope.unistellar.odyssey_pro,manufacturer.unistellar,optical_design.newtonian,85.0,,Odyssey Pro,All-in-one smart telescope. Same optics and imager as the Odyssey plus a Nikon-designed OLED eyepiece.,,4.0,https://shop.unistellar.com/products/odyssey
+# --- Askar models added in the 2026 catalogue audit ---
+telescope.askar.sqa55,manufacturer.askar,optical_design.petzval,55.0,,SQA55,Quintuplet Petzval astrograph; the smallest of the SQA line.,,,https://www.sharpstar-optics.com/
+telescope.askar.sqa70,manufacturer.askar,optical_design.petzval,70.0,,SQA70,Quintuplet Petzval astrograph.,,,https://www.sharpstar-optics.com/
+telescope.askar.sqa85,manufacturer.askar,optical_design.petzval,85.0,,SQA85,Quintuplet Petzval astrograph with two SD elements.,,,https://www.sharpstar-optics.com/
+telescope.askar.sqa106,manufacturer.askar,optical_design.petzval,106.0,,SQA106,Quintuplet Petzval astrograph with two SD elements; the largest SQA.,,,https://www.sharpstar-optics.com/
+telescope.askar.fra500,manufacturer.askar,optical_design.petzval,90.0,,FRA500,Petzval astrograph; sits between the FRA400 and FRA600.,,,https://www.sharpstar-optics.com/
+telescope.askar.71f,manufacturer.askar,optical_design.quadruplet_refractor,71.0,,71F,Quadruplet air-spaced flat-field APO with one ED element.,,,https://www.sharpstar-optics.com/
+telescope.askar.80phq,manufacturer.askar,optical_design.quadruplet_refractor,80.0,,80PHQ,Quadruplet air-spaced flat-field APO with two ED elements; 44mm image circle.,,,https://www.sharpstar-optics.com/
+telescope.askar.130phq,manufacturer.askar,optical_design.quadruplet_refractor,130.0,,130PHQ,Quadruplet flat-field APO with two ED elements.,,,https://www.sharpstar-optics.com/
+telescope.askar.151phq,manufacturer.askar,optical_design.quadruplet_refractor,151.0,,151PHQ,Quadruplet flat-field APO with two ED elements; the largest Askar refractor.,,,https://www.sharpstar-optics.com/
+telescope.askar.140apo,manufacturer.askar,optical_design.triplet_refractor,140.0,,140APO,Triplet air-spaced APO.,,,https://www.sharpstar-optics.com/

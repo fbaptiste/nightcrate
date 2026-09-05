@@ -124,3 +124,14 @@ telescope_configuration.unistellar.evscope_2.native,telescope.unistellar.evscope
 telescope_configuration.unistellar.equinox_2.native,telescope.unistellar.equinox_2,,Native f/3.9,,450.0,3.9,,1,Fixed optics. 45.6 x 34.2 arcmin field.,1.0
 telescope_configuration.unistellar.odyssey.native,telescope.unistellar.odyssey,,Native f/3.9,,320.0,3.9,,1,Fixed optics. 45 x 33.6 arcmin field. 320/85 is f/3.76; Unistellar publishes f/3.9.,1.0
 telescope_configuration.unistellar.odyssey_pro.native,telescope.unistellar.odyssey_pro,,Native f/3.9,,320.0,3.9,,1,Fixed optics. 45 x 33.6 arcmin field.,1.0
+# --- Askar native configurations added in the 2026 catalogue audit ---
+telescope_configuration.askar.sqa55.native,telescope.askar.sqa55,,Native f/4.8,,264.0,4.8,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.sqa70.native,telescope.askar.sqa70,,Native f/4.8,,336.0,4.8,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.sqa85.native,telescope.askar.sqa85,,Native f/4.8,,408.0,4.8,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.sqa106.native,telescope.askar.sqa106,,Native f/4.8,,509.0,4.8,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.fra500.native,telescope.askar.fra500,,Native f/5.6,,500.0,5.6,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.71f.native,telescope.askar.71f,,Native f/6.9,,490.0,6.9,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.80phq.native,telescope.askar.80phq,,Native f/7.5,,600.0,7.5,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.130phq.native,telescope.askar.130phq,,Native f/7.7,,1000.0,7.7,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.151phq.native,telescope.askar.151phq,,Native f/7.0,,1057.0,7.0,,1,Native configuration without reducer or extender.,1.0
+telescope_configuration.askar.140apo.native,telescope.askar.140apo,,Native f/7.0,,980.0,7.0,,1,Native configuration without reducer or extender.,1.0
