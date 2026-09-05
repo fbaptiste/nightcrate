@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
-import { fetchLocations, type Location } from "@/api/locations";
 import {
   fetchRigCalculators,
   type Rig,
@@ -41,16 +39,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     fetched?.rigId === rig.id ? fetched.data : rig.calculators;
   const [activeTab, setActiveTab] = useState<TabKey>("equipment");
 
-  const { data: locations = [] } = useQuery<Location[]>({
-    queryKey: ["locations"],
-    queryFn: fetchLocations,
-  });
-
-  // A rig is not tied to a location, so there is no picker here. The default
-  // location is still used for one thing — the typical seeing that the
-  // sampling assessment compares the image scale against. Without one the
-  // backend falls back to its own 2-4" default.
-  const seeingLocationId = locations.find((l) => l.is_default)?.id ?? null;
 
   const debouncedGuideBinning = useDebounce(guideBinning, 150);
   const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
@@ -59,8 +47,10 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
   // Fetch calculator data when any parameter changes.
   useEffect(() => {
     let cancelled = false;
+    // No location is passed: a rig has no location, and the one thing seeing
+    // was needed for is set directly by the Imaging tab's seeing slider. The
+    // backend's own 2-4" default seeds that slider's starting position.
     fetchRigCalculators(rig.id, {
-      ...(seeingLocationId !== null && { location_id: seeingLocationId }),
       guide_binning: debouncedGuideBinning,
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
       image_binning: debouncedGuidingImageBinning,
@@ -72,7 +62,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     };
   }, [
     rig.id,
-    seeingLocationId,
     debouncedGuideBinning,
     debouncedCentroidAccuracy,
     debouncedGuidingImageBinning,

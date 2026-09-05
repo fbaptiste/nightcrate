@@ -228,7 +228,7 @@ async def test_seeded_smart_scope_rigs(
         ("Seestar S50", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
         ("Seestar S30", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
         ("Seestar S30 Pro", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
-        ("DWARF mini", ["DWARF CLS", "DWARF Duo-Band", "DWARF Dark"]),
+        ("DWARF mini", ["DWARF Astro", "DWARF Duo-Band", "DWARF Dark"]),
     ],
 )
 async def test_seeded_rig_filter_slots_are_populated(client, name, expected_filters):
