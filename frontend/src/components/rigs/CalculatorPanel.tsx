@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
-import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { fetchLocations, type Location } from "@/api/locations";
 import {
@@ -26,9 +24,6 @@ type TabKey = "equipment" | "imaging" | "guiding";
 const TAB_ORDER: TabKey[] = ["equipment", "imaging", "guiding"];
 
 export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
-  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(
-    null,
-  );
   const [guideBinning, setGuideBinning] = useState<number>(1);
   const [centroidAccuracy, setCentroidAccuracy] = useState<number>(0.2);
   // Image binning on the Guiding tab — drives the guiding-tolerance
@@ -51,15 +46,11 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     queryFn: fetchLocations,
   });
 
-  // Set default location on first load
-  useEffect(() => {
-    if (locations.length > 0 && selectedLocationId === null) {
-      const defaultLoc = locations.find((l) => l.is_default);
-      if (defaultLoc) {
-        setSelectedLocationId(defaultLoc.id);
-      }
-    }
-  }, [locations, selectedLocationId]);
+  // A rig is not tied to a location, so there is no picker here. The default
+  // location is still used for one thing — the typical seeing that the
+  // sampling assessment compares the image scale against. Without one the
+  // backend falls back to its own 2-4" default.
+  const seeingLocationId = locations.find((l) => l.is_default)?.id ?? null;
 
   const debouncedGuideBinning = useDebounce(guideBinning, 150);
   const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
@@ -67,10 +58,9 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
   // Fetch calculator data when any parameter changes.
   useEffect(() => {
-    if (selectedLocationId === null) return;
     let cancelled = false;
     fetchRigCalculators(rig.id, {
-      location_id: selectedLocationId,
+      ...(seeingLocationId !== null && { location_id: seeingLocationId }),
       guide_binning: debouncedGuideBinning,
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
       image_binning: debouncedGuidingImageBinning,
@@ -82,13 +72,12 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     };
   }, [
     rig.id,
-    selectedLocationId,
+    seeingLocationId,
     debouncedGuideBinning,
     debouncedCentroidAccuracy,
     debouncedGuidingImageBinning,
   ]);
 
-  const selectedLocation = locations.find((l) => l.id === selectedLocationId);
   const hasGuideCamera = rig.guide_camera_id != null;
 
   return (
@@ -106,20 +95,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
         <Typography variant="h6" sx={{ flex: "1 1 auto", minWidth: 200 }}>
           {rig.name}
         </Typography>
-        <Autocomplete
-          size="small"
-          options={locations}
-          getOptionLabel={(loc) =>
-            `${loc.name}${loc.is_default ? " (default)" : ""}`
-          }
-          value={selectedLocation ?? null}
-          onChange={(_, loc) => {
-            if (loc) setSelectedLocationId(loc.id);
-          }}
-          renderInput={(params) => <TextField {...params} label="Location" />}
-          sx={{ width: 260, flexShrink: 0, mr: 4 }}
-          isOptionEqualToValue={(option, value) => option.id === value.id}
-        />
       </Box>
 
       {/* Tabs */}
