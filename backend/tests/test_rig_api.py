@@ -252,6 +252,31 @@ async def test_seeded_rigs_report_their_source(client, equipment):
 
 
 @pytest.mark.anyio
+async def test_passband_bandwidth_is_optional(client):
+    """A line can be recorded without its width (migration 0051).
+
+    DwarfLab publishes the DWARF dual-band's lines but not their bandwidths.
+    Requiring the number would mean inventing one, and an invented width feeds
+    the per-line moon-sensitivity model.
+    """
+    filters = (await client.get("/api/equipment/filter")).json()
+    duo = next(f for f in filters if f["model_name"] == "DWARF Duo-Band")
+    detail = (await client.get(f"/api/equipment/filter/{duo['id']}")).json()
+    bands = {p["line_name"]: p for p in detail["passbands"]}
+    assert set(bands) == {"Ha", "Oiii"}
+    assert bands["Ha"]["central_wavelength_nm"] == 656.3
+    assert bands["Oiii"]["central_wavelength_nm"] == 500.7
+    assert bands["Ha"]["bandwidth_nm"] is None
+    assert bands["Oiii"]["bandwidth_nm"] is None
+
+    # A published width is still recorded where one exists.
+    seestar = next(f for f in filters if f["model_name"] == "Seestar Duo-Band")
+    sdetail = (await client.get(f"/api/equipment/filter/{seestar['id']}")).json()
+    widths = {p["line_name"]: p["bandwidth_nm"] for p in sdetail["passbands"]}
+    assert widths == {"Ha": 20.0, "Oiii": 30.0}
+
+
+@pytest.mark.anyio
 async def test_dwarf_ii_has_no_filter_slots(client):
     """It has no internal changer — its filters are external accessories."""
     rigs = (await client.get("/api/rigs")).json()

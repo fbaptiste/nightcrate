@@ -112,9 +112,10 @@ filter_passband.askar.cm_e2.oiii,filter.askar.cm_e2,3.0,500.7,Oiii,88.0
 # These rows drive per-line integration budgets and moon sensitivity, and a
 # UV/IR-cut row would invent a "UVIR line" to accumulate hours against.
 #
-# The opaque "dark" positions likewise appear nowhere. The DWARF dual-band
-# filter is absent for a different reason: DwarfLab publishes its lines
-# (Ha 656.3 / OIII 500.7) but not their bandwidths, and bandwidth_nm is NOT
-# NULL. A guessed width would be wrong quietly, so that row waits for a figure.
+# The opaque "dark" positions likewise appear nowhere. The DWARF dual-band rows
+# carry no bandwidth: DwarfLab publishes its lines but not their widths, and
+# since 0051 that is recordable rather than a reason to omit the filter.
 filter_passband.zwo.seestar_duo_band.ha,filter.zwo.seestar_duo_band,20.0,656.3,Ha,
 filter_passband.zwo.seestar_duo_band.oiii,filter.zwo.seestar_duo_band,30.0,500.7,Oiii,
+filter_passband.dwarflab.duo_band.ha,filter.dwarflab.duo_band,,656.3,Ha,
+filter_passband.dwarflab.duo_band.oiii,filter.dwarflab.duo_band,,500.7,Oiii,

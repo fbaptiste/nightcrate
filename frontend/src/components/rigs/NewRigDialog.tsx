@@ -4,10 +4,10 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import Divider from "@mui/material/Divider";
-import List from "@mui/material/List";
-import ListItemButton from "@mui/material/ListItemButton";
-import ListItemText from "@mui/material/ListItemText";
+import MenuItem from "@mui/material/MenuItem";
+import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import { useEffect, useState } from "react";
 import type { Rig } from "@/api/rigs";
 
 interface NewRigDialogProps {
@@ -50,6 +50,19 @@ export default function NewRigDialog({
   onChoosePredefined,
   onChooseCustom,
 }: NewRigDialogProps) {
+  // A list grows with the catalog and would eventually outrun the dialog, so
+  // the choice is a select: one row whatever the catalog holds.
+  const [chosenId, setChosenId] = useState<number | "">("");
+  useEffect(() => {
+    if (open) setChosenId("");
+  }, [open]);
+
+  // The API orders rigs for the user's own list (owned first, then sort_order).
+  // That ordering means nothing in a catalog you're picking from, so sort by
+  // name — locale-aware so "DWARF II" and "Seestar S30" collate sensibly.
+  const options = [...available].sort((a, b) => a.name.localeCompare(b.name));
+  const chosen = available.find((r) => r.id === chosenId) ?? null;
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>New Rig</DialogTitle>
@@ -57,21 +70,44 @@ export default function NewRigDialog({
         <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
           Pre-defined rigs
         </Typography>
-        <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>
+        <Typography variant="body2" sx={{ color: "text.secondary", mb: 1.5 }}>
           Ready-made, with the optics, camera and filters already set up.
         </Typography>
         {available.length > 0 ? (
-          <List dense disablePadding>
-            {available.map((rig) => (
-              <ListItemButton
-                key={rig.id}
-                onClick={() => onChoosePredefined(rig)}
-                sx={{ borderRadius: 1 }}
-              >
-                <ListItemText primary={rig.name} secondary={specLine(rig)} />
-              </ListItemButton>
-            ))}
-          </List>
+          <>
+            <TextField
+              select
+              fullWidth
+              size="small"
+              label="Choose a rig"
+              value={chosenId}
+              onChange={(e) =>
+                setChosenId(e.target.value === "" ? "" : Number(e.target.value))
+              }
+            >
+              {options.map((rig) => (
+                <MenuItem key={rig.id} value={rig.id}>
+                  {rig.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            {/* The spec sits below rather than inside each option: a menu row
+                holding two lines of detail is unreadable at a glance. */}
+            <Typography
+              variant="body2"
+              sx={{ color: "text.secondary", mt: 1, minHeight: 20 }}
+            >
+              {chosen ? specLine(chosen) : ""}
+            </Typography>
+            <Button
+              variant="contained"
+              disabled={!chosen}
+              onClick={() => chosen && onChoosePredefined(chosen)}
+              sx={{ mt: 1.5 }}
+            >
+              Add this rig
+            </Button>
+          </>
         ) : (
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             You&rsquo;ve added all of them.

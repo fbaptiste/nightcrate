@@ -451,7 +451,11 @@ CREATE TABLE IF NOT EXISTS filter_passband (
         'UVIR', 'LP', 'ND', 'other'
     )),
     central_wavelength_nm REAL NOT NULL CHECK (central_wavelength_nm > 0),
-    bandwidth_nm REAL NOT NULL CHECK (bandwidth_nm > 0),
+    -- Nullable (migration 0051): a filter's emission line is public knowledge,
+    -- its bandwidth often isn't. Requiring it meant inventing a number or
+    -- recording nothing, and an invented width feeds the per-line
+    -- moon-sensitivity model and is wrong quietly.
+    bandwidth_nm REAL CHECK (bandwidth_nm IS NULL OR bandwidth_nm > 0),
     peak_transmission_pct REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
