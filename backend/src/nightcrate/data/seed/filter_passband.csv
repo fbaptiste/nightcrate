@@ -106,12 +106,15 @@ filter_passband.askar.cm_e1.oiii,filter.askar.cm_e1,3.0,500.7,Oiii,88.0
 filter_passband.askar.cm_e2.sii,filter.askar.cm_e2,3.0,672.0,Sii,88.0
 filter_passband.askar.cm_e2.oiii,filter.askar.cm_e2,3.0,500.7,Oiii,88.0
 # --- Filters built into smart telescopes ---
-# The opaque "dark" positions have no passband and so appear nowhere here.
-# The DWARF dual-band filter is also absent: DwarfLab publishes its lines
+# Emission lines only, matching every other filter here: none of the 13 seeded
+# UV/IR-cut or light-pollution filters carries a passband, because a blocking
+# filter's transmission window is not a bandpass in the sense this table means.
+# These rows drive per-line integration budgets and moon sensitivity, and a
+# UV/IR-cut row would invent a "UVIR line" to accumulate hours against.
+#
+# The opaque "dark" positions likewise appear nowhere. The DWARF dual-band
+# filter is absent for a different reason: DwarfLab publishes its lines
 # (Ha 656.3 / OIII 500.7) but not their bandwidths, and bandwidth_nm is NOT
-# NULL. A guessed width would feed the per-line moon-sensitivity model and
-# be wrong quietly, so the row waits for a real figure.
-filter_passband.zwo.seestar_uv_ir_cut.uvir,filter.zwo.seestar_uv_ir_cut,400.0,590.0,UVIR,
+# NULL. A guessed width would be wrong quietly, so that row waits for a figure.
 filter_passband.zwo.seestar_duo_band.ha,filter.zwo.seestar_duo_band,20.0,656.3,Ha,
 filter_passband.zwo.seestar_duo_band.oiii,filter.zwo.seestar_duo_band,30.0,500.7,Oiii,
-filter_passband.dwarflab.astro.lp,filter.dwarflab.cls,260.0,560.0,LP,

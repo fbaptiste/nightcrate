@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import Box from "@mui/material/Box";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
-import Typography from "@mui/material/Typography";
 import {
   fetchRigCalculators,
   type Rig,
@@ -71,21 +70,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
   return (
     <Box>
-      {/* Header row: rig name + location selector */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 2,
-          mb: 1.5,
-          flexWrap: "wrap",
-        }}
-      >
-        <Typography variant="h6" sx={{ flex: "1 1 auto", minWidth: 200 }}>
-          {rig.name}
-        </Typography>
-      </Box>
-
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
         <Tabs
