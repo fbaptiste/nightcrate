@@ -161,3 +161,7 @@ telescope_configuration.william_optics.cat_71_wifd.native,telescope.william_opti
 telescope_configuration.william_optics.cat_91_wifd.native,telescope.william_optics.cat_91_wifd,,Native f/4.9,,448.0,4.9,,1,Native configuration.,1.0
 telescope_configuration.william_optics.ultracat_108.native,telescope.william_optics.ultracat_108,,Native f/4.8,,518.0,4.8,,1,Native configuration.,1.0
 telescope_configuration.william_optics.ultracat_131.native,telescope.william_optics.ultracat_131,,Native f/4.9,,648.0,4.9,,1,Native configuration.,1.0
+# --- Sharpstar native configurations added in the 2026 catalogue audit ---
+telescope_configuration.sharpstar.61edph_iii.native,telescope.sharpstar.61edph_iii,,Native f/5.9,,360.0,5.9,,1,Native configuration.,1.0
+telescope_configuration.sharpstar.140ph.native,telescope.sharpstar.140ph,,Native f/6.5,,910.0,6.5,,1,Native configuration.,1.0
+telescope_configuration.sharpstar.20032pnt.native,telescope.sharpstar.20032pnt,,Native f/3.2,,640.0,3.2,,1,Native configuration.,1.0

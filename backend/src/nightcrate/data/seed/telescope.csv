@@ -99,3 +99,7 @@ telescope.william_optics.cat_71_wifd,manufacturer.william_optics,optical_design.
 telescope.william_optics.cat_91_wifd,manufacturer.william_optics,optical_design.petzval,91.0,,Cat 91 WIFD,Five-element advanced Petzval; sold within the Ultra-Cat range.,,,https://williamoptics.com/collections/cat-series
 telescope.william_optics.ultracat_108,manufacturer.william_optics,optical_design.petzval,108.0,,Ultra-Cat 108,Five-element advanced Petzval.,,,https://williamoptics.com/collections/cat-series
 telescope.william_optics.ultracat_131,manufacturer.william_optics,optical_design.petzval,131.0,,Ultra-Cat 131,Five-element advanced Petzval; the largest Ultra-Cat.,,,https://williamoptics.com/collections/cat-series
+# --- Sharpstar models added in the 2026 catalogue audit ---
+telescope.sharpstar.61edph_iii,manufacturer.sharpstar,optical_design.triplet_refractor,61.0,,61EDPH III,Triplet ED APO. Distinct optics from the 61EDPH II — 360mm at f/5.9 against the II's 335mm at f/5.5.,,,https://www.sharpstar-optics.com/
+telescope.sharpstar.140ph,manufacturer.sharpstar,optical_design.triplet_refractor,140.0,,140PH,Triplet air-spaced APO with two ED elements.,,,https://www.sharpstar-optics.com/
+telescope.sharpstar.20032pnt,manufacturer.sharpstar,optical_design.newtonian,200.0,,20032PNT,Parabolic Newtonian astrograph with an integrated corrector and carbon-fibre tube.,,,https://www.sharpstar-optics.com/
