@@ -69,3 +69,6 @@ backend/.coverage
 
 # Local sample data (horizon files, session logs — user-local, not part of codebase)
 sample_data/
+
+# Seed-audit working documents — kept locally, not part of the repo
+audit/

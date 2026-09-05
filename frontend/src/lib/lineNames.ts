@@ -1,5 +1,6 @@
 // Bandpass line-name vocabulary — mirrors the backend filter_passband.line_name
-// CHECK (migration 0005) and project_session/project_filter_goal (migration 0035).
+// CHECK (migration 0005) and project_session.line_name (migration 0035). Python copy:
+// backend/src/nightcrate/services/line_names.py.
 
 export const LINE_NAMES = [
   "Ha",
@@ -19,7 +20,6 @@ export const LINE_NAMES = [
   "other",
 ] as const;
 
-export type LineName = (typeof LINE_NAMES)[number];
 
 // Human-readable labels for the bandpass dropdowns.
 export const LINE_NAME_LABELS: Record<string, string> = {
@@ -42,10 +42,4 @@ export const LINE_NAME_LABELS: Record<string, string> = {
 
 export function lineLabel(line: string): string {
   return LINE_NAME_LABELS[line] ?? line;
-}
-
-// Index for canonical ordering (matches the backend LINE_NAMES order).
-export function lineOrder(line: string): number {
-  const i = (LINE_NAMES as readonly string[]).indexOf(line);
-  return i === -1 ? LINE_NAMES.length : i;
 }

@@ -91,6 +91,16 @@ async def graph():
             (ids["duo"], line, cw),
         )
 
+    for key, name, cam, cfg in [
+        ("rig_a", "Rig A", "camera", "cfg_native"),
+        ("rig_b", "Rig B", "camera_b", "cfg_reducer"),
+    ]:
+        cur = await conn.execute(
+            "INSERT INTO rig (name, telescope_configuration_id, camera_id) VALUES (?, ?, ?)",
+            (name, ids[cfg], ids[cam]),
+        )
+        ids[key] = cur.lastrowid
+
     cur = await conn.execute("INSERT INTO project (name) VALUES ('Test Project')")
     ids["project"] = cur.lastrowid
     cur = await conn.execute(
@@ -132,9 +142,8 @@ async def _insert_sub(conn: aiosqlite.Connection, **kw) -> int:
         "content_hash": f"hash-{next(_HASH_COUNTER)}",
         "frame_type": "light",
         "accepted": 1,
-        "camera_id": None,
-        "telescope_configuration_id": None,
-        "filter_id": None,
+        "rig_id": None,
+        "filter_name_hint": None,
         "gain": 100,
         "offset_adu": 50,
         "set_temp_c": -10.0,
@@ -192,18 +201,16 @@ class TestSchemaObjects:
             "matching_flats",
             "matching_bias",
             "calibration_coverage",
-            "integration_time_per_project_filter",
-            "project_filter_goal_progress",
             "session_summary",
         ]:
             assert v in names, f"missing view {v}"
 
     async def test_content_hash_unique(self, graph):
         conn, ids = graph
-        await _insert_sub(conn, content_hash="dup", frame_type="bias", camera_id=ids["camera"])
+        await _insert_sub(conn, content_hash="dup", frame_type="bias")
         # Same (project_id, content_hash) collides — re-ingest stays idempotent per project.
         with pytest.raises(aiosqlite.IntegrityError):
-            await _insert_sub(conn, content_hash="dup", frame_type="bias", camera_id=ids["camera"])
+            await _insert_sub(conn, content_hash="dup", frame_type="bias")
         # But the SAME content_hash under a DIFFERENT project is its own independent
         # row: each project owns its files, nothing is shared (v0.40.0).
         cur = await conn.execute("INSERT INTO project (name) VALUES ('Other Project')")
@@ -213,48 +220,35 @@ class TestSchemaObjects:
             project_id=other_project,
             content_hash="dup",
             frame_type="bias",
-            camera_id=ids["camera"],
         )
         assert other_id > 0
 
-    async def test_light_ingests_without_resolved_filter(self, graph):
+    async def test_light_carries_its_filter_as_a_header_hint(self, graph):
+        """`filter_name_hint` is the only filter fact a frame holds (v0.41.1 removed
+        equipment identification). There is no light-needs-filter CHECK — ingest must
+        never fail on a light whose FILTER header is missing either."""
         conn, ids = graph
-        # A light's filter_id is routinely NULL at v0.40.0 ingest (rig assignment
-        # is v0.41.0); the raw FILTER header is kept in filter_name_hint instead.
-        # There is no light-needs-filter CHECK — ingest must never fail on this.
-        light_id = await _insert_sub(
-            conn,
-            frame_type="light",
-            filter_id=None,
-            filter_name_hint="Ha",
-            camera_id=ids["camera"],
-        )
+        light_id = await _insert_sub(conn, frame_type="light", filter_name_hint="Ha")
         assert light_id > 0
         hint = await _scalar(
             conn, "SELECT filter_name_hint FROM sub_frame WHERE id = ?", (light_id,)
         )
         assert hint == "Ha"
-        # Calibration without a filter is fine too.
-        bias_id = await _insert_sub(
-            conn, frame_type="bias", filter_id=None, camera_id=ids["camera"]
-        )
-        assert bias_id > 0
+        # A light with no FILTER header, and filterless calibration, both fine.
+        assert await _insert_sub(conn, frame_type="light", filter_name_hint=None) > 0
+        assert await _insert_sub(conn, frame_type="bias") > 0
 
     async def test_exposure_nonnegative(self, graph):
         conn, ids = graph
         # Bias at 0 s is allowed.
-        ok = await _insert_sub(
-            conn, frame_type="bias", exposure_seconds=0.0, camera_id=ids["camera"]
-        )
+        ok = await _insert_sub(conn, frame_type="bias", exposure_seconds=0.0)
         assert ok > 0
         with pytest.raises(aiosqlite.IntegrityError):
-            await _insert_sub(
-                conn, frame_type="bias", exposure_seconds=-1.0, camera_id=ids["camera"]
-            )
+            await _insert_sub(conn, frame_type="bias", exposure_seconds=-1.0)
 
     async def test_updated_at_trigger(self, graph):
         conn, ids = graph
-        sid = await _insert_sub(conn, frame_type="bias", camera_id=ids["camera"])
+        sid = await _insert_sub(conn, frame_type="bias")
         await conn.execute(
             "UPDATE sub_frame SET updated_at = '2000-01-01 00:00:00' WHERE id = ?", (sid,)
         )
@@ -264,7 +258,7 @@ class TestSchemaObjects:
 
     async def test_project_cover_sub_frame_id(self, graph):
         conn, ids = graph
-        sid = await _insert_sub(conn, frame_type="bias", camera_id=ids["camera"])
+        sid = await _insert_sub(conn, frame_type="bias")
         await conn.execute(
             "UPDATE project SET cover_sub_frame_id = ? WHERE id = ?", (sid, ids["project"])
         )
@@ -299,15 +293,11 @@ class TestSchemaObjects:
 class TestCalibrationViews:
     async def test_matching_darks_temp_tolerance(self, graph):
         conn, ids = graph
-        light = await _insert_sub(
-            conn, frame_type="light", filter_id=ids["ha"], camera_id=ids["camera"], set_temp_c=-10.0
-        )
+        light = await _insert_sub(conn, frame_type="light", filter_name_hint="Ha", set_temp_c=-10.0)
         # Within ±1 °C → matches.
-        in_tol = await _insert_sub(
-            conn, frame_type="dark", camera_id=ids["camera"], set_temp_c=-10.8
-        )
+        in_tol = await _insert_sub(conn, frame_type="dark", set_temp_c=-10.8)
         # Outside ±1 °C → no match.
-        await _insert_sub(conn, frame_type="dark", camera_id=ids["camera"], set_temp_c=-12.0)
+        await _insert_sub(conn, frame_type="dark", set_temp_c=-12.0)
         rows = await (
             await conn.execute("SELECT dark_id FROM matching_darks WHERE light_id = ?", (light,))
         ).fetchall()
@@ -318,16 +308,13 @@ class TestCalibrationViews:
         light = await _insert_sub(
             conn,
             frame_type="light",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
+            filter_name_hint="Ha",
             exposure_seconds=300.0,
         )
         # Same camera/gain/binning/temp but different exposure → no match.
-        await _insert_sub(conn, frame_type="dark", camera_id=ids["camera"], exposure_seconds=120.0)
+        await _insert_sub(conn, frame_type="dark", exposure_seconds=120.0)
         # Matching exposure → match (darks carry no filter; matching ignores filter).
-        good = await _insert_sub(
-            conn, frame_type="dark", camera_id=ids["camera"], exposure_seconds=300.0
-        )
+        good = await _insert_sub(conn, frame_type="dark", exposure_seconds=300.0)
         rows = await (
             await conn.execute("SELECT dark_id FROM matching_darks WHERE light_id = ?", (light,))
         ).fetchall()
@@ -335,10 +322,8 @@ class TestCalibrationViews:
 
     async def test_matching_darks_excludes_rejected(self, graph):
         conn, ids = graph
-        light = await _insert_sub(
-            conn, frame_type="light", filter_id=ids["ha"], camera_id=ids["camera"]
-        )
-        await _insert_sub(conn, frame_type="dark", camera_id=ids["camera"], accepted=0)
+        light = await _insert_sub(conn, frame_type="light", filter_name_hint="Ha")
+        await _insert_sub(conn, frame_type="dark", accepted=0)
         count = await _scalar(
             conn, "SELECT COUNT(*) FROM matching_darks WHERE light_id = ?", (light,)
         )
@@ -349,41 +334,28 @@ class TestCalibrationViews:
         light = await _insert_sub(
             conn,
             frame_type="light",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
+            filter_name_hint="Ha",
             session_id=ids["session"],
         )
         # Library dark has no session — must still match.
-        lib = await _insert_sub(conn, frame_type="dark", camera_id=ids["camera"], session_id=None)
+        lib = await _insert_sub(conn, frame_type="dark", session_id=None)
         rows = await (
             await conn.execute("SELECT dark_id FROM matching_darks WHERE light_id = ?", (light,))
         ).fetchall()
         assert {r["dark_id"] for r in rows} == {lib}
 
-    async def test_matching_flats_telescope_configuration(self, graph):
+    async def test_matching_flats_rig_scoped(self, graph):
+        """A flat from the other rig must not calibrate this rig's light — the rig
+        comes from the folder the user tagged, so this is a declared fact."""
         conn, ids = graph
         light = await _insert_sub(
-            conn,
-            frame_type="light",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
-            telescope_configuration_id=ids["cfg_native"],
+            conn, frame_type="light", filter_name_hint="Ha", rig_id=ids["rig_a"]
         )
-        # Same everything but reducer config → no match (optical train differs).
-        await _insert_sub(
-            conn,
-            frame_type="flat",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
-            telescope_configuration_id=ids["cfg_reducer"],
-        )
-        # Native config → match.
+        # Identical flat, other rig → no match.
+        await _insert_sub(conn, frame_type="flat", filter_name_hint="Ha", rig_id=ids["rig_b"])
+        # Same rig → match.
         good = await _insert_sub(
-            conn,
-            frame_type="flat",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
-            telescope_configuration_id=ids["cfg_native"],
+            conn, frame_type="flat", filter_name_hint="Ha", rig_id=ids["rig_a"]
         )
         rows = await (
             await conn.execute("SELECT flat_id FROM matching_flats WHERE light_id = ?", (light,))
@@ -395,17 +367,13 @@ class TestCalibrationViews:
         light = await _insert_sub(
             conn,
             frame_type="light",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
-            telescope_configuration_id=ids["cfg_native"],
+            filter_name_hint="Ha",
         )
         # Different filter → no match.
         await _insert_sub(
             conn,
             frame_type="flat",
-            filter_id=ids["duo"],
-            camera_id=ids["camera"],
-            telescope_configuration_id=ids["cfg_native"],
+            filter_name_hint="Oiii",
         )
         count = await _scalar(
             conn, "SELECT COUNT(*) FROM matching_flats WHERE light_id = ?", (light,)
@@ -414,14 +382,12 @@ class TestCalibrationViews:
 
     async def test_matching_bias(self, graph):
         conn, ids = graph
-        light = await _insert_sub(
-            conn, frame_type="light", filter_id=ids["ha"], camera_id=ids["camera"], binning_x=1
-        )
-        good = await _insert_sub(conn, frame_type="bias", camera_id=ids["camera"], binning_x=1)
+        light = await _insert_sub(conn, frame_type="light", filter_name_hint="Ha", binning_x=1)
+        good = await _insert_sub(conn, frame_type="bias", binning_x=1)
         # Different binning → no match.
-        await _insert_sub(conn, frame_type="bias", camera_id=ids["camera"], binning_x=2)
-        # Different camera → no match.
-        await _insert_sub(conn, frame_type="bias", camera_id=ids["camera_b"], binning_x=1)
+        await _insert_sub(conn, frame_type="bias", binning_x=2)
+        # Different rig → no match.
+        await _insert_sub(conn, frame_type="bias", rig_id=ids["rig_b"], binning_x=1)
         rows = await (
             await conn.execute("SELECT bias_id FROM matching_bias WHERE light_id = ?", (light,))
         ).fetchall()
@@ -432,17 +398,13 @@ class TestCalibrationViews:
         light = await _insert_sub(
             conn,
             frame_type="light",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
-            telescope_configuration_id=ids["cfg_native"],
+            filter_name_hint="Ha",
         )
-        await _insert_sub(conn, frame_type="dark", camera_id=ids["camera"])
+        await _insert_sub(conn, frame_type="dark")
         await _insert_sub(
             conn,
             frame_type="flat",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
-            telescope_configuration_id=ids["cfg_native"],
+            filter_name_hint="Ha",
         )
         # No bias inserted → has_bias should be 0.
         cur = await conn.execute(
@@ -453,116 +415,17 @@ class TestCalibrationViews:
         assert (row["has_dark"], row["has_flat"], row["has_bias"]) == (1, 1, 0)
 
 
-# ── Integration + goal-progress + session_summary ────────────────────────────
+# ── Session summary ──────────────────────────────────────────────────────────
 
 
-class TestIntegrationViews:
-    async def test_single_band_integration(self, graph):
-        conn, ids = graph
-        for _ in range(3):
-            await _insert_sub(
-                conn,
-                frame_type="light",
-                filter_id=ids["ha"],
-                camera_id=ids["camera"],
-                exposure_seconds=300.0,
-                project_target_id=ids["target"],
-            )
-        cur = await conn.execute(
-            "SELECT line_name, total_seconds, total_minutes, sub_count "
-            "FROM integration_time_per_project_filter WHERE project_id = ?",
-            (ids["project"],),
-        )
-        rows = {r["line_name"]: r for r in await cur.fetchall()}
-        assert set(rows) == {"Ha"}
-        assert rows["Ha"]["total_seconds"] == 900.0
-        assert rows["Ha"]["total_minutes"] == 15.0
-        assert rows["Ha"]["sub_count"] == 3
-
-    async def test_duoband_double_counts(self, graph):
-        conn, ids = graph
-        for _ in range(2):
-            await _insert_sub(
-                conn,
-                frame_type="light",
-                filter_id=ids["duo"],
-                camera_id=ids["camera"],
-                exposure_seconds=600.0,
-                project_target_id=ids["target"],
-            )
-        cur = await conn.execute(
-            "SELECT line_name, total_minutes, sub_count "
-            "FROM integration_time_per_project_filter WHERE project_id = ?",
-            (ids["project"],),
-        )
-        rows = {r["line_name"]: r for r in await cur.fetchall()}
-        # The duoband sub contributes to BOTH line budgets.
-        assert set(rows) == {"Ha", "Oiii"}
-        assert rows["Ha"]["total_minutes"] == 20.0
-        assert rows["Oiii"]["total_minutes"] == 20.0
-        assert rows["Ha"]["sub_count"] == 2
-        assert rows["Oiii"]["sub_count"] == 2
-
-    async def test_rejected_lights_excluded_from_integration(self, graph):
-        conn, ids = graph
-        await _insert_sub(
-            conn,
-            frame_type="light",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
-            exposure_seconds=300.0,
-            project_target_id=ids["target"],
-            accepted=0,
-        )
-        count = await _scalar(
-            conn,
-            "SELECT COUNT(*) FROM integration_time_per_project_filter WHERE project_id = ?",
-            (ids["project"],),
-        )
-        assert count == 0
-
-    async def test_goal_progress_null_safe_and_actual(self, graph):
-        conn, ids = graph
-        # Goal with no matching subs.
-        await conn.execute(
-            "INSERT INTO project_filter_goal (project_id, line_name, goal_minutes) "
-            "VALUES (?, 'Sii', 30)",
-            (ids["project"],),
-        )
-        # Goal with 15 min of actuals.
-        await conn.execute(
-            "INSERT INTO project_filter_goal (project_id, line_name, goal_minutes) "
-            "VALUES (?, 'Ha', 60)",
-            (ids["project"],),
-        )
-        for _ in range(3):
-            await _insert_sub(
-                conn,
-                frame_type="light",
-                filter_id=ids["ha"],
-                camera_id=ids["camera"],
-                exposure_seconds=300.0,
-                project_target_id=ids["target"],
-            )
-        cur = await conn.execute(
-            "SELECT line_name, goal_minutes, actual_minutes, completion_ratio "
-            "FROM project_filter_goal_progress WHERE project_id = ?",
-            (ids["project"],),
-        )
-        rows = {r["line_name"]: r for r in await cur.fetchall()}
-        assert rows["Sii"]["actual_minutes"] == 0
-        assert rows["Sii"]["completion_ratio"] == 0
-        assert rows["Ha"]["actual_minutes"] == 15.0
-        assert rows["Ha"]["completion_ratio"] == 0.25
-
+class TestSessionSummary:
     async def test_session_summary(self, graph):
         conn, ids = graph
         for _ in range(3):
             await _insert_sub(
                 conn,
                 frame_type="light",
-                filter_id=ids["ha"],
-                camera_id=ids["camera"],
+                filter_name_hint="Ha",
                 exposure_seconds=300.0,
                 session_id=ids["session"],
                 project_target_id=ids["target"],
@@ -570,15 +433,12 @@ class TestIntegrationViews:
         await _insert_sub(
             conn,
             frame_type="light",
-            filter_id=ids["ha"],
-            camera_id=ids["camera"],
+            filter_name_hint="Ha",
             exposure_seconds=300.0,
             session_id=ids["session"],
             accepted=0,
         )
-        await _insert_sub(
-            conn, frame_type="dark", camera_id=ids["camera"], session_id=ids["session"]
-        )
+        await _insert_sub(conn, frame_type="dark", session_id=ids["session"])
         cur = await conn.execute(
             "SELECT duration_hours, total_subs, accepted_lights, rejected_lights, "
             "accepted_light_minutes, distinct_filters FROM session_summary WHERE session_id = ?",

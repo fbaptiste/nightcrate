@@ -1,5 +1,5 @@
-import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import Card from "@mui/material/Card";
 import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
@@ -24,18 +24,11 @@ interface RigCardProps {
 }
 
 
+/** Just the count — the wheel, the capacity and the filter names are all in
+ *  the detail panel, where there is room for them to mean something. */
 function formatFilterSummary(rig: Rig): string {
-  if (rig.filter_slots.length > 0) {
-    const slotNames = rig.filter_slots
-      .sort((a, b) => a.slot_number - b.slot_number)
-      .map((s) => s.filter_name)
-      .join(" \u00b7 ");
-    return `${rig.filter_wheel_positions}-pos: ${slotNames}`;
-  }
-  if (rig.single_filter_name) {
-    return `Filter: ${rig.single_filter_name}`;
-  }
-  return "No filter wheel";
+  const count = rig.filter_slots.length || (rig.single_filter_name ? 1 : 0);
+  return `Filters: ${count > 0 ? count : "\u2014"}`;
 }
 
 export default function RigCard({
@@ -48,13 +41,6 @@ export default function RigCard({
   onRestore,
   onSetDefault,
 }: RigCardProps) {
-  const calc = rig.calculators;
-  const scale = calc.image_scale_arcsec_per_pixel;
-  const [fovW, fovH] = calc.field_of_view_arcmin;
-  const fl = rig.effective_focal_length_mm;
-  const ratio = rig.effective_focal_ratio;
-  const statsLine = `${fl}mm \u00b7 f/${ratio} \u00b7 ${scale.toFixed(2)}\u2033/px \u00b7 ${fovW.toFixed(1)}\u00d7${fovH.toFixed(1)}\u2032`;
-
   return (
     <Card
       variant="outlined"
@@ -68,73 +54,65 @@ export default function RigCard({
       }}
       onClick={() => onSelect(rig)}
     >
-      {/* Default toggle — upper right */}
-      {rig.active && (
-        <Button
-          size="small"
-          variant={rig.is_default ? "contained" : "outlined"}
-          onClick={(e) => { e.stopPropagation(); onSetDefault(rig.id); }}
-          sx={{
-            position: "absolute",
-            top: 8,
-            right: 8,
-            textTransform: "none",
-            fontSize: "0.7rem",
-            px: 1,
-            py: 0.125,
-            minWidth: 0,
-          }}
-        >
-          default
-        </Button>
+      {/* Default marker — upper right. A state and an action read differently:
+          an outlined vs contained button both labelled "default" was
+          indistinguishable in dark theme, so the wording and the component
+          change, not just the fill. Only shown for rigs the user owns — an
+          unclaimed catalog rig can't be your default. */}
+      {rig.active && rig.is_mine && (
+        rig.is_default ? (
+          <Chip
+            size="small"
+            label="Default"
+            color="primary"
+            sx={{ position: "absolute", top: 8, right: 8, height: 20, fontSize: "0.7rem" }}
+          />
+        ) : (
+          <Button
+            size="small"
+            variant="text"
+            onClick={(e) => { e.stopPropagation(); onSetDefault(rig.id); }}
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              textTransform: "none",
+              fontSize: "0.7rem",
+              px: 1,
+              py: 0.125,
+              minWidth: 0,
+            }}
+          >
+            Set as default
+          </Button>
+        )
       )}
 
       <CardContent sx={{ pb: 1 }}>
-        {/* Name */}
-        <Typography variant="h6" fontWeight="bold" sx={{ mb: 0.5, pr: 4 }}>
+        <Typography variant="h6" fontWeight="bold" sx={{ mb: 0.25, pr: 10 }}>
           {rig.name}
         </Typography>
 
-        {/* OTA line */}
+        {rig.description && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+            {rig.description}
+          </Typography>
+        )}
+
+        {/* The three optical numbers that identify a rig at a glance. */}
         <Typography variant="body2" color="text.secondary">
-          {rig.telescope_name} &mdash; {rig.telescope_config_name}
+          {rig.aperture_mm}mm aperture &middot; {rig.effective_focal_length_mm}mm
+          &middot; f/{rig.effective_focal_ratio}
         </Typography>
 
-        {/* Stats line (above camera) */}
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {statsLine}
-        </Typography>
-
-        {/* Camera line */}
-        <Typography variant="body2" color="text.secondary">
-          {rig.camera_name}
-        </Typography>
-
-        {/* Filter summary (above mount) */}
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           {formatFilterSummary(rig)}
         </Typography>
 
-        {/* Mount line */}
-        {rig.mount_name && (
-          <Typography variant="body2" color="text.secondary">
-            Mount: {rig.mount_name}
-          </Typography>
-        )}
-
-        {/* Warnings */}
         {rig.warnings.length > 0 && (
-          <Alert
-            severity="warning"
-            variant="outlined"
-            sx={{ mt: 1, py: 0, fontSize: "0.75rem" }}
-          >
-            {rig.warnings.map((w, i) => (
-              <Typography key={i} variant="caption" component="div">
-                {w.message}
-              </Typography>
-            ))}
-          </Alert>
+          <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 1 }}>
+            {rig.warnings.length} warning{rig.warnings.length > 1 ? "s" : ""}
+          </Typography>
         )}
       </CardContent>
 
@@ -152,8 +130,21 @@ export default function RigCard({
             <ContentCopyIcon fontSize="small" />
           </IconButton>
         </Tooltip>
+        {/* One delete affordance in one place, but three outcomes, and the
+            card cannot tell which it will get: `delete_rig` removes a seeded
+            rig only while it still hashes identical to the CSV, and retires it
+            once the user has edited it — and `source` stays 'seed' through any
+            edit. So the tooltip names both possibilities rather than promising
+            the removal; RigsPage reports which actually happened. */}
         {rig.active ? (
-          <Tooltip title="Delete" arrow>
+          <Tooltip
+            title={
+              rig.source === "seed"
+                ? "Remove from my rigs (retired instead if you have edited it)"
+                : "Delete"
+            }
+            arrow
+          >
             <IconButton size="small" onClick={() => onDelete(rig.id)}>
               <DeleteIcon fontSize="small" />
             </IconButton>

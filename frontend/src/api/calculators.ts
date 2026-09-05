@@ -121,6 +121,10 @@ export interface TonightResponse {
   moonset: string | null;
   moon_illumination_pct: number;
   moon_phase_name: string;
+  /** Deepest darkness the sun actually reaches — NOT always astronomical.
+   *  Above ~48.5° latitude the sun stops reaching -18° near midsummer and the
+   *  backend falls back to nautical, then civil. Label the number from this. */
+  deepest_darkness_reached: "astro" | "nautical" | "civil" | "none";
   astronomical_dark_hours: number;
   moonless_dark_hours: number;
 }

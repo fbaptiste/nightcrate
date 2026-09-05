@@ -1,20 +1,28 @@
-"""Directory-scan ingest pipeline + catalog endpoints (v0.40.0, v0.41.0).
+"""Directory-scan ingest pipeline + catalog endpoints (v0.40.0, v0.41.1).
 
 The HTTP/DB boundary for cataloging a folder. Orchestrates:
 
-    scan (fast walk) -> ProcessPool header parse -> equipment resolution
+    scan (fast walk) -> ProcessPool header parse
     -> content-hash UPSERT into sub_frame / processed_image / file_location
-    -> session formation -> light-to-target assignment -> rig attribution
+    -> session formation -> light-to-target assignment
     -> ingestion_run counters
 
-This module owns the transaction; the pure services (ingest_scanner,
-ingest_classify, ingest_sessions, equipment_resolver, rig_attribution) never
-commit. One ingest runs at a time per process (global single-flight, 409 if
-busy).
+Frames are cataloged from their FITS headers alone. There is deliberately no
+automatic equipment identification (v0.41.1 removed the header-to-equipment
+resolver and the rig-attribution pass): a project carries its rigs via
+project_rig, and that is the equipment context. ``sub_frame.filter_name_hint``
+holds the header's filter name and is the only filter fact.
 
-Catalog endpoints are read-only except for the v0.41.0 per-frame equipment
-override (rig / camera / filter); frame_type corrections, session/target
-reassignment, and bulk operations are v0.41.1.
+Ingest also never writes ``project_session`` — building the user-facing session
+list from these frames is an explicit action on the Sessions tab
+(``services/session_derivation.py``).
+
+This module owns the transaction; the pure services (ingest_scanner,
+ingest_classify, ingest_sessions) never commit. One ingest runs at a time per
+process (global single-flight, 409 if busy).
+
+Catalog endpoints are read-only except for the frame-classification corrections
+(frame type + target, single and bulk).
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import get_args
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -33,11 +42,7 @@ from nightcrate.core import app_config
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
 from nightcrate.services.catalog_thumbnail import DEFAULT_MAX_PX, render_thumbnail_bytes
-from nightcrate.services.equipment_resolver import (
-    EquipmentResolver,
-    ResolverStats,
-    canonicalize_line_name,
-)
+from nightcrate.services.fits_header_map import extract_metadata
 from nightcrate.services.ingest_classify import (
     CATEGORY_LOG,
     CATEGORY_OTHER,
@@ -46,7 +51,8 @@ from nightcrate.services.ingest_classify import (
     classify_frame,
 )
 from nightcrate.services.ingest_models import (
-    AttributionSummary,
+    BulkCorrectionResult,
+    BulkFrameCorrection,
     CatalogFilterStat,
     CatalogFrame,
     CatalogFramesPage,
@@ -55,10 +61,12 @@ from nightcrate.services.ingest_models import (
     CatalogOther,
     CatalogOthersPage,
     CatalogSummary,
-    EquipmentOverride,
+    CorrectableField,
+    FrameCorrection,
     IngestStatus,
     SourceFolder,
     SourceFolderCreate,
+    SourceFolderUpdate,
 )
 from nightcrate.services.ingest_scanner import (
     header_bearing,
@@ -67,11 +75,11 @@ from nightcrate.services.ingest_scanner import (
     scan_directory,
 )
 from nightcrate.services.ingest_sessions import (
-    ensure_session,
-    session_key,
-    sweep_empty_sessions,
+    assign_rigs_and_sessions,
+    folder_prefix,
+    project_geo_timezone,
 )
-from nightcrate.services.rig_attribution import rerun_resolution
+from nightcrate.services.line_names import canonicalize_line_name
 
 logger = logging.getLogger("nightcrate.ingest")
 _LOG_PREFIX = "[ingest]"
@@ -99,9 +107,23 @@ def _thumb_cache_dir() -> Path:
 # ── Source-folder binding ─────────────────────────────────────────────────────
 
 
+_FOLDER_SELECT = (
+    "SELECT psf.*, r.name AS rig_name FROM project_source_folder psf "
+    "LEFT JOIN rig r ON r.id = psf.rig_id "
+)
+
+
 def _folder_response(d: dict) -> SourceFolder:
     bool_fields(d, "is_primary")
     return SourceFolder(**d)
+
+
+async def _fetch_folder(conn, folder_id: int) -> SourceFolder:
+    cursor = await conn.execute(
+        f"{_FOLDER_SELECT} WHERE psf.id = ?",  # nosec B608 - constant SELECT
+        (folder_id,),
+    )
+    return _folder_response(row_to_dict(await cursor.fetchone()))
 
 
 @router.get("/{project_id}/folders", response_model=list[SourceFolder])
@@ -109,8 +131,8 @@ async def list_folders(project_id: int) -> list[SourceFolder]:
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
         cursor = await conn.execute(
-            "SELECT * FROM project_source_folder WHERE project_id = ? "
-            "ORDER BY is_primary DESC, added_at",
+            f"{_FOLDER_SELECT} WHERE psf.project_id = ? "  # nosec B608 - constant SELECT
+            "ORDER BY psf.is_primary DESC, psf.added_at",
             (project_id,),
         )
         return [_folder_response(row_to_dict(r)) for r in await cursor.fetchall()]
@@ -135,19 +157,26 @@ async def add_folder(project_id: int, body: SourceFolderCreate) -> SourceFolder:
                 "UPDATE project_source_folder SET is_primary = 0 WHERE project_id = ?",
                 (project_id,),
             )
+        if body.rig_id is not None:
+            await get_or_404(conn, "rig", body.rig_id, "Rig")
         try:
             cursor = await conn.execute(
-                "INSERT INTO project_source_folder (project_id, path, is_primary) VALUES (?, ?, ?)",
-                (project_id, path, 1 if make_primary else 0),
+                "INSERT INTO project_source_folder (project_id, path, is_primary, rig_id) "
+                "VALUES (?, ?, ?, ?)",
+                (project_id, path, 1 if make_primary else 0, body.rig_id),
             )
+            folder_id = cursor.lastrowid
         except Exception as exc:  # noqa: BLE001 - translate UNIQUE(project_id, path)
             if "UNIQUE" in str(exc):
                 raise HTTPException(status_code=409, detail="Folder already added") from exc
             raise
+        # A folder can be bound over files another folder already cataloged (or
+        # re-bound after removal), so let the single owner settle rig + session.
+        await assign_rigs_and_sessions(
+            conn, project_id, await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
-        fid = cursor.lastrowid
-        cursor = await conn.execute("SELECT * FROM project_source_folder WHERE id = ?", (fid,))
-        return _folder_response(row_to_dict(await cursor.fetchone()))
+        return await _fetch_folder(conn, folder_id)
 
 
 @router.put("/{project_id}/folders/{folder_id}/primary", response_model=SourceFolder)
@@ -161,10 +190,33 @@ async def set_primary_folder(project_id: int, folder_id: int) -> SourceFolder:
             "UPDATE project_source_folder SET is_primary = 1 WHERE id = ?", (folder_id,)
         )
         await conn.commit()
-        cursor = await conn.execute(
-            "SELECT * FROM project_source_folder WHERE id = ?", (folder_id,)
+        return await _fetch_folder(conn, folder_id)
+
+
+@router.patch("/{project_id}/folders/{folder_id}", response_model=SourceFolder)
+async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdate) -> SourceFolder:
+    """Tag a source folder with the rig that shot it (explicit null clears it).
+
+    The user declares this; nothing infers it from a header. Frames already
+    cataloged are re-tagged in place and their sessions re-keyed, so the change
+    takes effect without a re-scan. Nested bindings resolve innermost-first, so
+    tagging a parent folder never steals a nested folder's frames.
+    """
+    async with get_db() as conn:
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await _get_folder_or_404(conn, project_id, folder_id)
+        if "rig_id" not in body.model_fields_set:
+            return await _fetch_folder(conn, folder_id)
+        if body.rig_id is not None:
+            await get_or_404(conn, "rig", body.rig_id, "Rig")
+        await conn.execute(
+            "UPDATE project_source_folder SET rig_id = ? WHERE id = ?", (body.rig_id, folder_id)
         )
-        return _folder_response(row_to_dict(await cursor.fetchone()))
+        await assign_rigs_and_sessions(
+            conn, project_id, await project_geo_timezone(conn, project_id)
+        )
+        await conn.commit()
+        return await _fetch_folder(conn, folder_id)
 
 
 @router.delete("/{project_id}/folders/{folder_id}", status_code=204)
@@ -180,9 +232,13 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
         await conn.execute("PRAGMA foreign_keys = ON")
         folder = await _get_folder_or_404(conn, project_id, folder_id)
         # Exact prefix match (folder + separator) so underscores/percent in real
-        # paths can't act as LIKE wildcards. Covers archive/pxiproject virtual
-        # paths too — they start with the on-disk folder path.
-        prefix = folder["path"].rstrip("/") + "/"
+        # paths can't act as LIKE wildcards. folder_prefix picks the separator the
+        # folder's children actually carry: `/` for a plain directory or one
+        # inside an archive, `::` for an archive bound at its root. Building it
+        # here with a hardcoded `/` got both the archive-root case and Windows
+        # wrong, and in both the DELETE simply matched nothing — the folder went
+        # away and its frames stayed behind, invisible to the orphan sweep.
+        prefix = folder_prefix(folder["path"])
 
         await conn.execute(
             "DELETE FROM file_location WHERE project_id = ? AND substr(path, 1, length(?)) = ?",
@@ -199,9 +255,13 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
             "AND NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.processed_image_id = id)",
             (project_id,),
         )
-        # Drop auto-sessions emptied by the removal.
-        await sweep_empty_sessions(conn, project_id)
         await conn.execute("DELETE FROM project_source_folder WHERE id = ?", (folder_id,))
+        # A sub that survived via a file_location under another still-bound folder
+        # may have been getting its rig from the folder just removed, so re-pick
+        # rig + session rather than only sweeping. This also drops emptied sessions.
+        await assign_rigs_and_sessions(
+            conn, project_id, await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
 
 
@@ -253,26 +313,6 @@ async def start_ingest(
         return await _run_ingest(project_id, folders)
 
 
-@router.post("/{project_id}/resolution/rerun", response_model=AttributionSummary)
-async def rerun_project_resolution(project_id: int) -> AttributionSummary:
-    """Re-resolve equipment + attribute rigs across the project's catalog.
-
-    Idempotent; usable any time (after confirming aliases, assigning a rig, …).
-    Shares the ingest single-flight lock so it never races a running scan.
-    Fields manually overridden (``*_source = 'user'``) are never touched.
-    """
-    if _INGEST_LOCK.locked():
-        raise HTTPException(status_code=409, detail="An ingest is already running")
-    async with _INGEST_LOCK:
-        async with get_db() as conn:
-            await conn.execute("PRAGMA foreign_keys = ON")
-            await get_or_404(conn, "project", project_id, "Project")
-            tz_name = await _project_geo_timezone(conn, project_id)
-            summary = await rerun_resolution(conn, project_id, tz_name=tz_name)
-            await conn.commit()
-        return summary
-
-
 async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
     settings = await get_settings()
     configured = settings.max_worker_cores
@@ -287,9 +327,8 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         run_id = cursor.lastrowid
         await conn.commit()
 
-        tz_name = await _project_geo_timezone(conn, project_id)
+        tz_name = await project_geo_timezone(conn, project_id)
         target_id = await _project_single_target(conn, project_id)
-        stats = ResolverStats()
         errors: list[dict] = []
         counters = {"scanned": 0, "inserted": 0, "updated": 0, "skipped": 0}
 
@@ -300,22 +339,16 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         try:
             for folder in folders:
                 await _ingest_folder(
-                    conn,
-                    project_id,
-                    run_id,
-                    folder,
-                    pool,
-                    tz_name,
-                    target_id,
-                    stats,
-                    errors,
-                    counters,
+                    conn, project_id, run_id, folder, pool, target_id, errors, counters
                 )
             await _reclassify_dark_flats(conn, project_id)
-            # Attribute rigs + back-fill filters project-wide (v0.41.0). Also
-            # re-keys sessions to (rig, night) and sweeps emptied auto-sessions
-            # (which covers re-scans that orphaned a session's frames).
-            await rerun_resolution(conn, project_id, tz_name=tz_name)
+            # Rig + session are assigned in one post-pass rather than per file: a
+            # frame's rig depends on which bound folder *innermost* contains it,
+            # which isn't known until every folder is on the table. The pass also
+            # sweeps sessions a re-scan emptied. The user-facing project_session
+            # rows are never touched by ingest — deriving those is an explicit
+            # action on the Sessions tab.
+            await assign_rigs_and_sessions(conn, project_id, tz_name)
             status = "completed"
         except Exception as exc:  # noqa: BLE001 - record failure on the run, re-raise after commit
             logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
@@ -343,7 +376,7 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         await conn.commit()
 
         logger.info(
-            "%s run %d %s: scanned=%d inserted=%d updated=%d skipped=%d errors=%d (resolver: %s)",
+            "%s run %d %s: scanned=%d inserted=%d updated=%d skipped=%d errors=%d",
             _LOG_PREFIX,
             run_id,
             status,
@@ -352,7 +385,6 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
             counters["updated"],
             counters["skipped"],
             len(errors),
-            stats,
         )
         return IngestStatus(
             run_id=run_id,
@@ -367,7 +399,7 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
 
 
 async def _ingest_folder(
-    conn, project_id, run_id, folder, pool, tz_name, target_id, stats, errors, counters
+    conn, project_id, run_id, folder, pool, target_id, errors, counters
 ) -> None:
     entries = scan_directory(folder)
     counters["scanned"] += len(entries)
@@ -381,15 +413,12 @@ async def _ingest_folder(
     to_parse = header_bearing(entries)
     parsed = await _parse_in_pool(to_parse, pool)
 
-    resolver = EquipmentResolver(conn)
     for result in parsed:
         if result.get("error"):
             errors.append({"path": result["path"], "error": result["error"]})
             continue
         try:
-            await _persist_parsed(
-                conn, project_id, run_id, result, resolver, tz_name, target_id, stats, counters
-            )
+            await _persist_parsed(conn, project_id, run_id, result, target_id, counters)
         except Exception as exc:  # noqa: BLE001 - one bad file shouldn't abort the run
             errors.append({"path": result["path"], "error": f"{type(exc).__name__}: {exc}"})
 
@@ -406,22 +435,10 @@ async def _parse_in_pool(entries, pool) -> list[dict]:
     return list(await asyncio.gather(*futures))
 
 
-async def _persist_parsed(
-    conn, project_id, run_id, result, resolver, tz_name, target_id, stats, counters
-) -> None:
+async def _persist_parsed(conn, project_id, run_id, result, target_id, counters) -> None:
     meta = result["meta"]
     raw_header = result["raw_header"]
-    route, frame_type = classify_frame(meta, raw_header)
-
-    camera = await resolver.resolve_camera(meta.get("camera_name"), source="nina", stats=stats)
-    telescope = await resolver.resolve_telescope(
-        meta.get("telescope_name"), source="nina", stats=stats
-    )
-    # No rig context here: attribution needs the whole folder parsed first, so it
-    # runs as a post-pass (rerun_resolution) once this loop finishes. Filter
-    # line-name scoping is therefore skipped and lights routinely resolve to
-    # NULL — kept as filter_name_hint, which the post-pass back-fills from.
-    filt = await resolver.resolve_filter(meta.get("filter_name"), source="nina", stats=stats)
+    route, frame_type = classify_frame(meta, raw_header, filename=Path(result["path"]).name)
 
     date_obs = _coerce_date_obs(meta.get("date_obs"), result["mtime"])
 
@@ -434,9 +451,6 @@ async def _persist_parsed(
             meta,
             raw_header,
             frame_type,
-            camera.equipment_id,
-            telescope.equipment_id,
-            filt.equipment_id,
             date_obs,
             counters,
         )
@@ -451,21 +465,24 @@ async def _persist_parsed(
         meta,
         raw_header,
         frame_type,
-        camera.equipment_id,
-        telescope.equipment_id,
-        filt.equipment_id,
         date_obs,
     )
     counters["inserted" if was_insert else "updated"] += 1
 
-    # Session formation: (rig_id, observing night). rig is NULL at persist time;
-    # the post-ingest rerun_resolution pass attributes rigs and re-keys sessions.
-    key = session_key(None, date_obs, tz_name)
-    session_id = await ensure_session(conn, project_id, key, tz_name)
+    # Session and rig are assigned project-wide after every folder is walked (see
+    # assign_rigs_and_sessions) — a frame's rig depends on folder nesting, which
+    # isn't knowable here.
+    #
+    # Target assignment is auto-only (migration 0043). A manual assignment must
+    # survive re-scans — and it would not otherwise, because `target_id` is NULL
+    # for any project that doesn't have exactly one target, so a multi-target
+    # project would have every hand-set target wiped on the next scan.
     assigned_target = target_id if frame_type == "light" else None
     await conn.execute(
-        "UPDATE sub_frame SET session_id = ?, project_target_id = ? WHERE id = ?",
-        (session_id, assigned_target, sub_id),
+        "UPDATE sub_frame SET project_target_id = CASE WHEN project_target_source = 'user' "
+        "                        THEN project_target_id ELSE ? END "
+        "WHERE id = ?",
+        (assigned_target, sub_id),
     )
     await _link_file_location(conn, project_id, result, "sub_frame", sub_id)
 
@@ -478,9 +495,6 @@ async def _upsert_sub_frame(
     meta,
     raw_header,
     frame_type,
-    camera_id,
-    telescope_id,
-    filter_id,
     date_obs,
 ) -> tuple[int, bool]:
     content_hash = result["content_hash"]
@@ -497,9 +511,6 @@ async def _upsert_sub_frame(
 
     cols = {
         "frame_type": frame_type,
-        "camera_id": camera_id,
-        "telescope_id": telescope_id,
-        "filter_id": filter_id if keeps_filter else None,
         "filter_name_hint": _as_str(meta.get("filter_name")) if keeps_filter else None,
         "exposure_seconds": _as_float(meta.get("exposure_time")) or 0.0,
         "gain": _as_float(meta.get("gain")),
@@ -529,18 +540,27 @@ async def _upsert_sub_frame(
         )
         return cursor.lastrowid, True
 
-    # Re-scan must never clobber a manual override (migration 0041): equipment
-    # fields guarded by a *_source column only update while still 'auto'.
-    protected = {"camera_id": "camera_source", "filter_id": "filter_source"}
+    # Re-scan must never clobber a hand correction (migration 0043): frame_type
+    # keeps its stored value while frame_type_source = 'user'.
+    #
+    # filter_name_hint is DERIVED, not user-owned — it is a function of (header
+    # FILTER, effective frame type), where "effective" means the corrected type
+    # when one was set. Recomputing it here rather than freezing it means a frame
+    # corrected *to* light or flat gets its filter name back, which a one-way
+    # freeze would have withheld forever (and matching_flats joins on it).
+    cols.pop("filter_name_hint")  # rebuilt below from the effective frame type
+    raw_hint = _as_str(meta.get("filter_name"))
     set_clause = ", ".join(
-        f"{k} = CASE WHEN {protected[k]} = 'user' THEN {k} ELSE ? END"
-        if k in protected
+        "frame_type = CASE WHEN frame_type_source = 'user' THEN frame_type ELSE ? END"
+        if k == "frame_type"
         else f"{k} = ?"
         for k in cols
     )
     await conn.execute(
-        f"UPDATE sub_frame SET {set_clause} WHERE id = ?",  # nosec B608 - column names from fixed internal dict, not user input
-        (*cols.values(), existing["id"]),
+        f"UPDATE sub_frame SET {set_clause}, filter_name_hint = CASE WHEN "  # nosec B608 - set_clause is built from a fixed internal column dict; every value is parameterized
+        "(CASE WHEN frame_type_source = 'user' THEN frame_type ELSE ? END) "
+        "IN ('light', 'flat') THEN ? ELSE NULL END WHERE id = ?",
+        (*cols.values(), frame_type, raw_hint, existing["id"]),
     )
     return existing["id"], False
 
@@ -553,9 +573,6 @@ async def _upsert_processed(
     meta,
     raw_header,
     frame_type,
-    camera_id,
-    telescope_id,
-    filter_id,
     date_obs,
     counters,
 ) -> None:
@@ -565,11 +582,11 @@ async def _upsert_processed(
         (project_id, content_hash),
     )
     existing = await cursor.fetchone()
-    # No rig context for masters → filter_id rarely resolves. Fall back to the
-    # bandpass parsed from the FILTER keyword (e.g. "Ha") so the Masters tab can
-    # show a filter. Only lights/flats carry a filter; darks/bias stay NULL.
+    # Masters carry no equipment identification, so the bandpass parsed from the
+    # FILTER keyword (e.g. "Ha") is the filter the Masters tab shows. Only
+    # lights/flats carry a filter; darks/bias stay NULL.
     line_name = None
-    if frame_type in ("light", "flat") and not filter_id:
+    if frame_type in ("light", "flat"):
         line_name = canonicalize_line_name(raw_header.get("FILTER") or "")
     ncombine = (
         _as_int(meta.get("pi_ncombine"))
@@ -579,10 +596,7 @@ async def _upsert_processed(
     cols = {
         "image_kind": "master",
         "frame_type": frame_type,
-        "filter_id": filter_id,
         "line_name": line_name,
-        "camera_id": camera_id,
-        "telescope_id": telescope_id,
         "ncombine": ncombine,
         "total_exposure_seconds": _total_exposure(raw_header, ncombine),
         "date_obs_utc": date_obs,
@@ -661,11 +675,16 @@ async def _reclassify_dark_flats(conn, project_id: int) -> None:
     them — but flats (seconds) and lights (minutes) are ~100× apart, so a loose
     ratio never confuses the two. Project-scoped and idempotent. Real darks (which
     match the lights' exposure) and master darks (``processed_image``) are untouched.
+
+    Frames whose ``frame_type_source`` is ``'user'`` are skipped (migration 0043):
+    this pass runs on every scan, so without the guard it would silently revert a
+    manual correction.
     """
     await conn.execute(
         "UPDATE sub_frame SET frame_type = 'dark_flat' WHERE id IN ("
         "  SELECT sf.id FROM sub_frame sf "
         "  WHERE sf.project_id = ? AND sf.frame_type = 'dark' AND sf.exposure_seconds > 0 "
+        "    AND sf.frame_type_source = 'auto' "
         "    AND EXISTS ("
         "      SELECT 1 FROM sub_frame f "
         "      WHERE f.project_id = ? AND f.frame_type = 'flat' "
@@ -691,18 +710,6 @@ async def _project_display_tz(conn, project_id: int) -> str:
     )
     row = await cursor.fetchone()
     return (row["timezone"] if row and row["timezone"] else None) or "UTC"
-
-
-async def _project_geo_timezone(conn, project_id) -> str | None:
-    cursor = await conn.execute(
-        "SELECT l.geo_timezone, l.timezone FROM project p "
-        "LEFT JOIN location l ON l.id = p.location_id WHERE p.id = ?",
-        (project_id,),
-    )
-    row = await cursor.fetchone()
-    if row is None:
-        return None
-    return row["geo_timezone"] or row["timezone"]
 
 
 async def _project_single_target(conn, project_id) -> int | None:
@@ -782,19 +789,17 @@ async def catalog_frames(
         type_clause = " AND sf.frame_type = ?"
         type_params = (frame_type,)
     # Optional filter-name scope (clicking a Lights/Flats filter pill). Matches the
-    # same COALESCE(model, hint) the pills are grouped by.
+    # same filter_name_hint the pills are grouped by.
     filter_clause = ""
     filter_params: tuple = ()
     if filter_name:
-        filter_clause = " AND COALESCE(f.model_name, sf.filter_name_hint) = ?"
+        filter_clause = " AND sf.filter_name_hint = ?"
         filter_params = (filter_name,)
     # Flats are organised per-filter (you match flats to lights by filter), so sort
     # by filter first. Lights/calibration sort by path so raw vs per-stage outputs
     # bunch together; date_obs is the within-group tiebreak.
     if frame_type == "flat":
-        order_clause = (
-            "ORDER BY COALESCE(f.model_name, sf.filter_name_hint), fl.path, sf.date_obs_utc, sf.id"
-        )
+        order_clause = "ORDER BY sf.filter_name_hint, fl.path, sf.date_obs_utc, sf.id"
     else:
         order_clause = "ORDER BY fl.path, sf.date_obs_utc, sf.id"
     async with get_db() as conn:
@@ -802,7 +807,6 @@ async def catalog_frames(
         total = await _count(
             conn,
             "SELECT COUNT(*) FROM sub_frame sf "
-            "LEFT JOIN filter f ON f.id = sf.filter_id "
             # nosec B608 - clauses are fixed literals; values are parameterized
             f"WHERE sf.project_id = ?{type_clause}{filter_clause}",
             (project_id, *type_params, *filter_params),
@@ -819,78 +823,138 @@ async def catalog_frames(
         return CatalogFramesPage(rows=rows, total=total, timezone=tz)
 
 
-@router.patch("/{project_id}/catalog/frames/{frame_id}/equipment", response_model=CatalogFrame)
-async def override_frame_equipment(
-    project_id: int, frame_id: int, body: EquipmentOverride
-) -> CatalogFrame:
-    """Manually override a frame's rig / camera / filter attribution.
+def _require_correction(body: FrameCorrection) -> None:
+    """422 unless the body actually asks for something.
 
-    Fields present in the body are applied verbatim (explicit ``null`` = "none")
-    and marked ``*_source = 'user'`` so re-scans and re-runs never clobber them.
-    ``reset_to_auto`` hands a field back to automated control (the next re-run
-    refills it). A rig change re-keys the frame's auto-session.
+    Stated as "did you send a correctable field?" rather than "is anything left
+    after removing the non-correctable ones?" — the subtractive form silently
+    stops guarding the moment a new bulk-only field is added.
     """
+    if not (body.model_fields_set & set(get_args(CorrectableField))) and not body.reset_to_auto:
+        raise HTTPException(status_code=422, detail="No correction fields provided")
+
+
+def _header_filter_name(fits_header_json: str | None) -> str | None:
+    """The FILTER value a frame would get from a fresh scan.
+
+    Reads the stored header rather than the file on disk, so a correction works on
+    a frame whose source volume is offline, and routes through the same
+    ``extract_metadata`` normalization the ingest uses so the two can't disagree.
+    """
+    if not fits_header_json:
+        return None
+    try:
+        header = json.loads(fits_header_json)
+    except _COERCE_ERRORS:  # JSONDecodeError subclasses ValueError
+        return None
+    return _as_str(extract_metadata(header).get("filter_name"))
+
+
+async def _apply_correction(conn, project_id: int, frame_id: int, body: FrameCorrection) -> None:
+    """Apply one classification correction. Caller owns the transaction.
+
+    Shared by the single-frame and bulk endpoints so the two can never drift.
+    """
+    cursor = await conn.execute(
+        "SELECT id, frame_type, fits_header_json FROM sub_frame WHERE id = ? AND project_id = ?",
+        (frame_id, project_id),
+    )
+    frame = await cursor.fetchone()
+    if frame is None:
+        raise HTTPException(status_code=404, detail=f"Frame {frame_id} not found")
+
     sent = body.model_fields_set
-    fields = [f for f in ("rig_id", "camera_id", "filter_id") if f in sent]
-    if not fields and not body.reset_to_auto:
-        raise HTTPException(status_code=422, detail="No override fields provided")
+    updates: dict[str, object] = {}
+
+    if "frame_type" in sent:
+        if body.frame_type is None:
+            raise HTTPException(status_code=422, detail="frame_type cannot be null")
+        updates["frame_type"] = body.frame_type
+        updates["frame_type_source"] = "user"
+        # filter_name_hint follows the corrected type in BOTH directions: a frame
+        # corrected to a calibration type loses it (only lights and flats carry a
+        # filter), and one corrected back to light/flat gets the header's FILTER
+        # again. A one-way null would strand the frame with no filter forever, and
+        # matching_flats joins on this column.
+        updates["filter_name_hint"] = (
+            _header_filter_name(frame["fits_header_json"])
+            if body.frame_type in ("light", "flat")
+            else None
+        )
+
+    if "project_target_id" in sent:
+        if body.project_target_id is not None:
+            # Only lights have a target — the automatic path enforces this
+            # (`_persist_parsed` assigns one only when frame_type == 'light'), so
+            # the manual path has to as well or the two disagree. Checked against
+            # the *effective* type, which may be corrected in this same request.
+            effective_type = updates.get("frame_type", frame["frame_type"])
+            if effective_type != "light":
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Only lights carry a target (frame is {effective_type})",
+                )
+            cursor = await conn.execute(
+                "SELECT id FROM project_target WHERE id = ? AND project_id = ?",
+                (body.project_target_id, project_id),
+            )
+            if await cursor.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Target not found in this project")
+        updates["project_target_id"] = body.project_target_id
+        updates["project_target_source"] = "user"
+
+    for f in body.reset_to_auto:
+        updates[f"{f.removesuffix('_id')}_source"] = "auto"
+
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    await conn.execute(
+        f"UPDATE sub_frame SET {set_clause} WHERE id = ?",  # nosec B608 - column names from a fixed internal allow-list, not user input
+        (*updates.values(), frame_id),
+    )
+
+
+@router.patch("/{project_id}/catalog/frames/{frame_id}/classification", response_model=CatalogFrame)
+async def correct_frame_classification(
+    project_id: int, frame_id: int, body: FrameCorrection
+) -> CatalogFrame:
+    """Manually correct a frame's type / target.
+
+    Both are re-derived by the ingest pipeline on every scan, so a correction
+    marks ``*_source = 'user'`` and the passes skip it (migration 0043).
+    """
+    _require_correction(body)
 
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
         await get_or_404(conn, "project", project_id, "Project")
-        cursor = await conn.execute(
-            "SELECT id, frame_type, date_obs_utc, session_id, rig_id "
-            "FROM sub_frame WHERE id = ? AND project_id = ?",
-            (frame_id, project_id),
-        )
-        frame = await cursor.fetchone()
-        if frame is None:
-            raise HTTPException(status_code=404, detail="Frame not found")
-
-        updates: dict[str, object] = {}
-        for f in fields:
-            value = getattr(body, f)
-            if value is not None:
-                table = f.removesuffix("_id")
-                await get_or_404(conn, table, value, table.capitalize())
-            if (
-                f == "filter_id"
-                and value is not None
-                and frame["frame_type"] not in ("light", "flat")
-            ):
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Only lights and flats carry a filter (frame is {frame['frame_type']})",
-                )
-            updates[f] = value
-            updates[f"{f.removesuffix('_id')}_source"] = "user"
-        for f in body.reset_to_auto:
-            updates[f"{f.removesuffix('_id')}_source"] = "auto"
-
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        await conn.execute(
-            f"UPDATE sub_frame SET {set_clause} WHERE id = ?",  # nosec B608 - column names from a fixed internal allow-list, not user input
-            (*updates.values(), frame_id),
-        )
-
-        # A rig change moves the frame to its (rig, night) session.
-        new_rig = updates.get("rig_id", frame["rig_id"])
-        if new_rig != frame["rig_id"]:
-            tz_name = await _project_geo_timezone(conn, project_id)
-            key = session_key(new_rig, frame["date_obs_utc"], tz_name)
-            session_id = await ensure_session(conn, project_id, key, tz_name)
-            await conn.execute(
-                "UPDATE sub_frame SET session_id = ? WHERE id = ?",
-                (session_id, frame_id),
-            )
-            await sweep_empty_sessions(conn, project_id)
-
+        await _apply_correction(conn, project_id, frame_id, body)
         await conn.commit()
         cursor = await conn.execute(
             _FRAME_SELECT + "WHERE sf.id = ? GROUP BY sf.id",  # nosec B608 - fixed literal
             (frame_id,),
         )
         return _catalog_frame(row_to_dict(await cursor.fetchone()))
+
+
+@router.post(
+    "/{project_id}/catalog/frames/bulk-classification", response_model=BulkCorrectionResult
+)
+async def bulk_correct_frames(project_id: int, body: BulkFrameCorrection) -> BulkCorrectionResult:
+    """Apply one classification correction to several frames in a single transaction.
+
+    All-or-nothing: an unknown or out-of-project frame id 404s and nothing commits.
+    """
+    _require_correction(body)
+
+    async with get_db() as conn:
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await get_or_404(conn, "project", project_id, "Project")
+        for frame_id in body.frame_ids:
+            await _apply_correction(conn, project_id, frame_id, body)
+        await conn.commit()
+        return BulkCorrectionResult(updated=len(body.frame_ids))
 
 
 @router.get("/{project_id}/catalog/filter-summary", response_model=list[CatalogFilterStat])
@@ -904,10 +968,9 @@ async def catalog_filter_summary(
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
         cursor = await conn.execute(
-            "SELECT COALESCE(f.model_name, sf.filter_name_hint) AS filter_name, "
+            "SELECT sf.filter_name_hint AS filter_name, "
             "COUNT(*) AS n, COALESCE(SUM(sf.exposure_seconds), 0) AS total "
             "FROM sub_frame sf "
-            "LEFT JOIN filter f ON f.id = sf.filter_id "
             "WHERE sf.project_id = ? AND sf.frame_type = ? "
             "GROUP BY filter_name ORDER BY filter_name",
             (project_id, frame_type),
@@ -936,11 +999,10 @@ async def catalog_masters(
         )
         cursor = await conn.execute(
             "SELECT pi.id, pi.image_kind, pi.frame_type, pi.line_name, "
-            "f.model_name AS filter_model, pi.ncombine, pi.total_exposure_seconds, "
+            "pi.ncombine, pi.total_exposure_seconds, "
             "pi.image_width, pi.image_height, pi.date_obs_utc, "
             "fl.path AS path, fl.size_bytes AS file_size_bytes "
             "FROM processed_image pi "
-            "LEFT JOIN filter f ON f.id = pi.filter_id "
             "LEFT JOIN file_location fl ON fl.processed_image_id = pi.id "
             "WHERE pi.project_id = ? "
             "GROUP BY pi.id ORDER BY fl.path, pi.id LIMIT ? OFFSET ?",
@@ -1010,7 +1072,7 @@ def _catalog_master(d: dict) -> CatalogMaster:
         id=d["id"],
         type_label=type_label,
         frame_type=ft,
-        filter_name=d.get("filter_model") or d.get("line_name"),
+        filter_name=d.get("line_name"),
         ncombine=d.get("ncombine"),
         total_exposure_seconds=d.get("total_exposure_seconds"),
         dimensions=dims,
@@ -1102,18 +1164,19 @@ def _write_cache_atomic(cache_path: Path, data: bytes) -> None:
 
 
 # Shared frame projection: the list endpoint and the single-frame refetch (after
-# an override) must return identical shapes.
+# a correction) must return identical shapes.
 _FRAME_SELECT = (
-    "SELECT sf.id, sf.frame_type, sf.filter_name_hint, f.model_name AS filter_model, "
+    "SELECT sf.id, sf.frame_type, sf.filter_name_hint, "
     "sf.object_hint, sf.exposure_seconds, sf.gain, sf.set_temp_c, sf.binning_x, "
-    "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.camera_id, "
-    "sf.telescope_id, sf.accepted, sf.filter_id, sf.rig_id, r.name AS rig_name, "
-    "c.model_name AS camera_model, sf.rig_source, sf.camera_source, sf.filter_source, "
+    "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.accepted, "
+    "sf.project_target_id, sf.frame_type_source, sf.project_target_source, "
+    "COALESCE(d.common_name, d.primary_designation) AS target_name, "
+    "r.name AS rig_name, "
     "fl.path AS path, fl.size_bytes AS file_size_bytes "
     "FROM sub_frame sf "
-    "LEFT JOIN filter f ON f.id = sf.filter_id "
+    "LEFT JOIN project_target pt ON pt.id = sf.project_target_id "
+    "LEFT JOIN dso d ON d.id = pt.dso_id "
     "LEFT JOIN rig r ON r.id = sf.rig_id "
-    "LEFT JOIN camera c ON c.id = sf.camera_id "
     "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
 )
 
@@ -1127,7 +1190,7 @@ def _catalog_frame(d: dict) -> CatalogFrame:
         kind="sub_frame",
         frame_type=d.get("frame_type"),
         path=d.get("path"),
-        filter_name=d.get("filter_model") or d.get("filter_name_hint"),
+        filter_name=d.get("filter_name_hint"),
         object_hint=d.get("object_hint"),
         exposure_seconds=d.get("exposure_seconds"),
         gain=d.get("gain"),
@@ -1137,17 +1200,12 @@ def _catalog_frame(d: dict) -> CatalogFrame:
         image_height=d.get("image_height"),
         file_size_bytes=d.get("file_size_bytes"),
         date_obs_utc=d.get("date_obs_utc"),
-        camera_id=d.get("camera_id"),
-        telescope_id=d.get("telescope_id"),
         accepted=bool(d["accepted"]) if d.get("accepted") is not None else None,
-        filter_id=d.get("filter_id"),
-        filter_model=d.get("filter_model"),
-        camera_model=d.get("camera_model"),
-        rig_id=d.get("rig_id"),
         rig_name=d.get("rig_name"),
-        rig_source=d.get("rig_source"),
-        camera_source=d.get("camera_source"),
-        filter_source=d.get("filter_source"),
+        project_target_id=d.get("project_target_id"),
+        target_name=d.get("target_name"),
+        frame_type_source=d.get("frame_type_source"),
+        project_target_source=d.get("project_target_source"),
     )
 
 

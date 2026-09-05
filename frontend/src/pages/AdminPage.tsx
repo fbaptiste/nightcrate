@@ -43,7 +43,6 @@ import {
 } from "@/api/admin";
 import CatalogsAdminSection from "@/components/dso/CatalogsAdminSection";
 import CachesAdminSection from "@/components/admin/CachesAdminSection";
-import EquipmentAliasesSection from "@/components/admin/EquipmentAliasesSection";
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return "unknown";
@@ -740,7 +739,6 @@ export function AdminPage() {
         )}
       </Paper>
 
-      <EquipmentAliasesSection />
 
       <CatalogsAdminSection />
 

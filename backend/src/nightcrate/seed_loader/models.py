@@ -10,6 +10,9 @@ class TableReport:
     inserted: int = 0
     updated: int = 0
     unchanged: int = 0
+    # Rows whose stored hash predated a change to the table's seeded_fields and
+    # were re-hashed in place. No value changed — see the update paths in loader.py.
+    rehashed: int = 0
     skipped_user_modified: list[str] = field(default_factory=list)
     skipped_corrupt: list[str] = field(default_factory=list)
     orphaned: list[str] = field(default_factory=list)
@@ -29,6 +32,8 @@ class SeedReport:
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: datetime | None = None
     per_table: dict[str, TableReport] = field(default_factory=dict)
+    # Rows re-hashed by a one-shot rehash step, per table. See seed_loader/rehash.py.
+    migration_rehashed: dict[str, int] = field(default_factory=dict)
     errors: list[SeedError] = field(default_factory=list)
 
     @property

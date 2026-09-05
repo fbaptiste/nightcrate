@@ -377,13 +377,13 @@ def test_junction_table(seed_db, csv_root):
     write_csv(
         csv_root,
         "sensor.csv",
-        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,model_name,notes,peak_qe_pct,pixel_size_um,read_noise_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm,source_url",
-        "sensor.imx571,manufacturer.zwo,,,0,,IMX571,,,3.76,,6248,4176,,mono,,",
+        "seed_key,manufacturer_seed_key,adc_bit_depth,bayer_pattern,dual_gain,full_well_capacity_ke,model_name,notes,peak_qe_pct,peak_qe_wavelength_nm,pixel_size_um,read_noise_low_gain_e,read_noise_high_gain_e,resolution_x,resolution_y,sensor_height_mm,sensor_type,sensor_width_mm,source_url",
+        "sensor.imx571,manufacturer.zwo,,,0,,IMX571,,,,3.76,,,6248,4176,,mono,,",
     )
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,,1,,0,ASI2600MM Pro,,,0,100,,,,,,",
     )
     write_csv(
@@ -414,7 +414,7 @@ def test_junction_table(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.asi2600mm,,,manufacturer.zwo,sensor.imx571,,17.5,1,,0,ASI2600MM Pro,,,0,100,,,,,,",
     )
 
@@ -479,7 +479,7 @@ def test_fk_resolution_failure(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.bad,,,manufacturer.zwo,sensor.nonexistent,,,,,,BadCamera,,,,100,,,,,,",
     )
 
@@ -508,7 +508,7 @@ def test_transaction_rollback(seed_db, csv_root):
     write_csv(
         csv_root,
         "camera.csv",
-        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_lcg_e,effective_read_noise_hcg_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
+        "seed_key,connector_size_seed_key,guide_sensor_seed_key,manufacturer_seed_key,sensor_seed_key,usb_hub_interface_seed_key,back_focus_mm,cooled,cooling_delta_c,has_usb_hub,model_name,notes,source_url,tilt_adapter,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,weight_g",
         "camera.bad,,,manufacturer.zwo,sensor.ghost,,,,,,GhostCamera,,,,100,,,,,,",
     )
 
@@ -650,3 +650,168 @@ def test_update_mode_new_row(seed_db, csv_root):
 
     rows = seed_db.execute("SELECT seed_key FROM manufacturer ORDER BY seed_key").fetchall()
     assert {r["seed_key"] for r in rows} == {"manufacturer.zwo", "manufacturer.new"}
+
+
+# ---------------------------------------------------------------------------
+# Re-hashing after a seeded_fields change
+# ---------------------------------------------------------------------------
+
+_STALE_HASH = "0" * 64
+
+_MFR_HEADER = "seed_key,name,notes,website"
+_TELESCOPE_HEADER = (
+    "seed_key,manufacturer_seed_key,optical_design_seed_key,aperture_mm,image_circle_mm,"
+    "model_name,notes,obstruction_pct,source_url,weight_kg"
+)
+_CONFIG_HEADER = (
+    "seed_key,telescope_seed_key,accessory_name,config_name,effective_back_focus_mm,"
+    "effective_focal_length_mm,effective_focal_ratio,effective_image_circle_mm,is_native,"
+    "notes,reduction_factor"
+)
+
+
+def _stale(conn, table: str, seed_key: str) -> None:
+    """Make a row's stored hash stale without touching a single value.
+
+    This is what renaming or adding an entry in a table's ``seeded_fields`` does
+    to every row at once: the field name is part of the hashed payload, so the
+    stored hash no longer matches even though nobody edited the data.
+    """
+    conn.execute(
+        f"UPDATE {table} SET seed_hash = ? WHERE seed_key = ?",  # noqa: S608
+        (_STALE_HASH, seed_key),
+    )
+    conn.commit()
+
+
+def test_reseed_rehashes_row_whose_seeded_fields_changed(seed_db, csv_root):
+    """A stale hash on an untouched row is rewritten, not read as a user edit.
+
+    Without this the loader strands every row in the table permanently — the
+    outcome 0024.mount_worm_period.sql documented and accepted.
+    """
+    write_csv(
+        csv_root, "manufacturer.csv", _MFR_HEADER, "manufacturer.zwo,ZWO,,https://zwoastro.com"
+    )
+    load_all(seed_db, csv_root, mode="first_run")
+    _stale(seed_db, "manufacturer", "manufacturer.zwo")
+
+    report = load_all(seed_db, csv_root, mode="update")
+
+    mfr = report.per_table["manufacturer"]
+    assert mfr.rehashed == 1
+    assert mfr.skipped_user_modified == []
+    assert mfr.updated == 0
+
+    row = seed_db.execute(
+        "SELECT name, website, seed_hash FROM manufacturer WHERE seed_key = 'manufacturer.zwo'"
+    ).fetchone()
+    assert row["name"] == "ZWO"
+    assert row["website"] == "https://zwoastro.com"
+    assert row["seed_hash"] != _STALE_HASH
+
+
+def test_rehashed_row_accepts_the_next_csv_change(seed_db, csv_root):
+    """Re-hashing puts the row back under the loader's management."""
+    write_csv(
+        csv_root, "manufacturer.csv", _MFR_HEADER, "manufacturer.zwo,ZWO,,https://zwoastro.com"
+    )
+    load_all(seed_db, csv_root, mode="first_run")
+    _stale(seed_db, "manufacturer", "manufacturer.zwo")
+    load_all(seed_db, csv_root, mode="update")
+
+    write_csv(
+        csv_root, "manufacturer.csv", _MFR_HEADER, "manufacturer.zwo,ZWO,,https://new.example.com"
+    )
+    report = load_all(seed_db, csv_root, mode="update")
+
+    assert report.per_table["manufacturer"].updated == 1
+    assert report.per_table["manufacturer"].rehashed == 0
+    row = seed_db.execute(
+        "SELECT website FROM manufacturer WHERE seed_key = 'manufacturer.zwo'"
+    ).fetchone()
+    assert row["website"] == "https://new.example.com"
+
+
+def test_stale_hash_does_not_license_overwriting_a_user_edit(seed_db, csv_root):
+    """A genuinely edited row is still skipped even when its hash is stale."""
+    write_csv(
+        csv_root, "manufacturer.csv", _MFR_HEADER, "manufacturer.zwo,ZWO,,https://zwoastro.com"
+    )
+    load_all(seed_db, csv_root, mode="first_run")
+    seed_db.execute(
+        "UPDATE manufacturer SET name = 'ZWO (User Edited)' WHERE seed_key = 'manufacturer.zwo'"
+    )
+    _stale(seed_db, "manufacturer", "manufacturer.zwo")
+
+    report = load_all(seed_db, csv_root, mode="update")
+
+    mfr = report.per_table["manufacturer"]
+    assert mfr.rehashed == 0
+    assert "manufacturer.zwo" in mfr.skipped_user_modified
+    row = seed_db.execute(
+        "SELECT name FROM manufacturer WHERE seed_key = 'manufacturer.zwo'"
+    ).fetchone()
+    assert row["name"] == "ZWO (User Edited)"
+
+
+def test_stale_hash_plus_same_release_csv_change_stays_skipped(seed_db, csv_root):
+    """Pins the one case re-hashing cannot resolve, and why the backfill rule exists.
+
+    An untouched row whose CSV value changed in the *same* release as the
+    seeded_fields change is indistinguishable from a user edit — both differ
+    from the CSV and from the stored hash. Hence: a migration that changes
+    seeded_fields must also backfill every value that release changes.
+    """
+    write_csv(
+        csv_root, "manufacturer.csv", _MFR_HEADER, "manufacturer.zwo,ZWO,,https://zwoastro.com"
+    )
+    load_all(seed_db, csv_root, mode="first_run")
+    _stale(seed_db, "manufacturer", "manufacturer.zwo")
+    write_csv(
+        csv_root, "manufacturer.csv", _MFR_HEADER, "manufacturer.zwo,ZWO,,https://new.example.com"
+    )
+
+    report = load_all(seed_db, csv_root, mode="update")
+
+    mfr = report.per_table["manufacturer"]
+    assert mfr.rehashed == 0
+    assert "manufacturer.zwo" in mfr.skipped_user_modified
+    row = seed_db.execute(
+        "SELECT website FROM manufacturer WHERE seed_key = 'manufacturer.zwo'"
+    ).fetchone()
+    assert row["website"] == "https://zwoastro.com"
+
+
+def test_child_table_rehashes_too(seed_db, csv_root):
+    """The parent/child update path carries the same contract."""
+    write_csv(csv_root, "manufacturer.csv", _MFR_HEADER, "manufacturer.celestron,Celestron,,")
+    write_csv(
+        csv_root, "optical_design.csv", "seed_key,name,description", "od.sct,SCT,Schmidt-Cassegrain"
+    )
+    write_csv(
+        csv_root,
+        "telescope.csv",
+        _TELESCOPE_HEADER,
+        "telescope.c11,manufacturer.celestron,od.sct,279,,C11,,,,",
+    )
+    write_csv(
+        csv_root,
+        "telescope_configuration.csv",
+        _CONFIG_HEADER,
+        "tc.c11.native,telescope.c11,,Native,,2800,10,,1,,1.0",
+    )
+    load_all(seed_db, csv_root, mode="first_run")
+    _stale(seed_db, "telescope_configuration", "tc.c11.native")
+
+    report = load_all(seed_db, csv_root, mode="update")
+
+    config = report.per_table["telescope_configuration"]
+    assert config.rehashed == 1
+    assert config.skipped_user_modified == []
+    row = seed_db.execute(
+        "SELECT effective_focal_length_mm, seed_hash FROM telescope_configuration "
+        "WHERE seed_key = 'tc.c11.native'"
+    ).fetchone()
+    assert row["effective_focal_length_mm"] == 2800
+    assert row["seed_hash"] != _STALE_HASH

@@ -55,8 +55,26 @@ export default function SensorList() {
           />
           <DetailField label="ADC Bit Depth" value={item.adc_bit_depth ?? null} />
           <DetailField label="Full Well" value={item.full_well_capacity_ke != null ? `${item.full_well_capacity_ke}ke⁻` : null} />
-          <DetailField label="Read Noise" value={item.read_noise_e != null ? `${item.read_noise_e}e⁻` : null} />
-          <DetailField label="Peak QE" value={item.peak_qe_pct != null ? `${item.peak_qe_pct}%` : null} />
+          <DetailField
+            label="Read Noise (Low Gain)"
+            value={item.read_noise_low_gain_e != null ? `${item.read_noise_low_gain_e}e⁻` : null}
+          />
+          <DetailField
+            label="Read Noise (High Gain)"
+            value={item.read_noise_high_gain_e != null ? `${item.read_noise_high_gain_e}e⁻` : null}
+          />
+          <DetailField
+            label="Peak QE"
+            value={
+              item.peak_qe_pct != null
+                ? `${item.peak_qe_pct}%${
+                    item.peak_qe_wavelength_nm != null
+                      ? ` @ ${item.peak_qe_wavelength_nm}nm`
+                      : ""
+                  }`
+                : null
+            }
+          />
           <DetailField label="Bayer Pattern" value={item.bayer_pattern ?? null} />
           <DetailField label="Dual Gain" value={item.dual_gain ? "Yes" : "No"} />
           <DetailField label="Notes" value={item.notes ?? null} />

@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
-import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
@@ -16,6 +15,13 @@ import StarIcon from "@mui/icons-material/Star";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import { FileBrowser } from "@/components/fits/FileBrowser";
+import { PlateSolveDialog } from "@/components/plate-solve/PlateSolveDialog";
+import {
+  headerNumber,
+  parseHeaderCoord,
+} from "@/components/analyzer/analyzerHelpers";
+import { fetchHeader } from "@/api/images";
+import type { PlateSolveRequest, PlateSolveResult } from "@/api/plateSolve";
 import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import {
   getProjectSolve,
@@ -67,11 +73,54 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
     onMainsChange?.();
   };
 
-  const solveMut = useMutation({
-    mutationFn: (imagePath: string) => createProjectSolve(projectId, { image_path: imagePath }),
-    onSuccess: applySolve,
-    onError: (err) => setError(String(err)),
+  // The chosen image, awaiting hints in the shared PlateSolveDialog. Solving
+  // straight from the file browser is what made every project solve blind:
+  // no coordinates and no FOV meant ASTAP searched the whole sky at native
+  // resolution and usually just timed out.
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+
+  const headerQuery = useQuery({
+    queryKey: ["header", pendingPath, 0],
+    queryFn: () => fetchHeader(pendingPath as string, 0),
+    enabled: pendingPath !== null,
+    staleTime: Infinity,
   });
+  const cards = headerQuery.data ?? [];
+
+  /** Runs the solve through the project endpoint so it persists, then adapts the
+   *  row into the PlateSolveResult shape the dialog renders. */
+  const solveViaProject = async (req: PlateSolveRequest): Promise<PlateSolveResult> => {
+    const s = await createProjectSolve(projectId, {
+      image_path: req.image_path,
+      hdu: req.hdu,
+      ra_hint: req.ra_hint,
+      dec_hint: req.dec_hint,
+      fov_hint: req.fov_hint,
+    });
+    applySolve(s);
+    return {
+      solved: true,
+      ra_deg: s.center_ra_deg,
+      dec_deg: s.center_dec_deg,
+      ra_hms: s.ra_hms,
+      dec_dms: s.dec_dms,
+      pixel_scale_arcsec: s.pixel_scale_arcsec,
+      rotation_deg: s.rotation_deg,
+      fov_width_arcmin: s.fov_width_arcmin,
+      fov_height_arcmin: s.fov_height_arcmin,
+      image_width: s.image_width,
+      image_height: s.image_height,
+      cd1_1: s.wcs.cd1_1,
+      cd1_2: s.wcs.cd1_2,
+      cd2_1: s.wcs.cd2_1,
+      cd2_2: s.wcs.cd2_2,
+      crpix1: s.wcs.crpix1,
+      crpix2: s.wcs.crpix2,
+      error_message: null,
+      warning: null,
+      solve_time_seconds: null,
+    };
+  };
 
   const mainMut = useMutation({
     mutationFn: ({ dsoId, isMain }: { dsoId: number; isMain: boolean }) =>
@@ -126,11 +175,10 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
         </Typography>
         <Button
           variant="contained"
-          startIcon={solveMut.isPending ? <CircularProgress size={16} /> : <TravelExploreIcon />}
-          disabled={solveMut.isPending}
+          startIcon={<TravelExploreIcon />}
           onClick={() => setBrowserOpen(true)}
         >
-          {solveMut.isPending ? "Solving…" : "Plate solve an image"}
+          Plate solve an image
         </Button>
         {error && (
           <Typography variant="caption" color="error" sx={{ display: "block", mt: 2 }}>
@@ -143,10 +191,27 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
           onSelect={(path) => {
             setBrowserOpen(false);
             setError(null);
-            solveMut.mutate(path);
+            setPendingPath(path);
           }}
           title="Choose an image to plate solve"
           emptyMessage="No image files in this directory"
+        />
+        {/* Same hint UI as the Image Analyzer — coordinate search, header
+            RA/Dec, and rig/equipment/manual FOV — but the solve is routed
+            through the project endpoint so it persists. Keyed on the path so
+            each pick re-seeds the fields. */}
+        <PlateSolveDialog
+          key={pendingPath ?? "none"}
+          open={pendingPath !== null}
+          onClose={() => setPendingPath(null)}
+          imagePath={pendingPath ?? ""}
+          hdu={0}
+          headerRa={parseHeaderCoord(cards, true, "RA", "OBJCTRA", "CRVAL1")}
+          headerDec={parseHeaderCoord(cards, false, "DEC", "OBJCTDEC", "CRVAL2")}
+          headerFocalLength={headerNumber(cards, "FOCALLEN")}
+          headerPixelSize={headerNumber(cards, "XPIXSZ")}
+          headerBinning={headerNumber(cards, "XBINNING")}
+          solveFn={solveViaProject}
         />
       </Box>
     );

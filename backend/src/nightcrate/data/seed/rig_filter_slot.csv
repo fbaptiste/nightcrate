@@ -1,0 +1,24 @@
+rig_seed_key,filter_seed_key,slot_number
+# The glass in an all-in-one telescope's internal changer is fixed in the
+# device, so these rigs ship with their slots populated — an empty wheel would
+# be wrong rather than merely incomplete.
+#
+# Slot order follows each maker's own numbering: the broadband/visual position
+# first, the narrowband second, and the opaque dark position last.
+#
+# The DWARF II has no internal changer and therefore no slots.
+rig.zwo.seestar_s50,filter.zwo.seestar_uv_ir_cut,1
+rig.zwo.seestar_s50,filter.zwo.seestar_duo_band,2
+rig.zwo.seestar_s50,filter.zwo.seestar_dark,3
+rig.zwo.seestar_s30,filter.zwo.seestar_uv_ir_cut,1
+rig.zwo.seestar_s30,filter.zwo.seestar_duo_band,2
+rig.zwo.seestar_s30,filter.zwo.seestar_dark,3
+rig.zwo.seestar_s30_pro,filter.zwo.seestar_uv_ir_cut,1
+rig.zwo.seestar_s30_pro,filter.zwo.seestar_duo_band,2
+rig.zwo.seestar_s30_pro,filter.zwo.seestar_dark,3
+rig.dwarflab.dwarf_mini,filter.dwarflab.cls,1
+rig.dwarflab.dwarf_mini,filter.dwarflab.duo_band,2
+rig.dwarflab.dwarf_mini,filter.dwarflab.dark,3
+rig.zwo.seestar_s50_pro,filter.zwo.seestar_uv_ir_cut,1
+rig.zwo.seestar_s50_pro,filter.zwo.seestar_duo_band,2
+rig.zwo.seestar_s50_pro,filter.zwo.seestar_dark,3

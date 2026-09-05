@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
+  DragOverlay,
   closestCenter,
   PointerSensor,
   useSensor,
@@ -11,7 +12,7 @@ import {
 import {
   SortableContext,
   arrayMove,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -29,10 +30,12 @@ import CloseIcon from "@mui/icons-material/Close";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import RigCard from "@/components/rigs/RigCard";
 import RigFormDialog from "@/components/rigs/RigFormDialog";
-import CalculatorPanel from "@/components/rigs/CalculatorPanel";
+import NewRigDialog from "@/components/rigs/NewRigDialog";
+import RigDetailPanel from "@/components/rigs/RigDetailPanel";
 import { setActivity } from "@/api/client";
 import {
   fetchRigs,
+  setRigMine,
   cloneRig,
   deleteRig,
   restoreRig,
@@ -43,8 +46,13 @@ import {
 
 export default function RigsPage() {
   const queryClient = useQueryClient();
+  // The whole catalog, retired rows included: this page owns claiming a
+  // pre-defined rig and un-retiring one. Every other consumer wants only the
+  // user's own kit and asks for ["rigs", "mine"] — a distinct key, because the
+  // two share a prefix but not a result set. Invalidating ["rigs"] still hits
+  // both.
   const { data: rigs = [], isLoading } = useQuery({
-    queryKey: ["rigs"],
+    queryKey: ["rigs", "all"],
     queryFn: () => fetchRigs(false),
   });
 
@@ -65,8 +73,31 @@ export default function RigsPage() {
 
   const [retiredVisible, setRetiredVisible] = useState(false);
 
-  const activeRigs = rigs.filter((r) => r.active);
+  // Seeded all-in-one smart telescopes are a catalog, not the user's kit, so
+  // they get their own collapsed section instead of padding out "my rigs".
+  const activeRigs = rigs.filter((r) => r.active && r.is_mine);
+  // Every unclaimed catalog rig belongs here regardless of `active`. Retiring a
+  // catalog entry is not a meaningful state — it is either yours or it is not —
+  // so a retired one would otherwise vanish into "Retired Rigs", which reads as
+  // if the telescope itself had been discontinued.
+  // Pre-defined rigs the user hasn't adopted are offered by the New Rig dialog,
+  // not listed here — this page is "my rigs" and nothing else. A retired rig is
+  // never on offer: deleting a customised pre-defined rig retires it precisely
+  // so the edits survive, and re-offering it would hide them.
+  const availablePredefined = rigs.filter(
+    (r) => r.source === "seed" && r.active && !r.is_mine,
+  );
   const retiredRigs = rigs.filter((r) => !r.active);
+
+  const handleToggleMine = async (id: number, isMine: boolean) => {
+    try {
+      await setRigMine(id, isMine);
+      invalidate();
+      showSnack(isMine ? "Added to your rigs" : "Removed from your rigs", "success");
+    } catch (e) {
+      showSnack(e instanceof Error ? e.message : "Failed to update rig", "error");
+    }
+  };
 
   const resolvedSelected = selectedRig
     ? rigs.find((r) => r.id === selectedRig.id) ?? null
@@ -76,8 +107,14 @@ export default function RigsPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+  const draggingRig = draggingId
+    ? rigs.find((r) => r.id === draggingId) ?? null
+    : null;
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
+    setDraggingId(null);
     if (!over || active.id === over.id) return;
     const oldIdx = activeRigs.findIndex((r) => r.id === active.id);
     const newIdx = activeRigs.findIndex((r) => r.id === over.id);
@@ -85,8 +122,11 @@ export default function RigsPage() {
     const reordered = arrayMove(activeRigs, oldIdx, newIdx);
     queryClient.setQueryData<Rig[]>(["rigs"], (prev) => {
       if (!prev) return prev;
-      const retired = prev.filter((r) => !r.active);
-      return [...reordered, ...retired];
+      // Everything that isn't in the reordered list — retired rigs and the
+      // unclaimed pre-defined ones the New Rig dialog offers — must survive,
+      // or they vanish from the cache until the refetch lands.
+      const moved = new Set(reordered.map((r) => r.id));
+      return [...reordered, ...prev.filter((r) => !moved.has(r.id))];
     });
     try {
       await reorderRigs(reordered.map((r) => r.id));
@@ -96,9 +136,21 @@ export default function RigsPage() {
     }
   };
 
+  const [chooserOpen, setChooserOpen] = useState(false);
+
   const handleNewRig = () => {
     setEditingRig(null);
-    setDialogOpen(true);
+    // Nothing left to adopt — don't make the user dismiss an empty chooser.
+    if (availablePredefined.length === 0) {
+      setDialogOpen(true);
+      return;
+    }
+    setChooserOpen(true);
+  };
+
+  const handleChoosePredefined = async (rig: Rig) => {
+    setChooserOpen(false);
+    await handleToggleMine(rig.id, true);
   };
 
   const handleEdit = (rig: Rig) => {
@@ -129,10 +181,16 @@ export default function RigsPage() {
 
   const handleDelete = async (id: number) => {
     try {
-      await deleteRig(id);
+      const { outcome } = await deleteRig(id);
       if (selectedRig?.id === id) setSelectedRig(null);
       invalidate();
-      showSnack("Rig retired.", "success");
+      // The server decides which happened, so say which rather than guess.
+      showSnack(
+        outcome === "removed"
+          ? "Removed from your rigs."
+          : "Rig retired — it had changes worth keeping.",
+        "success",
+      );
     } catch (err) {
       showSnack(
         err instanceof Error ? err.message : "Delete failed",
@@ -192,10 +250,10 @@ export default function RigsPage() {
       )}
 
       {/* Empty state */}
-      {!isLoading && rigs.length === 0 && (
+      {!isLoading && activeRigs.length === 0 && (
         <Typography color="text.secondary" sx={{ textAlign: "center", mt: 6 }}>
-          No rigs configured. Click &lsquo;New Rig&rsquo; to create your first
-          imaging rig.
+          No rigs yet. Click &lsquo;New Rig&rsquo; to add a pre-defined one or
+          build your own.
         </Typography>
       )}
 
@@ -204,13 +262,22 @@ export default function RigsPage() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
+          onDragStart={(e) => setDraggingId(Number(e.active.id))}
+          onDragCancel={() => setDraggingId(null)}
           onDragEnd={handleDragEnd}
         >
           <SortableContext
             items={activeRigs.map((r) => r.id)}
-            strategy={verticalListSortingStrategy}
+            strategy={rectSortingStrategy}
           >
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                gap: 2,
+                alignItems: "start",
+              }}
+            >
               {activeRigs.map((rig) => (
                 <SortableRigCard
                   key={rig.id}
@@ -226,6 +293,23 @@ export default function RigsPage() {
               ))}
             </Box>
           </SortableContext>
+          {/* The card travels with the pointer, leaving its slot free to act as
+              the dashed drop indicator. */}
+          <DragOverlay>
+            {draggingRig && (
+              <Box sx={{ opacity: 0.9, cursor: "grabbing" }}>
+                <RigCard
+                  rig={draggingRig}
+                  onSelect={() => {}}
+                  onEdit={() => {}}
+                  onClone={() => {}}
+                  onDelete={() => {}}
+                  onRestore={() => {}}
+                  onSetDefault={() => {}}
+                />
+              </Box>
+            )}
+          </DragOverlay>
         </DndContext>
       )}
 
@@ -277,11 +361,24 @@ export default function RigsPage() {
           >
             <CloseIcon fontSize="small" />
           </IconButton>
-          {resolvedSelected && <CalculatorPanel rig={resolvedSelected} />}
+          {resolvedSelected && <RigDetailPanel rig={resolvedSelected} />}
         </Paper>
       </Collapse>
 
       {/* Rig form dialog */}
+      <NewRigDialog
+        key={chooserOpen ? "open" : "closed"}
+        open={chooserOpen}
+        available={availablePredefined}
+        onClose={() => setChooserOpen(false)}
+        onChoosePredefined={handleChoosePredefined}
+        onChooseCustom={() => {
+          setChooserOpen(false);
+          setEditingRig(null);
+          setDialogOpen(true);
+        }}
+      />
+
       <RigFormDialog
         open={dialogOpen}
         rig={editingRig}
@@ -336,11 +433,28 @@ function SortableRigCard({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
   };
 
+  // While this item is being dragged its card rides in the DragOverlay, so the
+  // slot it leaves behind becomes the drop indicator: a dashed rectangle that
+  // moves with the sort as other cards shift around it. Keeping the card
+  // mounted but invisible preserves the slot's exact size.
   return (
-    <Box ref={setNodeRef} style={style} sx={{ display: "flex", alignItems: "stretch" }}>
+    <Box
+      ref={setNodeRef}
+      style={style}
+      sx={{
+        display: "flex",
+        alignItems: "stretch",
+        ...(isDragging && {
+          border: "2px dashed",
+          borderColor: "primary.main",
+          borderRadius: 1,
+          bgcolor: "action.hover",
+          "& > *": { visibility: "hidden" },
+        }),
+      }}
+    >
       <Box
         {...attributes}
         {...listeners}

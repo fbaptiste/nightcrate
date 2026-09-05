@@ -1,10 +1,12 @@
 import Box from "@mui/material/Box";
+import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import TuneIcon from "@mui/icons-material/Tune";
+import EditNoteIcon from "@mui/icons-material/EditNote";
+import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import { memo } from "react";
 import {
   catalogThumbnailUrl,
@@ -164,59 +166,50 @@ const CARD_SX = {
 
 // ── cards ─────────────────────────────────────────────────────────────────────
 
-/** Filter chip — filled when resolved to a physical filter, outlined when the
- * value is still just the raw FITS header hint. */
+/** Filter chip — the FITS FILTER header value, which is the only filter fact a
+ * cataloged frame carries (there is no equipment identification). */
 function FilterChip({ row }: { row: CatalogFrame }) {
   if (!row.filter_name) return null;
-  const resolved = row.filter_id != null;
-  const source = row.filter_source === "user" ? " (manual override)" : "";
   return (
-    <Tooltip
-      title={
-        resolved
-          ? `Filter: ${row.filter_name}${source}`
-          : "Raw FILTER header value — not yet mapped to a physical filter. " +
-            "Assign a rig to the project (or confirm an alias on Admin), then re-run resolution."
-      }
-    >
-      <Chip
-        size="small"
-        variant={resolved ? "filled" : "outlined"}
-        color="primary"
-        label={row.filter_name}
-      />
+    <Tooltip title={`FILTER header: ${row.filter_name}`}>
+      <Chip size="small" variant="outlined" color="primary" label={row.filter_name} />
     </Tooltip>
   );
 }
 
+/** Rig chip — inherited from the source folder the user tagged, so it is a
+ * declared fact rather than anything read out of a header. Absent when the
+ * folder carries no rig, which is a valid state ("not stated"). */
 function RigChip({ row }: { row: CatalogFrame }) {
   if (!row.rig_name) return null;
-  const source = row.rig_source === "user" ? " (manual override)" : "";
-  return (
-    <Tooltip title={`Attributed rig${source}`}>
-      <Chip size="small" variant="outlined" label={row.rig_name} />
-    </Tooltip>
-  );
+  return <Chip size="small" variant="outlined" label={row.rig_name} />;
 }
 
 // Memoized: the catalog is an infinite-scroll list that can hold thousands of
-// cards, and opening/closing the override dialog re-renders the whole tab.
-// `row` identity is stable from the query cache and `onEditEquipment` is a
-// stable setter, so memo makes that toggle O(1) instead of O(loaded cards).
+// cards, and opening/closing the corrections dialog re-renders the whole tab.
+// `row` identity is stable from the query cache and `onCorrect` / `onOpen` are
+// stable setters, so memo makes that toggle O(1) instead of O(loaded cards).
 function FrameCardImpl({
   row,
   projectId,
   tz,
   showFilter,
   showObject,
-  onEditEquipment,
+  onCorrect,
+  onOpen,
+  selected = false,
+  onToggleSelect,
 }: {
   row: CatalogFrame;
   projectId: number;
   tz: string;
   showFilter: boolean;
   showObject: boolean;
-  onEditEquipment?: (row: CatalogFrame) => void;
+  onCorrect?: (row: CatalogFrame) => void;
+  onOpen?: (row: CatalogFrame) => void;
+  // Primitives, not objects, so the memo above still holds when the selection changes.
+  selected?: boolean;
+  onToggleSelect?: (id: number) => void;
 }) {
   const capture = joinDot([
     formatSubExposure(row.exposure_seconds) || null,
@@ -229,12 +222,36 @@ function FrameCardImpl({
     formatSize(row.file_size_bytes) || null,
   ]);
   return (
-    <Paper variant="outlined" sx={CARD_SX}>
+    <Paper
+      variant="outlined"
+      sx={{
+        ...CARD_SX,
+        ...(selected ? { borderColor: "primary.main", bgcolor: "action.selected" } : null),
+      }}
+    >
+      {onToggleSelect && (
+        <Checkbox
+          size="small"
+          checked={selected}
+          onChange={() => onToggleSelect(row.id)}
+          inputProps={{ "aria-label": `select ${row.path ?? row.id}` }}
+          sx={{ alignSelf: "flex-start", p: 0.5 }}
+        />
+      )}
       <Thumb src={catalogThumbnailUrl(projectId, row.id)} />
       <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.25 }}>
         <FileNameBlock path={row.path} />
         {(showFilter || showObject || row.rig_name) && (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.25, minWidth: 0 }}>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              mt: 0.25,
+              minWidth: 0,
+              flexWrap: "wrap",
+            }}
+          >
             {showFilter && <FilterChip row={row} />}
             <RigChip row={row} />
             {showObject && row.object_hint && (
@@ -248,18 +265,30 @@ function FrameCardImpl({
           {formatDate(row.date_obs_utc, tz)}
         </Typography>
       </Box>
-      {onEditEquipment && (
-        <Tooltip title="Equipment attribution (rig / camera / filter)">
-          <IconButton
-            size="small"
-            aria-label="edit equipment attribution"
-            onClick={() => onEditEquipment(row)}
-            sx={{ alignSelf: "flex-start", ml: "auto" }}
-          >
-            <TuneIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      )}
+      <Box sx={{ display: "flex", alignSelf: "flex-start", ml: "auto" }}>
+        {onOpen && row.path && (
+          <Tooltip title="Open in the Image Analyzer">
+            <IconButton
+              size="small"
+              aria-label="open in image analyzer"
+              onClick={() => onOpen(row)}
+            >
+              <OpenInFullIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+        {onCorrect && (
+          <Tooltip title="Classification (frame type / target)">
+            <IconButton
+              size="small"
+              aria-label="correct classification"
+              onClick={() => onCorrect(row)}
+            >
+              <EditNoteIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
     </Paper>
   );
 }

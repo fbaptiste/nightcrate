@@ -9,3 +9,4 @@ optical_design.petzval,Petzval-design refractor (specific quadruplet geometry),P
 optical_design.mak_cass,Maksutov-Cassegrain,Maksutov-Cassegrain
 optical_design.dk,Dall-Kirkham / Corrected Dall-Kirkham (CDK),Dall-Kirkham / CDK
 optical_design.rasa,Rowe-Ackermann Schmidt Astrograph,RASA
+optical_design.mak_newtonian,Maksutov-Newtonian,Maksutov-Newtonian

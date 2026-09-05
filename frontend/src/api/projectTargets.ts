@@ -1,6 +1,8 @@
 import { apiFetch } from "./client";
 
 export interface ProjectTarget {
+  /** project_target PK — what sub_frame.project_target_id references. */
+  id: number;
   dso_id: number;
   primary_designation: string;
   common_name: string | null;

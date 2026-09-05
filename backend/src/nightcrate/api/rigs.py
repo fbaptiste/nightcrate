@@ -3,7 +3,6 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
 
 from nightcrate.api._common import bool_fields, integrity_guard, row_to_dict
 from nightcrate.api.rig_models import (
@@ -11,10 +10,13 @@ from nightcrate.api.rig_models import (
     ReorderRigsRequest,
     RigCalculators,
     RigCreate,
+    RigMineToggle,
     RigOut,
     RigUpdate,
 )
 from nightcrate.db.session import get_db
+from nightcrate.seed_loader.hash import compute_seed_hash
+from nightcrate.seed_loader.registry import REGISTRY
 from nightcrate.services.rig_calculators import (
     compute_rig_calculators,
     resolve_seeing,
@@ -323,7 +325,7 @@ async def _build_rig_response(
     # Warnings
     warnings = await _check_warnings(conn, rig_row)
 
-    _bool_fields(rig_row, "is_default", "active")
+    _bool_fields(rig_row, "is_default", "is_mine", "active")
 
     return {
         "id": rig_row["id"],
@@ -366,6 +368,8 @@ async def _build_rig_response(
         "software": await _build_software(conn, rig_id),
         "filter_slots": filter_slots,
         "is_default": rig_row["is_default"],
+        "is_mine": rig_row["is_mine"],
+        "source": rig_row["source"],
         "active": rig_row["active"],
         "sort_order": rig_row.get("sort_order", 0),
         "notes": rig_row.get("notes"),
@@ -576,16 +580,24 @@ async def get_equipment_options():
 @router.get("", response_model=list[RigOut])
 async def list_rigs(
     active_only: bool = Query(True, description="Only show active rigs"),
+    mine: bool = Query(False, description="Only show rigs the user owns"),
     location_id: int | None = Query(None, description="Location for seeing data"),
 ):
-    """List all rigs with calculator data."""
+    """List all rigs with calculator data.
+
+    ``mine=true`` hides the seeded all-in-one smart-telescope rigs, which are a
+    catalog rather than the user's own kit. Same opt-in shape as the equipment
+    list endpoints, so nothing disappears from an existing caller by default.
+    """
     async with get_db() as conn:
-        if active_only:
-            rows = await conn.execute(
-                "SELECT * FROM rig_summary WHERE active = 1 ORDER BY sort_order, name"
-            )
-        else:
-            rows = await conn.execute("SELECT * FROM rig_summary ORDER BY sort_order, name")
+        # Both filters are expressed as parameters rather than assembled into
+        # the SQL, so the statement is static and needs no injection caveat.
+        rows = await conn.execute(
+            "SELECT * FROM rig_summary "
+            "WHERE (? = 0 OR active = 1) AND (? = 0 OR is_mine = 1) "
+            "ORDER BY is_mine DESC, sort_order, name",
+            (int(active_only), int(mine)),
+        )
         results = []
         for r in await rows.fetchall():
             d = _row_to_dict(r)
@@ -644,8 +656,8 @@ async def create_rig(body: RigCreate):
                     name, description, telescope_configuration_id, camera_id,
                     filter_wheel_id, single_filter_id, mount_id, focuser_id,
                     oag_id, guide_scope_id, guide_camera_id, computer_id,
-                    is_default, notes, sort_order
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    is_default, notes, sort_order, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (
                     body.name.strip(),
                     body.description,
@@ -741,18 +753,73 @@ async def update_rig(rig_id: int, body: RigUpdate):
         return await _build_rig_response(conn, rig_row)
 
 
+async def _seeded_rig_is_untouched(conn, rig_id: int) -> bool:
+    """True when *rig_id* is a seeded rig the user has not edited.
+
+    Uses the seed loader's own definition of "user-modified" — rehash the
+    seeded fields as they currently stand and compare against the hash stored
+    when the row was written — so the two agree by construction. If this says
+    untouched, the loader would also happily overwrite the row.
+
+    Note this covers the rig's own fields, not its filter slots: reassigning a
+    filter on a claimed rig is not counted as customisation.
+    """
+    cursor = await conn.execute(
+        "SELECT source, seed_hash, name, description, telescope_configuration_id, "
+        "camera_id, filter_wheel_id, notes FROM rig WHERE id = ?",
+        (rig_id,),
+    )
+    row = await cursor.fetchone()
+    if row is None or row["source"] != "seed" or not row["seed_hash"]:
+        return False
+    current = {f: row[f] for f in REGISTRY["rig"].seeded_fields}
+    return compute_seed_hash(current) == row["seed_hash"]
+
+
 @router.delete("/{rig_id}")
-async def delete_rig(rig_id: int):
-    """Soft-delete a rig (sets active=0)."""
+async def delete_rig(rig_id: int) -> dict:
+    """Remove a rig from the user's list.
+
+    An untouched pre-defined rig is simply dropped — it is a catalog entry, so
+    nothing is lost and it returns to the New Rig offer list. Anything else is
+    retired (active = 0), because a rig the user built, or a pre-defined one
+    they have since edited, holds work that a delete must not throw away.
+    """
     async with get_db() as conn:
         row = await conn.execute("SELECT id FROM rig WHERE id = ?", (rig_id,))
         if await row.fetchone() is None:
             raise HTTPException(status_code=404, detail="Rig not found")
 
-        await conn.execute("UPDATE rig SET active = 0 WHERE id = ?", (rig_id,))
+        if await _seeded_rig_is_untouched(conn, rig_id):
+            await conn.execute("UPDATE rig SET is_mine = 0 WHERE id = ?", (rig_id,))
+            outcome = "removed"
+        else:
+            await conn.execute("UPDATE rig SET active = 0 WHERE id = ?", (rig_id,))
+            outcome = "retired"
         await conn.commit()
 
-    return Response(status_code=204)
+    return {"outcome": outcome}
+
+
+@router.post("/{rig_id}/mine", response_model=RigOut)
+async def toggle_rig_mine(rig_id: int, body: RigMineToggle):
+    """Claim or unclaim a rig as the user's own.
+
+    Deliberately not a seeded field: claiming a seeded smart-telescope rig is a
+    user action, not a modification of the catalog row, so the loader must keep
+    updating its specs afterwards. Same contract as the equipment tables.
+    """
+    async with get_db() as conn:
+        row = await conn.execute("SELECT id FROM rig WHERE id = ?", (rig_id,))
+        if await row.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Rig not found")
+
+        await conn.execute("UPDATE rig SET is_mine = ? WHERE id = ?", (int(body.is_mine), rig_id))
+        await conn.commit()
+
+        rows = await conn.execute("SELECT * FROM rig_summary WHERE id = ?", (rig_id,))
+        d = _row_to_dict(await rows.fetchone())
+        return await _build_rig_response(conn, d)
 
 
 @router.post("/{rig_id}/clone", response_model=RigOut, status_code=201)

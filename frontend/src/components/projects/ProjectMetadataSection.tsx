@@ -17,7 +17,7 @@ export default function ProjectMetadataSection({ project, onUpdated }: Props) {
     queryKey: ["locations"],
     queryFn: fetchLocations,
   });
-  const { data: rigs = [] } = useQuery({ queryKey: ["rigs"], queryFn: () => fetchRigs(true) });
+  const { data: rigs = [] } = useQuery({ queryKey: ["rigs", "mine"], queryFn: () => fetchRigs(true, true) });
 
   const locationMut = useMutation({
     mutationFn: (locationId: number | null) =>

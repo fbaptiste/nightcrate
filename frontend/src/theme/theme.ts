@@ -84,6 +84,10 @@ export const lightTheme = createTheme({
     text: {
       primary: "#2c2c2c",
       secondary: "#6b6b6b",
+      // Stated explicitly in both palettes. Left unset, a disabled control in
+      // dark mode rendered with the light default (rgba(0,0,0,0.38)) — black
+      // text on a dark ground, which read as "not disabled, just unresponsive".
+      disabled: "#a3a3a3",
     },
   },
   components: {
@@ -123,6 +127,9 @@ export const darkTheme = createTheme({
     text: {
       primary: "#e2e0dd",
       secondary: "#8e8c88",
+      // Clearly dimmer than `secondary`, so a disabled control reads as
+      // disabled rather than merely unselected.
+      disabled: "#57554f",
     },
   },
   components: {

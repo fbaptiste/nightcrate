@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
-import { fetchLocations, type Location } from "@/api/locations";
 import {
   fetchRigCalculators,
   type Rig,
@@ -26,9 +21,6 @@ type TabKey = "equipment" | "imaging" | "guiding";
 const TAB_ORDER: TabKey[] = ["equipment", "imaging", "guiding"];
 
 export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
-  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(
-    null,
-  );
   const [guideBinning, setGuideBinning] = useState<number>(1);
   const [centroidAccuracy, setCentroidAccuracy] = useState<number>(0.2);
   // Image binning on the Guiding tab — drives the guiding-tolerance
@@ -46,20 +38,6 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     fetched?.rigId === rig.id ? fetched.data : rig.calculators;
   const [activeTab, setActiveTab] = useState<TabKey>("equipment");
 
-  const { data: locations = [] } = useQuery<Location[]>({
-    queryKey: ["locations"],
-    queryFn: fetchLocations,
-  });
-
-  // Set default location on first load
-  useEffect(() => {
-    if (locations.length > 0 && selectedLocationId === null) {
-      const defaultLoc = locations.find((l) => l.is_default);
-      if (defaultLoc) {
-        setSelectedLocationId(defaultLoc.id);
-      }
-    }
-  }, [locations, selectedLocationId]);
 
   const debouncedGuideBinning = useDebounce(guideBinning, 150);
   const debouncedCentroidAccuracy = useDebounce(centroidAccuracy, 300);
@@ -67,10 +45,11 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
 
   // Fetch calculator data when any parameter changes.
   useEffect(() => {
-    if (selectedLocationId === null) return;
     let cancelled = false;
+    // No location is passed: a rig has no location, and the one thing seeing
+    // was needed for is set directly by the Imaging tab's seeing slider. The
+    // backend's own 2-4" default seeds that slider's starting position.
     fetchRigCalculators(rig.id, {
-      location_id: selectedLocationId,
       guide_binning: debouncedGuideBinning,
       centroid_accuracy_pixels: debouncedCentroidAccuracy,
       image_binning: debouncedGuidingImageBinning,
@@ -82,46 +61,15 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
     };
   }, [
     rig.id,
-    selectedLocationId,
     debouncedGuideBinning,
     debouncedCentroidAccuracy,
     debouncedGuidingImageBinning,
   ]);
 
-  const selectedLocation = locations.find((l) => l.id === selectedLocationId);
   const hasGuideCamera = rig.guide_camera_id != null;
 
   return (
     <Box>
-      {/* Header row: rig name + location selector */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 2,
-          mb: 1.5,
-          flexWrap: "wrap",
-        }}
-      >
-        <Typography variant="h6" sx={{ flex: "1 1 auto", minWidth: 200 }}>
-          {rig.name}
-        </Typography>
-        <Autocomplete
-          size="small"
-          options={locations}
-          getOptionLabel={(loc) =>
-            `${loc.name}${loc.is_default ? " (default)" : ""}`
-          }
-          value={selectedLocation ?? null}
-          onChange={(_, loc) => {
-            if (loc) setSelectedLocationId(loc.id);
-          }}
-          renderInput={(params) => <TextField {...params} label="Location" />}
-          sx={{ width: 260, flexShrink: 0, mr: 4 }}
-          isOptionEqualToValue={(option, value) => option.id === value.id}
-        />
-      </Box>
-
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
         <Tabs
@@ -129,6 +77,9 @@ export default function CalculatorPanel({ rig }: CalculatorPanelProps) {
           onChange={(_, v: TabKey) => setActiveTab(v)}
           aria-label="rig calculator tabs"
         >
+          {/* Tabs styles its children by cloning them, so a Tab must stay a
+              direct child — wrapping one (in a Tooltip, say) silently costs it
+              the disabled colour and it renders as bright as an active tab. */}
           {TAB_ORDER.map((key) => (
             <Tab
               key={key}

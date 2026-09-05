@@ -59,15 +59,13 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.40.2 — Planner Sort Tooltips + Tonight Cross-Links](#v0402--planner-sort-tooltips--tonight-cross-links) ✅
 - [v0.40.3 — Plan a Night (pick any date)](#v0403--plan-a-night-pick-any-date) ✅
 - [v0.41.0 — Equipment Resolution + Rig Attribution](#v0410--equipment-resolution--rig-attribution) ✅
-- [v0.41.1 — Catalog Corrections + Embedded Image Analyzer](#v0411--catalog-corrections--embedded-image-analyzer)
+- [v0.41.1 — Catalog Simplification + Derived Sessions](#v0411--catalog-simplification--derived-sessions) ✅
 - [v0.41.2 — Frame Quality Metrics](#v0412--frame-quality-metrics)
-- [v0.41.3 — Curated Content](#v0413--curated-content)
-- [v0.42.0 — Calibration Matching + Derived Integration](#v0420--calibration-matching--derived-integration)
+- [v0.42.0 — Calibration Coverage + Gallery Promotion](#v0420--calibration-coverage--gallery-promotion)
 - [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
 - [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
 - [v0.45.0 — AI Context Bundle](#v0450--ai-context-bundle)
 - [v0.4x.0 — Mosaic Projects (Arc Capstone)](#v04x0--mosaic-projects-arc-capstone)
-- [FITS Equipment Resolver Spec](#fits-equipment-resolver-spec)
 - [Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames](#imaging-core-schema--rigs-projects-sessions-sub-frames)
 - [Future Features to Consider](#future-features-to-consider)
 - [Appendix: PHD2 Analyzer Roadmap](#appendix-phd2-analyzer-roadmap)
@@ -4737,12 +4735,19 @@ data it joins against:
 
 The bridge from manually-entered project metadata (v0.38.0) to **automated ingest of real
 capture data**. This is the largest remaining arc; it spans v0.39.0–v0.45.0 and is the
-foundation the future AI session analyzer consumes. The detailed target architecture lives
-in two specs further down this file — the
-[FITS Equipment Resolver spec](#fits-equipment-resolver-spec) and the
-[Imaging Core Schema spec](#imaging-core-schema--rigs-projects-sessions-sub-frames). The
-versions below are the agreed **roadmap altitude** breakdown; the specs are the deep
-reference, not a per-version checklist.
+foundation the future AI session analyzer consumes. The detailed target architecture lives in
+the [Imaging Core Schema spec](#imaging-core-schema--rigs-projects-sessions-sub-frames)
+further down this file. The versions below are the agreed **roadmap altitude** breakdown; the
+spec is the deep reference, not a per-version checklist.
+
+**Reshaped 2026-08-29 (v0.41.1).** The arc originally opened with a FITS-header →
+equipment-row resolver (v0.39.0) and a rig-attribution pass (v0.41.0). Both shipped and both
+were then **removed**: they were a large, fragile surface answering a question the project
+already answers. Equipment now comes from two declared facts — the rigs assigned to the
+project, and the rig tagged on each bound source folder — and never from inference. The
+companion FITS Equipment Resolver spec that used to live in this file was deleted with the
+code; the version history for v0.39.0 / v0.41.0 is kept as the record. v0.41.3 was folded into
+v0.42.0 at the same time, since v0.41.1 delivered its Sessions tab early.
 
 The driving user workflow: **point a project at one or more folders and have NightCrate
 catalog every file in them** — identifying lights, calibration frames, masters, the
@@ -4782,19 +4787,33 @@ These apply across the whole arc; individual versions don't re-litigate them.
   schema, dormant (all frames `accepted = 1`), so the views work unchanged and the UI
   could return later without a migration.
 
+- **No automatic equipment identification (settled 2026-08-29, v0.41.1).** The
+  header→equipment-row resolver (v0.39.0) and the rig-attribution pass (v0.41.0) were built,
+  shipped, and then **removed**: they were a large, fragile surface answering a question the
+  project already answers. **A project's assigned rigs (`project_rig`) are the equipment
+  context**, alongside the rig the user tags on each bound source folder
+  (`project_source_folder.rig_id`) — a declared fact, never an inference.
+  `sub_frame.filter_name_hint` (the FITS `FILTER` header) is the only filter fact a cataloged
+  frame carries. Every other equipment FK was dropped in migration 0046. Do not re-open this.
+- **Sessions derive on demand, never on ingest (settled 2026-08-29, v0.41.1).** Scanning a
+  folder catalogs frames and stops. The Sessions tab has two paths: derive from the cataloged
+  lights (replacing `source='auto'` rows, never `manual` ones) or hand-enter one. A project may
+  legitimately hold no subs at all and still keep a full session record.
+
 ### Cross-version behavior to honor (flagged, not re-decided)
 
 - **Session formation:** group subs by rig + observing night (noon-to-noon in the site
   timezone). Simultaneous dual-rig imaging = two separate sessions — never conflate rigs.
+  *(As built in v0.41.1: the rig is the one the user tagged on the source folder
+  (`project_source_folder.rig_id`), not one inferred from a header.)*
 - **Target assignment:** lights attach to the project's existing `project_target`; the
   `OBJECT` header is stored as a hint only (real data: `OBJECT='Barnard 144'` under a "Tulip
   Nebula" project).
-- **Telescope resolution is weak for ASIAir:** `TELESCOP` often carries the *mount*
-  (`'ZWO AM5'`), not the OTA; `FOCALLEN` is the real optical-config signal. Many telescope
-  values will legitimately land in the unresolved queue — expected, not a bug.
-- **Two-camera-same-model** (identical `INSTRUME` across both ASI 2600MM Pro bodies) is a
-  documented limitation until rig-matching gets real (v0.41.0). Until then the alias resolves
-  to whichever camera the alias points at; disambiguation is the ingest/rig layer's job.
+- ~~**Telescope resolution is weak for ASIAir**~~ — moot as of v0.41.1 (no resolution, no
+  unresolved queue). Worth remembering if header-derived equipment ever returns: `TELESCOP`
+  often carries the *mount* (`'ZWO AM5'`), not the OTA, and `FOCALLEN` is the real signal.
+- ~~**Two-camera-same-model**~~ — moot as of v0.41.1: nothing identifies a frame's camera at
+  all. The project's rigs carry the equipment.
 - **Stack/master detection signals** for routing to `processed_image`: `NCOMBINE` /
   `STACKCNT` / PixInsight processing history / `IMAGETYP='Master Light'`. The master →
   source-subs linkage is deferred; early versions just catalog masters with filter/type/
@@ -4804,7 +4823,13 @@ These apply across the whole arc; individual versions don't re-litigate them.
 
 ## v0.39.0 — FITS Equipment Resolver
 
-**Status:** Done. Branch `v0.39.0/fits-equipment-resolver`.
+**Status:** Done, then **REMOVED in v0.41.1.** Branch `v0.39.0/fits-equipment-resolver`.
+The resolver shipped and worked, but per-frame equipment identification turned out to be a
+large, fragile surface for very little user value — a project already carries its rigs via
+`project_rig`, and that is enough equipment context. `services/equipment_resolver.py`, the
+alias tables, and the unresolved-observation queue are all gone as of v0.41.1; the only
+piece kept is the bandpass canonicalization, now `services/line_names.py`. History below is
+retained as the record of what was built.
 
 Deterministic string→equipment-row lookup: given a FITS header value (`INSTRUME`,
 `TELESCOP`, `FILTER`), return the matching equipment row — or record it as unresolved. The
@@ -4877,7 +4902,8 @@ folder and see everything filed correctly.
       At v0.40.0 a light's `filter_id` is routinely NULL (rig assignment is v0.41.0, aliases
       start empty); the raw `FILTER` header is kept as the hint so lights catalog correctly,
       and v0.41.0 maps the physical filter + back-fills integration. Ingest never fails on
-      partial equipment. **Shipped as forward migration `0038` (not an edit to 0037):** the
+      partial equipment. *(v0.41.1 removed that back-fill along with the resolver —
+      `filter_name_hint` is now the only filter fact, permanently.)* **Shipped as forward migration `0038` (not an edit to 0037):** the
       dev DB had already applied 0037's original shape via `make dev`'s reload, so the column +
       CHECK-drop had to converge through a new migration (SQLite table-rewrite). Verified on a
       simulated already-migrated DB (data preserved, CHECK gone, lights ingest).
@@ -5075,7 +5101,11 @@ proves to thrash it.
 
 ## v0.41.0 — Equipment Resolution + Rig Attribution
 
-**Status:** Done. **Branch:** `v0.41.0/equipment-resolution-rig-attribution`. First of four
+**Status:** Done, then **REMOVED in v0.41.1** (see that version for the reasoning).
+Rig attribution, the Admin alias review queue, the per-frame equipment override, and the
+"Re-run resolution" button were all backed out; migrations 0044–0045 cleared and dropped the
+schema they used. History below is retained as the record of what was built.
+**Branch:** `v0.41.0/equipment-resolution-rig-attribution`. First of four
 v0.41.x chunks (the old "Correct + Curate" version was split 2026-07-08 so each chunk lands
 with a manually-testable UI surface). This one makes the cataloged data *right* —
 equipment, rig, and filter attribution — before any editing UI is built on top of it.
@@ -5167,28 +5197,276 @@ equipment, rig, and filter attribution — before any editing UI is built on top
       carried a `nosec` on a concatenated WHERE); memoized the three catalog card
       components so opening the override dialog no longer re-renders every loaded card.
 
-## v0.41.1 — Catalog Corrections + Embedded Image Analyzer
+## v0.41.1 — Catalog Simplification + Derived Sessions
 
-**Status:** Planned. The correction layer over the (now correctly attributed) catalog.
-Per the arc-wide "catalog and correlate" decision (2026-07-08), there is **no
-accept/reject workflow** here — corrections fix catalog facts, not processing decisions.
+**Status:** Done. **Branch:** `v0.41.1/catalog-simplification-derived-sessions`.
 
-- [ ] Edit a frame's `frame_type`; reassign session / target; bulk operations across a
-      selection (catalog *corrections* only).
-- [ ] **Embedded Image Analyzer** (replaces an earlier deep-link idea — navigation must
-      stay inside the project). Refactor `ImageAnalyzerPage` into an embeddable view whose
-      Zustand store is provided via context instead of the module-level singleton; the
-      standalone page keeps the global store and behaves exactly as today. In a project,
-      an "open" action on any catalog card (frames, masters, others) or gallery image opens
-      the analyzer as a **full-screen overlay** — the URL stays on `/projects/:id`, close
-      returns to the catalog in place — handing every project file the full existing
-      toolset (stretch, stats, histogram, pixel inspector, aberration inspector, Identify,
-      header viewer) for free.
-- [ ] **Prev/next stepping** inside the overlay, walking the launching list (respecting
-      the active filter pill + sort) — inspect a night's subs one after another without
-      leaving the project.
-- [ ] UI to verify: corrections + bulk ops on the Catalog tab; overlay open/close returns
-      in place; prev/next honors the filtered list.
+Scope changed mid-version (2026-08-29). It began as "corrections + embedded analyzer" over the
+v0.41.0 attribution layer; it shipped as a **strip-out of that layer**. Automatic per-frame
+equipment identification was doing a lot of fragile work to answer a question the project
+already answers — *a project has rigs assigned, and that is enough equipment context.* The
+correction and analyzer work landed as planned; the attribution machinery underneath it did not
+survive.
+
+### Removed
+
+- [x] **All automatic equipment identification.** Deleted `services/equipment_resolver.py`
+      (555 lines), `services/rig_attribution.py` (413), `api/equipment_aliases.py` (139), the
+      Admin alias review queue, the per-frame equipment override dialog, the "Re-run resolution"
+      button, and `POST /resolution/rerun` + `PATCH .../equipment`. Also the seed loader's
+      now-unreachable `_alias` table path and its three header-only CSVs. 62 tests deleted with
+      them (`test_equipment_resolver.py` 29, `test_rig_attribution.py` 33).
+- [x] **Per-filter integration goals.** `project_filter_goal`, `PUT /integration/goals`, and
+      `FilterGoalsEditor.tsx` are gone. The integration bars stay as a **totals read-out** — no
+      goal tick, no `/ 12h`, no percentage.
+- [x] **The equipment FK columns are gone too (migration 0046).** They were kept dormant at
+      first on the theory that v0.42's calibration matching wanted that shape — it doesn't.
+      `camera_id` / `telescope_id` / `telescope_configuration_id` / `filter_id` / `mount_id` /
+      `filter_wheel_id` / `focuser_id` dropped from `sub_frame`, and camera/telescope/filter
+      from `processed_image`. `sub_frame.rig_id` **stays** — see the folder rig tag below.
+
+### Calibration matching, re-keyed on header facts (migration 0046)
+
+- [x] **The shipped views had gone dead and nobody would have noticed.** `matching_darks` and
+      friends join `d.camera_id = l.camera_id` with a plain `=`; once every `camera_id` went
+      NULL that comparison is NULL rather than TRUE, so the join failed before reaching the
+      exposure test and every view silently returned zero rows. Nothing reads them yet, so it
+      would have surfaced as a mystery in v0.42.
+- [x] **Re-keyed on what the header actually gives us**, which is all calibration ever needed:
+      darks on exposure + gain + binning + set-temp ±1 °C; flats on gain + binning +
+      `filter_name_hint`; bias on gain + binning. Scoped to **project and rig** — the views
+      were never project-scoped before (flagged by migration 0040, never fixed). The camera
+      term added nothing once a project's rig fixes the camera.
+- [x] **`project_source_folder.rig_id` — declared, not inferred.** The user tags each bound
+      folder with the rig that shot it; every frame beneath inherits it into `sub_frame.rig_id`,
+      sessions key on (project, night, rig) so a simultaneous dual-rig night splits again, and
+      the match views refuse to pair one rig's darks with another's lights. `PATCH
+      .../folders/{id}` re-tags frames already cataloged and re-keys their sessions, so it takes
+      effect without a re-scan. This is the *only* equipment fact the ingest records.
+- [x] **One owner for rig + session** (`services/ingest_sessions.py:assign_rigs_and_sessions`),
+      called after every scan and from the folder add/PATCH endpoints. The simplification pass
+      caught that the first cut assigned the rig per file during the walk, which resolved
+      **nested** bindings three different wrong ways — last-added-wins on scan,
+      parent-steals-child on tag, flip-flop on re-scan. Longest-prefix wins, resolved once after
+      every folder is known; a regression test pins all three cases. Set-based rather than
+      per-frame (a per-frame loop measured ~100× slower on a 2400-frame project).
+- [x] **Dropped `integration_time_per_project_filter`.** Integration has one source of truth
+      now — the derived `project_session` rows. A parallel sub-frame-level view keyed on a
+      header string would be a second, subtly different answer to the same question.
+- [x] Verified against a copy of the real workspace: with two darks, a Lum flat and a bias
+      added alongside the 2339 real lights, every light resolves dark + bias coverage, only the
+      1011 Lum lights match the flat, a −20 °C dark is correctly rejected against −5 °C lights,
+      and neither another project's nor another rig's calibration leaks in.
+
+### Derived sessions
+
+- [x] **`POST /projects/{id}/sessions/derive`** → `services/session_derivation.py` (pure service,
+      caller owns the transaction) rebuilds every `source='auto'` row from the project's
+      cataloged lights and leaves `source='manual'` rows alone. Grain: **one row per (observing
+      night, rig, filter, exposure, gain, binning)**, grouped on the *canonical* filter key so
+      `Ha` and `H-alpha` in one night collapse to one row. The rig comes from the frame (i.e.
+      from its folder's tag), falling back to the project's rig when it has exactly one, so it
+      only ever splits a group when two rigs really did shoot the same filter that night.
+- [x] **Never automatic.** Ingest catalogs frames and stops there — deriving is an explicit
+      action on the Sessions tab. A project may legitimately hold no subs at all (the user
+      doesn't have them, or doesn't want them in the project) and still keep a full hand-entered
+      session record. Pinned by a test.
+- [x] **Derived rows are read-only** (409 on PATCH/DELETE, no row actions in the table). Editing
+      a row the next derive replaces is a lie; correct the frames on the Catalog tab instead.
+- [x] Migration **0044** adds `project_session.filter_label` — the header filter name a derived
+      row was grouped on. `line_name` is still set (canonical, else `'other'`) so the existing
+      filter-or-line CHECK holds with a plain `ADD COLUMN`, no table rewrite. `IntegrationLine`
+      gained a free-string `label` (was `line_name`) so an unrecognized filter renders as itself
+      rather than collapsing into `other`.
+- [x] Column-shape mismatches handled explicitly: REAL vs INTEGER gain (coerce, and group on the
+      coerced value), `binning_x`/`binning_y` vs one `binning`, and `exposure_seconds > 0` vs
+      `>= 0` — a light with no EXPTIME is skipped and counted, never allowed to abort the INSERT.
+- [x] Sessions are now keyed on **(project, observing night)** alone; `ensure_session` takes a
+      night string and its lookup uses `ORDER BY id LIMIT 1` (pre-0044 DBs can hold more than
+      one row per project-night from rig keying — the extras empty out and get swept).
+
+### Kept from the original scope
+
+- [x] **Frame-classification corrections** — `frame_type` and target, single and bulk, guarded
+      by migration 0043's `frame_type_source` / `project_target_source` so a re-scan can't wipe
+      them (both are re-derived on every scan: `_reclassify_dark_flats` is heuristic, and
+      `_persist_parsed` writes a NULL target for any project without exactly one main).
+- [x] **Embedded Image Analyzer** — `ImageAnalyzerPage` split into an embeddable
+      `components/analyzer/ImageAnalyzerView`; the module-global Zustand store was deleted in
+      favour of per-instance `useState` so the route page and the project overlay can't stomp
+      each other. `AnalyzerOverlay.tsx` opens any catalog card full-screen without leaving
+      `/projects/:id`, with prev/next stepping over the launching list.
+- [x] **Shared `PlateSolveDialog` on the project Plate Solve tab** — project solves now go
+      through the dialog with coordinate + equipment hints instead of firing blind from the
+      file browser (which made ASTAP search the whole sky and usually time out).
+
+### Smart telescopes ship as rigs (migrations 0047-0051)
+
+- [x] **`rig` and `rig_filter_slot` became seedable**, but only for all-in-one smart telescopes.
+      A Seestar or DWARF has fixed inseparable optics, camera and filter changer, so the rig *is*
+      the product rather than something the user assembles. Twelve ship ready to use — Seestar
+      S30 / S30 Pro / S50 / S50 Pro, DWARF II and mini, Celestron Origin and Origin Mark II, and
+      the Unistellar eVscope 2 / eQuinox 2 / Odyssey / Odyssey Pro — each with its telescope,
+      native configuration, integrated imager and populated internal changer.
+      `rig` loads **last** in `LOAD_ORDER` because it references almost every other table.
+      `is_default` and `sort_order` are deliberately not seeded: which rig is default is the
+      user's business. Renaming a seeded rig marks it user-modified and the loader leaves it be.
+- [x] **`rig.is_mine` (0048)** so the catalog doesn't clutter "my rigs" — same flag and the same
+      NOT-in-`seeded_fields` treatment as the ten owned-equipment tables. Claiming a catalog rig
+      sets it; retiring one that has not been customised clears it and returns the rig to the
+      pre-defined list rather than leaving a retired husk behind.
+- [x] **`filter_passband.bandwidth_nm` is nullable (0051).** DwarfLab publish the dual-band's
+      lines and not their widths, and a user may well know their filter passes Ha without knowing
+      to how many nanometres. The choice was invent a number or record nothing, and an invented
+      width feeds the per-line moon model quietly. `central_wavelength_nm` stays NOT NULL — it is
+      what identifies the passband. The rebuild has to drop and recreate `filter_summary` first:
+      `ALTER TABLE ... RENAME` rewrites references *inside* existing views, so doing it with the
+      original table already dropped leaves the view pointing at nothing.
+- [x] Also seeded: MLAstro mounts, the ZWO Seestar S50 Pro, and passbands for the smart-scope
+      filters. Blocking filters (UV/IR-cut, light pollution) still carry **no** passband rows —
+      a UV/IR-cut row would invent a line to accumulate hours against.
+
+### The rigs page, reworked
+
+- [x] **Cards are a summary; the detail lives in a panel.** Half-width cards carry name,
+      description, aperture / focal length / ratio and a filter count ("Filters: 3", or a dash) —
+      no OTA string, nothing repeated. Clicking one opens `RigDetailPanel` with everything
+      formatted. The default marker is an unambiguous chip rather than a star: starring stays
+      reserved for favourites and defaults elsewhere in the app.
+- [x] **New Rig offers a dropdown of pre-defined rigs or a custom build** (`NewRigDialog`),
+      alpha-ordered, with a one-line spec under the selector. A list would have outrun the dialog
+      as the catalog grows.
+- [x] **Delete drops an untouched pre-defined rig and retires a customised one.** `rigs.py`
+      reuses `compute_seed_hash` + the registry's `seeded_fields` to tell the two apart and
+      returns `{"outcome": "removed" | "retired"}`.
+- [x] **Location removed from rigs entirely** — rigs are not tied to locations, and the rig
+      calculators were silently using the default location for seeing, which is a hidden
+      parameter and worse than a misplaced control. The Imaging tab already has a seeing slider.
+
+### Equipment catalogue audit
+
+- [x] **Additions, researched against manufacturer pages**: cameras 112 → 190, sensors 41 → 54,
+      telescopes 51 → 93, configurations 84 → 130. ZWO, QHY, Player One, ToupTek, Altair (a
+      manufacturer with nothing in the catalogue at all), Askar, William Optics, Sky-Watcher,
+      Sharpstar, Celestron, Explore Scientific.
+- [x] **Real defects found by arithmetic, not by agreement between sources.** An IMX676 row
+      filled from the IMX571/455 family (impossible 50Ke full well at 2um pixels); an IMX411
+      width that disagreed with its own resolution; a **fabricated** Player One Apollo-M MINI
+      row; 19 telescope rows whose unquoted-CSV commas had silently eaten their weight,
+      obstruction and source URL, costing 14 product links. Search summaries twice blended
+      adjacent rows — the 20032PNT given the 15028HNT's focal length, the William Optics Cat
+      line shifted a row — and the focal-ratio check caught both.
+- [x] **Claude Desktop's verification pass over the pre-existing rows** returned 16 corrections
+      across four handoffs plus a column-semantics spec. All applied. Its working documents are
+      not in the repo; `docs/seed-audit-handoff.md` — the brief that drove it — is, because the
+      checks it describes are reusable: the arithmetic that actually catches errors, the traps
+      already hit on this data, and the hard rules for anything that writes these CSVs.
+- [x] **A passband row is one emission line, not one physical window.** The L-eNhance passes Ha,
+      Hb and OIII through two windows and carried two rows, so integration through it never
+      accumulated against Hb. Nothing sums `bandwidth_nm`, so recording the shared width twice is
+      correct input for moon scattering.
+
+### Column semantics (migrations 0052-0054)
+
+- [x] **Read noise is named by gain, not by mode (0052).** `sensor.read_noise_e` held the
+      low-gain figure on six rows and the high-gain figure on ten, with nothing to say which —
+      an IMX571 looked 4.7x noisier than it is. And `full_well_capacity_ke` is the low-gain
+      figure, so combining the two described a state the sensor cannot occupy: 50000/0.7 is 16.1
+      stops on a 16-bit part. Split into `read_noise_low_gain_e` + `read_noise_high_gain_e`, each
+      value classified by cross-reference against the cameras using it. The camera pair is
+      renamed (`effective_read_noise_lcg_e` → `effective_read_noise_low_gain_e`), which makes
+      four rows true that are wrong today: the ASI1600/QHY163 bodies publish both figures for a
+      Panasonic MN34230, which has no dual-conversion-gain mode at all.
+- [x] **`payload_capacity_kg` gets one meaning (0053)** — maximum instrument payload excluding
+      counterweights, photographic where a maker publishes visual and photographic separately.
+      It was carrying three conventions, so the same 8 kg meant "telescope, counterweights on
+      top" on one row and "telescope *and* counterweights" on another. Adds
+      `payload_capacity_with_cw_kg` for the harmonic mounts, seeded on the ten rows with a
+      published figure.
+- [x] **`peak_qe_pct` is the peak within 400-700nm (0054)**, with `peak_qe_wavelength_nm` beside
+      it so the figure carries its own context. Three mono/colour pairs were seeded identical
+      because 91% is their *near-infrared* peak, where Bayer dyes are transparent. Deep-sky
+      imaging is a visible-band activity; five values that were NIR peaks (or a mono figure
+      copied onto colour) are blanked rather than left to be read under a meaning they were not
+      recorded under.
+
+### The seed loader can now survive its own schema changes
+
+- [x] **The hash contract had no repair path, and the renames above would have been the first
+      thing to need one.** A field's *name* is part of the hashed payload, so renaming or adding
+      a `seeded_fields` entry invalidates every row in the table at once and the loader reads
+      them all as user-edited — permanently, since nothing ever rewrote `seed_hash`. On the real
+      workspace DB that would have stranded 226 rows, silently: reseeding reports success and
+      changes nothing. `HASH_CONTRACT_VERSION` does not catch it (it guards the serialization
+      format, not the field set), and migration 0024's own comment shows the precedent was to
+      accept the damage and defer "a versioned-hash strategy in the loader itself".
+- [x] **Two repairs, in `loader.py` and the new `seed_loader/rehash.py`.** The general one: if a
+      row still hashes to the CSV's own value then nobody edited it, so rewrite the hash
+      (`TableReport.rehashed`). The sharper one, for a release that changes the field set *and*
+      CSV values in the same version: reconstruct the row's **pre-migration** hash from values
+      still present under the new names, and re-hash only what matches. Writing the CSV values
+      into the migration instead — 0024's approach — overwrites exactly the rows the hash exists
+      to protect, so no migration here backfills a value.
+
+### Smaller fixes
+
+- [x] **Source folders inside archives.** `ingest_scanner` walks a zip/tar/7z and catalogs its
+      entries through the existing `archive.zip::entry` virtual-path convention; `FileBrowser` in
+      `directoryMode` lets an archive be selected as a bound folder.
+- [x] **Frames with no `IMAGETYP` fall back to the filename** (`ingest_classify`), which is what
+      made a DWARF folder ingest "find nothing". Header evidence outranks the filename, so a
+      light of the Dark Horse Nebula is not classified as a dark.
+- [x] **The Tonight card is labelled by the darkness actually reached** — it said "ASTRONOMICAL
+      DARK" for a Stockholm June night that never gets there. The number was right; the label
+      was not.
+- [x] Aberration-inspector zone boxes made legible; a maximizable resizable Overview window;
+      focal ratio computed from aperture + focal length in the OTA form; `text.disabled` added to
+      both theme palettes so a disabled tab actually reads as disabled.
+
+### Migrations
+
+- [x] **0043** `sub_frame_correction_source` — `frame_type_source` / `project_target_source`.
+- [x] **0044** `session_derivation` — `project_session.filter_label`; clears `session.rig_id`
+      and every equipment FK on `sub_frame` / `processed_image`.
+- [x] **0045** `drop_equipment_resolution` — drops `project_filter_goal` +
+      `project_filter_goal_progress`, the three alias tables + `unresolved_equipment_observation`,
+      and `sub_frame.rig_source` / `camera_source` / `filter_source`.
+- [x] **0046** `header_keyed_calibration` — rebuilds the four calibration views on header facts
+      scoped to project + rig, drops `integration_time_per_project_filter`, drops the remaining
+      equipment FK columns from `sub_frame` / `processed_image`, and adds
+      `project_source_folder.rig_id`.
+- [x] All three verified on a **copy of the populated dev DB** (already at 0043) as well as a
+      fresh build: 2341 sub frames preserved, `foreign_key_check` and `integrity_check` clean.
+- [x] **0047** `seedable_rigs` — `source` / `seed_key` / `seed_hash` on `rig`.
+- [x] **0048** `rig_is_mine`; **0049** `seed_smart_scope_filter_slots`; **0050**
+      `rig_summary_source` exposes the seed columns through the view.
+- [x] **0051** `passband_bandwidth_nullable` — table rebuild, with `filter_summary` dropped and
+      recreated around it.
+- [x] **0052** `read_noise_by_gain`; **0053** `mount_payload_convention`; **0054**
+      `sensor_peak_qe_band`. All three structural only — values reach existing databases through
+      the loader, which still respects rows the user has edited.
+- [x] 0052-0054 verified together on a **copy of the live workspace DB**: 226 rows re-hashed
+      across sensor / camera / mount, every pending correction applied, `skipped_user_modified`
+      down to one genuine local edit, and a second run a clean no-op.
+
+### Verification
+
+- [x] 2348 backend tests pass (48 new in `tests/test_session_derivation.py`); ruff, ruff format,
+      and bandit clean (bandit's 3 findings are pre-existing in `plate_solve.py`).
+- [x] `npm run build` clean.
+- [x] End-to-end against a copy of the real workspace: 2339 cataloged lights derive to 9 sessions
+      across 3 nights × 4 filters, noon-to-noon in `America/Phoenix`, gain coerced 101.0 → 101,
+      rig inherited from the project's single rig, `filter_label` preserving `Red`/`Green`/`Blue`
+      while `line_name` canonicalizes to `R`/`G`/`B`. Integration total (3350 min) equals the sum
+      of the bars. Derive is idempotent; a manual session survives it; 409 on editing a derived
+      row; the removed endpoints 404. Zero console errors.
+
+### Known gap left for v0.42.0
+
+Hand-entering a session for a night *and* deriving that same night produces two
+`project_session` rows and the integration bars add them together. Nothing guards it. The
+workflow makes it unlikely — you either have the subs or you don't — but it should either warn
+on the derive confirm or reconcile.
 
 ## v0.41.2 — Frame Quality Metrics
 
@@ -5212,20 +5490,12 @@ fills the `sub_frame` quality columns (`hfr`, `star_count`, `median_adu`,
       present as a cheap complement (see "FITS Header Database Storage" in Future Features).
 - [ ] UI to verify: button + progress, quality values on cards, quality sort.
 
-## v0.41.3 — Curated Content
+## v0.42.0 — Calibration Coverage + Gallery Promotion
 
-**Status:** Planned. The catalog-to-display bridge.
-
-- [ ] **Promote any frame (raw sub or processed) into the `project_image` gallery** — the
-      bridge from catalog to the existing display gallery.
-- [ ] **Sessions tab** for auto (ingest) sessions: date, rig, sub count, integration per
-      filter. One Sessions tab listing auto + manual rows with source badges; manual
-      continues to win the integration display until v0.42.0's COALESCE lands.
-- [ ] UI to verify: promote action + gallery result; the merged Sessions tab.
-
-## v0.42.0 — Calibration Matching + Derived Integration
-
-**Status:** Planned. Delivers the cross-domain payoff — coverage + real integration totals.
+**Status:** Planned. **Absorbed the old v0.41.3 (Curated Content) on 2026-08-29** — half of
+that version (the merged Sessions tab) shipped early in v0.41.1, leaving only gallery
+promotion, and v0.42.0 itself shrank when v0.41.1 delivered derived sessions and re-keyed the
+calibration views. What's left between them is about one version of work.
 
 **Settled (2026-07-08): calibration matching stays per-project; no shared
 calibration-library feature.** Flats + flat-darks are shot fresh for every project (camera
@@ -5233,21 +5503,32 @@ angle and dust motes change), and each rig has its own master darks — the only
 that travels between projects is a master dark or two, and binding its folder to a project
 is a trivial one-time action. Do not re-open this.
 
-- [ ] The calibration-matching + integration **views already shipped in migration 0037**
-      (`matching_darks` — camera + gain + exposure + binning, set-temp ±1 °C, never filter;
-      `matching_flats` — adds filter + telescope_configuration; `matching_bias`;
-      `calibration_coverage`; `integration_time_per_project_filter` with the intentional
-      duoband double-count; all `accepted = 1` only). v0.42.0's work is the UI + derived
-      integration on top of them, not creating them.
-- [ ] **Derived integration** from actual sub-frame data, stored separately from the v0.38.0
-      manual column. Manual always wins for display/progress (`COALESCE(manual, derived)`);
+- [x] ~~The calibration views need re-keying first~~ — **done in v0.41.1 (migration 0046).**
+      They now match on header facts (exposure, gain, binning, set-temp ±1 °C, plus
+      `filter_name_hint` for flats) scoped to project **and rig**, where the rig is the source
+      folder's user-declared tag. Verified against real data: 2339 cataloged lights all resolve
+      dark + bias coverage from matching calibration, only Lum lights match a Lum flat, a
+      wrong-temperature dark is rejected, and nothing leaks across projects or rigs.
+      **v0.42.0's job is the UI on top of working views.**
+- [ ] **Guard the manual/derived overlap.** v0.41.1 delivers derived integration already
+      (`project_session` rows with `source='auto'`). The gap it leaves: hand-entering a session
+      for a night *and* deriving that same night produces two rows and the integration bars add
+      them together. Nothing guards it — the workflow makes it unlikely (you either have the
+      subs or you don't) but it should either warn on the derive confirm or reconcile.
+      Historic note, no longer applicable: the original design stored derived integration in a
+      separate column with `COALESCE(manual, derived)`;
       derived never overwrites manual. Both surface in the context bundle with provenance.
       With no rejection workflow (arc decision 2026-07-08), derived counts **every**
       cataloged light — i.e. *captured* integration, slightly above what survives into a
       stack. Where the published number should reflect the stacked subset, the manual
       session entry wins via the COALESCE rule; document this in the UI tooltip.
-- [ ] Per-light calibration-coverage indicators; derived actuals in the integration bar
-      chart against `project_filter_goal`.
+- [ ] **Per-light calibration-coverage indicators** on the catalog cards, reading the
+      `calibration_coverage` view. (Not "against `project_filter_goal`" — per-filter goals were
+      removed in v0.41.1; the integration bars are a totals read-out.)
+- [ ] **Promote any frame (raw sub or processed) into the `project_image` gallery** — the
+      bridge from catalog to the existing display gallery. *(Absorbed from the old v0.41.3.)*
+- [ ] UI to verify: coverage indicators against a folder that has real darks/flats/bias;
+      promote action + gallery result.
 
 ## v0.43.0 — Guiding (PHD2) Association + Session Timeline v1
 
@@ -5256,7 +5537,10 @@ is a trivial one-time action. Do not re-open this.
 manually-testable UI.
 
 - [ ] Populate `guiding_log_file` / `guiding_sample` / `dither_event` from PHD2 logs ingested
-      per session.
+      per session. Sessions split per rig again as of v0.41.1 (via
+      `project_source_folder.rig_id`), so a dual-rig night's two PHD2 logs attach to the right
+      sessions instead of piling onto one. `guiding_log_file`'s `guide_camera_id` /
+      `guide_scope_id` / `oag_id` should come from the session's rig, not from a header.
 - [ ] Per-sub guiding lookup: aggregate RMS (total / RA / Dec), peak error, sample count over
       the sub's time window — parameterized query, not a stored column.
 - [ ] **Embedded PHD2 analyzer** — same store-decoupling refactor as the v0.41.1 Image
@@ -5413,214 +5697,6 @@ Automated mosaic-panel detection from FITS headers / N.I.N.A. mosaic plans (a la
 
 ---
 
-## FITS Equipment Resolver Spec
-
-This spec defines the **equipment resolver**: the component that takes values from FITS headers (`INSTRUME`, `TELESCOP`, `FILTER`, etc.) and resolves them to rows in the equipment database (`camera`, `telescope`, `filter`). It's the bridge between messy real-world header strings and the clean normalized equipment schema.
-
-Assumes the FITS alias tables (`camera_alias`, `telescope_alias`, `filter_alias`) already exist (see DB_SCHEMA.md §12).
-
-**Out of scope for this change:** the FITS file reader itself (astropy handles that), the full sub frame ingest pipeline, UI for reviewing unresolved aliases, any automatic fuzzy matching beyond the specific rules in §5.
-
----
-
-### Table of contents
-
-1. Goals and non-goals
-2. Terminology
-3. High-level design
-4. Normalization rules
-5. Resolution algorithm
-6. Line-name canonicalization (for `FILTER` headers)
-7. The two-camera-same-model problem
-8. Public API
-9. Unresolved alias handling
-10. Logging and diagnostics
-11. Deliverables
-
----
-
-### 1. Goals and non-goals
-
-#### Goals
-
-- Given a FITS header value for a camera, telescope, or filter, return the corresponding equipment row — or `None` if no confident match exists.
-- Record new alias observations automatically so the first encounter bootstraps the alias table.
-- Treat any alias promotion to `confirmed=1` as a user-only action (the resolver never auto-confirms).
-- Provide a clear "needs review" list for the UI (out of scope for this change) to act on later.
-- Be fast: resolution should be O(1) for aliases already in the table.
-
-#### Non-goals
-
-- No fuzzy string matching, Levenshtein, embeddings, or ML. The resolver is deterministic: exact match against the normalized alias table, nothing else. If that fails, the caller handles the unresolved case.
-- No UI for confirming aliases. The resolver returns structured results; the UI is separate.
-- No FITS file reading. This component receives already-parsed header values as strings.
-- No handling of date ranges, equipment retirement timelines, or "which camera was this two years ago." The resolver operates on the current state of the equipment DB.
-- No automatic promotion of unconfirmed aliases. `confirmed=0` stays `confirmed=0` until a human decides otherwise.
-
----
-
-### 2. Terminology
-
-- **Header value** — the raw string from a FITS header, e.g. `"ZWO ASI2600MM Pro"`.
-- **Alias** — the normalized form of a header value, stored in the alias tables, e.g. `"zwo asi2600mm pro"`.
-- **Resolution** — the act of mapping a header value to an equipment row via the alias tables.
-- **Confirmed alias** — `confirmed=1`; the user has explicitly told the app "this header value means this equipment row." Authoritative.
-- **Unconfirmed alias** — `confirmed=0`; the resolver observed this header value and either seeded it or the system auto-inserted it pending user review.
-- **Unresolved** — the normalized alias is not in the alias table at all. The caller must decide what to do (typically: surface it to the user for mapping).
-
----
-
-### 3. High-level design
-
-The resolver is a single **stateless** module (safe to instantiate per ingest run) exposing `resolve_camera`, `resolve_telescope`, and `resolve_filter`. Each takes a header value plus a `source` tag and follows the same shape: normalize the value (§4), look it up in the corresponding alias table, and return a structured result. A match to an active row is the happy path; a match to a retired row still returns the row but flags it; a miss records the observation (§5) and returns unresolved. `last_seen_at` is bumped on every match.
-
-#### Result shape
-
-A resolve call returns the resolved equipment row (or none), the normalized alias, whether the alias was newly observed, an optional message, and a **status**:
-
-- **`resolved`** — matched an alias pointing to an active equipment row. Happy path.
-- **`resolved_retired`** — matched an alias pointing to an `active=0` equipment row. Still returns the row (the header is probably from an old session before retirement), but the caller should display a warning in the UI.
-- **`unresolved`** — normalized alias not in the table. A new unconfirmed alias row was inserted. Caller should queue for review.
-- **`ambiguous`** — reserved for the two-camera-same-model problem (§7). Not emitted in the base implementation; placeholder for a future extension.
-
----
-
-### 4. Normalization rules
-
-Normalization must be deterministic and reversible enough that the same header value always produces the same normalized form. Apply these steps in order:
-
-1. **Unicode normalize** to NFKC. Handles stray compatibility characters.
-2. **Strip leading and trailing whitespace.**
-3. **Collapse internal whitespace runs** to a single space. `"ZWO   ASI2600MM   Pro"` → `"ZWO ASI2600MM Pro"`.
-4. **Remove zero-width and control characters.** Some capture software emits weird invisible bytes.
-5. **Lowercase.** `"ZWO ASI2600MM Pro"` → `"zwo asi2600mm pro"`.
-6. **Do NOT** remove punctuation, hyphens, slashes, or parentheses. `"7nm Ha"` and `"7 nm Ha"` are different aliases as far as the resolver is concerned; if a user wants them to resolve to the same filter, they add both as aliases.
-
-**What normalization does not do:**
-
-- No stemming, no tokenization, no reordering of words.
-- No "smart" handling of brand prefixes (`"ZWO ASI2600MM Pro"` vs `"ASI2600MM Pro"` are different aliases until a human says otherwise).
-- No removal of version numbers, firmware strings, or trailing whitespace variants beyond the steps above.
-
-The rule of thumb: **normalization handles pure string-formatting differences. Everything else is the user's call.**
-
-The resolver stores the normalized alias, never the raw header value — normalization is lossy and we accept that. The raw string is preserved for display only in the unresolved-observations table (§5).
-
----
-
-### 5. Resolution algorithm
-
-All three resolve methods share one shape (cameras shown; telescopes and filters are identical bar table/FK names):
-
-1. Empty/blank header value → `unresolved` immediately.
-2. Normalize (§4), then look up the alias joined to its equipment row.
-3. Match + equipment active → `resolved`.
-4. Match + equipment `active=0` → `resolved_retired` (still return the row — the header is probably from a session before the gear was retired — but the caller should warn).
-5. No match → record the observation (below) and return `unresolved`.
-6. Bump `last_seen_at` on any matched alias row.
-
-#### The "unresolved observation" problem
-
-The alias tables have a NOT-NULL equipment FK — an alias must point at a real equipment row (this prevents orphaned aliases). So the resolver **can't** record a brand-new, unmapped header value in the alias table itself. A separate `unresolved_equipment_observation` table fills the gap: on a miss the resolver upserts a row there, keyed by `(equipment_kind, normalized_alias)` and incrementing a `seen_count` on repeat sightings, storing the raw header string and a `source` tag (`nina | asiair | user | manual`). `equipment_kind` is one of `camera | telescope | filter`.
-
-The review UI (later) reads this table as a "map these to equipment" queue. When the user maps one, the app inserts a **confirmed** alias (`source='user'`, `confirmed=1`) and marks the observation resolved (recording the equipment id + timestamp) — kept for history, not deleted. Adding this small table is part of this spec's deliverables.
-
----
-
-### 6. Line-name canonicalization (for `FILTER` headers)
-
-The `FILTER` header is special. Users see it as both a physical filter reference *and* as a line-name reference. N.I.N.A. commonly writes `FILTER = "Ha"` or `FILTER = "Lum"` — which is **not** the model name of any filter the user owns; it's the slot label in the filter wheel config.
-
-This means `resolve_filter` has to do two things:
-
-1. **Canonicalize the line name** — normalize `"H-alpha"`, `"Hydrogen Alpha"`, `"H-a"`, `"Ha"`, etc. to the canonical `line_name` vocabulary from the schema (`'Ha'`, `'Hb'`, `'Oiii'`, `'Sii'`, etc.).
-2. **Resolve to a physical filter** — match the canonicalized line name against the user's filter_passband rows, scoped to the current rig or session context (because the same `"Ha"` header maps to Fred's 7nm Optolong or 3nm Antlia depending on which rig captured the sub).
-
-#### Line name canonicalization table
-
-A closed, code-level mapping (not in the DB; grows only by code change) folds common header spellings onto the canonical `line_name` vocabulary. Matching is case/space/punctuation-insensitive (after §4 normalization). A value not in the map is "not a line name" → fall back to the regular alias lookup, so a physical model name like `"Optolong L-Pro"` still resolves normally.
-
-| Canonical | Accepted header spellings |
-|-----------|---------------------------|
-| `Ha`   | ha, h-a, h alpha, h-alpha, halpha, hydrogen alpha, hydrogen-alpha |
-| `Hb`   | hb, h-b, h beta, h-beta, hbeta, hydrogen beta |
-| `Oiii` | oiii, o3, o-iii, o iii, oxygen iii, oxygen-iii, oxygeniii |
-| `Sii`  | sii, s2, s-ii, s ii, sulfur ii, sulphur ii, sulfur-ii |
-| `Lum`  | l, lum, luminance, clear |
-| `R` / `G` / `B` | r/red, g/green, b/blue |
-| `UVIR` | uvir, uv/ir, uv-ir, uv ir cut |
-
-(`Nii`, `OI`, `LP`, `ND` are valid `line_name` values but have no common header spellings yet — extend the map when real headers surface them.)
-
-#### Filter resolution order
-
-`resolve_filter` tries, in order:
-
-1. **Exact alias lookup** — handles model-name headers (`"Optolong L-Pro"`).
-2. **Line-name canonicalization scoped to the rig's filter wheel** — `"Ha"` is ambiguous globally (Fred's 7nm Optolong vs 3nm Antlia), so candidates are restricted to the filters loaded in the capturing rig's wheel (join `filter_passband.line_name` → `filter` → `filter_wheel_filter` for that wheel). Exactly one candidate → `resolved`; more than one → `ambiguous`; none → fall through.
-3. **Unresolved** — record the observation as in §5.
-
-#### `RigContext` and the forward-compatible stub
-
-Rig scoping needs a `RigContext` (rig + filter-wheel identity, resolved earlier in the same ingest run) and the `filter_wheel_filter` junction (rig wheel → filter), which lives in the rig/session layer built later. The `rig_context` parameter and signature are in place now; if that table doesn't exist yet, the resolver catches the missing-table error, logs a warning, and falls through to unresolved. Line-name-to-filter resolution starts working automatically once that schema lands.
-
----
-
-### 7. The two-camera-same-model problem
-
-Fred owns two physically distinct ASI 2600MM Pro cameras. Both produce `INSTRUME = "ZWO ASI2600MM Pro"` in their FITS headers. The `UNIQUE(alias)` constraint on `camera_alias` means the string `"zwo asi2600mm pro"` can map to exactly one camera row in the DB.
-
-This is a known limitation and **is not solved by this spec**. The resolver returns whichever camera the alias points to. Disambiguation happens at the rig level via other context: which mount, which telescope, which filter wheel, which computer hostname captured the frame. That's a job for the ingest pipeline, not the alias resolver.
-
-**For this spec**, document the limitation and flag it in the module docstring. When the rig-aware ingest code lands, it will do disambiguation by:
-
-1. Resolving the obvious equipment from FITS headers.
-2. Matching the resolved equipment against known rig configurations.
-3. If exactly one rig matches, using that rig's specific camera instance.
-4. If multiple rigs match, flagging the sub frame for manual rig assignment.
-
-The alias tables will need a schema change later to support this (likely: replace `UNIQUE(alias)` with `UNIQUE(alias, rig_hint)` or similar). Do not implement that now.
-
----
-
-### 8. Public API and transaction ownership
-
-The module exposes `EquipmentResolver(conn)` with `resolve_camera` / `resolve_telescope` / `resolve_filter`, plus the `normalize_alias` and `canonicalize_line_name` helpers. `source` is one of `nina | asiair | user | manual`.
-
-**The caller owns the transaction.** The resolver writes during normal operation (bumping `last_seen_at`, upserting unresolved observations) but never commits or rolls back itself — so the caller can wrap a whole ingest run in one transaction and commit at the end.
-
----
-
-### 9. Unresolved handling and promotion
-
-Unresolved is a **normal outcome, not an error** — the resolver never raises for it. The ingest caller should keep processing the sub frame with whatever equipment *did* resolve, leave the unresolved FK NULL (or stash the observation id), and report an unresolved count at the end of the run. The review UI (later) turns `unresolved_equipment_observation` into a "map these to equipment" screen.
-
-**Promotion** (when the user maps an observation): insert a confirmed alias (`source='user'`, `confirmed=1`) pointing at the chosen equipment row, and mark the observation resolved (retained for history). The resolver never auto-confirms — promotion is always a human action. A `confirm_unresolved_observation` utility ships with the module but is not wired to any UI in this change.
-
----
-
-### 10. Logging and diagnostics
-
-Logger `nightcrate.equipment_resolver`: DEBUG per resolve call, INFO on first sighting of a new alias, WARNING on resolving-to-retired-equipment and on the missing-`filter_wheel_filter` fallback, ERROR on DB/integrity/type failures. An optional `ResolverStats` accumulator (counts per outcome + newly-observed) can be passed in for ingest-summary reporting.
-
-### 11. Deliverables
-
-The resolver module (normalization, line-name canonicalization, the resolver class, the promotion utility) plus a small migration adding the `unresolved_equipment_observation` table. Tests cover: normalization rules, every line-name mapping, the four resolve outcomes (resolved / retired / unresolved / ambiguous), the missing-`filter_wheel_filter` fallback, promotion, and the no-auto-commit guarantee. A README section documents the API, the normalization rules, the two-camera limitation (§7), and the rig-scoped-filter forward stub (§6).
-
----
-
-### What NOT to build in this change
-
-- FITS file reading — astropy handles that. The resolver takes strings.
-- The sub frame ingest pipeline that calls the resolver.
-- The "unresolved observations review" UI.
-- Any fuzzy matching — the resolver is strictly exact-match after normalization.
-- Rig disambiguation for the two-cameras-same-model case.
-- The `filter_wheel_filter` table — that belongs to the rig/session schema, built later. The resolver handles its absence gracefully.
-- Automatic promotion of unconfirmed aliases to confirmed. Only humans confirm aliases.
-- Historical "which equipment was this two years ago" logic.
-
----
 ## Imaging Core Schema — Rigs, Projects, Sessions, Sub Frames
 
 This spec defines the imaging-core schema layer: the tables that model *what you imaged*, *when you imaged it*, *what gear captured it*, and *what individual exposures resulted*. It sits on top of the existing equipment schema (see DB_SCHEMA.md) and assumes the FITS Equipment Resolver (spec above) exists or is built in parallel.

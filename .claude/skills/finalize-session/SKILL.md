@@ -58,7 +58,10 @@ If any check fails, fix the issue and re-run. Do not proceed to commit with fail
 
 - Stage all relevant files (do NOT stage `instructions/` or files in `.gitignore`)
 - Write a descriptive commit message summarizing the work done
-- End the commit message with: `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
+- End the commit message with the co-author trailer for the model actually running the
+  session, as specified by the harness — currently
+  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`. Do not carry a
+  hardcoded model version forward; it goes stale at the next model release.
 - Use a HEREDOC for the commit message
 - Tag the branch with the version number
 

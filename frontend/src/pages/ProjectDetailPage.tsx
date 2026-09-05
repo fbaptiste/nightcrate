@@ -4,7 +4,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import Tooltip from "@mui/material/Tooltip";
 import IconButton from "@mui/material/IconButton";
+import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CircularProgress from "@mui/material/CircularProgress";
 import Snackbar from "@mui/material/Snackbar";
 import Tab from "@mui/material/Tab";
@@ -52,6 +54,50 @@ import {
   listProjectTargets,
   removeProjectTarget,
 } from "@/api/projectTargets";
+
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
+
+/**
+ * Open one project image in its own OS window at ~2/3 of the screen.
+ *
+ * A real window rather than a modal, so it can be resized, moved to a second
+ * display, and left open next to the app. The popup gets a tiny document rather
+ * than the bare image URL so the image *fits* the window and keeps fitting as
+ * it is resized — pointing a window at an image URL shows it at native size
+ * with scrollbars instead.
+ */
+function openImageWindow(url: string, title: string) {
+  const width = Math.round(window.screen.availWidth * (2 / 3));
+  const height = Math.round(window.screen.availHeight * (2 / 3));
+  // Centre on the window we were launched from, NOT on `screen.availLeft` —
+  // that reports the offset of one particular display, so on a multi-monitor
+  // desk it throws the popup onto a different screen than the app is on
+  // (measured: left = -2133 with a second display to the left of the primary).
+  const left = Math.round(window.screenX + (window.outerWidth - width) / 2);
+  const top = Math.round(window.screenY + (window.outerHeight - height) / 2);
+
+  const win = window.open(
+    "",
+    `nightcrate-image-${title}`,
+    `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no`,
+  );
+  if (!win) {
+    // Popup blocked — fall back to a tab so the click still does something.
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  win.document.write(
+    `<!doctype html><html><head><meta charset="utf-8">` +
+      `<title>${escapeHtml(title)}</title>` +
+      `<style>html,body{margin:0;height:100%;background:#000000;}` +
+      `body{display:flex;align-items:center;justify-content:center;}` +
+      `img{max-width:100vw;max-height:100vh;object-fit:contain;}</style></head>` +
+      `<body><img src="${escapeHtml(url)}" alt="${escapeHtml(title)}"></body></html>`,
+  );
+  win.document.close();
+  win.focus();
+}
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -385,6 +431,7 @@ export default function ProjectDetailPage() {
                 width: 520,
                 height: 520,
                 flexShrink: 0,
+                position: "relative",
                 borderRadius: 1,
                 overflow: "hidden",
                 bgcolor: images.length > 0 ? "common.black" : undefined,
@@ -412,6 +459,32 @@ export default function ProjectDetailPage() {
                       display: mainImgLoaded && !addMut.isPending ? "block" : "none",
                     }}
                   />
+                  {mainImgLoaded && !addMut.isPending && (
+                    <Tooltip title="Open in a larger window">
+                      <IconButton
+                        size="small"
+                        aria-label="Open image in a larger window"
+                        onClick={() =>
+                          openImageWindow(
+                            renderedImageUrl(projectId, viewedImage.id, "full"),
+                            project.name,
+                          )
+                        }
+                        sx={{
+                          position: "absolute",
+                          top: 8,
+                          right: 8,
+                          // Sits on the image, not on a themed surface, so the
+                          // scrim is literal black rather than a theme token.
+                          color: "common.white",
+                          bgcolor: "rgba(0,0,0,0.45)",
+                          "&:hover": { bgcolor: "rgba(0,0,0,0.75)" },
+                        }}
+                      >
+                        <OpenInFullIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                 </>
               ) : addMut.isPending ? (
                 <CircularProgress size={32} />

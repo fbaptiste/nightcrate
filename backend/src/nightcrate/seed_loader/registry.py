@@ -92,8 +92,10 @@ LOAD_ORDER: list[SeedableTable] = [
             "sensor_height_mm",
             "adc_bit_depth",
             "full_well_capacity_ke",
-            "read_noise_e",
+            "read_noise_low_gain_e",
+            "read_noise_high_gain_e",
             "peak_qe_pct",
+            "peak_qe_wavelength_nm",
             "bayer_pattern",
             "dual_gain",
             "notes",
@@ -125,8 +127,8 @@ LOAD_ORDER: list[SeedableTable] = [
             "usb_hub_interface_id",
             "unity_gain",
             "effective_full_well_ke",
-            "effective_read_noise_lcg_e",
-            "effective_read_noise_hcg_e",
+            "effective_read_noise_low_gain_e",
+            "effective_read_noise_high_gain_e",
             "effective_peak_qe_pct",
             "hcg_threshold_gain",
             "notes",
@@ -281,6 +283,7 @@ LOAD_ORDER: list[SeedableTable] = [
             "mount_type_id",
             "model_name",
             "payload_capacity_kg",
+            "payload_capacity_with_cw_kg",
             "mount_weight_kg",
             "counterweight_required",
             "goto_capable",
@@ -468,41 +471,53 @@ LOAD_ORDER: list[SeedableTable] = [
         },
     ),
     # ------------------------------------------------------------------
-    # 26-28: Alias tables
+    # 26: rig — LAST, because it references almost everything above.
     #
-    # Alias tables have a different structure from standard seeded tables:
-    #   - No seed_key / seed_hash columns — identified by the alias text
-    #     (UNIQUE constraint on alias).
-    #   - No active column; have first_seen_at / last_seen_at instead.
-    #   - The loader uses `alias` as the natural key for upserts.
-    #   - source is included as a seeded field (value: 'seed').
+    # Only all-in-one smart telescopes are seeded here. Their optics, camera
+    # and filter changer are fixed and inseparable, so the rig is the product
+    # rather than something the user assembles. Ordinary rigs stay user-owned;
+    # the loader never touches `source = 'user'` rows.
+    #
+    # `name` is seeded, so renaming a seeded rig marks it user-modified and it
+    # is left alone from then on — the same contract as every other table.
+    # `is_default` and `sort_order` are deliberately NOT seeded: which rig is
+    # default is the user's business, not the catalog's.
     # ------------------------------------------------------------------
-    # 26: camera_alias
     SeedableTable(
-        table_name="camera_alias",
-        csv_filename="camera_alias.csv",
-        seeded_fields=("camera_id", "alias", "source", "confirmed"),
+        table_name="rig",
+        csv_filename="rig.csv",
+        seeded_fields=(
+            "name",
+            "description",
+            "telescope_configuration_id",
+            "camera_id",
+            "filter_wheel_id",
+            "notes",
+        ),
         fk_columns={
+            "telescope_configuration_seed_key": "telescope_configuration",
             "camera_seed_key": "camera",
+            "filter_wheel_seed_key": "filter_wheel",
         },
     ),
-    # 27: telescope_alias
+    # ------------------------------------------------------------------
+    # 27: rig_filter_slot — junction (rig × filter), carrying slot_number.
+    #
+    # Seeded so a smart telescope arrives with its internal changer populated:
+    # the glass is fixed in the device, so an empty wheel would be wrong rather
+    # than merely incomplete. Delete-and-reinsert per rig, like every junction.
+    # ------------------------------------------------------------------
     SeedableTable(
-        table_name="telescope_alias",
-        csv_filename="telescope_alias.csv",
-        seeded_fields=("telescope_id", "alias", "source", "confirmed"),
+        table_name="rig_filter_slot",
+        csv_filename="rig_filter_slot.csv",
+        seeded_fields=("rig_id", "filter_id", "slot_number"),
         fk_columns={
-            "telescope_seed_key": "telescope",
-        },
-    ),
-    # 28: filter_alias
-    SeedableTable(
-        table_name="filter_alias",
-        csv_filename="filter_alias.csv",
-        seeded_fields=("filter_id", "alias", "source", "confirmed"),
-        fk_columns={
+            "rig_seed_key": "rig",
             "filter_seed_key": "filter",
         },
+        is_junction=True,
+        junction_parent="rig",
+        junction_key_columns=("rig_id", "filter_id"),
     ),
 ]
 

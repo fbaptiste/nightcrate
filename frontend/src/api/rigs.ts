@@ -125,6 +125,10 @@ export interface Rig {
   software: { id: number; name: string; category: string }[];
   filter_slots: RigFilterSlotOut[];
   is_default: boolean;
+  /** Whether the user owns this rig. Seeded smart-telescope rigs are false. */
+  is_mine: boolean;
+  /** "seed" = a catalog rig (all-in-one smart telescope); "user" = self-built. */
+  source: "seed" | "user";
   active: boolean;
   sort_order: number;
   notes: string | null;
@@ -232,8 +236,21 @@ export interface EquipmentOptions {
 
 // ── Fetch Functions ──────────────────────────────────────────────────────
 
-export const fetchRigs = (activeOnly = true) =>
-  apiFetch<Rig[]>(`/rigs${activeOnly ? "" : "?active_only=false"}`);
+export const fetchRigs = (activeOnly = true, mine = false) => {
+  const sp = new URLSearchParams();
+  if (!activeOnly) sp.set("active_only", "false");
+  if (mine) sp.set("mine", "true");
+  const qs = sp.toString();
+  return apiFetch<Rig[]>(`/rigs${qs ? `?${qs}` : ""}`);
+};
+
+/** Claim or unclaim a rig as the user's own. */
+export const setRigMine = (id: number, isMine: boolean) =>
+  apiFetch<Rig>(`/rigs/${id}/mine`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_mine: isMine }),
+  });
 
 export const fetchRig = (id: number, locationId?: number) =>
   apiFetch<Rig>(`/rigs/${id}${locationId ? `?location_id=${locationId}` : ""}`);
@@ -252,8 +269,9 @@ export const updateRig = (id: number, data: Partial<RigCreate>) =>
     body: JSON.stringify(data),
   });
 
+/** Removing an untouched pre-defined rig drops it; anything else is retired. */
 export const deleteRig = (id: number) =>
-  apiFetch<void>(`/rigs/${id}`, { method: "DELETE" });
+  apiFetch<{ outcome: "removed" | "retired" }>(`/rigs/${id}`, { method: "DELETE" });
 
 export const restoreRig = (id: number) =>
   apiFetch<Rig>(`/rigs/${id}/restore`, { method: "POST" });

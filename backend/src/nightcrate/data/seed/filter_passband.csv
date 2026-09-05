@@ -2,6 +2,13 @@ seed_key,filter_seed_key,bandwidth_nm,central_wavelength_nm,line_name,peak_trans
 # --- L-eNhance (tri-band, 2 physical passbands) ---
 filter_passband.optolong.l_enhance.ha,filter.optolong.l_enhance,10.0,656.3,Ha,85.0
 filter_passband.optolong.l_enhance.oiii,filter.optolong.l_enhance,24.0,498.0,Oiii,85.0
+# The L-eNhance passes Ha Hb and OIII through two physical windows: a narrow Ha
+# window and a wide one covering Hb and OIII together. A passband row is one
+# emission line the filter usefully passes — not one physical window — so Hb gets
+# its own row sharing the wide window's 24nm width. Without it no integration
+# through this filter ever accumulates against Hb. Nothing sums bandwidth across
+# rows so recording the shared width twice is correct input for moon scattering.
+filter_passband.optolong.l_enhance.hb,filter.optolong.l_enhance,24.0,486.1,Hb,85.0
 # --- L-eXtreme (dual 7nm) ---
 filter_passband.optolong.l_extreme.ha,filter.optolong.l_extreme,7.0,656.3,Ha,85.0
 filter_passband.optolong.l_extreme.oiii,filter.optolong.l_extreme,7.0,500.7,Oiii,85.0
@@ -34,9 +41,9 @@ filter_passband.antlia.ultra_2_5nm_ha.ha,filter.antlia.ultra_2_5nm_ha,2.5,656.3,
 filter_passband.antlia.ultra_2_5nm_oiii.oiii,filter.antlia.ultra_2_5nm_oiii,2.5,500.7,Oiii,93.0
 filter_passband.antlia.ultra_2_5nm_sii.sii,filter.antlia.ultra_2_5nm_sii,2.5,671.6,Sii,95.0
 # --- Antlia 3nm Pro ---
-filter_passband.antlia.pro_3nm_ha.ha,filter.antlia.pro_3nm_ha,3.0,656.3,Ha,90.0
-filter_passband.antlia.pro_3nm_oiii.oiii,filter.antlia.pro_3nm_oiii,3.0,500.7,Oiii,90.0
-filter_passband.antlia.pro_3nm_sii.sii,filter.antlia.pro_3nm_sii,3.0,671.6,Sii,90.0
+filter_passband.antlia.pro_3nm_ha.ha,filter.antlia.pro_3nm_ha,3.0,656.3,Ha,88.0
+filter_passband.antlia.pro_3nm_oiii.oiii,filter.antlia.pro_3nm_oiii,3.0,500.7,Oiii,88.0
+filter_passband.antlia.pro_3nm_sii.sii,filter.antlia.pro_3nm_sii,3.0,671.6,Sii,88.0
 # --- Antlia 3nm Pro Highspeed ---
 filter_passband.antlia.pro_3nm_hs_ha.ha,filter.antlia.pro_3nm_hs_ha,3.0,656.3,Ha,90.0
 filter_passband.antlia.pro_3nm_hs_oiii.oiii,filter.antlia.pro_3nm_hs_oiii,3.0,500.7,Oiii,90.0
@@ -105,3 +112,17 @@ filter_passband.askar.cm_e1.ha,filter.askar.cm_e1,3.0,656.3,Ha,88.0
 filter_passband.askar.cm_e1.oiii,filter.askar.cm_e1,3.0,500.7,Oiii,88.0
 filter_passband.askar.cm_e2.sii,filter.askar.cm_e2,3.0,672.0,Sii,88.0
 filter_passband.askar.cm_e2.oiii,filter.askar.cm_e2,3.0,500.7,Oiii,88.0
+# --- Filters built into smart telescopes ---
+# Emission lines only, matching every other filter here: none of the 13 seeded
+# UV/IR-cut or light-pollution filters carries a passband, because a blocking
+# filter's transmission window is not a bandpass in the sense this table means.
+# These rows drive per-line integration budgets and moon sensitivity, and a
+# UV/IR-cut row would invent a "UVIR line" to accumulate hours against.
+#
+# The opaque "dark" positions likewise appear nowhere. The DWARF dual-band rows
+# carry no bandwidth: DwarfLab publishes its lines but not their widths, and
+# since 0051 that is recordable rather than a reason to omit the filter.
+filter_passband.zwo.seestar_duo_band.ha,filter.zwo.seestar_duo_band,20.0,656.3,Ha,
+filter_passband.zwo.seestar_duo_band.oiii,filter.zwo.seestar_duo_band,30.0,500.7,Oiii,
+filter_passband.dwarflab.duo_band.ha,filter.dwarflab.duo_band,,656.3,Ha,
+filter_passband.dwarflab.duo_band.oiii,filter.dwarflab.duo_band,,500.7,Oiii,

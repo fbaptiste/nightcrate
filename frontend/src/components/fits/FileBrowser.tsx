@@ -229,8 +229,16 @@ export function FileBrowser({
 
   function handleOpen() {
     if (directoryMode) {
-      // Select the currently-displayed real directory (not archives/projects).
-      if (result?.path && !activeProject && !activeArchive) {
+      // Inside an archive, select the archive itself or a directory within it,
+      // as the `archive::entry` virtual path the rest of the app speaks. Ingest
+      // walks archives and reads entries straight out of them.
+      if (activeArchive) {
+        onSelect(archiveSubdir ? `${activeArchive}::${archiveSubdir}` : activeArchive);
+        onClose();
+        return;
+      }
+      // Otherwise the currently-displayed real directory (never a PI project).
+      if (result?.path && !activeProject) {
         onSelect(result.path);
         onClose();
       }
@@ -718,11 +726,17 @@ export function FileBrowser({
           onClick={handleOpen}
           disabled={
             directoryMode
-              ? !result?.path || !!activeProject || !!activeArchive || loading
+              ? (!activeArchive && (!result?.path || !!activeProject)) ||
+                loading ||
+                archiveLoading
               : !selectedFile
           }
         >
-          {directoryMode ? "Select This Folder" : "Open"}
+          {directoryMode
+            ? activeArchive
+              ? "Select This Archive Folder"
+              : "Select This Folder"
+            : "Open"}
         </Button>
       </DialogActions>
     </Dialog>

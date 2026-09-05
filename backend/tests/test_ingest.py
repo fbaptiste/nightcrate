@@ -31,7 +31,7 @@ from nightcrate.services.ingest_scanner import (
     parse_image_file,
     scan_directory,
 )
-from nightcrate.services.ingest_sessions import observing_night, session_key
+from nightcrate.services.ingest_sessions import observing_night
 from nightcrate.services.ingest_sessions import observing_window_utc as _observing_window_utc
 
 # ── Pure: extension classification ───────────────────────────────────────────
@@ -96,6 +96,98 @@ class TestClassifyFrame:
         assert route == CATEGORY_SUB
         assert frame_type == "unknown"
 
+    # --- IMAGETYP absent entirely (smart scopes: DWARF, ZWO Seestar) ---
+    #
+    # Verified against a DWARF mini folder: a light carries OBJECT / RA / DEC /
+    # EXPTIME / FILTER, while its dark and flat carry only structural keywords
+    # plus BAYERPAT. Nothing anywhere writes IMAGETYP.
+
+    _DWARF_LIGHT_META = {
+        "exposure_time": 60.0,
+        "object_name": "HD 200178",
+        "ra": 315.1261,
+        "dec": 43.56413,
+        "filter_name": "Duo-Band",
+    }
+
+    def test_on_sky_header_without_imagetyp_is_a_light(self):
+        route, frame_type = classify_frame(
+            self._DWARF_LIGHT_META,
+            {"BAYERPAT": "RGGB"},
+            filename="HD 200178_60s60_Duo-Band_20260901-204952011_38C.fits",
+        )
+        assert route == CATEGORY_SUB
+        assert frame_type == "light"
+
+    def test_on_sky_evidence_outranks_a_misleading_filename(self):
+        """A light of "Dark Horse Nebula" must not read as a dark."""
+        route, frame_type = classify_frame(
+            self._DWARF_LIGHT_META | {"object_name": "Dark Horse Nebula"},
+            {},
+            filename="Dark Horse Nebula_60s_20260901-204952_38C.fits",
+        )
+        assert route == CATEGORY_SUB
+        assert frame_type == "light"
+
+    def test_coordinates_alone_are_on_sky_evidence(self):
+        route, frame_type = classify_frame(
+            {"exposure_time": 60.0, "ra": 315.1261, "dec": 43.56413},
+            {},
+            filename="20260901-204952011_38C.fits",
+        )
+        assert frame_type == "light"
+
+    @pytest.mark.parametrize(
+        "filename,expected",
+        [
+            ("dark_exp_60.000000_gain_60_bin_1_39C_stack_1.fits", "dark"),
+            ("flat_gain_2_bin_1_ir_1.fits", "flat"),
+            ("Light_M31_10.0s_IRCUT_20260101-201500.fit", "light"),
+            ("Dark_10.0s_20260101-201500.fit", "dark"),
+            ("bias_gain_100_bin_1.fits", "bias"),
+            ("darkflat_2.2s_gain_100.fits", "dark_flat"),
+            ("dark_flat_2.2s_gain_100.fits", "dark_flat"),
+            ("flat-dark-2.2s.fits", "dark_flat"),
+        ],
+    )
+    def test_filename_token_when_header_is_silent(self, filename, expected):
+        route, frame_type = classify_frame({}, {"BAYERPAT": "RGGB"}, filename=filename)
+        assert route == CATEGORY_SUB
+        assert frame_type == expected
+
+    def test_no_exposure_is_not_a_light(self):
+        """Pointing keywords without a real exposure are not enough."""
+        route, frame_type = classify_frame(
+            {"object_name": "HD 200178", "ra": 315.1261, "dec": 43.56413},
+            {},
+            filename="something.fits",
+        )
+        assert frame_type == "unknown"
+
+    def test_zero_exposure_is_not_a_light(self):
+        route, frame_type = classify_frame(
+            self._DWARF_LIGHT_META | {"exposure_time": 0.0}, {}, filename="x.fits"
+        )
+        assert frame_type == "unknown"
+
+    def test_unrecognized_filename_stays_unknown(self):
+        """Never guessed at — the catalog surfaces it for correction instead."""
+        route, frame_type = classify_frame({}, {}, filename="IMG_4021.fits")
+        assert route == CATEGORY_SUB
+        assert frame_type == "unknown"
+
+    def test_filename_is_never_consulted_when_imagetyp_exists(self):
+        """A header type always wins, even against a contradicting filename."""
+        route, frame_type = classify_frame(
+            {}, {"IMAGETYP": "DARK"}, filename="light_something.fits"
+        )
+        assert frame_type == "dark"
+
+    def test_token_must_lead_the_filename(self):
+        """A type word buried mid-name is not a classification signal."""
+        route, frame_type = classify_frame({}, {}, filename="NGC7000_shot_through_flat_clouds.fits")
+        assert frame_type == "unknown"
+
     def test_stack_by_ncombine(self):
         assert is_stack({}, {"IMAGETYP": "Light", "NCOMBINE": "25"}) is True
         route, _ = classify_frame({}, {"IMAGETYP": "Light", "NCOMBINE": "25"})
@@ -137,13 +229,6 @@ class TestSessionFormation:
     def test_invalid_tz_falls_back_to_utc(self):
         assert observing_night("2026-03-15T22:00:00+00:00", "Not/AZone") == "2026-03-15"
 
-    def test_session_key_separates_rigs(self):
-        k_none = session_key(None, "2026-03-15T22:00:00+00:00", "UTC")
-        k_rig = session_key(3, "2026-03-15T22:00:00+00:00", "UTC")
-        assert k_none == (None, "2026-03-15")
-        assert k_rig == (3, "2026-03-15")
-        assert k_none != k_rig
-
     def test_observing_window_utc_uses_site_offset(self):
         # Local noon-to-noon in the site tz, converted to UTC — NOT a literal
         # noon-UTC stamp (the old bug). Phoenix is UTC-7 → local noon = 19:00 UTC.
@@ -182,6 +267,63 @@ class TestScanner:
         assert all(
             not e.name.startswith(".") or e.name.endswith(".pxiproject") for e in entries.values()
         )
+
+    def test_scan_walks_inside_a_zip(self, tmp_path: Path):
+        """A source folder may live inside an archive; entries get :: virtual paths."""
+        import zipfile
+
+        staged = tmp_path / "staged"
+        (staged / "lights").mkdir(parents=True)
+        (staged / "calib").mkdir()
+        _write_fits(staged / "lights" / "light_001.fits", imagetyp="LIGHT", filt="Ha")
+        _write_fits(staged / "calib" / "dark_001.fits", imagetyp="DARK")
+        (staged / "notes.md").write_text("hi")
+        (staged / ".hidden.fits").write_bytes(b"x")
+
+        archive = tmp_path / "night.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            for f in sorted(staged.rglob("*")):
+                if f.is_file():
+                    zf.write(f, f.relative_to(staged).as_posix())
+
+        entries = {e.name: e for e in scan_directory(str(archive))}
+        assert set(entries) == {"light_001.fits", "dark_001.fits", "notes.md"}
+        assert entries["light_001.fits"].path == f"{archive}::lights/light_001.fits"
+        assert entries["light_001.fits"].category == CATEGORY_SUB
+        assert entries["notes.md"].category == CATEGORY_OTHER
+        assert entries["light_001.fits"].size_bytes > 0
+
+        # A directory *within* the archive scopes the walk.
+        sub = {e.name for e in scan_directory(f"{archive}::lights")}
+        assert sub == {"light_001.fits"}
+
+    def test_parse_entry_inside_zip_matches_the_loose_file(self, tmp_path: Path):
+        """Same bytes, same content hash — archived or not."""
+        import zipfile
+
+        loose = tmp_path / "frame.fits"
+        _write_fits(loose, imagetyp="LIGHT", filt="Ha")
+        archive = tmp_path / "night.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.write(loose, "sub/frame.fits")
+
+        direct = parse_image_file(str(loose))
+        zipped = parse_image_file(f"{archive}::sub/frame.fits")
+
+        assert zipped["error"] is None
+        assert zipped["content_hash"] == direct["content_hash"]
+        assert zipped["size_bytes"] == direct["size_bytes"]
+        assert zipped["raw_header"]["IMAGETYP"] == direct["raw_header"]["IMAGETYP"]
+
+    def test_parse_missing_zip_entry_is_a_recorded_error(self, tmp_path: Path):
+        import zipfile
+
+        archive = tmp_path / "night.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("a.txt", "x")
+        result = parse_image_file(f"{archive}::nope.fits")
+        assert result["error"] is not None
+        assert "path" in result
 
     def test_scan_missing_dir_returns_empty(self, tmp_path: Path):
         assert scan_directory(str(tmp_path / "nope")) == []
@@ -351,8 +493,59 @@ class TestIngestEndToEnd:
         assert summary["logs"] == 1
         assert summary["pxiprojects"] == 1
         assert summary["other"] == 1  # notes.md
-        # One observing night, one rig bucket (NULL) → one session.
+        # One observing night → one session.
         assert summary["sessions"] == 1
+
+    async def test_ingest_a_folder_inside_a_zip(self, client, imaging_folder):
+        """The same capture layout, zipped, catalogs identically."""
+        import zipfile
+
+        archive = imaging_folder.parent / "night.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            for f in sorted(imaging_folder.rglob("*")):
+                if f.is_file():
+                    zf.write(f, f.relative_to(imaging_folder).as_posix())
+
+        pid = await _make_project(client, "Zipped")
+        resp = await client.post(f"/api/projects/{pid}/folders", json={"path": str(archive)})
+        assert resp.status_code == 201, resp.text
+
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        assert run["status"] == "completed"
+        assert run["errors_count"] == 0
+        assert run["subs_inserted"] == 5
+
+        summary = (await client.get(f"/api/projects/{pid}/catalog/summary")).json()
+        assert summary["lights"] == 2
+        assert summary["darks"] == 1
+        assert summary["flats"] == 1
+        assert summary["processed"] == 1
+        assert summary["sessions"] == 1
+
+        # Re-scan stays idempotent through the archive.
+        again = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        assert again["subs_inserted"] == 0
+        assert again["subs_updated"] == 5
+
+    async def test_ingest_a_subdirectory_inside_a_zip(self, client, imaging_folder):
+        """Binding `archive::sub` scopes the catalog to that directory."""
+        import zipfile
+
+        archive = imaging_folder.parent / "scoped.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            for f in sorted(imaging_folder.rglob("*")):
+                if f.is_file():
+                    zf.write(f, f.relative_to(imaging_folder).as_posix())
+
+        pid = await _make_project(client, "Zipped subdir")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": f"{archive}::raw/H"})
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        assert run["errors_count"] == 0
+        assert run["subs_inserted"] == 2  # only the two lights under raw/H
+
+        summary = (await client.get(f"/api/projects/{pid}/catalog/summary")).json()
+        assert summary["lights"] == 2
+        assert summary["darks"] == 0
 
     async def test_idempotent_reingest(self, client, imaging_folder):
         pid = await _make_project(client, "Idem")
@@ -498,8 +691,8 @@ class TestIngestEndToEnd:
         assert fb[0]["path"].startswith(str(b))
 
     async def test_lights_ingest_with_null_filter(self, client, imaging_folder):
-        # Aliases are empty → filter_id stays NULL, but the raw FILTER is kept as
-        # the hint and the light still catalogs as a light.
+        # Nothing identifies equipment, so the FILTER header IS the filter fact:
+        # it is stored as filter_name_hint and surfaces as the frame's filter_name.
         pid = await _make_project(client, "PartialEq")
         await client.post(f"/api/projects/{pid}/folders", json={"path": str(imaging_folder)})
         await client.post(f"/api/projects/{pid}/ingest")
@@ -766,8 +959,8 @@ class TestClassificationRefinements:
             assert r["file_size_bytes"] > 0
 
     async def test_master_filter_and_dimensions(self, client, tmp_path):
-        # A master flat carries FILTER + NAXIS → Masters tab shows bandpass +
-        # dimensions even without rig context (filter_id won't resolve).
+        # A master flat carries FILTER + NAXIS → Masters tab shows the bandpass
+        # canonicalized from FILTER, plus dimensions from NAXIS.
         folder = tmp_path / "MMeta"
         folder.mkdir()
         _write_fits(

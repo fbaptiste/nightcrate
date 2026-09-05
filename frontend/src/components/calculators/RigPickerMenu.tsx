@@ -26,8 +26,8 @@ export default function RigPickerMenu({
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   const { data: rigs } = useQuery<Rig[]>({
-    queryKey: ["rigs", "calculator-picker"],
-    queryFn: () => fetchRigs(true),
+    queryKey: ["rigs", "mine"],
+    queryFn: () => fetchRigs(true, true),
   });
 
   const open = Boolean(anchorEl);

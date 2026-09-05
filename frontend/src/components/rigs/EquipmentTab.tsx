@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import { TreeItem } from "@mui/x-tree-view/TreeItem";
@@ -136,6 +136,20 @@ export default function EquipmentTab({ rig }: EquipmentTabProps) {
     hasSummary ? "summary" : `camera:${rig.camera_id}`,
   );
 
+  // Controlled, because the equipment loads in stages: buildTree adds the camera,
+  // filter and software groups only once their queries resolve, so an uncontrolled
+  // defaultExpandedItems changes after mount and MUI logs an error. Newly arrived
+  // groups are expanded once each — a group the user has since collapsed stays
+  // collapsed, because it is already in seenGroups.
+  const [expandedItems, setExpandedItems] = useState<string[]>(tree.defaultExpanded);
+  const seenGroups = useRef(new Set(tree.defaultExpanded));
+  useEffect(() => {
+    const fresh = tree.defaultExpanded.filter((id) => !seenGroups.current.has(id));
+    if (fresh.length === 0) return;
+    fresh.forEach((id) => seenGroups.current.add(id));
+    setExpandedItems((prev) => [...prev, ...fresh]);
+  }, [tree.defaultExpanded]);
+
   const coreLoading = tLoading || cLoading;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -175,7 +189,8 @@ export default function EquipmentTab({ rig }: EquipmentTabProps) {
               setSelectedId(itemId);
             }
           }}
-          defaultExpandedItems={tree.defaultExpanded}
+          expandedItems={expandedItems}
+          onExpandedItemsChange={(_event, itemIds) => setExpandedItems(itemIds)}
         >
           {tree.nodes}
         </SimpleTreeView>
@@ -804,10 +819,20 @@ function SensorBody({ sensor, label }: { sensor: Sensor; label?: string }) {
       {sensor.full_well_capacity_ke != null && (
         <Field label="Full Well" value={`${sensor.full_well_capacity_ke} ke⁻`} />
       )}
-      {sensor.read_noise_e != null && (
-        <Field label="Read Noise" value={`${sensor.read_noise_e} e⁻`} />
+      {sensor.read_noise_low_gain_e != null && (
+        <Field label="Read Noise (Low Gain)" value={`${sensor.read_noise_low_gain_e} e⁻`} />
       )}
-      {sensor.peak_qe_pct != null && <Field label="Peak QE" value={`${sensor.peak_qe_pct}%`} />}
+      {sensor.read_noise_high_gain_e != null && (
+        <Field label="Read Noise (High Gain)" value={`${sensor.read_noise_high_gain_e} e⁻`} />
+      )}
+      {sensor.peak_qe_pct != null && (
+        <Field
+          label="Peak QE"
+          value={`${sensor.peak_qe_pct}%${
+            sensor.peak_qe_wavelength_nm != null ? ` @ ${sensor.peak_qe_wavelength_nm}nm` : ""
+          }`}
+        />
+      )}
       <Field label="Dual Gain" value={sensor.dual_gain ? "Yes" : "No"} />
       {sensor.notes && <Field label="Notes" value={sensor.notes} />}
     </Subsection>
@@ -832,23 +857,17 @@ function CameraBody({ camera }: { camera: Camera }) {
       )}
       {camera.connector_size && <Field label="Connector" value={camera.connector_size.name} />}
       {camera.unity_gain != null && <Field label="Unity Gain" value={camera.unity_gain} />}
-      {(camera.effective_read_noise_lcg_e != null ||
-        camera.effective_read_noise_hcg_e != null ||
+      {(camera.effective_read_noise_low_gain_e != null ||
+        camera.effective_read_noise_high_gain_e != null ||
         camera.effective_full_well_ke != null ||
         camera.effective_peak_qe_pct != null ||
         camera.hcg_threshold_gain != null) && (
         <Subsection title="Vendor-tuned Specs">
-          {camera.effective_read_noise_lcg_e != null && (
-            <Field
-              label="Read Noise (LCG)"
-              value={`${camera.effective_read_noise_lcg_e} e⁻`}
-            />
+          {camera.effective_read_noise_low_gain_e != null && (
+            <Field label="Read Noise (Low Gain)" value={`${camera.effective_read_noise_low_gain_e} e⁻`} />
           )}
-          {camera.effective_read_noise_hcg_e != null && (
-            <Field
-              label="Read Noise (HCG)"
-              value={`${camera.effective_read_noise_hcg_e} e⁻`}
-            />
+          {camera.effective_read_noise_high_gain_e != null && (
+            <Field label="Read Noise (High Gain)" value={`${camera.effective_read_noise_high_gain_e} e⁻`} />
           )}
           {camera.hcg_threshold_gain != null && (
             <Field label="HCG Threshold Gain" value={camera.hcg_threshold_gain} />
@@ -949,6 +968,12 @@ function MountBody({ mount }: { mount: Mount }) {
       {mount.mount_type && <Field label="Type" value={mount.mount_type.name} />}
       {mount.payload_capacity_kg != null && (
         <Field label="Payload Capacity" value={`${mount.payload_capacity_kg} kg`} />
+      )}
+      {mount.payload_capacity_with_cw_kg != null && (
+        <Field
+          label="Payload With Counterweight"
+          value={`${mount.payload_capacity_with_cw_kg} kg`}
+        />
       )}
       {mount.mount_weight_kg != null && (
         <Field label="Mount Weight" value={`${mount.mount_weight_kg} kg`} />

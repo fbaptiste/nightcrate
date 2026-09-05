@@ -14,6 +14,7 @@ from nightcrate.seed_loader.csv_reader import read_seed_csv
 from nightcrate.seed_loader.hash import HASH_CONTRACT_VERSION, compute_seed_hash
 from nightcrate.seed_loader.models import SeedError, SeedReport, TableReport
 from nightcrate.seed_loader.registry import LOAD_ORDER, SeedableTable
+from nightcrate.seed_loader.rehash import apply_rehash_steps
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -22,9 +23,6 @@ from nightcrate.seed_loader.registry import LOAD_ORDER, SeedableTable
 # Maps SQLite declared type keywords → Python converter tag
 _INT_TYPES = {"INTEGER", "INT", "SMALLINT", "TINYINT", "MEDIUMINT", "BIGINT"}
 _REAL_TYPES = {"REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL"}
-
-# Alias table names (no seed_key/seed_hash)
-_ALIAS_SUFFIX = "_alias"
 
 
 def _get_column_types(conn: sqlite3.Connection, table_name: str) -> dict[str, str]:
@@ -123,10 +121,6 @@ def _build_incoming(
     return incoming if ok else None
 
 
-def _is_alias_table(table: SeedableTable) -> bool:
-    return table.table_name.endswith(_ALIAS_SUFFIX)
-
-
 def _is_child_table(table: SeedableTable) -> bool:
     return table.parent_key_column is not None and not table.is_junction
 
@@ -206,6 +200,10 @@ def load_all(
 
     report = SeedReport(mode=effective_mode)
 
+    # Repair hashes invalidated by a migration that changed a table's
+    # seeded_fields, before anything reads them. Idempotent per database.
+    report.migration_rehashed = apply_rehash_steps(conn)
+
     # ------------------------------------------------------------------
     # In-memory FK map: (table_name, seed_key) → id
     # ------------------------------------------------------------------
@@ -234,6 +232,24 @@ def load_all(
 
         col_types = _get_column_types(conn, table.table_name)
 
+        # The update path reads every seeded field off the existing row by name.
+        # If the registry names a column the schema does not have, that surfaces
+        # as a bare IndexError from sqlite3.Row deep inside the loop — and
+        # IndexError is not in main.py's _SEED_EXPECTED_ERRS, so it takes startup
+        # down without saying why. Check once, up front, and name the problem.
+        missing = [f for f in table.seeded_fields if f not in col_types]
+        if missing:
+            # ValueError rather than RuntimeError so main.py's _SEED_EXPECTED_ERRS
+            # catches it: the app logs the problem with a traceback and still
+            # starts, exactly as it does for the parallel registry-vs-CSV
+            # divergence in csv_reader._validate_header. Refusing to boot a local
+            # desktop app over stale seed data would be the worse trade.
+            raise ValueError(
+                f"Table {table.table_name!r} is missing seeded column(s) {sorted(missing)}. "
+                f"registry.py and the schema have diverged — most likely a migration "
+                f"that renames or adds a seeded field has not been applied."
+            )
+
         if table.is_junction:
             _load_junction_table(
                 conn=conn,
@@ -242,16 +258,6 @@ def load_all(
                 fk_map=fk_map,
                 col_types=col_types,
                 inserted_or_updated=inserted_or_updated,
-                report=report,
-                errors=errors,
-            )
-        elif _is_alias_table(table):
-            _load_alias_table(
-                conn=conn,
-                table=table,
-                rows=rows,
-                fk_map=fk_map,
-                col_types=col_types,
                 report=report,
                 errors=errors,
             )
@@ -410,8 +416,30 @@ def _load_regular_table(
                 current_hash = compute_seed_hash(current_row)
 
                 if current_hash != existing["seed_hash"]:
-                    # User has modified this row — skip
-                    table_report.skipped_user_modified.append(seed_key)
+                    if current_hash == incoming_hash:
+                        # The row still holds exactly what the CSV says, so nobody
+                        # edited it — the stored hash simply predates a change to
+                        # this table's ``seeded_fields``. A field NAME is part of the
+                        # hashed payload (see hash.compute_seed_hash), so renaming or
+                        # adding a seeded field invalidates every stored hash in the
+                        # table at once, and without this branch every row would be
+                        # read as user-modified and stranded permanently. Rewriting
+                        # the hash touches no value.
+                        conn.execute(
+                            f"UPDATE {table.table_name} SET seed_hash = ? WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
+                            (current_hash, existing_id),
+                        )
+                        table_report.rehashed += 1
+                    else:
+                        # Genuinely user-modified — leave it alone.
+                        #
+                        # This test conflates two questions, "was this row edited"
+                        # and "is this row up to date", so a row that is untouched
+                        # but whose CSV value changed in the same release as the
+                        # field-set change lands here too. seed_loader/rehash.py
+                        # answers the first question directly, and a migration that
+                        # renames a seeded field needs a step there.
+                        table_report.skipped_user_modified.append(seed_key)
                     continue
 
                 if incoming_hash == existing["seed_hash"]:
@@ -430,7 +458,7 @@ def _load_regular_table(
                 table_inserted_or_updated.add(seed_key)
                 table_report.updated += 1
 
-    # Orphan detection (update mode only, for regular non-alias non-junction tables)
+    # Orphan detection (update mode only, for regular non-junction tables)
     if effective_mode == "update" and csv_seed_keys:
         placeholders = ",".join("?" for _ in csv_seed_keys)
         orphan_rows = conn.execute(
@@ -667,7 +695,15 @@ def _load_child_table(
                 current_hash = compute_seed_hash(current_row)
 
                 if current_hash != existing_child["seed_hash"]:
-                    table_report.skipped_user_modified.append(child_seed_key_val)
+                    # Same contract as the regular-table path above.
+                    if current_hash == incoming_hash:
+                        conn.execute(
+                            f"UPDATE {table.table_name} SET seed_hash = ? WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
+                            (current_hash, existing_id),
+                        )
+                        table_report.rehashed += 1
+                    else:
+                        table_report.skipped_user_modified.append(child_seed_key_val)
                     continue
 
                 if incoming_hash == existing_child["seed_hash"]:
@@ -697,63 +733,5 @@ def _load_child_table(
                 ).fetchall()
                 for orphan in orphan_rows:
                     table_report.orphaned.append(orphan["seed_key"])
-
-    report.per_table[table.table_name] = table_report
-
-
-# ---------------------------------------------------------------------------
-# Alias table loader
-# ---------------------------------------------------------------------------
-
-
-def _load_alias_table(
-    conn: sqlite3.Connection,
-    table: SeedableTable,
-    rows: list[dict],
-    fk_map: dict[tuple[str, str], int],
-    col_types: dict[str, str],
-    report: SeedReport,
-    errors: list[SeedError],
-) -> None:
-    """Alias tables: INSERT OR IGNORE keyed by alias (UNIQUE). Append-only."""
-    table_report = TableReport()
-
-    for row in rows:
-        alias_val = row.get("alias")
-        incoming = _build_incoming(
-            row=row,
-            table=table,
-            col_types=col_types,
-            fk_map=fk_map,
-            conn=conn,
-            errors=errors,
-            seed_key=alias_val,  # type: ignore[arg-type]
-        )
-        if incoming is None:
-            continue
-
-        # Alias rows always have source = 'seed' from the CSV
-        cols = list(incoming.keys())
-        vals = list(incoming.values())
-        placeholders = ", ".join("?" for _ in cols)
-        col_str = ", ".join(cols)
-        try:
-            cur = conn.execute(
-                f"INSERT OR IGNORE INTO {table.table_name} ({col_str}) VALUES ({placeholders})",
-                vals,
-            )
-            if cur.rowcount == 1:
-                table_report.inserted += 1
-            else:
-                table_report.unchanged += 1
-        except sqlite3.IntegrityError as exc:
-            errors.append(
-                SeedError(
-                    table=table.table_name,
-                    seed_key=alias_val,
-                    message=f"Alias INSERT failed: {exc}",
-                    exception=str(exc),
-                )
-            )
 
     report.per_table[table.table_name] = table_report

@@ -110,8 +110,8 @@ export default function WishlistCalendarView({
   });
 
   const rigsQuery = useQuery({
-    queryKey: ["rigs"],
-    queryFn: () => fetchRigs(true),
+    queryKey: ["rigs", "mine"],
+    queryFn: () => fetchRigs(true, true),
     staleTime: 5 * 60_000,
   });
 

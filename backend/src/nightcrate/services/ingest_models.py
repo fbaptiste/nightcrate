@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from nightcrate.services.ingest_classify import FRAME_TYPES
+
+# Derived from the single vocabulary in services/ingest_classify.py rather than
+# restated, so the two cannot drift. A test still pins both to the
+# sub_frame.frame_type CHECK constraint (migration 0037).
+FrameTypeName = Literal[*FRAME_TYPES]
 
 
 class SourceFolder(BaseModel):
@@ -12,12 +19,25 @@ class SourceFolder(BaseModel):
     project_id: int
     path: str
     is_primary: bool
+    rig_id: int | None = None
+    """Which rig shot the frames under this folder. **User-declared, never inferred**
+    — it is the one equipment fact the ingest records. Frames inherit it, sessions key
+    on it so a simultaneous dual-rig night splits, and calibration matching scopes on
+    it. NULL means "not stated", which is a valid answer."""
+    rig_name: str | None = None
     added_at: str
 
 
 class SourceFolderCreate(BaseModel):
     path: str
     is_primary: bool = False
+    rig_id: int | None = None
+
+
+class SourceFolderUpdate(BaseModel):
+    """Partial update. Only ``rig_id`` is editable; an explicit null clears it."""
+
+    rig_id: int | None = None
 
 
 class IngestStatus(BaseModel):
@@ -34,21 +54,6 @@ class IngestStatus(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     message: str | None = None
-
-
-class AttributionSummary(BaseModel):
-    """Result of a rig-attribution / equipment re-resolution pass (v0.41.0)."""
-
-    rigs_considered: int = 0
-    frames_processed: int = 0
-    frames_changed: int = 0
-    rigs_attributed: int = 0
-    cameras_rig_corrected: int = 0
-    cameras_resolved: int = 0
-    telescopes_resolved: int = 0
-    filters_resolved: int = 0
-    masters_processed: int = 0
-    masters_changed: int = 0
 
 
 class CatalogSummary(BaseModel):
@@ -75,7 +80,7 @@ class CatalogFrame(BaseModel):
     kind: str  # "sub_frame" | "processed_image"
     frame_type: str | None = None
     path: str | None = None
-    filter_name: str | None = None  # resolved model name, else raw header hint
+    filter_name: str | None = None  # the FITS FILTER header value
     object_hint: str | None = None
     exposure_seconds: float | None = None
     gain: float | None = None
@@ -85,36 +90,42 @@ class CatalogFrame(BaseModel):
     image_height: int | None = None
     file_size_bytes: int | None = None
     date_obs_utc: str | None = None
-    camera_id: int | None = None
-    telescope_id: int | None = None
     accepted: bool | None = None
-    # Attribution (v0.41.0) — resolved display names + per-field source flags.
-    filter_id: int | None = None
-    filter_model: str | None = None  # set only when filter_id resolved
-    camera_model: str | None = None
-    rig_id: int | None = None
+    # The rig the user tagged on this frame's source folder (v0.41.1). NULL is a
+    # valid answer — "not stated" — and renders as no chip rather than a blank one.
     rig_name: str | None = None
-    rig_source: str | None = None  # 'auto' | 'user'
-    camera_source: str | None = None
-    filter_source: str | None = None
+    # Classification (v0.41.1) — hand-correctable, guarded by a source flag.
+    project_target_id: int | None = None
+    target_name: str | None = None  # resolved DSO designation for display
+    frame_type_source: str | None = None
+    project_target_source: str | None = None
 
 
-OverridableField = Literal["rig_id", "camera_id", "filter_id"]
+CorrectableField = Literal["frame_type", "project_target_id"]
 
 
-class EquipmentOverride(BaseModel):
-    """Per-frame manual attribution override (v0.41.0).
+class FrameCorrection(BaseModel):
+    """Per-frame manual classification correction (v0.41.1).
 
-    A field present in the request body is applied verbatim (including an
-    explicit ``null`` = "this frame has no X") and its ``*_source`` flips to
-    ``'user'`` so automated passes never clobber it. ``reset_to_auto`` flips a
-    field back to automated control — the next re-run refills it.
+    A field present in the body is applied verbatim (explicit ``null`` = "none")
+    and its ``*_source`` flips to ``'user'``, so the ingest passes that re-derive
+    these values on every scan leave them alone. ``reset_to_auto`` hands a field
+    back to the pipeline.
     """
 
-    rig_id: int | None = None
-    camera_id: int | None = None
-    filter_id: int | None = None
-    reset_to_auto: list[OverridableField] = []
+    frame_type: FrameTypeName | None = None
+    project_target_id: int | None = None
+    reset_to_auto: list[CorrectableField] = []
+
+
+class BulkFrameCorrection(FrameCorrection):
+    """A :class:`FrameCorrection` applied to several frames in one transaction."""
+
+    frame_ids: list[int] = Field(min_length=1)
+
+
+class BulkCorrectionResult(BaseModel):
+    updated: int
 
 
 class CatalogFramesPage(BaseModel):

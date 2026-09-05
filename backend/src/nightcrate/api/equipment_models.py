@@ -222,8 +222,10 @@ class SensorCreate(BaseModel):
     sensor_height_mm: float | None = None
     adc_bit_depth: int | None = None
     full_well_capacity_ke: float | None = None
-    read_noise_e: float | None = None
+    read_noise_low_gain_e: float | None = None
+    read_noise_high_gain_e: float | None = None
     peak_qe_pct: float | None = None
+    peak_qe_wavelength_nm: float | None = None
     bayer_pattern: str | None = None
     dual_gain: bool = False
     notes: str | None = None
@@ -241,8 +243,10 @@ class SensorUpdate(BaseModel):
     sensor_height_mm: float | None = None
     adc_bit_depth: int | None = None
     full_well_capacity_ke: float | None = None
-    read_noise_e: float | None = None
+    read_noise_low_gain_e: float | None = None
+    read_noise_high_gain_e: float | None = None
     peak_qe_pct: float | None = None
+    peak_qe_wavelength_nm: float | None = None
     bayer_pattern: str | None = None
     dual_gain: bool | None = None
     notes: str | None = None
@@ -261,8 +265,10 @@ class SensorResponse(BaseModel):
     sensor_height_mm: float | None
     adc_bit_depth: int | None
     full_well_capacity_ke: float | None
-    read_noise_e: float | None
+    read_noise_low_gain_e: float | None
+    read_noise_high_gain_e: float | None
     peak_qe_pct: float | None
+    peak_qe_wavelength_nm: float | None
     bayer_pattern: str | None
     dual_gain: bool
     notes: str | None
@@ -290,8 +296,8 @@ class CameraCreate(BaseModel):
     usb_hub_interface_id: int | None = None
     unity_gain: int | None = None
     effective_full_well_ke: float | None = None
-    effective_read_noise_lcg_e: float | None = None
-    effective_read_noise_hcg_e: float | None = None
+    effective_read_noise_low_gain_e: float | None = None
+    effective_read_noise_high_gain_e: float | None = None
     effective_peak_qe_pct: float | None = None
     hcg_threshold_gain: int | None = None
     notes: str | None = None
@@ -315,8 +321,8 @@ class CameraUpdate(BaseModel):
     usb_hub_interface_id: int | None = None
     unity_gain: int | None = None
     effective_full_well_ke: float | None = None
-    effective_read_noise_lcg_e: float | None = None
-    effective_read_noise_hcg_e: float | None = None
+    effective_read_noise_low_gain_e: float | None = None
+    effective_read_noise_high_gain_e: float | None = None
     effective_peak_qe_pct: float | None = None
     hcg_threshold_gain: int | None = None
     notes: str | None = None
@@ -341,8 +347,8 @@ class CameraResponse(BaseModel):
     usb_hub_interface: ConnectionInterfaceResponse | None
     unity_gain: int | None
     effective_full_well_ke: float | None
-    effective_read_noise_lcg_e: float | None
-    effective_read_noise_hcg_e: float | None
+    effective_read_noise_low_gain_e: float | None
+    effective_read_noise_high_gain_e: float | None
     effective_peak_qe_pct: float | None
     hcg_threshold_gain: int | None
     notes: str | None
@@ -539,6 +545,7 @@ class MountCreate(BaseModel):
     mount_type_id: int | None = None
     model_name: str
     payload_capacity_kg: float | None = None
+    payload_capacity_with_cw_kg: float | None = None
     mount_weight_kg: float | None = None
     counterweight_required: bool = True
     goto_capable: bool = True
@@ -555,6 +562,7 @@ class MountUpdate(BaseModel):
     mount_type_id: int | None = None
     model_name: str | None = None
     payload_capacity_kg: float | None = None
+    payload_capacity_with_cw_kg: float | None = None
     mount_weight_kg: float | None = None
     counterweight_required: bool | None = None
     goto_capable: bool | None = None
@@ -572,6 +580,7 @@ class MountResponse(BaseModel):
     mount_type: MountTypeResponse | None
     model_name: str
     payload_capacity_kg: float | None
+    payload_capacity_with_cw_kg: float | None
     mount_weight_kg: float | None
     counterweight_required: bool
     goto_capable: bool

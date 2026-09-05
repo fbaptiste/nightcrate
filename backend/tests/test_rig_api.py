@@ -189,6 +189,215 @@ def _rig_payload(eq, **overrides):
     return base
 
 
+# ── Seeded smart-telescope rigs ──────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "name,aperture_mm,focal_length_mm,focal_ratio,has_wheel",
+    [
+        ("Seestar S50", 50.0, 250.0, 5.0, True),
+        ("Seestar S30", 30.0, 150.0, 5.0, True),
+        ("Seestar S30 Pro", 30.0, 160.0, 5.3, True),
+        ("DWARF mini", 30.0, 150.0, 5.0, True),
+        # No internal filter changer — its filters are external accessories.
+        ("DWARF II", 24.0, 100.0, 4.2, False),
+    ],
+)
+async def test_seeded_smart_scope_rigs(
+    client, name, aperture_mm, focal_length_mm, focal_ratio, has_wheel
+):
+    """All-in-one scopes ship as ready-made rigs: fixed optics, nothing to assemble."""
+    rigs = (await client.get("/api/rigs")).json()
+    rig = next((r for r in rigs if r["name"] == name), None)
+    assert rig is not None, f"{name} not seeded"
+    assert rig["aperture_mm"] == aperture_mm
+    assert rig["effective_focal_length_mm"] == focal_length_mm
+    assert rig["effective_focal_ratio"] == focal_ratio
+    assert rig["camera_id"] is not None
+    assert (rig["filter_wheel_id"] is not None) is has_wheel
+    # Self-contained: they carry their own mount and do not guide.
+    assert rig["mount_id"] is None
+    assert rig["guide_camera_id"] is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "name,expected_filters",
+    [
+        ("Seestar S50", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
+        ("Seestar S30", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
+        ("Seestar S30 Pro", ["Seestar UV/IR-Cut", "Seestar Duo-Band", "Seestar Dark"]),
+        ("DWARF mini", ["DWARF Astro", "DWARF Duo-Band", "DWARF Dark"]),
+    ],
+)
+async def test_seeded_rig_filter_slots_are_populated(client, name, expected_filters):
+    """The glass is fixed in the device, so the changer ships filled."""
+    rigs = (await client.get("/api/rigs")).json()
+    rig = next(r for r in rigs if r["name"] == name)
+    slots = sorted(rig["filter_slots"], key=lambda s: s["slot_number"])
+    assert [s["slot_number"] for s in slots] == [1, 2, 3]
+    assert [s["filter_name"] for s in slots] == expected_filters
+
+
+@pytest.mark.anyio
+async def test_seeded_rigs_report_their_source(client, equipment):
+    """The UI needs this to tell a catalog rig from one the user built."""
+    created = (await client.post("/api/rigs", json=_rig_payload(equipment))).json()
+    assert created["source"] == "user"
+
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    assert s50["source"] == "seed"
+
+
+@pytest.mark.anyio
+async def test_passband_bandwidth_is_optional(client):
+    """A line can be recorded without its width (migration 0051).
+
+    DwarfLab publishes the DWARF dual-band's lines but not their bandwidths.
+    Requiring the number would mean inventing one, and an invented width feeds
+    the per-line moon-sensitivity model.
+    """
+    filters = (await client.get("/api/equipment/filter")).json()
+    duo = next(f for f in filters if f["model_name"] == "DWARF Duo-Band")
+    detail = (await client.get(f"/api/equipment/filter/{duo['id']}")).json()
+    bands = {p["line_name"]: p for p in detail["passbands"]}
+    assert set(bands) == {"Ha", "Oiii"}
+    assert bands["Ha"]["central_wavelength_nm"] == 656.3
+    assert bands["Oiii"]["central_wavelength_nm"] == 500.7
+    assert bands["Ha"]["bandwidth_nm"] is None
+    assert bands["Oiii"]["bandwidth_nm"] is None
+
+    # A published width is still recorded where one exists.
+    seestar = next(f for f in filters if f["model_name"] == "Seestar Duo-Band")
+    sdetail = (await client.get(f"/api/equipment/filter/{seestar['id']}")).json()
+    widths = {p["line_name"]: p["bandwidth_nm"] for p in sdetail["passbands"]}
+    assert widths == {"Ha": 20.0, "Oiii": 30.0}
+
+
+@pytest.mark.anyio
+async def test_dwarf_ii_has_no_filter_slots(client):
+    """It has no internal changer — its filters are external accessories."""
+    rigs = (await client.get("/api/rigs")).json()
+    rig = next(r for r in rigs if r["name"] == "DWARF II")
+    assert rig["filter_slots"] == []
+    assert rig["filter_wheel_id"] is None
+
+
+@pytest.mark.anyio
+async def test_seeded_rig_pixel_scale_is_computed(client):
+    """Sanity-check one rig end to end: 2.9um pixels at 250mm is ~2.4 arcsec/px."""
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    scale = s50["calculators"]["image_scale_arcsec_per_pixel"]
+    assert 2.35 < scale < 2.45, scale
+
+
+# ── is_mine ──────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_seeded_rigs_are_not_mine_and_user_rigs_are(client, equipment):
+    """A rig you build is yours; a catalog rig is not until you say so."""
+    created = (await client.post("/api/rigs", json=_rig_payload(equipment))).json()
+    assert created["is_mine"] is True
+
+    rigs = (await client.get("/api/rigs")).json()
+    seeded = [r for r in rigs if r["name"].startswith(("Seestar", "DWARF"))]
+    assert seeded, "expected seeded smart-scope rigs"
+    assert all(r["is_mine"] is False for r in seeded)
+
+
+@pytest.mark.anyio
+async def test_mine_filter_hides_the_catalog(client, equipment):
+    await client.post("/api/rigs", json=_rig_payload(equipment))
+    mine = (await client.get("/api/rigs?mine=true")).json()
+    assert [r["name"] for r in mine] == ["C11 Deep Sky"]
+    # Default is unchanged — nothing disappears for existing callers.
+    assert len((await client.get("/api/rigs")).json()) > 1
+
+
+@pytest.mark.anyio
+async def test_claiming_a_seeded_rig(client):
+    """Claiming a catalog rig makes it show up under ?mine=true."""
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    assert s50["is_mine"] is False
+
+    resp = await client.post(f"/api/rigs/{s50['id']}/mine", json={"is_mine": True})
+    assert resp.status_code == 200
+    assert resp.json()["is_mine"] is True
+
+    mine = (await client.get("/api/rigs?mine=true")).json()
+    assert [r["name"] for r in mine] == ["Seestar S50"]
+
+    # And it can be given back.
+    await client.post(f"/api/rigs/{s50['id']}/mine", json={"is_mine": False})
+    assert (await client.get("/api/rigs?mine=true")).json() == []
+
+
+@pytest.mark.anyio
+async def test_owned_rigs_sort_before_the_catalog(client, equipment):
+    await client.post("/api/rigs", json=_rig_payload(equipment))
+    rigs = (await client.get("/api/rigs")).json()
+    flags = [r["is_mine"] for r in rigs]
+    # Every owned rig precedes every catalog rig.
+    assert flags == sorted(flags, reverse=True)
+
+
+@pytest.mark.anyio
+async def test_toggle_mine_unknown_rig_404(client):
+    resp = await client.post("/api/rigs/999999/mine", json={"is_mine": True})
+    assert resp.status_code == 404
+
+
+# ── Deleting a pre-defined rig ───────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_deleting_an_untouched_predefined_rig_just_removes_it(client):
+    """Nothing to lose — it goes back to being on offer, not into Retired."""
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    await client.post(f"/api/rigs/{s50['id']}/mine", json={"is_mine": True})
+
+    resp = await client.delete(f"/api/rigs/{s50['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "removed"
+
+    after = next(r for r in (await client.get("/api/rigs")).json() if r["id"] == s50["id"])
+    assert after["is_mine"] is False
+    assert after["active"] is True  # still on offer, not retired
+
+
+@pytest.mark.anyio
+async def test_deleting_a_customised_predefined_rig_retires_it(client):
+    """The user's edits must survive a delete, so it retires instead."""
+    rigs = (await client.get("/api/rigs")).json()
+    s30 = next(r for r in rigs if r["name"] == "Seestar S30")
+    await client.post(f"/api/rigs/{s30['id']}/mine", json={"is_mine": True})
+    # Any edit to a seeded field counts — this is the loader's own definition.
+    await client.put(f"/api/rigs/{s30['id']}", json={"name": "S30 (mine)"})
+
+    resp = await client.delete(f"/api/rigs/{s30['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "retired"
+
+    after = next(
+        r for r in (await client.get("/api/rigs?active_only=false")).json() if r["id"] == s30["id"]
+    )
+    assert after["active"] is False
+    assert after["name"] == "S30 (mine)"  # the edit survived
+
+
+@pytest.mark.anyio
+async def test_deleting_a_self_built_rig_always_retires(client, equipment):
+    created = (await client.post("/api/rigs", json=_rig_payload(equipment))).json()
+    resp = await client.delete(f"/api/rigs/{created['id']}")
+    assert resp.json()["outcome"] == "retired"
+
+
 # ── CRUD Tests ───────────────────────────────────────────────────────────────
 
 
@@ -210,8 +419,10 @@ async def test_list_rigs(client, equipment):
     resp = await client.get("/api/rigs")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 1
-    assert data[0]["name"] == "C11 Deep Sky"
+    # The catalog seeds all-in-one smart-telescope rigs, so assert on the rig
+    # this test created rather than on the total.
+    mine = [r for r in data if r["name"] == "C11 Deep Sky"]
+    assert len(mine) == 1
 
 
 @pytest.mark.anyio
@@ -243,15 +454,16 @@ async def test_soft_delete_rig(client, equipment):
     create_resp = await client.post("/api/rigs", json=_rig_payload(equipment))
     rig_id = create_resp.json()["id"]
     resp = await client.delete(f"/api/rigs/{rig_id}")
-    assert resp.status_code == 204
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "retired"
 
-    # Should not appear in active list
-    list_resp = await client.get("/api/rigs")
-    assert len(list_resp.json()) == 0
+    # Should not appear in active list (seeded smart-scope rigs still do)
+    active = await client.get("/api/rigs")
+    assert not [r for r in active.json() if r["id"] == rig_id]
 
     # Should appear with active_only=false
-    list_resp = await client.get("/api/rigs?active_only=false")
-    assert len(list_resp.json()) == 1
+    all_rigs = await client.get("/api/rigs?active_only=false")
+    assert [r for r in all_rigs.json() if r["id"] == rig_id]
 
 
 @pytest.mark.anyio
