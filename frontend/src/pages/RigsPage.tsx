@@ -33,6 +33,7 @@ import CalculatorPanel from "@/components/rigs/CalculatorPanel";
 import { setActivity } from "@/api/client";
 import {
   fetchRigs,
+  setRigMine,
   cloneRig,
   deleteRig,
   restoreRig,
@@ -65,8 +66,25 @@ export default function RigsPage() {
 
   const [retiredVisible, setRetiredVisible] = useState(false);
 
-  const activeRigs = rigs.filter((r) => r.active);
+  // Seeded all-in-one smart telescopes are a catalog, not the user's kit, so
+  // they get their own collapsed section instead of padding out "my rigs".
+  const activeRigs = rigs.filter((r) => r.active && r.is_mine);
+  const catalogRigs = rigs.filter((r) => r.active && !r.is_mine);
   const retiredRigs = rigs.filter((r) => !r.active);
+  // Nothing to declutter when the user owns none — open the catalog so the
+  // page isn't just an empty list with the answer hidden behind a disclosure.
+  const [catalogVisible, setCatalogVisible] = useState(false);
+  const showCatalog = catalogVisible || activeRigs.length === 0;
+
+  const handleToggleMine = async (id: number, isMine: boolean) => {
+    try {
+      await setRigMine(id, isMine);
+      invalidate();
+      showSnack(isMine ? "Added to your rigs" : "Removed from your rigs", "success");
+    } catch (e) {
+      showSnack(e instanceof Error ? e.message : "Failed to update rig", "error");
+    }
+  };
 
   const resolvedSelected = selectedRig
     ? rigs.find((r) => r.id === selectedRig.id) ?? null
@@ -192,10 +210,10 @@ export default function RigsPage() {
       )}
 
       {/* Empty state */}
-      {!isLoading && rigs.length === 0 && (
+      {!isLoading && activeRigs.length === 0 && (
         <Typography color="text.secondary" sx={{ textAlign: "center", mt: 6 }}>
-          No rigs configured. Click &lsquo;New Rig&rsquo; to create your first
-          imaging rig.
+          None of your own rigs yet. Click &lsquo;New Rig&rsquo; to build one, or
+          star an all-in-one telescope below if you own one.
         </Typography>
       )}
 
@@ -258,6 +276,42 @@ export default function RigsPage() {
                   onDelete={handleDelete}
                   onRestore={handleRestore}
                   onSetDefault={handleSetDefault}
+                />
+              ))}
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* All-in-one smart telescopes — seeded, claimable, never reorderable
+          (sort_order is for the user's own list). */}
+      {catalogRigs.length > 0 && (
+        <Box sx={{ mt: 4 }}>
+          <Typography
+            variant="subtitle2"
+            sx={{ cursor: "pointer", userSelect: "none", color: "text.secondary", mb: 1 }}
+            onClick={() => setCatalogVisible((v) => !v)}
+          >
+            {showCatalog ? "▾" : "▸"} All-in-one telescopes ({catalogRigs.length})
+          </Typography>
+          {showCatalog && (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                Pre-built rigs for smart telescopes. Star one to add it to your
+                rigs.
+              </Typography>
+              {catalogRigs.map((rig) => (
+                <RigCard
+                  key={rig.id}
+                  rig={rig}
+                  selected={resolvedSelected?.id === rig.id}
+                  onSelect={handleSelect}
+                  onEdit={handleEdit}
+                  onClone={handleClone}
+                  onDelete={handleDelete}
+                  onRestore={handleRestore}
+                  onSetDefault={handleSetDefault}
+                  onToggleMine={handleToggleMine}
                 />
               ))}
             </Box>

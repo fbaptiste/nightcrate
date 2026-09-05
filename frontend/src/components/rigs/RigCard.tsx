@@ -5,6 +5,8 @@ import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
+import StarIcon from "@mui/icons-material/Star";
+import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import Typography from "@mui/material/Typography";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -21,6 +23,8 @@ interface RigCardProps {
   onDelete: (id: number) => void;
   onRestore: (id: number) => void;
   onSetDefault: (id: number) => void;
+  /** Claim/unclaim the rig as the user's own. Omitted where it doesn't apply. */
+  onToggleMine?: (id: number, isMine: boolean) => void;
 }
 
 
@@ -47,6 +51,7 @@ export default function RigCard({
   onDelete,
   onRestore,
   onSetDefault,
+  onToggleMine,
 }: RigCardProps) {
   const calc = rig.calculators;
   const scale = calc.image_scale_arcsec_per_pixel;
@@ -142,6 +147,21 @@ export default function RigCard({
         sx={{ px: 2, pt: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
+        {onToggleMine && (
+          <Tooltip title={rig.is_mine ? "Remove from my rigs" : "This is mine"} arrow>
+            <IconButton
+              size="small"
+              onClick={() => onToggleMine(rig.id, !rig.is_mine)}
+              aria-label={rig.is_mine ? "Remove from my rigs" : "Add to my rigs"}
+            >
+              {rig.is_mine ? (
+                <StarIcon fontSize="small" color="primary" />
+              ) : (
+                <StarOutlineIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+        )}
         <Tooltip title="Edit" arrow>
           <IconButton size="small" onClick={() => onEdit(rig)}>
             <EditIcon fontSize="small" />

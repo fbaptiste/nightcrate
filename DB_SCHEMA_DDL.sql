@@ -923,6 +923,11 @@ CREATE TABLE IF NOT EXISTS rig (
     guide_camera_id INTEGER REFERENCES camera(id),
     computer_id INTEGER REFERENCES computer(id),
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    -- Whether the user owns this rig (migration 0048). Seeded smart-telescope
+    -- rigs are 0 so they stay out of a list whose purpose is "my rigs".
+    -- Deliberately NOT a seeded field: claiming one is a user action, not a
+    -- modification of the catalog row.
+    is_mine INTEGER NOT NULL DEFAULT 0 CHECK (is_mine IN (0, 1)),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -981,6 +986,7 @@ SELECT
     r.name,
     r.description,
     r.is_default,
+    r.is_mine,
     r.active,
     r.notes,
     r.created_at,

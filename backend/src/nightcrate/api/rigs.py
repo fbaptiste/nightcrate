@@ -11,6 +11,7 @@ from nightcrate.api.rig_models import (
     ReorderRigsRequest,
     RigCalculators,
     RigCreate,
+    RigMineToggle,
     RigOut,
     RigUpdate,
 )
@@ -323,7 +324,7 @@ async def _build_rig_response(
     # Warnings
     warnings = await _check_warnings(conn, rig_row)
 
-    _bool_fields(rig_row, "is_default", "active")
+    _bool_fields(rig_row, "is_default", "is_mine", "active")
 
     return {
         "id": rig_row["id"],
@@ -366,6 +367,7 @@ async def _build_rig_response(
         "software": await _build_software(conn, rig_id),
         "filter_slots": filter_slots,
         "is_default": rig_row["is_default"],
+        "is_mine": rig_row["is_mine"],
         "active": rig_row["active"],
         "sort_order": rig_row.get("sort_order", 0),
         "notes": rig_row.get("notes"),
@@ -576,16 +578,24 @@ async def get_equipment_options():
 @router.get("", response_model=list[RigOut])
 async def list_rigs(
     active_only: bool = Query(True, description="Only show active rigs"),
+    mine: bool = Query(False, description="Only show rigs the user owns"),
     location_id: int | None = Query(None, description="Location for seeing data"),
 ):
-    """List all rigs with calculator data."""
+    """List all rigs with calculator data.
+
+    ``mine=true`` hides the seeded all-in-one smart-telescope rigs, which are a
+    catalog rather than the user's own kit. Same opt-in shape as the equipment
+    list endpoints, so nothing disappears from an existing caller by default.
+    """
     async with get_db() as conn:
-        if active_only:
-            rows = await conn.execute(
-                "SELECT * FROM rig_summary WHERE active = 1 ORDER BY sort_order, name"
-            )
-        else:
-            rows = await conn.execute("SELECT * FROM rig_summary ORDER BY sort_order, name")
+        # Both filters are expressed as parameters rather than assembled into
+        # the SQL, so the statement is static and needs no injection caveat.
+        rows = await conn.execute(
+            "SELECT * FROM rig_summary "
+            "WHERE (? = 0 OR active = 1) AND (? = 0 OR is_mine = 1) "
+            "ORDER BY is_mine DESC, sort_order, name",
+            (int(active_only), int(mine)),
+        )
         results = []
         for r in await rows.fetchall():
             d = _row_to_dict(r)
@@ -644,8 +654,8 @@ async def create_rig(body: RigCreate):
                     name, description, telescope_configuration_id, camera_id,
                     filter_wheel_id, single_filter_id, mount_id, focuser_id,
                     oag_id, guide_scope_id, guide_camera_id, computer_id,
-                    is_default, notes, sort_order
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    is_default, notes, sort_order, is_mine
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (
                     body.name.strip(),
                     body.description,
@@ -753,6 +763,27 @@ async def delete_rig(rig_id: int):
         await conn.commit()
 
     return Response(status_code=204)
+
+
+@router.post("/{rig_id}/mine", response_model=RigOut)
+async def toggle_rig_mine(rig_id: int, body: RigMineToggle):
+    """Claim or unclaim a rig as the user's own.
+
+    Deliberately not a seeded field: claiming a seeded smart-telescope rig is a
+    user action, not a modification of the catalog row, so the loader must keep
+    updating its specs afterwards. Same contract as the equipment tables.
+    """
+    async with get_db() as conn:
+        row = await conn.execute("SELECT id FROM rig WHERE id = ?", (rig_id,))
+        if await row.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Rig not found")
+
+        await conn.execute("UPDATE rig SET is_mine = ? WHERE id = ?", (int(body.is_mine), rig_id))
+        await conn.commit()
+
+        rows = await conn.execute("SELECT * FROM rig_summary WHERE id = ?", (rig_id,))
+        d = _row_to_dict(await rows.fetchone())
+        return await _build_rig_response(conn, d)
 
 
 @router.post("/{rig_id}/clone", response_model=RigOut, status_code=201)

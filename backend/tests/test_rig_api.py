@@ -230,6 +230,64 @@ async def test_seeded_rig_pixel_scale_is_computed(client):
     assert 2.35 < scale < 2.45, scale
 
 
+# ── is_mine ──────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_seeded_rigs_are_not_mine_and_user_rigs_are(client, equipment):
+    """A rig you build is yours; a catalog rig is not until you say so."""
+    created = (await client.post("/api/rigs", json=_rig_payload(equipment))).json()
+    assert created["is_mine"] is True
+
+    rigs = (await client.get("/api/rigs")).json()
+    seeded = [r for r in rigs if r["name"].startswith(("Seestar", "DWARF"))]
+    assert seeded, "expected seeded smart-scope rigs"
+    assert all(r["is_mine"] is False for r in seeded)
+
+
+@pytest.mark.anyio
+async def test_mine_filter_hides_the_catalog(client, equipment):
+    await client.post("/api/rigs", json=_rig_payload(equipment))
+    mine = (await client.get("/api/rigs?mine=true")).json()
+    assert [r["name"] for r in mine] == ["C11 Deep Sky"]
+    # Default is unchanged — nothing disappears for existing callers.
+    assert len((await client.get("/api/rigs")).json()) > 1
+
+
+@pytest.mark.anyio
+async def test_claiming_a_seeded_rig(client):
+    """Claiming a catalog rig makes it show up under ?mine=true."""
+    rigs = (await client.get("/api/rigs")).json()
+    s50 = next(r for r in rigs if r["name"] == "Seestar S50")
+    assert s50["is_mine"] is False
+
+    resp = await client.post(f"/api/rigs/{s50['id']}/mine", json={"is_mine": True})
+    assert resp.status_code == 200
+    assert resp.json()["is_mine"] is True
+
+    mine = (await client.get("/api/rigs?mine=true")).json()
+    assert [r["name"] for r in mine] == ["Seestar S50"]
+
+    # And it can be given back.
+    await client.post(f"/api/rigs/{s50['id']}/mine", json={"is_mine": False})
+    assert (await client.get("/api/rigs?mine=true")).json() == []
+
+
+@pytest.mark.anyio
+async def test_owned_rigs_sort_before_the_catalog(client, equipment):
+    await client.post("/api/rigs", json=_rig_payload(equipment))
+    rigs = (await client.get("/api/rigs")).json()
+    flags = [r["is_mine"] for r in rigs]
+    # Every owned rig precedes every catalog rig.
+    assert flags == sorted(flags, reverse=True)
+
+
+@pytest.mark.anyio
+async def test_toggle_mine_unknown_rig_404(client):
+    resp = await client.post("/api/rigs/999999/mine", json={"is_mine": True})
+    assert resp.status_code == 404
+
+
 # ── CRUD Tests ───────────────────────────────────────────────────────────────
 
 

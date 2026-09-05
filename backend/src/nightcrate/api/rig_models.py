@@ -138,6 +138,10 @@ class RigCalculators(BaseModel):
     guiding_tolerance: GuidingTolerance | None = None
 
 
+class RigMineToggle(BaseModel):
+    is_mine: bool
+
+
 class RigOut(BaseModel):
     id: int
     name: str
@@ -179,6 +183,9 @@ class RigOut(BaseModel):
     software: list[RigSoftwareOut]
     filter_slots: list[RigFilterSlotOut]
     is_default: bool
+    # Whether the user owns this rig. Seeded smart-telescope rigs default to
+    # false so they stay out of a list whose purpose is "my rigs".
+    is_mine: bool
     active: bool
     sort_order: int
     notes: str | None
