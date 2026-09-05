@@ -195,3 +195,12 @@ camera.player_one.apollo_c,manufacturer.player_one,sensor.sony.imx174_color,,,Ap
 camera.player_one.xena_585m,manufacturer.player_one,sensor.sony.imx585_mono,,,Xena 585M,0,,,,0,0,,,,,,,,Uncooled monochrome guide camera on the IMX585.,https://player-one-astronomy.com/product/
 camera.player_one.ceres_462m,manufacturer.player_one,sensor.sony.imx462_mono,,,Ceres 462M,0,,,,0,0,,,,,,,,Uncooled monochrome guide camera on the IMX462.,https://player-one-astronomy.com/product/
 camera.player_one.sedna_m,manufacturer.player_one,sensor.sony.imx178_mono,,,Sedna-M,0,,,,0,0,,,,,,,,Uncooled monochrome guide camera on the IMX178.,https://player-one-astronomy.com/product/
+# --- ToupTek models added in the 2026 catalogue audit ---
+camera.touptek.atr432m,manufacturer.touptek,sensor.sony.imx432_mono,,,ATR432M,1,,,,0,0,,,,,,,,Cooled monochrome camera on the 9um global-shutter IMX432.,https://www.touptekastro.com/collections/all
+camera.touptek.atr432c,manufacturer.touptek,sensor.sony.imx432_color,,,ATR432C,1,,,,0,0,,,,,,,,Cooled colour camera on the 9um global-shutter IMX432.,https://www.touptekastro.com/collections/all
+camera.touptek.atr428m,manufacturer.touptek,sensor.sony.imx428_mono,,,ATR428M,1,,,,0,0,,,,,,,,Cooled monochrome camera on the 7.1MP global-shutter IMX428.,https://www.touptekastro.com/collections/all
+camera.touptek.ae676c,manufacturer.touptek,sensor.sony.imx676_color,,,AE676C,0,,,,0,0,,,,,,,,Uncooled colour camera on the square 12.6MP IMX676.,https://www.touptekastro.com/collections/all
+camera.touptek.g3m662c,manufacturer.touptek,sensor.sony.imx662_color,,,G3M662C,0,,,,0,0,,,,,,,,Uncooled colour planetary camera on the STARVIS 2 IMX662.,https://www.touptekastro.com/collections/planetray-cameras
+camera.touptek.gpm174m,manufacturer.touptek,sensor.sony.imx174_mono,,,GPM174M,0,,,,0,0,,,,,,,,Monochrome guide camera on the IMX174; the 5.86um pixels suit an off-axis guider.,https://www.touptekastro.com/collections/guide-cameras
+camera.touptek.gpm662m,manufacturer.touptek,sensor.sony.imx662_mono,,,GPM662M,0,,,,0,0,,,,,,,,Monochrome guide camera on the IMX662.,https://www.touptekastro.com/collections/guide-cameras
+camera.touptek.gpm662c,manufacturer.touptek,sensor.sony.imx662_color,,,GPM662C,0,,,,0,0,,,,,,,,Colour guide camera on the IMX662.,https://www.touptekastro.com/collections/guide-cameras
