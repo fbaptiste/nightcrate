@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import { TreeItem } from "@mui/x-tree-view/TreeItem";
@@ -136,6 +136,20 @@ export default function EquipmentTab({ rig }: EquipmentTabProps) {
     hasSummary ? "summary" : `camera:${rig.camera_id}`,
   );
 
+  // Controlled, because the equipment loads in stages: buildTree adds the camera,
+  // filter and software groups only once their queries resolve, so an uncontrolled
+  // defaultExpandedItems changes after mount and MUI logs an error. Newly arrived
+  // groups are expanded once each — a group the user has since collapsed stays
+  // collapsed, because it is already in seenGroups.
+  const [expandedItems, setExpandedItems] = useState<string[]>(tree.defaultExpanded);
+  const seenGroups = useRef(new Set(tree.defaultExpanded));
+  useEffect(() => {
+    const fresh = tree.defaultExpanded.filter((id) => !seenGroups.current.has(id));
+    if (fresh.length === 0) return;
+    fresh.forEach((id) => seenGroups.current.add(id));
+    setExpandedItems((prev) => [...prev, ...fresh]);
+  }, [tree.defaultExpanded]);
+
   const coreLoading = tLoading || cLoading;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -175,7 +189,8 @@ export default function EquipmentTab({ rig }: EquipmentTabProps) {
               setSelectedId(itemId);
             }
           }}
-          defaultExpandedItems={tree.defaultExpanded}
+          expandedItems={expandedItems}
+          onExpandedItemsChange={(_event, itemIds) => setExpandedItems(itemIds)}
         >
           {tree.nodes}
         </SimpleTreeView>

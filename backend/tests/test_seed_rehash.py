@@ -213,3 +213,22 @@ def test_step_waits_for_its_migration(seed_db, csv_root):
     assert not (sensor_steps & markers), "a sensor step was marked before its migration ran"
     # Steps for tables the migration did reach are unaffected.
     assert {s.key for s in REHASH_STEPS if s.table != "sensor"} <= markers
+
+
+def test_loader_names_a_registry_schema_divergence(seed_db, csv_root):
+    """A seeded field the table lacks fails with a message, not a bare IndexError.
+
+    The update path reads each seeded field off the row by name, so a registry that
+    has run ahead of the migrations used to surface as `IndexError` from
+    sqlite3.Row — which main.py does not treat as an expected seed failure, so it
+    took startup down without saying why.
+    """
+    write(csv_root, "manufacturer.csv", MFR_HEADER, "manufacturer.zwo,ZWO,,")
+    write(csv_root, "sensor.csv", SENSOR_HEADER, _sensor_row(read_noise_low="3.3"))
+    load_all(seed_db, csv_root, mode="first_run")
+
+    seed_db.execute("ALTER TABLE sensor DROP COLUMN read_noise_high_gain_e")
+    seed_db.commit()
+
+    with pytest.raises(ValueError, match="missing seeded column"):
+        load_all(seed_db, csv_root, mode="update")

@@ -232,6 +232,24 @@ def load_all(
 
         col_types = _get_column_types(conn, table.table_name)
 
+        # The update path reads every seeded field off the existing row by name.
+        # If the registry names a column the schema does not have, that surfaces
+        # as a bare IndexError from sqlite3.Row deep inside the loop — and
+        # IndexError is not in main.py's _SEED_EXPECTED_ERRS, so it takes startup
+        # down without saying why. Check once, up front, and name the problem.
+        missing = [f for f in table.seeded_fields if f not in col_types]
+        if missing:
+            # ValueError rather than RuntimeError so main.py's _SEED_EXPECTED_ERRS
+            # catches it: the app logs the problem with a traceback and still
+            # starts, exactly as it does for the parallel registry-vs-CSV
+            # divergence in csv_reader._validate_header. Refusing to boot a local
+            # desktop app over stale seed data would be the worse trade.
+            raise ValueError(
+                f"Table {table.table_name!r} is missing seeded column(s) {sorted(missing)}. "
+                f"registry.py and the schema have diverged — most likely a migration "
+                f"that renames or adds a seeded field has not been applied."
+            )
+
         if table.is_junction:
             _load_junction_table(
                 conn=conn,

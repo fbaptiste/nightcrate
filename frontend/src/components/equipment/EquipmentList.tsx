@@ -353,14 +353,13 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
           loading={isLoading}
           disableRowSelectionOnClick
           hideFooter
+          // One item only: MUI X Community always sets disableMultipleColumnsSorting,
+          // so a multi-item model is rejected outright with a console error and only
+          // the first entry ever applied. The model_name / name tiebreakers below it
+          // were therefore never doing anything — the within-manufacturer order comes
+          // from the API, which already sorts by name.
           initialState={{
-            sorting: {
-              sortModel: [
-                { field: "manufacturer", sort: "asc" },
-                { field: "model_name", sort: "asc" },
-                { field: "name", sort: "asc" },
-              ],
-            },
+            sorting: { sortModel: [{ field: "manufacturer", sort: "asc" }] },
           }}
           onRowClick={renderDetail ? (params) => handleRowClick(params.row) : undefined}
           getRowClassName={(params) => {
