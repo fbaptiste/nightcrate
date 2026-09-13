@@ -6,7 +6,12 @@ import { useEffect, useRef, useState } from "react";
 import type { HourlyWeather, MoonPolylinePoint, TwilightTimes } from "../../api/weather";
 import type { WeatherUnits } from "../../api/settings";
 import { cToF, kmhToMph } from "../../lib/unitConversion";
-import { scoreToBackground, scoreToTextColor } from "../../lib/weatherColors";
+import {
+  UNUSABLE_HATCH_ID,
+  isUnusable,
+  scoreToBackground,
+  scoreToTextColor,
+} from "../../lib/weatherColors";
 
 interface HourlyTimelineProps {
   hours: HourlyWeather[];
@@ -91,21 +96,29 @@ function dewRiskLabel(risk: string): string {
 const scoreToCellColor = scoreToBackground;
 const cellTextColor = scoreToTextColor;
 
-function moonScore(altDeg: number | null): number {
-  if (altDeg === null) return 100;
-  if (altDeg <= 0) return 100;
-  return Math.max(0, Math.round(100 - (altDeg / 90) * 100));
+/**
+ * Read one factor's 0-100 value off an hour.
+ *
+ * Replaces three private heuristics this file used to carry (moonScore /
+ * cloudScore / precipScore). They existed only to colour the detail rows, and
+ * they disagreed with the backend: the "Moon Alt." row and the "Moon Quality"
+ * row showed two different moon scores on the same chart, and cloudScore's flat
+ * `100 - pct` ignored the layer treatment entirely. Every row now colours from
+ * the score the server actually used.
+ */
+function factorValue(h: HourlyWeather, key: string): number | null {
+  const factor = h.factors?.find((f) => f.key === key);
+  return factor?.value ?? null;
 }
 
-function cloudScore(pct: number): number {
+/**
+ * Colour for a raw per-layer cloud row. Not a score — just the inverse of the
+ * reported coverage. Consistent with the model, which counts every layer at face
+ * value (effective cover is the maximum over total and all layers), so a layer
+ * at 80% really does mean 20% clear regardless of its altitude.
+ */
+function clearPct(pct: number): number {
   return Math.round(100 - pct);
-}
-
-function precipScore(mm: number | null): number {
-  if (mm === null || mm <= 0) return 100;
-  if (mm < 0.5) return 70;
-  if (mm < 2) return 30;
-  return 0;
 }
 
 // ── Row definitions ─────────────────────────────────────────────────────────
@@ -129,40 +142,90 @@ const QUALITY_ROW: RowDef = {
   height: QUALITY_ROW_HEIGHT,
 };
 
+/**
+ * The score breakdown, in the model's own order: the availability gates and the
+ * cloud yield first, then the quality terms, then the moon modifier. Static
+ * because the factor set is fixed per mode — only `applied` varies per hour.
+ */
 const QUALITY_FACTOR_ROWS: RowDef[] = [
   {
-    label: "Sky Clarity",
-    key: "sky_clarity",
-    scoreFromHour: (h) => h.sky_clarity,
-    textFromHour: (h) => String(Math.round(h.sky_clarity)),
+    label: "Darkness",
+    key: "darkness",
+    scoreFromHour: (h) => factorValue(h, "darkness"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "darkness");
+      return v === null ? null : `${Math.round(v)}`;
+    },
     type: "score",
   },
   {
-    label: "Transparency",
-    key: "transparency_score",
-    scoreFromHour: (h) => h.transparency_score,
-    textFromHour: (h) => String(Math.round(h.transparency_score)),
+    label: "Precip. Gate",
+    key: "precipitation",
+    scoreFromHour: (h) => factorValue(h, "precipitation"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "precipitation");
+      return v === null ? "—" : `${Math.round(v)}`;
+    },
+    type: "score",
+  },
+  {
+    label: "Wind Gate",
+    key: "wind_gate",
+    scoreFromHour: (h) => factorValue(h, "wind_gate"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "wind_gate");
+      return v === null ? "—" : `${Math.round(v)}`;
+    },
+    type: "score",
+  },
+  {
+    label: "Clear Sky",
+    key: "cloud",
+    scoreFromHour: (h) => factorValue(h, "cloud"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "cloud");
+      return v === null ? null : `${Math.round(v)}`;
+    },
     type: "score",
   },
   {
     label: "Seeing",
-    key: "seeing_score",
-    scoreFromHour: (h) => h.seeing_score,
-    textFromHour: (h) => String(Math.round(h.seeing_score)),
+    key: "seeing",
+    scoreFromHour: (h) => factorValue(h, "seeing"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "seeing");
+      return v === null ? null : `${Math.round(v)}`;
+    },
     type: "score",
   },
   {
-    label: "Moon Quality",
-    key: "moon_score",
-    scoreFromHour: (h) => h.moon_score,
-    textFromHour: (h) => String(Math.round(h.moon_score)),
+    label: "Transparency",
+    key: "transparency",
+    scoreFromHour: (h) => factorValue(h, "transparency"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "transparency");
+      return v === null ? null : `${Math.round(v)}`;
+    },
     type: "score",
   },
   {
     label: "Wind Calm",
     key: "wind_calm",
-    scoreFromHour: (h) => h.wind_calm,
-    textFromHour: (h) => String(Math.round(h.wind_calm)),
+    scoreFromHour: (h) => factorValue(h, "wind_calm"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "wind_calm");
+      return v === null ? null : `${Math.round(v)}`;
+    },
+    type: "score",
+  },
+  {
+    label: "Moon Quality",
+    key: "moon",
+    scoreFromHour: (h) => factorValue(h, "moon"),
+    textFromHour: (h) => {
+      const v = factorValue(h, "moon");
+      return v === null ? null : `${Math.round(v)}`;
+    },
     type: "score",
   },
 ];
@@ -180,35 +243,35 @@ function buildDetailRows(units: WeatherUnits): RowDef[] {
     {
       label: "Precip. mm",
       key: "precipitation_mm",
-      scoreFromHour: (h) => precipScore(h.precipitation_mm),
+      scoreFromHour: (h) => factorValue(h, "precipitation"),
       textFromHour: (h) => (h.precipitation_mm !== null ? h.precipitation_mm.toFixed(1) : "0.0"),
       type: "score",
     },
     {
       label: "Cloud (total)",
       key: "cloud_cover_pct",
-      scoreFromHour: (h) => cloudScore(h.cloud_cover_pct),
+      scoreFromHour: (h) => factorValue(h, "cloud"),
       textFromHour: (h) => `${Math.round(h.cloud_cover_pct)}%`,
       type: "score",
     },
     {
       label: "Cloud (high)",
       key: "cloud_cover_high_pct",
-      scoreFromHour: (h) => cloudScore(h.cloud_cover_high_pct),
+      scoreFromHour: (h) => clearPct(h.cloud_cover_high_pct),
       textFromHour: (h) => `${Math.round(h.cloud_cover_high_pct)}%`,
       type: "score",
     },
     {
       label: "Cloud (mid)",
       key: "cloud_cover_mid_pct",
-      scoreFromHour: (h) => cloudScore(h.cloud_cover_mid_pct),
+      scoreFromHour: (h) => clearPct(h.cloud_cover_mid_pct),
       textFromHour: (h) => `${Math.round(h.cloud_cover_mid_pct)}%`,
       type: "score",
     },
     {
       label: "Cloud (low)",
       key: "cloud_cover_low_pct",
-      scoreFromHour: (h) => cloudScore(h.cloud_cover_low_pct),
+      scoreFromHour: (h) => clearPct(h.cloud_cover_low_pct),
       textFromHour: (h) => `${Math.round(h.cloud_cover_low_pct)}%`,
       type: "score",
     },
@@ -305,7 +368,7 @@ function buildDetailRows(units: WeatherUnits): RowDef[] {
     {
       label: "Moon Alt.",
       key: "moon_altitude_deg",
-      scoreFromHour: (h) => moonScore(h.moon_altitude_deg),
+      scoreFromHour: (h) => factorValue(h, "moon"),
       textFromHour: (h) =>
         h.moon_altitude_deg !== null ? `${Math.round(h.moon_altitude_deg)}°` : "—",
       type: "score",
@@ -542,6 +605,15 @@ export default function HourlyTimeline({
             .attr("x", x + 1).attr("y", y + 1)
             .attr("width", cellWidth - 2).attr("height", h - 2)
             .attr("rx", 2).attr("fill", fillColor);
+          // An unusable hour scores 0, which on a darker-is-better ramp paints
+          // the palest cell on the chart — the deadest night looking like the
+          // calmest. Hatch it so it does not read as innocuous.
+          if (row.type === "quality" && isUnusable(hour.imaging_quality_label)) {
+            rowG.append("rect")
+              .attr("x", x + 1).attr("y", y + 1)
+              .attr("width", cellWidth - 2).attr("height", h - 2)
+              .attr("rx", 2).attr("fill", `url(#${UNUSABLE_HATCH_ID})`);
+          }
           rowG.append("text")
             .attr("x", x + cellWidth / 2).attr("y", y + h / 2 + 1)
             .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
@@ -588,6 +660,17 @@ export default function HourlyTimeline({
     // Darkness gradient
     const gradId = "darkness-gradient";
     const defs = svg.append("defs");
+
+    const hatch = defs.append("pattern")
+      .attr("id", UNUSABLE_HATCH_ID)
+      .attr("patternUnits", "userSpaceOnUse")
+      .attr("width", 6).attr("height", 6)
+      .attr("patternTransform", "rotate(45)");
+    hatch.append("line")
+      .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 6)
+      .attr("stroke", cellTextColor(0))
+      .attr("stroke-width", 1.5)
+      .attr("opacity", 0.45);
     const grad = defs.append("linearGradient")
       .attr("id", gradId)
       .attr("x1", "0%").attr("y1", "0%")
@@ -903,7 +986,7 @@ export default function HourlyTimeline({
     renderGroupHeader("SCORE FACTORS", curY);
     curY += GROUP_HEADER_HEIGHT;
     for (const row of QUALITY_FACTOR_ROWS) {
-      const rowOpacity = row.key === "moon_score" && !moonIncluded ? 0.35 : 1;
+      const rowOpacity = row.key === "moon" && !moonIncluded ? 0.35 : 1;
       renderRow(row, curY, ROW_HEIGHT, true, rowOpacity);
       curY += ROW_HEIGHT;
     }

@@ -238,7 +238,6 @@ export default function WeatherPage() {
               key={day.date}
               day={day}
               selected={selectedDate === day.date}
-              moonIncluded={includeMoon ?? true}
               units={units}
               onClick={() => handleDaySelect(day.date)}
             />

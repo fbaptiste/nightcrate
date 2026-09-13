@@ -98,9 +98,9 @@ async def test_methodology_returns_text(client):
     assert resp.status_code == 200
     data = resp.json()
     assert "text" in data
-    assert "Sky Clarity" in data["text"]
+    assert "Availability" in data["text"] or "availability" in data["text"]
     assert "Transparency" in data["text"]
-    assert "35%" in data["text"]
+    assert "45%" in data["text"]  # seeing weight under the new quality mean
 
 
 # ---------------------------------------------------------------------------
@@ -149,11 +149,11 @@ async def test_forecast_returns_days(client):
         assert "date" in day
         assert "imaging_quality" in day
         assert "imaging_quality_label" in day
-        assert "sky_clarity" in day
-        assert "transparency_score" in day
-        assert "seeing_score" in day
-        assert "wind_calm" in day
-        assert "moon_score" in day
+        assert "availability" in day
+        assert "quality" in day
+        assert "expected_useful_hours" in day
+        assert "factors" in day
+        assert "flags" in day
         assert "sunset" in day
         assert "sunrise" in day
         assert "darkness_hours" in day
@@ -247,10 +247,10 @@ async def test_hourly_returns_hours(client):
         hour = data["hours"][0]
         assert "time" in hour
         assert "temperature_c" in hour
-        assert "sky_clarity" in hour
-        assert "transparency_score" in hour
-        assert "seeing_score" in hour
-        assert "wind_calm" in hour
+        assert "availability" in hour
+        assert "quality" in hour
+        assert "factors" in hour
+        assert "flags" in hour
         assert "dew_risk" in hour
         assert "pwv_mm" in hour
         assert "aod" in hour
@@ -417,23 +417,20 @@ async def test_forecast_strict_schema_validation(client):
         assert isinstance(day["imaging_quality"], int)
         assert 0 <= day["imaging_quality"] <= 100
 
-        assert isinstance(day["sky_clarity"], int)
-        assert 0 <= day["sky_clarity"] <= 100
+        assert 0.0 <= day["availability"] <= 1.0
+        assert 0.0 <= day["quality"] <= 100.0
 
-        assert isinstance(day["transparency_score"], int)
-        assert 0 <= day["transparency_score"] <= 100
+        assert day["expected_useful_hours"] >= 0.0
 
-        assert isinstance(day["seeing_score"], int)
-        assert 0 <= day["seeing_score"] <= 100
+        assert isinstance(day["factors"], list)
 
-        assert isinstance(day["wind_calm"], int)
-        assert 0 <= day["wind_calm"] <= 100
+        assert isinstance(day["flags"], list)
 
         assert isinstance(day["moon_score"], int)
         assert 0 <= day["moon_score"] <= 100
 
         # Quality label must be one of the defined labels
-        assert day["imaging_quality_label"] in ("Excellent", "Good", "Marginal", "Poor")
+        assert day["imaging_quality_label"] in ("Excellent", "Good", "Marginal", "Poor", "Unusable")
 
         # Deepest darkness reached must be one of the defined values
         assert day["deepest_darkness_reached"] in ("astro", "nautical", "civil", "none")
@@ -482,17 +479,22 @@ async def test_methodology_text_current_weights(client):
     assert resp.status_code == 200
     text = resp.json()["text"]
 
-    # Current factors and weights must be present
+    # Current quality weights must be present
     assert "Transparency" in text
-    assert "35%" in text
-    assert "Sky Clarity" in text
-    assert "25%" in text  # Seeing weight
+    assert "45%" in text  # seeing
+    assert "40%" in text  # transparency
+    assert "15%" in text  # wind calm
 
-    # Old factors/weights must NOT be present
+    # The gates and the availability/quality split must be described
+    assert "Darkness" in text
+    assert "Precipitation" in text
+    assert "Unusable" in text
+
+    # The old additive-cloud model must NOT be described any more: cloud is a
+    # gate now, there is no "Sky Clarity" factor and no sqrt gating.
+    assert "Sky Clarity" not in text
+    assert "Cloud Gating" not in text
     assert "Dryness" not in text
-    # Note: "40%" IS present in the "No Moon" column (Sky Clarity = 40% when
-    # moon excluded) — that's the current design, not a stale weight.
-    assert "| 40%" in text  # No-Moon column for Sky Clarity
 
 
 # ---------------------------------------------------------------------------
@@ -613,7 +615,7 @@ async def test_polar_forecast_structure(client):
     # Validate structure of no-imaging days
     for day in no_imaging_days:
         assert day["imaging_quality"] == 0
-        assert day["imaging_quality_label"] == "Poor"
+        assert day["imaging_quality_label"] == "Unusable"
         assert day["darkness_hours"] == 0
         assert day["deepest_darkness_reached"] in ("astro", "nautical", "civil", "none")
         assert isinstance(day["no_imaging_window"], bool)
@@ -624,7 +626,7 @@ async def test_polar_forecast_structure(client):
     # All days (imaging or not) should have valid schema
     for day in data["days"]:
         assert 0 <= day["imaging_quality"] <= 100
-        assert day["imaging_quality_label"] in ("Excellent", "Good", "Marginal", "Poor")
+        assert day["imaging_quality_label"] in ("Excellent", "Good", "Marginal", "Poor", "Unusable")
         assert day["deepest_darkness_reached"] in ("astro", "nautical", "civil", "none")
 
 
@@ -710,7 +712,7 @@ async def test_supplementary_fallback_on_error(client):
     if len(data["days"]) > 0:
         day = data["days"][0]
         assert 0 <= day["imaging_quality"] <= 100
-        assert day["imaging_quality_label"] in ("Excellent", "Good", "Marginal", "Poor")
+        assert day["imaging_quality_label"] in ("Excellent", "Good", "Marginal", "Poor", "Unusable")
 
 
 # ---------------------------------------------------------------------------
@@ -822,7 +824,8 @@ async def test_hourly_surface_only_seeing(client):
     assert resp.status_code == 200
     data = resp.json()
     for hour in data["hours"]:
-        assert 0 <= hour["seeing_score"] <= 100
+        seeing = next(f for f in hour["factors"] if f["key"] == "seeing")
+        assert 0 <= seeing["value"] <= 100
 
 
 # ---------------------------------------------------------------------------
