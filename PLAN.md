@@ -61,7 +61,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.41.0 — Equipment Resolution + Rig Attribution](#v0410--equipment-resolution--rig-attribution) ✅
 - [v0.41.1 — Catalog Simplification + Derived Sessions](#v0411--catalog-simplification--derived-sessions) ✅
 - [v0.41.2 — Catalogue Gaps + Planner Pool](#v0412--catalogue-gaps--planner-pool) ✅
-- [v0.41.3 — Frame Quality Metrics](#v0413--frame-quality-metrics)
+- [v0.41.3 — Frame Quality Metrics](#v0413--frame-quality-metrics) ✅
 - [v0.42.0 — Calibration Coverage + Gallery Promotion](#v0420--calibration-coverage--gallery-promotion)
 - [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
 - [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
@@ -5572,25 +5572,258 @@ audit surfaced but did not touch. No migration; no schema change.
 
 ## v0.41.3 — Frame Quality Metrics
 
-**Status:** Planned. Batch quality analysis reusing the aberration-inspector machinery —
-fills the `sub_frame` quality columns (`hfr`, `star_count`, `median_adu`,
-`background_adu`, `snr_estimate`) that shipped empty in migration 0037. No migration.
+**Status:** Done. **Branch:** `v0.41.3/frame-quality-metrics`. Batch quality
+analysis reusing the aberration-inspector machinery — fills the `sub_frame` quality
+columns (`hfr`, `star_count`, `median_adu`, `background_adu`, `snr_estimate`) that
+shipped empty in migration 0037.
 
-- [ ] **"Analyze frames" button** on the Catalog tab → single-flight batch pass (same
-      lock/status pattern as ingest, own run type): per light (optionally flats), load
-      pixels at native resolution (HFR cannot run on decimated data), run
-      `services/aberration.py:detect_stars()` + `services/imaging.py:compute_image_stats()`
-      (both already pure functions), UPDATE the quality columns. **Numpy-only in a per-run
-      ProcessPool** (mlx is not safe on concurrent paths; per-run pools per the ingest
-      precedent). Skips already-analyzed rows unless forced; progress via run counters.
-- [ ] Catalog cards show HFR / star count; quality sort + filter (worst-first for quick
-      inspection). Quality here is **catalog metadata** — it feeds the session timeline
-      (v0.43/v0.44) and the context bundle (v0.45), and helps spot problem frames to
-      inspect in the embedded analyzer; it is NOT a culling workflow (see the arc-wide
-      "catalog and correlate" decision).
-- [ ] PixInsight-processed files may carry SSWEIGHT / PSF metrics in headers — import when
-      present as a cheap complement (see "FITS Header Database Storage" in Future Features).
-- [ ] UI to verify: button + progress, quality values on cards, quality sort.
+Quality here is **catalog metadata** — it feeds the session timeline (v0.43/v0.44) and
+the context bundle (v0.45), and helps spot problem frames to inspect in the embedded
+analyzer; it is NOT a culling workflow (arc-wide "catalog and correlate" decision).
+
+### The run is client-driven, not a background task
+
+- [x] **"Analyze N lights" button** on the Catalog tab. The frontend fetches the pending
+      frame ids once (`GET .../catalog/analyze/pending`), then POSTs them back in batches
+      of 60 (`POST .../catalog/analyze`). Each batch is an ordinary short request, so a
+      determinate progress bar, an ETA, Cancel, and resume-where-it-stopped all fall out
+      for free — and the app keeps its documented "all work is request-driven, no
+      background tasks" property. `_ANALYZE_LOCK` is single-flight (409 if busy), separate
+      from `_INGEST_LOCK` so a quality pass and a folder re-scan don't queue behind each
+      other. Cancel lands between batches, i.e. within a few seconds.
+- [x] **The plan's "same lock/status pattern as ingest" had nothing to copy.** Ingest runs
+      synchronously inside its POST and returns final counters; nothing ever SELECTs
+      `ingestion_run`, and the frontend has no polling anywhere (`grep refetchInterval`
+      → zero hits). Progress machinery was new surface whichever way it went, so it went
+      to the client, where it costs one hook.
+- [x] Per-run `ProcessPool` via the existing `ingest_scanner.make_pool`; worker count from
+      `compute.effective_worker_count` (the canonical helper — `api/ingest.py` and
+      `api/planner.py` each inline a duplicate of that formula, drift worth collapsing
+      later). A single frame or a single-core setting parses inline, no IPC.
+
+### Scope: the active sub-tab, and stars only where they mean something
+
+- [x] The button analyzes **what the list is showing** — sub-tab plus filter pill — and
+      says so: "Analyze 276 Blue lights". Star metrics (`hfr`, `star_count`,
+      `snr_estimate`) run on **lights only**; `median_adu` + `background_adu` run on every
+      frame type, which is the flat-exposure sanity check and the dark/bias pedestal check.
+- [x] **Migration 0055 was needed after all** (the plan said none). Because a *successfully*
+      analyzed dark legitimately ends with `hfr` NULL, `hfr IS NULL` cannot mean "not
+      analyzed" — the client's batch loop would re-queue every calibration frame forever.
+      Added `quality_analyzed_at` + `quality_status` CHECK (`ok`/`no_stars`/`unreadable`)
+      + `quality_error`, additively (`ALTER TABLE ADD COLUMN`, no rebuild — 0043 precedent),
+      plus a partial index on the pending query. An unreadable file is recorded once and
+      reported, not retried on every run.
+
+### Metric definitions (the contract — `services/frame_quality.py`)
+
+- [x] `hfr` = median per-star `sep.flux_radius`, **pixels**. Only comparable within a rig:
+      `pixel_scale_arcsec` is usually NULL on a cataloged frame, so there is no honest
+      arcsec conversion. Arcsec display is a later item, when pixel scale is known.
+- [x] `snr_estimate` = **median** per-star SNR, not mean — one saturated star measured
+      11,497 against a frame median of 111.
+- [x] `median_adu` / `background_adu` are **16-bit-equivalent**: `normalize_to_01` is
+      type-based (uint16 ÷ 65535; float assumed already `[0,1]`), so ×65535 recovers true
+      ADU for integer sources and gives a comparable scale for PixInsight float XISF —
+      which carries no bit depth at all (1,756 of 2,668 real frames). Documented as such;
+      the float-sourced numbers are not presented as real ADU.
+- [x] `QUALITY_SETTINGS` is a **frozen module constant, deliberately not user-tunable** —
+      HFR is only comparable across frames measured identically, so a slider would silently
+      make the catalog incomparable to itself.
+- [x] `detect_stars` now also returns `median_snr` + `background_level`, which it already
+      computed on the way to extraction and threw away. Avoids a second ~0.2 s
+      `sep.Background` pass per light. (`background_rms` was returned too and read by
+      nothing — dropped in the cleanup pass rather than shipped as dead schema.)
+- [x] **`compute_image_stats` is NOT used** — it reaches `get_array_module()` via
+      `_channel_stats`, and mlx segfaults on concurrent paths. The median is computed in
+      numpy instead, the same way `catalog_thumbnail` replicates the STF math. The worker
+      also calls `set_gpu_enabled(False)` first: a fresh spawn worker starts with the GPU
+      flag True regardless of the user's setting. Pinned by a regression test.
+- [x] New `services/pixel_loader.py` holds the "path string → normalized array"
+      resolve+dispatch, converting `HTTPException` to `ValueError` so it is safe in a
+      worker. **It absorbed one of the three existing copies, not all three**:
+      `catalog_thumbnail` uses it, while `api/images.py` and `api/aberration.py` still
+      hand-roll theirs because they hold a pre-resolved source for their caches rather
+      than a path. They have already drifted on `reshape_color`. Folding them in needs a
+      `load_from_resolved(...)` seam — carried forward, and the docstring and CLAUDE.md
+      now say so instead of claiming a single source of truth that doesn't exist.
+
+### Catalog list
+
+- [x] Cards show `HFR 6.02 px · 129 stars · sky 1,047 ADU` — nothing at all when
+      unanalyzed (a row of dashes on thousands of cards is noise), and a quiet
+      "file unreadable" note with a tooltip when the volume was offline.
+- [x] **Server-side sort** (`sort=` on `catalog/frames`, fixed allow-list dict → ORDER BY
+      literal): worst/best HFR, fewest stars, brightest sky, path, date. Client-side sort
+      would only order the pages already loaded, which is wrong for "worst first". Blanks
+      sort last in both directions, per the app-wide rule.
+
+### Dropped: the PixInsight SSWEIGHT / PSF import
+
+- [x] **Cut, on evidence from the 2,668 real cataloged headers.** `SSWEIGHT`, `PSFFWHM`,
+      `PSFSNR`, `PSFSTARS`, `PSFECCENTR` appear in **zero** frames. `NOISE00` appears in
+      1,754 and *is* in `fits_header_map`, but has no column. The PSF keys actually present
+      are the **numbered** variants (`PSFSGN00`, `PSFNST00`, `PSFMST00`, `PSFFLX00`), which
+      the alias map does not cover — it targets the unnumbered forms — and whose semantics
+      I could not verify from a primary source (sampled values are counterintuitive:
+      `PSFSGN00` = 46–88, count-like; `PSFNST00` = 4.4e-4, level-like). Mapping them would
+      be guessing at external field meanings. Revisit if a library with real
+      SubframeSelector output turns up.
+
+### Grew a second half, driven by using it
+
+Everything below came out of Fred exercising the feature on the real 2,668-frame library.
+
+- [x] **Image Analyzer parity.** The Statistics panel gained the same star metrics
+      (`GET /api/images/quality` → `frame_quality.analyze_array`, shared with the catalog
+      pass so the numbers agree *by construction* — verified byte-identical on a real
+      frame). Fetched **separately from `/stats`**: detection is 0.357 s on a 26 MP frame
+      against 0.065 s for all of `/stats`, so bundling would have made an instant panel
+      sluggish on every image. ADU columns added beside the normalized values, and the
+      panel's **`SNR` renamed `Med/σ`** — introducing a star SNR had put two unrelated
+      numbers under one name in one app (7.2 vs 111.0 on the same frame).
+- [x] **HFR in arcseconds** (derived on read; see the metric notes above) plus arcsec sort
+      orders. Fred spotted the need: an M42 frame at 2.03 px next to M101 subs at 6.11 px
+      looks three times sharper and isn't — 2.62″ vs 2.42″ once converted.
+- [x] **ADU shown against full scale** (`2^adc_bit_depth - 1` from the rig's sensor).
+      Prompted by "is there a max ADU?" — and the answer is no: a real Dwarf frame is
+      `uint16` with an actual maximum of exactly 4095. The earlier tooltip advising "a third
+      to half of full well" was unjudgeable without it, and is corrected.
+- [x] **Per-item delete** (`POST /catalog/delete`, three typed lists, project-scoped).
+      Deliberately **plain**: a re-scan re-catalogs the file, the confirm dialog says so,
+      and a test pins that so the dialog can't quietly become a lie. Closes a gap against
+      the arc-wide claim that "any frame is deletable".
+- [x] **Generated sidecars no longer cataloged** — `.xnml` / `.xdrz` / `.xpsm`, ~1,248 of
+      the 1,253 rows in Fred's Others tab. Rule is "generated sidecar", not "not an image":
+      logs and the `.pxiproject` stay, since log ingestion is the next arc.
+- [x] **Folder-declared target** (migration 0056), the second user-declared per-folder fact
+      after the rig. Target assignment moved out of `_persist_parsed` into
+      `assign_rigs_and_sessions`, which now owns rig, target and session alike — the
+      per-file version couldn't see folder nesting and got tag-after-scan wrong, the same
+      class of bug the rig pass exists to prevent. Verified live: tagging re-linked 585
+      already-cataloged lights with no re-scan.
+- [x] Others tab: an "Unclassified frames only" filter the alert's Review button drives
+      (previously it said "select them there" among 1,256 rows with no way to find the 2),
+      thumbnails and frame-type editing on those rows, and shift-click range selection
+      across all tabs. Masters gained open-in-analyzer and checkboxes.
+- [x] **Fixed: the `::` separator means two things.** A `.fit` inside a zip displayed as
+      "PXI" because `isVirtualPath` is just `path.includes("::")`. `parsePath` now mirrors
+      the backend's own rule (integer index = project, else archive entry).
+- [x] **Fixed: stale analyze counts.** `invalidateCatalog()` didn't refresh the counts
+      query, so "Re-analyze 2,548 lights" survived deleting every frame. Fixed in the one
+      place rather than per-caller.
+
+### Intel Mac support — mlx was a hard install-time dependency
+
+- [x] **NightCrate would not install on an Intel Mac at all.** `pyproject.toml` declared
+      `mlx>=0.31.1; sys_platform == 'darwin'` — platform but no architecture — and mlx
+      publishes arm64-only wheels with **no sdist**. uv therefore could not satisfy a
+      required dependency and aborted the whole sync, so `uv sync` installed *nothing*,
+      not merely "everything except mlx". Marker narrowed to
+      `sys_platform == 'darwin' and platform_machine == 'arm64'` and re-locked; the diff
+      is exactly two marker lines, no version drift. Verified both ways with
+      `uv sync --python-platform x86_64-apple-darwin --dry-run` (mlx dropped) and a native
+      resolve (mlx kept).
+- [x] **Nothing needed changing at runtime** — the compute backend already falls back to
+      numpy automatically via a `try: import mlx.core`, and only two call sites in the
+      whole backend touch `get_array_module()` (`imaging._channel_stats` and
+      `stretch_plane`). Several of the heaviest paths are numpy-only *by design* already,
+      because mlx is not thread-safe.
+- [x] **The GPU toggle was silently decorative where no backend exists.** `gpu_backend_name()`
+      existed with zero callers; now exposed via `GET /api/settings/compute` and rendered as
+      a read-only line under the Settings switch — "Active: Apple Metal (mlx)" vs
+      "Active: CPU (numpy) — no GPU backend on this machine". Deliberately not a field on
+      the `Settings` model, since `PUT /api/settings` persists every field on it into the
+      KV table.
+- [x] `_check_mlx` / `_check_cupy` caught only `ImportError`, so a library that imports but
+      fails at device init would escape from an image render — and, once the backend name
+      is on the Settings page, break a page with nothing to do with imaging. Now catches
+      `Exception`, logs once under `[compute]`, falls back. A plain missing library stays
+      silent: that is the normal Intel/Linux case, not a problem.
+- [x] Known and documented, not fixed: `bottleneck`, `h3`, `brotlicffi`, `sep`,
+      `timezonefinder` and `py7zr` ship arm64-only macOS wheels but do have sdists, so they
+      build from source on Intel. README now says Xcode Command Line Tools are needed there.
+
+### Cleanup pass — one real bug
+
+- [x] **Data loss: the orphan sweep deleted every master in the project.** Both
+      `catalog_delete` (new this version) and `remove_folder` (pre-existing) ran
+      `DELETE FROM processed_image … NOT EXISTS (SELECT 1 FROM file_location fl WHERE
+      fl.processed_image_id = id)`. A bare `id` binds to `file_location.id` — the
+      subquery's own table — so the subquery is **uncorrelated** (`EXPLAIN QUERY PLAN`
+      confirms `SCALAR SUBQUERY`), `NOT EXISTS` is true for every row, and deleting any
+      one plain file wiped **all** `processed_image` rows including those that still had
+      files. The `sub_frame` sweep immediately above qualifies correctly, so it reads as a
+      copy-paste slip. Both qualified; regression test pins it (verified failing before
+      the fix, passing after).
+- [x] `_frame_scope` (was `_quality_scope`) is now shared with `catalog_frames`, which had
+      its own copy of the clause builder validating frame types against a **hardcoded
+      tuple** while the new one used `get_args(FrameTypeName)` — so a new frame type would
+      have worked on the analyze endpoints and silently failed on the listing.
+- [x] Shared `isSubFrame` / `isMaster` type guards exported from `projectCatalog.ts`,
+      replacing five hand-written `{ kind?: string }` casts (one of which was a *different*
+      predicate that deliberately includes masters — worth having named).
+- [x] `GET /api/images/quality` bounded by a `Semaphore(3)`, mirroring `_THUMB_SEM`:
+      stepping prev/next in the analyzer overlay fired an unbounded number of concurrent
+      full-resolution star detections, each peaking around 3x the frame size in memory.
+- [x] Dead code removed (`frame_quality`'s unused logger, `background_rms`), Settings
+      moved onto TanStack Query like every other read in the app, `TAB_NOUNS` record
+      replaces a six-deep nested ternary, `invalidateCatalog` now composes
+      `invalidateCounts` instead of duplicating it.
+
+### Carried forward, deliberately not done here
+
+- [ ] **The analyzer re-measures quality the catalog already stored** — opening a cataloged
+      frame in the overlay costs a ~0.9 s `detect_stars` for numbers already in
+      `sub_frame`. Widening `AnalyzerItem` to carry them and passing them as the query's
+      `initialData` would remove it. Also: `/images/quality` is uncached while
+      `/aberration/analyze` is DB-cached on identical default settings, so the Aberration
+      tab runs the same detection twice.
+- [ ] **`median_adu` is a full-array `np.median` on every light** (~185 ms of a ~1.1 s
+      frame) for a value the cards only show when there are no stars. Subsampling matches
+      the app's existing histogram pattern and costs ~0.001 % accuracy, but it changes a
+      stored metric, so it wants a deliberate decision plus pinned values.
+- [ ] **`BATCH_SIZE = 60`** in `useAnalyzeRun` pays a 0.3–0.6 s pool spawn per batch
+      (~10 % on lights, ~25 % on the ADU-only calibration path). 120–240 would cut the
+      churn 2–4x at the cost of cancel latency.
+- [ ] **The catalog list is unvirtualized** and now mounts up to five MUI `Tooltip`s per
+      analyzed card.
+
+### A rig tag that never landed — worth remembering
+
+Fred's M42 archive frames showed rig "(not stated)" although the folder was tagged. The
+frames were scanned at 2026-09-05 03:17; the `folder_prefix` fix for archives bound at
+their *root* landed in `5b1602e` at 10:48 the same day. **The fix was correct and nothing
+re-applied it to already-cataloged frames** — the folder row showed the rig, the frames
+silently didn't. Re-applying the tag fixed all 794. The general lesson matches the seed
+loader's: a fix to a propagation rule leaves existing databases stale, and there is no
+signal that they are.
+
+### Verification
+
+- [x] 24 new tests; full backend suite 2,460 passed / 3 skipped. ruff, ruff format, bandit
+      (3 pre-existing low findings in `plate_solve.py`, none new), `npm run build`.
+- [x] Migration 0055 verified on the populated dev DB (2,668 sub frames, 3,932 file
+      locations, 15 rigs intact; `integrity_check` + `foreign_key_check` clean). Note it
+      applied itself the moment the file was written — `make dev` was running
+      `uvicorn --reload`, exactly the gotcha CLAUDE.md documents.
+- [x] **Driven in a real browser** against the real library: 276 Blue lights analyzed in
+      ~45 s, live progress read "120 / 276 · ~33s left", bar in `RIG_BLUE` (`primary.main`
+      is warm amber in this theme, so `color="primary"` would have been orange), zero
+      console errors.
+- [x] **The measurements are real and the feature found real problems.** 20 M101 Lum subs
+      spread HFR 5.48 → 6.77 px (2.17″ → 2.68″ at C11) with star counts 112 → 154, cleanly
+      anti-correlated. `sep`'s background RMS came out 24.7 ADU-equivalent against
+      PixInsight's own `NOISE00` of 29.7 on the same frames — two different estimators
+      (sigma-clipped mesh vs MRS multiscale) agreeing to 20 %. Sorting worst-first
+      immediately surfaced three consecutive Blue frames from 2026-03-27 00:24–00:40 at
+      HFR 11.3–11.8 px against a ~6 px average across both processing stages: a genuine
+      focus or seeing excursion, not an artifact.
+- [ ] **Caveat worth knowing: `star_count` is not comparable across PixInsight processing
+      stages.** The catalog holds the same subs calibrated (`_c`) and registered
+      (`_c_cc_r`); detection is sensitive to the noise floor, which differs between them.
+      HFR is robust across stages (6.02 vs 6.21 average on the same Blue set); star count
+      is the softer signal. Worth surfacing in the UI if it causes confusion.
 
 ## v0.42.0 — Calibration Coverage + Gallery Promotion
 

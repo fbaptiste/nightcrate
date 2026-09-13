@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.41.2
+**NightCrate version:** 0.41.3
 
-**Last updated:** 2026-09-05
+**Last updated:** 2026-09-12
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -27,9 +27,9 @@
 ## Stack and runtime
 
 - **Backend:** Python 3.14 + FastAPI ≥0.115, served by Uvicorn.
-- **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, scipy (FFT pipeline, Akima interpolation), sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU, darwin-only), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
+- **Key backend libraries:** astropy ≥7.0 (astronomy), **astropy-healpix** (BSD-3, HEALPix partitioning for the sky-tile cache — not GPL `healpy`), aiosqlite (async DB), yoyo-migrations (schema), Pillow + tifffile (standard images), numpy ≥2.0, scipy (FFT pipeline, Akima interpolation), sep (star extraction), lz4 + zstandard (XISF compression), defusedxml (XML parsing), py7zr (7z archives), httpx (HTTP client — via shared `services/http_client.py` wrapper with uniform timeout + 1-retry), bottleneck (fast median), imagecodecs, mlx (Apple Silicon GPU — marker is `darwin AND arm64`; an Intel Mac installs and runs CPU-only on numpy), platformdirs (cross-platform paths), timezonefinder (coords → IANA tz).
 - **Frontend:** React 19 + TypeScript 5.9, built with Vite 8. MUI Material 7 + MUI X Community v8 (DataGrid, Charts, DatePickers, TreeView — free tier only, no MUI X Pro/Premium). D3 7 for complex charts. Zustand 5 for state, TanStack Query 5 for data fetching, react-router-dom 7 for routing. **@dnd-kit** (core + sortable + utilities, MIT) for drag-to-reorder. KaTeX + react-katex for math rendering. Geist font via @fontsource-variable.
-- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0046.header_keyed_calibration.sql`. Pydantic for all data models.
+- **Database:** SQLite via aiosqlite (raw SQL, no ORM). Current migration: `0056.source_folder_target.sql`. Pydantic for all data models.
 - **Packaging:** Local web app — `make dev` runs backend (uvicorn port 8000) + frontend (Vite port 5173) concurrently. `make dev-lan` binds to `0.0.0.0` + serves Vite over HTTPS (auto-picks `frontend/.certs/{cert,key}.pem` if present, else `@vitejs/plugin-basic-ssl` self-signed) so iPad/Android tablets can reach NightCrate over the LAN. `nightcrate` CLI entry point defined in pyproject.toml. No Tauri/Electron wrapper yet.
 - **Platform support:** Mac, Windows, Linux. Platform-specific app data dirs via platformdirs. GPU auto-detects mlx (Mac) or CuPy (Windows/Linux) with numpy CPU fallback.
 
@@ -392,9 +392,33 @@ Two things at once: a **strip-out** and a **new capability**.
 
 ---
 
+### Frame Quality Metrics (v0.41.3)
+
+**Status:** `[shipped]`
+
+Fills the five `sub_frame` quality columns that migration 0037 created and left empty. An "Analyze N lights" button on the Catalog tab measures **HFR, star count, median SNR, median ADU and sky background** for the frames the list is currently showing — sub-tab plus filter pill, so the label reads "Analyze 276 Blue lights". Star metrics run on lights only; the two ADU columns run on every frame type, which gives the flat-exposure sanity check and the dark/bias pedestal check for free.
+
+**The run is client-driven.** A full pass over a real library is a couple of hundred gigabytes and several minutes, far too long to hold one request open behind a spinner. Rather than introduce the app's first background task, the frontend fetches the pending ids once and POSTs them back in batches of 60; each batch is an ordinary short request. A determinate progress bar with an ETA, a Cancel that lands between batches, and resume-where-it-stopped all fall out of that, and the "all work is request-driven" property survives. Measured: 276 frames in ~45 s, so ~5 min for a 2,548-frame project.
+
+**Migration 0055 was needed despite the plan saying otherwise.** Because a *successfully* analyzed dark legitimately ends with `hfr` NULL, `hfr IS NULL` cannot mean "not analyzed" — the batch loop would re-queue every calibration frame forever. `quality_analyzed_at` is the marker, with `quality_status` (`ok` / `no_stars` / `unreadable`) and `quality_error` alongside it: `no_stars` is a real result rather than a failure, and an unreadable file (offline volume) is stamped so it is reported once instead of retried on every run.
+
+**Cut on evidence:** the planned SSWEIGHT / PSF header import. Across 2,668 real cataloged headers, `SSWEIGHT`, `PSFFWHM`, `PSFSNR`, `PSFSTARS` and `PSFECCENTR` appear in **zero** frames; the PSF keys actually present are numbered variants (`PSFSGN00`, `PSFNST00`, …) that the alias map doesn't cover and whose semantics aren't verifiable from a primary source.
+
+- **Route:** Project detail → "Catalog" tab (Analyze button + progress bar, quality line on each card, Sort-by dropdown)
+- **API:** `GET /api/projects/{id}/catalog/analyze/pending`, `POST /api/projects/{id}/catalog/analyze`, plus a `sort=` param on `GET .../catalog/frames` (fixed allow-list: path, date, HFR worst/best, fewest stars, brightest sky — server-side, because the list is offset-paged and infinite)
+- **Key backend:** `services/frame_quality.py` (the metric contract + the picklable ProcessPool worker), `services/pixel_loader.py` (new — consolidates the path-string → normalized-array dispatch that was written out three times, and raises `ValueError` not `HTTPException` so it's worker-safe), `services/aberration.py` (`detect_stars` now also returns `median_snr` / `background_level` / `background_rms`, which it already computed and discarded), `api/ingest.py`, `db/migrations/0055.sub_frame_quality_run.sql`
+- **Key frontend:** `lib/useAnalyzeRun.ts`, `components/projects/ProjectCatalogTab.tsx`, `components/projects/CatalogCards.tsx`
+- **Tests:** `tests/test_frame_quality.py` (23) plus an orphan-sweep regression test in `tests/test_ingest.py`, and a `stars=N` synthetic-FITS variant in `tests/catalog_helpers.py` — the existing 8×8 uniform frame has zero variance and no sources, so detection finds nothing on it
+- **Also in v0.41.3, driven by real use:** the Image Analyzer's Statistics panel shows the same star metrics (shared code path, so identical numbers) with the panel's old `SNR` renamed `Med/σ` to stop two unrelated quantities sharing a name; HFR is shown in pixels **and** arcseconds (derived on read from the tagged rig's optics, so re-tagging updates it without re-measuring); ADU is shown against the camera's real full scale (`2^adc - 1`, since a 12-bit body writes 0..4095 into a 16-bit file); per-item **delete** (deliberately plain — a re-scan re-catalogs, and a test pins that); PixInsight sidecars (`.xnml`/`.xdrz`/`.xpsm`) are no longer cataloged at all; and a **folder-declared target** (migration 0056), the second user-declared per-folder fact after the rig, with target assignment moved into `assign_rigs_and_sessions` so it follows the same longest-prefix, survives-a-hand-correction rules
+- **Intel Mac support (v0.41.3):** the app would not install on an Intel Mac at all — `mlx` was declared `sys_platform == 'darwin'` with no architecture guard, and it publishes arm64-only wheels with no sdist, so `uv sync` aborted and installed *nothing*. The marker is now `darwin AND arm64`. No runtime change was needed: the compute backend already falls back to numpy on a failed import, and only two call sites in the backend touch `get_array_module()`. `gpu_backend_name()` (previously called from nowhere) is now surfaced via `GET /api/settings/compute` as a read-only line under the Settings GPU toggle, which was otherwise silently decorative on a machine with no backend. A handful of smaller deps (`bottleneck`, `h3`, `brotlicffi`, `sep`, `timezonefinder`, `py7zr`) build from source on Intel — documented in the README, not worked around
+- **Bug found and fixed in the cleanup pass:** both `catalog_delete` and the pre-existing `remove_folder` swept orphaned masters with `NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.processed_image_id = id)`. The bare `id` binds to `file_location.id`, making the subquery uncorrelated, so **deleting any one plain file deleted every `processed_image` row in the project**, including masters that still had files. Both qualified to `processed_image.id`; a regression test pins it (confirmed failing before the fix)
+- **Known limitations:** `hfr` is in **pixels** and only comparable within a rig (`pixel_scale_arcsec` is usually NULL, so no honest arcsec conversion). `star_count` is **not comparable across PixInsight processing stages** — detection is sensitive to the noise floor, which differs between a calibrated `_c` sub and a registered `_c_cc_r` one; HFR holds up across both. `QUALITY_SETTINGS` is frozen and not user-tunable on purpose: HFR is only comparable across frames measured identically
+
+---
+
 ## Schema state
 
-Current migration: **0054** (`sensor_peak_qe_band`). 54 migrations total (`0001`–`0054`).
+Current migration: **0056** (`source_folder_target`). 56 migrations total (`0001`–`0056`).
 
 **v0.41.1 equipment-catalogue migrations:** 0047 (`seedable_rigs` — seed columns on `rig`), 0048 (`rig_is_mine`), 0049 (`seed_smart_scope_filter_slots`), 0050 (`rig_summary_source`), 0051 (`passband_bandwidth_nullable` — table rebuild with `filter_summary` dropped and recreated around it), 0052 (`read_noise_by_gain` — splits `sensor.read_noise_e` into low/high gain columns and renames the camera pair off the misleading LCG/HCG spelling), 0053 (`mount_payload_convention` — adds `payload_capacity_with_cw_kg`), 0054 (`sensor_peak_qe_band` — adds `peak_qe_wavelength_nm`).
 

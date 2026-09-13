@@ -118,8 +118,9 @@ JPEG and TIFF — including everything inside a `.zip`, `.7z` or
 - **Identify**: detect WCS from headers — including reconstructing it from a
   PixInsight-solved XISF's astrometric solution — or plate solve on the spot,
   then overlay catalog objects with a sortable object grid.
-- GPU-accelerated stretch and statistics via mlx (Apple Silicon) or CuPy, with a
-  numpy fallback.
+- GPU-accelerated stretch and statistics via mlx (Apple Silicon) or CuPy
+  (NVIDIA). Everywhere else — Intel Macs included — the same code runs on numpy;
+  the Settings page reports which backend is actually in use.
 - Full touch support: pinch-zoom, pan, and long-press pixel inspection on iPad.
 
 ![Image Analyzer](docs/screenshots/image-analyzer.png)
@@ -198,6 +199,10 @@ Every calculator shows its formula and sources.
 (or 22.12+), and optionally [ASTAP](https://www.hnsky.org/astap.htm) plus a star
 database if you want plate solving.
 
+On an Intel Mac, also install the Xcode Command Line Tools
+(`xcode-select --install`). A few dependencies publish Apple Silicon wheels only
+and are built from source there, so the first `make install` takes a while.
+
 ```bash
 make install    # uv sync + npm install
 make dev        # backend on :8000, frontend on :5173, browser opens
@@ -225,8 +230,9 @@ make lint       # ruff
   Zustand · TanStack Query · D3
 - **Astronomy & imaging:** astropy · astropy-healpix · numpy/scipy · sep ·
   Pillow · tifffile. Array work goes through one compute-backend module that
-  picks mlx (Apple Silicon, bundled) or CuPy (NVIDIA, detected if you install
-  it), falling back to numpy.
+  picks mlx (installed on Apple Silicon only) or CuPy (NVIDIA, detected if you
+  install it), falling back to numpy. The fallback is automatic and complete —
+  no backend is required to run NightCrate.
 - **External programs:** ASTAP (plate solving), Open-Meteo and CDS/VizieR (data),
   all across process or network boundaries
 

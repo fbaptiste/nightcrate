@@ -97,3 +97,12 @@ export function saveSettings(settings: Settings): Promise<Settings> {
     body: JSON.stringify(settings),
   });
 }
+
+/** Which GPU backend the backend process can actually use, if any. */
+export interface ComputeInfo {
+  gpu_backend: "mlx" | "cupy" | null;
+}
+
+export function fetchComputeInfo(): Promise<ComputeInfo> {
+  return apiFetch<ComputeInfo>("/settings/compute");
+}

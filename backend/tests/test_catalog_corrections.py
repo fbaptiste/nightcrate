@@ -16,9 +16,11 @@ from nightcrate.main import app
 from nightcrate.services.ingest_classify import FRAME_TYPES
 from nightcrate.services.ingest_models import FrameTypeName
 from tests.catalog_helpers import (
+    _add_target,
     _frames,
     _ingest_folder,
     _make_project,
+    _seed_dsos,
     _write_fits,
 )
 
@@ -34,35 +36,6 @@ def anyio_backend():
 async def client():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
-
-
-async def _add_target(client: AsyncClient, project_id: int, dso_id: int) -> int:
-    """Attach a DSO to the project and return the project_target id."""
-    resp = await client.post(f"/api/projects/{project_id}/targets", json={"dso_id": dso_id})
-    assert resp.status_code in (200, 201), resp.text
-    listing = await client.get(f"/api/projects/{project_id}/targets")
-    row = next(t for t in listing.json() if t["dso_id"] == dso_id)
-    return row["id"]
-
-
-async def _seed_dsos(n: int = 2) -> list[int]:
-    """Minimal DSO rows so targets can be attached (dso requires a source catalog)."""
-    ids = []
-    async with get_db() as conn:
-        cursor = await conn.execute(
-            "INSERT INTO dso_catalog_source (source_id, category, display_name, file_path, "
-            "file_hash) VALUES ('test-src', 'nightcrate', 'Test Source', '/x', 'h')"
-        )
-        source_id = cursor.lastrowid
-        for i in range(n):
-            cursor = await conn.execute(
-                "INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg, "
-                "source_catalog_id, source_row_hash) VALUES (?, 'Neb', 300.0, 38.0, ?, ?)",
-                (f"TestDSO {i + 1}", source_id, f"rowhash{i}"),
-            )
-            ids.append(cursor.lastrowid)
-        await conn.commit()
-    return ids
 
 
 async def _setup(client, tmp_path, *, name: str):

@@ -21,6 +21,7 @@ from pathlib import Path
 from nightcrate.services.ingest_classify import (
     CATEGORY_SUB,
     classify_extension,
+    is_sidecar,
 )
 
 logger = logging.getLogger("nightcrate.ingest")
@@ -60,6 +61,8 @@ def scan_directory(root: str) -> list[ScanEntry]:
         return entries
 
     for path in _walk(base):
+        if is_sidecar(path.name):
+            continue
         try:
             stat = path.stat()
         except OSError:
@@ -141,6 +144,8 @@ def _scan_archive(root: str) -> list[ScanEntry]:
                     )
                     continue
                 stack.append(entry_path)
+                continue
+            if is_sidecar(name):
                 continue
             entries.append(
                 ScanEntry(

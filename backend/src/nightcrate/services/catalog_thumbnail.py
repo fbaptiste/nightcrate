@@ -25,14 +25,12 @@ import logging
 import numpy as np
 from PIL import Image
 
-from nightcrate.services import fits_io, pxiproject_io, standard_io, xisf_io
 from nightcrate.services.imaging import (
     STF_SHADOWS_CLIP,
     STF_TARGET_BG,
     _mtf_scalar,
-    reshape_color,
 )
-from nightcrate.services.path_resolver import resolve_path
+from nightcrate.services.pixel_loader import load_normalized as _load_normalized
 
 logger = logging.getLogger("nightcrate.catalog_thumbnail")
 
@@ -40,23 +38,6 @@ DEFAULT_MAX_PX = 96
 # Decimate so the longest axis is ~this many source pixels before the stretch —
 # enough detail for a small thumbnail at a fraction of the cost.
 _DECIMATE_TARGET_FACTOR = 3
-
-
-def _load_normalized(path: str) -> np.ndarray:
-    """Load image data normalized to [0, 1], shape (H, W) or (3, H, W).
-
-    The format loaders already normalize + reshape, so this is just a dispatch.
-    """
-    resolved, ft, idx, _ = resolve_path(path)
-    if ft == "pxiproject":
-        return reshape_color(pxiproject_io.load_image_data(resolved, idx))
-    if ft == "fits":
-        return fits_io.load_image_data(resolved)
-    if ft == "float_tiff":
-        return reshape_color(standard_io.load_image_data(resolved))
-    if ft == "standard":
-        return reshape_color(standard_io.load_image_as_array(resolved))
-    return xisf_io.load_image_data(resolved)
 
 
 def _decimate_step(long_axis: int, max_px: int) -> int:

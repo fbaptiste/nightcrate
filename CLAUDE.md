@@ -184,7 +184,10 @@ are the way they are.
 - **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
 - **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, `timezonefinder` (geo tz from coordinates), `scipy` (FFT pipeline). ASTAP integrated as external plate solver (subprocess, not a Python dependency).
 - **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
-- **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly.
+- **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly. **No GPU backend is ever required** — `core/compute.py` probes each with a `try: import`, memoizes the answer and returns numpy otherwise, and only two call sites in the whole backend touch `get_array_module()` (`imaging._channel_stats` and `imaging.stretch_plane`).
+  - **The `mlx` dependency marker MUST keep its `platform_machine == 'arm64'` clause.** mlx publishes arm64-only wheels and **no sdist**, so the original `sys_platform == 'darwin'` marker made it unsatisfiable on an Intel Mac — and uv aborts the entire resolution, meaning `uv sync` installed *nothing at all*, not "everything but mlx". Symptom is a total install failure on x86_64 macOS, not a degraded runtime. Verify any change to it with `uv sync --python-platform x86_64-apple-darwin --dry-run` (mlx must be absent) **and** a native resolve (mlx must be present). A few other deps — `bottleneck`, `h3`, `brotlicffi`, `sep`, `timezonefinder`, `py7zr` — ship arm64-only macOS wheels but do have sdists, so Intel builds them from source and needs Xcode Command Line Tools.
+  - The capability probes catch `Exception`, not just `ImportError`: an installed-but-unusable library (Metal init failure, wrong CUDA) must degrade to numpy rather than escape from an image render. A plain missing library is logged at nothing — that is the normal Intel/Linux case.
+  - `gpu_backend_name()` is surfaced at `GET /api/settings/compute` and rendered read-only under the Settings toggle. It is deliberately **not** a field on the `Settings` model: `PUT /api/settings` persists every field on that model into the KV table, so a computed field would be written back as a setting row.
 - **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, key-value rows).
 
 Desktop packaging rationale: Electron rejected (100MB+ bundle size); Tauri is the future native wrapper option using OS-native webview.
@@ -435,6 +438,106 @@ For full feature inventory and per-version history see `nightcrate-current-state
 - **`FileBrowser` `directoryMode` prop:** when set, the shared browser selects the current directory (`onSelect(result.path)`), the action button reads "Select This Folder", file rows are context-only, and PixInsight projects aren't selectable. **An archive is selectable** (v0.41.1) — either the archive itself or a directory inside it — so a zip/tar/7z can be bound as a source folder; the selection is the `archive.zip::entry` virtual path. Keeps one browser component everywhere.
 - **Archive source folders (v0.41.1).** `ingest_scanner._scan_archive` walks the TOC and catalogs entries under the same `archive::entry` convention the rest of the app uses. Two things follow. Entries inherit the **archive's** mtime — a fallback for a frame whose header has no DATE-OBS, but the displayed date for a log or other non-header file. And **prefix matching must use `services/ingest_sessions.py:folder_prefix`, never a hand-built separator**: an archive bound at its *root* is stored as `/data/n.zip` while its frames are `/data/n.zip::…`, so appending `/` matches nothing — the rig tag silently never lands and removing the folder deletes no `file_location` row, leaving frames the orphan sweep can't see. This is the third outing for that class of bug; the other two were a missing separator boundary and a hardcoded `/` on Windows.
 - **ProcessPool is per-run, shut down in a `finally` (`make_pool`, NOT a persistent global).** A long-lived spawn `ProcessPoolExecutor` leaves worker processes alive after the run; under `uvicorn --reload` (i.e. `make dev`) those orphaned children block a clean restart and **wedge the whole event loop** (every endpoint hangs, including `/api/health`). The `~1 s` spawn cost per ingest is negligible. **Both pools now follow this** — `planner_annual_hours.py` was converted in v0.41.2 (`_make_pool`, used in a `with`). It had cached a module-level pool and closed it on `atexit`, reasoning that only `--reload` leaked and production does not reload; that gets the trade backwards, since the reloader is a development tool and wedging dev is the whole cost. **There is no persistent ProcessPool left in the codebase — do not add one.**
+
+### Frame Quality Metrics (v0.41.3)
+
+- **The run is client-driven, and that is deliberate.** `ProjectCatalogTab` fetches the
+  pending frame ids once (`GET .../catalog/analyze/pending`) and POSTs them back in
+  batches of 60 (`POST .../catalog/analyze`, `lib/useAnalyzeRun.ts`). Progress, ETA,
+  Cancel and resume-where-it-stopped all fall out of that, and the app keeps its
+  "all work is request-driven, no background tasks" property. **Do not convert this to a
+  background task + polled status endpoint** without a reason — there is no such
+  machinery anywhere in the codebase (ingest runs synchronously inside its POST and
+  nothing ever SELECTs `ingestion_run`), so that would be net-new surface for no gain.
+  `_ANALYZE_LOCK` is separate from `_INGEST_LOCK` so a quality pass and a re-scan don't
+  queue behind each other.
+- **`hfr IS NULL` does NOT mean "not analyzed" — use `quality_analyzed_at`** (migration
+  0055). Star metrics run on **lights only**; `median_adu`/`background_adu` run on every
+  frame type. So a successfully analyzed dark ends with `hfr` NULL, and keying the
+  pending query off `hfr` would re-queue every calibration frame forever. `quality_status`
+  is `ok | no_stars | unreadable` — `no_stars` is a real result (clouds, lost target), not
+  a failure, and an unreadable file is stamped too so an offline volume is reported once
+  rather than retried every run.
+- **`services/frame_quality.py` must never call `compute_image_stats`.** It reaches
+  `get_array_module()` via `imaging._channel_stats`, and this pass fans out across a
+  ProcessPool. The median is replicated in numpy, the same way `catalog_thumbnail` does
+  for the STF math. The worker also calls `set_gpu_enabled(False)` first — a fresh spawn
+  worker starts with the GPU flag `True` regardless of the user's setting. Pinned by
+  `test_render_never_uses_gpu_backend` in `tests/test_frame_quality.py`.
+- **ADU columns are 16-bit-equivalent, not always real ADU.** `normalize_to_01` is
+  type-based (uint16 ÷ 65535; float assumed already `[0,1]`), so ×65535 recovers true ADU
+  for integer sources and gives a comparable scale for PixInsight float XISF — which
+  carries no `bit_depth` at all. Don't present the float-sourced numbers as real ADU.
+- **`hfr` is in PIXELS and only comparable within a rig** (`pixel_scale_arcsec` is usually
+  NULL on a cataloged frame). And **`star_count` is not comparable across PixInsight
+  processing stages** — detection is sensitive to the noise floor, which differs between
+  a calibrated `_c` sub and a registered `_c_cc_r` one. HFR is the robust signal.
+- **`QUALITY_SETTINGS` is frozen and must not become user-tunable.** HFR is only
+  comparable across frames measured with identical detection settings; a slider would
+  silently make the catalog incomparable to itself. Changing the constant means
+  invalidating every stored value.
+- **`services/pixel_loader.py` is the path-string → normalized-array loader for new
+  code.** It handles archive and pxiproject virtuals and raises `ValueError`, never
+  `HTTPException`, so it is safe in a worker or a thread. New code that loads pixels from
+  a user-supplied path should use it rather than re-writing the format dispatch.
+  **It is not yet the only copy** — `api/images.py:_load_image_data` and
+  `api/aberration.py:_load_mono_data` still carry their own dispatch (they hold a
+  pre-resolved source for their caches, not a path), and have already drifted on
+  `reshape_color`. Folding them in needs a `load_from_resolved(...)` seam; a new format
+  currently means editing all three.
+- **HFR is stored in pixels and converted to arcsec ON READ, never stored.**
+  `_PIXEL_SCALE_SQL` prefers the frame's plate-solved `pixel_scale_arcsec`, else
+  `206.265 x pixel_size_um x binning / focal_length_mm` from the tagged rig. Deriving it
+  means re-tagging a folder's rig updates every frame without re-measuring. NULL when the
+  rig is untagged — the UI shows pixels rather than guessing. **Sort by arcsec, not pixels,
+  on a multi-rig project**: pixels rank by focal length, not by seeing.
+- **ADU is NOT out of 65535.** `_FULL_SCALE_SQL` is `2^adc_bit_depth - 1` from the rig's
+  sensor, because a 12-bit camera writes 0..4095 into a 16-bit file and the container says
+  nothing (verified on a real Dwarf frame: dtype uint16, actual max exactly 4095). One
+  user's kit can span 65535 / 16383 / 4095 at once, so a bare ADU figure is unjudgeable.
+- **Catalog sort is server-side, via a fixed allow-list dict** (`api/ingest.py:_FRAME_SORTS`)
+  — the list is offset-paged and infinite, so client-side sort would only order loaded
+  pages. Blanks sort last in both directions.
+
+- **Two user-declared facts per source folder: `rig_id` (0046) and
+  `project_target_id` (0056).** Target joined the rig in v0.41.3 and is assigned the same
+  way — `assign_rigs_and_sessions` is the **single owner of rig, target and session**, and
+  `_persist_parsed` no longer writes a target per file. That move is not cosmetic: which
+  folder innermost contains a file isn't knowable during the walk, so the per-file version
+  got nested folders and tag-after-scan wrong, exactly as it did for rigs. Target differs
+  from rig in two ways — **lights only** (a dark isn't "of" anything), and every statement
+  in the pass excludes `project_target_source = 'user'`, which is the only reason a hand
+  correction survives a re-scan. An untagged folder falls back to the project's single
+  target. **The `OBJECT` header is still only a hint** — never used to pick a target.
+- **A folder's target must belong to that project.** `project_target` ids are global, so a
+  bare FK would let one project's folder point at another's target; `_validate_folder_target`
+  is the scoped check and returns 422.
+- **`PATCH /folders/{id}` writes only the fields actually sent** (read off
+  `model_fields_set`), so tagging a rig can't silently clear a target set separately.
+- **Qualify the outer column in a correlated `NOT EXISTS` orphan sweep.** The sweeps that
+  drop a `sub_frame` / `processed_image` once its last `file_location` is gone read
+  `NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.processed_image_id = <col>)`. Writing
+  a bare `id` there binds it to **`file_location.id`** — the subquery's own table has that
+  column, so SQLite resolves it locally, the subquery becomes *uncorrelated*
+  (`EXPLAIN QUERY PLAN` shows `SCALAR SUBQUERY` instead of `CORRELATED`), `NOT EXISTS` is
+  true for every row, and the statement deletes the **whole table for that project** —
+  including rows that still have files. This shipped in both `catalog_delete` and
+  `remove_folder` and was caught in v0.41.3 review; always write
+  `fl.processed_image_id = processed_image.id`. A regression test in `tests/test_ingest.py`
+  pins it.
+- **Deleting from the catalog is plain and does NOT stick.** `POST /catalog/delete` removes
+  rows; a re-scan of a still-bound folder catalogs the files again, because nothing records
+  the removal. That's the chosen behaviour, the confirm dialog says so, and a test pins it —
+  don't "fix" it into silent exclusion without deciding to build an exclusion list.
+- **Generated sidecars are never cataloged** (`ingest_classify.is_sidecar`): `.xnml`
+  (PixInsight local-normalization data), `.xdrz` (drizzle data), `.xpsm`. WBPP writes one of
+  each per registered sub, so a 600-sub project gained ~1,250 rows nobody could act on. The
+  rule is **"generated sidecar", not "not an image"** — logs are not images and are
+  cataloged deliberately (they are the v0.43/v0.44 arc), as is the `.pxiproject`.
+- **`::` means two different things and `path.includes("::")` cannot tell them apart.**
+  A pxiproject path ends in an integer image index; anything else is an archive entry.
+  `frontend/src/api/images.ts:parsePath` mirrors `services/path_resolver.py`'s own rule.
+  Treating every `::` path as a project is what labelled a `.fit` inside a zip as "PXI".
 
 ### Catalog Corrections + Derived Sessions (v0.41.1)
 - **No automatic equipment identification, by design.** v0.39.0's FITS-header → equipment-row

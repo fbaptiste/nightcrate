@@ -929,6 +929,43 @@ class TestClassificationRefinements:
         assert m["type_label"] == "Master: Dark"
         assert m["ncombine"] == 20
 
+    async def test_deleting_a_plain_file_keeps_masters_that_still_have_files(
+        self, client, tmp_path
+    ):
+        """Regression: the orphan sweep must only remove genuinely orphaned masters.
+
+        The sweep's subquery said ``fl.processed_image_id = id``. A bare ``id``
+        binds to ``file_location.id`` — the subquery's own table — which makes the
+        subquery uncorrelated, so ``NOT EXISTS`` was true for every row and
+        deleting any plain file wiped **every** master in the project.
+        """
+        folder = tmp_path / "MastersAndLog"
+        folder.mkdir()
+        _write_fits(
+            folder / "MasterDark.fits",
+            imagetyp="Master Dark",
+            exptime=300.0,
+            extra={"NCOMBINE": 20},
+        )
+        (folder / "session.log").write_text("a cataloged non-image file\n")
+
+        pid = await _make_project(client, "SweepGuard")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(folder)})
+        await client.post(f"/api/projects/{pid}/ingest")
+
+        assert (await client.get(f"/api/projects/{pid}/catalog/masters")).json()["total"] == 1
+        others = (await client.get(f"/api/projects/{pid}/catalog/others")).json()["rows"]
+        log_ids = [o["id"] for o in others if str(o.get("path", "")).endswith(".log")]
+        assert len(log_ids) == 1, others
+
+        resp = await client.post(f"/api/projects/{pid}/catalog/delete", json={"file_ids": log_ids})
+        assert resp.status_code == 200, resp.text
+
+        # The master still has its own file_location, so it must survive.
+        masters = (await client.get(f"/api/projects/{pid}/catalog/masters")).json()
+        assert masters["total"] == 1, "orphan sweep deleted a master that still has a file"
+        assert masters["rows"][0]["ncombine"] == 20
+
     async def test_flats_sorted_by_filter(self, client, tmp_path):
         # Flats sort by filter name even when the path would order them otherwise.
         folder = tmp_path / "Flats"

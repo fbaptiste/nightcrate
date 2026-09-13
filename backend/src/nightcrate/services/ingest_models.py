@@ -25,6 +25,11 @@ class SourceFolder(BaseModel):
     on it so a simultaneous dual-rig night splits, and calibration matching scopes on
     it. NULL means "not stated", which is a valid answer."""
     rig_name: str | None = None
+    project_target_id: int | None = None
+    """Which target this folder holds. **User-declared, never inferred** (v0.41.3).
+    NULL falls back to the project's single target, which is what every frame got
+    before folders could say. The OBJECT header stays a hint and is not used."""
+    target_name: str | None = None
     added_at: str
 
 
@@ -32,12 +37,19 @@ class SourceFolderCreate(BaseModel):
     path: str
     is_primary: bool = False
     rig_id: int | None = None
+    project_target_id: int | None = None
 
 
 class SourceFolderUpdate(BaseModel):
-    """Partial update. Only ``rig_id`` is editable; an explicit null clears it."""
+    """Partial update of the folder's declared facts.
+
+    ``rig_id`` and ``project_target_id`` are the editable ones; a field absent
+    from the body is left alone, an explicit null clears it. That distinction is
+    read off ``model_fields_set``, not off the value.
+    """
 
     rig_id: int | None = None
+    project_target_id: int | None = None
 
 
 class IngestStatus(BaseModel):
@@ -99,6 +111,29 @@ class CatalogFrame(BaseModel):
     target_name: str | None = None  # resolved DSO designation for display
     frame_type_source: str | None = None
     project_target_source: str | None = None
+    # Quality metrics (v0.41.3). All NULL until the analyze pass has run over this
+    # frame. hfr / star_count / snr_estimate stay NULL on calibration frames even
+    # after a successful run — only lights carry stars. See services/frame_quality.py
+    # for the definitions; hfr is in PIXELS and only comparable within a rig.
+    hfr: float | None = None
+    star_count: int | None = None
+    median_adu: float | None = None
+    background_adu: float | None = None
+    snr_estimate: float | None = None
+    quality_status: str | None = None  # ok | no_stars | unreadable
+    quality_analyzed_at: str | None = None
+    # Derived on read, never stored (v0.41.3). The frame's plate-solved scale if
+    # it has one, else computed from the tagged rig's focal length and sensor
+    # pitch (times binning). NULL when the rig is untagged or its equipment record
+    # is incomplete — the UI then shows HFR in pixels rather than guessing.
+    pixel_scale_arcsec: float | None = None
+    # hfr x pixel_scale_arcsec. The angular figure is the comparable one: the same
+    # seeing reads ~6 px at 1960 mm and ~2 px at 600 mm.
+    hfr_arcsec: float | None = None
+    # Saturation point of the frame's camera (2^ADC - 1), from the tagged rig.
+    # An ADU reading can't be judged without it: 30,000 is about half scale on a
+    # 16-bit body and impossible on a 12-bit one. NULL when the rig is untagged.
+    full_scale_adu: int | None = None
 
 
 CorrectableField = Literal["frame_type", "project_target_id"]
@@ -132,6 +167,61 @@ class CatalogFramesPage(BaseModel):
     rows: list[CatalogFrame]
     total: int
     timezone: str = "UTC"  # IANA tz for displaying date_obs (project location or UTC)
+
+
+class QualityPending(BaseModel):
+    """The frames still awaiting quality analysis, in the requested scope.
+
+    The whole ordered id list, not a page: the client slices it into batches
+    itself, which makes progress exact and avoids re-querying a moving target
+    between batches. 2,664 ints is about 20 KB of JSON.
+    """
+
+    frame_ids: list[int]
+    total: int  # frames in scope overall (analyzed + pending), for the progress bar
+
+
+class QualityCounts(BaseModel):
+    """Analyze-state of the frames in one catalog scope, for the button labels."""
+
+    total: int = 0
+    analyzed: int = 0  # includes unreadable — they were attempted
+    pending: int = 0  # never attempted
+    unreadable: int = 0
+
+
+class QualityAnalyzeRequest(BaseModel):
+    """One batch of the client-driven analyze run."""
+
+    frame_ids: list[int] = Field(min_length=1, max_length=500)
+    force: bool = False  # recompute even if already analyzed
+
+
+class QualityAnalyzeResult(BaseModel):
+    analyzed: int = 0
+    no_stars: int = 0
+    unreadable: int = 0
+    skipped: int = 0  # already analyzed and force was not set
+    errors: list[str] = []
+
+
+class CatalogDeleteRequest(BaseModel):
+    """Items to drop from the catalog. At least one list must be non-empty.
+
+    Three typed lists rather than one id list plus a discriminator, because the
+    three tables are genuinely different rows — a sub frame owns its file
+    locations, a plain file IS a file location.
+    """
+
+    sub_frame_ids: list[int] = []
+    processed_image_ids: list[int] = []
+    file_ids: list[int] = []
+
+
+class CatalogDeleteResult(BaseModel):
+    sub_frames: int = 0
+    processed_images: int = 0
+    files: int = 0
 
 
 class CatalogMaster(BaseModel):

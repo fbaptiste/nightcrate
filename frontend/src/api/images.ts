@@ -69,6 +69,44 @@ export function isVirtualPath(path: string): boolean {
   return path.includes("::");
 }
 
+export type VirtualKind = "plain" | "pxiproject" | "archive";
+
+export interface ParsedPath {
+  kind: VirtualKind;
+  /** The file or directory before `::` — the archive or the project. */
+  container: string;
+  /** The part after `::` — an entry path, or the image index for a project. */
+  entry: string;
+}
+
+/**
+ * Classify a path, telling the two `::` conventions apart.
+ *
+ * `::` means BOTH "image N of a PixInsight project" and "this entry inside this
+ * archive", so `isVirtualPath` alone cannot say what a path is — treating every
+ * `::` path as a project is what made a `.fit` inside a zip display as "PXI".
+ *
+ * The test mirrors `services/path_resolver.py` exactly: a pxiproject path ends
+ * in an **integer image index**; anything else with a `::` is an archive entry.
+ * Matching the backend's own rule rather than sniffing extensions keeps the two
+ * from drifting as more archive formats are supported.
+ */
+export function parsePath(path: string): ParsedPath {
+  const i = path.lastIndexOf("::");
+  if (i < 0) return { kind: "plain", container: path, entry: "" };
+  const container = path.slice(0, i);
+  const entry = path.slice(i + 2);
+  const isIndex = entry !== "" && /^\d+$/.test(entry);
+  return { kind: isIndex ? "pxiproject" : "archive", container, entry };
+}
+
+/** Uppercase extension of *name*, or "" — e.g. "…/x.fit" -> "FIT". */
+export function extLabel(name: string): string {
+  const base = name.slice(name.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toUpperCase() : "";
+}
+
 const FITS_EXTENSIONS = new Set([".fits", ".fit", ".fts"]);
 
 export function isFitsPath(path: string): boolean {
@@ -132,6 +170,35 @@ export interface StatsAndHistogram {
 export function fetchStatsAndHistogram(path: string, hdu: number): Promise<StatsAndHistogram> {
   return apiFetch<StatsAndHistogram>(
     `/images/stats-histogram?path=${encodeURIComponent(path)}&hdu=${hdu}`,
+  );
+}
+
+// ── Star + level quality ─────────────────────────────────────────────────────
+
+/**
+ * Star-based quality for the loaded image, in the same 16-bit-equivalent ADU
+ * scale and with the same frozen detection settings the catalog uses — so these
+ * numbers match a cataloged frame's stored values exactly.
+ */
+export interface ImageQuality {
+  /** Median per-star half-flux radius, in PIXELS (comparable only within a rig). */
+  hfr: number | null;
+  star_count: number | null;
+  /** Median per-star SNR — NOT the Statistics panel's median/σ. */
+  snr_estimate: number | null;
+  median_adu: number | null;
+  background_adu: number | null;
+  status: "ok" | "no_stars";
+}
+
+/**
+ * Fetched separately from stats on purpose: detection costs ~0.36 s on a 26 MP
+ * frame against ~0.07 s for all of /stats, so the two run in parallel and the
+ * star block fills in without holding up the rest of the panel.
+ */
+export function fetchImageQuality(path: string, hdu: number): Promise<ImageQuality> {
+  return apiFetch<ImageQuality>(
+    `/images/quality?path=${encodeURIComponent(path)}&hdu=${hdu}`,
   );
 }
 

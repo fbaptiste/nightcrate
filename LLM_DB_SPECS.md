@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.41.2
+**NightCrate version:** 0.41.3
 
 ## Overview
 
@@ -380,7 +380,12 @@ CREATE TABLE sub_frame (project_id FK CASCADE NOT NULL, content_hash TEXT,
     date_obs_utc TEXT NOT NULL,  -- mtime fallback so ingest never fails
     obs_mjd REAL, ra_deg REAL, dec_deg REAL, rotation_deg REAL,
     pixel_scale_arcsec REAL, airmass REAL,
+    -- Quality (v0.41.3 analyze pass). hfr in PIXELS, median over detected stars,
+    -- comparable only within a rig. *_adu are 16-bit-equivalent. Lights get all
+    -- five; other frame types get the two *_adu only.
     hfr REAL, star_count INT, median_adu REAL, background_adu REAL, snr_estimate REAL,
+    quality_analyzed_at TEXT,  -- NULL = never analyzed (hfr can't serve: a dark's stays NULL)
+    quality_status TEXT CHECK (ok|no_stars|unreadable), quality_error TEXT,
     latitude REAL, longitude REAL, elevation_m REAL,
     object_hint TEXT, filter_name_hint TEXT,  -- raw OBJECT/FILTER headers
     fits_header_json TEXT, created_at, updated_at);  -- updated_at trigger
@@ -429,7 +434,12 @@ CREATE TABLE dither_event (guiding_log_file_id FK CASCADE NOT NULL,
     dither_utc TEXT NOT NULL, ra_offset_arcsec REAL, dec_offset_arcsec REAL,
     settle_completed_utc TEXT, settle_failed INT CHECK(0,1) DEFAULT 0);
 
+-- Two USER-DECLARED facts per folder: rig_id (0046) and project_target_id (0056).
+-- Neither is inferred from a header. Frames beneath inherit both via
+-- assign_rigs_and_sessions; target applies to lights only and never overwrites
+-- a frame whose project_target_source = 'user'.
 CREATE TABLE project_source_folder (project_id FK CASCADE NOT NULL, path TEXT NOT NULL,
+    project_target_id FK project_target SET NULL,  -- NULL = project's single target
     is_primary INT CHECK(0,1) DEFAULT 0, added_at TEXT,
     UNIQUE (project_id, path));  -- partial unique idx: one primary per project
 

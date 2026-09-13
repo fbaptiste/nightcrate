@@ -19,6 +19,7 @@ from nightcrate.services.fits_header_map import (
     FITS_KEYWORD_ALIASES,
     extract_metadata,
 )
+from nightcrate.services.frame_quality import analyze_array
 from nightcrate.services.imaging import (
     LUM_B,
     LUM_G,
@@ -307,6 +308,52 @@ async def get_stats(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("stats failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+def _compute_quality(
+    p: Path | BinaryIO, ft: str, idx: int, hdu: int, cache_key: tuple | None = None
+) -> dict:
+    """Load image (cached) and measure star + level quality (runs in a thread)."""
+    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
+    return analyze_array(data, True)
+
+
+# Star detection loads the frame at full resolution and peaks around 3x its size
+# in memory. Stepping prev/next in the analyzer overlay fires one per step and
+# nothing cancels the in-flight ones, so bound the concurrency the same way the
+# catalog thumbnail render does (api/ingest.py:_THUMB_SEM).
+_QUALITY_SEM = asyncio.Semaphore(3)
+
+
+@router.get("/quality")
+async def get_quality(
+    path: str = Query(..., description="Absolute path to image file"),
+    hdu: int = Query(0, description="Extension index"),
+) -> dict:
+    """Star count, HFR, star SNR and levels in ADU for the loaded image.
+
+    Deliberately a **separate endpoint from /stats**, not folded into it: star
+    detection costs ~0.36 s on a 26 MP frame against ~0.07 s for the whole of
+    /stats, so bundling would make an instant panel sluggish on every image —
+    including masters and snapshots with no stars worth finding. The analyzer
+    fetches the two in parallel and fills the star block in when it lands.
+
+    Shares ``services/frame_quality.analyze_array`` with the catalog's batch
+    pass, so what you read here is the same number the catalog stores.
+    """
+    p, ft, idx, ck = resolve_path(path)
+    if ft == "standard":
+        raise HTTPException(
+            status_code=404, detail="Quality metrics not available for standard image formats"
+        )
+    try:
+        async with _QUALITY_SEM:
+            return await asyncio.to_thread(_compute_quality, p, ft, idx, hdu, ck)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("quality failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
