@@ -711,7 +711,37 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
 ### Weather Forecast
 - Two timezones per location: `geo_timezone` (auto-derived from coords via `timezonefinder`, used for noon-to-noon astro windows and the lunar 48 h grid) and `timezone` (user's display preference, used for Open-Meteo API + display formatting). **Don't conflate them** — remote-observatory operators legitimately want display in their home timezone while astro computes against site coordinates.
 - **Hourly Detail joins astro to weather by absolute UTC, never wall-clock `HH:MM`.** Weather rows are labelled in the display `timezone`; astro in `geo_timezone`. A string-time join silently grabs the wrong hour whenever the two differ (it shifts moon/darkness/quality by the offset). `api/weather.py:get_hourly` matches on `HourlyAstro.time_utc` via a bisect nearest-match; `compute_hourly_astro` pads its grid ±1h so every displayed hour (incl. the pre-sunset / post-sunrise context columns) has real data. A missing astro hour must NOT be treated as "moon below horizon" — that produced a spurious Moon Quality of 100 in the first column (v0.38.1).
-- Quality scoring uses a **colorblind-safe sequential blue palette** (darker = better). Cloud gating: all non-sky factors multiplied by `√(sky_clarity / 100)`.
+- Quality scoring uses a **colorblind-safe sequential blue palette** (darker = better).
+- **Cloud is a GATE, not a weighted term (v0.41.4).** `score = 100 × availability × quality`,
+  where `availability = darkness × precip_gate × wind_gate × (1 − cover)^1.5` and
+  `quality` is a weighted mean of seeing/transparency/wind-calm times a moon factor
+  with a floor. Availability is a **product**, so 100% cover is exactly 0 by
+  construction. **Do not reintroduce cloud as an additive term** — the previous model
+  summed `sky_clarity × 0.35` with `sqrt(sky_clarity/100)` gating, which gives the
+  score a floor: 100% cloud returned 46, and 55 with every other factor perfect. The
+  layer weighting it used (low 1.0 / mid 0.9 / high 0.6) was a *visual observing*
+  heuristic; effective cover is now the **maximum** over total and every layer, so
+  adding cloud anywhere can never raise the score. Rationale and sources in
+  `docs/imaging-quality-model.md`; the constants are frozen module constants for the
+  same reason `QUALITY_SETTINGS` is.
+- **`Unusable` is a label about availability, not a bucket of the 0-100 scale** — it
+  fires below `UNUSABLE_AVAILABILITY` (0.10) whatever the score, so it cannot be
+  re-derived from the number. `scoreToLabel` in the frontend is a fallback that can
+  never produce it; prefer the server's `imaging_quality_label`. It scores 0, which on
+  a darker-is-better ramp is the *palest* cell, so the hourly grid hatches it.
+- **The night is aggregated from per-hour scores, never scored from averaged inputs.**
+  Averaging cloud across a night and then applying `(1−f)^k` is not the same as
+  aggregating per-hour yields, and it discards which hours were good.
+  `expected_useful_hours` (Σ availability × quality) is the go/no-go number.
+- **The moon and darkness inputs must be PER HOUR.** `darkness_fraction` is an exact
+  minute overlap with the twilight boundaries on `night.darkness` (astro dark
+  normally, sun ≤ −12° in narrowband so 3nm filters keep astronomical twilight) — not
+  `darkness_category`, which is one instantaneous classification at the top of the
+  hour. `moon_score` is `100 × (1 − illumination × sin(altitude))`. Both live in
+  `services/imaging_quality.py`.
+- **`api/weather.py:METHODOLOGY` is the single source for the scoring docs.** The
+  frontend renders it via `fetchMethodology`; `MethodologyInfo.tsx` used to hardcode a
+  duplicate that silently went stale. Change the model, change METHODOLOGY.
 - Supplementary data writes (PWV, AOD) are **non-fatal** — wrap in try/except and serve stale data rather than 5xx.
 - Forecast covers 8 days (`forecast_days=8`) so the last night's sunrise window is included.
 

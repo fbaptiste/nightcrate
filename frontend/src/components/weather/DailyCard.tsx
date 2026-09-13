@@ -16,10 +16,21 @@ import QualityBadge from "./QualityBadge";
 interface DailyCardProps {
   day: DailySummary;
   selected: boolean;
-  moonIncluded: boolean;
   units: WeatherUnits;
   onClick: () => void;
 }
+
+/** Display names for the model's factor keys. Keys come from the backend. */
+const FACTOR_LABELS: Record<string, string> = {
+  darkness: "Darkness",
+  precipitation: "Precip. Gate",
+  wind_gate: "Wind Gate",
+  cloud: "Clear Sky",
+  seeing: "Seeing",
+  transparency: "Transparency",
+  wind_calm: "Wind Calm",
+  moon: "Moon Quality",
+};
 
 // ── Sub-score bar ──────────────────────────────────────────────────────────
 
@@ -106,7 +117,9 @@ function formatTempLine2(minC: number, maxC: number, units: WeatherUnits): strin
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export default function DailyCard({ day, selected, moonIncluded, units, onClick }: DailyCardProps) {
+// Narrowband no longer needs a prop here: the server marks the moon factor
+// `applied: false`, which is what greys the bar.
+export default function DailyCard({ day, selected, units, onClick }: DailyCardProps) {
   // Parse date with T12:00:00 to avoid timezone shift
   const dateObj = new Date(`${day.date}T12:00:00`);
   const dayName = dateObj.toLocaleDateString("en-US", { weekday: "short" });
@@ -217,11 +230,25 @@ export default function DailyCard({ day, selected, moonIncluded, units, onClick 
             </Typography>
           ) : (
             <Box sx={{ px: 0.25 }}>
-              <ScoreBar label="Sky Clarity" value={day.sky_clarity} />
-              <ScoreBar label="Transparency" value={day.transparency_score} />
-              <ScoreBar label="Seeing" value={day.seeing_score} />
-              <ScoreBar label="Moon Quality" value={day.moon_score} grayed={!moonIncluded} />
-              <ScoreBar label="Wind Calm" value={day.wind_calm} />
+              {day.factors
+                .filter((f) => f.value !== null)
+                .map((f) => (
+                  <ScoreBar
+                    key={f.key}
+                    label={FACTOR_LABELS[f.key] ?? f.key}
+                    value={f.value as number}
+                    grayed={!f.applied}
+                  />
+                ))}
+              {day.expected_useful_hours > 0 && (
+                <Typography
+                  variant="caption"
+                  display="block"
+                  sx={{ ...infoTextSx, textAlign: "center", mt: 0.5 }}
+                >
+                  {"\u2248"} {day.expected_useful_hours.toFixed(1)} h of usable data
+                </Typography>
+              )}
             </Box>
           )}
 

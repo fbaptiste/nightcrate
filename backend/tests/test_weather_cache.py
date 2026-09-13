@@ -261,12 +261,12 @@ async def test_forecast_polar_no_imaging_window(client):
     # darkness, dew_safe_window="none", and a valid deepest_darkness_reached.
     for day in no_imaging_days:
         assert day["imaging_quality"] == 0
-        assert day["imaging_quality_label"] == "Poor"
-        assert day["sky_clarity"] == 0
-        assert day["transparency_score"] == 0
-        assert day["seeing_score"] == 0
-        assert day["wind_calm"] == 0
-        assert day["moon_score"] == 100
+        assert day["imaging_quality_label"] == "Unusable"
+        assert day["availability"] == 0.0
+        assert day["quality"] == 0.0
+        assert day["expected_useful_hours"] == 0.0
+        assert day["factors"] == []
+        assert day["flags"] == ["no_darkness"]
         assert day["darkness_hours"] == 0
         assert day["moonless_dark_hours"] == 0
         assert day["dew_safe_window"]["label"] == "none"

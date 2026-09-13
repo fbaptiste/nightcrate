@@ -231,7 +231,7 @@ export default function TonightCalc() {
                     label={tonightForecast.imaging_quality_label}
                     size="medium"
                     showLabel
-                    tooltip={`Composite of sky clarity, transparency, seeing, moon, and wind for ${tonightForecast.date} at ${location?.name ?? "this location"}. Click to open the Weather page.`}
+                    tooltip={`Expected useful data for ${tonightForecast.date} at ${location?.name ?? "this location"}: about ${tonightForecast.expected_useful_hours.toFixed(1)} h. Cloud, darkness, precipitation and wind gate how much of the night is usable; seeing, transparency, wind and the moon set how good it is. Click to open the Weather page.`}
                   />
                 </Link>
               )

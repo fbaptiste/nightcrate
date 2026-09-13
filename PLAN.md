@@ -62,6 +62,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.41.1 — Catalog Simplification + Derived Sessions](#v0411--catalog-simplification--derived-sessions) ✅
 - [v0.41.2 — Catalogue Gaps + Planner Pool](#v0412--catalogue-gaps--planner-pool) ✅
 - [v0.41.3 — Frame Quality Metrics](#v0413--frame-quality-metrics) ✅
+- [v0.41.4 — Imaging Quality Redesign](#v0414--imaging-quality-redesign) ✅
 - [v0.42.0 — Calibration Coverage + Gallery Promotion](#v0420--calibration-coverage--gallery-promotion)
 - [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
 - [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
@@ -5826,6 +5827,163 @@ signal that they are.
       (`_c_cc_r`); detection is sensitive to the noise floor, which differs between them.
       HFR is robust across stages (6.02 vs 6.21 average on the same Blue set); star count
       is the softer signal. Worth surfacing in the UI if it causes confusion.
+
+## v0.41.4 — Imaging Quality Redesign
+
+**Status:** Done. **Branch:** `v0.41.4/imaging-quality-redesign`. The weather
+panel's per-hour score, rebuilt so that cloud gates the hour instead of being one
+weighted term among several. Inserted ahead of v0.42.0; nothing renumbered.
+
+Carved out of the roadmap because the score was wrong in a way that mattered: an
+hour with **100% cloud cover scored 46 "Marginal"**. Design work was handed to
+Fable, which produced a rationale document, a reference implementation and a
+worked-example harness; this version ports that model and wires it in.
+
+### The 0.6 high-cloud weight was the symptom, not the disease
+
+- [x] **Cloud was an additive term, and any weighted sum with cloud as a term has
+      a floor.** The old model computed `sky_clarity*0.35 + other*sqrt(sky_clarity/100)`,
+      and `sqrt(0.4) = 0.63` let 63% of the other credit through at sky clarity 40.
+      The layer weighting (low 1.0 / mid 0.9 / high 0.6) is a *visual observing*
+      heuristic — you can still see Jupiter through cirrus — and it made a
+      100%-cirrus hour read as 60% effective cloud.
+- [x] **Worse cases than the reported one:** 100% high cloud with every other
+      factor perfect scored **55 "Good"**; 80% high cloud scored 65; the 60%-cirrus
+      hour scored 60 "Good". Tuning the constant could not have fixed any of them.
+- [x] The replacement splits the two questions the old single number conflated:
+
+      ```
+      score        = 100 x availability x quality
+      availability = darkness x precip_gate x wind_gate x (1 - cloud) ** 1.5
+      quality      = moon_factor x (0.45 seeing + 0.40 transparency + 0.15 wind_calm)
+      ```
+
+      Availability is a **product**, so any closed gate zeroes the hour and 100%
+      cover is 0 by construction rather than by tuning. Quality stays additive
+      because seeing, transparency and wind each degrade data without making a
+      night unimageable. Both halves are returned, so a cirrus night reads
+      "0 — though the data would have been 67".
+
+### Every layer of cloud now counts at face value
+
+- [x] Effective cover is the **maximum** of the total and every layer, so adding
+      cloud to any layer can never raise the score even when the total field does
+      not move. A missing total is estimated from the layers with random overlap
+      and flagged; an hour with no cloud figure at all raises rather than being
+      treated as clear.
+- [x] **No partial credit for high cloud, deliberately.** The forecast reports
+      high cloud as *coverage* inferred from relative humidity, not opacity, so it
+      cannot separate subvisual cirrus from an opaque deck. Layer composition
+      drives only the `high_cloud_only` advisory, which exists so the UI can say
+      "check satellite IR before writing this off" on the one night in ten that a
+      full-cirrus forecast is still imageable.
+- [x] Sources and the labelled judgement calls live in
+      **`docs/imaging-quality-model.md`** (ESO and Gemini observing categories,
+      Sassen & Cho cirrus optical-depth classes, mid-latitude cirrus climatology).
+      The constants that are guesses say so.
+
+### Two new inputs the old model never had
+
+- [x] **Per-hour darkness fraction.** Nothing computed one — there was only
+      `darkness_category`, a single instantaneous classification at the top of the
+      hour, and the hourly scorer hardcoded `darkness_hours=1.0` so a *daylight*
+      hour scored like a dark one. Now an exact minute overlap against the twilight
+      boundary datetimes already on `night.darkness`. **Normal mode uses astro dark
+      (sun ≤ −18°); narrowband widens to sun ≤ −12°**, keeping the astronomical
+      twilight that 3nm filters can genuinely shoot through. A polar summer
+      correctly scores 0 broadband and non-zero narrowband.
+- [x] **Per-hour moon sub-score.** The hourly path abused the nightly API
+      (`moonless_dark_hours = 0.0 or 1.0`, `darkness_hours = 1.0`) to produce a
+      binary switch that treated any moon above the horizon as if it were at the
+      zenith. Now `100 * (1 - illumination * sin(altitude))` — no tunable constant,
+      and a full moon at 5° costs far less than one overhead. It also stopped
+      reading nightly illumination while *emitting* the hourly value, which was two
+      sources for one quantity inside one loop.
+- [x] Four inputs the model wanted were **already on the hourly record and simply
+      unused**: precipitation amount and probability, wind speed, temperature and
+      dew point. No new API fetches and no new astronomy; `moon_altitudes_at` in
+      `services/astronomy.py` is one vectorised call so the nightly path does not
+      pay for `compute_hourly_astro`.
+
+### The night is aggregated, not averaged
+
+- [x] `_compute_night_data` scored the **averaged** inputs once. That is
+      structurally wrong for a gate product — averaging cloud across a night and
+      then applying `(1-f)^k` is not the same as aggregating per-hour yields, and
+      it throws away which hours were the good ones. Hours are now scored
+      individually and aggregated: `imaging_quality` is the mean over hours inside
+      the darkness window, and **`expected_useful_hours`** (Σ availability × quality)
+      is the new number that belongs next to a go/no-go decision. The day cards
+      read "≈ 2.3 h of usable data".
+- [x] Fable's `expected_useful_hours` summed the **rounded** integer score;
+      ported to sum `availability × quality` so a long night does not accumulate
+      half a point per hour.
+- [x] `effective_cloud_fraction` raises when an hour has no cloud data at all —
+      correct, but the API catches it per hour and leaves that hour unscored rather
+      than failing the whole request.
+
+### UI: the gates are visible, and a dead night looks dead
+
+- [x] The response carries `availability`, `quality`, a typed `factors[]` list
+      with roles (gate / yield / quality / modifier) and `flags[]`. The five old
+      flattened score fields are gone; the Hourly Detail's factor block went from
+      5 rows to 8, now including the three gates.
+- [x] **`Unusable` gets a hatch.** It scores 0, and on a darker-is-better ramp 0
+      paints the palest, most innocuous cell on the chart — the deadest night
+      looking like the calmest. Colour alone could not carry it, so unusable cells
+      are hatched as well. The day-card badges already carry the word, so they are
+      left plain.
+- [x] **Deleted four private score re-implementations in the frontend**
+      (`moonScore`, `cloudScore`, `precipScore`, and `scoreToLabel`'s duplicated
+      thresholds). They disagreed with the backend: the "Moon Alt." row and the
+      "Moon Quality" row rendered two different moon scores on the same chart.
+      Per-layer cloud rows keep a plain inverse, which is now *consistent* with the
+      model rather than contradicting it, since every layer counts at face value.
+- [x] **`MethodologyInfo` stopped hardcoding a duplicate of the backend docs.** It
+      carried its own copy of the factor table, weights, label ranges and the
+      cloud-gating prose — all of it about to be wrong. The endpoint already
+      existed and `fetchMethodology` was already written and never called; it now
+      renders the backend's own markdown, and 188 lines of duplicate are gone.
+
+### Verification
+
+- [x] 101 tests in `test_imaging_quality.py` (was 30); full backend suite 2,531
+      passed / 3 skipped. ruff, ruff format, bandit (no new findings),
+      `npm run build`.
+- [x] **The reference harness is the acceptance criterion.** Running Fable's
+      `imaging_quality_examples.py` against the *ported* module reproduces the
+      design doc's §4 tables exactly — the five real hours, the boundary cases, the
+      moon/mode table, the gates and the cloud-yield curve — and the monotonicity
+      sweep passes.
+- [x] **Driven in a real browser against the live forecast.** The night from the
+      report now reads **0 / Unusable at 20:00–22:00** with quality still showing
+      67 / 69 / 62; the 04:00 hour shows darkness 74% as astro dark ends mid-hour;
+      the hatch renders on 12 cells, all on the Imaging Quality row.
+- [x] **It still discriminates** — the fix did not make everything zero. Across the
+      live 7-day forecast: three nights 0 Unusable, one 23 Poor with 2.3 usable
+      hours, one 10 Poor with 1.0, one 6 Unusable with 0.6.
+- [x] Narrowband verified live: the 19:00 hour goes darkness 0 → 48% (nautical
+      dark starts 19:30) and 05:00 goes 0 → 24% (ends 05:14), with the moon factor
+      marked not-applied.
+- [ ] **Not re-checked against an independent source.** The old model's numbers
+      were cross-checked against Clear Outside; the new ones have not been. Worth
+      doing over a few real nights, especially the cloud exponent (1.5, defensible
+      range 1.5–2.0).
+
+### Carried forward
+
+- [ ] **The calibration constants stay module constants, not settings** (cloud
+      exponent, moon floor, precipitation and wind ramps, label thresholds). This
+      sits against the "everything user-tunable" goal, and the planner's scoring
+      weights *are* settings — but a slider on these would silently make the
+      forecast incomparable to itself. Worth a deliberate decision rather than
+      smuggling it in here.
+- [ ] **Mild double-counting between cloud and transparency** at partial cover.
+      Transparency is derived from PWV / AOD / humidity / visibility, none of which
+      measure cloud, but upper-air moisture correlates with cirrus. The fix belongs
+      upstream in the transparency derivation, not in the score.
+- [ ] **Per-rig wind gate** — 60 km/h is unsafe for a C11 and survivable for a
+      small refractor.
 
 ## v0.42.0 — Calibration Coverage + Gallery Promotion
 
