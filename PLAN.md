@@ -5766,10 +5766,12 @@ Everything below came out of Fred exercising the feature on the real 2,668-frame
 - [x] `GET /api/images/quality` bounded by a `Semaphore(3)`, mirroring `_THUMB_SEM`:
       stepping prev/next in the analyzer overlay fired an unbounded number of concurrent
       full-resolution star detections, each peaking around 3x the frame size in memory.
-- [x] Dead code removed (`frame_quality`'s unused logger, `background_rms`), Settings
-      moved onto TanStack Query like every other read in the app, `TAB_NOUNS` record
-      replaces a six-deep nested ternary, `invalidateCatalog` now composes
-      `invalidateCounts` instead of duplicating it.
+- [x] Dead code removed (`frame_quality`'s unused logger, `background_rms`); the new
+      compute-info fetch on the Settings page uses TanStack Query like every other read
+      rather than a hand-rolled `useEffect` + cancel flag (`useSettingsStore` itself is
+      untouched and still does its own fetch/save); `TAB_NOUNS` record replaces a
+      six-deep nested ternary; `invalidateCatalog` now composes `invalidateCounts`
+      instead of duplicating it.
 
 ### Carried forward, deliberately not done here
 

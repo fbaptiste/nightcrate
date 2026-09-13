@@ -285,12 +285,17 @@ async def set_primary_folder(project_id: int, folder_id: int) -> SourceFolder:
 
 @router.patch("/{project_id}/folders/{folder_id}", response_model=SourceFolder)
 async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdate) -> SourceFolder:
-    """Tag a source folder with the rig that shot it (explicit null clears it).
+    """Tag a source folder with the rig that shot it and/or the target it holds
+    (explicit null clears either).
 
-    The user declares this; nothing infers it from a header. Frames already
-    cataloged are re-tagged in place and their sessions re-keyed, so the change
-    takes effect without a re-scan. Nested bindings resolve innermost-first, so
-    tagging a parent folder never steals a nested folder's frames.
+    The user declares both; nothing infers them from a header. **Only the fields
+    actually sent are written** (read off ``model_fields_set``), so tagging a rig
+    cannot silently clear a target set separately. Frames already cataloged are
+    re-tagged in place and their sessions re-keyed, so the change takes effect
+    without a re-scan. Nested bindings resolve innermost-first, so tagging a parent
+    folder never steals a nested folder's frames. Target differs from rig in two
+    ways: it applies to lights only, and a hand-corrected frame
+    (``project_target_source = 'user'``) is never overwritten.
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
@@ -963,7 +968,7 @@ async def catalog_delete(project_id: int, body: CatalogDeleteRequest) -> Catalog
             )
 
         # Removing frames can empty a session and can change which folder a
-        # surviving frame's rig comes from, so let the single owner settle both.
+        # surviving frame's rig comes from, so let the single owner settle all three.
         await assign_rigs_and_sessions(
             conn, project_id, await project_geo_timezone(conn, project_id)
         )

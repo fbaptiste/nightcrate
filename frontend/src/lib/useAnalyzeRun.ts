@@ -23,9 +23,14 @@ import {
 } from "../api/projectCatalog";
 
 /**
- * Frames per request. At roughly 0.5 s/frame across the worker pool this is a
- * few seconds per batch — responsive enough for a live progress bar and for
- * cancel to feel prompt, while still amortizing the pool spawn.
+ * Frames per request. Measured on the real library, lights run ~0.16 s/frame in
+ * wall clock across the pool (276 analyzed in ~45 s on 12 workers), so a batch is
+ * ~10 s — responsive enough for a live progress bar and for cancel to feel
+ * prompt, while still amortizing the ~0.3-0.6 s pool spawn each request pays.
+ * That spawn is ~10 % of a lights batch and closer to 25 % on the ADU-only
+ * calibration path; raising this to 120-240 would cut the churn at the cost of
+ * cancel latency. Left at 60 deliberately — cancel responsiveness wins until
+ * someone complains about throughput.
  */
 const BATCH_SIZE = 60;
 
@@ -34,7 +39,9 @@ const RATE_WINDOW = 5;
 
 export interface AnalyzeProgress {
   running: boolean;
-  /** Frames processed in this run (analyzed + unreadable). */
+  /** Frames the server accounted for this run (analyzed + unreadable + skipped).
+   *  `skipped` is inert in practice — the pending fetch and the analyze POST use
+   *  the same `force` flag — but it is counted so the bar can never stall. */
   done: number;
   /** Frames this run set out to process. */
   total: number;
