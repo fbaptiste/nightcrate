@@ -39,10 +39,12 @@ from fastapi.responses import FileResponse, Response
 
 from nightcrate.api._common import bool_fields, get_or_404, row_to_dict
 from nightcrate.core import app_config
+from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
 from nightcrate.services.catalog_thumbnail import DEFAULT_MAX_PX, render_thumbnail_bytes
 from nightcrate.services.fits_header_map import extract_metadata
+from nightcrate.services.frame_quality import analyze_frame_file, wants_stars
 from nightcrate.services.ingest_classify import (
     CATEGORY_LOG,
     CATEGORY_OTHER,
@@ -53,6 +55,8 @@ from nightcrate.services.ingest_classify import (
 from nightcrate.services.ingest_models import (
     BulkCorrectionResult,
     BulkFrameCorrection,
+    CatalogDeleteRequest,
+    CatalogDeleteResult,
     CatalogFilterStat,
     CatalogFrame,
     CatalogFramesPage,
@@ -63,7 +67,12 @@ from nightcrate.services.ingest_models import (
     CatalogSummary,
     CorrectableField,
     FrameCorrection,
+    FrameTypeName,
     IngestStatus,
+    QualityAnalyzeRequest,
+    QualityAnalyzeResult,
+    QualityCounts,
+    QualityPending,
     SourceFolder,
     SourceFolderCreate,
     SourceFolderUpdate,
@@ -83,15 +92,68 @@ from nightcrate.services.line_names import canonicalize_line_name
 
 logger = logging.getLogger("nightcrate.ingest")
 _LOG_PREFIX = "[ingest]"
+_QUALITY_PREFIX = "[frame-quality]"
 
 # Module-level tuple: ruff format strips parens from inline ``except (A, B):`` on
 # py3.14, producing invalid Py2 syntax. Referencing a constant sidesteps it.
 _COERCE_ERRORS = (TypeError, ValueError)
 
+# Arcsec per pixel for a frame, as a SQL expression over the joins in
+# _FRAME_SELECT. 206.265 converts (micron / millimetre) to arcseconds.
+#
+# HFR is measured and stored in PIXELS, which is only comparable within one rig —
+# the same seeing reads 6 px at 1960 mm and 2 px at 600 mm. Multiplying by this
+# gives the angular figure, which IS comparable, and is what an astrophotographer
+# actually means by "how good was the seeing".
+#
+# Precedence: a plate-solved / header pixel scale on the frame wins, because it
+# was measured on the sky. Otherwise derive it from the rig the user tagged.
+# Binning multiplies the effective pixel pitch. NULL when the rig is untagged or
+# its optics/camera are incomplete — the UI then shows pixels, never a guess.
+_PIXEL_SCALE_SQL = (
+    "COALESCE(sf.pixel_scale_arcsec, "
+    "206.265 * sen.pixel_size_um * COALESCE(sf.binning_x, 1) "
+    "/ NULLIF(tc.effective_focal_length_mm, 0))"
+)
+
+# Allow-list of catalog sort orders (v0.41.3). The values are interpolated into
+# SQL, so this dict is the only thing that may ever reach an ORDER BY — a caller's
+# string is looked up here, never used. ``x IS NULL`` first in every key sorts
+# unanalyzed frames last regardless of direction, matching the app-wide rule that
+# blanks sort last.
+_FRAME_SORTS = {
+    "path": "ORDER BY fl.path, sf.date_obs_utc, sf.id",
+    "date": "ORDER BY sf.date_obs_utc, sf.id",
+    # Worst focus/seeing first — the point of the quality pass.
+    # Pixels: right within one rig, misleading across two — a long focal length
+    # inflates every frame's figure. The arcsec orders below are the honest ones
+    # for a multi-rig project, and fall back to pixels when the scale is unknown.
+    "hfr_desc": "ORDER BY sf.hfr IS NULL, sf.hfr DESC, fl.path, sf.id",
+    "hfr_asc": "ORDER BY sf.hfr IS NULL, sf.hfr ASC, fl.path, sf.id",
+    "hfr_arcsec_desc": (
+        f"ORDER BY sf.hfr IS NULL, sf.hfr * COALESCE({_PIXEL_SCALE_SQL}, 1) DESC, fl.path, sf.id"
+    ),
+    "hfr_arcsec_asc": (
+        f"ORDER BY sf.hfr IS NULL, sf.hfr * COALESCE({_PIXEL_SCALE_SQL}, 1) ASC, fl.path, sf.id"
+    ),
+    # Fewest stars first — clouds, dew, or a frame that lost the target.
+    "stars_asc": "ORDER BY sf.star_count IS NULL, sf.star_count ASC, fl.path, sf.id",
+    "stars_desc": "ORDER BY sf.star_count IS NULL, sf.star_count DESC, fl.path, sf.id",
+    # Brightest sky first — moon, twilight, or light pollution creeping in.
+    "background_desc": (
+        "ORDER BY sf.background_adu IS NULL, sf.background_adu DESC, fl.path, sf.id"
+    ),
+}
+
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 # Single-flight guard: at most one ingest run in flight per process.
 _INGEST_LOCK = asyncio.Lock()
+
+# Separate from _INGEST_LOCK: the quality pass reads files and writes only the
+# quality columns, so it need not queue behind a folder re-scan (and vice versa).
+# Each is still single-flight against itself.
+_ANALYZE_LOCK = asyncio.Lock()
 
 # Bound concurrent thumbnail renders so a grid drawing many cells can't stampede
 # the loader (each render still reads a file). Renders run in a thread; results
@@ -108,9 +170,29 @@ def _thumb_cache_dir() -> Path:
 
 
 _FOLDER_SELECT = (
-    "SELECT psf.*, r.name AS rig_name FROM project_source_folder psf "
+    "SELECT psf.*, r.name AS rig_name, "
+    "COALESCE(d.common_name, d.primary_designation) AS target_name "
+    "FROM project_source_folder psf "
     "LEFT JOIN rig r ON r.id = psf.rig_id "
+    "LEFT JOIN project_target pt ON pt.id = psf.project_target_id "
+    "LEFT JOIN dso d ON d.id = pt.dso_id "
 )
+
+
+async def _validate_folder_target(conn, project_id: int, target_id: int | None) -> None:
+    """422 unless *target_id* is one of this project's own targets.
+
+    Scoped, not just existence-checked: project_target ids are global, so a bare
+    FK check would happily let one project's folder point at another's target.
+    """
+    if target_id is None:
+        return
+    cursor = await conn.execute(
+        "SELECT 1 FROM project_target WHERE id = ? AND project_id = ?",
+        (target_id, project_id),
+    )
+    if await cursor.fetchone() is None:
+        raise HTTPException(status_code=422, detail="Target does not belong to this project")
 
 
 def _folder_response(d: dict) -> SourceFolder:
@@ -159,11 +241,19 @@ async def add_folder(project_id: int, body: SourceFolderCreate) -> SourceFolder:
             )
         if body.rig_id is not None:
             await get_or_404(conn, "rig", body.rig_id, "Rig")
+        await _validate_folder_target(conn, project_id, body.project_target_id)
         try:
             cursor = await conn.execute(
-                "INSERT INTO project_source_folder (project_id, path, is_primary, rig_id) "
-                "VALUES (?, ?, ?, ?)",
-                (project_id, path, 1 if make_primary else 0, body.rig_id),
+                "INSERT INTO project_source_folder "
+                "(project_id, path, is_primary, rig_id, project_target_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    project_id,
+                    path,
+                    1 if make_primary else 0,
+                    body.rig_id,
+                    body.project_target_id,
+                ),
             )
             folder_id = cursor.lastrowid
         except Exception as exc:  # noqa: BLE001 - translate UNIQUE(project_id, path)
@@ -195,22 +285,36 @@ async def set_primary_folder(project_id: int, folder_id: int) -> SourceFolder:
 
 @router.patch("/{project_id}/folders/{folder_id}", response_model=SourceFolder)
 async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdate) -> SourceFolder:
-    """Tag a source folder with the rig that shot it (explicit null clears it).
+    """Tag a source folder with the rig that shot it and/or the target it holds
+    (explicit null clears either).
 
-    The user declares this; nothing infers it from a header. Frames already
-    cataloged are re-tagged in place and their sessions re-keyed, so the change
-    takes effect without a re-scan. Nested bindings resolve innermost-first, so
-    tagging a parent folder never steals a nested folder's frames.
+    The user declares both; nothing infers them from a header. **Only the fields
+    actually sent are written** (read off ``model_fields_set``), so tagging a rig
+    cannot silently clear a target set separately. Frames already cataloged are
+    re-tagged in place and their sessions re-keyed, so the change takes effect
+    without a re-scan. Nested bindings resolve innermost-first, so tagging a parent
+    folder never steals a nested folder's frames. Target differs from rig in two
+    ways: it applies to lights only, and a hand-corrected frame
+    (``project_target_source = 'user'``) is never overwritten.
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
         await _get_folder_or_404(conn, project_id, folder_id)
-        if "rig_id" not in body.model_fields_set:
+        sent = body.model_fields_set
+        if not ({"rig_id", "project_target_id"} & sent):
             return await _fetch_folder(conn, folder_id)
-        if body.rig_id is not None:
+        if "rig_id" in sent and body.rig_id is not None:
             await get_or_404(conn, "rig", body.rig_id, "Rig")
+        if "project_target_id" in sent:
+            await _validate_folder_target(conn, project_id, body.project_target_id)
+        # Only the fields actually sent are written, so tagging a rig can't clear
+        # a target that was set separately.
+        sets = [f"{f} = ?" for f in ("rig_id", "project_target_id") if f in sent]
+        params = [getattr(body, f) for f in ("rig_id", "project_target_id") if f in sent]
         await conn.execute(
-            "UPDATE project_source_folder SET rig_id = ? WHERE id = ?", (body.rig_id, folder_id)
+            # column names come from a fixed tuple; values are bound
+            f"UPDATE project_source_folder SET {', '.join(sets)} WHERE id = ?",  # nosec B608
+            (*params, folder_id),
         )
         await assign_rigs_and_sessions(
             conn, project_id, await project_geo_timezone(conn, project_id)
@@ -252,7 +356,10 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
         )
         await conn.execute(
             "DELETE FROM processed_image WHERE project_id = ? "
-            "AND NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.processed_image_id = id)",
+            # Qualify the column — see the note in catalog_delete: a bare `id`
+            # binds to file_location.id and sweeps away every master.
+            "AND NOT EXISTS (SELECT 1 FROM file_location fl "
+            "WHERE fl.processed_image_id = processed_image.id)",
             (project_id,),
         )
         await conn.execute("DELETE FROM project_source_folder WHERE id = ?", (folder_id,))
@@ -328,7 +435,6 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         await conn.commit()
 
         tz_name = await project_geo_timezone(conn, project_id)
-        target_id = await _project_single_target(conn, project_id)
         errors: list[dict] = []
         counters = {"scanned": 0, "inserted": 0, "updated": 0, "skipped": 0}
 
@@ -338,9 +444,7 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         pool = make_pool(n_workers) if n_workers > 1 else None
         try:
             for folder in folders:
-                await _ingest_folder(
-                    conn, project_id, run_id, folder, pool, target_id, errors, counters
-                )
+                await _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters)
             await _reclassify_dark_flats(conn, project_id)
             # Rig + session are assigned in one post-pass rather than per file: a
             # frame's rig depends on which bound folder *innermost* contains it,
@@ -398,9 +502,7 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         )
 
 
-async def _ingest_folder(
-    conn, project_id, run_id, folder, pool, target_id, errors, counters
-) -> None:
+async def _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters) -> None:
     entries = scan_directory(folder)
     counters["scanned"] += len(entries)
 
@@ -418,7 +520,7 @@ async def _ingest_folder(
             errors.append({"path": result["path"], "error": result["error"]})
             continue
         try:
-            await _persist_parsed(conn, project_id, run_id, result, target_id, counters)
+            await _persist_parsed(conn, project_id, run_id, result, counters)
         except Exception as exc:  # noqa: BLE001 - one bad file shouldn't abort the run
             errors.append({"path": result["path"], "error": f"{type(exc).__name__}: {exc}"})
 
@@ -435,7 +537,7 @@ async def _parse_in_pool(entries, pool) -> list[dict]:
     return list(await asyncio.gather(*futures))
 
 
-async def _persist_parsed(conn, project_id, run_id, result, target_id, counters) -> None:
+async def _persist_parsed(conn, project_id, run_id, result, counters) -> None:
     meta = result["meta"]
     raw_header = result["raw_header"]
     route, frame_type = classify_frame(meta, raw_header, filename=Path(result["path"]).name)
@@ -469,21 +571,11 @@ async def _persist_parsed(conn, project_id, run_id, result, target_id, counters)
     )
     counters["inserted" if was_insert else "updated"] += 1
 
-    # Session and rig are assigned project-wide after every folder is walked (see
-    # assign_rigs_and_sessions) — a frame's rig depends on folder nesting, which
-    # isn't knowable here.
-    #
-    # Target assignment is auto-only (migration 0043). A manual assignment must
-    # survive re-scans — and it would not otherwise, because `target_id` is NULL
-    # for any project that doesn't have exactly one target, so a multi-target
-    # project would have every hand-set target wiped on the next scan.
-    assigned_target = target_id if frame_type == "light" else None
-    await conn.execute(
-        "UPDATE sub_frame SET project_target_id = CASE WHEN project_target_source = 'user' "
-        "                        THEN project_target_id ELSE ? END "
-        "WHERE id = ?",
-        (assigned_target, sub_id),
-    )
+    # Session, rig AND target are assigned project-wide after every folder is
+    # walked (assign_rigs_and_sessions) — all three depend on which bound folder
+    # innermost contains the file, which isn't knowable here. Target moved there
+    # in v0.41.3 when folders gained a target tag; writing it per-file could not
+    # see folder nesting and got a tag-after-scan wrong.
     await _link_file_location(conn, project_id, result, "sub_frame", sub_id)
 
 
@@ -712,15 +804,6 @@ async def _project_display_tz(conn, project_id: int) -> str:
     return (row["timezone"] if row and row["timezone"] else None) or "UTC"
 
 
-async def _project_single_target(conn, project_id) -> int | None:
-    cursor = await conn.execute(
-        "SELECT id FROM project_target WHERE project_id = ? ORDER BY id LIMIT 2",
-        (project_id,),
-    )
-    rows = await cursor.fetchall()
-    return rows[0]["id"] if len(rows) == 1 else None
-
-
 # ── Catalog (read-only) ───────────────────────────────────────────────────────
 
 
@@ -781,24 +864,19 @@ async def catalog_frames(
     offset: int = Query(default=0, ge=0),
     frame_type: str | None = Query(default=None, description="Filter by frame_type"),
     filter_name: str | None = Query(default=None, description="Filter by filter name (pill)"),
+    sort: str | None = Query(default=None, description=f"One of {sorted(_FRAME_SORTS)}"),
 ) -> CatalogFramesPage:
-    # Optional frame_type filter (drives the count-pill filtering in the UI).
-    type_clause = ""
-    type_params: tuple = ()
-    if frame_type in ("light", "dark", "flat", "bias", "dark_flat", "unknown"):
-        type_clause = " AND sf.frame_type = ?"
-        type_params = (frame_type,)
-    # Optional filter-name scope (clicking a Lights/Flats filter pill). Matches the
-    # same filter_name_hint the pills are grouped by.
-    filter_clause = ""
-    filter_params: tuple = ()
-    if filter_name:
-        filter_clause = " AND sf.filter_name_hint = ?"
-        filter_params = (filter_name,)
-    # Flats are organised per-filter (you match flats to lights by filter), so sort
-    # by filter first. Lights/calibration sort by path so raw vs per-stage outputs
-    # bunch together; date_obs is the within-group tiebreak.
-    if frame_type == "flat":
+    # Optional frame_type filter (drives the count-pill filtering in the UI) and
+    # filter-name scope (clicking a Lights/Flats filter pill, matching the same
+    # filter_name_hint the pills are grouped by).
+    scope, scope_params = _frame_scope(frame_type, filter_name)
+    # An explicit sort wins; otherwise keep the per-tab default. Flats are
+    # organised per-filter (you match flats to lights by filter), so sort by filter
+    # first. Lights/calibration sort by path so raw vs per-stage outputs bunch
+    # together; date_obs is the within-group tiebreak.
+    if sort and sort in _FRAME_SORTS:
+        order_clause = _FRAME_SORTS[sort]
+    elif frame_type == "flat":
         order_clause = "ORDER BY sf.filter_name_hint, fl.path, sf.date_obs_utc, sf.id"
     else:
         order_clause = "ORDER BY fl.path, sf.date_obs_utc, sf.id"
@@ -808,19 +886,330 @@ async def catalog_frames(
             conn,
             "SELECT COUNT(*) FROM sub_frame sf "
             # nosec B608 - clauses are fixed literals; values are parameterized
-            f"WHERE sf.project_id = ?{type_clause}{filter_clause}",
-            (project_id, *type_params, *filter_params),
+            f"WHERE sf.project_id = ?{scope}",
+            (project_id, *scope_params),
         )
         cursor = await conn.execute(
             _FRAME_SELECT
             # nosec B608 - clauses are fixed literals; values are parameterized
-            + f"WHERE sf.project_id = ?{type_clause}{filter_clause} "
+            + f"WHERE sf.project_id = ?{scope} "
             f"GROUP BY sf.id {order_clause} LIMIT ? OFFSET ?",
-            (project_id, *type_params, *filter_params, limit, offset),
+            (project_id, *scope_params, limit, offset),
         )
         rows = [_catalog_frame(row_to_dict(r)) for r in await cursor.fetchall()]
         tz = await _project_display_tz(conn, project_id)
         return CatalogFramesPage(rows=rows, total=total, timezone=tz)
+
+
+@router.post("/{project_id}/catalog/delete", response_model=CatalogDeleteResult)
+async def catalog_delete(project_id: int, body: CatalogDeleteRequest) -> CatalogDeleteResult:
+    """Remove items from this project's catalog. Files on disk are never touched.
+
+    **A re-scan of a still-bound source folder will catalog these again** — the
+    catalog is a view of what is under the bound folders, and nothing records
+    that you removed something. That is the deliberate, documented behaviour, not
+    an oversight: the UI says so before you confirm. To keep files out for good,
+    unbind the folder or move them out of it.
+
+    Deleting a sub frame or a processed image takes its file locations with it.
+    Deleting a plain file removes only that row; if it was the last location of a
+    sub or master, the orphan sweep drops that too.
+    """
+    if not (body.sub_frame_ids or body.processed_image_ids or body.file_ids):
+        raise HTTPException(status_code=422, detail="Nothing to delete")
+
+    result = CatalogDeleteResult()
+    async with get_db() as conn:
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await get_or_404(conn, "project", project_id, "Project")
+
+        for ids, table, field in (
+            (body.sub_frame_ids, "sub_frame", "sub_frames"),
+            (body.processed_image_ids, "processed_image", "processed_images"),
+        ):
+            if not ids:
+                continue
+            marks = ",".join("?" * len(ids))
+            # Scoped to the project on both statements: an id from another
+            # project must not be deletable by sending it here.
+            await conn.execute(
+                # only the placeholder count is interpolated; ids are parameterized
+                f"DELETE FROM file_location WHERE project_id = ? AND {table}_id IN ({marks})",  # nosec B608
+                (project_id, *ids),
+            )
+            cursor = await conn.execute(
+                # only the placeholder count is interpolated; ids are parameterized
+                f"DELETE FROM {table} WHERE project_id = ? AND id IN ({marks})",  # nosec B608
+                (project_id, *ids),
+            )
+            setattr(result, field, cursor.rowcount)
+
+        if body.file_ids:
+            marks = ",".join("?" * len(body.file_ids))
+            cursor = await conn.execute(
+                # only the placeholder count is interpolated; ids are parameterized
+                f"DELETE FROM file_location WHERE project_id = ? AND id IN ({marks})",  # nosec B608
+                (project_id, *body.file_ids),
+            )
+            result.files = cursor.rowcount
+            # A plain-file delete can strand the sub/master it belonged to.
+            await conn.execute(
+                "DELETE FROM sub_frame WHERE project_id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM file_location fl WHERE fl.sub_frame_id = sub_frame.id)",
+                (project_id,),
+            )
+            await conn.execute(
+                "DELETE FROM processed_image WHERE project_id = ? AND NOT EXISTS "
+                # Qualify the column: a bare `id` binds to file_location.id, which
+                # makes the subquery uncorrelated and deletes EVERY master.
+                "(SELECT 1 FROM file_location fl "
+                "WHERE fl.processed_image_id = processed_image.id)",
+                (project_id,),
+            )
+
+        # Removing frames can empty a session and can change which folder a
+        # surviving frame's rig comes from, so let the single owner settle all three.
+        await assign_rigs_and_sessions(
+            conn, project_id, await project_geo_timezone(conn, project_id)
+        )
+        await conn.commit()
+
+    logger.info(
+        "%s project %d deleted: subs=%d masters=%d files=%d",
+        _LOG_PREFIX,
+        project_id,
+        result.sub_frames,
+        result.processed_images,
+        result.files,
+    )
+    return result
+
+
+# ── Frame quality analysis (v0.41.3) ──────────────────────────────────────────
+#
+# A full pass over a real library is 210 GB and several minutes, so the run is
+# driven by the client: it fetches the pending ids once, then POSTs them back in
+# batches. Each batch is an ordinary short request. Progress, cancel and
+# resume-where-it-stopped all fall out of that for free, and the app keeps its
+# "all work is request-driven, no background tasks" property.
+
+
+def _frame_scope(frame_type: str | None, filter_name: str | None) -> tuple[str, tuple]:
+    """Build the WHERE fragment + params selecting the frames in scope.
+
+    Shared by the listing, the quality-pending count and the quality summary so
+    the three can never disagree about what "this tab, this filter pill" means.
+    The frame-type vocabulary comes from ``FrameTypeName`` rather than a literal,
+    so adding a frame type reaches every caller.
+    """
+    clause = ""
+    params: tuple = ()
+    if frame_type in get_args(FrameTypeName):
+        clause += " AND sf.frame_type = ?"
+        params += (frame_type,)
+    if filter_name:
+        clause += " AND sf.filter_name_hint = ?"
+        params += (filter_name,)
+    return clause, params
+
+
+@router.get("/{project_id}/catalog/analyze/pending", response_model=QualityPending)
+async def catalog_analyze_pending(
+    project_id: int,
+    frame_type: str | None = Query(default=None, description="Scope to one frame_type"),
+    filter_name: str | None = Query(default=None, description="Scope to one filter pill"),
+    force: bool = Query(default=False, description="Include already-analyzed frames"),
+) -> QualityPending:
+    """The frames awaiting quality analysis, as one ordered id list.
+
+    Returns the whole list rather than a page — the client batches it locally, so
+    progress is exact and there is no re-querying a target that moves as rows are
+    analyzed underneath it.
+    """
+    scope, scope_params = _frame_scope(frame_type, filter_name)
+    pending_clause = "" if force else " AND sf.quality_analyzed_at IS NULL"
+    async with get_db() as conn:
+        await get_or_404(conn, "project", project_id, "Project")
+        total = await _count(
+            conn,
+            # clauses are fixed literals; values are parameterized
+            f"SELECT COUNT(*) FROM sub_frame sf WHERE sf.project_id = ?{scope}",  # nosec B608
+            (project_id, *scope_params),
+        )
+        cursor = await conn.execute(
+            "SELECT sf.id FROM sub_frame sf "
+            "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
+            # nosec B608 - clauses are fixed literals; values are parameterized
+            f"WHERE sf.project_id = ?{scope}{pending_clause} "
+            "GROUP BY sf.id ORDER BY fl.path, sf.date_obs_utc, sf.id",
+            (project_id, *scope_params),
+        )
+        ids = [int(r[0]) for r in await cursor.fetchall()]
+        return QualityPending(frame_ids=ids, total=total)
+
+
+@router.get("/{project_id}/catalog/analyze/summary", response_model=QualityCounts)
+async def catalog_analyze_summary(
+    project_id: int,
+    frame_type: str | None = Query(default=None, description="Scope to one frame_type"),
+    filter_name: str | None = Query(default=None, description="Scope to one filter pill"),
+) -> QualityCounts:
+    """How much of this scope has been analyzed, for the Analyze button's label.
+
+    Counts only — the button needs to distinguish "nothing measured yet" from
+    "12 new frames since last time" from "all done, offer a re-run", and pulling
+    the full pending id list on every tab switch just to length it would ship
+    ~20 KB of ints for a number.
+    """
+    scope, scope_params = _frame_scope(frame_type, filter_name)
+    async with get_db() as conn:
+        await get_or_404(conn, "project", project_id, "Project")
+        cursor = await conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN sf.quality_analyzed_at IS NOT NULL THEN 1 ELSE 0 END) AS analyzed, "
+            "SUM(CASE WHEN sf.quality_status = 'unreadable' THEN 1 ELSE 0 END) AS unreadable "
+            # nosec B608 - clauses are fixed literals; values are parameterized
+            f"FROM sub_frame sf WHERE sf.project_id = ?{scope}",
+            (project_id, *scope_params),
+        )
+        row = row_to_dict(await cursor.fetchone())
+    total = int(row["total"] or 0)
+    analyzed = int(row["analyzed"] or 0)
+    return QualityCounts(
+        total=total,
+        analyzed=analyzed,
+        pending=total - analyzed,
+        unreadable=int(row["unreadable"] or 0),
+    )
+
+
+@router.post("/{project_id}/catalog/analyze", response_model=QualityAnalyzeResult)
+async def catalog_analyze(
+    project_id: int,
+    body: QualityAnalyzeRequest,
+) -> QualityAnalyzeResult:
+    """Compute quality metrics for one batch of frames.
+
+    Star metrics are computed for lights only; ADU stats for every frame type.
+    Every frame touched gets ``quality_analyzed_at`` set — including one that
+    could not be read — so a file on an unmounted volume is reported once rather
+    than retried on every subsequent run.
+    """
+    if _ANALYZE_LOCK.locked():
+        raise HTTPException(status_code=409, detail="A frame analysis is already running")
+    async with _ANALYZE_LOCK:
+        return await _run_analyze(project_id, body)
+
+
+async def _run_analyze(project_id: int, body: QualityAnalyzeRequest) -> QualityAnalyzeResult:
+    settings = await get_settings()
+    n_workers = effective_worker_count(settings.max_worker_cores)
+    result = QualityAnalyzeResult()
+
+    async with get_db() as conn:
+        await get_or_404(conn, "project", project_id, "Project")
+        placeholders = ",".join("?" * len(body.frame_ids))
+        cursor = await conn.execute(
+            "SELECT sf.id, sf.frame_type, sf.quality_analyzed_at, MIN(fl.path) AS path "
+            "FROM sub_frame sf "
+            "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
+            # nosec B608 - only the id placeholder count is interpolated
+            f"WHERE sf.project_id = ? AND sf.id IN ({placeholders}) "
+            "GROUP BY sf.id",
+            (project_id, *body.frame_ids),
+        )
+        rows = [row_to_dict(r) for r in await cursor.fetchall()]
+
+        todo: list[dict] = []
+        for row in rows:
+            if row["quality_analyzed_at"] and not body.force:
+                result.skipped += 1
+                continue
+            if not row["path"]:
+                # Cataloged with no file_location row — nothing to open. Mark it so
+                # it leaves the queue instead of coming back every run.
+                await _write_quality(conn, row["id"], None, "unreadable", "No file path on record")
+                result.unreadable += 1
+                continue
+            todo.append(row)
+
+        if todo:
+            parsed = await _analyze_in_pool(todo, n_workers)
+            for row, out in zip(todo, parsed, strict=True):
+                if out.get("error"):
+                    await _write_quality(conn, row["id"], None, "unreadable", out["error"])
+                    result.unreadable += 1
+                    if len(result.errors) < 20:
+                        result.errors.append(f"{row['path']}: {out['error']}")
+                    continue
+                await _write_quality(conn, row["id"], out, out["status"], None)
+                if out["status"] == "no_stars":
+                    result.no_stars += 1
+                result.analyzed += 1
+
+        await conn.commit()
+
+    logger.info(
+        "%s project %d: analyzed=%d no_stars=%d unreadable=%d skipped=%d",
+        _QUALITY_PREFIX,
+        project_id,
+        result.analyzed,
+        result.no_stars,
+        result.unreadable,
+        result.skipped,
+    )
+    return result
+
+
+async def _analyze_in_pool(todo: list[dict], n_workers: int) -> list[dict]:
+    """Fan the batch out across a per-run ProcessPool.
+
+    Per-run, never a module global: a long-lived spawn pool leaves worker
+    processes alive that wedge ``uvicorn --reload`` (CLAUDE.md). A single frame
+    or a single-core setting parses inline, skipping the IPC entirely.
+    """
+    args = [(row["path"], wants_stars(row["frame_type"])) for row in todo]
+    if n_workers <= 1 or len(args) == 1:
+        return [analyze_frame_file(p, s) for p, s in args]
+    pool = make_pool(n_workers)
+    try:
+        loop = asyncio.get_running_loop()
+        futures = [loop.run_in_executor(pool, analyze_frame_file, p, s) for p, s in args]
+        return list(await asyncio.gather(*futures))
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+async def _write_quality(
+    conn,
+    frame_id: int,
+    out: dict | None,
+    status: str,
+    error: str | None,
+) -> None:
+    """Persist one frame's outcome. A failure clears any stale metric values.
+
+    ``updated_at`` is set explicitly on purpose. ``trg_sub_frame_updated_at`` fires
+    only ``WHEN NEW.updated_at = OLD.updated_at``, so writing it here suppresses the
+    trigger's second, recursive UPDATE — one statement per frame instead of two,
+    over a pass that touches thousands of rows. Don't "simplify" it away.
+    """
+    await conn.execute(
+        "UPDATE sub_frame SET hfr = ?, star_count = ?, median_adu = ?, "
+        "background_adu = ?, snr_estimate = ?, quality_status = ?, "
+        "quality_error = ?, quality_analyzed_at = datetime('now'), "
+        "updated_at = datetime('now') WHERE id = ?",
+        (
+            out["hfr"] if out else None,
+            out["star_count"] if out else None,
+            out["median_adu"] if out else None,
+            out["background_adu"] if out else None,
+            out["snr_estimate"] if out else None,
+            status,
+            error,
+            frame_id,
+        ),
+    )
 
 
 def _require_correction(body: FrameCorrection) -> None:
@@ -1018,19 +1407,36 @@ async def catalog_others(
     project_id: int,
     limit: int = Query(default=500, ge=1, le=100000),
     offset: int = Query(default=0, ge=0),
+    unclassified_only: bool = Query(
+        default=False,
+        description="Only unknown-type sub frames — the ones a correction can act on",
+    ),
 ) -> CatalogOthersPage:
-    """Catch-all: PixInsight projects, logs, other files, and unknown-type subs."""
+    """Catch-all: PixInsight projects, logs, other files, and unknown-type subs.
+
+    ``unclassified_only`` drops the non-frame files. They dominate the tab on a
+    PixInsight-processed project — WBPP writes an ``.xnml`` and an ``.xdrz``
+    beside every registered sub, so a few hundred subs become a couple of
+    thousand rows here — and none of them can be given a frame type, because
+    they aren't frames. The "N frames could not be classified" alert links
+    straight to this filtered view; without it the user is told to find 2 rows
+    among 1,256.
+    """
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
         # Non-frame files owned by this project + this project's unknown-type subs.
-        file_rows = await (
-            await conn.execute(
-                "SELECT id, category, path, size_bytes, mtime FROM file_location "
-                "WHERE project_id = ? AND category IN ('pxiproject', 'log', 'other') "
-                "ORDER BY category, path",
-                (project_id,),
-            )
-        ).fetchall()
+        file_rows = (
+            []
+            if unclassified_only
+            else await (
+                await conn.execute(
+                    "SELECT id, category, path, size_bytes, mtime FROM file_location "
+                    "WHERE project_id = ? AND category IN ('pxiproject', 'log', 'other') "
+                    "ORDER BY category, path",
+                    (project_id,),
+                )
+            ).fetchall()
+        )
         unknown_rows = await (
             await conn.execute(
                 "SELECT sf.id, sf.date_obs_utc, fl.path AS path "
@@ -1165,23 +1571,43 @@ def _write_cache_atomic(cache_path: Path, data: bytes) -> None:
 
 # Shared frame projection: the list endpoint and the single-frame refetch (after
 # a correction) must return identical shapes.
+#
+# nosec B608 - the only interpolation is _PIXEL_SCALE_SQL, a module constant;
+# every caller-supplied value is parameterized.
+# Full-scale ADU for the frame's camera: 2^ADC - 1. NOT a constant 65535 — the
+# ADC depth is a property of the camera, and a 12-bit body writes 0..4095 into a
+# 16-bit file, so the container says nothing. Across one user's kit that can be
+# 65535 (16-bit), 16383 (14-bit) and 4095 (12-bit) at once, which is why a bare
+# ADU number can't be judged without it. NULL when the rig is untagged.
+_FULL_SCALE_SQL = "CASE WHEN sen.adc_bit_depth > 0 THEN (1 << sen.adc_bit_depth) - 1 END"
+
 _FRAME_SELECT = (
     "SELECT sf.id, sf.frame_type, sf.filter_name_hint, "
     "sf.object_hint, sf.exposure_seconds, sf.gain, sf.set_temp_c, sf.binning_x, "
     "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.accepted, "
     "sf.project_target_id, sf.frame_type_source, sf.project_target_source, "
+    "sf.hfr, sf.star_count, sf.median_adu, sf.background_adu, sf.snr_estimate, "
+    "sf.quality_status, sf.quality_analyzed_at, "
     "COALESCE(d.common_name, d.primary_designation) AS target_name, "
     "r.name AS rig_name, "
+    f"{_PIXEL_SCALE_SQL} AS pixel_scale_arcsec, "  # nosec B608
+    f"{_FULL_SCALE_SQL} AS full_scale_adu, "  # nosec B608
     "fl.path AS path, fl.size_bytes AS file_size_bytes "
     "FROM sub_frame sf "
     "LEFT JOIN project_target pt ON pt.id = sf.project_target_id "
     "LEFT JOIN dso d ON d.id = pt.dso_id "
     "LEFT JOIN rig r ON r.id = sf.rig_id "
+    # Optics + sensor of the tagged rig, for the pixel scale above. All LEFT:
+    # an untagged rig or an incomplete equipment record must not drop the frame.
+    "LEFT JOIN telescope_configuration tc ON tc.id = r.telescope_configuration_id "
+    "LEFT JOIN camera cam ON cam.id = r.camera_id "
+    "LEFT JOIN sensor sen ON sen.id = cam.sensor_id "
     "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
 )
 
 
 def _catalog_frame(d: dict) -> CatalogFrame:
+    scale = d.get("pixel_scale_arcsec")
     binning = None
     if d.get("binning_x") and d.get("binning_y"):
         binning = f"{d['binning_x']}x{d['binning_y']}"
@@ -1206,6 +1632,18 @@ def _catalog_frame(d: dict) -> CatalogFrame:
         target_name=d.get("target_name"),
         frame_type_source=d.get("frame_type_source"),
         project_target_source=d.get("project_target_source"),
+        hfr=d.get("hfr"),
+        star_count=d.get("star_count"),
+        median_adu=d.get("median_adu"),
+        background_adu=d.get("background_adu"),
+        snr_estimate=d.get("snr_estimate"),
+        quality_status=d.get("quality_status"),
+        quality_analyzed_at=d.get("quality_analyzed_at"),
+        pixel_scale_arcsec=scale,
+        full_scale_adu=d.get("full_scale_adu"),
+        # Derived on read, never stored: re-tagging a folder's rig must change
+        # this without re-measuring anything.
+        hfr_arcsec=round(d["hfr"] * scale, 3) if d.get("hfr") and scale else None,
     )
 
 

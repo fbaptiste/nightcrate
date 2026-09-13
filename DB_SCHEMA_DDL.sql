@@ -1,4 +1,4 @@
--- NightCrate version: 0.41.2
+-- NightCrate version: 0.41.3
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1746,12 +1746,25 @@ CREATE TABLE sub_frame (
     pixel_scale_arcsec       REAL,
     airmass                  REAL,
 
-    -- Quality metrics (computed at/after ingest; NULL in v0.40.0).
+    -- Quality metrics, filled by the v0.41.3 analyze pass (services/frame_quality.py).
+    -- hfr is a median over detected stars, in PIXELS (only comparable within a
+    -- rig). The two *_adu columns are 16-bit-equivalent: true ADU for integer
+    -- sources, normalized-times-65535 for PixInsight float data. Lights get all
+    -- five; every other frame type gets the two *_adu columns only.
     hfr                      REAL,
     star_count               INTEGER,
     median_adu               REAL,
     background_adu           REAL,
     snr_estimate             REAL,
+
+    -- Analyze-pass bookkeeping (migration 0055). NULL analyzed_at = never run.
+    -- Needed because a successfully analyzed dark still has hfr NULL, so hfr
+    -- cannot serve as the "not analyzed" marker.
+    quality_analyzed_at      TEXT,
+    quality_status           TEXT
+                                 CHECK (quality_status IS NULL OR quality_status IN
+                                     ('ok', 'no_stars', 'unreadable')),
+    quality_error            TEXT,
 
     -- Site (denormalized from session for standalone queryability).
     latitude                 REAL,
@@ -1780,6 +1793,10 @@ CREATE INDEX idx_sub_frame_target ON sub_frame(project_target_id);
 CREATE INDEX idx_sub_frame_run ON sub_frame(ingestion_run_id);
 CREATE INDEX idx_sub_frame_frame_type ON sub_frame(frame_type);
 CREATE INDEX idx_sub_frame_date_obs ON sub_frame(date_obs_utc);
+
+-- "Which frames still need quality analysis" (migration 0055).
+CREATE INDEX idx_sub_frame_quality_todo ON sub_frame(project_id, frame_type)
+    WHERE quality_analyzed_at IS NULL;
 
 -- Partial composite indices keyed to the calibration-match queries (migration 0046:
 -- header facts scoped to project + rig, not equipment FKs).
@@ -1947,9 +1964,18 @@ CREATE TABLE project_source_folder (
     -- simultaneous dual-rig night splits), and the calibration views scope on it.
     -- NULL means "not stated", which is a valid answer.
     rig_id     INTEGER REFERENCES rig(id),
+    -- migration 0056: which target this folder holds. Also USER-DECLARED — the
+    -- OBJECT header stays a hint and is never used to pick one. Lights beneath
+    -- inherit it into sub_frame.project_target_id (calibration frames don't: a
+    -- dark is not "of" anything), and a frame whose project_target_source is
+    -- 'user' is never overwritten. NULL falls back to the project's single
+    -- target, which is what every light got before folders could declare one.
+    -- SET NULL, not CASCADE: dropping a target must not unbind the folder.
+    project_target_id INTEGER REFERENCES project_target(id) ON DELETE SET NULL,
     added_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE (project_id, path)
 );
+CREATE INDEX idx_source_folder_target ON project_source_folder(project_target_id);
 CREATE INDEX idx_project_source_folder_project ON project_source_folder(project_id);
 -- At most one primary folder per project.
 CREATE UNIQUE INDEX idx_project_source_folder_one_primary

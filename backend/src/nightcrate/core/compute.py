@@ -10,10 +10,13 @@ Current backends:
   - numpy (CPU fallback, always available)
 """
 
+import logging
 import os
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 _mlx_available: bool | None = None
 _cupy_available: bool | None = None
@@ -31,6 +34,12 @@ def _check_mlx() -> bool:
 
             _mlx_available = True
         except ImportError:
+            # Not installed. Expected on Intel Macs, Windows and Linux.
+            _mlx_available = False
+        except Exception:
+            # Installed but unusable (Metal init failure, ABI mismatch). Report it
+            # once and fall back rather than letting it surface from a render.
+            logger.warning("[compute] mlx present but unusable; using numpy", exc_info=True)
             _mlx_available = False
     return _mlx_available
 
@@ -43,6 +52,11 @@ def _check_cupy() -> bool:
 
             _cupy_available = True
         except ImportError:
+            # Not installed. CuPy is never a declared dependency; the user adds it.
+            _cupy_available = False
+        except Exception:
+            # Installed but unusable (no CUDA driver, wrong CUDA version).
+            logger.warning("[compute] cupy present but unusable; using numpy", exc_info=True)
             _cupy_available = False
     return _cupy_available
 

@@ -25,10 +25,13 @@ import {
   fetchExtensions,
   fetchHeader,
   fetchMetadata,
+  fetchImageQuality,
   fetchStatsAndHistogram,
   imageUrl,
   isFitsPath,
+  extLabel,
   isVirtualPath,
+  parsePath,
   stfToStretch,
   type ImageStats,
   type StfParams,
@@ -197,6 +200,16 @@ export interface ImageAnalyzerViewProps {
   onError?: (msg: string) => void;
 }
 
+/**
+ * Normalized [0, 1] value as 16-bit-equivalent ADU — the same convention the
+ * catalog's quality columns use (`services/frame_quality.py`). True ADU for
+ * integer sources; for PixInsight float data, which carries no bit depth, it is
+ * a comparable 16-bit-equivalent scale rather than a literal sensor reading.
+ */
+function adu(v: number): string {
+  return Math.round(v * 65535).toLocaleString();
+}
+
 export default function ImageAnalyzerView({
   path,
   displayName,
@@ -287,6 +300,17 @@ export default function ImageAnalyzerView({
     isError: statsHistogramQuery.isError,
     error: statsHistogramQuery.error,
   };
+
+  // Separate from stats on purpose: detection costs ~0.36 s on a 26 MP frame
+  // against ~0.07 s for all of /stats, so the star block fills in afterwards
+  // rather than holding up the whole panel on every image.
+  const qualityQuery = useQuery({
+    queryKey: ["image-quality", activePath, selectedHdu],
+    queryFn: () => fetchImageQuality(activePath, selectedHdu),
+    enabled: hasStretch,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
 
   const headerQuery = useQuery({
     queryKey: ["header", activePath, selectedHdu],
@@ -508,17 +532,20 @@ export default function ImageAnalyzerView({
   const headerCards = headerQuery.data ?? [];
   const headerVal = (key: string) => headerValue(headerCards, key);
   // For project images, resolve the image name from extensions query
-  const projectImageName = isVirtualPath(activePath)
-    ? (extensionsQuery.data?.[0]?.name ?? null)
-    : null;
+  const parsed = parsePath(activePath);
+  // Only a PixInsight project needs its image name resolved from the extensions
+  // query — its `::` suffix is a bare index. An archive entry already carries a
+  // real filename after the separator.
+  const projectImageName =
+    parsed.kind === "pxiproject" ? (extensionsQuery.data?.[0]?.name ?? null) : null;
   const fileName = activePath
-    ? isVirtualPath(activePath)
-      ? (() => {
-          const projPath = activePath.split("::")[0];
-          const projName = projPath.split("/").pop() ?? "";
-          return `${projName} / ${projectImageName ?? "…"}`;
-        })()
-      : activePath.split("/").pop() ?? null
+    ? parsed.kind === "plain"
+      ? (activePath.split("/").pop() ?? null)
+      : `${parsed.container.split("/").pop() ?? ""} / ${
+          parsed.kind === "pxiproject"
+            ? (projectImageName ?? "\u2026")
+            : (parsed.entry.split("/").pop() ?? parsed.entry)
+        }`
     : null;
   const [linearityOverride, setLinearityOverride] = useState<"auto" | "linear" | "nonlinear">("auto");
 
@@ -601,12 +628,29 @@ export default function ImageAnalyzerView({
               </Tabs>
               {/* Format and linearity indicators */}
               <Box sx={{ display: "flex", gap: 0.5, ml: "auto", mr: 2 }}>
+                {/* Format of the IMAGE, not of its container. A `.fit` inside a
+                    zip is a FITS file — labelling every `::` path "PXI" (both
+                    conventions share the separator) claimed otherwise. */}
                 <Chip
-                  label={isVirtualPath(activePath) ? "PXI" : activePath.split(".").pop()?.toUpperCase() ?? ""}
+                  label={
+                    parsed.kind === "pxiproject"
+                      ? "PXI"
+                      : extLabel(parsed.kind === "archive" ? parsed.entry : activePath)
+                  }
                   size="small"
                   variant="outlined"
                   sx={{ fontSize: "0.65rem", height: 20 }}
                 />
+                {parsed.kind === "archive" && (
+                  <Tooltip title={`Inside ${parsed.container.split("/").pop() ?? parsed.container}`}>
+                    <Chip
+                      label={extLabel(parsed.container) || "ARCHIVE"}
+                      size="small"
+                      variant="outlined"
+                      sx={{ fontSize: "0.65rem", height: 20, cursor: "help" }}
+                    />
+                  </Tooltip>
+                )}
                 {hasStretch && (
                   <Tooltip title="Click to override linearity detection" arrow>
                     <Chip
@@ -1157,26 +1201,30 @@ export default function ImageAnalyzerView({
                       <Typography sx={{ fontSize: "0.65rem", fontFamily: monoFontFamily, color: chColor, fontWeight: 600, mb: 0.25 }}>
                         {label}
                       </Typography>
-                      <Box sx={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, rowGap: 0.125, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
+                      <Box sx={{ display: "grid", gridTemplateColumns: "auto 1fr auto", columnGap: 1, rowGap: 0.125, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
                         <Tooltip title="Median pixel value" arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Med</Typography>
                         </Tooltip>
                         <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.median.toFixed(6)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{adu(ch.median)}</Typography>
 
                         <Tooltip title="Median Absolute Deviation — noise measure" arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>MAD</Typography>
                         </Tooltip>
                         <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.mad.toFixed(6)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{adu(ch.mad)}</Typography>
 
                         <Tooltip title="Average Deviation — used by auto stretch algorithm" arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>AvgDev</Typography>
                         </Tooltip>
                         <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.avg_dev.toFixed(6)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{adu(ch.avg_dev)}</Typography>
 
-                        <Tooltip title="Signal-to-Noise Ratio (median / σ)" arrow>
-                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>SNR</Typography>
+                        <Tooltip title="Median divided by sigma (MAD x 1.4826) — the sky level against its own noise. NOT the same as Star SNR below, which measures the detected stars." arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Med/{"\u03c3"}</Typography>
                         </Tooltip>
                         <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.snr.toFixed(1)}</Typography>
+                        <Typography />
 
                         {delta != null && (
                           <>
@@ -1186,6 +1234,7 @@ export default function ImageAnalyzerView({
                             <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: Math.abs(delta) < 0.001 ? "inherit" : "#d4993f" }}>
                               {delta >= 0 ? "+" : ""}{delta.toFixed(6)}
                             </Typography>
+                            <Typography />
                           </>
                         )}
                       </Box>
@@ -1214,6 +1263,62 @@ export default function ImageAnalyzerView({
                           : statsQuery.data.lab_a_median > 0 ? "warm excess" : "cool excess"}
                       </Typography>
                     </Box>
+                  </Box>
+                )}
+
+                {/* Star-based quality. Same computation and same frozen detection
+                    settings as the catalog's analyze pass, so these values match a
+                    cataloged frame's stored ones exactly. Arrives after the rest of
+                    the panel — detection is ~5x the cost of everything above. */}
+                {(qualityQuery.isFetching || qualityQuery.data) && (
+                  <Box sx={{ mt: 0.5, pt: 0.75, borderTop: 1, borderColor: "divider" }}>
+                    {qualityQuery.isFetching ? (
+                      <Typography sx={{ fontSize: "0.65rem", fontFamily: monoFontFamily, color: "text.secondary" }}>
+                        measuring stars…
+                      </Typography>
+                    ) : qualityQuery.data!.star_count === 0 ? (
+                      <Tooltip title="Detection found nothing — cloud, a closed shutter, badly defocused, or simply not a star field. A real result, not an error." arrow>
+                        <Typography sx={{ fontSize: "0.65rem", fontFamily: monoFontFamily, color: "text.secondary", cursor: "help" }}>
+                          no stars detected
+                        </Typography>
+                      </Tooltip>
+                    ) : (
+                      <Box sx={{ display: "grid", gridTemplateColumns: "auto 1fr auto", columnGap: 1, rowGap: 0.125, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
+                        <Tooltip title="Half-Flux Radius — the median over every detected star, in pixels. Lower is sharper. Comparable within a rig only: a pixel subtends a different angle on each scope." arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>HFR</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>
+                          {qualityQuery.data!.hfr?.toFixed(2) ?? "—"}
+                        </Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>px</Typography>
+
+                        <Tooltip title="Stars detected with fixed settings, so counts are comparable between frames. Independent of the Aberration tab, whose filters you can tune." arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Stars</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>
+                          {qualityQuery.data!.star_count?.toLocaleString() ?? "—"}
+                        </Typography>
+                        <Typography />
+
+                        <Tooltip title="Median signal-to-noise of the detected stars — mainly a transparency indicator. Not the same as Med/sigma above, which measures the sky against its own noise." arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Star SNR</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>
+                          {qualityQuery.data!.snr_estimate?.toFixed(0) ?? "—"}
+                        </Typography>
+                        <Typography />
+
+                        <Tooltip title="Sky background from the detection pass, in 16-bit-equivalent ADU. Rises with moonlight, twilight and light pollution." arrow>
+                          <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Sky</Typography>
+                        </Tooltip>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>
+                          {qualityQuery.data!.background_adu != null
+                            ? Math.round(qualityQuery.data!.background_adu).toLocaleString()
+                            : "—"}
+                        </Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>ADU</Typography>
+                      </Box>
+                    )}
                   </Box>
                 )}
               </Box>

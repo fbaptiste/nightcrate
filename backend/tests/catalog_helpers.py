@@ -73,6 +73,27 @@ async def _make_project(client: AsyncClient, name: str) -> int:
 _PIXEL_SEED = itertools.count(1000)
 
 
+def _star_field(seed: int, n_stars: int) -> np.ndarray:
+    """A small noisy frame with *n_stars* gaussian-ish point sources.
+
+    The default 8x8 uniform frame has zero variance and no sources, so
+    ``sep.Background`` / ``detect_stars`` find nothing on it — useless for the
+    frame-quality pass. This gives detection something real to measure while
+    staying small enough to keep the suite fast.
+    """
+    rng = np.random.default_rng(seed)
+    h, w = 160, 200
+    data = rng.integers(1400, 1600, size=(h, w)).astype(np.float64)
+    # Grid-placed so stars never overlap and always clear the edge margin and
+    # the min_separation_px filter — the count is then deterministic.
+    yy, xx = np.mgrid[0:h, 0:w]
+    for i in range(n_stars):
+        cy = 30 + (i // 5) * 35
+        cx = 30 + (i % 5) * 35
+        data += 30000.0 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 2.0**2)))
+    return np.clip(data, 0, 65535).astype(np.uint16)
+
+
 def _write_fits(
     path: Path,
     *,
@@ -81,10 +102,17 @@ def _write_fits(
     exptime: float = 300.0,
     gain: int = 100,
     date_obs: str = "2026-03-15T23:30:00",
+    stars: int = 0,
 ) -> None:
     """A synthetic frame with unique pixel data — byte-identical files in one
-    project correctly dedupe to a single row, which would break count assertions."""
-    data = np.full((8, 8), next(_PIXEL_SEED) % 65535, dtype=np.uint16)
+    project correctly dedupe to a single row, which would break count assertions.
+
+    Pass ``stars=N`` for a frame the quality pass can actually measure.
+    """
+    if stars:
+        data = _star_field(next(_PIXEL_SEED), stars)
+    else:
+        data = np.full((8, 8), next(_PIXEL_SEED) % 65535, dtype=np.uint16)
     hdu = fits.PrimaryHDU(data)
     hdu.header["IMAGETYP"] = imagetyp
     hdu.header["EXPTIME"] = exptime
@@ -119,3 +147,36 @@ async def _frames(client: AsyncClient, project_id: int, **params) -> list[dict]:
     resp = await client.get(f"/api/projects/{project_id}/catalog/frames", params=params)
     assert resp.status_code == 200, resp.text
     return resp.json()["rows"]
+
+
+async def _seed_dsos(n: int = 2) -> list[int]:
+    """Minimal DSO rows so targets can be attached (dso requires a source catalog).
+
+    The DSO catalogs download on demand at runtime, so a test database has an
+    empty `dso` table — anything needing a target has to make its own.
+    """
+    ids = []
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "INSERT INTO dso_catalog_source (source_id, category, display_name, file_path, "
+            "file_hash) VALUES ('test-src', 'nightcrate', 'Test Source', '/x', 'h')"
+        )
+        source_id = cursor.lastrowid
+        for i in range(n):
+            cursor = await conn.execute(
+                "INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg, "
+                "source_catalog_id, source_row_hash) VALUES (?, 'Neb', 300.0, 38.0, ?, ?)",
+                (f"TestDSO {i + 1}", source_id, f"rowhash{i}"),
+            )
+            ids.append(cursor.lastrowid)
+        await conn.commit()
+    return ids
+
+
+async def _add_target(client: AsyncClient, project_id: int, dso_id: int) -> int:
+    """Attach a DSO to the project and return the project_target id."""
+    resp = await client.post(f"/api/projects/{project_id}/targets", json={"dso_id": dso_id})
+    assert resp.status_code in (200, 201), resp.text
+    listing = await client.get(f"/api/projects/{project_id}/targets")
+    row = next(t for t in listing.json() if t["dso_id"] == dso_id)
+    return row["id"]

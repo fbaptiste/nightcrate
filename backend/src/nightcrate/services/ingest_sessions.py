@@ -123,18 +123,83 @@ async def ensure_session(
     return cursor.lastrowid
 
 
+async def _project_single_target(conn: aiosqlite.Connection, project_id: int) -> int | None:
+    """The project's target when it has exactly one, else None.
+
+    Ambiguity is not resolved by guessing: with two targets and no folder tag, a
+    light gets no target rather than an arbitrary one.
+    """
+    cursor = await conn.execute(
+        "SELECT id FROM project_target WHERE project_id = ? ORDER BY id LIMIT 2",
+        (project_id,),
+    )
+    rows = await cursor.fetchall()
+    return rows[0]["id"] if len(rows) == 1 else None
+
+
+async def _assign_targets(conn: aiosqlite.Connection, project_id: int, folders: list[dict]) -> None:
+    """Set ``sub_frame.project_target_id`` from the folder tags. Lights only.
+
+    Same shape as the rig pass above: clear, then apply shortest-path-first so
+    the innermost binding wins. Every statement excludes
+    ``project_target_source = 'user'`` — that guard is the whole reason a manual
+    correction survives a re-scan, and dropping it from any one of these three
+    statements would silently wipe hand-set targets.
+    """
+    await conn.execute(
+        "UPDATE sub_frame SET project_target_id = NULL "
+        "WHERE project_id = ? AND project_target_source != 'user'",
+        (project_id,),
+    )
+
+    for folder in sorted(folders, key=lambda f: len(f["path"])):
+        if folder.get("project_target_id") is None:
+            continue
+        prefix = folder_prefix(folder["path"])
+        await conn.execute(
+            "UPDATE sub_frame SET project_target_id = ? "
+            "WHERE project_id = ? AND frame_type = 'light' "
+            "  AND project_target_source != 'user' AND id IN ("
+            "  SELECT fl.sub_frame_id FROM file_location fl"
+            "  WHERE fl.project_id = ? AND fl.sub_frame_id IS NOT NULL"
+            "    AND substr(fl.path, 1, ?) = ?)",
+            (folder["project_target_id"], project_id, project_id, len(prefix), prefix),
+        )
+
+    # Anything still unassigned falls back to the project's single target — the
+    # behaviour every frame had before folders could declare one.
+    single = await _project_single_target(conn, project_id)
+    if single is not None:
+        await conn.execute(
+            "UPDATE sub_frame SET project_target_id = ? "
+            "WHERE project_id = ? AND frame_type = 'light' "
+            "  AND project_target_source != 'user' AND project_target_id IS NULL",
+            (single, project_id),
+        )
+
+
 async def assign_rigs_and_sessions(
     conn: aiosqlite.Connection, project_id: int, tz_name: str | None
 ) -> None:
-    """Give every cataloged frame its rig and its session. **Single owner of both
-    facts** — ingest, folder tagging and folder removal all call this rather than
-    each writing their own answer.
+    """Give every cataloged frame its rig, its target and its session. **Single
+    owner of all three** — ingest, folder tagging and folder removal all call this
+    rather than each writing their own answer.
 
-    The rig is the one tagged on the *innermost* bound source folder containing the
-    frame's file. Longest-prefix wins, which is the only rule that behaves when
-    folders nest: binding ``/data`` to rig A and ``/data/rig-b`` to rig B must give
-    the nested files rig B regardless of which folder was added, scanned or tagged
-    last. Frames under no bound folder get NULL, which is a valid answer.
+    Rig and target are both the one tagged on the *innermost* bound source folder
+    containing the frame's file. Longest-prefix wins, which is the only rule that
+    behaves when folders nest: binding ``/data`` to rig A and ``/data/rig-b`` to
+    rig B must give the nested files rig B regardless of which folder was added,
+    scanned or tagged last. Frames under no bound folder get NULL, a valid answer.
+
+    Target has two extras the rig doesn't:
+
+    - it applies to **lights only** (a dark is not of anything), and
+    - a frame whose ``project_target_source`` is ``'user'`` is never touched, so a
+      hand correction outlives every re-scan and re-tag.
+
+    An untagged folder falls back to the project's single target, which is what
+    ingest did for every frame before folders could declare one. Nothing is
+    inferred from the ``OBJECT`` header — it stays a hint.
 
     Caller owns the transaction.
     """
@@ -150,7 +215,8 @@ async def assign_rigs_and_sessions(
     # — the same reason api/ingest.py:remove_folder avoids LIKE.
     await conn.execute("UPDATE sub_frame SET rig_id = NULL WHERE project_id = ?", (project_id,))
     cursor = await conn.execute(
-        "SELECT path, rig_id FROM project_source_folder WHERE project_id = ?", (project_id,)
+        "SELECT path, rig_id, project_target_id FROM project_source_folder WHERE project_id = ?",
+        (project_id,),
     )
     folders = [row_dict(r) for r in await cursor.fetchall()]
     for folder in sorted(folders, key=lambda f: len(f["path"])):
@@ -164,6 +230,8 @@ async def assign_rigs_and_sessions(
             "    AND substr(fl.path, 1, ?) = ?)",
             (folder["rig_id"], project_id, project_id, len(prefix), prefix),
         )
+
+    await _assign_targets(conn, project_id, folders)
 
     # Re-key sessions. The distinct (rig, night) set is tens of entries even for a
     # multi-year project, so group first and issue one ensure_session per group —

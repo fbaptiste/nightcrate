@@ -49,6 +49,11 @@ class AnalysisResult(BaseModel):
     median_fwhm: float | None = None
     median_hfr: float | None = None
     median_eccentricity: float | None = None
+    median_snr: float | None = None
+    # Sky background from sep, in the input's [0, 1] scale. Computed on the way to
+    # detection and surfaced here so the frame-quality pass doesn't re-run
+    # sep.Background (a second ~0.2 s pass on a 26 MP frame).
+    background_level: float | None = None
     settings: DetectionSettings
 
 
@@ -84,6 +89,17 @@ class SampleGridResult(BaseModel):
     squares: list[SampleSquare]
 
 
+def background_level(data: np.ndarray) -> float:
+    """Global sky background of *data*, in the input's [0, 1] scale.
+
+    The standalone form of what ``detect_stars`` computes on its way to
+    extraction — for callers that want the background without paying for
+    detection (calibration frames, which have no stars to find).
+    """
+    img = np.ascontiguousarray(data, dtype=np.float64)
+    return float(sep.Background(img).globalback)
+
+
 def detect_stars(
     data: np.ndarray,
     settings: DetectionSettings | None = None,
@@ -108,6 +124,7 @@ def detect_stars(
 
     bkg = sep.Background(img)
     img_sub = img - bkg
+    bkg_level = round(float(bkg.globalback), 8)
 
     sep.set_extract_pixstack(1_000_000)
 
@@ -133,6 +150,7 @@ def detect_stars(
             star_count=0,
             image_width=width,
             image_height=height,
+            background_level=bkg_level,
             settings=settings,
         )
 
@@ -230,10 +248,14 @@ def detect_stars(
     median_fwhm = None
     median_hfr = None
     median_ecc = None
+    median_snr = None
     if stars:
         median_fwhm = round(float(np.median([s.fwhm for s in stars])), 3)
         median_hfr = round(float(np.median([s.hfr for s in stars])), 3)
         median_ecc = round(float(np.median([s.eccentricity for s in stars])), 4)
+        # Median, not mean: a single saturated star measures in the thousands
+        # against a typical per-star SNR around 100.
+        median_snr = round(float(np.median([s.snr for s in stars])), 3)
 
     return AnalysisResult(
         stars=stars,
@@ -243,6 +265,8 @@ def detect_stars(
         median_fwhm=median_fwhm,
         median_hfr=median_hfr,
         median_eccentricity=median_ecc,
+        median_snr=median_snr,
+        background_level=bkg_level,
         settings=settings,
     )
 

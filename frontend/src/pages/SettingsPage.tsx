@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
@@ -21,6 +22,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { PlannerScoringSection } from "@/components/settings/PlannerScoringSection";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import { validateAstapPath } from "@/api/plateSolve";
+import { fetchComputeInfo } from "@/api/settings";
 import { monoFontFamily } from "@/theme/theme";
 
 const sectionHeaderSx = {
@@ -33,9 +35,29 @@ const sectionHeaderSx = {
 export function SettingsPage() {
   const { settings, update } = useSettingsStore();
 
+  // Which array backend the server can actually use. Fixed for the process
+  // lifetime, so it never needs refetching.
+  const computeQuery = useQuery({
+    queryKey: ["compute-info"],
+    queryFn: fetchComputeInfo,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+  const compute = computeQuery.data;
+
   if (!settings) {
     return <Typography sx={{ p: 3 }} color="text.secondary">Loading…</Typography>;
   }
+
+  const backendLabel = !compute
+    ? null
+    : compute.gpu_backend === null
+      ? "Active: CPU (numpy) — no GPU backend on this machine"
+      : !settings.gpu_acceleration
+        ? "Active: CPU (numpy) — acceleration turned off"
+        : compute.gpu_backend === "mlx"
+          ? "Active: Apple Metal (mlx)"
+          : "Active: NVIDIA CUDA (CuPy)";
 
   return (
     <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 4 }}>
@@ -124,6 +146,11 @@ export function SettingsPage() {
                   <Typography variant="body2" color="text.secondary">
                     Use GPU acceleration (Apple Metal / NVIDIA CUDA) when available
                   </Typography>
+                  {backendLabel && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                      {backendLabel}
+                    </Typography>
+                  )}
                 </Box>
                 <Switch
                   checked={settings.gpu_acceleration}
