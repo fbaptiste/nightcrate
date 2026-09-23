@@ -836,7 +836,7 @@ class TestThumbnailEndpoint:
 
 @pytest.fixture
 def calib_folder(tmp_path: Path) -> Path:
-    """Mimics Fred's real data: lights @300s; flats auto-exposed @2.208s; dark-flats
+    """Mimics a real capture set: lights @300s; flats auto-exposed @2.208s; dark-flats
     at the NOMINAL 2.2s (IMAGETYP=DARK, exposure NOT exactly equal to the flats — the
     case that broke exact matching); a real dark @300s with a stray FILTER; and a
     stacked master dark (IMAGETYP='Master Dark', NCOMBINE)."""

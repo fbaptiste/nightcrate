@@ -173,7 +173,7 @@ export default function LatLongCalc() {
                 label="Latitude"
                 value={latSex}
                 onChange={(e) => setLatSex(e.target.value)}
-                placeholder={"e.g. 33 27 54 N  or  33\u00B027'54\" N"}
+                placeholder={"e.g. 33 26 24 N  or  33\u00B026'24\" N"}
                 error={Boolean(decResult?.latitude_error)}
                 helperText={
                   decResult?.latitude_error ??
@@ -236,16 +236,16 @@ export default function LatLongCalc() {
         <p>Acceptable sexagesimal inputs include:</p>
         <ul>
           <li>
-            <code>33 27 54 N</code>
+            <code>33 26 24 N</code>
           </li>
           <li>
-            <code>33&deg;27&#39;54&quot; N</code>
+            <code>33&deg;26&#39;24&quot; N</code>
           </li>
           <li>
-            <code>33.465 N</code>
+            <code>33.44 N</code>
           </li>
           <li>
-            <code>33.465</code> (sign indicates hemisphere)
+            <code>33.44</code> (sign indicates hemisphere)
           </li>
         </ul>
         <p>

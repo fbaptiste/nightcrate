@@ -441,8 +441,8 @@ Raise it toward 1.0, which disables the softening entirely.
 
 ## 9. Colorblind-safe palette rationale
 
-Fred is red-green color blind, which rules out the usual
-red-for-bad / green-for-good convention. The score chip palette
+Palettes must remain readable with red-green color vision deficiency, which
+rules out the usual red-for-bad / green-for-good convention. The score chip palette
 uses **blue-for-good, orange-for-poor, neutral gray for middle**:
 
 - **Excellent:** saturated blue (`#1976d2`)

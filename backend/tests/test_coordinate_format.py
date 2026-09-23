@@ -7,10 +7,10 @@ from nightcrate.services.coordinate_format import format_latitude, format_longit
 
 class TestFormatLatitude:
     def test_positive_north(self):
-        assert format_latitude(33.465) == "33\u00b027\u203254\u2033 N"
+        assert format_latitude(33.44) == "33\u00b026\u203224\u2033 N"
 
     def test_negative_south(self):
-        assert format_latitude(-33.465) == "33\u00b027\u203254\u2033 S"
+        assert format_latitude(-33.44) == "33\u00b026\u203224\u2033 S"
 
     def test_zero(self):
         # Zero formats as N by the `>= 0` convention.

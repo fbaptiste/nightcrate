@@ -188,7 +188,7 @@ class LocationResponse(BaseModel):
     latitude: float
     longitude: float
     # Sexagesimal display strings derived from latitude/longitude,
-    # formatted like "33deg27'54'' N" / "112deg04'26'' W".
+    # formatted like "33deg26'24'' N" / "112deg04'26'' W".
     latitude_display: str
     longitude_display: str
     elevation_m: float | None

@@ -159,7 +159,7 @@ class TestParseLatLonStringErrors:
     def test_too_many_components(self):
         # 4 numeric tokens → line 172.
         with pytest.raises(ValueError, match="Too many components"):
-            svc.parse_latlon_string("33 27 54 10 N", "lat")
+            svc.parse_latlon_string("33 26 24 10 N", "lat")
 
     def test_negative_minutes(self):
         # Line 179 is hit when minutes or seconds come through as negative.
@@ -178,8 +178,8 @@ class TestParseLatLonStringErrors:
 
     def test_negative_degrees_preserves_sign(self):
         # Line 189 (degrees < 0 branch) — signed DMS where degrees carry the sign.
-        val = svc.parse_latlon_string("-33 27 54", "lat")
-        assert abs(val - (-33.465)) < 1e-6
+        val = svc.parse_latlon_string("-33 26 24", "lat")
+        assert abs(val - (-33.44)) < 1e-6
 
     def test_leading_plus_sign(self):
         # Line 166 strips a leading '+'.
@@ -239,21 +239,21 @@ class TestParseLatLonStringHappy:
         assert svc.parse_latlon_string("33.5 S", "lat") == -33.5
 
     def test_dms_with_symbols(self):
-        val = svc.parse_latlon_string("33\u00b027'54\" N", "lat")
-        assert abs(val - 33.465) < 1e-6
+        val = svc.parse_latlon_string("33\u00b026'24\" N", "lat")
+        assert abs(val - 33.44) < 1e-6
 
     def test_dms_with_letters(self):
-        val = svc.parse_latlon_string("33d27m54s N", "lat")
-        assert abs(val - 33.465) < 1e-6
+        val = svc.parse_latlon_string("33d26m24s N", "lat")
+        assert abs(val - 33.44) < 1e-6
 
     def test_whitespace_tolerant(self):
-        val = svc.parse_latlon_string("  33  27  54  N  ", "lat")
-        assert abs(val - 33.465) < 1e-6
+        val = svc.parse_latlon_string("  33  26  24  N  ", "lat")
+        assert abs(val - 33.44) < 1e-6
 
     def test_leading_direction(self):
         # Exercises _strip_direction first-char branch.
-        val = svc.parse_latlon_string("N33 27 54", "lat")
-        assert abs(val - 33.465) < 1e-6
+        val = svc.parse_latlon_string("N33 26 24", "lat")
+        assert abs(val - 33.44) < 1e-6
 
 
 class TestParseLatLonComponents:
@@ -281,8 +281,8 @@ class TestParseLatLonComponents:
 
     def test_negative_degrees_branch(self):
         # Line 240 — degrees < 0 preserves sign through the components path.
-        val = svc.parse_latlon_components(-33, 27, 54, None, "lat")
-        assert abs(val - (-33.465)) < 1e-6
+        val = svc.parse_latlon_components(-33, 26, 24, None, "lat")
+        assert abs(val - (-33.44)) < 1e-6
 
     def test_direction_east_on_latitude(self):
         with pytest.raises(ValueError, match="Invalid latitude direction"):

@@ -2,7 +2,8 @@
 
 Applies to every agent. `AGENTS.md` points here; keep one source of instructions.
 Project skills live in `.claude/skills/`; edit those files, not the pointers in
-`.agents/skills/`. Use the running agent's identity and memory location.
+`.agents/skills/`. The Claude-only `codex` skill has no pointer. Use the running
+agent's identity and memory location.
 
 Also read `CLAUDE.local.md` at the repository root if present and not already
 loaded. It holds optional machine-specific guidance and must remain untracked.
@@ -29,6 +30,16 @@ and Linux, between capture software (N.I.N.A./ASIAIR) and processing software
   decision at a time, with a recommendation and reason. Execute routine choices
   within the user's authorization.
 
+## Agent collaboration
+
+Fred is the product manager and approves scope, plans, release candidates, and
+every commit, push, and merge. In work Claude orchestrates, Claude plans,
+reviews, and delivers; Codex implements and critiques plans. Roles, gates,
+review records, and Codex profiles are in
+[docs/agent-collaboration.md](docs/agent-collaboration.md); Claude runs Codex
+through the `codex` skill. Codex working under Claude never stages, commits,
+pushes, or opens PRs.
+
 ## Documentation map
 
 | File | Purpose |
@@ -37,6 +48,7 @@ and Linux, between capture software (N.I.N.A./ASIAIR) and processing software
 | [PLAN.md](PLAN.md) | Current release and remaining work |
 | [docs/README.md](docs/README.md) | Code map and documentation index |
 | [docs/development-decisions.md](docs/development-decisions.md) | Feature-specific constraints and regression traps |
+| [docs/agent-collaboration.md](docs/agent-collaboration.md) | Claude–Codex roles, gates, and review records |
 | [DB_SCHEMA.md](DB_SCHEMA.md), [DB_SCHEMA_DDL.sql](DB_SCHEMA_DDL.sql) | Schema diagrams and complete DDL |
 | [LLM_DB_SPECS.md](LLM_DB_SPECS.md) | Equipment seed-data authoring reference |
 | [NightCrate_Equipment_and_Technical_Context.md](NightCrate_Equipment_and_Technical_Context.md) | Reference capture formats and equipment context |
@@ -104,6 +116,9 @@ instructions to restore removed features.
   edited file. Add the next numbered forward migration instead.
 - Verify upgrades on a copy of a database at the preceding migration, as well as
   a fresh database. Preserve user records; check integrity and foreign keys.
+- To reshape a parent table, wrap the rename in `PRAGMA legacy_alter_table = ON`
+  as migrations 0022, 0023, 0038, and 0040 do. Otherwise SQLite rewrites child
+  foreign keys to point at the renamed legacy table, which is then dropped.
 - Equipment vocabularies use closed CHECK constraints. Vocabulary changes need
   a migration and matching loader/model changes.
 - Seed changes must preserve user edits. Field renames require compatible hash
@@ -116,6 +131,11 @@ instructions to restore removed features.
 - Use theme tokens, including `common.white`/`common.black`. Any required hex
   color must have six digits; alpha suffixes break on three-digit hex.
 - No question-mark help icons or tooltip underlines.
+- Equipment Autocompletes group by manufacturer (software by category), with
+  options sorted by that key first; MUI repeats group headers otherwise. Drill-down
+  details open in a panel below the content with a close button, not inline
+  expanders. Badges that depend on user-set inputs, such as binning, appear only
+  where those inputs are set.
 - JSX Unicode escapes need expressions, not quoted attributes. Use actual
   Unicode or `{"≈"}` where React does not recognize a named HTML entity.
 - MUI Typography variants override inherited font sizing. Explicitly inherit
@@ -153,9 +173,11 @@ their parentheses is valid syntax.
 Documentation changes need diff, link, and factual checks. Run the full release
 checklist at finalization; report exactly what was verified during each task.
 
-**Keep changes staged and uncommitted until Fred explicitly authorizes a commit.**
-Opening a later PR does not authorize committing now. Follow `start-version`,
-`sync-docs`, and `finalize-session` for their respective workflows. Never force-push.
+**Nothing is committed without Fred's explicit authorization.** In
+Claude-orchestrated work, Claude stages reviewed changes; in direct sessions,
+the acting agent follows Fred's staging instructions. Opening a later PR does not
+authorize committing now. Follow `start-version`, `sync-docs`,
+`finalize-session`, and (Claude only) `codex` for their workflows. Never force-push.
 
 ## Public repository
 

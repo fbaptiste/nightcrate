@@ -11,7 +11,7 @@ Build a seed loader that reads CSV files from the repo and populates the equipme
 - CSV file format and conventions
 - Hash-based change detection (never clobber user edits)
 - Full seed loader infrastructure (registry, CSV reader, FK resolution, re-seed logic)
-- Minimal initial seed data for Fred's equipment + common astrophotography gear
+- Minimal initial seed data for a reference equipment set + common astrophotography gear
 - Automatic first-run seeding on app startup
 - Tests covering all seed/re-seed scenarios
 

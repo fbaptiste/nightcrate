@@ -1,8 +1,8 @@
 /**
  * Shared color palette for rig calculator visualizations.
  *
- * Uses a blue/orange/teal palette that's colorblind-safe (Fred is red-green
- * color blind). Lighter variants provide 4-tier ratings where needed.
+ * Uses a blue/orange/teal palette that stays distinguishable with red-green
+ * color vision deficiency. Lighter variants provide 4-tier ratings where needed.
  */
 
 export const RIG_BLUE = "#1976d2";

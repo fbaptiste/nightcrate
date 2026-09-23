@@ -21,9 +21,9 @@ async def client():
 
 
 SAMPLE_LOCATION = {
-    "name": "Mesa Backyard",
-    "latitude": 33.46,
-    "longitude": -111.62,
+    "name": "Test Backyard",
+    "latitude": 33.4484,
+    "longitude": -112.074,
     "elevation_m": 400.0,
     "timezone": "America/Phoenix",
 }
@@ -411,7 +411,7 @@ async def test_export_stellarium_zip_contents(client):
         names = set(zf.namelist())
         assert names == {"landscape.ini", "horizon.txt", "readme.txt"}
         ini = zf.read("landscape.ini").decode("utf-8")
-    assert "name = Mesa Backyard" in ini
+    assert "name = Test Backyard" in ini
 
 
 @pytest.mark.anyio
