@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/dev/context/bin/session-log.py nightcrate"
+          }
+        ]
+      }
+    ]
+  }
+}

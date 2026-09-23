@@ -1,6 +1,16 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**The single source of project instructions, for every agent working in this
+repository — not only Claude Code.** `AGENTS.md` is a pointer to this file, and
+`.agents/skills/` holds pointers to `.claude/skills/`. Do not fork any of them
+into a second copy: these files carry rules that were expensive to learn, and a
+stale duplicate is how an agent confidently reintroduces a bug that was already
+fixed. If something here is genuinely agent-specific, fix it here or note the
+narrow exception in `AGENTS.md`.
+
+Anything below that names a particular agent — commit attribution, a
+`~/.claude/...` path — means "whichever agent is running, and its own equivalent
+path".
 
 ## Product Context
 
