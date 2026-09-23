@@ -172,13 +172,6 @@ Reference documents:
 - `DB_SCHEMA.md` / `DB_SCHEMA_DDL.sql` — authoritative schema docs
 - `LLM_DB_SPECS.md` — LLM-facing seed-data reference (CSV columns, abbreviated schema)
 
-Maintainer's cross-project note, kept outside this repo (other clones won't
-have it — Claude Code silently skips missing imports). Orientation, goals,
-non-goals, and current state; `decisions.md` alongside it records why things
-are the way they are.
-
-@~/dev/context/projects/nightcrate/README.md
-
 ## Planned Stack
 
 - **Backend:** Python + FastAPI

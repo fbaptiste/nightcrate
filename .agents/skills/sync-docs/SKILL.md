@@ -1,6 +1,6 @@
 ---
 name: sync-docs
-description: Use when a work session is ending, before committing, or when asked to update docs — syncs PLAN.md, CLAUDE.md, README.md, DB_SCHEMA.md, DB_SCHEMA_DDL.sql, LLM_DB_SPECS.md, nightcrate-current-state.md, and the ~/dev/context project note to reflect actual work done
+description: Use when a work session is ending, before committing, or when asked to update docs — syncs PLAN.md, CLAUDE.md, README.md, DB_SCHEMA.md, DB_SCHEMA_DDL.sql, LLM_DB_SPECS.md, and nightcrate-current-state.md to reflect actual work done
 ---
 
 # sync-docs
