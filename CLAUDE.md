@@ -1,877 +1,194 @@
-# CLAUDE.md
+# NightCrate — project instructions
 
-**The single source of project instructions, for every agent working in this
-repository — not only Claude Code.** `AGENTS.md` is a pointer to this file, and
-`.agents/skills/` holds pointers to `.claude/skills/`. Do not fork any of them
-into a second copy: these files carry rules that were expensive to learn, and a
-stale duplicate is how an agent confidently reintroduces a bug that was already
-fixed. If something here is genuinely agent-specific, fix it here or note the
-narrow exception in `AGENTS.md`.
+Applies to every agent. `AGENTS.md` points here; keep one source of instructions.
+Project skills live in `.claude/skills/`; edit those files, not the pointers in
+`.agents/skills/`. Use the running agent's identity and memory location.
 
-Anything below that names a particular agent — commit attribution, a
-`~/.claude/...` path — means "whichever agent is running, and its own equivalent
-path".
+Also read `CLAUDE.local.md` at the repository root if present and not already
+loaded. It holds optional machine-specific guidance and must remain untracked.
 
-## Product Context
+## Product and scope
 
-NightCrate is a desktop application for serious amateur
-astrophotographers to catalog, organize, and analyze their imaging
-sessions. It's the missing layer between capture software (N.I.N.A.,
-ASIAIR) and processing software (PixInsight) — nobody else combines
-FITS metadata, guiding logs, session logs, and equipment tracking
-into a unified, searchable catalog.
+NightCrate is a free, MIT-licensed application for astrophotographers to plan,
+catalog, and understand their imaging work. It runs locally on Mac, Windows,
+and Linux, between capture software (N.I.N.A./ASIAIR) and processing software
+(PixInsight/Siril). Files are cataloged in place by default.
 
-This is a free, open-source project (MIT licensed) built to give
-the astrophotography community a tool that doesn't yet exist. The
-goal is simply to provide something genuinely useful to serious
-amateur astrophotographers — a niche community that's underserved
-by existing software. What makes it distinctive: no equivalent
-tool combines these data sources, Mac-first in a Windows-dominated
-ecosystem, but still supporting Windows users, and a data model designed for a future AI-powered
-session analyzer.
+- Prioritize connections between projects, exposures, equipment, guiding, and
+  conditions. New features should support a concrete imaging decision.
+- Catalog and correlate. Sub-frame rejection, weighting, and processing belong
+  in processing software; the catalog's rejection fields are dormant.
+- Account for multiple rigs, multi-night projects, partial captures, archives,
+  offline volumes, polar twilight, and southern-hemisphere seasons.
+- Keep units explicit, missing values missing, and facts separate from estimates.
+  Verify external schemas, catalog identifiers, and scientific formulas.
+- Keep the data model normalized. Add typed fields and relationships where
+  appropriate; raw source payloads are retained for re-parsing, not as a substitute
+  for modeled data. Speculative AI features do not determine current scope.
+- Explain meaningful tradeoffs and challenge unnecessary complexity. Ask one
+  decision at a time, with a recommendation and reason. Execute routine choices
+  within the user's authorization.
 
-The user base is technically sophisticated — they run imaging rigs
-with multiple computers, automate multi-hour capture sequences, and
-process data in specialized scientific software. They will notice
-bad astronomy, incorrect calculations, and sloppy unit handling.
-They won't tolerate dumbed-down UX, but they also won't read
-documentation — the app needs to be discoverable and self-evident.
+## Documentation map
 
-## Public Repository — Privacy & Sensitive Data
+| File | Purpose |
+|---|---|
+| [README.md](README.md) | User overview, setup, acknowledgments |
+| [PLAN.md](PLAN.md) | Current release and remaining work |
+| [docs/README.md](docs/README.md) | Code map and documentation index |
+| [docs/development-decisions.md](docs/development-decisions.md) | Feature-specific constraints and regression traps |
+| [DB_SCHEMA.md](DB_SCHEMA.md), [DB_SCHEMA_DDL.sql](DB_SCHEMA_DDL.sql) | Schema diagrams and complete DDL |
+| [LLM_DB_SPECS.md](LLM_DB_SPECS.md) | Equipment seed-data authoring reference |
+| [NightCrate_Equipment_and_Technical_Context.md](NightCrate_Equipment_and_Technical_Context.md) | Reference capture formats and equipment context |
 
-**This is a PUBLIC, open-source repository.** Everything committed —
-code, docs, comments, commit messages, test fixtures — is world-readable
-and effectively permanent (it survives in git history even if later
-"removed"). Treat every commit as a public publication.
-
-**Never commit personal or sensitive data.** This includes, but is not
-limited to:
-
-- **Personal location** — home/observatory address, city/state,
-  precise coordinates, or anything that pinpoints where the maintainer
-  lives. (The test suite's reference location `33.4484, -112.0740` /
-  `America/Phoenix` is a public civic centroid kept intentionally — fine
-  to reuse for tests, but do **not** add finer or home-specific coords.)
-- **Network / infrastructure** — ISP, home-network topology, gateway/NAS
-  brands, hostnames, IP addresses, VPN/remote-access setup.
-- **Identity / contact / brand** — personal emails, phone numbers, owned
-  domains, social/YouTube channels, real names of non-maintainers.
-- **Financial / business** — pricing, revenue, monetization plans,
-  income goals, employment/career details. This project is free and
-  MIT-licensed; it has no business model to document.
-- **Personal hardware & health** — specific personal machine specs,
-  medical/health characteristics. (Accessibility *requirements* like a
-  colorblind-safe palette are fine; frame them as project constraints,
-  not personal facts about an individual.)
-- **Secrets** — API keys, tokens, passwords, TLS private keys, `.env`
-  files. (`.gitignore` already covers `.env`, `frontend/.certs/`, and
-  `*.db`/`*.sqlite` — do not un-ignore these or commit their contents.)
-
-**In examples, tests, and docs, use generic placeholders** — a neutral
-example site, `example.com`, illustrative specs — never the maintainer's
-real personal details. If a task seems to require real personal data in
-a committed file, stop and ask rather than guessing.
-
-If you ever notice sensitive data already present (in a diff you're about
-to commit, or in existing files), flag it before committing. Scrubbing it
-from history after the fact requires a disruptive `filter-repo` rewrite —
-far better to never commit it.
-
-## How to Engage as a Product Partner
-
-You are not just implementing code — you are co-developing a
-product with real users who have strong opinions about their
-workflow. When working on any feature:
-
-**Think like an astrophotographer.** Before writing code, consider
-how this feature fits into an actual imaging workflow. Who uses it,
-when in their session (planning? capturing? reviewing? processing?),
-and what decision does it help them make? If a feature doesn't
-clearly serve a workflow moment, say so.
-
-**Challenge feature scope.** If a request feels over-engineered for
-the user value it delivers, push back. If it feels under-specified
-and will create UX confusion, say so. "Do we actually need this?"
-and "What happens when the user has 200 of these?" are valid
-questions.
-
-**Protect the data model.** The schema is designed to be consumed
-by a future AI analyzer. Every table and relationship should make
-sense when serialized into a context window. If a proposed change
-muddies the data model, flag it — even if the immediate feature
-works fine. Convenience columns, denormalization, and "just add a
-JSON blob" are red flags worth questioning.
-
-**Think about the edges.** Astrophotography has brutal edge cases:
-polar regions where the sun never sets, southern hemisphere season
-inversion, targets that transit at 85° altitude, guide logs that
-span midnight, mosaics with dozens of panels, users with 10 years
-of archived data. If a feature only works for "normal" mid-latitude
-single-target sessions, that's worth flagging.
-
-**Consider the competitive position.** NightCrate's advantage is
-depth and integration — not breadth. Features that duplicate what
-Telescopius or Stellarium already do well are low value. Features
-that connect data across domains (guiding quality ↔ sub-frame
-quality ↔ equipment ↔ conditions) are high value, because nobody
-else can do that.
-
-## Role & Expectations
-
-You are an equal development partner on NightCrate, not a passive
-code generator. You have deep expertise in software architecture,
-UI/UX engineering, astrophotography, and astronomy.
-
-### When to push back or ask questions
-
-- If a request conflicts with existing patterns in the codebase,
-  flag it before proceeding.
-- If a feature has implications for other parts of the system
-  (data model, API surface, UI consistency), call them out.
-- If you see a simpler or more robust approach than what's being
-  asked, propose it — but briefly, not as a blocker.
-- If a spec is ambiguous or underspecified in ways that will
-  affect correctness, ask before guessing.
-
-### When to just execute
-
-- If the task is straightforward and consistent with existing
-  patterns, do it. Don't manufacture questions.
-- Implementation details (file organization, internal naming,
-  helper functions) are your calls unless the spec says otherwise.
-- Small bug fixes and refactors don't need architectural review.
-
-### How to ask for a decision
-
-When you need Fred's input on a choice, always: (1) present the concrete
-options, (2) state which one you recommend, and (3) explain why. Ask
-decisions **one at a time**, not batched, so each can be weighed on its own
-— this applies to plan-mode clarifications and any in-flight choice.
-
-### What "critical thinking" looks like here
-
-- Check whether a change affects the data model's future
-  AI-consumption design goal.
-- Verify that external field mappings (API schemas, catalog IDs,
-  third-party formats) are correct — never guess these.
-- Consider colorblind accessibility (no red/green; use viridis
-  or blue/orange palettes).
-- Think about edge cases specific to astrophotography: polar
-  regions, southern hemisphere, narrow FOV plate solving,
-  summer twilight timing.
-
-
-## Project Status
-
-Active development. See `PLAN.md` for the current version plan and task checklist.
-
-Reference documents:
-- `nightcrate-brief.md` — product vision, MVP features, architecture decisions
-- `nightcrate-current-state.md` — living inventory of what's actually built (per-feature snapshots, statuses, file pointers). Use this when you need to know what exists today; use `PLAN.md` when you need version history; use this CLAUDE.md when you need architectural decisions, conventions, and gotchas.
-- `NightCrate_Equipment_and_Technical_Context.md` — Fred's imaging setup, file formats, FITS headers, PHD2 log structure, known edge cases
-- `DB_SCHEMA.md` / `DB_SCHEMA_DDL.sql` — authoritative schema docs
-- `LLM_DB_SPECS.md` — LLM-facing seed-data reference (CSV columns, abbreviated schema)
-
-## Planned Stack
-
-- **Backend:** Python + FastAPI
-- **Frontend:** React + TypeScript (Vite); Claude Code handles most React/JS work — Fred is not a React developer
-  - **UI library:** MUI (`@mui/material`) — free MIT core. MUI X Community tier only (`@mui/x-data-grid`, `@mui/x-date-pickers`, `@mui/x-charts`, `@mui/x-tree-view`) — all free MIT. **Never use MUI X Pro or Premium** (paid commercial license).
-  - **Theme:** MUI `ThemeProvider` with light/dark/browser (system) modes. Stored in SQLite settings table via backend.
-  - **No Tailwind CSS, shadcn, or related packages** — MUI uses its own styling system (`sx` prop + `styled`). Do not add `tailwind-merge`, `class-variance-authority`, `clsx`, `lucide-react`, or `@base-ui/react`.
-  - **State:** Zustand
-  - **Data fetching:** TanStack Query
-  - **Charts:** D3.js for complex interactive charts (PHD2 guiding graph, session timeline); MUI X Charts (free) for simpler dashboards (integration time bars, altitude).
-- **Database:** SQLite accessed directly via `aiosqlite` (raw SQL, no ORM). Migrations managed with `yoyo-migrations` (SQL files in `db/migrations/`). **No SQLAlchemy.**
-- **Data models:** Pydantic only — for API shapes, domain objects, and settings. No ORM models.
-- **Desktop:** Phase 1 = local web app (FastAPI serves React, accessed via browser or pywebview); Phase 2 = Tauri wrapper if needed
-- **Key Python libs:** `astropy`, `astroquery`, `lz4`, `zstandard`, `defusedxml`, `timezonefinder` (geo tz from coordinates), `scipy` (FFT pipeline). ASTAP integrated as external plate solver (subprocess, not a Python dependency).
-- **Async ingestion:** asyncio task queue + `ProcessPoolExecutor` for CPU-bound FITS parsing (parallelizes across cores; SQLite writes stay on main process)
-- **GPU acceleration:** `mlx` (Apple Metal, Apple Silicon) or `cupy` (NVIDIA CUDA, Windows/Linux) with numpy as CPU fallback. All array operations go through a thin `compute` backend module — callers never reference mlx/numpy/cupy directly. **No GPU backend is ever required** — `core/compute.py` probes each with a `try: import`, memoizes the answer and returns numpy otherwise, and only two call sites in the whole backend touch `get_array_module()` (`imaging._channel_stats` and `imaging.stretch_plane`).
-  - **The `mlx` dependency marker MUST keep its `platform_machine == 'arm64'` clause.** mlx publishes arm64-only wheels and **no sdist**, so the original `sys_platform == 'darwin'` marker made it unsatisfiable on an Intel Mac — and uv aborts the entire resolution, meaning `uv sync` installed *nothing at all*, not "everything but mlx". Symptom is a total install failure on x86_64 macOS, not a degraded runtime. Verify any change to it with `uv sync --python-platform x86_64-apple-darwin --dry-run` (mlx must be absent) **and** a native resolve (mlx must be present). A few other deps — `bottleneck`, `h3`, `brotlicffi`, `sep`, `timezonefinder`, `py7zr` — ship arm64-only macOS wheels but do have sdists, so Intel builds them from source and needs Xcode Command Line Tools.
-  - The capability probes catch `Exception`, not just `ImportError`: an installed-but-unusable library (Metal init failure, wrong CUDA) must degrade to numpy rather than escape from an image render. A plain missing library is logged at nothing — that is the normal Intel/Linux case.
-  - `gpu_backend_name()` is surfaced at `GET /api/settings/compute` and rendered read-only under the Settings toggle. It is deliberately **not** a field on the `Settings` model: `PUT /api/settings` persists every field on that model into the KV table, so a computed field would be written back as a setting row.
-- **User settings:** `gpu_acceleration` (bool) and `max_worker_cores` (int, `null` = `cpu_count - 1`) are user-configurable at runtime. Settings stored in the SQLite database (`settings` table, key-value rows).
-
-Desktop packaging rationale: Electron rejected (100MB+ bundle size); Tauri is the future native wrapper option using OS-native webview.
+**Before changing a feature, read its section in `docs/development-decisions.md`.**
+Use code and migrations to resolve stale documentation. Update current summaries
+in place; keep release narratives in `docs/archive/`. Historical specs are not
+instructions to restore removed features.
 
 ## Architecture
 
-The app is a **cross-platform local-first desktop application** (Mac, Windows, Linux). The backend handles all computation — FITS parsing, log ingestion, plate solving, file management. The frontend is a React UI.
+- **Backend:** Python 3.14, FastAPI, Pydantic. `uv` manages dependencies and runs
+  commands (`uv add`, `uv sync`, `uv run`). SQLite uses raw SQL through
+  `aiosqlite`; migrations use yoyo. No ORM.
+- **Frontend:** React/TypeScript/Vite, MUI, Zustand, TanStack Query. D3 for complex
+  charts; MUI X Community for simpler charts and controls. No MUI X Pro/Premium.
+  Use MUI's `sx`/`styled`; do not add Tailwind, shadcn, `tailwind-merge`,
+  `class-variance-authority`, `clsx`, `lucide-react`, or `@base-ui/react`.
+- **Boundaries:** `api/` owns HTTP, transactions, and orchestration. Services must
+  not import `api/` or FastAPI. Prefer pure services with adjacent Pydantic models;
+  existing ingest/derivation helpers take a caller-owned DB connection and never
+  commit. Existing `path_resolver` HTTP exceptions are a known boundary violation,
+  not a pattern to copy.
+- **Runtime:** local browser app; no native wrapper yet. Use `platformdirs` for
+  app data, user-selected workspaces for databases/project images, and portable
+  path handling. Tauri is the deferred wrapper option; Electron was rejected for
+  its bundled-browser footprint.
+- **Work:** request-driven; no recurring scheduler. CPU-heavy ingest/analysis uses
+  per-run process pools. Close pools in `finally` or a context manager; persistent
+  pools leave workers alive and wedge `uvicorn --reload`.
+- **GPU:** optional mlx (Apple Silicon) or CuPy (CUDA), numpy fallback. Use
+  `core/compute.py`; capability probes catch unusable installations as well as
+  missing imports. Never invoke the GPU backend from concurrent worker threads.
+  Catalog thumbnails and frame-quality workers must remain numpy-only.
+- Keep mlx's dependency marker `sys_platform == 'darwin' and
+  platform_machine == 'arm64'`: it has no Intel wheel or source distribution.
+  Changes require both native resolution and
+  `uv sync --python-platform x86_64-apple-darwin --dry-run` (mlx absent on Intel).
 
-**Cross-platform:** App data directory via `platformdirs` (Mac: `~/Library/Application Support/NightCrate`, Windows: `AppData/Local/NightCrate`, Linux: `~/.local/share/NightCrate`). File browser detects volumes per platform. GPU backend auto-detects mlx (Mac) or CuPy (Windows/Linux).
+## Shared patterns
 
-**Core data flow:** Imaging data captured on Windows PCs → transferred to Mac → NightCrate ingests and catalogs → PixInsight for processing.
+- Settings are `settings(key, value_json, updated_at)`, one Pydantic field per row.
+  Add defaults to `core/config.py:Settings`; no migration is needed. Computed
+  values such as the detected GPU name must not become persisted settings.
+  Invalid stored JSON is ignored and validation failures fall back to defaults.
+  GPU acceleration and maximum worker cores are runtime preferences; a NULL
+  core limit defaults to CPU count minus one.
+- Outbound HTTP uses `services/http_client.py:get`: 30 s timeout, one retry after
+  500 ms for transient failures. Translate failures at the HTTP boundary.
+- Use structured log prefixes. Router 500 handlers must log tracebacks with
+  `logger.exception`. `NIGHTCRATE_LOG_LEVEL` defaults to INFO.
+- Reuse `api/_common.py` helpers and the equipment router factories for CRUD.
+- Resolve plain, archive, and PixInsight virtual paths through `path_resolver`.
+  New path-to-pixel callers use `pixel_loader`; it raises domain errors and is
+  worker-safe. Two older resolved-source dispatchers remain to be consolidated.
+- Disk caches that outlive a database use stable content/sky identities, never
+  database IDs. Rehydrate their index before sweeping orphans.
+- All frontend API calls are same-origin. LAN mode proxies through Vite; never
+  hardcode a backend origin into frontend requests.
 
-**Key domain hierarchy:** Equipment Profile → Project → Session (single night) → Sub Frame
+## Database and data preservation
 
-**Calibration frame matching keys:**
-- Darks: camera + gain + sensor temperature + exposure + binning
-- Flats: camera + gain + filter + binning (+ rotator angle ideally)
-- Bias: camera + gain + binning
+- **Never edit an existing migration, even one added on this unmerged branch.**
+  Development reloads apply migrations immediately; yoyo will not rerun an
+  edited file. Add the next numbered forward migration instead.
+- Verify upgrades on a copy of a database at the preceding migration, as well as
+  a fresh database. Preserve user records; check integrity and foreign keys.
+- Equipment vocabularies use closed CHECK constraints. Vocabulary changes need
+  a migration and matching loader/model changes.
+- Seed changes must preserve user edits. Field renames require compatible hash
+  rehashing; see the seed-loader decisions before changing seeded columns.
 
-**Layer separation (enforced):**
-- `services/` — pure business logic. **No FastAPI, no DB session, no API-layer imports.** Service modules return Pydantic shapes that live alongside them in `services/*_models.py`.
-- `api/` — HTTP boundary. Owns DB access via `get_db()`, request/response Pydantic wrappers, and orchestration. May import from `services/` but never the reverse.
-- Reference pattern: `services/aberration.py` ↔ `api/aberration.py`. New PHD2 / planner / weather code follows the same shape.
+## UI
 
-## Domain Knowledge
+- Colorblind-safe blue/orange/teal or viridis; use text, shape, or pattern where
+  color alone would carry meaning. Avoid red/green and purple/amber pairings.
+- Use theme tokens, including `common.white`/`common.black`. Any required hex
+  color must have six digits; alpha suffixes break on three-digit hex.
+- No question-mark help icons or tooltip underlines.
+- JSX Unicode escapes need expressions, not quoted attributes. Use actual
+  Unicode or `{"≈"}` where React does not recognize a named HTML entity.
+- MUI Typography variants override inherited font sizing. Explicitly inherit
+  `fontSize`/`lineHeight` when container sizing depends on them.
+- Preserve native form-control `colorScheme`, tablet gesture handling, and
+  accessible chart interactions; see the image/tablet decisions.
 
-**Three imaging rigs, at most two running on a night** — the C6 and Askar V share one AM5 mount, so a simultaneous night is the C11 plus one of them:
-- C6 (current workhorse): ASIAIR Plus + PHD2, ZWO ASI 533MM Pro, Antlia LRGB-V Pro + Antlia 3nm Pro narrowband. **True focal length ~1667mm at f/11** — the published 1500mm f/10 is wrong for this OTA; use the measured value.
-- C11: N.I.N.A. + PHD2 on a Windows mini-PC, ZWO ASI 2600MM Pro, ZWO Premium LRGB + Optolong Ha 7nm / Oiii 6.5nm / Sii 6.5nm (Starizona LCF 0.7x corrector, ~1960mm f/7)
-- Askar V: ASIAIR Plus + PHD2, ZWO ASI 2600MM Pro, ZWO Premium Lum + Optolong RGB + Antlia 3nm Pro narrowband
+## Development and verification
 
-A filter name alone never identifies a rig — "Ha" is Optolong 7nm on the C11 and Antlia 3nm Pro on the other two. Guiding: OAG on the C11 (ASI 174MM) and C6 (ASI 174MM), 52mm guide scope on the Askar V (ASI 178MM). Full inventory in `NightCrate_Equipment_and_Technical_Context.md`.
+From the root: `make install`, `make dev`, `make backend`, `make frontend`,
+`make test`, or `make test-fast`. `make dev-lan` enables tablet access on a trusted
+LAN; both servers bind to the network and the backend is unauthenticated.
+Normal `make dev` binds the backend to localhost.
 
-**Ingestion sources with different formats:**
-- N.I.N.A. session logs (text) + autofocus JSON files
-- ASIAIR logs (format TBD — needs research)
-- PHD2 guiding logs (CSV-like, timestamped, single file spanning full night)
-- FITS headers (standard keywords + N.I.N.A.-specific `NINA-` prefixed extensions)
-
-**FITS header parsing priority keywords:** `OBJECT`, `FILTER`, `EXPTIME`, `GAIN`, `CCD-TEMP`, `INSTRUME`, `TELESCOP`, `DATE-OBS`, `IMAGETYP`, `RA`/`OBJCTRA`, `DEC`/`OBJCTDEC`
-
-**PHD2 association:** Match guiding data to subs by timestamp. One PHD2 log file may cover multiple targets across a full night.
-
-**Known edge cases to handle:**
-- Multi-night projects are the norm (same target imaged across weeks/months)
-- Dual-rig simultaneous imaging of same or different targets — never conflate rigs
-- Filter name inconsistency across software: normalize "Lum"/"L"/"Luminance", "Ha"/"H-alpha", etc.
-- Partial/interrupted sessions due to weather are normal, not errors
-- Data may live on local SSD, NAS (Synology), or mounted volumes — handle paths flexibly
-- Calibration frames (darks/bias) often reused across many sessions
-
-## UI/UX Requirements
-
-- **Color-blind-friendly palette required** (red-green colorblind accessibility is a core constraint) — use blue/orange instead of red/green; add pattern/shape differentiation where color alone would be used. Approved trio: blue / orange / teal. Reject purple + amber as too similar.
-- **No question-mark icons** for help affordances; **no underlines on tooltips**; **theme-aware colors everywhere** (don't hardcode `#fff` / `#000` / raw hex — use MUI theme tokens like `common.white`, `common.black`, `primary.main`, `action.hover`, etc.).
-- **Catalog by reference (don't move files)** is the default. File reorganization/copy is optional.
-- **Hex colors must be 6-digit** (`#888888`, never `#888`) — gradient code appends alpha suffixes that break with 3-digit hex.
-
-## Python Tooling
-
-- **Python version:** 3.14
-- **Package manager / venv:** `uv` — use `uv add <pkg>` to add deps, `uv run <cmd>` to run inside venv, `uv sync` after pulling changes
-- **Linter/formatter:** `ruff` (replaces flake8, black, isort — single tool, configured in pyproject.toml)
-- **Testing:** `pytest`
-- **Migrations:** `yoyo-migrations` — SQL files in `backend/src/nightcrate/db/migrations/`, applied automatically on startup via `db/migrations.py`
-
-## Commands
-
-From the repo root, use `make`:
+Before committing, run the applicable checks:
 
 ```bash
-make dev       # Start backend + frontend together; browser opens automatically; Ctrl+C stops both
-make backend   # Backend only (http://127.0.0.1:8000)
-make frontend  # Frontend only (http://localhost:5173)
-make install   # Sync all deps after pulling changes
-make lint      # ruff check
-make format    # ruff format
-make test      # pytest (serial — full output, consistent ordering)
-make test-fast # pytest -n auto (parallel via pytest-xdist, typically 2-3x faster)
+# backend/
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run bandit -r src/
+uv run pytest
+
+# frontend/
+npm run build
 ```
 
-Direct commands when needed:
-```bash
-# Backend (from backend/)
-uv run uvicorn nightcrate.main:app --reload --port 8000
-uv run pytest                          # Run tests
-uv run ruff check src/ tests/          # Lint
-uv run ruff format src/ tests/         # Format
-uv run bandit -r src/                  # Security scan
+New behavior needs tests for normal, edge, and failure cases. Assert concrete
+values; scoring changes need hand-computed regression examples. Verify downstream
+behavior before removing guards. Periodically run
+`uv run coverage report --include="src/nightcrate/*"` and prevent module coverage
+regressions. Python 3.14 permits unparenthesized multiple exceptions; ruff removing
+their parentheses is valid syntax.
 
-# Migrations: applied automatically on startup.
-# To add a new migration: create backend/src/nightcrate/db/migrations/NNNN.description.sql
-```
+Documentation changes need diff, link, and factual checks. Run the full release
+checklist at finalization; report exactly what was verified during each task.
 
-## Pre-Commit Checklist
+**Keep changes staged and uncommitted until Fred explicitly authorizes a commit.**
+Opening a later PR does not authorize committing now. Follow `start-version`,
+`sync-docs`, and `finalize-session` for their respective workflows. Never force-push.
 
-Before committing, all applicable checks must pass:
+## Public repository
 
-**Backend (from `backend/`):**
-1. `uv run ruff check src/ tests/` — lint
-2. `uv run ruff format --check src/ tests/` — formatting
-3. `uv run bandit -r src/` — security
-4. `uv run pytest` — tests
+Everything committed is public and persists in history. Do not add secrets,
+precise personal locations, private network details, contact/identity information,
+business/financial details, or personal hardware/health information. Use generic
+examples. The existing public civic test location (`33.4484, -112.0740`,
+`America/Phoenix`) is intentional; do not substitute home coordinates.
 
-**Frontend (from `frontend/`):**
-5. `npm run build` — TypeScript compilation + production build
+Keep `.env`, certificates, databases, and other ignored local data untracked.
+Scan staged changes before committing. Flag sensitive data already present before
+publishing; do not rewrite history without an explicit decision.
 
-**Privacy (public repo):**
-6. Scan the diff for personal/sensitive data before committing — see
-   "Public Repository — Privacy & Sensitive Data". No real location,
-   network, identity, financial, or secret data in any committed file.
+## Dependencies and licenses
 
-**Test quality expectations:**
-- New code must include tests covering happy paths, edge cases, and error conditions
-- Tests must assert specific expected values (not just ranges like `0 <= x <= 100`)
-- When modifying scoring formulas or algorithms, add pinned regression tests with hand-computed expected values
-- When removing guards, assertions, or defensive checks, verify the downstream code still handles all cases
-- Run `uv run coverage report --include="src/nightcrate/*"` periodically — no module should regress below its current coverage level
+Review licenses before adding dependencies; record additions and required credits
+in README's acknowledgments. Check data-source terms separately from library terms.
 
-## Gotchas
+- Permissive MIT/BSD/Apache/ISC/HPND/PSF/CC0/Unlicense/0BSD are acceptable. SIL OFL
+  fonts are acceptable; BSD-4-Clause needs its advertising attribution. MPL-2.0
+  requires preserving obligations on modified MPL files.
+- LGPL Python runtime imports are permitted (e.g. sep, py7zr). Discuss modified
+  library source, static linking, or redistribution/bundling before proceeding;
+  carry the applicable source and license obligations into packaging.
+- Do not add GPL/AGPL or non-open-source SSPL, BUSL, Commons Clause, Elastic,
+  Confluent, or Redis Source Available dependencies. For dual licensing, select
+  the compatible license explicitly.
+- External programs such as ASTAP may be called across a process boundary.
+  Bundling them needs a separate distribution/license review.
+- Only MUI X Community features. Keep the clean-room XISF reader. Prefer
+  `opencv-python-headless`; `opencv-contrib-python` needs case-by-case review.
+  Do not use rawpy/LibRaw builds containing GPL demosaic packs. The GCC Runtime
+  Library Exception is not a reason to reject a dependency by itself.
 
-- **Python 3.14 + ruff format:** ruff format strips the parentheses from `except (ValueError, IndexError):`. This is **not** a bug — Python 3.14's PEP 758 allows unparenthesized except groups, and the stripped form compiles and catches identically (verified 2026-09-05: both types caught, an unlisted type still propagates). The parens are cosmetic. Earlier guidance here said the result was Python 2 syntax and told you to avoid multi-exception clauses; that no longer holds. Do keep using a module-level tuple constant where the same exception set is caught in several places, for readability rather than correctness.
-- **JSX Unicode escapes** are not interpreted in attribute strings: `label="°C"` passes 8 literal characters. Wrap in an expression: `label={"°C"}`. HTML entities like `&approx;` / `&asymp;` aren't in React's named-entity table — use `{"≈"}` instead.
-- **MUI `<Typography variant=...>` overrides parent font styles.** A parent Box's `sx={{ fontSize, lineHeight }}` does NOT cascade — the variant brings its own (caption is 12px / 1.66, not the parent's 11 / 1.35). When sizing a fixed-height container by parent font math, force inheritance: `'& .MuiTypography-root': { fontSize: 'inherit', lineHeight: 'inherit' }`.
-- **Migration policy** — never edit existing migration files. Always create new forward migrations (next sequential number in `db/migrations/`). Existing user data (locations, horizons, rigs, plans) must be preserved across upgrades. **This applies even to a migration added earlier in the same unmerged branch:** `make dev` runs `uvicorn --reload`, and every reload calls `apply_migrations()`, so a brand-new migration is applied to the dev DB as soon as a `.py` reload fires. Once applied, yoyo records it by filename and never re-runs it — editing that `.sql` in place silently desyncs the dev DB from the file (the edit only reaches fresh DBs / the test harness, which rebuild from scratch). Symptom: `no such column` / missing-constraint errors that pass all tests but fail on the dev DB. Fix forward with the next migration number (precedent: v0.40.0's 0038 added `sub_frame.filter_name_hint` + dropped a CHECK that 0037 had already shipped to the dev DB). **Verify a forward migration on a DB that already has the prior version applied, not just a fresh build.**
-
-## Cross-cutting patterns
-
-### Settings (key-value schema)
-
-Settings live in `settings(key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT)` (migration 0011). Each Pydantic field on `core/config.py:Settings` maps to one row. **Adding a new setting requires no migration** — add the Pydantic field with a default, and the KV path handles the rest. `get_settings()` merges rows, silently drops un-parseable JSON, falls back to defaults on `ValidationError`.
-
-### Outbound HTTP
-
-All outbound HTTP goes through `services/http_client.py:get()`. Uniform 30 s timeout, one 500 ms-backoff retry on transient failures (`TimeoutException`, `ConnectError`, 5xx), structured `[http] …` log lines. Callers still catch `httpx.HTTPError` and translate to their domain-appropriate HTTP status (typically 502).
-
-### Logging
-
-- `NIGHTCRATE_LOG_LEVEL` env var drives the `nightcrate` namespace logger level (INFO default; `DEBUG` for traces).
-- Use structured prefixes on hot paths: `[weather-cache]`, `[http]`, `[open-meteo]`, etc.
-- Router 500s (bare `except Exception`) MUST log via `logger.exception(...)` so server bugs leave a traceback.
-
-### Shared router helpers (`api/_common.py`)
-
-- `row_to_dict(row, *, extra_fn=None)` — aiosqlite.Row → dict with optional post-processor.
-- `bool_fields(d, *keys)` — INTEGER(0/1) → Python bool, in place.
-- `strip_seed(d)` — drops `source` / `seed_key` / `seed_hash` from response dicts.
-- `integrity_guard(...)` — context manager translating `aiosqlite.IntegrityError.sqlite_errorname` into HTTP 409 (UNIQUE) or 422 (CHECK), with optional partial-index dispatch.
-
-**Use these in every new CRUD router instead of reimplementing the pattern.** New equipment/lookup routes should also reach for the factories in `api/equipment_factory.py` (`build_lookup_router`, `build_equipment_router`).
-
-### Path resolution
-
-`services/path_resolver.py:resolve_path(path)` handles plain filesystem paths, pxiproject virtual paths (`project_dir::index`), and archive virtual paths (`archive.zip::entry`). Returns `(resolved_path_or_BytesIO, file_type, image_index, cache_key)`. Used by both `api/images.py` and `api/aberration.py`. **All new code that accepts user-supplied paths should go through this.**
-
-## Feature areas — architectural notes
-
-For full feature inventory and per-version history see `nightcrate-current-state.md` (living snapshot) and `PLAN.md`. This section captures only the **architectural invariants and gotchas worth knowing when modifying these areas**.
-
-### Image Analyzer
-- Format-agnostic core in `services/imaging.py`; per-format I/O in `services/{fits,xisf,pxiproject,standard}_io.py`. The XISF parser is **clean-room** — the GPL-licensed reference lib is off-limits per the dependency policy.
-- **XISF WCS comes from `PCL:AstrometricSolution`, not FITS keywords.** PixInsight-solved XISF carries its plate solution as base64 `PCL:AstrometricSolution:*` properties (ReferenceCelestialCoordinates → CRVAL, ReferenceImageCoordinates → CRPIX, LinearTransformationMatrix → CD, ProjectionSystem "Gnomonic" → TAN). `xisf_io.read_header:_astrometric_wcs_cards` decodes these into synthetic FITS WCS cards so `detect_wcs_from_cards`/Identify work. **Verified convention (against an ASTAP solve of the same frame): CD = matrix as-is (no transpose, no y-flip), CRVAL = ReferenceCelestialCoordinates, CRPIX = ReferenceImageCoordinates + 1 (PI 0-based → FITS 1-based).** Real FITSKeyword WCS, if present, wins. Linear TAN only; the optional SplineWorldTransformation is ignored (sub-arcsec for annotation).
-- **DSO annotation: identified == drawn.** `image_annotations.py:project_dsos` keeps an object only if its drawn extent overlaps the frame (margin = semi-major radius, 0 for a point) so the count matches what the SVG (clipped to the image) draws. `DsoAnnotationOverlay.tsx` also clamps labels into the frame — a multi-degree object centered just off-frame would otherwise put its label off-image.
-- **Auto-stretch uses PixInsight AutoSTF** (avgDev, NOT MAD). Constants: shadow clip = `median + (-1.25)·avgDev`, midtone target = 0.25, MTF self-inverse for midtones balance.
-- Stretch is **server-side**; frontend sends params as query string and receives a rendered PNG. Default mode is `stretch=auto` (one round-trip computes stats + linearity + STF); user slider interaction switches to explicit `stretch=stf`.
-- **Per-key locks** on image-data and stats caches prevent redundant computation under concurrent requests. Archive cache key is `(archive_path, mtime, entry_path)` so archive-extracted images share with regular files.
-- **FITS header editing only** — XISF, standard images, archive paths, and pxiproject virtuals can't be edited. Structural keywords (`SIMPLE`, `BITPIX`, `NAXIS*`, `EXTEND`, `BZERO`, `BSCALE`, `COMMENT`, `HISTORY`, `END`) are protected.
-- Performance patterns: histograms subsample to ~2M pixels for large images; PNG encoding uses `compress_level=1` (local app, speed > size); `bottleneck.nanmedian` over numpy median.
-- **Pixel inspector — small sampling canvas (iOS WebKit constraint).** Never allocate a full-image offscreen canvas — iOS silently fails to allocate the backing store for canvases backing >~70 MB images and `getImageData` returns all zeros without throwing. Use a single 301×301 canvas allocated once, and 9-arg `drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh)` to copy just the requested patch region per sample. Pattern lives in `frontend/src/components/fits/FitsImage.tsx`.
-- **Touch viewport hardening (iPad).** The page sets `<meta name="viewport" content="...maximum-scale=1.0, user-scalable=no">` and the FitsImage container preventDefaults Apple's proprietary `gesturestart`/`gesturechange`/`gestureend` events. Without those, iPadOS engages its own pinch-zoom alongside our touch handler and the user sees the "freeze then jump" stutter. **Do not regress** — if you ever see touch-zoom go janky on iPad, check the viewport meta first.
-
-### Tablet / LAN access (`make dev-lan`)
-- Vite binds to `0.0.0.0:5173` and serves HTTPS. Cert resolution: prefers `frontend/.certs/{cert,key}.pem` (mkcert-issued, trusted on iPad after profile install) and falls back to `@vitejs/plugin-basic-ssl` (untrusted, browser warning) if those files are absent. See `frontend/vite.config.ts`.
-- Vite proxies `/api`, `/docs`, and `/openapi.json` → `http://127.0.0.1:8000`, so **frontend code only ever makes same-origin calls** — the tablet's browser never opens a connection to port 8000 itself. Keep it that way: never hardcode a `:8000` origin in frontend code, or LAN mode breaks (and mixed-content-blocks under HTTPS).
-- **⚠ The backend itself is NOT localhost-only in LAN mode.** `make dev-lan` passes `--host 0.0.0.0` (Makefile), `main.py:run()` picks `0.0.0.0` under `NIGHTCRATE_LAN` for the `nightcrate` script path, and `_LAN_MODE` widens CORS to `allow_origins=["*"]`. So the backend is directly reachable, unauthenticated, from anything on the network — the threat model in `README.md` holds only for plain `make dev`. This is an intentional opt-in for tablet access on a network you control; don't describe LAN mode as "backend stays on localhost" (that claim was wrong in this file until 2026-07-26), and don't reach for it on a shared network.
-- iPad pixel inspector and clipboard buttons require a trusted cert. Self-signed → canvas tainting + `navigator.clipboard` rejection.
-- Touch interactions are added to chart SVGs as native `addEventListener` with `{ passive: false }` so `preventDefault` works. The shared loupe-suppression CSS bundle is `WebkitTouchCallout: "none"` + `WebkitUserSelect: "none"` + `userSelect: "none"` + `touch-action: "none"` on the chart's SVG element.
-
-### Aberration Inspector
-- Cache key is `(file_path, hdu, settings_json)`. Different filter settings = different cache row. TTL via `aberration_cache_ttl_days` setting.
-- Star detection via `sep` + `sep.flux_radius` for HFR. Filters are user-tunable, debounced 500 ms.
-
-### Archive Browser
-- Virtual paths: `{archive_path}::{entry_path}` (same `::` separator as pxiproject). All I/O services accept `Path | BinaryIO`.
-- In-memory extraction for zip/tar; 7z uses a temp dir then cleans up (py7zr API limitation).
-
-### Equipment + Rigs
-- **Schema is fully normalized.** No `custom_fields` JSON; add a real column via migration when needed. See `DB_SCHEMA.md` / `DB_SCHEMA_DDL.sql`.
-- **Closed CHECK vocabularies** on key fields (`drive_type`, `filter_passband.line_name`, `software.category`, `connection_interface.category`, `sensor.sensor_type`, `sensor.bayer_pattern`). Adding a value = migration.
-- Every telescope has ≥ 1 `telescope_configuration` with exactly one `is_native = 1`.
-- `camera` table carries `effective_*` overrides that win over the underlying sensor's baseline values.
-- Soft-delete via `active = 0`; list endpoints accept `?include_retired=true`.
-- Default-rig enforcement: setting `is_default = 1` clears it on all others in one transaction (`_ensure_single_default`).
-- `is_mine` flag on the 10 owned-equipment tables **and on `rig`** (v0.41.1) is **NOT** in `seeded_fields` — toggling does NOT trigger a re-seed.
-- **Three column meanings were defined in v0.41.1 (migrations 0052-0054) — don't undo them.**
-  `sensor` read noise is split into `read_noise_low_gain_e` + `read_noise_high_gain_e` (the camera pair keeps its
-  `effective_` prefix: `effective_read_noise_low_gain_e`). Named by **gain**, not by mode — the ASI1600 / QHY163
-  bodies publish both figures for a Panasonic MN34230 that has no dual-conversion-gain mode at all; whether a
-  discrete switch exists is carried by `dual_gain` + `hcg_threshold_gain`. `full_well_capacity_ke` is the
-  **low-gain** figure, so dynamic range must pair with `read_noise_low_gain_e`.
-  `mount.payload_capacity_kg` is maximum instrument payload **excluding counterweights**, photographic where a
-  maker publishes visual and photographic separately; `payload_capacity_with_cw_kg` holds the harmonic mounts'
-  with-counterweight rating. `sensor.peak_qe_pct` is the peak within **400-700nm** (`peak_qe_wavelength_nm`
-  records where) — a near-infrared peak makes mono and colour variants look identical and answers a question no
-  deep-sky imager is asking.
-- **A `filter_passband` row is one emission line the filter usefully passes, not one physical window.** The
-  L-eNhance passes Ha, Hb and OIII through two windows and needs three rows. Two rows may therefore share a
-  bandwidth — correct input for moon scattering, so **never sum `bandwidth_nm` across rows**.
-- Filter slots (`rig_filter_slot`) require `filter_wheel_id`; clearing the wheel deletes all slots in the same transaction.
-
-### Seed Loader
-- **`rig` is seeded, but only for all-in-one smart telescopes (v0.41.1, migration 0047).** A Seestar or DWARF has fixed, inseparable optics + camera + filter changer, so the rig *is* the product rather than something the user assembles — it ships ready to use with its telescope, native configuration, integrated imager and internal filter changer all seeded alongside it. Ordinary rigs stay user records. `rig` loads **last** in `LOAD_ORDER` because it references almost every other table. `is_default` and `sort_order` are deliberately **not** seeded fields — which rig is default is the user's business. Renaming a seeded rig marks it user-modified, and the loader leaves it alone from then on.
-- **Hash contract is versioned.** A field *name* is part of the hashed payload, so renaming or
-  adding a `seeded_fields` entry changes the hash of **every row in that table** and the loader's
-  user-modified check (`current_hash != stored_hash`) reads them all as user-edited.
-  v0.41.1 made the loader self-healing: when the stored hash is stale but the row still hashes to
-  the CSV's value (`current_hash == incoming_hash`), nobody edited it, so the hash is rewritten in
-  place and the row stays under management. Reported as `TableReport.rehashed`.
-- **A migration that RENAMES a seeded field needs a matching step in
-  `seed_loader/rehash.py`.** The self-heal above compares the row against the CSV, which conflates
-  *was this row edited* with *is this row up to date*; they come apart when the same release also
-  changes CSV values for those rows, and an untouched row is then stranded. A rehash step asks the
-  sharper question — it reconstructs the row's pre-migration hash from the values still present
-  under the new names, and re-hashes only the rows that match. Runs once per database, marked in
-  `seed_loader_meta`. **Do not "fix" this by writing the CSV values into the migration** (0024's
-  approach): that overwrites rows the user has edited, which is what the hash protects.
-- **Verify on a copy of a database that predates the migration and assert `skipped_user_modified`
-  is empty** — a fresh DB rebuilds from scratch and never exercises any of this. The v0.41.1 rename
-  was verified this way against the real workspace DB: 47 sensors + 123 cameras recovered, and the
-  one row left skipped was a genuine local edit.
-- Never overwrites `source = 'user'` rows.
-- Junction tables delete-and-reinsert only for parents that were inserted/updated.
-- First-run vs update modes; missing CSV files fail loud at startup.
-
-### Folder Ingest + Imaging-Core Schema (v0.40.0)
-- **Imaging-core schema** (migration 0037; ownership reworked by 0040): `session` (auto/ingest rig-night grouping — NOT the manual `project_session` from 0035), `sub_frame` (the core atom), `processed_image` (masters/stacks), `file_location` (one row per cataloged file, **any** category, nullable `sub_frame_id`/`processed_image_id`), `ingestion_run` (provenance), `project_source_folder`, plus the **empty** guiding/session-event/session-log/autofocus tables (created up front to resolve forward FKs; populated v0.43/0.44), and the calibration-matching + integration **views**.
-- **Projects own their files (migration 0040).** Each cataloged row belongs to exactly the project that cataloged it: `sub_frame`, `processed_image`, and `file_location` all carry `project_id NOT NULL` (`ON DELETE CASCADE`). Identity is **per-project** — `UNIQUE(project_id, content_hash)` on sub_frame/processed_image, `UNIQUE(project_id, path)` on file_location. The same physical file cataloged into two projects becomes **two independent rows** (no shared row, no global identity). Re-scan stays idempotent *within* a project. There is no path-prefix project scoping anymore (the old `_project_file_scope` is gone); every catalog query is a plain `WHERE project_id = ?`. "Have I imaged this object?" is answered by the plate-solve / `project_dso` layer, not frame identity.
-- **Header-driven classification, never folder names** — `frame_type` from `IMAGETYP` (`api`-side via `services/ingest_classify.py`); masters/stacks detected via `NCOMBINE`/`STACKCNT`/master `IMAGETYP`/PI history → `processed_image`. Reuses `services/fits_header_map.py:extract_metadata`/`normalize_frame_type`.
-- **Dark-flats are inferred by exposure, not header.** Capture software (ASIAir) labels dark-flats just `IMAGETYP=DARK` — indistinguishable from real darks per-file. After ingest, `api/ingest.py:_reclassify_dark_flats` (project-scoped, idempotent) promotes a `dark` → `dark_flat` when its exposure matches a flat in the project and not any light (tolerant **±20 % exposure ratio** — ASIAir auto-exposes flats e.g. 2.208 s while dark-flats use the nominal 2.2 s, so exact/ms match never fires). Real darks (matching the lights' exposure) and master darks (`processed_image`) are untouched.
-- **Darks/dark-flats/bias are filterless.** `_upsert_sub_frame` nulls `filter_name_hint` for any frame_type not in `(light, flat)` — calibration darks are never matched on filter, so a stray `FILTER` header is dropped. Only lights and flats carry a filter.
-- **NO light-needs-filter CHECK; `sub_frame.filter_name_hint` holds the `FILTER` header.** Ingest must never fail on partial equipment — every equipment FK is nullable, and since v0.41.1 they are all permanently NULL. The hint is the filter fact (see the v0.41.1 section below).
-- **Pure services + one DB/HTTP boundary.** `ingest_scanner.py` (walk + picklable `parse_image_file` ProcessPool worker), `ingest_classify.py`, `ingest_sessions.py` (noon-to-noon observing-night grouping in the site `geo_timezone`; also owns `ensure_session` / `observing_window_utc` / `project_geo_timezone`, so `api/ingest.py` and `services/session_derivation.py` share them without a service→api import) — none import from `api/`. `api/ingest.py` owns the transaction, content-hash UPSERTs, forms sessions, writes provenance. Single-flight ingest (one at a time, 409 if busy).
-- **Idempotent re-ingest** keyed on `(project_id, content_hash)` (UPSERT). Re-scan of a project's folder updates rows; counts never grow. **Tests must give synthetic FITS unique pixel data** — byte-identical files in the *same* project correctly dedupe to one row (the same bytes in two *different* projects are two rows, by design).
-- **Calibration views** (`matching_darks`/`flats`/`bias`, `calibration_coverage`): darks match camera+gain+exposure+binning + set-temp ±1 °C (never on filter); flats add filter + `telescope_configuration_id`; all `accepted=1` both sides. Integration view double-counts duoband filters per `line_name` by design.
-- **Read-only catalog UI**: `ProjectCatalogTab.tsx` (5th project tab) — folder binding uses the **shared `components/fits/FileBrowser` in `directoryMode`** (same browser as Image Analyzer / PHD2 — do NOT build a separate folder picker); per-folder + auto-on-add Re-scan; then **7 category sub-tabs** (Lights/Darks/Flats/Bias/Dark Flats/Masters/Others, count in each label) over a **card-based infinite-scroll list** (`CatalogCardList` + `CatalogCards`, NOT a DataGrid — MUI X Community caps at 100 rows/page, see [[feedback-mui-datagrid-row-cap]]). Frame tabs → `catalog/frames?frame_type=` (filter pills add `?filter_name=`); **Masters** → `catalog/masters` (processed_image, Type/filter/integration); **Others** → `catalog/others` (file_location pxiproject/log/other + unknown-type subs). All catalog counts/listings scope via a plain `file_location.project_id` / `sub_frame.project_id` match (migration 0040 gave every cataloged row a `project_id`; the old path-prefix `_project_file_scope` is gone). v0.41.1 added frame-type/target corrections (single + bulk) and the embedded analyzer overlay; the equipment-override dialog and "Re-run resolution" button it also once carried were removed with the resolver.
-- **Catalog thumbnails use a dedicated cheap endpoint, NOT `/api/images/image`.** `GET /api/projects/{id}/catalog/frames/{frame_id}/thumbnail` → `services/catalog_thumbnail.py:render_thumbnail_bytes` **decimates the raw array before any work** (a 26 MP sub renders in ~0.07 s vs the full-image endpoint that loads+stretches all 26 MP and resets the backend when a grid draws many). Result is a tiny JPEG cached on disk under `APP_DIR/catalog_thumbnails/{content_hash}_{px}.jpg` (stable across DB recreation), bounded by `_THUMB_SEM` (Semaphore 3). Grid cells use `loading="lazy"` so only visible rows fetch. **Never point a many-row grid at the full-image render endpoint.**
-- **The thumbnail render is PURE NUMPY and must stay that way — mlx (Apple Metal) is NOT thread-safe.** `render_thumbnail_bytes` replicates the AutoSTF stretch (`_stf_params` + `_stretch_u8`) in numpy and must NOT call `imaging.stretch_plane` / `resolve_auto_stretch` (which route through `get_array_module()` → mlx). The catalog grid renders several thumbnails concurrently via `asyncio.to_thread`; concurrent mlx calls from worker threads **segfault the whole process** (reproduced: 9 concurrent XISF renders → SIGSEGV with mlx, clean with numpy). A regression test (`test_render_never_uses_gpu_backend`) patches `get_array_module` to fail if the thumbnail path ever reaches it. **General gotcha: do NOT call the GPU backend (`get_array_module`) from `asyncio.to_thread`/multi-threaded paths.** The image-analyzer render is mlx-backed but safe only because it runs one-at-a-time.
-- **`FileBrowser` `directoryMode` prop:** when set, the shared browser selects the current directory (`onSelect(result.path)`), the action button reads "Select This Folder", file rows are context-only, and PixInsight projects aren't selectable. **An archive is selectable** (v0.41.1) — either the archive itself or a directory inside it — so a zip/tar/7z can be bound as a source folder; the selection is the `archive.zip::entry` virtual path. Keeps one browser component everywhere.
-- **Archive source folders (v0.41.1).** `ingest_scanner._scan_archive` walks the TOC and catalogs entries under the same `archive::entry` convention the rest of the app uses. Two things follow. Entries inherit the **archive's** mtime — a fallback for a frame whose header has no DATE-OBS, but the displayed date for a log or other non-header file. And **prefix matching must use `services/ingest_sessions.py:folder_prefix`, never a hand-built separator**: an archive bound at its *root* is stored as `/data/n.zip` while its frames are `/data/n.zip::…`, so appending `/` matches nothing — the rig tag silently never lands and removing the folder deletes no `file_location` row, leaving frames the orphan sweep can't see. This is the third outing for that class of bug; the other two were a missing separator boundary and a hardcoded `/` on Windows.
-- **ProcessPool is per-run, shut down in a `finally` (`make_pool`, NOT a persistent global).** A long-lived spawn `ProcessPoolExecutor` leaves worker processes alive after the run; under `uvicorn --reload` (i.e. `make dev`) those orphaned children block a clean restart and **wedge the whole event loop** (every endpoint hangs, including `/api/health`). The `~1 s` spawn cost per ingest is negligible. **Both pools now follow this** — `planner_annual_hours.py` was converted in v0.41.2 (`_make_pool`, used in a `with`). It had cached a module-level pool and closed it on `atexit`, reasoning that only `--reload` leaked and production does not reload; that gets the trade backwards, since the reloader is a development tool and wedging dev is the whole cost. **There is no persistent ProcessPool left in the codebase — do not add one.**
-
-### Frame Quality Metrics (v0.41.3)
-
-- **The run is client-driven, and that is deliberate.** `ProjectCatalogTab` fetches the
-  pending frame ids once (`GET .../catalog/analyze/pending`) and POSTs them back in
-  batches of 60 (`POST .../catalog/analyze`, `lib/useAnalyzeRun.ts`). Progress, ETA,
-  Cancel and resume-where-it-stopped all fall out of that, and the app keeps its
-  "all work is request-driven, no background tasks" property. **Do not convert this to a
-  background task + polled status endpoint** without a reason — there is no such
-  machinery anywhere in the codebase (ingest runs synchronously inside its POST and
-  nothing ever SELECTs `ingestion_run`), so that would be net-new surface for no gain.
-  `_ANALYZE_LOCK` is separate from `_INGEST_LOCK` so a quality pass and a re-scan don't
-  queue behind each other.
-- **`hfr IS NULL` does NOT mean "not analyzed" — use `quality_analyzed_at`** (migration
-  0055). Star metrics run on **lights only**; `median_adu`/`background_adu` run on every
-  frame type. So a successfully analyzed dark ends with `hfr` NULL, and keying the
-  pending query off `hfr` would re-queue every calibration frame forever. `quality_status`
-  is `ok | no_stars | unreadable` — `no_stars` is a real result (clouds, lost target), not
-  a failure, and an unreadable file is stamped too so an offline volume is reported once
-  rather than retried every run.
-- **`services/frame_quality.py` must never call `compute_image_stats`.** It reaches
-  `get_array_module()` via `imaging._channel_stats`, and this pass fans out across a
-  ProcessPool. The median is replicated in numpy, the same way `catalog_thumbnail` does
-  for the STF math. The worker also calls `set_gpu_enabled(False)` first — a fresh spawn
-  worker starts with the GPU flag `True` regardless of the user's setting. Pinned by
-  `test_render_never_uses_gpu_backend` in `tests/test_frame_quality.py`.
-- **ADU columns are 16-bit-equivalent, not always real ADU.** `normalize_to_01` is
-  type-based (uint16 ÷ 65535; float assumed already `[0,1]`), so ×65535 recovers true ADU
-  for integer sources and gives a comparable scale for PixInsight float XISF — which
-  carries no `bit_depth` at all. Don't present the float-sourced numbers as real ADU.
-- **`hfr` is in PIXELS and only comparable within a rig** (`pixel_scale_arcsec` is usually
-  NULL on a cataloged frame). And **`star_count` is not comparable across PixInsight
-  processing stages** — detection is sensitive to the noise floor, which differs between
-  a calibrated `_c` sub and a registered `_c_cc_r` one. HFR is the robust signal.
-- **`QUALITY_SETTINGS` is frozen and must not become user-tunable.** HFR is only
-  comparable across frames measured with identical detection settings; a slider would
-  silently make the catalog incomparable to itself. Changing the constant means
-  invalidating every stored value.
-- **`services/pixel_loader.py` is the path-string → normalized-array loader for new
-  code.** It handles archive and pxiproject virtuals and raises `ValueError`, never
-  `HTTPException`, so it is safe in a worker or a thread. New code that loads pixels from
-  a user-supplied path should use it rather than re-writing the format dispatch.
-  **It is not yet the only copy** — `api/images.py:_load_image_data` and
-  `api/aberration.py:_load_mono_data` still carry their own dispatch (they hold a
-  pre-resolved source for their caches, not a path), and have already drifted on
-  `reshape_color`. Folding them in needs a `load_from_resolved(...)` seam; a new format
-  currently means editing all three.
-- **HFR is stored in pixels and converted to arcsec ON READ, never stored.**
-  `_PIXEL_SCALE_SQL` prefers the frame's plate-solved `pixel_scale_arcsec`, else
-  `206.265 x pixel_size_um x binning / focal_length_mm` from the tagged rig. Deriving it
-  means re-tagging a folder's rig updates every frame without re-measuring. NULL when the
-  rig is untagged — the UI shows pixels rather than guessing. **Sort by arcsec, not pixels,
-  on a multi-rig project**: pixels rank by focal length, not by seeing.
-- **ADU is NOT out of 65535.** `_FULL_SCALE_SQL` is `2^adc_bit_depth - 1` from the rig's
-  sensor, because a 12-bit camera writes 0..4095 into a 16-bit file and the container says
-  nothing (verified on a real Dwarf frame: dtype uint16, actual max exactly 4095). One
-  user's kit can span 65535 / 16383 / 4095 at once, so a bare ADU figure is unjudgeable.
-- **Catalog sort is server-side, via a fixed allow-list dict** (`api/ingest.py:_FRAME_SORTS`)
-  — the list is offset-paged and infinite, so client-side sort would only order loaded
-  pages. Blanks sort last in both directions.
-
-- **Two user-declared facts per source folder: `rig_id` (0046) and
-  `project_target_id` (0056).** Target joined the rig in v0.41.3 and is assigned the same
-  way — `assign_rigs_and_sessions` is the **single owner of rig, target and session**, and
-  `_persist_parsed` no longer writes a target per file. That move is not cosmetic: which
-  folder innermost contains a file isn't knowable during the walk, so the per-file version
-  got nested folders and tag-after-scan wrong, exactly as it did for rigs. Target differs
-  from rig in two ways — **lights only** (a dark isn't "of" anything), and every statement
-  in the pass excludes `project_target_source = 'user'`, which is the only reason a hand
-  correction survives a re-scan. An untagged folder falls back to the project's single
-  target. **The `OBJECT` header is still only a hint** — never used to pick a target.
-- **A folder's target must belong to that project.** `project_target` ids are global, so a
-  bare FK would let one project's folder point at another's target; `_validate_folder_target`
-  is the scoped check and returns 422.
-- **`PATCH /folders/{id}` writes only the fields actually sent** (read off
-  `model_fields_set`), so tagging a rig can't silently clear a target set separately.
-- **Qualify the outer column in a correlated `NOT EXISTS` orphan sweep.** The sweeps that
-  drop a `sub_frame` / `processed_image` once its last `file_location` is gone read
-  `NOT EXISTS (SELECT 1 FROM file_location fl WHERE fl.processed_image_id = <col>)`. Writing
-  a bare `id` there binds it to **`file_location.id`** — the subquery's own table has that
-  column, so SQLite resolves it locally, the subquery becomes *uncorrelated*
-  (`EXPLAIN QUERY PLAN` shows `SCALAR SUBQUERY` instead of `CORRELATED`), `NOT EXISTS` is
-  true for every row, and the statement deletes the **whole table for that project** —
-  including rows that still have files. This shipped in both `catalog_delete` and
-  `remove_folder` and was caught in v0.41.3 review; always write
-  `fl.processed_image_id = processed_image.id`. A regression test in `tests/test_ingest.py`
-  pins it.
-- **Deleting from the catalog is plain and does NOT stick.** `POST /catalog/delete` removes
-  rows; a re-scan of a still-bound folder catalogs the files again, because nothing records
-  the removal. That's the chosen behaviour, the confirm dialog says so, and a test pins it —
-  don't "fix" it into silent exclusion without deciding to build an exclusion list.
-- **Generated sidecars are never cataloged** (`ingest_classify.is_sidecar`): `.xnml`
-  (PixInsight local-normalization data), `.xdrz` (drizzle data), `.xpsm`. WBPP writes one of
-  each per registered sub, so a 600-sub project gained ~1,250 rows nobody could act on. The
-  rule is **"generated sidecar", not "not an image"** — logs are not images and are
-  cataloged deliberately (they are the v0.43/v0.44 arc), as is the `.pxiproject`.
-- **`::` means two different things and `path.includes("::")` cannot tell them apart.**
-  A pxiproject path ends in an integer image index; anything else is an archive entry.
-  `frontend/src/api/images.ts:parsePath` mirrors `services/path_resolver.py`'s own rule.
-  Treating every `::` path as a project is what labelled a `.fit` inside a zip as "PXI".
-
-### Catalog Corrections + Derived Sessions (v0.41.1)
-- **No automatic equipment identification, by design.** v0.39.0's FITS-header → equipment-row
-  resolver and v0.41.0's rig-attribution pass were **removed** in v0.41.1, along with the
-  global alias review queue and the per-frame equipment override. Per-frame
-  camera/telescope/filter attribution was a large, fragile surface for very little user value.
-  **Do not reintroduce header→equipment resolution.** Equipment now comes from exactly two
-  *declared* facts: the rigs assigned to the project (`project_rig`, Overview picker), and the
-  rig tagged on each bound source folder (`project_source_folder.rig_id`). Migration 0046
-  dropped every other equipment FK from `sub_frame` / `processed_image`.
-- **`project_source_folder.rig_id` is the one equipment fact ingest records — and the user
-  declares it.** Frames found beneath a tagged folder inherit it into `sub_frame.rig_id`,
-  sessions key on **(project, observing night, rig)** so a simultaneous dual-rig night splits,
-  the calibration views scope on it so one rig's darks never calibrate another's lights, and
-  the session derivation splits on it. NULL means "not stated" and is a valid answer — a NULL
-  rig is its own bucket everywhere (the SQL is `IS`, not `=`, precisely so NULL matches NULL).
-- **`services/ingest_sessions.py:assign_rigs_and_sessions` is the SINGLE owner of both
-  `sub_frame.rig_id` and `sub_frame.session_id`.** Ingest calls it once after every folder is
-  walked; the folder add/PATCH endpoints call it too. Do **not** assign either field per file
-  during the walk: a frame's rig depends on which bound folder *innermost* contains it, which
-  isn't knowable until every folder is on the table. **Longest-prefix wins** — bind `/data` to
-  rig A and `/data/rig-b` to rig B and the nested files must get rig B regardless of which
-  folder was added, scanned or tagged last. A per-frame rule gets this wrong in three
-  different ways (last-added-wins on scan, parent-steals-child on tag, flip-flop on re-scan);
-  a regression test pins all three. The pass is set-based: one UPDATE for the rig, then one
-  `ensure_session` per distinct (rig, night) — a per-frame loop measured ~100× slower.
-- **Calibration matching is keyed on header facts (migration 0046).** `matching_darks` —
-  exposure + gain + binning + set-temp ±1 °C, never filter; `matching_flats` — gain + binning +
-  `filter_name_hint`, never exposure (a flat's exposure comes from the panel); `matching_bias`
-  — gain + binning. All scoped to project **and** rig, all `accepted = 1` both sides. **The
-  cautionary tale:** the original views compared `d.camera_id = l.camera_id` with a plain `=`;
-  once equipment identification went away and every `camera_id` was NULL, `NULL = NULL` is NULL
-  rather than TRUE, so the join failed before reaching the exposure test and every view
-  silently returned zero rows. If you add a nullable term to a match view, use `IS`.
-  `integration_time_per_project_filter` was dropped — integration has one source of truth now,
-  the derived `project_session` rows.
-- **`sub_frame.filter_name_hint` is the only filter fact.** It holds the FITS `FILTER` header,
-  already normalized to a display short-form by `services/fits_header_map.py:FILTER_NAME_ALIASES`
-  (so it reads `Red` / `Lum`, not `R` / `L`). It drives the catalog filter pills, the card's
-  filter chip, and the session-derivation grouping. There is no resolved-vs-hint distinction any
-  more — one plain outlined chip.
-- **The bandpass vocabulary lives in `services/line_names.py`** — `LINE_NAMES` (the closed
-  15-value CHECK vocabulary, mirrored by `frontend/src/lib/lineNames.ts` and migration 0005),
-  plus `canonicalize_line_name` / `normalize_label`. It is a **service**, not an api module,
-  because `session_derivation` needs it and services may not import from `api/`.
-  `api/project_session_models.py` imports `LINE_NAMES` from there. Keep it separate from
-  `fits_header_map.FILTER_NAME_ALIASES` — different map, different purpose.
-- **Sessions derive on demand only — ingest never creates them.** Scanning a folder catalogs
-  frames and stops. `POST /projects/{id}/sessions/derive` → `services/session_derivation.py`
-  (pure service, caller owns the transaction) replaces every `project_session` row with
-  `source='auto'` and leaves `source='manual'` rows alone. This is deliberate: a project may
-  legitimately hold no subs at all (the user doesn't have them, or doesn't want them in the
-  project) and still keep a full hand-entered session record. **Do not wire the derive into
-  `_run_ingest`.**
-- **Derived grain: one row per (observing night, rig, filter, exposure, gain, binning).** The
-  rig comes from the frame (its folder's tag), falling back to the project's rig when it has
-  exactly one. Grouping is on the *canonical* filter key (`canonicalize_line_name(hint)` else `normalize_label(hint)`)
-  so `Ha` and `H-alpha` in one night collapse to one row. Watch the column-shape mismatches —
-  `sub_frame.gain` is REAL vs `project_session.gain` INTEGER (round, and group on the coerced
-  value); `binning_x`/`binning_y` vs a single `binning` (NULL when asymmetric); and
-  `project_session.exposure_seconds CHECK (> 0)` vs `sub_frame`'s `>= 0`, so a light with no
-  EXPTIME is **skipped and counted**, never allowed to abort the INSERT.
-- **`project_session.filter_label` (migration 0044) carries the header filter name;
-  `line_name` is still set** (canonical, or `'other'`) purely so the existing
-  `CHECK (filter_id IS NOT NULL OR line_name IS NOT NULL)` holds without a table rewrite. The
-  UI renders `filter_label` first — a derived `L-eXtreme` row must not display as `other`.
-- **Derived rows are read-only** — `PATCH`/`DELETE` on a `source='auto'` row is a **409**, and
-  the table renders no edit/delete actions for them. Editing a row the next derive replaces is
-  a lie; the escape hatch is to correct the frames on the Catalog tab and re-derive.
-- **Integration is a read-out, not a tracker.** Per-filter goals (`project_filter_goal`, the
-  goal tick, the `%` complete) are gone. `IntegrationLine.label` is a **free string**, not the
-  closed vocabulary: a session groups under its canonical `line_name`, except a derived row
-  whose header name didn't canonicalize, which groups under `filter_label` so `L-eXtreme`
-  doesn't collapse into `other`. Ordering is server-side (`LINE_NAMES` order, then labels A–Z).
-- **Sessions are keyed on (project, observing night, rig).** `ingest_sessions.ensure_session`
-  takes a night string plus the folder's rig. Its lookup uses `rig_id IS ?` (NULL-safe) and
-  `ORDER BY id LIMIT 1`, because a DB written before v0.41.1 can hold more than one row per
-  key — the extras empty out and `sweep_empty_sessions` removes them.
-- **Frame-classification corrections stay** (migration 0043): `frame_type` and
-  `project_target_id` are hand-correctable with `*_source` guards, single and bulk
-  (`PATCH .../classification`, `POST .../bulk-classification`). Both are re-derived on every
-  scan — `_reclassify_dark_flats` is heuristic (±20 % exposure), and `_persist_parsed` writes a
-  NULL target for any project without exactly one — so without the guards a re-scan would wipe
-  them.
-- **`filter_name_hint` is DERIVED, never guarded.** It is a function of (header `FILTER`,
-  *effective* frame type), where effective means the corrected type when one was set. Both
-  `_upsert_sub_frame` and `_apply_correction` recompute it **in both directions**. Freezing it
-  behind `frame_type_source = 'user'` looks tempting and is a trap: a frame corrected *to*
-  light or flat would keep a NULL hint forever, and `matching_flats` joins on this column, so
-  that frame would silently never match a flat. `_header_filter_name` reads the stored
-  `fits_header_json` (not the file) so a correction works with the source volume offline.
-
-### DSO Catalog
-- **No vendored DSO data.** Repo ships only NightCrate editorial CSVs (CC0). OpenNGC, Sharpless, Barnard, 50 MGC, Wikidata data downloads to `APP_DIR/catalogs/` on user demand from Admin → Catalogs.
-- **Source layering precedence is structural, not enforced**: `curated > 50 MGC > redshift`. Each augmenter writes only `WHERE distance_pc IS NULL`, so earlier stages never get clobbered.
-- Canonical `dso.obj_type` and `dso_designation.catalog` are **closed CHECK vocabularies** — adding a new prefix needs both a migration AND a loader-map update.
-- All catalog fetchers use **atomic staging-dir-rename** and write `version.json` LAST so a crash mid-rename leaves the source as "Not loaded".
-- See `docs/dso-catalog-architecture.md`.
-
-### DSO External References
-- **Provider allowlist for chip rendering: `wikipedia | simbad | ned`.** Wikidata QIDs are stored but never rendered as user-facing chips — they're for future automated enrichment (Commons images, etc.).
-- Provider order is server-fixed (`api/dso.py: _EXTERNAL_REF_PROVIDER_ORDER`).
-- **SQLite NULL-uniqueness quirk**: the main `UNIQUE(dso_id, provider, language)` doesn't dedupe when language is NULL; a partial unique index `(dso_id, provider) WHERE language IS NULL` covers wikidata/simbad/ned rows.
-- One Wikipedia article / Wikidata QID may correctly cover multiple DSOs (Stephan's Quintet → 5 galaxies). Don't add cross-DSO uniqueness.
-- **Verify Wikidata property IDs against live Wikidata before trusting a spec** — specs sometimes claim wrong properties (P2528 = earthquake magnitude, not NED).
-
-### Horizons (per-location, multi)
-- Each location has ≥ 1 horizon. Deleting the last one is 422.
-- Exactly one horizon per location has `is_default = 1` (partial unique index). At most one custom (polyline) horizon per location; any number of artificial (flat-altitude) horizons.
-- **Horizons in the Location editor STAGE — they do NOT persist immediately.** Save commits everything atomically (location fields + horizons); Cancel discards everything. **Do NOT regress** to immediate-persistence — the editor's dirty-state contract requires staging. The atomic-create + diff-apply paths live in `api/locations.py` (`LocationCreate.horizons`) and `api/horizons.py` (`PUT /api/locations/{id}/horizons`).
-- Smoothing is **never persisted**; raw points are canonical, consumers re-run D3 smoothing.
-- Points stored `[0, 360)`, never 360; display rolls to `[-180, +180]` with virtual seam points at the S boundary.
-
-### Target Planner
-- Visibility snapshot computes alt/az at 5-min sampling over **all active DSOs** in the astro-dark window, then filters in memory. Cache key = location + date + location.updated_at + horizon_id + horizon.updated_at.
-- Tonight mode applies imaging-focused defaults (min size, max magnitude); **Anytime mode does NOT fall back to those defaults** — a missing param means "don't filter" (otherwise small + faint object types silently collapse).
-- `compute_now_status` needs **both** `astro_dark_start_utc` and `astro_dark_end_utc` and uses a **48 h midnight-anchored grid** for moon rise/set (24 h noon-to-noon misses the lunar period of 24h50m).
-- Moon separation is computed at **closest approach during the visibility window**, not at peak (peak is misleading when moon is below horizon at transit).
-- Sort null-handling: blanks (None AND empty/whitespace strings) always sort last regardless of per-key direction.
-- **Persistent UI state lives in the `settings` KV table** (planner_* fields), bridged by `frontend/src/lib/usePlannerSettingsSync.ts`. Free-text search (`searchQuery`) and the Plan-a-Night date (`selectedDate`, v0.40.3) are the ephemeral fields — deliberately kept out of the sync (the date carries "now" meaning and resets to tonight each session). The sync hook hydrates the in-memory Zustand store on mount, then rAF-coalesces multi-setter ticks into a single PUT and skips no-op writes via a `lastPushedRef` JSON diff. Adding a new persisted field = add it to the Pydantic model, the TS Settings interface, the planner store, and the `buildPayload` map.
-- **WishlistCalendarView snap precision.** Snap entries carry their underlying `Date`; never round-trip pixel→date through `d3.scaleTime().invert()` — its linear interpolation can return a date 1 ms before the intended one, which will fail the strict `hoverDate >= rs` check that gates the bar tooltip's range label.
-- **Lazy thumbnails use IntersectionObserver, NOT native `loading="lazy"` (v0.40.3).** `ThumbnailCell`'s `lazy` prop (planner grid) defers mounting the `<img>` + DSS2 miss/poll cycle until the cell nears the viewport. **Native `loading="lazy"` is unreliable here** — the app's content scrolls inside an `overflow:auto` container (not the document), where native lazy defers on first paint but never fires on inner-container scroll (verified: lower tiles spin forever). The `IntersectionObserver` (root=viewport, `rootMargin:"400px"`) handles the nested scroller correctly. First paint fetches only visible tiles (~4 vs ~100+). Eager callers (`lazy=false`, e.g. WishlistTab) are unchanged — `inView` starts `true`.
-- **Moon–target separation: strip the body's distance (astropy footgun).** `get_body("moon"/"sun", …)` returns a GCRS coordinate **carrying a distance**. Computing `target.separation(moon)` against an ICRS catalog coord transforms that distance-bearing point into the target's barycentric frame, shifting the origin ~1 AU and **corrupting the on-sky direction** — the separation comes out several degrees wrong AND nearly frozen across a night. Always strip the distance first via `services/astronomy.py:direction_only(body)` (re-wraps as a unit-spherical ra/dec). All three call sites (`planner_sky_track`, `planner_visibility` — which feeds scoring — `planner_annual_hours`) use it; the sun↔moon elongation calls are same-frame and fine. Same-frame separations are safe; only ICRS-vs-GCRS-with-distance is the trap.
-- **`tonight_date(location_tz)` is the single source of truth for "what night is it"** (`services/astronomy.py`; planner aliases it as `_tonight_date`). It rolls back 12 h so the UI stays on "tonight" until local noon. Any chart's "today"/"now" marker must derive from a **location-tz date** (the backend stamps `today` on the annual-hours + wishlist-calendar responses), NOT the raw `Date.now()` instant — and when points are anchored at midnight/noon UTC, render the date label with `timeZone: "UTC"`. Otherwise the marker/label is off by one in the evening (local date ≠ UTC date once past ~17:00 in the Americas). **Frontend mirror (v0.40.3):** `lib/timezoneDate.ts` exposes both `todayInTimezone` (plain calendar date) and `tonightDate` (the 12 h-rollback observing night). Anything that must agree with a planner/visibility computation — the Plan-a-Night date default, the `isToday` now-status gate — MUST use `tonightDate`; `todayInTimezone` (used by the Tonight calculator) drifts a day ahead between local midnight and noon.
-
-### Target Planner Scoring
-- Score is **backend-only** and **Tonight-only** (no Anytime score).
-- **Moon impact** uses a two-component model: sky glow (global brightness, default 60% weight) + proximity penalty (local gradient near moon, default 40%). This replaced a proximity-only formula that dropped to zero impact beyond `min_sep`. Both weights are configurable.
-- **Meridian timing** uses the true astronomical transit time (not clamped to the dark window) with a configurable buffer (default 2h) that extends the zero point beyond the dark boundary.
-- **Observability** min-altitude setting must be ≥ 10° (validation enforced) — below that the `1/sin(alt)` airmass formula produces degenerate values.
-- Cluster modifier vocab is closed: `OCl | GCl | *Ass`. `Cl+N` is intentionally NOT a cluster (users image those for the nebula).
-- Detail-panel rig/horizon overrides trigger a refetch via `fetchSingleTargetScore` — the list-fetch score is frozen on the page-level rig.
-
-### Caches that survive DB recreation
-On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode stable identity (RA/Dec + variant + size + FOV) in filenames**, NOT internal `dso_id` (unstable across catalog reloads). On startup, `rehydrate_from_disk()` parses filenames back into cache keys and re-indexes BEFORE the orphan sweep deletes anything.
-
-### PHD2 Guide-Log Analyzer
-- **Pure-service architecture**: `services/phd2_*.py` produce data; `api/phd2.py` is the only DB/HTTP boundary. Service modules **must not import from `api/`**.
-- **Pixel-canonical representation**: all distances stored and computed in pixels; arcsec derived at display time from `SectionHeader.pixel_scale_arcsec_per_px`. Missing pixel scale → UI shows pixels-only; never fabricate arcsec.
-- **Parse-by-name, never-by-position.** Column order read per-section from the actual CSV header. Future PHD2 versions reordering columns must not break the parser.
-- **Never silently coerce missing data.** Empty fields → `None`, never `0.0`. DROP frames have `None` in positional fields (coercing to zero silently corrupts RMS and creates phantom ideal-guiding periods on charts).
-- **No hardcoded ErrorCode → string table.** The log's own ErrorDescription is authoritative.
-- **Three tabs**: Guiding (RA/Dec time-series + pulses + SNR + Mass sub-panels), Dispersion (2-D scatter + 1σ / 2σ ellipses), Data (per-frame table). No spectrum / no unguided RA — both stripped in v0.27.0 cleanup.
-- **Recent files in DB.** `phd2_recent_files(id, path UNIQUE, opened_at)` (migration 0028). Endpoints `POST/GET/DELETE /api/phd2/recent` mirror the image-analyzer's recent-files pattern. Frontend client lives in `api/phd2.ts` (not the lib file — that one only owns the legacy localStorage migration + the `formatRelativeTime` display helper).
-- **Viewport export.** `POST /api/phd2/export` returns the visible window (filtered by section + time range) as a PHD2-format text log file.
-- Sample log for local testing: `sample_data/session_logs/ASIAir/PHD2_GuideLog_2026-03-07_193345.txt`.
-
-### Plate Solving
-- **ASTAP via subprocess** — invoked via `asyncio.create_subprocess_exec()`. **Never pass `-update`** (would modify the input file). Output directed to temp dir via `-o`, parsed from the `.ini` sidecar.
-- **macOS `.app` bundle resolution**: `resolve_astap_binary()` navigates `Contents/MacOS/` to find the executable by name (`astap`, `ASTAP`).
-- **Temp file pipeline**: archive/pxiproject images extracted to temp FITS for ASTAP. XISF also converted (ASTAP only handles uncompressed XISF). Regular FITS/TIFF/PNG/JPG passed directly. Header keywords (focal length, pixel size, coordinates) are passed through to temp FITS so ASTAP can determine correct binning and FOV.
-- **Virtual-path (archive/pxiproject) sources — fresh buffer per consumer.** A `BinaryIO` source gets closed by header reading (astropy `fits.open` closes file objects it's handed), so reusing one buffer raises `I/O operation on closed file`. `_do_solve` and `get_image_dimensions` read the bytes once and hand a fresh `BytesIO` to each consumer — never re-`seek` a consumed buffer.
-- **Concurrency**: `asyncio.Semaphore(1)` — one solve at a time, claimed via a race-free `locked()`-then-`acquire()` with no `await` in between. Second request gets 409; use `POST /plate-solve/cancel` to stop an in-progress solve (the solver no longer auto-kills a running solve to preempt it).
-- **Display-only in the Image Analyzer** — that flow shows RA/Dec/scale/rotation/FOV in a dialog with no DB persistence. **Project** plate solves *do* persist (`project_solve` + `project_dso`) — see the Projects section.
-- **Two-tab UI**: "Solve" (solve the current image directly) and "From Reference Image" (solve a pre-processed stars-only image with matching dimensions). Both support coordinate hints (from header or target search) and equipment hints (from rig, individual equipment, or manual focal length/pixel size).
-- **Equipment hints**: Rig, Equipment (OTA config + camera), or Manual mode. Computes pixel scale and FOV from the selected equipment + binning, passed to ASTAP as `-fov` for faster solving.
-- **Key backend:** `services/plate_solve.py` (ASTAP invocation + `.ini` parsing), `services/plate_solve_models.py` (Pydantic shapes), `api/plate_solve.py` (`POST /solve`, `POST /validate-reference-image`).
-- **Key frontend:** `components/plate-solve/PlateSolveDialog.tsx`, Settings page `AstapPathSection`.
-
-### Projects
-- **Save-as-you-go (v0.37.0).** The project detail page persists every edit immediately — text fields on blur/Enter; add/remove/reorder/set-main/crop on the click. There is **no** Save/Cancel, no dirty-state, no staging. **Do NOT reintroduce a staging holding pen or global Save** — the staging model (v0.35/v0.36, since removed in migration 0033) didn't scale to the sessions/sub-frames ingest in v0.39.0+. Backing out of a new project = delete it (it's saved on creation). Backend is plain direct CRUD in `api/projects.py`.
-- **Gallery vs plate-solve image are separate.** Gallery images (`project_image`) are finished/processed images for display (future slideshows). The **plate-solve image is standalone** — a linear FITS/XISF kept out of the gallery (processed images don't solve well). One solve per project for now (`project_solve` UNIQUE on `project_id`); mosaics will relax this.
-- **DSO linking (v0.37.0).** Solving stores the WCS solution (view-only — delete to re-solve) plus **every** in-FOV catalog object in `project_dso` (not just mains — this powers a future cross-project DSO search), auto-flagging one main (nearest frame centre, tie-break largest); the user can star several. Deleting the solve cascades the objects and removes the rendered display image, behind a confirm dialog. `api/project_solve.py` reuses `run_plate_solve` + the cone query + `image_annotations.project_dsos`; overlay pixel coords are reprojected from the stored WCS on read (offloaded to a thread to keep the loop free).
-- **Shared overlay.** `components/plate-solve/DsoAnnotationOverlay.tsx` (image + SVG annotations) is used by both the Image Analyzer Identify tab and the project Plate Solve tab. Mains render teal, others blue (colorblind-safe).
-- **Main targets are `project_target` (v0.38.0, migration 0036).** Persistent project↔dso link — one source of truth for both the Overview's "Main targets" chips and the Plate Solve tab's star toggle. Creating a solve auto-inserts its best-guess main into `project_target`; the tab toggle adds/removes there. Migration 0036 backfills from existing `project_dso.is_main = 1` rows. The `is_main` flag on the solve response is **derived** from `project_target`, so chips/star stay in sync and **main targets survive `DELETE /solve`** (the solve cascades `project_dso` only; `project_target` lives on `project`, FK CASCADE on project).
-- **Imaging sessions (v0.38.0, migration 0035).** `project_session` is a capture batch (one filter, exposure, gain, sub count, optional date, optional rig) — actual integration is **derived** as `Σ(exposure_seconds × num_subs)`, never typed. Rows are hand-entered (`source='manual'`) or rebuilt from the catalog by the v0.41.1 derive pass (`source='auto'`); see the v0.41.1 section. `CHECK(filter_id IS NOT NULL OR line_name IS NOT NULL)` — a session is either a specific equipment filter or a generic bandpass line. The integration view in `api/project_sessions.py:_compute_integration` expands filter_id sessions through `filter_passband` so a duo-band filter (Ha+Oiii) double-counts into both line budgets (spec §12); the wall-clock total counts each session once.
-- **Per-filter goals were removed in v0.41.1** (`project_filter_goal` dropped in migration 0045). The integration bar chart is a totals read-out — blue fill, no goal tick, no percentage.
-- **Closed bandpass vocabulary** mirrors `filter_passband.line_name` exactly (15 values incl. `R+`). Single source: migration 0005's CHECK. Python copy in `services/line_names.py:LINE_NAMES` (moved there in v0.41.1 so the pure derivation service can use it); TS copy in `frontend/src/lib/lineNames.ts`. Adding a value = update all three (and update any seeded data).
-- **Reusable `MarkdownEditor`** at `frontend/src/components/common/MarkdownEditor.tsx` — default rendered view (react-markdown + remark-gfm, MUI-themed `& p`/`& h*`/`& pre`/etc. sx overrides); edit-icon toggles to a raw markdown TextField; `onSave` fires only on real changes. Used by Notes (full-tab) and Overview Description. Optional `label` prop renders inline with the toggle button when needed.
-
-### Weather Forecast
-- Two timezones per location: `geo_timezone` (auto-derived from coords via `timezonefinder`, used for noon-to-noon astro windows and the lunar 48 h grid) and `timezone` (user's display preference, used for Open-Meteo API + display formatting). **Don't conflate them** — remote-observatory operators legitimately want display in their home timezone while astro computes against site coordinates.
-- **Hourly Detail joins astro to weather by absolute UTC, never wall-clock `HH:MM`.** Weather rows are labelled in the display `timezone`; astro in `geo_timezone`. A string-time join silently grabs the wrong hour whenever the two differ (it shifts moon/darkness/quality by the offset). `api/weather.py:get_hourly` matches on `HourlyAstro.time_utc` via a bisect nearest-match; `compute_hourly_astro` pads its grid ±1h so every displayed hour (incl. the pre-sunset / post-sunrise context columns) has real data. A missing astro hour must NOT be treated as "moon below horizon" — that produced a spurious Moon Quality of 100 in the first column (v0.38.1).
-- Quality scoring uses a **colorblind-safe sequential blue palette** (darker = better).
-- **Cloud is a GATE, not a weighted term (v0.41.4).** `score = 100 × availability × quality`,
-  where `availability = darkness × precip_gate × wind_gate × (1 − cover)^1.5` and
-  `quality` is a weighted mean of seeing/transparency/wind-calm times a moon factor
-  with a floor. Availability is a **product**, so 100% cover is exactly 0 by
-  construction. **Do not reintroduce cloud as an additive term** — the previous model
-  summed `sky_clarity × 0.35` with `sqrt(sky_clarity/100)` gating, which gives the
-  score a floor: 100% cloud returned 46, and 55 with every other factor perfect. The
-  layer weighting it used (low 1.0 / mid 0.9 / high 0.6) was a *visual observing*
-  heuristic; effective cover is now the **maximum** over total and every layer, so
-  adding cloud anywhere can never raise the score. Rationale and sources in
-  `docs/imaging-quality-model.md`; the constants are frozen module constants for the
-  same reason `QUALITY_SETTINGS` is.
-- **`Unusable` is a label about availability, not a bucket of the 0-100 scale** — it
-  fires below `UNUSABLE_AVAILABILITY` (0.10) whatever the score, so it cannot be
-  re-derived from the number. `scoreToLabel` in the frontend is a fallback that can
-  never produce it; prefer the server's `imaging_quality_label`. It scores 0, which on
-  a darker-is-better ramp is the *palest* cell, so the hourly grid hatches it.
-- **The night is aggregated from per-hour scores, never scored from averaged inputs.**
-  Averaging cloud across a night and then applying `(1−f)^k` is not the same as
-  aggregating per-hour yields, and it discards which hours were good.
-  `expected_useful_hours` (Σ availability × quality) is the go/no-go number.
-- **The moon and darkness inputs must be PER HOUR.** `darkness_fraction` is an exact
-  minute overlap with the twilight boundaries on `night.darkness` (astro dark
-  normally, sun ≤ −12° in narrowband so 3nm filters keep astronomical twilight) — not
-  `darkness_category`, which is one instantaneous classification at the top of the
-  hour. `moon_score` is `100 × (1 − illumination × sin(altitude))`. Both live in
-  `services/imaging_quality.py`.
-- **Cloud comes from ECMWF, not `best_match` — and that was measured, not preferred
-  (v0.41.5).** `best_match` resolves to GFS, which over 126 night hours had a day-ahead
-  mean absolute error of 32 pts against ECMWF's 18, a +11.8 pt too-cloudy bias, and
-  called a clear night cloudy 25 times against ECMWF's 8. It reported a genuinely
-  43 %-cloud night as 100 %. **Only cloud moved** — ECMWF IFS 0.25 serves no
-  `visibility`, which transparency needs, so everything else still comes from
-  `best_match`. Counter-intuitive result worth not re-deriving: the *median* of three
-  models is worse than ECMWF alone. Evidence and caveats in
-  `docs/imaging-quality-model.md` §7.
-- **The uncertainty flag needs BOTH a label difference and a material spread.** Three
-  models are fetched in one request and the score re-run on each. Flagging on "the
-  extremes fall in different labels" alone marks essentially every night — a ten-hour
-  night with three models almost always has one boundary-straddling hour — and two
-  models 2 points apart can straddle 50. A flag that is always on says nothing, so it
-  also requires `FORECAST_UNCERTAIN_MIN_SPREAD`. Nights are judged on their own
-  aggregated extremes, never `any()` over the hours.
-- **Whatever cloud series is scored is the one that must be reported.** The hourly
-  `cloud_cover_*` fields and the nightly averages carry the *primary model's* figures,
-  not the main forecast's — emitting `best_match`'s put a "Clear Sky 30" factor above a
-  "Cloud (total) 0%" raw row. Note ECMWF sometimes reports a total below its own layer;
-  effective cover is the max over total and all layers, and the raw rows are left as
-  reported rather than silently corrected.
-- **`api/weather.py:METHODOLOGY` is the single source for the scoring docs.** The
-  frontend renders it via `fetchMethodology`; `MethodologyInfo.tsx` used to hardcode a
-  duplicate that silently went stale. Change the model, change METHODOLOGY.
-- Supplementary data writes (PWV, AOD) are **non-fatal** — wrap in try/except and serve stale data rather than 5xx.
-- Forecast covers 8 days (`forecast_days=8`) so the last night's sunrise window is included.
-
-### Calculators
-- Math runs server-side (one endpoint per calculator). Frontend ticks at the sidereal rate between 60 s server refreshes for the sidereal clock.
-- Backend returns `HH:MM` strings already rendered in the display timezone — frontend must pass them through verbatim, not re-parse as ISO-UTC.
-- Formula rendering via **KaTeX** (MIT). Clock order persists in `settings.calculators_clock_order` (server-side), not localStorage. Drag-to-reorder via `@dnd-kit` (single-container `SortableContext` + click-to-add — cross-container drag was attempted and abandoned).
-- **Native form-control theming**: `MuiCssBaseline` sets `body.colorScheme = "dark"/"light"` so the native date-input popup, scrollbars, and other browser-rendered form elements match the current theme.
-- **Location-aware calculators** declare `aware: true` in `CalculatorSidebar.tsx`'s registry; the page then auto-renders the shared `CalculatorLocationBar` and the component reads the active location via `useCalculatorLocation()` (session-only Zustand, no persistence).
-- **Moon Altitude (Year)** (Sky Conditions) — `components/calculators/MoonAltitudeChart.tsx` plots the Moon's peak altitude during astro darkness across a year, illumination as background shading (same per-night rect treatment as the planner's `BestTimeOfYearChart`), and new/full-moon markers the hover scrubber snaps to. Backed by `GET /api/planner/moon-year` (NOT under `/calculators` — it reuses `compute_annual_hours` + the planner loaders/semaphore in `api/planner.py`). `services/planner_annual_hours.py:compute_moon_year` reuses the cached annual-hours moon path with a throwaway target (`include_moon=True`); `derive_phase_dates` finds new/full from illumination extrema.
-- **Tonight cross-links (v0.40.2)** — "Tonight at a Glance" deep-links out via the `useSearchParams` read-then-clear pattern (same shape as the equipment list's `?select=`): the Moon panel → `/calculators/moon-altitude?year=<Y>` (location rides the shared calculators store, so only the year threads through); the Imaging-quality panel → `/weather?location=<id>&date=<date>`. **`WeatherPage` is a *persistent* page and its forecast loads async after `locationId` changes — so a deep-linked date is held as `pendingDate` (state, not a ref, so it re-triggers the apply effect) and applied only once `forecast.days` confirms it's inside the 8-day window; a future date past the window is silently dropped.** The deep-link param-read effect is declared *after* the default-location effect so its `setLocationId` wins the first-mount tick.
-
-### Admin → Caches
-Cache management UI (thumbnail / sky-tile / aberration / weather budgets + Clear All) lives on the Admin page, **NOT Settings**. Settings is for user preferences only (theme, units, planner defaults, GPU, worker cores).
-
-### Activity Console
-ASGI middleware (`api/diagnostics.py:RequestTrackingMiddleware`) records every request. Activity label propagates via `X-Activity` header (for `fetch()`) or `_activity` query param (for `<img>` calls — header isn't accessible). Image requests use a **stable `_activity` label** set once on file open so URL-cache-busting doesn't fragment grouping.
-
-## Dependency & License Policy
-
-NightCrate is licensed under **MIT**. Before adding any new dependency (Python or JS/TS):
-
-1. **Check the license:.** **Always discuss copyleft dependencies (LGPL, GPL) with Fred before adding** so we can weigh pros and cons together. Always use attributions where necessary. Discuss possibility of clean room implementation options if that becomes necessary.
-
-NightCrate is licensed under MIT. Dependency licenses must be reviewed
-before inclusion. The acceptable licenses, in order of preference:
-
-Freely compatible (always fine):
-  MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, HPND, PSF-2.0,
-  CC0, Unlicense, 0BSD
-
-Font licenses (always fine for bundled fonts):
-  SIL OFL 1.1 — permits embedding and redistribution with software
-  under any license, including proprietary.
-
-Compatible with attribution obligations (fine, note the requirements):
-  BSD-4-Clause — advertising clause imposes attribution on derivative
-  works. Prefer BSD-2/3-Clause alternatives where available.
-  MPL-2.0 — file-level copyleft. Modifications to MPL files must stay
-  MPL; combining MPL libraries with MIT code is fine.
-
-Compatible for normal Python imports (fine, no discussion needed):
-  LGPL-2.1, LGPL-2.1+, LGPL-3.0, LGPL-3.0+ — Python `import` is
-  dynamic linking, which LGPL permits. Currently in use: sep (LGPL-3.0),
-  py7zr (LGPL-2.1+). Discussion is required only if NightCrate modifies
-  the library source, static-links it, or bundles it into a redistributed
-  artifact (e.g., a PyInstaller/Tauri build) — in those cases the LGPL
-  library's source must be made available alongside the distribution,
-  per LGPL requirements.
-
-Not allowed (incompatible copyleft):
-  GPL-2.0, GPL-2.0+, GPL-3.0, GPL-3.0+, AGPL-3.0, AGPL-3.0+
-  — the copyleft terms would force NightCrate to relicense.
-
-Not allowed (not open source):
-  SSPL, BUSL (Business Source License), Commons Clause, Elastic
-  License 2.0, Confluent Community License, Redis Source Available
-  License, any "source-available" license that restricts commercial
-  use, hosting, or competition.
-
-Dual-licensed libraries:
-  Fine — take the permissive option. Many libraries offer MIT-or-GPL,
-  MPL-or-LGPL-or-GPL, etc. Use under the most permissive option.
-
-Commercial tier caveats:
-  MUI X packages (@mui/x-charts, @mui/x-data-grid, @mui/x-date-pickers,
-  @mui/x-tree-view) ship a Community tier (MIT) and Pro/Premium tiers
-  (commercial). NightCrate uses only Community features. Features marked
-  with a "Pro" or "Premium" badge in MUI X documentation are off-limits
-  regardless of whether they appear to work without a license key.
-
-Exception — external programs invoked across a process boundary:
-  External programs invoked via subprocess, IPC, CLI, or HTTP are not
-  "dependencies" for license propagation purposes — they are separate
-  works. GPL-licensed external tools (e.g., plate solvers, Source
-  Extractor, ASTAP) may be invoked via the process-boundary pattern.
-  The license of an external program does not propagate to code that
-  calls it across a process boundary, provided NightCrate does not
-  bundle the program into a combined distribution. If such a program
-  is bundled with a redistributed NightCrate build, its license terms
-  apply to that distribution and must be reviewed separately.
-
-Transitive and bundled licensing considerations:
-  - LGPL obligations only kick in at distribution/packaging time (Tauri/PyInstaller),
-    not at pip-install time. At distribution time, the LGPL library's LICENSE file
-    and notices must be bundled alongside the build (LGPL §6). No runtime attribution
-    or "credits screen" is required.
-  - Pre-built wheels from PyPI are the expected distribution path. Building from
-    source may pull in different license terms (e.g., rawpy's LibRaw demosaic packs
-    are GPL-2.0 — only the standard pip-installed wheels, which exclude these packs,
-    are compatible with MIT).
-  - Some libraries have optional features or tiers that are separately licensed and
-    off-limits even if the main library is fine: rawpy demosaic packs (GPL-2.0),
-    opencv-contrib modules (mixed GPL/patent), MUI X Pro/Premium (commercial).
-  - `opencv-python-headless` is preferred over `opencv-python` (avoids Qt/GUI deps).
-    `opencv-contrib-python` is not allowed without case-by-case review.
-  - Data retrieved from astronomical databases (via astroquery or similar) may have
-    attribution requirements independent of the library's software license. Check
-    the terms of use for each specific service queried (e.g., SIMBAD, MAST).
-  - If Claude Code audits transitive deps and flags the GCC Runtime Library, that is
-    covered by the GCC Runtime Library Exception and is explicitly designed for use
-    in non-GPL code.
-
-2. **MUI X Pro/Premium is never allowed** — paid commercial license. Only MUI X Community tier.
-3. **Update `README.md`** — add the library to the Open Source Acknowledgments table with its license and copyright.
-4. **Update `PLAN.md`** — if it's a new category of library, add it to the Library Reference appendix.
-
-The full evaluated library list is in `PLAN.md` under "Appendix: Library Reference."
+Historical library evaluations are in the archived plan; recheck the actual
+package and optional components when adding a dependency.
