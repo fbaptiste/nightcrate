@@ -6054,7 +6054,12 @@ independent source". Checking it found that the scoring model was fine and the
 - [x] **Migration 0057** widens `weather_cache.source` to accept `cloud_models`.
       SQLite cannot alter a CHECK in place, so the table is rebuilt; existing rows
       are carried over rather than dropped, to avoid a refetch burst for every
-      location on upgrade.
+      location on upgrade. **Verified on a DB already at 0056**, not just a fresh
+      build — that is the shape CLAUDE.md's migration rule exists for, and the
+      row-preservation claim is exactly what a fresh build cannot exercise: two
+      pre-existing rows survived byte-identical, `cloud_models` was rejected before
+      and accepted after, `integrity_check` and `foreign_key_check` clean, and
+      AUTOINCREMENT continued from the prior max id.
 
 ### Verification
 

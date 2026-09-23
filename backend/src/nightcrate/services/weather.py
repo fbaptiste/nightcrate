@@ -64,7 +64,7 @@ extremes falling in different quality labels.
 
 The label test alone is brittle at the boundaries: two models 2 points apart can
 straddle the Marginal/Good line at 50 and get flagged, which is noise. Requiring
-roughly a third of a label band (they are 25 wide) keeps the flag for
+two-fifths of a label band (they are 25 wide) keeps the flag for
 disagreements that would actually change the evening's plan."""
 
 _CLOUD_HOURLY = [

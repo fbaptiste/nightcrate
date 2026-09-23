@@ -2,6 +2,7 @@
 
 import importlib.resources
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import aiosqlite
 import numpy as np
@@ -21,16 +22,12 @@ def _no_cloud_model_network(monkeypatch):
     main forecast, no spread shown). Tests that want a spread patch it themselves;
     an inner patch wins over this one.
     """
+    # No `raising=False`: if this function is ever renamed, every test should fail
+    # loudly here rather than quietly resume making live Open-Meteo calls.
     monkeypatch.setattr(
         "nightcrate.api.weather._fetch_or_cached_cloud_models",
-        _AsyncNone(),
-        raising=False,
+        AsyncMock(return_value=None),
     )
-
-
-class _AsyncNone:
-    async def __call__(self, *args, **kwargs):
-        return None
 
 
 @pytest.fixture(autouse=True)

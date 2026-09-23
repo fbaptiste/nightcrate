@@ -753,7 +753,8 @@ def _compute_night_data(
     )
     scored: list[ImagingQuality] = []
     in_window: list[ImagingQuality] = []
-    spreads: list[tuple[int, int, bool]] = []
+    in_window_spreads: list[tuple[ImagingQuality, ImagingQuality]] = []
+    all_spreads: list[tuple[ImagingQuality, ImagingQuality]] = []
     for idx, (_, h) in enumerate(hours_data):
         dark = darkness_fraction(hour_utcs[idx], night.darkness, mode=mode)
         score_kw = dict(
@@ -768,16 +769,19 @@ def _compute_night_data(
         if hour_quality is None:
             continue
         scored.append(hour_quality)
+        spread = _score_spread(h, cloud_models, h.time, **score_kw)
         if dark > 0.0:
             in_window.append(hour_quality)
-            spread = _score_spread(h, cloud_models, h.time, **score_kw)
             if spread is not None:
-                spreads.append(spread)
+                in_window_spreads.append(spread)
+        if spread is not None:
+            all_spreads.append(spread)
 
     # The night's headline averages only the hours inside the darkness window —
     # padding a clear twilight hour into the mean would flatter a cloudy night.
     # A fully clouded dark hour still counts, at 0.
     rated = in_window or scored
+    spreads = in_window_spreads or all_spreads
     if rated:
         night_score = int(round(sum(q.score for q in rated) / len(rated)))
         night_availability = sum(q.availability for q in rated) / len(rated)

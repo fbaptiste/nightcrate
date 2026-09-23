@@ -158,9 +158,14 @@ class TestScoreSpread:
         h = _hour()
         cm = _models(ecmwf_ifs025=0.0, gfs_seamless=100.0, icon_seamless=50.0)
         low, high = _score_spread(h, cm, h.time, **SCORE_KW)
-        assert low.score == 0  # the 100%-cloud model
-        assert high.score > 50  # the clear one
-        assert low.availability < high.availability
+        # 100% cloud -> yield 0. 0% cloud -> yield 1, and quality is
+        # (0.45*88 seeing + 0.40*41 transparency + 0.15*88 wind_calm)/100 = 0.692,
+        # with the moon factor 1.0 since it is below the horizon. wind_calm is
+        # derived from the hour's 8 km/h, not passed in SCORE_KW.
+        assert low.score == 0
+        assert high.score == 69
+        assert low.availability == 0.0
+        assert high.availability == pytest.approx(1.0)
         assert low.label != high.label
 
     def test_agreeing_models_give_an_empty_range(self):
