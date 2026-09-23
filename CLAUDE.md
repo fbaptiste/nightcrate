@@ -1,6 +1,16 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**The single source of project instructions, for every agent working in this
+repository — not only Claude Code.** `AGENTS.md` is a pointer to this file, and
+`.agents/skills/` holds pointers to `.claude/skills/`. Do not fork any of them
+into a second copy: these files carry rules that were expensive to learn, and a
+stale duplicate is how an agent confidently reintroduces a bug that was already
+fixed. If something here is genuinely agent-specific, fix it here or note the
+narrow exception in `AGENTS.md`.
+
+Anything below that names a particular agent — commit attribution, a
+`~/.claude/...` path — means "whichever agent is running, and its own equivalent
+path".
 
 ## Product Context
 
@@ -161,13 +171,6 @@ Reference documents:
 - `NightCrate_Equipment_and_Technical_Context.md` — Fred's imaging setup, file formats, FITS headers, PHD2 log structure, known edge cases
 - `DB_SCHEMA.md` / `DB_SCHEMA_DDL.sql` — authoritative schema docs
 - `LLM_DB_SPECS.md` — LLM-facing seed-data reference (CSV columns, abbreviated schema)
-
-Maintainer's cross-project note, kept outside this repo (other clones won't
-have it — Claude Code silently skips missing imports). Orientation, goals,
-non-goals, and current state; `decisions.md` alongside it records why things
-are the way they are.
-
-@~/dev/context/projects/nightcrate/README.md
 
 ## Planned Stack
 

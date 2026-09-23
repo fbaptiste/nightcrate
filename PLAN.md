@@ -6193,6 +6193,24 @@ because in every case the reason is more useful than the task.
       Effective cover takes the max, so the score is right; the raw rows look odd.
       Leaving them uncorrected is deliberate — they are what the model said.
 
+### Model surface never rendered
+
+The v0.41.4 model returns more than the panel shows. `api/weather.py` passes all
+of it through; nothing under `frontend/src/components/weather/` reads it. Designed
+in `planning_weather/imaging_quality_redesign.md` §3.
+
+- [ ] **`flags[]` is returned and never displayed** — `high_cloud_only`, `overcast`,
+      `total_estimated`, `layers_unavailable`, `dew_risk`, plus the gate flags. The
+      design singles out `high_cloud_only` as the one deserving a call to action: a
+      full-cirrus night is lost about nine times in ten, and the flag exists so the
+      tenth can be checked against satellite imagery rather than written off.
+- [ ] **`availability` and `quality` are shown only as their product.** The split is
+      the point of the model — a cirrus night should be able to say "0, though the
+      data would have been 67" — and collapsing it back into one number discards the
+      one thing the redesign added over the old weighted sum.
+- [ ] **Factor rows are neither grouped nor coloured by `Role`**, and a gate row that
+      did not apply renders identically to one that did.
+
 ### Frame quality (v0.41.3 leftovers)
 
 - [ ] **The analyzer re-measures quality the catalog already stored.** Opening a
