@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { HourlyWeather, MoonPolylinePoint, TwilightTimes } from "../../api/weather";
 import type { WeatherUnits } from "../../api/settings";
 import { cToF, kmhToMph } from "../../lib/unitConversion";
+import { RIG_ORANGE } from "../../lib/rigColors";
 import {
   UNUSABLE_HATCH_ID,
   isUnusable,
@@ -613,6 +614,17 @@ export default function HourlyTimeline({
               .attr("x", x + 1).attr("y", y + 1)
               .attr("width", cellWidth - 2).attr("height", h - 2)
               .attr("rx", 2).attr("fill", `url(#${UNUSABLE_HATCH_ID})`);
+          }
+          // Models disagree about this hour: mark it provisional rather than
+          // letting a coin-flip read as a settled number. A top rule, not a
+          // fill, so it stacks legibly with the unusable hatch.
+          if (row.type === "quality" && hour.forecast_uncertain) {
+            rowG.append("line")
+              .attr("x1", x + 2).attr("y1", y + 2.5)
+              .attr("x2", x + cellWidth - 2).attr("y2", y + 2.5)
+              .attr("stroke", RIG_ORANGE)
+              .attr("stroke-width", 2)
+              .attr("stroke-dasharray", "3 2");
           }
           rowG.append("text")
             .attr("x", x + cellWidth / 2).attr("y", y + h / 2 + 1)

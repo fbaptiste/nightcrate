@@ -63,6 +63,7 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.41.2 — Catalogue Gaps + Planner Pool](#v0412--catalogue-gaps--planner-pool) ✅
 - [v0.41.3 — Frame Quality Metrics](#v0413--frame-quality-metrics) ✅
 - [v0.41.4 — Imaging Quality Redesign](#v0414--imaging-quality-redesign) ✅
+- [v0.41.5 — Forecast Source + Model Spread](#v0415--forecast-source--model-spread) ✅
 - [v0.42.0 — Calibration Coverage + Gallery Promotion](#v0420--calibration-coverage--gallery-promotion)
 - [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
 - [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
@@ -5984,6 +5985,90 @@ worked-example harness; this version ports that model and wires it in.
       upstream in the transparency derivation, not in the score.
 - [ ] **Per-rig wind gate** — 60 km/h is unsafe for a C11 and survivable for a
       small refractor.
+
+## v0.41.5 — Forecast Source + Model Spread
+
+**Status:** Done. **Branch:** `v0.41.5/forecast-source-and-spread`. The cloud
+forecast the score runs on, and an honest signal for when the models disagree
+about it. Inserted ahead of v0.42.0; nothing renumbered.
+
+Came directly out of v0.41.4's open verification item — "not re-checked against an
+independent source". Checking it found that the scoring model was fine and the
+**input** was the larger error.
+
+### The app was running on the worst of the three models
+
+- [x] **Measured, not assumed.** Day-ahead forecasts against ERA5 reanalysis over
+      **126 night hours** at one location: ECMWF 18.2 pts mean absolute error,
+      ICON 23.0, **GFS 32.4**. Open-Meteo's `best_match` resolves to GFS here, so
+      the app had the worst of them. GFS also carries a **+11.8 pt too-cloudy
+      bias** and called a clear night cloudy **25 times against ECMWF's 8** — the
+      error that costs an imaging night.
+- [x] The concrete miss: the night v0.41.4 was written around was genuinely
+      **43 % cloud**. GFS forecast 100 %, so every hour scored 0 Unusable. On the
+      real sky that night scores mean 33 with a best hour of 66 — the app said
+      "don't bother" about a night with a Good hour in it.
+- [x] **Only cloud moved.** The measurement covered nothing else, and ECMWF IFS
+      0.25 serves **no `visibility` at all**, which the transparency score needs.
+      Everything else still comes from `best_match`. Checked before switching, not
+      after.
+- [x] **The ensemble median is worse than ECMWF alone** (19.1 vs 18.2), so the
+      obvious "just combine them" move does not pay. Recorded so it is not
+      re-derived.
+- [x] Caveat kept in the open: one location, two weeks, one season. The effect size
+      is large and in the direction that hurts, which is why it was acted on.
+
+### The spread is free, so show it — but only when it matters
+
+- [x] Three models arrive in **one request** (`models=` takes a comma-separated
+      list), so the disagreement costs no extra API calls. The score is re-run on
+      each model's cloud with every other factor held fixed, so the range isolates
+      forecast disagreement rather than mixing in other differences.
+- [x] **Two conditions, both needed.** A night is uncertain when the aggregated
+      extremes fall in different quality labels **and** differ by at least
+      `FORECAST_UNCERTAIN_MIN_SPREAD`. The label test alone flagged **every single
+      night** — a ten-hour night with three models almost always has one hour whose
+      extremes straddle a boundary — and two models 2 points apart can straddle 50.
+      A flag that is always on carries no information. Both failure modes are pinned
+      by tests.
+- [x] Nights are judged on their **own aggregated extremes**, labelled with the same
+      rule as the headline. `Unusable` depends on availability rather than score, so
+      it cannot be recovered from a bare pair of integers — which is why the spread
+      helper returns full results, not two numbers.
+- [x] UI: the day card shows *"could be 5–32"* under the badge only on flagged
+      nights, and the hourly grid marks uncertain hours with a dashed rule. On the
+      four of seven nights the models agreed, nothing appears.
+
+### Two things the source switch broke, and the fixes
+
+- [x] **The panel contradicted itself.** The Clear Sky factor used ECMWF while the
+      raw "Cloud (total)" row still showed `best_match`, so a "Clear Sky 30" sat
+      above a "Cloud (total) 0%". The hourly cloud fields and the nightly averages
+      now carry whatever series was actually scored.
+- [x] **ECMWF reports a total below its own layers** (total 0 %, high 36 %).
+      Effective cover is the max over total and every layer, so the score follows
+      the layer and stays correct; the raw rows are left as the model reported them
+      rather than silently corrected. Worth knowing before it reads as a bug.
+- [x] **Migration 0057** widens `weather_cache.source` to accept `cloud_models`.
+      SQLite cannot alter a CHECK in place, so the table is rebuilt; existing rows
+      are carried over rather than dropped, to avoid a refetch burst for every
+      location on upgrade.
+
+### Verification
+
+- [x] 18 new tests in `test_forecast_spread.py`; full backend suite green. ruff,
+      ruff format, bandit (no new findings), `npm run build`.
+- [x] **A test-hermeticity bug was introduced and caught.** The new fetch is a third
+      call the existing weather tests did not mock, and its failure path is
+      deliberately silent — so the suite was quietly making one live Open-Meteo
+      request per weather request and still passing. An autouse fixture in
+      `conftest.py` now keeps it off the network for every test.
+- [x] **Driven in a real browser** against the live forecast: three of seven nights
+      flagged, ranges 0–12 / 5–32 / 0–23, nothing shown on the four that agreed.
+- [x] Fallback verified: a failed cloud-model fetch leaves the score working off the
+      main forecast with no range, rather than failing the request.
+- [ ] **Still one location, two weeks.** Re-measure in a different season before
+      treating ECMWF's win as a general result.
 
 ## v0.42.0 — Calibration Coverage + Gallery Promotion
 

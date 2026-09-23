@@ -4,9 +4,9 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.41.4
+**NightCrate version:** 0.41.5
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-22
 
 **Last full repo snapshot:** 2026-05-19
 
@@ -243,6 +243,8 @@ Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsig
 **Status:** `[shipped]`
 
 7-day imaging quality forecast with hourly detail. **Rebuilt in v0.41.4:** the score is `100 × availability × quality`, where availability is a *product* of gates (darkness, precipitation, wind) and a cloud yield curve `(1 − cover)^1.5`, and quality is a weighted mean of seeing (45%), transparency (40%) and wind calm (15%) times a moon factor with a 0.35 floor. Because availability is a product, 100% cloud is exactly 0 by construction. The previous model had cloud as an additive term with `√(sky_clarity/100)` gating, which gave the score a floor — 100% cirrus scored 46, and 55 with every other factor perfect — and weighted high cloud at 0.6 on a visual-observing heuristic. Effective cover is now the maximum over the total and every layer. Hours are scored individually and the night aggregated from them, never scored from averaged inputs; `expected_useful_hours` (Σ availability × quality) is the go/no-go figure. Darkness is an exact per-hour overlap with the twilight window (sun ≤ −18°, widening to ≤ −12° for narrowband), and the moon sub-score is `100 × (1 − illumination × sin(altitude))`. Seeing estimated via blended surface (JAG Lab) + wind-shear (Trinquet/Cherubini) models. Transparency scored from PWV + AOD + humidity + visibility with graceful fallback tiers. Dew risk classification from temperature–dew point spread with safe window computation — advisory only, never affects the score. Rationale and sources: `docs/imaging-quality-model.md`.
+
+**Forecast source (v0.41.5):** cloud comes from **ECMWF**, picked by measurement — over 126 night hours its day-ahead mean absolute error against ERA5 was 18 pts against GFS's 32, with a smaller bias and a third as many missed-clear nights. Open-Meteo's `best_match` resolves to GFS, which had been reporting a genuinely 43%-cloud night as 100%. Only cloud moved: ECMWF serves no `visibility`, which transparency needs. GFS and ICON arrive in the same request, the score is re-run on each, and a night is marked uncertain when the extremes land in different labels *and* differ materially — both conditions, because either alone flags almost everything. Migration 0057 widened `weather_cache.source` for the extra response.
 
 **UI:** Daily card view with quality badge (Excellent/Good/Marginal/Poor/**Unusable**, sequential blue palette) and "≈ N h of usable data". Hourly timeline with D3 SVG: darkness gradient, moon polyline, an 8-row score factor grid that now shows the gates, weather details. `Unusable` cells are hatched — they score 0, which on a darker-is-better ramp is the palest cell, so colour alone would read as innocuous. Location selector from saved locations. Moon phase icon with terminator rendering. Methodology accordion, now rendering the backend's own `METHODOLOGY` markdown instead of a hardcoded duplicate. Metric/imperial unit toggle.
 

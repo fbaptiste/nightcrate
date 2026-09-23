@@ -57,7 +57,13 @@ class HourlyWeatherResponse(BaseModel):
     quality: float
     factors: list[FactorResponse]
     flags: list[str]
-    moon_altitude_deg: float | None
+    # Forecast-model spread. None when fewer than two models cover the hour.
+    score_min: int | None = None
+    score_max: int | None = None
+    # True when the extremes fall in different quality labels, i.e. the models
+    # disagree enough to change the decision. The UI shows the range only then.
+    forecast_uncertain: bool = False
+    moon_altitude_deg: float | None = None
     moon_illumination_pct: float | None
     darkness_category: str | None
 
@@ -71,7 +77,10 @@ class DailySummaryResponse(BaseModel):
     expected_useful_hours: float
     factors: list[FactorResponse]
     flags: list[str]
-    sunset: str | None  # HH:MM local — None for polar day
+    score_min: int | None = None
+    score_max: int | None = None
+    forecast_uncertain: bool = False
+    sunset: str | None = None  # HH:MM local — None for polar day
     sunrise: str | None  # HH:MM local — None for polar day
     astro_dark_start: str | None  # HH:MM local — None if astro dark not reached
     astro_dark_end: str | None  # HH:MM local — None if astro dark not reached
