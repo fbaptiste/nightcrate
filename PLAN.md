@@ -64,6 +64,8 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.41.3 — Frame Quality Metrics](#v0413--frame-quality-metrics) ✅
 - [v0.41.4 — Imaging Quality Redesign](#v0414--imaging-quality-redesign) ✅
 - [v0.41.5 — Forecast Source + Model Spread](#v0415--forecast-source--model-spread) ✅
+- [v0.41.6 — Configurable Score + Rig-Aware Gates](#v0416--configurable-score--rig-aware-gates)
+- [Deferred — known work not yet versioned](#deferred--known-work-not-yet-versioned)
 - [v0.42.0 — Calibration Coverage + Gallery Promotion](#v0420--calibration-coverage--gallery-promotion)
 - [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
 - [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
@@ -6069,6 +6071,158 @@ independent source". Checking it found that the scoring model was fine and the
       main forecast with no range, rather than failing the request.
 - [ ] **Still one location, two weeks.** Re-measure in a different season before
       treating ECMWF's win as a general result.
+
+## v0.41.6 — Configurable Score + Rig-Aware Gates
+
+**Status:** Planned. Let the user decide which factors the imaging-quality score
+takes into account, the way the moon toggle already works — and make the gates
+reflect the rig and the setup rather than one hardcoded assumption.
+
+**Origin (2026-09-22):** Fred, on the v0.41.5 forecast work — *"I often don't care
+about transparency as much as cloud cover. And since I always intend to leave the
+scope out at night, any chance of precipitation is a no-go for me, irrespective of
+how much is forecast — I don't have a dome that can close automatically."*
+
+**This is not one uniform feature, and the differences are the whole design.** The
+score has two structurally different halves (see `docs/imaging-quality-model.md`),
+and "add a checkbox per factor" would be wrong for three of them.
+
+### Quality terms — checkboxes, straightforwardly
+
+- [ ] **Seeing and transparency get checkboxes**, joining the existing moon toggle.
+      They are weighted terms in an arithmetic mean (`QUALITY_WEIGHTS`, currently
+      seeing 0.45 / transparency 0.40 / wind calm 0.15). Dropping one means
+      **renormalising the remainder to sum to 1**, not scoring it as zero — scoring
+      a dropped factor as zero would punish the night for a factor the user said to
+      ignore, which is the opposite of the intent.
+- [ ] Disabling *every* quality term is a real input. Decide deliberately: either
+      forbid it in the UI, or define quality as 1.0 so the score becomes pure
+      availability ("how much of the night is usable at all"). The latter is
+      arguably a legitimate view and costs nothing to support.
+- [ ] The moon is a **modifier, not a term** (it multiplies quality, with a floor),
+      so it stays on its existing path. Do not fold it into the weights.
+
+### Precipitation — a tolerance, not a toggle
+
+- [ ] **A checkbox here would mean "ignore rain", which is the opposite of what was
+      asked for.** The request is for the gate to be *stricter*: today it is fully
+      open below 40 % probability and only closes above 70 % (`PRECIP_PROBABILITY_RAMP`),
+      so a 30 % chance of rain currently costs an unattended scope nothing. That is
+      plainly wrong for a rig left out uncovered.
+- [ ] Model it as **how much rain risk this setup tolerates**. Two shapes worth
+      weighing: a plain "the scope is left out / the scope is protected" switch that
+      picks a preset ramp, or an explicit probability threshold. The switch is more
+      honest about what is actually being decided and does not ask the user to
+      invent a number; the threshold is more tunable. Fred's case is the strict end —
+      any non-zero probability closes the hour.
+- [ ] Note the existing asymmetry worth fixing at the same time: any forecast
+      precipitation **amount** above zero closes the gate outright, while a 46 %
+      **probability** only drops it to 0.80. Both come from the same forecast, so the
+      two paths should be consistent with each other under whatever tolerance is set.
+
+### Wind — belongs to the rig, not the user
+
+- [ ] `WIND_GATE_RAMP_KMH` (40 → 60 km/h) is a property of what is on the mount:
+      60 km/h is unsafe for a C11 and survivable for a small refractor. This is the
+      per-rig wind gate already carried forward from v0.41.4. If rigs gain it, the
+      weather page needs a rig selector or a sensible default, which is a bigger UI
+      question than it first appears — the weather page currently has no rig concept.
+
+### Cloud and darkness stay fixed
+
+- [ ] **Do not make cloud toggleable.** It is the gate the entire v0.41.4 redesign
+      exists to establish; an off switch hands back the original bug (100 % cloud
+      scoring 46). Darkness is physics. Neither is a preference.
+
+### What this breaks, and the honest cost
+
+- [ ] **The score stops being comparable** — to other users, and to the same user's
+      own past nights once they change a setting. That is acceptable for a personal
+      tool, but it has consequences: the pinned regression tests must assert the
+      **default** configuration explicitly, and `api/weather.py:METHODOLOGY` can no
+      longer state fixed weights as fact. It has to describe the user's current
+      configuration, which means the methodology text becomes partly generated.
+- [ ] Settings placement: the moon toggle is both a stored setting
+      (`weather_moon_penalty`) **and** a per-request query param plus a page checkbox.
+      Follow that pattern rather than inventing a second one. Adding settings needs no
+      migration — `core/config.py:Settings` is a Pydantic model over a KV table.
+- [ ] The model-disagreement range (v0.41.5) re-runs the same scoring per model, so
+      it picks up the user's configuration for free. No extra work, but worth
+      verifying rather than assuming.
+
+### Not in scope
+
+- [ ] Per-target or per-filter configurations (narrowband already has its own mode).
+- [ ] Making the calibration constants themselves user-facing (cloud exponent, moon
+      floor, label thresholds). Those change what the score *means*; these toggles
+      change what it *considers*. Different decisions, and the first one deserves its
+      own argument.
+
+## Deferred — known work not yet versioned
+
+Items deliberately left undone in v0.41.3–v0.41.5, collected here so they are
+findable without re-reading three version sections. Each says why it was skipped,
+because in every case the reason is more useful than the task.
+
+### Measurement debt
+
+- [ ] **Re-measure forecast skill in a different season.** The v0.41.5 switch to
+      ECMWF rests on 126 night hours at one location over two weeks of late-summer
+      monsoon — cirrus-heavy, which is exactly the regime GFS handled worst. The
+      effect size was large and in the direction that costs imaging nights, which is
+      why it was acted on, but it is not a general claim. The measurement is
+      reproducible: day-ahead forecasts from `previous-runs-api.open-meteo.com`
+      against ERA5 from `archive-api.open-meteo.com`, scored over night hours.
+      Method in `docs/imaging-quality-model.md` §7.
+- [ ] **Sanity-check the score against real observed skies**, not just against
+      another forecast. No amount of model-vs-model comparison establishes that the
+      cloud exponent (1.5, defensible range 1.5–2.0) is right.
+
+### Scoring model
+
+- [ ] **Cloud and transparency mildly double-count at partial cover.** Transparency
+      is derived from PWV / AOD / humidity / visibility, none of which measure cloud,
+      but upper-air moisture correlates with cirrus. The fix belongs upstream in the
+      transparency derivation, not in the score — do not "fix" it by reweighting.
+- [ ] **ECMWF reports a total below its own layers** (total 0 %, high 36 %).
+      Effective cover takes the max, so the score is right; the raw rows look odd.
+      Leaving them uncorrected is deliberate — they are what the model said.
+
+### Frame quality (v0.41.3 leftovers)
+
+- [ ] **The analyzer re-measures quality the catalog already stored.** Opening a
+      cataloged frame in the embedded overlay costs a ~0.9 s `detect_stars` for
+      numbers already sitting in `sub_frame`. Widening `AnalyzerItem` to carry them
+      and passing them as the query's `initialData` removes it. Related:
+      `/images/quality` is uncached while `/aberration/analyze` is DB-cached on
+      identical default settings, so the Aberration tab runs the same detection twice.
+- [ ] **`median_adu` is a full-array `np.median` on every light** (~185 ms of a
+      ~1.1 s frame) for a value the cards only show when there are no stars.
+      Subsampling matches the app's existing histogram pattern and costs ~0.001 %
+      accuracy — but it changes a stored metric, so it needs pinned values and a
+      deliberate decision, not a quiet edit.
+- [ ] **`BATCH_SIZE = 60` in `useAnalyzeRun`** pays a 0.3–0.6 s pool spawn per batch
+      (~10 % on lights, ~25 % on the ADU-only calibration path). 120–240 would cut the
+      churn at the cost of cancel latency. Left at 60 on purpose: cancel
+      responsiveness wins until someone complains about throughput.
+- [ ] **The catalog list is unvirtualized** and mounts up to five MUI `Tooltip`s per
+      analyzed card. DataGrid was rejected for its 100-row cap, but `react-window` /
+      `react-virtuoso` are MIT and would fit.
+
+### Consolidation
+
+- [ ] **`services/pixel_loader.py` absorbed one of three dispatch copies, not all
+      three.** `api/images.py:_load_image_data` and `api/aberration.py:_load_mono_data`
+      still hand-roll the same `file_type` ladder because they hold a pre-resolved
+      source for their caches rather than a path. They have already drifted on
+      `reshape_color`. The fix is a `load_from_resolved(source, file_type, index, hdu)`
+      seam those two can call. Until then a new format needs editing in three places.
+- [ ] **`path_resolver` raises FastAPI's `HTTPException` from inside `services/`**,
+      which is the actual layering violation behind the stringly-typed
+      `type(exc).__name__ == "HTTPException"` wrappers now duplicated in
+      `services/plate_solve.py` and `services/pixel_loader.py`. A domain
+      `PathResolveError` translated in the three routers removes both wrappers and
+      stops `services/` importing fastapi.
 
 ## v0.42.0 — Calibration Coverage + Gallery Promotion
 
