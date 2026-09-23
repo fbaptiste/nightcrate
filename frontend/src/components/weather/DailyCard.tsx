@@ -37,13 +37,14 @@ const FACTOR_LABELS: Record<string, string> = {
 
 interface ScoreBarProps {
   label: string;
-  value: number;
+  /** null when the factor had no input at all; the row is still drawn. */
+  value: number | null;
   grayed?: boolean;
 }
 
 function ScoreBar({ label, value, grayed = false }: ScoreBarProps) {
-  const barWidth = `${Math.max(0, Math.min(100, value))}%`;
-  const opacity = grayed ? 0.35 : 1;
+  const barWidth = value === null ? "0%" : `${Math.max(0, Math.min(100, value))}%`;
+  const opacity = grayed || value === null ? 0.35 : 1;
 
   return (
     <Box sx={{ mb: 1.5, opacity }}>
@@ -58,7 +59,7 @@ function ScoreBar({ label, value, grayed = false }: ScoreBarProps) {
           variant="caption"
           sx={{ fontSize: "0.6rem", color: "text.secondary", lineHeight: 1.3, ml: 0.5 }}
         >
-          {Math.round(value)}
+          {value === null ? "\u2014" : Math.round(value)}
         </Typography>
       </Box>
       <Box sx={{ ml: 1, mt: 0.25 }}>
@@ -128,6 +129,19 @@ export default function DailyCard({ day, selected, units, onClick }: DailyCardPr
 
   const infoTextSx = { fontSize: "0.65rem", color: "text.secondary", lineHeight: 1.6 };
   const precipPct = Math.round(day.max_precipitation_probability_pct);
+  // Shared by the real range line and its blank placeholder, so the two are the
+  // same height and the cards stay in step with each other.
+  const rangeTextSx = {
+    mt: 0.25,
+    fontSize: "0.65rem",
+    color: "text.secondary",
+    fontStyle: "italic",
+  } as const;
+  const showRange =
+    day.forecast_uncertain && day.score_min !== null && day.score_max !== null;
+  // Below a tenth of an hour this rounds to "0.0 h of usable data", which claims
+  // usable data where there are about two minutes of it. Say nothing instead.
+  const showUsableHours = day.expected_useful_hours >= 0.05;
 
   return (
     <Card
@@ -173,31 +187,29 @@ export default function DailyCard({ day, selected, units, onClick }: DailyCardPr
                 {/* The forecast models only get a say when they disagree enough to
                     change the verdict. On the nights they agree this would be
                     noise ("0–0"), and on the nights they don't, a single number
-                    presents a coin-flip as settled fact. */}
-                {day.forecast_uncertain &&
-                  day.score_min !== null &&
-                  day.score_max !== null && (
+                    presents a coin-flip as settled fact.
+
+                    The row is always rendered, blank when there is nothing to say,
+                    because the cards sit side by side and every one of them that
+                    skipped a line pushed its factor bars out of step with its
+                    neighbours. */}
+                {showRange ? (
                     <Tooltip
                       arrow
                       title={
                         "Forecast models disagree about cloud for this night: they put it " +
-                        `between ${day.score_min} and ${day.score_max}. Worth re-checking ` +
-                        "closer to the night rather than treating the headline score as settled."
+                        `between ${day.score_min} and ${day.score_max}. Check again closer ` +
+                        "to the night rather than treating the headline score as settled."
                       }
                     >
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          mt: 0.25,
-                          fontSize: "0.65rem",
-                          color: "text.secondary",
-                          fontStyle: "italic",
-                          cursor: "help",
-                        }}
-                      >
+                      <Typography variant="caption" sx={{ ...rangeTextSx, cursor: "help" }}>
                         {`could be ${day.score_min}\u2013${day.score_max}`}
                       </Typography>
                     </Tooltip>
+                ) : (
+                  <Typography variant="caption" sx={rangeTextSx} aria-hidden>
+                    {"\u00a0"}
+                  </Typography>
                   )}
               </Box>
             )}
@@ -262,25 +274,29 @@ export default function DailyCard({ day, selected, units, onClick }: DailyCardPr
             </Typography>
           ) : (
             <Box sx={{ px: 0.25 }}>
-              {day.factors
-                .filter((f) => f.value !== null)
-                .map((f) => (
-                  <ScoreBar
-                    key={f.key}
-                    label={FACTOR_LABELS[f.key] ?? f.key}
-                    value={f.value as number}
-                    grayed={!f.applied}
-                  />
-                ))}
-              {day.expected_useful_hours > 0 && (
-                <Typography
-                  variant="caption"
-                  display="block"
-                  sx={{ ...infoTextSx, textAlign: "center", mt: 0.5 }}
-                >
-                  {"\u2248"} {day.expected_useful_hours.toFixed(1)} h of usable data
-                </Typography>
-              )}
+              {/* Every factor keeps its row even with no value — dropping one
+                  would shorten the card and pull the rows out of line with its
+                  neighbours. */}
+              {day.factors.map((f) => (
+                <ScoreBar
+                  key={f.key}
+                  label={FACTOR_LABELS[f.key] ?? f.key}
+                  value={f.value}
+                  grayed={!f.applied}
+                />
+              ))}
+              {/* Blank rather than absent, for the same alignment reason as the
+                  range line above. */}
+              <Typography
+                variant="caption"
+                display="block"
+                sx={{ ...infoTextSx, textAlign: "center", mt: 0.5 }}
+                aria-hidden={!showUsableHours}
+              >
+                {showUsableHours
+                  ? `\u2248 ${day.expected_useful_hours.toFixed(1)} h of usable data`
+                  : "\u00a0"}
+              </Typography>
             </Box>
           )}
 
