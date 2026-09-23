@@ -1,53 +1,21 @@
 ---
 name: start-version
-description: Use when a PR has been merged and you're ready to start work on the next version — checks out main, pulls latest, creates a new feature branch
+description: Start a release branch from updated main after the previous work is merged.
 ---
 
-# Start Version
+# Start version
 
-Post-merge workflow: ensure clean state, update main, create a new branch for the next version.
-
-## Process
-
-### 1. Check clean state
-
-- Run `git status --short` to check for uncommitted changes
-- If there are uncommitted changes, warn the user and ask how to proceed (stash, commit, or abort)
-- Do not proceed with dirty working tree unless the user explicitly says to stash
-
-### 2. Stash if needed
-
-- If the user approves stashing: `git stash --include-untracked`
-- Note this in the report so the user remembers to pop later
-
-### 3. Checkout main and pull
-
-- `git checkout main`
-- `git pull`
-- Verify the merge commit is present (the PR should be merged). If not found, warn the user and ask how to proceed (wait for merge, check PR status on GitHub, or abort)
-
-### 4. Determine next version
-
-- Check `PLAN.md` for the next planned version section (look for `## v*` sections with `Status: Planned`)
-- If a clear next version exists, propose it to the user
-- If unclear or multiple candidates, ask the user which version to start
-- State the version number in the response
-
-### 5. Create branch
-
-- Branch naming convention: `v{version}/{short-description}`
-  - e.g., `v0.6.0/session-ingestion`, `v0.5.1/heatmap-view`
-- The short description should come from the version's goal in PLAN.md
-- If unclear, ask the user for the branch name
-- `git checkout -b {branch-name}`
-
-### 6. Pop stash if applicable
-
-- If changes were stashed in step 2: `git stash pop`
-
-### 7. Report
-
-- State the new branch name
-- State the version being started
-- Briefly note what's planned for this version (from PLAN.md)
-- Remind about any stashed changes if applicable
+1. Read `CLAUDE.md`, `VERSION`, and the current `PLAN.md`. Check branch/status.
+2. Preserve existing work. If the tree is dirty, ask how to carry it forward;
+   stash only with authorization, include untracked files, and record the stash.
+3. Switch to `main`, then `git pull --ff-only`. Confirm the preceding work is
+   merged (including squash merges). If it is not, resolve that with the user
+   before starting a new release; do not discard or rewrite it.
+4. Use the user's release scope, otherwise the next clear planned version.
+   Ask only when version or scope is ambiguous. Name the branch
+   `v{version}/{short-description}` and create it from updated main.
+5. Restore any authorized stash and resolve conflicts without losing work.
+6. Record the branch, scope, and **In progress** status in `PLAN.md`. Leave release
+   version files unchanged until finalization. Stage changes when requested;
+   starting a version does not authorize a commit, push, or PR.
+7. Report version/branch and any work or stash still needing attention.

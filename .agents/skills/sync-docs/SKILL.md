@@ -1,6 +1,6 @@
 ---
 name: sync-docs
-description: Use when a work session is ending, before committing, or when asked to update docs — syncs PLAN.md, CLAUDE.md, README.md, DB_SCHEMA.md, DB_SCHEMA_DDL.sql, LLM_DB_SPECS.md, and nightcrate-current-state.md to reflect actual work done
+description: Update current project documentation from implemented changes, without committing or pushing.
 ---
 
 # sync-docs

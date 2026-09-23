@@ -1,125 +1,55 @@
 ---
 name: finalize-session
-description: Use when a work session is done and ready to commit, push, and open a PR — bumps version, runs checks, commits, pushes, opens PR
+description: Finalize an authorized release with documentation, version bump, checks, commit, tag, push, and PR.
 ---
 
-# Finalize Session
+# Finalize session
 
-End-of-session workflow: simplify code, sync docs, bump version, run checks, commit, push, open PR, code review.
+Read `CLAUDE.md` and respect the user's authorization. If commits are withheld,
+prepare and stage the work, then stop before committing. A request to prepare a
+future PR does not override that restriction. Never force-push.
 
-## Process
+## Prepare
 
-### 1. Determine version
+1. Determine the target version from the user's scope and `PLAN.md`; resolve any
+   ambiguity. Review all branch, staged, unstaged, and untracked changes.
+2. Review changed code for clarity and reuse; use an available simplification
+   workflow when helpful. Preserve behavior and recheck any resulting edits.
+3. Bump `VERSION` and `backend/pyproject.toml` together; update `uv.lock` if its
+   project metadata changes. Run `sync-docs`, including its schema/reference
+   version headers.
+4. Complete the release checks in `CLAUDE.md`: backend lint, format, security
+   (zero medium/high findings), and tests; frontend TypeScript/production build.
+   Report every security finding under step 7. For documentation changes, also
+   verify links, current claims, skill structure and diff whitespace. Record
+   actual results; don't mark unrun tests as passed or skip release checks.
+5. New behavior needs normal/edge/failure tests, concrete assertions and pinned
+   calculations for scoring changes. Check coverage when behavior changes and
+   investigate regressions. Resolve failed checks before committing.
+6. Review the full staged diff for scope and public-repository privacy. Stage
+   only relevant files; never stage ignored files or `instructions/`. Ask about
+   unrelated work only when its ownership or inclusion is genuinely unclear.
+7. Flag any security findings, including pre-existing findings, to Fred for a
+   decision; do not silently suppress or ignore them.
 
-- Check `VERSION` file and `PLAN.md` to identify what version was being implemented
-- If unclear, ask the user before proceeding
-- State the version number in the response
+## Publish when authorized
 
-### 2. Code simplification
-
-- Invoke the `simplify` skill (or follow its process if not available via Skill tool)
-- This reviews recently modified code for clarity, consistency, and maintainability
-- Preserves all functionality — only improves how code is written
-- If changes are made, re-run checks before proceeding
-
-### 3. Sync docs
-
-- Invoke the `sync-docs` skill (or follow its process if not available via Skill tool)
-- This updates PLAN.md, CLAUDE.md, README.md, and memory before committing
-
-### 4. Bump version
-
-- Update `VERSION` file to the target version
-- Update `backend/pyproject.toml` version field to match
-- If both already match the target, skip silently
-
-### 5. Run all checks
-
-Run the pre-commit checklist (all must pass before committing):
-
-**Backend (from `backend/`):**
-1. `uv run ruff check src/ tests/` — lint
-2. `uv run ruff format --check src/ tests/` — formatting (fix if needed with `ruff format`)
-3. `uv run bandit -r src/` — security (0 medium/high)
-4. `uv run pytest` — tests
-
-**Frontend (from `frontend/`):**
-5. `npm run build` — TypeScript compilation + production build
-
-If any check fails, fix the issue and re-run. Do not proceed to commit with failing checks.
-
-**Test quality gate:**
-- New code must include tests with edge cases and error conditions, not just happy paths
-- Tests must assert specific expected values, not just ranges
-- Scoring/algorithm changes need pinned regression tests with hand-computed values
-- Run `uv run coverage report --include="src/nightcrate/*"` — no module should regress below its current coverage level
-
-### 6. Commit
-
-- Stage all relevant files (do NOT stage `instructions/` or files in `.gitignore`)
-- Write a descriptive commit message summarizing the work done
-- End the commit message with the co-author trailer for the model actually running the
-  session, as specified by the harness — currently
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`. Do not carry a
-  hardcoded model version forward; it goes stale at the next model release.
-- Use a HEREDOC for the commit message
-- Tag the branch with the version number
-
-### 7. Push
-
-- Push the current branch to origin with `-u` flag
-
-### 8. Open PR
-
-- Use `gh pr create` targeting `main`
-- PR title: short, under 70 chars, describes the version/feature
-- PR body format:
-  ```
-  ## Summary
-  <3-5 bullet points of what was done>
-
-  ## Test plan
-  - [x] Backend lint (ruff check) ✅ Claude
-  - [x] Backend format (ruff format) ✅ Claude
-  - [x] Backend security (bandit) ✅ Claude
-  - [x] Backend tests (pytest — N tests) ✅ Claude
-  - [x] Frontend build (tsc + vite) ✅ Claude
-  - [x] Code simplification pass ✅ Claude
-  - [ ] Manual UI testing — load image, verify feature works 👤 User
-  - [ ] <any other user-specific test items relevant to the changes> 👤 User
-
-  🤖 Generated with [Claude Code](https://claude.com/claude-code)
-  ```
-
-  **Test plan rules:**
-  - Items verified by running commands during this session: check them off with `✅ Claude`
-  - Items requiring manual user testing (UI interaction, visual verification, real data): leave unchecked with `👤 User`
-  - If the user has confirmed they tested something, check it off with `✅ User`
-  - Be specific about what manual testing is needed based on the actual changes (e.g., "Test aberration tab with galaxy image" not just "test UI")
-  - If the branch already has an open PR, push to it instead of creating a new one
-
-### 9. Code review
-
-- After the PR is created (or updated), invoke the `code-review:code-review` skill with the PR number
-  - e.g., `/code-review <PR-number>` or `Skill("code-review:code-review", args: "<PR-number>")`
-- This runs a multi-agent code review (CLAUDE.md compliance, bug scan, git history, prior PR comments, code comment compliance)
-- If the review finds issues, stop and provide that list to user to determine whether to handle or not. For those issues user indicates they want fixed:
-  - Fix the issues in code
-  - Re-run checks (step 5)
-  - Commit and push the fixes
-  - Note the fixes in the report
-
-### 10. Report
-
-- State the version number that was set
-- Show the PR URL
-- Show the test count
-- Note any code review findings and whether they were addressed
-
-## Rules
-
-- Never skip checks — all must pass before committing
-- Never force-push
-- Always ask before committing if there are unstaged changes that look like they shouldn't be committed (e.g., local config, temp files)
-- Any security issues identified eiother by bandit or by the PR review need to be flagged to user and asked what to do about them - even if the identified issue was code committed in a prior PR. Under no circumstance should they be ignored or silenced.
-
+1. Commit with a concise message explaining the change. Use the actual running
+   agent's harness-provided attribution; never copy a model name or invent a
+   co-author address. Pass multiline bodies through a temporary file.
+2. Tag the release commit `v{version}`; if that tag exists elsewhere, resolve the
+   conflict instead of moving it. Push the branch with upstream tracking. Publish
+   the version tag only as part of the authorized release workflow.
+3. Create a PR to `main`, or update the existing branch PR. Keep the title under
+   70 characters. Describe the final scope and relevant validation; omit tool
+   marketing and canned boilerplate.
+4. Use `gh pr create/edit --body-file` for multiline text. Check off only items
+   actually verified and name the verifier (the running agent or Fred). Leave
+   necessary unperformed manual checks open; do not add irrelevant UI checks to
+   documentation changes.
+5. Run the available PR review workflow, or review the diff directly if none is
+   available. Report findings for Fred to decide which to address. For authorized
+   fixes, rerun affected checks, update docs, then commit/push within the granted
+   scope. Do not rewrite published history.
+6. Report the version, PR URL, verification results and outstanding findings or
+   manual checks.
