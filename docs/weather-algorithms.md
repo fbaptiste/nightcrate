@@ -285,75 +285,78 @@ Delegates to `estimate_seeing_surface()` described above.
 
 **Source file:** `backend/src/nightcrate/services/imaging_quality.py`
 
-### 4.1 Individual Factor Scores
+### 4.1 Shape of the model
 
-| Factor | Computation | Range |
+**Replaced in v0.41.4.** Cloud used to be an additive term
+(`sky_clarity * 0.35` with the other factors gated by `sqrt(sky_clarity/100)`),
+which gave the score a floor: 100% high cloud returned 46, and 55 with every
+other factor perfect. Cloud is now a gate.
+
+```
+score        = 100 * availability * quality
+availability = darkness * precip_gate * wind_gate * (1 - cloud) ** 1.5
+quality      = moon_factor * (0.45*seeing + 0.40*transparency + 0.15*wind_calm) / 100
+```
+
+`availability` is a **product**, so any closed gate zeroes the hour and 100%
+cover is exactly 0 for any exponent > 0. `quality` is a weighted mean, because
+seeing, transparency and wind each degrade data without making a night
+unimageable. Both halves are returned, so the UI can show "0, though the data
+would have been 67".
+
+### 4.2 Availability — gates and the cloud curve
+
+| Factor | Computation | Notes |
 |--------|------------|-------|
-| Sky Clarity | Weighted cloud layers (low×1.0, mid×0.9, high×0.6); falls back to `100 - cloud_cover_pct` | 0–100 |
-| Seeing | Passed through from seeing model | 0–100 |
-| Transparency | PWV + AOD + humidity + visibility (from transparency service) | 0–100 |
-| Wind Calm | Piecewise linear (see below) | 0–100 |
-| Moon Score | Moon-up fraction × illumination (see below) | 0–100 |
+| Darkness | Fraction of the hour inside the usable window | Sun ≤ −18° normally; ≤ −12° in narrowband, which keeps astronomical twilight for 3nm filters. Exact minute overlap against the twilight boundary datetimes, not the `darkness_category` label |
+| Precipitation | 1.0 at ≤ 40% probability, 0.0 at ≥ 70%, linear between | Any non-zero precipitation **amount** closes the gate outright |
+| Wind | 1.0 at ≤ 40 km/h, 0.0 at ≥ 60 km/h, linear between | Rig-dependent in truth; a per-rig setting is a plausible later refinement |
+| Cloud | `(1 - cover) ** 1.5` on the **maximum** of total and every layer | Taking the max keeps the result monotonic in every input and robust to an inconsistent feed |
 
-#### Wind Calm Score
-```
-≤ 5 km/h:    100
-5–15 km/h:   100 → 60  (linear, -4/km/h)
-15–30 km/h:  60 → ~8   (linear, -3.47/km/h)
-> 30 km/h:   0
-```
+**Every layer counts at face value.** The forecast reports high cloud as
+*coverage* inferred from relative humidity, not opacity, so it cannot separate
+subvisual cirrus from an opaque deck. The old 1.0 / 0.9 / 0.6 layer weighting was
+a visual-observing heuristic and is what produced the bug. Layer composition now
+drives only the `high_cloud_only` advisory.
 
-#### Moon Score
-```
-moon_up_fraction = 1 - moonless_dark_hours / darkness_hours
-illumination_factor = moon_illumination_pct / 100
-moon_score = (1 - moon_up_fraction * illumination_factor) * 100
-```
-- Moon never rises (moonless = darkness): moon_score = 100
-- New moon (illumination = 0): moon_score = 100
-- Full moon up all night: moon_score = 0
+### 4.3 Quality — the weighted mean
 
-### 4.2 Composite Score — Moon Included (default, broadband)
+| Factor | Weight | Computation |
+|--------|--------|------------|
+| Seeing | 45% | Passed through from the seeing model |
+| Transparency | 40% | PWV + AOD + humidity + visibility |
+| Wind Calm | 15% | Piecewise linear: 100 at ≤ 5 km/h, 60 at 15, 0 at 40. Continuous — the previous version jumped from 8 to 0 at exactly 30 |
 
-```
-sky_clarity = compute_sky_clarity(cloud layers)  # weighted multi-layer
-sky_factor = sqrt(sky_clarity / 100)             # 0.0–1.0 gating multiplier
-
-other_score = seeing * 0.25 + transparency * 0.15 + moon * 0.15 + wind_calm * 0.10
-
-overall = sky_clarity * 0.35 + other_score * sky_factor
-```
-
-**Effective weights under clear skies (sky_factor ≈ 1.0):**
-- Sky Clarity: 35%
-- Seeing: 25%
-- Transparency: 15%
-- Moon: 15%
-- Wind Calm: 10%
-
-**Under heavy cloud (sky_factor → 0):** Sky clarity dominates; other factors are suppressed.
-
-### 4.3 Composite Score — Moon Excluded (narrowband)
-
-```
-other_score = transparency * 0.25 + seeing * 0.25 + wind_calm * 0.10
-overall = sky_clarity * 0.40 + other_score * sky_factor
-```
-
-**Effective weights under clear skies:**
-- Sky Clarity: 40%
-- Transparency: 25%
-- Seeing: 25%
-- Wind Calm: 10%
+**Moon** multiplies the mean rather than joining it, from 1.0 at no moon down to
+a floor of `MOON_FLOOR` (0.35) — a floor, not a gate, because bright targets
+survive moonlight. The per-hour sub-score is
+`100 * (1 - illumination * sin(altitude))`, so a full moon at 5° costs far less
+than one overhead; below the horizon it is 100. Ignored entirely in narrowband
+mode.
 
 ### 4.4 Quality Labels
 
 | Score Range | Label |
 |-------------|-------|
-| 80–100 | Excellent |
-| 55–79 | Good |
-| 30–54 | Marginal |
-| 0–29 | Poor |
+| 75–100 | Excellent |
+| 50–74 | Good |
+| 25–49 | Marginal |
+| 0–24 | Poor |
+
+**Unusable** overrides all of these when `availability < 0.10` (≈ 78% cover, or
+any closed gate). It is a statement about whether the hour is imageable at all,
+not the bottom bucket of the scale, so it cannot be derived from the score alone.
+
+### 4.5 Night aggregation
+
+Hours are scored individually and then aggregated — the night is **not** scored
+from averaged inputs, which would be wrong for a gate product and would discard
+which hours were good. `imaging_quality` is the mean over hours inside the
+darkness window; `expected_useful_hours` is `Σ availability × quality`, i.e.
+equivalent hours of perfect data, and is the number that belongs next to a
+go/no-go decision.
+
+Full rationale and sources: `docs/imaging-quality-model.md`.
 
 ---
 
@@ -371,13 +374,13 @@ to provide context before and after the imaging window.
 For each weather hour in the window:
 
 1. **Seeing:** `_compute_seeing(h, prev_h)` — selects wind-shear or surface model
-2. **Sky Clarity:** `compute_sky_clarity()` — weighted multi-layer (low×1.0, mid×0.9, high×0.6), falls back to `100 - cloud_cover_pct`
-3. **Wind Calm:** Same piecewise linear as in imaging_quality.py (duplicated inline):
+2. **Darkness:** `darkness_fraction()` — exact overlap with the usable window
+3. **Wind Calm:** `wind_calm_score()` from `imaging_quality.py` — one definition, no longer duplicated inline:
    ```
    ≤ 5: 100
    5–15: 100 - (wind - 5) * 4
-   15–30: 60 - (wind - 15) * (52/15)
-   > 30: 0
+   15–40: 60 - (wind - 15) * (60/25)
+   > 40: 0
    ```
 4. **Dryness:** `int(round(clamp(100 - humidity_pct, 0, 100)))`
 5. **Moon altitude & illumination:** Looked up from astronomy hourly data by HH:MM match

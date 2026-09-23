@@ -4,7 +4,7 @@
 
 **Maintenance model:** Updated incrementally as features land. Not exhaustive — a one-paragraph-per-feature summary is enough. The goal is "good enough that an architecture discussion doesn't miss obvious existing functionality," not "complete API documentation."
 
-**NightCrate version:** 0.41.3
+**NightCrate version:** 0.41.4
 
 **Last updated:** 2026-09-12
 
@@ -242,9 +242,9 @@ Multi-format viewer: FITS, XISF (clean-room parser, no GPL dependency), PixInsig
 
 **Status:** `[shipped]`
 
-7-day imaging quality forecast with hourly detail. Composite 0–100 quality scores per night with weighted factors: sky clarity (35–40%), seeing (25%), transparency (15–25%), moon (0–15%), wind calm (10%). Broadband/narrowband weight sets toggle via moon penalty setting. Cloud gating multiplies non-sky factors by √(sky_clarity/100). Seeing estimated via blended surface (JAG Lab) + wind-shear (Trinquet/Cherubini) models. Transparency scored from PWV + AOD + humidity + visibility with graceful fallback tiers. Dew risk classification from temperature–dew point spread with safe window computation.
+7-day imaging quality forecast with hourly detail. **Rebuilt in v0.41.4:** the score is `100 × availability × quality`, where availability is a *product* of gates (darkness, precipitation, wind) and a cloud yield curve `(1 − cover)^1.5`, and quality is a weighted mean of seeing (45%), transparency (40%) and wind calm (15%) times a moon factor with a 0.35 floor. Because availability is a product, 100% cloud is exactly 0 by construction. The previous model had cloud as an additive term with `√(sky_clarity/100)` gating, which gave the score a floor — 100% cirrus scored 46, and 55 with every other factor perfect — and weighted high cloud at 0.6 on a visual-observing heuristic. Effective cover is now the maximum over the total and every layer. Hours are scored individually and the night aggregated from them, never scored from averaged inputs; `expected_useful_hours` (Σ availability × quality) is the go/no-go figure. Darkness is an exact per-hour overlap with the twilight window (sun ≤ −18°, widening to ≤ −12° for narrowband), and the moon sub-score is `100 × (1 − illumination × sin(altitude))`. Seeing estimated via blended surface (JAG Lab) + wind-shear (Trinquet/Cherubini) models. Transparency scored from PWV + AOD + humidity + visibility with graceful fallback tiers. Dew risk classification from temperature–dew point spread with safe window computation — advisory only, never affects the score. Rationale and sources: `docs/imaging-quality-model.md`.
 
-**UI:** Daily card view with quality badge (Excellent/Good/Marginal/Poor, sequential blue palette). Hourly timeline with D3 SVG: darkness gradient, moon polyline, score factor grid, weather details. Location selector from saved locations. Moon phase icon with terminator rendering. Methodology help accordion. Metric/imperial unit toggle.
+**UI:** Daily card view with quality badge (Excellent/Good/Marginal/Poor/**Unusable**, sequential blue palette) and "≈ N h of usable data". Hourly timeline with D3 SVG: darkness gradient, moon polyline, an 8-row score factor grid that now shows the gates, weather details. `Unusable` cells are hatched — they score 0, which on a darker-is-better ramp is the palest cell, so colour alone would read as innocuous. Location selector from saved locations. Moon phase icon with terminator rendering. Methodology accordion, now rendering the backend's own `METHODOLOGY` markdown instead of a hardcoded duplicate. Metric/imperial unit toggle.
 
 - **Route:** `/weather`
 - **API:** `/api/weather/forecast`, `/api/weather/hourly/{date}`, `/api/weather/methodology`

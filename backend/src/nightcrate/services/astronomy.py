@@ -5,6 +5,7 @@ Pure computation module using astropy. No DB, no HTTP, no FastAPI imports.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -151,6 +152,25 @@ def _moon_altitudes(times: Time, location: EarthLocation) -> np.ndarray:
     moon = get_body("moon", times, location)
     moon_altaz = moon.transform_to(altaz_frame)
     return np.asarray(moon_altaz.alt.deg)
+
+
+def moon_altitudes_at(
+    times_utc: Sequence[datetime],
+    latitude: float,
+    longitude: float,
+    elevation_m: float | None,
+) -> list[float]:
+    """Moon altitude in degrees at each supplied UTC instant.
+
+    One vectorised astropy call for the whole sequence. Exists so the weather
+    scorer can get a per-hour moon altitude across a night without paying for
+    ``compute_hourly_astro``, which re-derives sunset/sunrise by dense sampling
+    before it gets to the moon.
+    """
+    if not times_utc:
+        return []
+    location = _make_location(latitude, longitude, elevation_m)
+    return [round(float(a), 2) for a in _moon_altitudes(Time(list(times_utc)), location)]
 
 
 def _time_to_utc_datetime(t: Time) -> datetime:

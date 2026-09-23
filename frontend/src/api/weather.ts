@@ -11,6 +11,33 @@ export interface MoonPolylinePoint {
   altitude_deg: number;
 }
 
+/** How a factor enters the score; drives grouping and colour in the UI. */
+export type FactorRole = "gate" | "yield" | "quality" | "modifier";
+
+/** Machine-readable advisories. Display text lives in the UI, not the API. */
+export type WeatherFlag =
+  | "no_darkness"
+  | "precipitation"
+  | "wind_gate"
+  | "overcast"
+  | "high_cloud_only"
+  | "layers_unavailable"
+  | "total_estimated"
+  | "dew_risk";
+
+export interface WeatherFactor {
+  key: string;
+  role: FactorRole;
+  /** 0-100, always higher-is-better (cloud shows clear-sky %, precip shows dry %). */
+  value: number | null;
+  /** Gate/yield/modifier: the multiplier applied. Quality: the term's weight. */
+  effect: number;
+  /** False when ignored in this mode (moon under narrowband) or input absent. */
+  applied: boolean;
+}
+
+export type QualityLabel = "Excellent" | "Good" | "Marginal" | "Poor" | "Unusable";
+
 export interface HourlyWeather {
   time: string;
   temperature_c: number;
@@ -28,14 +55,15 @@ export interface HourlyWeather {
   precipitation_probability_pct: number | null;
   pwv_mm: number | null;
   aod: number | null;
-  sky_clarity: number;
-  transparency_score: number;
-  seeing_score: number;
-  wind_calm: number;
   dew_risk: "low" | "moderate" | "high" | "critical";
   imaging_quality: number;
-  imaging_quality_label: string;
-  moon_score: number;
+  imaging_quality_label: QualityLabel;
+  /** Fraction of the hour expected to yield keepable frames, 0-1. */
+  availability: number;
+  /** Expected quality of those frames, 0-100. */
+  quality: number;
+  factors: WeatherFactor[];
+  flags: WeatherFlag[];
   moon_altitude_deg: number | null;
   moon_illumination_pct: number | null;
   darkness_category: string | null;
@@ -44,12 +72,13 @@ export interface HourlyWeather {
 export interface DailySummary {
   date: string;
   imaging_quality: number;
-  imaging_quality_label: string;
-  sky_clarity: number;
-  transparency_score: number;
-  seeing_score: number;
-  wind_calm: number;
-  moon_score: number;
+  imaging_quality_label: QualityLabel;
+  availability: number;
+  quality: number;
+  /** Equivalent hours of perfect data across the night. */
+  expected_useful_hours: number;
+  factors: WeatherFactor[];
+  flags: WeatherFlag[];
   sunset: string | null;
   sunrise: string | null;
   astro_dark_start: string | null;

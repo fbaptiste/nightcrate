@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from nightcrate.api.weather_models import (
     DailySummaryResponse,
     DewSafeWindowResponse,
+    FactorResponse,
     ForecastResponse,
     HourlyDetailResponse,
     HourlyWeatherResponse,
@@ -25,14 +26,23 @@ from nightcrate.services.astronomy import (
     compute_hourly_astro,
     compute_moon_polyline,
     compute_night_summary,
+    moon_altitudes_at,
 )
 from nightcrate.services.dew import (
     classify_dew_risk,
     compute_dew_safe_window,
 )
 from nightcrate.services.imaging_quality import (
-    compute_imaging_quality,
-    compute_sky_clarity,
+    UNUSABLE_LABEL,
+    Flag,
+    ImagingQuality,
+    Mode,
+    darkness_fraction,
+    expected_useful_hours,
+    label_for_score,
+    moon_score,
+    score_hour,
+    wind_calm_score,
 )
 from nightcrate.services.seeing import estimate_seeing_surface, estimate_seeing_wind_shear
 from nightcrate.services.transparency import estimate_transparency
@@ -53,55 +63,81 @@ router = APIRouter(prefix="/api/weather", tags=["Weather"])
 # ── Help text (verbatim from spec) ─────────────────────────────────────────
 
 METHODOLOGY = """\
-The imaging quality score (0\u2013100) rates each night\u2019s suitability for deep-sky \
-imaging. Higher is always better. Sky clarity acts as a cloud gating factor \u2014 \
-heavy clouds suppress the contribution of all other factors.
+The imaging quality score (0\u2013100) rates each forecast hour's suitability for \
+deep-sky imaging. Higher is always better. It reads as **expected useful data as a \
+fraction of a perfect hour**, so summing it across a night gives equivalent hours \
+of good data.
 
-### Factors & Weights
+### Two questions, two numbers
 
-| Factor       | Weight | No Moon | Description |
-|--------------|--------|---------|-------------|
-| Sky Clarity  | 35%    | 40%     | Cloud-weighted sky openness. Low, mid, and \
-high clouds are weighted 1.0 / 0.9 / 0.6 \u2014 thin cirrus hurts less than thick \
-stratus. Also acts as a gating multiplier on all other factors. |
-| Seeing       | 25%    | 25%     | Atmospheric turbulence estimate. Uses \
-upper-atmosphere wind shear at 200/300/500 hPa when available, surface \
-wind/humidity/stability as fallback. |
-| Transparency | 15%    | 25%     | Total-column water vapor (PWV), aerosol \
-optical depth (wildfire smoke, dust, pollution), surface humidity, and \
-visibility combined. Lower PWV and AOD = better narrowband and broadband \
-transparency. |
-| Moon         | 15%    | n/a     | Penalty based on how long the moon is above \
-the horizon during darkness and how bright it is. Disable for narrowband \
-imaging. |
-| Wind Calm    | 10%    | 10%     | Surface wind penalty. Calm (< 5 km/h) is \
-ideal; strong wind (> 25 km/h) scores poorly. |
+    score = availability \u00d7 quality
 
-### Cloud Gating
+**Availability** is the fraction of the hour that yields keepable sub-frames. It \
+is a *product* of hard gates and the cloud curve, so any closed gate zeroes it \
+and nothing downstream can rescue it. **Quality** is how good those frames will \
+be, and is a weighted mean \u2014 seeing, transparency and wind each degrade data, \
+but none alone makes a night unimageable. Both are shown, so a cirrus night can \
+read "0, though quality would have been 67".
 
-Other factors are multiplied by \u221a(sky_clarity / 100). At 50% cloud cover, \
-other factors contribute 71% of their normal weight. At 90% cloud cover, 32%. \
-At 100% cloud, 0. Perfect seeing can\u2019t save a cloudy night.
+### Gates and the cloud curve (availability)
+
+| Factor | Behaviour |
+|--------|-----------|
+| Darkness | Fraction of the hour inside astronomical darkness (sun below \u221218\u00b0). \
+Narrowband mode uses sun below \u221212\u00b0, keeping the astronomical-twilight hours \
+a 3nm filter can shoot through. No darkness at all \u2192 0. |
+| Precipitation | Any forecast precipitation *amount* closes the hour outright. \
+Probability ramps the gate from 1 to 0 across 40\u201370%. |
+| Wind | Sustained wind ramps the gate from 1 to 0 across 40\u201360 km/h \u2014 above \
+that a tall OTA is unsafe and guiding is hopeless regardless of sky. |
+| Cloud | Yield is (1 \u2212 cover)^1.5 on the **maximum** of total and per-layer \
+cover. Exactly 0 at 100% cover, for any layer. |
+
+**Cloud counts fully, whatever its altitude.** The forecast reports high cloud as \
+*coverage* inferred from relative humidity, not opacity, so it cannot tell \
+subvisual cirrus from an opaque deck. Giving high cloud partial credit is what \
+made an overcast cirrus night score 46 in the previous model. Layer composition \
+now drives only an advisory: when obscuration is almost all above 8 km, the hour \
+is flagged so you can check satellite IR before writing the night off.
+
+### Quality factors
+
+| Factor       | Weight | Description |
+|--------------|--------|-------------|
+| Seeing       | 45%    | Atmospheric turbulence. Upper-atmosphere wind shear at \
+200/300/500 hPa when available, surface wind/humidity/stability as fallback. |
+| Transparency | 40%    | Total-column water vapour (PWV), aerosol optical depth \
+(smoke, dust, pollution), surface humidity and visibility. |
+| Wind Calm    | 15%    | Surface wind. Calm (< 5 km/h) is ideal; 40 km/h scores zero. |
+
+The **Moon** multiplies quality rather than adding to it, from 1.0 at no moon down \
+to a floor of 0.35 under a full moon high in the sky \u2014 a floor, not a gate, \
+because bright targets survive moonlight. The per-hour penalty scales with \
+illumination and with the sine of the moon's altitude, so a full moon at 5\u00b0 costs \
+far less than one overhead. Disabled entirely in narrowband mode.
 
 ### Quality Labels
 
 | Score   | Label     |
 |---------|-----------|
-| 80\u2013100  | Excellent |
-| 55\u201379   | Good      |
-| 30\u201354   | Marginal  |
-| 0\u201329    | Poor      |
+| 75\u2013100  | Excellent |
+| 50\u201374   | Good      |
+| 25\u201349   | Marginal  |
+| 0\u201324    | Poor      |
+
+**Unusable** overrides all of these when availability falls below 0.10 \
+(\u2248 78% cloud, or any closed gate) \u2014 it is a statement about whether you can \
+image at all, not the bottom bucket of the scale.
 
 ### Dew Risk
 
-Classified from temperature minus dew point spread:
+Classified from temperature minus dew point spread. Advisory only: it never \
+affects the score, because dew heaters make it a preparation issue rather than a \
+go/no-go one.
 - **Low:** spread > 5 \u00b0C
 - **Moderate:** spread 3\u20135 \u00b0C
 - **High:** spread 1\u20133 \u00b0C (dew heaters recommended)
 - **Critical:** spread < 1 \u00b0C (active dew formation likely)
-
-The \u201cDew-safe\u201d line on daily cards reports when the spread stays above 3 \u00b0C \
-during darkness.
 
 ### Data Sources
 
@@ -109,7 +145,10 @@ during darkness.
 - **PWV:** Open-Meteo ECMWF IFS 0.25\u00b0 model
 - **Air quality (AOD):** Open-Meteo Air Quality API, CAMS Global
 - **Astronomy:** astropy (moon, twilight, elongation)
-- **Seeing model:** Trinquet & Vernin 2006, Cherubini & Businger 2013\
+- **Seeing model:** Trinquet & Vernin 2006, Cherubini & Businger 2013
+- **Cloud treatment:** ESO and Gemini observing-condition definitions; Sassen & \
+Cho (1992) cirrus optical-depth classes; mid-latitude cirrus climatology, \
+Atmos. Chem. Phys. 20, 4427\u20134444 (2020)\
 """
 
 
@@ -382,6 +421,102 @@ def _fmt_time(dt: datetime | None, tz: ZoneInfo) -> str | None:
     return dt.astimezone(tz).strftime("%H:%M")
 
 
+def _mode_for(moon_included: bool) -> Mode:
+    """Narrowband mode ignores the moon and widens the darkness gate to sun <= -12."""
+    return Mode.NORMAL if moon_included else Mode.NARROWBAND
+
+
+def _hour_utc(h, tz: ZoneInfo) -> datetime:
+    """Absolute UTC instant for a weather hour.
+
+    Weather rows are labelled in the *display* timezone while astronomy is
+    computed in the site timezone, so everything that joins the two must go
+    through the absolute instant rather than a wall-clock string.
+    """
+    return datetime.fromisoformat(h.time).replace(tzinfo=tz).astimezone(UTC)
+
+
+def _score_one_hour(
+    h,
+    *,
+    seeing: float,
+    transparency: float,
+    darkness: float,
+    moon_altitude_deg: float | None,
+    moon_illumination_pct: float,
+    mode: Mode,
+) -> ImagingQuality | None:
+    """Score a single forecast hour, or None when it carries no cloud data.
+
+    The scorer refuses to guess at missing cloud cover, which is right — but one
+    bad hour must not fail the whole request, so it is caught and reported here.
+    """
+    try:
+        return score_hour(
+            cloud_cover=h.cloud_cover_pct,
+            cloud_cover_low=h.cloud_cover_low_pct,
+            cloud_cover_mid=h.cloud_cover_mid_pct,
+            cloud_cover_high=h.cloud_cover_high_pct,
+            seeing=seeing,
+            transparency=transparency,
+            wind_calm=wind_calm_score(h.wind_speed_kmh),
+            moon=moon_score(moon_altitude_deg, moon_illumination_pct),
+            darkness=darkness,
+            precipitation_mm=h.precipitation_mm,
+            precipitation_probability=h.precipitation_probability_pct,
+            wind_speed_kmh=h.wind_speed_kmh,
+            temperature_c=h.temperature_c,
+            dew_point_c=h.dew_point_c,
+            mode=mode,
+        )
+    except ValueError:
+        logger.warning("[weather] hour %s has no cloud data - left unscored", h.time)
+        return None
+
+
+def _factor_rows(quality: ImagingQuality) -> list[FactorResponse]:
+    return [
+        FactorResponse(
+            key=f.key, role=f.role.value, value=f.value, effect=f.effect, applied=f.applied
+        )
+        for f in quality.factors
+    ]
+
+
+def _aggregate_factors(scored: list[ImagingQuality]) -> list[FactorResponse]:
+    """Mean of each factor across the night, in the model's own row order.
+
+    A factor counts as applied for the night if it applied in any hour, and its
+    displayed value averages only the hours where it had one.
+    """
+    if not scored:
+        return []
+    rows: list[FactorResponse] = []
+    for idx, template in enumerate(scored[0].factors):
+        same = [q.factors[idx] for q in scored if idx < len(q.factors)]
+        values = [f.value for f in same if f.value is not None]
+        rows.append(
+            FactorResponse(
+                key=template.key,
+                role=template.role.value,
+                value=round(sum(values) / len(values), 1) if values else None,
+                effect=round(sum(f.effect for f in same) / len(same), 4),
+                applied=any(f.applied for f in same),
+            )
+        )
+    return rows
+
+
+def _aggregate_flags(scored: list[ImagingQuality]) -> list[str]:
+    """Union of the night's flags, in first-seen order."""
+    seen: list[str] = []
+    for q in scored:
+        for flag in q.flags:
+            if flag.value not in seen:
+                seen.append(flag.value)
+    return seen
+
+
 def _compute_night_data(
     loc: dict,
     night_date: date,
@@ -412,12 +547,12 @@ def _compute_night_data(
         return DailySummaryResponse(
             date=night_date.isoformat(),
             imaging_quality=0,
-            imaging_quality_label="Poor",
-            sky_clarity=0,
-            transparency_score=0,
-            seeing_score=0,
-            wind_calm=0,
-            moon_score=100,
+            imaging_quality_label=UNUSABLE_LABEL,
+            availability=0.0,
+            quality=0.0,
+            expected_useful_hours=0.0,
+            factors=[],
+            flags=[Flag.NO_DARKNESS.value],
             sunset=_fmt_time(night.sunset, tz),
             sunrise=_fmt_time(night.sunrise, tz),
             astro_dark_start=_fmt_time(night.darkness.astro_start, tz),
@@ -453,7 +588,6 @@ def _compute_night_data(
     avg_cloud_low = sum(h.cloud_cover_low_pct for _, h in hours_data) / n
     avg_cloud_mid = sum(h.cloud_cover_mid_pct for _, h in hours_data) / n
     avg_cloud_high = sum(h.cloud_cover_high_pct for _, h in hours_data) / n
-    avg_wind = sum(h.wind_speed_kmh for _, h in hours_data) / n
     max_precip_prob = max(
         (h.precipitation_probability_pct or 0 for _, h in hours_data),
         default=0,
@@ -461,12 +595,12 @@ def _compute_night_data(
     temp_min = min(h.temperature_c for _, h in hours_data)
     temp_max = max(h.temperature_c for _, h in hours_data)
 
-    # Seeing scores
+    # Per-hour seeing and transparency: the scorer consumes these hour by hour,
+    # so there is deliberately no average taken here any more.
     seeing_scores = []
     for idx, (i, h) in enumerate(hours_data):
         prev_h = hours_data[idx - 1][1] if idx > 0 else None
         seeing_scores.append(_compute_seeing(h, prev_h))
-    avg_seeing = sum(seeing_scores) / len(seeing_scores)
 
     # Transparency scores (O(log n) per lookup via the prebuilt indexes)
     transparency_scores = []
@@ -474,26 +608,47 @@ def _compute_night_data(
         pwv_val = pwv_index.lookup(h.time)
         aod_val = aod_index.lookup(h.time)
         transparency_scores.append(_transparency_score(h, pwv_val, aod_val))
-    avg_transparency = sum(transparency_scores) / len(transparency_scores)
 
-    # Sky clarity (weighted)
-    sky_clarity = compute_sky_clarity(
-        cloud_cover_pct=avg_cloud,
-        cloud_cover_low_pct=avg_cloud_low,
-        cloud_cover_mid_pct=avg_cloud_mid,
-        cloud_cover_high_pct=avg_cloud_high,
+    # Score every hour, then aggregate. Scoring the *averaged* inputs once is
+    # structurally wrong for a gate product: averaging cloud across the night and
+    # then applying (1-f)^k is not the same as aggregating the per-hour yields,
+    # and it discards which hours were the good ones — the thing the user is
+    # actually deciding about.
+    mode = _mode_for(moon_included)
+    hour_utcs = [_hour_utc(h, tz) for _, h in hours_data]
+    moon_alts = moon_altitudes_at(
+        hour_utcs, loc["latitude"], loc["longitude"], loc.get("elevation_m")
     )
+    scored: list[ImagingQuality] = []
+    in_window: list[ImagingQuality] = []
+    for idx, (_, h) in enumerate(hours_data):
+        dark = darkness_fraction(hour_utcs[idx], night.darkness, mode=mode)
+        hour_quality = _score_one_hour(
+            h,
+            seeing=seeing_scores[idx],
+            transparency=transparency_scores[idx],
+            darkness=dark,
+            moon_altitude_deg=moon_alts[idx] if idx < len(moon_alts) else None,
+            moon_illumination_pct=night.moon.illumination_pct,
+            mode=mode,
+        )
+        if hour_quality is None:
+            continue
+        scored.append(hour_quality)
+        if dark > 0.0:
+            in_window.append(hour_quality)
 
-    quality = compute_imaging_quality(
-        sky_clarity=sky_clarity,
-        seeing_score=int(round(avg_seeing)),
-        transparency_score=int(round(avg_transparency)),
-        wind_speed_kmh=avg_wind,
-        moonless_dark_hours=night.moonless_dark_hours,
-        darkness_hours=night.darkness_hours,
-        moon_illumination_pct=night.moon.illumination_pct,
-        include_moon=moon_included,
-    )
+    # The night's headline averages only the hours inside the darkness window —
+    # padding a clear twilight hour into the mean would flatter a cloudy night.
+    # A fully clouded dark hour still counts, at 0.
+    rated = in_window or scored
+    if rated:
+        night_score = int(round(sum(q.score for q in rated) / len(rated)))
+        night_availability = sum(q.availability for q in rated) / len(rated)
+        night_quality = sum(q.quality for q in rated) / len(rated)
+    else:
+        night_score, night_availability, night_quality = 0, 0.0, 0.0
+    useful_hours = expected_useful_hours(scored)
 
     # Dew safe window — compute from hourly data during darkness
     dew_hourly: list[tuple[str, float, float]] = []
@@ -506,13 +661,13 @@ def _compute_night_data(
 
     return DailySummaryResponse(
         date=night_date.isoformat(),
-        imaging_quality=quality.overall,
-        imaging_quality_label=quality.label,
-        sky_clarity=quality.sky_clarity,
-        transparency_score=quality.transparency,
-        seeing_score=int(round(avg_seeing)),
-        wind_calm=quality.wind_calm,
-        moon_score=quality.moon_score,
+        imaging_quality=night_score,
+        imaging_quality_label=label_for_score(night_score, night_availability),
+        availability=round(night_availability, 4),
+        quality=round(night_quality, 1),
+        expected_useful_hours=round(useful_hours, 2),
+        factors=_aggregate_factors(rated),
+        flags=_aggregate_flags(rated),
         sunset=sunset_local.strftime("%H:%M"),
         sunrise=sunrise_local.strftime("%H:%M"),
         astro_dark_start=_fmt_time(night.darkness.astro_start, tz),
@@ -732,6 +887,7 @@ async def get_hourly(
     pwv_index = NearestMatchIndex(pwv_by_time)
     aod_index = NearestMatchIndex(aod_by_time)
 
+    mode = _mode_for(moon_included)
     hours: list[HourlyWeatherResponse] = []
     for idx, (i, h) in enumerate(matched):
         prev_h = matched[idx - 1][1] if idx > 0 else None
@@ -742,14 +898,6 @@ async def get_hourly(
         weather_dt = datetime.fromisoformat(h.time).replace(tzinfo=tz)
         astro = _astro_at(weather_dt.astimezone(UTC))
 
-        # Sky clarity (weighted by cloud layers)
-        sky_clarity_val = compute_sky_clarity(
-            cloud_cover_pct=h.cloud_cover_pct,
-            cloud_cover_low_pct=h.cloud_cover_low_pct,
-            cloud_cover_mid_pct=h.cloud_cover_mid_pct,
-            cloud_cover_high_pct=h.cloud_cover_high_pct,
-        )
-
         # Transparency (PWV and AOD via O(log n) lookup on prebuilt indexes)
         pwv_val = pwv_index.lookup(h.time)
         aod_val = aod_index.lookup(h.time)
@@ -758,18 +906,22 @@ async def get_hourly(
         # Dew risk
         dew_risk = classify_dew_risk(h.temperature_c, h.dew_point_c)
 
+        # Moon illumination comes from the same astro entry as the altitude —
+        # the nightly figure was previously used here while the hourly one was
+        # emitted in the response, i.e. two sources for one quantity.
         moon_alt = astro.moon_altitude_deg if astro else None
-        moon_up = moon_alt is not None and moon_alt > 0
-        quality = compute_imaging_quality(
-            sky_clarity=sky_clarity_val,
-            seeing_score=seeing,
-            transparency_score=transparency,
-            wind_speed_kmh=h.wind_speed_kmh,
-            moonless_dark_hours=0.0 if moon_up else 1.0,
-            darkness_hours=1.0,
-            moon_illumination_pct=night.moon.illumination_pct,
-            include_moon=moon_included,
+        moon_illum = astro.moon_illumination_pct if astro else night.moon.illumination_pct
+        quality = _score_one_hour(
+            h,
+            seeing=seeing,
+            transparency=transparency,
+            darkness=darkness_fraction(weather_dt.astimezone(UTC), night.darkness, mode=mode),
+            moon_altitude_deg=moon_alt,
+            moon_illumination_pct=moon_illum,
+            mode=mode,
         )
+        if quality is None:
+            continue
 
         hours.append(
             HourlyWeatherResponse(
@@ -789,14 +941,13 @@ async def get_hourly(
                 precipitation_probability_pct=h.precipitation_probability_pct,
                 pwv_mm=pwv_val,
                 aod=aod_val,
-                sky_clarity=sky_clarity_val,
-                transparency_score=transparency,
-                seeing_score=seeing,
-                wind_calm=quality.wind_calm,
                 dew_risk=dew_risk,
-                imaging_quality=quality.overall,
+                imaging_quality=quality.score,
                 imaging_quality_label=quality.label,
-                moon_score=quality.moon_score,
+                availability=round(quality.availability, 4),
+                quality=round(quality.quality, 1),
+                factors=_factor_rows(quality),
+                flags=[f.value for f in quality.flags],
                 moon_altitude_deg=astro.moon_altitude_deg if astro else None,
                 moon_illumination_pct=(astro.moon_illumination_pct if astro else None),
                 darkness_category=(astro.darkness_category if astro else None),

@@ -11,6 +11,23 @@ class DewSafeWindowResponse(BaseModel):
     after_time: str | None = None
 
 
+class FactorResponse(BaseModel):
+    """One row of the score breakdown.
+
+    ``value`` is the 0-100 figure to display and always reads higher-is-better
+    (cloud shows clear-sky %, precipitation shows dry %). ``effect`` is the
+    multiplier actually applied for a gate/yield/modifier, or the weight for a
+    quality term. ``applied`` is False when the factor is ignored in this mode
+    (moon under narrowband) or its input was absent.
+    """
+
+    key: str
+    role: Literal["gate", "yield", "quality", "modifier"]
+    value: float | None
+    effect: float
+    applied: bool
+
+
 class MoonPolylinePointResponse(BaseModel):
     time_utc: str
     altitude_deg: float
@@ -33,14 +50,13 @@ class HourlyWeatherResponse(BaseModel):
     precipitation_probability_pct: float | None
     pwv_mm: float | None
     aod: float | None
-    sky_clarity: int
-    transparency_score: int
-    seeing_score: int
-    wind_calm: int
     dew_risk: Literal["low", "moderate", "high", "critical"]
     imaging_quality: int
     imaging_quality_label: str
-    moon_score: int
+    availability: float
+    quality: float
+    factors: list[FactorResponse]
+    flags: list[str]
     moon_altitude_deg: float | None
     moon_illumination_pct: float | None
     darkness_category: str | None
@@ -50,11 +66,11 @@ class DailySummaryResponse(BaseModel):
     date: str
     imaging_quality: int
     imaging_quality_label: str
-    sky_clarity: int
-    transparency_score: int
-    seeing_score: int
-    wind_calm: int
-    moon_score: int
+    availability: float
+    quality: float
+    expected_useful_hours: float
+    factors: list[FactorResponse]
+    flags: list[str]
     sunset: str | None  # HH:MM local — None for polar day
     sunrise: str | None  # HH:MM local — None for polar day
     astro_dark_start: str | None  # HH:MM local — None if astro dark not reached
