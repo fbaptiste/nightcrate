@@ -3,6 +3,7 @@ import Card from "@mui/material/Card";
 import CardActionArea from "@mui/material/CardActionArea";
 import CardContent from "@mui/material/CardContent";
 import Divider from "@mui/material/Divider";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import ThermostatIcon from "@mui/icons-material/Thermostat";
 import WaterDropIcon from "@mui/icons-material/WaterDrop";
@@ -162,12 +163,43 @@ export default function DailyCard({ day, selected, units, onClick }: DailyCardPr
                 —
               </Typography>
             ) : (
-              <QualityBadge
-                score={day.imaging_quality}
-                label={day.imaging_quality_label}
-                size="large"
-                showLabel
-              />
+              <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <QualityBadge
+                  score={day.imaging_quality}
+                  label={day.imaging_quality_label}
+                  size="large"
+                  showLabel
+                />
+                {/* The forecast models only get a say when they disagree enough to
+                    change the verdict. On the nights they agree this would be
+                    noise ("0–0"), and on the nights they don't, a single number
+                    presents a coin-flip as settled fact. */}
+                {day.forecast_uncertain &&
+                  day.score_min !== null &&
+                  day.score_max !== null && (
+                    <Tooltip
+                      arrow
+                      title={
+                        "Forecast models disagree about cloud for this night: they put it " +
+                        `between ${day.score_min} and ${day.score_max}. Worth re-checking ` +
+                        "closer to the night rather than treating the headline score as settled."
+                      }
+                    >
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          mt: 0.25,
+                          fontSize: "0.65rem",
+                          color: "text.secondary",
+                          fontStyle: "italic",
+                          cursor: "help",
+                        }}
+                      >
+                        {`could be ${day.score_min}\u2013${day.score_max}`}
+                      </Typography>
+                    </Tooltip>
+                  )}
+              </Box>
             )}
           </Box>
 

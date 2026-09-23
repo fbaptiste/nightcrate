@@ -64,6 +64,11 @@ export interface HourlyWeather {
   quality: number;
   factors: WeatherFactor[];
   flags: WeatherFlag[];
+  /** Score range across the forecast models. Null when fewer than two cover it. */
+  score_min: number | null;
+  score_max: number | null;
+  /** True when the models disagree enough to land in different quality labels. */
+  forecast_uncertain: boolean;
   moon_altitude_deg: number | null;
   moon_illumination_pct: number | null;
   darkness_category: string | null;
@@ -79,6 +84,11 @@ export interface DailySummary {
   expected_useful_hours: number;
   factors: WeatherFactor[];
   flags: WeatherFlag[];
+  /** Score range across the forecast models. Null when fewer than two cover it. */
+  score_min: number | null;
+  score_max: number | null;
+  /** True when the models disagree enough to land in different quality labels. */
+  forecast_uncertain: boolean;
   sunset: string | null;
   sunrise: string | null;
   astro_dark_start: string | null;

@@ -739,6 +739,28 @@ On-disk caches that outlive the SQLite DB (thumbnails, sky tiles) **must encode 
   `darkness_category`, which is one instantaneous classification at the top of the
   hour. `moon_score` is `100 × (1 − illumination × sin(altitude))`. Both live in
   `services/imaging_quality.py`.
+- **Cloud comes from ECMWF, not `best_match` — and that was measured, not preferred
+  (v0.41.5).** `best_match` resolves to GFS, which over 126 night hours had a day-ahead
+  mean absolute error of 32 pts against ECMWF's 18, a +11.8 pt too-cloudy bias, and
+  called a clear night cloudy 25 times against ECMWF's 8. It reported a genuinely
+  43 %-cloud night as 100 %. **Only cloud moved** — ECMWF IFS 0.25 serves no
+  `visibility`, which transparency needs, so everything else still comes from
+  `best_match`. Counter-intuitive result worth not re-deriving: the *median* of three
+  models is worse than ECMWF alone. Evidence and caveats in
+  `docs/imaging-quality-model.md` §7.
+- **The uncertainty flag needs BOTH a label difference and a material spread.** Three
+  models are fetched in one request and the score re-run on each. Flagging on "the
+  extremes fall in different labels" alone marks essentially every night — a ten-hour
+  night with three models almost always has one boundary-straddling hour — and two
+  models 2 points apart can straddle 50. A flag that is always on says nothing, so it
+  also requires `FORECAST_UNCERTAIN_MIN_SPREAD`. Nights are judged on their own
+  aggregated extremes, never `any()` over the hours.
+- **Whatever cloud series is scored is the one that must be reported.** The hourly
+  `cloud_cover_*` fields and the nightly averages carry the *primary model's* figures,
+  not the main forecast's — emitting `best_match`'s put a "Clear Sky 30" factor above a
+  "Cloud (total) 0%" raw row. Note ECMWF sometimes reports a total below its own layer;
+  effective cover is the max over total and all layers, and the raw rows are left as
+  reported rather than silently corrected.
 - **`api/weather.py:METHODOLOGY` is the single source for the scoring docs.** The
   frontend renders it via `fetchMethodology`; `MethodologyInfo.tsx` used to hardcode a
   duplicate that silently went stale. Change the model, change METHODOLOGY.

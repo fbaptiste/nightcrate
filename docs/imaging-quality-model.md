@@ -354,6 +354,68 @@ All in the module header, each with its rationale in the docstring:
 
 ---
 
+---
+
+## 7. The cloud forecast itself (v0.41.5)
+
+The model above is only as good as the cloud number it is fed, and that turned
+out to be the larger error source.
+
+### What was measured
+
+Day-ahead forecasts against ERA5 reanalysis, **126 night hours** (20:00–04:00)
+over 2026-09-08 to 2026-09-21, at one mid-latitude location:
+
+| Source | Mean abs error | Bias | Missed-clear hours |
+|---|---|---|---|
+| `ecmwf_ifs025` | **18.2 pts** | −2.6 | **8** |
+| median of three | 19.1 | +6.3 | 15 |
+| mean of three | 20.3 | +8.7 | — |
+| `icon_seamless` | 23.0 | +17.1 | 24 |
+| `gfs_seamless` | **32.4** | +11.8 | **25** |
+
+"Missed-clear" is the forecast saying cloudy when ERA5 says it was clear — the
+error that costs an imaging night. Open-Meteo's `best_match` resolves to GFS at
+this location, so the app was running on the worst of the three: it reported a
+genuinely 43 %-cloud night as 100 % and scored every hour of it 0.
+
+Two results worth keeping because they are counter-intuitive:
+
+- **The ensemble median is not better.** Taking the median of three models
+  (19.1) is worse than ECMWF alone (18.2), so the obvious "combine them" instinct
+  does not pay here.
+- **GFS is not merely noisy, it is biased** (+11.8 pts too cloudy). A bias that
+  direction systematically hides usable nights.
+
+### What was changed
+
+`services/weather.py:CLOUD_PRIMARY_MODEL` is ECMWF. **Only cloud moved** — the
+measurement covered nothing else, and ECMWF IFS 0.25 serves no `visibility` at
+all, which the transparency score needs. Everything else still comes from
+`best_match`.
+
+### Caveats on the evidence
+
+One location, two weeks, one season (late-summer monsoon tail, cirrus-heavy).
+The effect size is large and in the direction that hurts, which is why it was
+acted on, but it is not a general claim about these models. Re-measuring in a
+different regime before treating it as settled would be reasonable.
+
+### The spread
+
+Three models are fetched in one request, so the disagreement between them is
+free. It is shown only when the aggregated extremes fall in **different quality
+labels** *and* differ by at least `FORECAST_UNCERTAIN_MIN_SPREAD` points. Both
+conditions are needed: the label test alone is brittle at the boundaries (two
+models 2 points apart can straddle 50 and get flagged), and the spread test alone
+would flag numeric differences that do not change the decision.
+
+A note on reading the raw cloud rows: ECMWF sometimes reports a `total` lower
+than one of its own layers (total 0 %, high 36 %). Effective cover is the maximum
+over total and every layer, so the score follows the layer; the raw rows are left
+as the model reported them rather than silently corrected.
+
+
 ## Sources
 
 - Open-Meteo forecast API docs (layer definitions, total as area fraction, RH-based

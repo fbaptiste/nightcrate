@@ -2,11 +2,32 @@
 
 import importlib.resources
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import aiosqlite
 import numpy as np
 import pytest
 from astropy.io import fits
+
+
+@pytest.fixture(autouse=True)
+def _no_cloud_model_network(monkeypatch):
+    """Keep the multi-model cloud fetch off the network in every test.
+
+    The weather tests patch `_fetch_or_cached` and `_fetch_or_cached_supplementary`
+    individually, but the cloud-model fetch (v0.41.5) is a third call and its
+    failure path is deliberately silent — so without this a test suite run would
+    quietly make one live Open-Meteo request per weather request and still pass.
+    Returning None exercises the documented fallback (primary cloud comes from the
+    main forecast, no spread shown). Tests that want a spread patch it themselves;
+    an inner patch wins over this one.
+    """
+    # No `raising=False`: if this function is ever renamed, every test should fail
+    # loudly here rather than quietly resume making live Open-Meteo calls.
+    monkeypatch.setattr(
+        "nightcrate.api.weather._fetch_or_cached_cloud_models",
+        AsyncMock(return_value=None),
+    )
 
 
 @pytest.fixture(autouse=True)

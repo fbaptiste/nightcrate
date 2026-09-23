@@ -63,6 +63,9 @@ Living document tracking implementation status. Check off items as they are comp
 - [v0.41.2 — Catalogue Gaps + Planner Pool](#v0412--catalogue-gaps--planner-pool) ✅
 - [v0.41.3 — Frame Quality Metrics](#v0413--frame-quality-metrics) ✅
 - [v0.41.4 — Imaging Quality Redesign](#v0414--imaging-quality-redesign) ✅
+- [v0.41.5 — Forecast Source + Model Spread](#v0415--forecast-source--model-spread) ✅
+- [v0.41.6 — Configurable Score + Rig-Aware Gates](#v0416--configurable-score--rig-aware-gates)
+- [Deferred — known work not yet versioned](#deferred--known-work-not-yet-versioned)
 - [v0.42.0 — Calibration Coverage + Gallery Promotion](#v0420--calibration-coverage--gallery-promotion)
 - [v0.43.0 — Guiding (PHD2) Association + Session Timeline v1](#v0430--guiding-phd2-association--session-timeline-v1)
 - [v0.44.0 — Session Logs + Session Timeline v2](#v0440--session-logs--session-timeline-v2)
@@ -5984,6 +5987,247 @@ worked-example harness; this version ports that model and wires it in.
       upstream in the transparency derivation, not in the score.
 - [ ] **Per-rig wind gate** — 60 km/h is unsafe for a C11 and survivable for a
       small refractor.
+
+## v0.41.5 — Forecast Source + Model Spread
+
+**Status:** Done. **Branch:** `v0.41.5/forecast-source-and-spread`. The cloud
+forecast the score runs on, and an honest signal for when the models disagree
+about it. Inserted ahead of v0.42.0; nothing renumbered.
+
+Came directly out of v0.41.4's open verification item — "not re-checked against an
+independent source". Checking it found that the scoring model was fine and the
+**input** was the larger error.
+
+### The app was running on the worst of the three models
+
+- [x] **Measured, not assumed.** Day-ahead forecasts against ERA5 reanalysis over
+      **126 night hours** at one location: ECMWF 18.2 pts mean absolute error,
+      ICON 23.0, **GFS 32.4**. Open-Meteo's `best_match` resolves to GFS here, so
+      the app had the worst of them. GFS also carries a **+11.8 pt too-cloudy
+      bias** and called a clear night cloudy **25 times against ECMWF's 8** — the
+      error that costs an imaging night.
+- [x] The concrete miss: the night v0.41.4 was written around was genuinely
+      **43 % cloud**. GFS forecast 100 %, so every hour scored 0 Unusable. On the
+      real sky that night scores mean 33 with a best hour of 66 — the app said
+      "don't bother" about a night with a Good hour in it.
+- [x] **Only cloud moved.** The measurement covered nothing else, and ECMWF IFS
+      0.25 serves **no `visibility` at all**, which the transparency score needs.
+      Everything else still comes from `best_match`. Checked before switching, not
+      after.
+- [x] **The ensemble median is worse than ECMWF alone** (19.1 vs 18.2), so the
+      obvious "just combine them" move does not pay. Recorded so it is not
+      re-derived.
+- [x] Caveat kept in the open: one location, two weeks, one season. The effect size
+      is large and in the direction that hurts, which is why it was acted on.
+
+### The spread is free, so show it — but only when it matters
+
+- [x] Three models arrive in **one request** (`models=` takes a comma-separated
+      list), so the disagreement costs no extra API calls. The score is re-run on
+      each model's cloud with every other factor held fixed, so the range isolates
+      forecast disagreement rather than mixing in other differences.
+- [x] **Two conditions, both needed.** A night is uncertain when the aggregated
+      extremes fall in different quality labels **and** differ by at least
+      `FORECAST_UNCERTAIN_MIN_SPREAD`. The label test alone flagged **every single
+      night** — a ten-hour night with three models almost always has one hour whose
+      extremes straddle a boundary — and two models 2 points apart can straddle 50.
+      A flag that is always on carries no information. Both failure modes are pinned
+      by tests.
+- [x] Nights are judged on their **own aggregated extremes**, labelled with the same
+      rule as the headline. `Unusable` depends on availability rather than score, so
+      it cannot be recovered from a bare pair of integers — which is why the spread
+      helper returns full results, not two numbers.
+- [x] UI: the day card shows *"could be 5–32"* under the badge only on flagged
+      nights, and the hourly grid marks uncertain hours with a dashed rule. On the
+      four of seven nights the models agreed, nothing appears.
+
+### Two things the source switch broke, and the fixes
+
+- [x] **The panel contradicted itself.** The Clear Sky factor used ECMWF while the
+      raw "Cloud (total)" row still showed `best_match`, so a "Clear Sky 30" sat
+      above a "Cloud (total) 0%". The hourly cloud fields and the nightly averages
+      now carry whatever series was actually scored.
+- [x] **ECMWF reports a total below its own layers** (total 0 %, high 36 %).
+      Effective cover is the max over total and every layer, so the score follows
+      the layer and stays correct; the raw rows are left as the model reported them
+      rather than silently corrected. Worth knowing before it reads as a bug.
+- [x] **Migration 0057** widens `weather_cache.source` to accept `cloud_models`.
+      SQLite cannot alter a CHECK in place, so the table is rebuilt; existing rows
+      are carried over rather than dropped, to avoid a refetch burst for every
+      location on upgrade. **Verified on a DB already at 0056**, not just a fresh
+      build — that is the shape CLAUDE.md's migration rule exists for, and the
+      row-preservation claim is exactly what a fresh build cannot exercise: two
+      pre-existing rows survived byte-identical, `cloud_models` was rejected before
+      and accepted after, `integrity_check` and `foreign_key_check` clean, and
+      AUTOINCREMENT continued from the prior max id.
+
+### Verification
+
+- [x] 18 new tests in `test_forecast_spread.py`; full backend suite green. ruff,
+      ruff format, bandit (no new findings), `npm run build`.
+- [x] **A test-hermeticity bug was introduced and caught.** The new fetch is a third
+      call the existing weather tests did not mock, and its failure path is
+      deliberately silent — so the suite was quietly making one live Open-Meteo
+      request per weather request and still passing. An autouse fixture in
+      `conftest.py` now keeps it off the network for every test.
+- [x] **Driven in a real browser** against the live forecast: three of seven nights
+      flagged, ranges 0–12 / 5–32 / 0–23, nothing shown on the four that agreed.
+- [x] Fallback verified: a failed cloud-model fetch leaves the score working off the
+      main forecast with no range, rather than failing the request.
+- [ ] **Still one location, two weeks.** Re-measure in a different season before
+      treating ECMWF's win as a general result.
+
+## v0.41.6 — Configurable Score + Rig-Aware Gates
+
+**Status:** Planned. Let the user decide which factors the imaging-quality score
+takes into account, the way the moon toggle already works — and make the gates
+reflect the rig and the setup rather than one hardcoded assumption.
+
+**Origin (2026-09-22):** Fred, on the v0.41.5 forecast work — *"I often don't care
+about transparency as much as cloud cover. And since I always intend to leave the
+scope out at night, any chance of precipitation is a no-go for me, irrespective of
+how much is forecast — I don't have a dome that can close automatically."*
+
+**This is not one uniform feature, and the differences are the whole design.** The
+score has two structurally different halves (see `docs/imaging-quality-model.md`),
+and "add a checkbox per factor" would be wrong for three of them.
+
+### Quality terms — checkboxes, straightforwardly
+
+- [ ] **Seeing and transparency get checkboxes**, joining the existing moon toggle.
+      They are weighted terms in an arithmetic mean (`QUALITY_WEIGHTS`, currently
+      seeing 0.45 / transparency 0.40 / wind calm 0.15). Dropping one means
+      **renormalising the remainder to sum to 1**, not scoring it as zero — scoring
+      a dropped factor as zero would punish the night for a factor the user said to
+      ignore, which is the opposite of the intent.
+- [ ] Disabling *every* quality term is a real input. Decide deliberately: either
+      forbid it in the UI, or define quality as 1.0 so the score becomes pure
+      availability ("how much of the night is usable at all"). The latter is
+      arguably a legitimate view and costs nothing to support.
+- [ ] The moon is a **modifier, not a term** (it multiplies quality, with a floor),
+      so it stays on its existing path. Do not fold it into the weights.
+
+### Precipitation — a tolerance, not a toggle
+
+- [ ] **A checkbox here would mean "ignore rain", which is the opposite of what was
+      asked for.** The request is for the gate to be *stricter*: today it is fully
+      open below 40 % probability and only closes above 70 % (`PRECIP_PROBABILITY_RAMP`),
+      so a 30 % chance of rain currently costs an unattended scope nothing. That is
+      plainly wrong for a rig left out uncovered.
+- [ ] Model it as **how much rain risk this setup tolerates**. Two shapes worth
+      weighing: a plain "the scope is left out / the scope is protected" switch that
+      picks a preset ramp, or an explicit probability threshold. The switch is more
+      honest about what is actually being decided and does not ask the user to
+      invent a number; the threshold is more tunable. Fred's case is the strict end —
+      any non-zero probability closes the hour.
+- [ ] Note the existing asymmetry worth fixing at the same time: any forecast
+      precipitation **amount** above zero closes the gate outright, while a 46 %
+      **probability** only drops it to 0.80. Both come from the same forecast, so the
+      two paths should be consistent with each other under whatever tolerance is set.
+
+### Wind — belongs to the rig, not the user
+
+- [ ] `WIND_GATE_RAMP_KMH` (40 → 60 km/h) is a property of what is on the mount:
+      60 km/h is unsafe for a C11 and survivable for a small refractor. This is the
+      per-rig wind gate already carried forward from v0.41.4. If rigs gain it, the
+      weather page needs a rig selector or a sensible default, which is a bigger UI
+      question than it first appears — the weather page currently has no rig concept.
+
+### Cloud and darkness stay fixed
+
+- [ ] **Do not make cloud toggleable.** It is the gate the entire v0.41.4 redesign
+      exists to establish; an off switch hands back the original bug (100 % cloud
+      scoring 46). Darkness is physics. Neither is a preference.
+
+### What this breaks, and the honest cost
+
+- [ ] **The score stops being comparable** — to other users, and to the same user's
+      own past nights once they change a setting. That is acceptable for a personal
+      tool, but it has consequences: the pinned regression tests must assert the
+      **default** configuration explicitly, and `api/weather.py:METHODOLOGY` can no
+      longer state fixed weights as fact. It has to describe the user's current
+      configuration, which means the methodology text becomes partly generated.
+- [ ] Settings placement: the moon toggle is both a stored setting
+      (`weather_moon_penalty`) **and** a per-request query param plus a page checkbox.
+      Follow that pattern rather than inventing a second one. Adding settings needs no
+      migration — `core/config.py:Settings` is a Pydantic model over a KV table.
+- [ ] The model-disagreement range (v0.41.5) re-runs the same scoring per model, so
+      it picks up the user's configuration for free. No extra work, but worth
+      verifying rather than assuming.
+
+### Not in scope
+
+- [ ] Per-target or per-filter configurations (narrowband already has its own mode).
+- [ ] Making the calibration constants themselves user-facing (cloud exponent, moon
+      floor, label thresholds). Those change what the score *means*; these toggles
+      change what it *considers*. Different decisions, and the first one deserves its
+      own argument.
+
+## Deferred — known work not yet versioned
+
+Items deliberately left undone in v0.41.3–v0.41.5, collected here so they are
+findable without re-reading three version sections. Each says why it was skipped,
+because in every case the reason is more useful than the task.
+
+### Measurement debt
+
+- [ ] **Re-measure forecast skill in a different season.** The v0.41.5 switch to
+      ECMWF rests on 126 night hours at one location over two weeks of late-summer
+      monsoon — cirrus-heavy, which is exactly the regime GFS handled worst. The
+      effect size was large and in the direction that costs imaging nights, which is
+      why it was acted on, but it is not a general claim. The measurement is
+      reproducible: day-ahead forecasts from `previous-runs-api.open-meteo.com`
+      against ERA5 from `archive-api.open-meteo.com`, scored over night hours.
+      Method in `docs/imaging-quality-model.md` §7.
+- [ ] **Sanity-check the score against real observed skies**, not just against
+      another forecast. No amount of model-vs-model comparison establishes that the
+      cloud exponent (1.5, defensible range 1.5–2.0) is right.
+
+### Scoring model
+
+- [ ] **Cloud and transparency mildly double-count at partial cover.** Transparency
+      is derived from PWV / AOD / humidity / visibility, none of which measure cloud,
+      but upper-air moisture correlates with cirrus. The fix belongs upstream in the
+      transparency derivation, not in the score — do not "fix" it by reweighting.
+- [ ] **ECMWF reports a total below its own layers** (total 0 %, high 36 %).
+      Effective cover takes the max, so the score is right; the raw rows look odd.
+      Leaving them uncorrected is deliberate — they are what the model said.
+
+### Frame quality (v0.41.3 leftovers)
+
+- [ ] **The analyzer re-measures quality the catalog already stored.** Opening a
+      cataloged frame in the embedded overlay costs a ~0.9 s `detect_stars` for
+      numbers already sitting in `sub_frame`. Widening `AnalyzerItem` to carry them
+      and passing them as the query's `initialData` removes it. Related:
+      `/images/quality` is uncached while `/aberration/analyze` is DB-cached on
+      identical default settings, so the Aberration tab runs the same detection twice.
+- [ ] **`median_adu` is a full-array `np.median` on every light** (~185 ms of a
+      ~1.1 s frame) for a value the cards only show when there are no stars.
+      Subsampling matches the app's existing histogram pattern and costs ~0.001 %
+      accuracy — but it changes a stored metric, so it needs pinned values and a
+      deliberate decision, not a quiet edit.
+- [ ] **`BATCH_SIZE = 60` in `useAnalyzeRun`** pays a 0.3–0.6 s pool spawn per batch
+      (~10 % on lights, ~25 % on the ADU-only calibration path). 120–240 would cut the
+      churn at the cost of cancel latency. Left at 60 on purpose: cancel
+      responsiveness wins until someone complains about throughput.
+- [ ] **The catalog list is unvirtualized** and mounts up to five MUI `Tooltip`s per
+      analyzed card. DataGrid was rejected for its 100-row cap, but `react-window` /
+      `react-virtuoso` are MIT and would fit.
+
+### Consolidation
+
+- [ ] **`services/pixel_loader.py` absorbed one of three dispatch copies, not all
+      three.** `api/images.py:_load_image_data` and `api/aberration.py:_load_mono_data`
+      still hand-roll the same `file_type` ladder because they hold a pre-resolved
+      source for their caches rather than a path. They have already drifted on
+      `reshape_color`. The fix is a `load_from_resolved(source, file_type, index, hdu)`
+      seam those two can call. Until then a new format needs editing in three places.
+- [ ] **`path_resolver` raises FastAPI's `HTTPException` from inside `services/`**,
+      which is the actual layering violation behind the stringly-typed
+      `type(exc).__name__ == "HTTPException"` wrappers now duplicated in
+      `services/plate_solve.py` and `services/pixel_loader.py`. A domain
+      `PathResolveError` translated in the three routers removes both wrappers and
+      stops `services/` importing fastapi.
 
 ## v0.42.0 — Calibration Coverage + Gallery Promotion
 

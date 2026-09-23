@@ -43,6 +43,37 @@ _COMMON_HOURLY = [
     "precipitation_probability",
 ]
 
+# Cloud-forecast models requested alongside the main forecast.
+#
+# The primary is ECMWF, chosen on measurement rather than preference: over 126
+# night hours at a test location, day-ahead mean absolute error against ERA5
+# reanalysis was ECMWF 18.2 pts, ICON 23.0, GFS 32.4 — and GFS called a clear
+# night cloudy 25 times against ECMWF's 8. `best_match` resolves to GFS at that
+# location, which is why a genuinely 43%-cloud night was being reported as 100%.
+# See docs/imaging-quality-model.md.
+#
+# **Only cloud moves to ECMWF.** Everything else still comes from `best_match`,
+# because that is all the measurement covered — and because ECMWF IFS 0.25
+# serves no `visibility` at all, which the transparency score needs.
+CLOUD_PRIMARY_MODEL = "ecmwf_ifs025"
+CLOUD_SPREAD_MODELS = ("ecmwf_ifs025", "gfs_seamless", "icon_seamless")
+
+FORECAST_UNCERTAIN_MIN_SPREAD = 10
+"""Minimum score spread before a night counts as uncertain, on top of the
+extremes falling in different quality labels.
+
+The label test alone is brittle at the boundaries: two models 2 points apart can
+straddle the Marginal/Good line at 50 and get flagged, which is noise. Requiring
+two-fifths of a label band (they are 25 wide) keeps the flag for
+disagreements that would actually change the evening's plan."""
+
+_CLOUD_HOURLY = [
+    "cloud_cover",
+    "cloud_cover_low",
+    "cloud_cover_mid",
+    "cloud_cover_high",
+]
+
 _PRESSURE_LEVEL_HOURLY = [
     "wind_speed_200hPa",
     "wind_speed_300hPa",
@@ -231,6 +262,79 @@ def nearest_match(
     if not data:
         return None
     return NearestMatchIndex(data).lookup(target_time, max_gap_hours)
+
+
+@dataclass(frozen=True)
+class CloudModelData:
+    """Per-model cloud cover for one location, keyed by model then local time.
+
+    ``models[model][time] = (total, low, mid, high)``, percentages. A model that
+    did not return an hour is simply absent from that hour — ICON's horizon is
+    shorter than the 8-day window, so its tail is missing by design.
+    """
+
+    models: dict[str, dict[str, tuple[float, float, float, float]]]
+    raw_json: str
+
+    def at(self, model: str, time: str) -> tuple[float, float, float, float] | None:
+        return self.models.get(model, {}).get(time)
+
+    def spread_at(self, time: str) -> list[tuple[float, float, float, float]]:
+        """Every model's cloud figures for one hour, for the min/max spread."""
+        return [v for m in self.models if (v := self.models[m].get(time)) is not None]
+
+
+def parse_cloud_models(hourly: dict, models: tuple[str, ...]) -> dict:
+    """Split a multi-model Open-Meteo response into per-model series.
+
+    With more than one ``models=`` value every variable comes back suffixed
+    (``cloud_cover_ecmwf_ifs025``); with exactly one it does not. Only the
+    multi-model shape is parsed here.
+    """
+    times = hourly.get("time", [])
+    out: dict[str, dict[str, tuple[float, float, float, float]]] = {}
+    for model in models:
+        keys = [f"{v}_{model}" for v in _CLOUD_HOURLY]
+        if not all(k in hourly for k in keys):
+            continue
+        series: dict[str, tuple[float, float, float, float]] = {}
+        for i, t in enumerate(times):
+            vals = [hourly[k][i] for k in keys]
+            if any(v is None for v in vals):
+                continue  # model horizon ended, or a gap
+            series[t] = tuple(float(v) for v in vals)
+        if series:
+            out[model] = series
+    return out
+
+
+async def fetch_cloud_models(
+    latitude: float,
+    longitude: float,
+    timezone_str: str,
+    models: tuple[str, ...] = CLOUD_SPREAD_MODELS,
+) -> CloudModelData:
+    """Fetch cloud cover from several forecast models in one request.
+
+    Supplies both the primary cloud series (``CLOUD_PRIMARY_MODEL``) and the
+    spread between models, which is what tells the user the forecast is
+    uncertain rather than settled.
+    """
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "timezone": timezone_str,
+        "hourly": ",".join(_CLOUD_HOURLY),
+        "forecast_days": 8,
+        "models": ",".join(models),
+    }
+    response = await http_get(_FORECAST_URL, params=params, label="weather[cloud_models]")
+    response.raise_for_status()
+    data = response.json()
+    return CloudModelData(
+        models=parse_cloud_models(data.get("hourly", {}), models),
+        raw_json=json.dumps(data),
+    )
 
 
 async def fetch_weather(

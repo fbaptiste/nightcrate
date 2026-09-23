@@ -1,4 +1,4 @@
--- NightCrate version: 0.41.4
+-- NightCrate version: 0.41.5
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -910,7 +910,9 @@ END;
 CREATE TABLE IF NOT EXISTS weather_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     location_id INTEGER NOT NULL REFERENCES location(id) ON DELETE CASCADE,
-    source TEXT NOT NULL CHECK (source IN ('forecast', 'archive', 'openmeteo_aq', 'ecmwf_pwv')),
+    source TEXT NOT NULL CHECK (
+        source IN ('forecast', 'archive', 'openmeteo_aq', 'ecmwf_pwv', 'cloud_models')
+    ),
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
     response_json TEXT NOT NULL,

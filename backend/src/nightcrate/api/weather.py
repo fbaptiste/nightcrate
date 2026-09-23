@@ -47,12 +47,18 @@ from nightcrate.services.imaging_quality import (
 from nightcrate.services.seeing import estimate_seeing_surface, estimate_seeing_wind_shear
 from nightcrate.services.transparency import estimate_transparency
 from nightcrate.services.weather import (
+    CLOUD_PRIMARY_MODEL,
+    CLOUD_SPREAD_MODELS,
+    FORECAST_UNCERTAIN_MIN_SPREAD,
+    CloudModelData,
     NearestMatchIndex,
     SupplementaryData,
     WeatherData,
     fetch_air_quality,
+    fetch_cloud_models,
     fetch_pwv,
     fetch_weather,
+    parse_cloud_models,
     parse_hourly,
 )
 
@@ -139,9 +145,24 @@ go/no-go one.
 - **High:** spread 1\u20133 \u00b0C (dew heaters recommended)
 - **Critical:** spread < 1 \u00b0C (active dew formation likely)
 
+### Forecast Uncertainty
+
+Cloud cover comes from **ECMWF**, chosen by measurement: against reanalysis over \
+126 night hours, its day-ahead mean absolute error was 18 points against GFS's 32, \
+and it called a clear night cloudy 8 times against GFS's 25. Everything else still \
+comes from Open-Meteo's default blend.
+
+Two further models (GFS and ICON) are fetched in the same request, and the score is \
+re-run on each. When their verdicts differ \u2014 different quality labels, and far \
+enough apart to change the evening's plan \u2014 the night is marked as uncertain and \
+the range is shown. On the nights the models agree, nothing is shown, because a \
+range of "0\u20130" is noise. A wide range is a reason to look again closer to the \
+night rather than to trust the headline number.
+
 ### Data Sources
 
-- **Weather:** Open-Meteo forecast API (free)
+- **Weather:** Open-Meteo forecast API (free); cloud from ECMWF IFS 0.25, with \
+GFS and ICON fetched alongside for the uncertainty range
 - **PWV:** Open-Meteo ECMWF IFS 0.25\u00b0 model
 - **Air quality (AOD):** Open-Meteo Air Quality API, CAMS Global
 - **Astronomy:** astropy (moon, twilight, elongation)
@@ -251,6 +272,64 @@ async def _fetch_or_cached(
             await conn.commit()
     except Exception:
         logger.warning("Failed to cache weather data (non-fatal)")
+
+    return data
+
+
+async def _fetch_or_cached_cloud_models(
+    location_id: int,
+    latitude: float,
+    longitude: float,
+    timezone_str: str,
+    ttl_hours: int | None = None,
+) -> CloudModelData | None:
+    """Multi-model cloud cover with cache. None when unavailable.
+
+    A failure here must never fail the forecast: the primary cloud series falls
+    back to the main `best_match` response and the spread is simply not shown.
+    """
+    if ttl_hours is None:
+        settings = await get_settings()
+        ttl_hours = settings.weather_cache_ttl_hours
+
+    try:
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                """SELECT response_json FROM weather_cache
+                   WHERE location_id = ? AND source = 'cloud_models'
+                     AND fetched_at > datetime('now', ?)
+                   ORDER BY fetched_at DESC LIMIT 1""",
+                (location_id, f"-{ttl_hours} hours"),
+            )
+            row = await cursor.fetchone()
+            if row is not None:
+                logger.debug("[weather-cache] HIT cloud_models location=%s", location_id)
+                raw = json.loads(row["response_json"])
+                return CloudModelData(
+                    models=parse_cloud_models(raw.get("hourly", {}), CLOUD_SPREAD_MODELS),
+                    raw_json=row["response_json"],
+                )
+    except Exception:
+        logger.warning("[weather-cache] cloud_models cache read failed (non-fatal)")
+
+    logger.info("[weather-cache] MISS cloud_models location=%s -> fetching", location_id)
+    try:
+        data = await fetch_cloud_models(latitude, longitude, timezone_str)
+    except Exception:
+        logger.warning("[weather] cloud-model fetch failed; falling back to the primary forecast")
+        return None
+
+    try:
+        async with get_db() as conn:
+            await conn.execute(
+                """INSERT OR REPLACE INTO weather_cache
+                   (location_id, source, start_date, end_date, response_json, fetched_at)
+                   VALUES (?, 'cloud_models', '', '', ?, datetime('now'))""",
+                (location_id, data.raw_json),
+            )
+            await conn.commit()
+    except Exception:
+        logger.warning("Failed to cache cloud-model data (non-fatal)")
 
     return data
 
@@ -436,9 +515,30 @@ def _hour_utc(h, tz: ZoneInfo) -> datetime:
     return datetime.fromisoformat(h.time).replace(tzinfo=tz).astimezone(UTC)
 
 
+def _cloud_for(h, cloud_models: CloudModelData | None, time_key: str) -> tuple:
+    """Cloud figures to score this hour with.
+
+    The primary model (ECMWF, chosen on measured skill — see
+    `services/weather.py:CLOUD_PRIMARY_MODEL`) when it covers the hour, else the
+    main `best_match` forecast. Falling back rather than skipping matters at the
+    8-day edge, where a model's horizon can end mid-window.
+    """
+    if cloud_models is not None:
+        primary = cloud_models.at(CLOUD_PRIMARY_MODEL, time_key)
+        if primary is not None:
+            return primary
+    return (
+        h.cloud_cover_pct,
+        h.cloud_cover_low_pct,
+        h.cloud_cover_mid_pct,
+        h.cloud_cover_high_pct,
+    )
+
+
 def _score_one_hour(
     h,
     *,
+    cloud: tuple,
     seeing: float,
     transparency: float,
     darkness: float,
@@ -452,11 +552,12 @@ def _score_one_hour(
     bad hour must not fail the whole request, so it is caught and reported here.
     """
     try:
+        total, low, mid, high = cloud
         return score_hour(
-            cloud_cover=h.cloud_cover_pct,
-            cloud_cover_low=h.cloud_cover_low_pct,
-            cloud_cover_mid=h.cloud_cover_mid_pct,
-            cloud_cover_high=h.cloud_cover_high_pct,
+            cloud_cover=total,
+            cloud_cover_low=low,
+            cloud_cover_mid=mid,
+            cloud_cover_high=high,
             seeing=seeing,
             transparency=transparency,
             wind_calm=wind_calm_score(h.wind_speed_kmh),
@@ -472,6 +573,32 @@ def _score_one_hour(
     except ValueError:
         logger.warning("[weather] hour %s has no cloud data - left unscored", h.time)
         return None
+
+
+def _score_spread(
+    h, cloud_models: CloudModelData | None, time_key: str, **score_kw
+) -> tuple[ImagingQuality, ImagingQuality] | None:
+    """The lowest- and highest-scoring forecast model for one hour.
+
+    Only cloud varies between the runs; everything else is held at the values the
+    primary score used, so the range isolates forecast disagreement rather than
+    mixing in other differences.
+
+    Returns the full results rather than two numbers so a night can aggregate the
+    extremes the same way it aggregates the headline, and label them with the same
+    rule — ``Unusable`` depends on availability, not on the score, so it cannot be
+    recovered from a bare pair of integers. None with fewer than two models
+    covering the hour (ICON's horizon ends before the 8-day window does).
+    """
+    if cloud_models is None:
+        return None
+    variants = cloud_models.spread_at(time_key)
+    if len(variants) < 2:
+        return None
+    scored = [q for c in variants if (q := _score_one_hour(h, cloud=c, **score_kw)) is not None]
+    if len(scored) < 2:
+        return None
+    return min(scored, key=lambda q: q.score), max(scored, key=lambda q: q.score)
 
 
 def _factor_rows(quality: ImagingQuality) -> list[FactorResponse]:
@@ -525,6 +652,7 @@ def _compute_night_data(
     pwv_index: NearestMatchIndex,
     aod_index: NearestMatchIndex,
     moon_included: bool,
+    cloud_models: CloudModelData | None = None,
 ) -> DailySummaryResponse | None:
     """Compute a daily summary for one night, driven by actual sunset/sunrise."""
     # Use geographic timezone for astronomy (noon-to-noon search window must
@@ -584,10 +712,14 @@ def _compute_night_data(
         return None
 
     n = len(hours_data)
-    avg_cloud = sum(h.cloud_cover_pct for _, h in hours_data) / n
-    avg_cloud_low = sum(h.cloud_cover_low_pct for _, h in hours_data) / n
-    avg_cloud_mid = sum(h.cloud_cover_mid_pct for _, h in hours_data) / n
-    avg_cloud_high = sum(h.cloud_cover_high_pct for _, h in hours_data) / n
+    # Average the cloud series that is actually scored (the primary model), not
+    # the main forecast's — otherwise the card's "avg cloud" contradicts its own
+    # Clear Sky factor.
+    night_clouds = [_cloud_for(h, cloud_models, h.time) for _, h in hours_data]
+    avg_cloud = sum(c[0] for c in night_clouds) / n
+    avg_cloud_low = sum(c[1] for c in night_clouds) / n
+    avg_cloud_mid = sum(c[2] for c in night_clouds) / n
+    avg_cloud_high = sum(c[3] for c in night_clouds) / n
     max_precip_prob = max(
         (h.precipitation_probability_pct or 0 for _, h in hours_data),
         default=0,
@@ -621,10 +753,11 @@ def _compute_night_data(
     )
     scored: list[ImagingQuality] = []
     in_window: list[ImagingQuality] = []
+    in_window_spreads: list[tuple[ImagingQuality, ImagingQuality]] = []
+    all_spreads: list[tuple[ImagingQuality, ImagingQuality]] = []
     for idx, (_, h) in enumerate(hours_data):
         dark = darkness_fraction(hour_utcs[idx], night.darkness, mode=mode)
-        hour_quality = _score_one_hour(
-            h,
+        score_kw = dict(
             seeing=seeing_scores[idx],
             transparency=transparency_scores[idx],
             darkness=dark,
@@ -632,16 +765,23 @@ def _compute_night_data(
             moon_illumination_pct=night.moon.illumination_pct,
             mode=mode,
         )
+        hour_quality = _score_one_hour(h, cloud=_cloud_for(h, cloud_models, h.time), **score_kw)
         if hour_quality is None:
             continue
         scored.append(hour_quality)
+        spread = _score_spread(h, cloud_models, h.time, **score_kw)
         if dark > 0.0:
             in_window.append(hour_quality)
+            if spread is not None:
+                in_window_spreads.append(spread)
+        if spread is not None:
+            all_spreads.append(spread)
 
     # The night's headline averages only the hours inside the darkness window —
     # padding a clear twilight hour into the mean would flatter a cloudy night.
     # A fully clouded dark hour still counts, at 0.
     rated = in_window or scored
+    spreads = in_window_spreads or all_spreads
     if rated:
         night_score = int(round(sum(q.score for q in rated) / len(rated)))
         night_availability = sum(q.availability for q in rated) / len(rated)
@@ -649,6 +789,25 @@ def _compute_night_data(
     else:
         night_score, night_availability, night_quality = 0, 0.0, 0.0
     useful_hours = expected_useful_hours(scored)
+    # Aggregate the extremes exactly as the headline is aggregated, then label
+    # them with the same rule. The night counts as uncertain only when those two
+    # labels differ — i.e. the models disagree about the *verdict*, not merely
+    # about the number. Flagging any hour whose extremes cross a boundary marks
+    # essentially every night, since a ten-hour night with three models almost
+    # always has one such hour, and a flag that is always on says nothing.
+    if spreads:
+        lows = [lo for lo, _ in spreads]
+        highs = [hi for _, hi in spreads]
+        night_min = int(round(sum(q.score for q in lows) / len(lows)))
+        night_max = int(round(sum(q.score for q in highs) / len(highs)))
+        min_label = label_for_score(night_min, sum(q.availability for q in lows) / len(lows))
+        max_label = label_for_score(night_max, sum(q.availability for q in highs) / len(highs))
+        night_uncertain = (
+            min_label != max_label and night_max - night_min >= FORECAST_UNCERTAIN_MIN_SPREAD
+        )
+    else:
+        night_min = night_max = None
+        night_uncertain = False
 
     # Dew safe window — compute from hourly data during darkness
     dew_hourly: list[tuple[str, float, float]] = []
@@ -668,6 +827,9 @@ def _compute_night_data(
         expected_useful_hours=round(useful_hours, 2),
         factors=_aggregate_factors(rated),
         flags=_aggregate_flags(rated),
+        score_min=night_min,
+        score_max=night_max,
+        forecast_uncertain=night_uncertain,
         sunset=sunset_local.strftime("%H:%M"),
         sunrise=sunrise_local.strftime("%H:%M"),
         astro_dark_start=_fmt_time(night.darkness.astro_start, tz),
@@ -711,7 +873,7 @@ async def get_forecast(
     # forecast, PWV, and AOD. _fetch_supplementary_pair already gathers its
     # PWV/AOD pair; nesting that inside the outer gather means all three
     # requests are in flight at the same time.
-    weather, (pwv_by_time, aod_by_time) = await asyncio.gather(
+    weather, (pwv_by_time, aod_by_time), cloud_models = await asyncio.gather(
         _fetch_or_cached(
             location_id=loc["id"],
             latitude=loc["latitude"],
@@ -721,6 +883,13 @@ async def get_forecast(
             ttl_hours=ttl,
         ),
         _fetch_supplementary_pair(loc, ttl_hours=ttl),
+        _fetch_or_cached_cloud_models(
+            location_id=loc["id"],
+            latitude=loc["latitude"],
+            longitude=loc["longitude"],
+            timezone_str=loc["timezone"],
+            ttl_hours=ttl,
+        ),
     )
 
     tz = ZoneInfo(loc["timezone"])
@@ -743,6 +912,7 @@ async def get_forecast(
             pwv_index,
             aod_index,
             moon_included,
+            cloud_models,
         )
         if result is not None:
             days.append(result)
@@ -778,7 +948,7 @@ async def get_hourly(
         raise HTTPException(status_code=422, detail="Invalid date format, expected YYYY-MM-DD")
 
     # All three sources fetched concurrently on cache miss.
-    weather, (pwv_by_time, aod_by_time) = await asyncio.gather(
+    weather, (pwv_by_time, aod_by_time), cloud_models = await asyncio.gather(
         _fetch_or_cached(
             location_id=loc["id"],
             latitude=loc["latitude"],
@@ -788,6 +958,13 @@ async def get_hourly(
             ttl_hours=ttl,
         ),
         _fetch_supplementary_pair(loc, ttl_hours=ttl),
+        _fetch_or_cached_cloud_models(
+            location_id=loc["id"],
+            latitude=loc["latitude"],
+            longitude=loc["longitude"],
+            timezone_str=loc["timezone"],
+            ttl_hours=ttl,
+        ),
     )
 
     tz = ZoneInfo(loc["timezone"])
@@ -911,8 +1088,7 @@ async def get_hourly(
         # emitted in the response, i.e. two sources for one quantity.
         moon_alt = astro.moon_altitude_deg if astro else None
         moon_illum = astro.moon_illumination_pct if astro else night.moon.illumination_pct
-        quality = _score_one_hour(
-            h,
+        score_kw = dict(
             seeing=seeing,
             transparency=transparency,
             darkness=darkness_fraction(weather_dt.astimezone(UTC), night.darkness, mode=mode),
@@ -920,8 +1096,11 @@ async def get_hourly(
             moon_illumination_pct=moon_illum,
             mode=mode,
         )
+        hour_cloud = _cloud_for(h, cloud_models, h.time)
+        quality = _score_one_hour(h, cloud=hour_cloud, **score_kw)
         if quality is None:
             continue
+        spread = _score_spread(h, cloud_models, h.time, **score_kw)
 
         hours.append(
             HourlyWeatherResponse(
@@ -929,10 +1108,14 @@ async def get_hourly(
                 temperature_c=h.temperature_c,
                 dew_point_c=h.dew_point_c,
                 humidity_pct=h.humidity_pct,
-                cloud_cover_pct=h.cloud_cover_pct,
-                cloud_cover_low_pct=h.cloud_cover_low_pct,
-                cloud_cover_mid_pct=h.cloud_cover_mid_pct,
-                cloud_cover_high_pct=h.cloud_cover_high_pct,
+                # The cloud series that was scored, which is the primary model
+                # rather than the main forecast. Emitting `h`'s values here made
+                # the panel contradict itself: a "Clear Sky 30" factor sitting
+                # above a "Cloud (total) 0%" raw row.
+                cloud_cover_pct=hour_cloud[0],
+                cloud_cover_low_pct=hour_cloud[1],
+                cloud_cover_mid_pct=hour_cloud[2],
+                cloud_cover_high_pct=hour_cloud[3],
                 wind_speed_kmh=h.wind_speed_kmh,
                 wind_direction_deg=h.wind_direction_deg,
                 wind_gusts_kmh=h.wind_gusts_kmh,
@@ -948,6 +1131,13 @@ async def get_hourly(
                 quality=round(quality.quality, 1),
                 factors=_factor_rows(quality),
                 flags=[f.value for f in quality.flags],
+                score_min=spread[0].score if spread else None,
+                score_max=spread[1].score if spread else None,
+                forecast_uncertain=bool(
+                    spread
+                    and spread[0].label != spread[1].label
+                    and spread[1].score - spread[0].score >= FORECAST_UNCERTAIN_MIN_SPREAD
+                ),
                 moon_altitude_deg=astro.moon_altitude_deg if astro else None,
                 moon_illumination_pct=(astro.moon_illumination_pct if astro else None),
                 darkness_category=(astro.darkness_category if astro else None),
