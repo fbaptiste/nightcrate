@@ -18,10 +18,10 @@ SAMPLE_POINTS = [(0.0, 12.0), (90.0, 5.5), (180.0, 8.0), (270.0, 10.25)]
 
 
 def test_nina_hrz_header_comments_and_data_lines() -> None:
-    text = export_nina_hrz("Mesa Backyard", SAMPLE_POINTS)
+    text = export_nina_hrz("Test Backyard", SAMPLE_POINTS)
     lines = text.strip().splitlines()
     assert lines[0].startswith("#")
-    assert "Mesa Backyard" in lines[1]
+    assert "Test Backyard" in lines[1]
     data = [line for line in lines if line and not line.startswith("#")]
     assert len(data) == 4
     assert data[0] == "0 12"
@@ -80,18 +80,18 @@ def test_csv_round_trips_through_parser() -> None:
 
 def test_stellarium_zip_contains_expected_files() -> None:
     payload = export_stellarium_zip(
-        "Mesa", SAMPLE_POINTS, latitude=33.46, longitude=-111.62, elevation_m=1877
+        "Test Site", SAMPLE_POINTS, latitude=33.4484, longitude=-112.074, elevation_m=331
     )
     with zipfile.ZipFile(io.BytesIO(payload), "r") as zf:
         names = set(zf.namelist())
         assert names == {"landscape.ini", "horizon.txt", "readme.txt"}
         ini = zf.read("landscape.ini").decode("utf-8")
         horizon = zf.read("horizon.txt").decode("utf-8")
-    assert "name = Mesa" in ini
+    assert "name = Test Site" in ini
     assert "type = polygonal" in ini
-    assert "latitude = 33.46" in ini
-    assert "longitude = -111.62" in ini
-    assert "altitude = 1877" in ini
+    assert "latitude = 33.4484" in ini
+    assert "longitude = -112.074" in ini
+    assert "altitude = 331" in ini
     lines = [line for line in horizon.strip().splitlines() if line]
     assert len(lines) == len(SAMPLE_POINTS)
     assert lines[0] == "0 12"
@@ -110,7 +110,7 @@ def test_stellarium_zip_handles_none_elevation() -> None:
 
 
 def test_sanitize_filename_spaces_to_underscores() -> None:
-    assert sanitize_filename("Mesa Backyard") == "mesa_backyard"
+    assert sanitize_filename("Test Backyard") == "test_backyard"
 
 
 def test_sanitize_filename_strips_unsafe_chars() -> None:

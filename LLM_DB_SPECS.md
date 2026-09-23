@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.41.6
+**NightCrate version:** 0.41.7
 
 ## Overview
 
@@ -226,6 +226,8 @@ Header: `focuser_seed_key,interface_seed_key`
 Header: `seed_key,manufacturer_seed_key,model_name,sensor_type,pixel_size_um,resolution_x,resolution_y,sensor_width_mm,sensor_height_mm,adc_bit_depth,full_well_capacity_ke,read_noise_low_gain_e,read_noise_high_gain_e,peak_qe_pct,peak_qe_wavelength_nm,bayer_pattern,dual_gain,notes,source_url`
 
 Note: mono and color variants of the same chip need separate rows (sensor_type='mono' vs 'color' with bayer_pattern). `hcg_threshold_gain` exists in the SQL schema but is NOT in the CSV — it is populated only at the camera level.
+
+Resolution: seed the sensor's **effective** pixel array from the manufacturer datasheet, not the smaller "recommended recording pixels" window that camera vendors often quote (IMX662: 1936×1096, not 1920×1080). Check `hypot(resolution_x × pixel_size_um, resolution_y × pixel_size_um) / 1000` against the stated optical-format diagonal; a shortfall of about 1.5% indicates a recording window. Do not copy a sibling row's resolution, and prefer this arithmetic over retailer pages, which have published wrong array sizes.
 
 ### camera.csv (196 rows)
 Header: `seed_key,manufacturer_seed_key,sensor_seed_key,guide_sensor_seed_key,connector_size_seed_key,model_name,cooled,cooling_delta_c,back_focus_mm,weight_g,tilt_adapter,has_usb_hub,usb_hub_interface_seed_key,unity_gain,effective_full_well_ke,effective_read_noise_low_gain_e,effective_read_noise_high_gain_e,effective_peak_qe_pct,hcg_threshold_gain,notes,source_url`

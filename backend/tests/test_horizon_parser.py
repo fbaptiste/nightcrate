@@ -193,7 +193,7 @@ def test_parse_preserves_source_filename() -> None:
 
 
 def test_parse_theodolite_sample_fixture() -> None:
-    """Parses the real Theodolite iPhone log shipped as a test fixture."""
+    """Parses a real Theodolite iPhone log (location fields set to the test site)."""
     path = FIXTURE_DIR / "theodolite_sample.csv"
     text = path.read_text()
     result = parse_horizon_text(text, source_filename=path.name)

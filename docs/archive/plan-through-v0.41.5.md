@@ -1393,7 +1393,7 @@ Equipment seed loader that reads CSV files from the repo and populates the datab
 - [x] CSV reader (`seed_loader/csv_reader.py`) — header validation, comment lines, FK seed_key column detection
 - [x] Core loader (`seed_loader/loader.py`) — first_run/update modes, FK resolution, re-seed decision logic, junction/child handling, orphan detection
 - [x] CLI entry point (`seed_loader/__main__.py`) — `python -m nightcrate.seed_loader` with --dry-run, --verbose, --json
-- [x] 29 stub CSV files under `data/seed/` — header-only stubs for all tables, populated with test data for lookups + Fred's equipment
+- [x] 29 stub CSV files under `data/seed/` — header-only stubs for all tables, populated with test data for lookups + a reference equipment set
 - [x] filter_type seeding moved from migration 0005 to CSV (no equipment data in migrations)
 - [x] Auto-runs on app startup after migrations (sync connection, non-fatal)
 - [x] 50 seed loader tests (hash + integration)
@@ -1698,7 +1698,7 @@ Specs: `docs/superpowers/specs/2026-04-15-rig-builder-design.md`, `2026-04-16-my
 
 - [x] Migration 0009 — `rig`, `rig_filter_slot`, `rig_software` junction, `rig_summary` view (edited in place to add `telescope_id`; migration 0010 recreates the view for already-migrated DBs)
 - [x] Location seeing fields (`typical_seeing_low_arcsec`, `typical_seeing_high_arcsec`) on migration 0007 (edit in place, pre-release policy)
-- [x] `services/rig_calculators.py` — pure math (image scale, FOV, Dawes/Rayleigh, sensor coverage, sampling assessment) with pinned regression tests for Fred's actual equipment
+- [x] `services/rig_calculators.py` — pure math (image scale, FOV, Dawes/Rayleigh, sensor coverage, sampling assessment) with pinned regression tests for real-world equipment
 - [x] Full CRUD API under `/api/rigs`: list / get / create / update / soft-delete / restore / clone / calculators / equipment-options
 - [x] Default-rig flag with single-active enforcement
 - [x] Filter-slot sub-resource with wheel-size validation
@@ -4218,7 +4218,7 @@ rounds to **4** for compatibility: `a_arcsec = 4 · |X_k| / N · pixel_scale`. O
 
 - [x] Backend pytest passes (52 PHD2 tests including the 39 new).
 - [x] Frontend build passes (`tsc --noEmit` + vite build).
-- [x] Manual: opened ASIAir sample log → Spectrum tab → hairline + snap-to-peak hover work end-to-end, peak amplitudes within Hamming 8% of reported values. Both Fred's mounts (WD-20 + AM5) are Harmonic so the rig-specific marker doesn't fire on his data; the heuristic fallback runs as expected.
+- [x] Manual: opened ASIAir sample log → Spectrum tab → hairline + snap-to-peak hover work end-to-end, peak amplitudes within Hamming 8% of reported values. The test data came from harmonic mounts (WD-20, AM5), so the rig-specific marker doesn't fire; the heuristic fallback runs as expected.
 
 ---
 
@@ -5687,7 +5687,7 @@ analyzer; it is NOT a culling workflow (arc-wide "catalog and correlate" decisio
 
 ### Grew a second half, driven by using it
 
-Everything below came out of Fred exercising the feature on the real 2,668-frame library.
+Everything below came out of exercising the feature on a real 2,668-frame library.
 
 - [x] **Image Analyzer parity.** The Statistics panel gained the same star metrics
       (`GET /api/images/quality` → `frame_quality.analyze_array`, shared with the catalog
@@ -5709,7 +5709,7 @@ Everything below came out of Fred exercising the feature on the real 2,668-frame
       and a test pins that so the dialog can't quietly become a lie. Closes a gap against
       the arc-wide claim that "any frame is deletable".
 - [x] **Generated sidecars no longer cataloged** — `.xnml` / `.xdrz` / `.xpsm`, ~1,248 of
-      the 1,253 rows in Fred's Others tab. Rule is "generated sidecar", not "not an image":
+      the 1,253 rows in one library's Others tab. Rule is "generated sidecar", not "not an image":
       logs and the `.pxiproject` stay, since log ingestion is the next arc.
 - [x] **Folder-declared target** (migration 0056), the second user-declared per-folder fact
       after the rig. Target assignment moved out of `_persist_parsed` into
@@ -5808,7 +5808,7 @@ Everything below came out of Fred exercising the feature on the real 2,668-frame
 
 ### A rig tag that never landed — worth remembering
 
-Fred's M42 archive frames showed rig "(not stated)" although the folder was tagged. The
+M42 archive frames showed rig "(not stated)" although the folder was tagged. The
 frames were scanned at 2026-09-05 03:17; the `folder_prefix` fix for archives bound at
 their *root* landed in `5b1602e` at 10:48 the same day. **The fix was correct and nothing
 re-applied it to already-cataloged frames** — the folder row showed the rig, the frames
@@ -6094,10 +6094,10 @@ independent source". Checking it found that the scoring model was fine and the
 takes into account, the way the moon toggle already works — and make the gates
 reflect the rig and the setup rather than one hardcoded assumption.
 
-**Origin (2026-09-22):** Fred, on the v0.41.5 forecast work — *"I often don't care
-about transparency as much as cloud cover. And since I always intend to leave the
-scope out at night, any chance of precipitation is a no-go for me, irrespective of
-how much is forecast — I don't have a dome that can close automatically."*
+**Origin (2026-09-22):** a user requirement from the v0.41.5 forecast work: cloud
+cover often matters more than transparency, and when equipment stays out overnight
+without a cover that closes automatically, any chance of precipitation is a no-go,
+however little is forecast.
 
 **This is not one uniform feature, and the differences are the whole design.** The
 score has two structurally different halves (see `docs/imaging-quality-model.md`),
@@ -6129,8 +6129,8 @@ and "add a checkbox per factor" would be wrong for three of them.
       weighing: a plain "the scope is left out / the scope is protected" switch that
       picks a preset ramp, or an explicit probability threshold. The switch is more
       honest about what is actually being decided and does not ask the user to
-      invent a number; the threshold is more tunable. Fred's case is the strict end —
-      any non-zero probability closes the hour.
+      invent a number; the threshold is more tunable. The left-out-overnight case is the
+      strict end — any non-zero probability closes the hour.
 - [ ] Note the existing asymmetry worth fixing at the same time: any forecast
       precipitation **amount** above zero closes the gate outright, while a 46 %
       **probability** only drops it to 0.80. Both come from the same forecast, so the
@@ -6500,7 +6500,7 @@ This is target architecture, not a migration to apply as-is — schema truth liv
 #### Goals
 
 - Model the full lifecycle of an imaging project: from the target being selected, through multi-night sessions on one or more rigs, down to the individual sub frames and associated telemetry.
-- Handle the realities of Fred's dual-rig setup: two physical ASI 2600MM Pro cameras, a modular Askar V that changes focal length with different reducer configurations, filters whose name-per-rig mapping matters, and multi-night accumulation of integration time across projects.
+- Handle the realities of a dual-rig setup: two physical ASI 2600MM Pro cameras, a modular Askar V that changes focal length with different reducer configurations, filters whose name-per-rig mapping matters, and multi-night accumulation of integration time across projects.
 - Support calibration frame matching (darks, flats, bias) via straightforward queries, not bespoke matching code.
 - Associate PHD2 guiding data with sub frames by timestamp, with enough fidelity to support the guiding graph feature and per-sub RMS lookups.
 - Be re-ingestable: running the ingest twice on the same data must be idempotent. No duplicate sub frames, no corrupted state.
@@ -6526,13 +6526,13 @@ Two approaches to "what rig captured this sub?" were considered:
 - **Approach A:** Rig is a stable snapshot of equipment. Each sub frame references `rig_id`. Equipment details are looked up through the rig.
 - **Approach B:** Each sub frame records its equipment directly (camera, telescope, filter, etc.). Rig is an optional label/grouping that may or may not match.
 
-**Decision: Approach B.** Rigs are useful for saying "capture new data with the C11 rig" (forward-looking) and for grouping historical data in the UI. But the authoritative record of what captured a sub frame is the sub frame itself, inferred from FITS headers at ingest time. This avoids the slowly-changing-dimension nightmare of versioning rigs every time Fred swaps a filter, and it handles data imported from before a rig was defined.
+**Decision: Approach B.** Rigs are useful for saying "capture new data with the C11 rig" (forward-looking) and for grouping historical data in the UI. But the authoritative record of what captured a sub frame is the sub frame itself, inferred from FITS headers at ingest time. This avoids the slowly-changing-dimension nightmare of versioning rigs every time a filter is swapped, and it handles data imported from before a rig was defined.
 
 `sub_frame.rig_id` is nullable. It's populated by the ingest pipeline as a best-guess based on which rig's current equipment matches the sub frame's recorded equipment.
 
 #### 2.2 filter_wheel_filter is keyed to rig, not filter wheel
 
-When the FITS resolver needs to map `FILTER = "Ha"` to a physical filter, it needs rig context: Fred's "Ha" is Optolong 7nm on the C11 rig and Antlia 3nm on the Askar V rig. The `filter_wheel_filter` table links rig → filter wheel position → filter. It represents the *current* loadout of the rig. When Fred swaps filters, he updates this table, but historical sub frames are unaffected because they already captured `filter_id` directly.
+When the FITS resolver needs to map `FILTER = "Ha"` to a physical filter, it needs rig context: "Ha" can be Optolong 7nm on one rig and Antlia 3nm on another. The `filter_wheel_filter` table links rig → filter wheel position → filter. It represents the *current* loadout of the rig. When filters are swapped, this table is updated, but historical sub frames are unaffected because they already captured `filter_id` directly.
 
 #### 2.3 Project → project_target → sub frame, not project → sub frame
 
@@ -6615,7 +6615,7 @@ Component FKs: telescope + telescope_configuration, camera, mount, filter_wheel,
 
 Which filters are currently loaded in which position of a rig's filter wheel — the table the FITS resolver's line-name path needs. Maps rig → wheel position → filter, keyed to the **rig** (not the wheel) so the same wheel moved between rigs is unambiguous. Constraints encode the rules: `position > 0`, `UNIQUE (rig_id, position)` (one filter per slot) and `UNIQUE (rig_id, filter_id)` (a physical filter sits in only one slot per rig at a time).
 
-When Fred swaps filters between rigs or reorders his wheel, this table gets updated. Historical sub frames already have `filter_id` recorded inline (see §6), so past captures are unaffected by current loadout changes.
+When a user swaps filters between rigs or reorders a wheel, this table gets updated. Historical sub frames already have `filter_id` recorded inline (see §6), so past captures are unaffected by current loadout changes.
 
 ---
 

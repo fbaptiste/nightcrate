@@ -184,7 +184,7 @@ def parse_latlon_string(text: str, kind: str) -> float:
     # tokens[0] already carries the full value. The minutes/seconds calculation
     # below correctly yields the same value when those are zero.
     magnitude = abs(degrees) + minutes / 60.0 + seconds / 3600.0
-    # Preserve the explicit sign if the user wrote `-33 27 54`.
+    # Preserve the explicit sign if the user wrote `-33 26 24`.
     if degrees < 0:
         magnitude = -magnitude
     else:

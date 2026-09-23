@@ -19,8 +19,8 @@ def _format_dms(decimal_deg: float) -> str:
 def format_latitude(decimal_deg: float) -> str:
     """Format a decimal latitude as a sexagesimal display string.
 
-    Example: 33.465  -> "33°27′54″ N"
-             -33.465 -> "33°27′54″ S"
+    Example: 33.44  -> "33°26′24″ N"
+             -33.44 -> "33°26′24″ S"
     """
     if not -90.0 <= decimal_deg <= 90.0:
         raise ValueError(f"Latitude out of range [-90, 90]: {decimal_deg}")

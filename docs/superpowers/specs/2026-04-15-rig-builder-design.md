@@ -976,9 +976,9 @@ pytest-based, using in-memory SQLite with the equipment schema + rig migration a
 
 ## Appendix A: Worked examples
 
-These examples use Fred's actual equipment to validate the schema and calculators. Both rigs use Fred's default location: "Backyard Observatory" with `typical_seeing_low_arcsec = 2.0`, `typical_seeing_high_arcsec = 4.0`.
+These examples use a real-world equipment set to validate the schema and calculators. Both rigs use the same default location: "Backyard Observatory" with `typical_seeing_low_arcsec = 2.0`, `typical_seeing_high_arcsec = 4.0`.
 
-### Fred's C11 Rig
+### Example: C11 rig
 
 ```
 Rig name: "C11 Deep Sky"
@@ -994,7 +994,7 @@ Filter slots:
   5: Optolong Ha 7nm
   6: Optolong Oiii 7nm
   7: Optolong Sii 7nm
-OAG: (Fred's OAG)
+OAG: (off-axis guider)
 Guide camera: ZWO ASI 178MM
 Focuser: PrimaLuceLab ESATTO 2"
 Computer: Geekom AX8 Max
@@ -1016,7 +1016,7 @@ Calculator results:
     At 1.19″/pixel 3×3: well sampled
 ```
 
-### Fred's Askar V Rig (V60 Native)
+### Example: Askar V rig (V60 native)
 
 ```
 Rig name: "Askar V (V60 Native)"

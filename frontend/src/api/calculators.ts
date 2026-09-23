@@ -24,7 +24,7 @@ export const convertLatLongToSexagesimal = (latitude: number, longitude: number)
   );
 
 export interface LatLongToDecimalRequest {
-  /** Free-form input like "33 27 54 N" or "33°27'54\" N". */
+  /** Free-form input like "33 26 24 N" or "33°26'24\" N". */
   latitude?: string;
   longitude?: string;
   /** Alternative: explicit DMS fields */

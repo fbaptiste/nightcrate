@@ -30,6 +30,16 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   to TAN/FITS cards. **CD = matrix as-is, CRVAL = reference sky coordinates,
   CRPIX = reference image coordinates + 1.** No transpose or y-flip. Real FITS
   WCS wins; nonlinear spline distortion is not modeled for annotations.
+- `astropy.wcs.WCS.world_to_pixel` returns 0-based coordinates that match numpy
+  indexing and the displayed image (row 0 at the top). Use them directly for
+  annotations; a y-flip misaligns every overlay.
+- `.pxiproject` referenced images load from the path the project stores. A
+  missing file raises "Referenced file not found", usually because a drive is
+  not mounted. Do not add a fallback to paths relative to the project: projects
+  legitimately reference subs, masters, and outputs on different drives, and a
+  same-named file elsewhere could load silently. Improve the message instead.
+  The loader does not yet reject a relative stored path, which would resolve
+  against the server's working directory (see `PLAN.md` deferred work).
 - Annotation counts must match drawn objects: keep any object whose extent
   intersects the frame, clip the overlay, and clamp labels into the image.
 - `pixel_loader` is the shared path-to-normalized-array entry point for new
@@ -37,6 +47,20 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   still dispatch pre-resolved sources separately; a new format affects all three.
 - Aberration detection uses `sep` and `sep.flux_radius` for HFR. Cache by
   `(file_path, hdu, settings_json)` with configurable TTL; debounce edits 500 ms.
+- File browser: a single click opens a folder or selects a file; a double click
+  opens the file. Stretch sliders change local state and render only on
+  **Apply**; the Auto/None and Linked/Unlinked toggles and Reset apply at once.
+  Show the Extension selector (not "HDU") only when a file has more than one
+  image extension. The analyzer sidebar never scrolls horizontally: inner
+  containers use `minWidth: 0` and `overflowX: hidden`.
+
+## App shell
+
+- `AppShell` keeps the Image Analyzer, Planner, PHD2 Analyzer, DSO Catalog, and
+  Weather pages mounted after their first visit, hidden with `display: none`, so
+  nested state such as chart zoom survives navigation. To add a page, register
+  it in `PERSISTENT_ROUTES` (`components/AppShell.tsx`) and give its route
+  `element: null` in `App.tsx` to avoid a second render.
 
 ## Tablet and LAN behavior
 
@@ -55,6 +79,12 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - Chart touch listeners need `{ passive: false }` for `preventDefault`.
   Suppress touch callouts/text selection and set `touch-action: none` on SVGs
   where the chart owns the gesture.
+- Detect touch tablets with `navigator.maxTouchPoints > 1`. iPadOS Safari sends
+  a desktop Mac user agent by default, so user-agent tests miss iPads.
+- Chip-style Autocomplete filters set `readOnly` on the input
+  (`inputProps={{ ...params.inputProps, readOnly: true }}`): a tap opens the
+  options without raising the iOS keyboard. See `PillFilter` and
+  `FilterIntentSelect`.
 
 ## Equipment and seed data
 
@@ -268,8 +298,9 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - Preserve PHD2 metric conventions: population-standard-deviation RMS,
   corrections-subtracted RA drift, unguided-frame Dec drift, sign-preserving
   peak, and declination-aware polar-alignment error. Backend/viewport math agree.
-- Tabs are Guiding, Dispersion, Data. Spectrum/FFT and unguided RA reconstruction
-  were removed as unreliable; do not restore them from historical plans.
+- Tabs are Section Info, Guiding, Dispersion (guiding sections only), and Data.
+  Spectrum/FFT and unguided RA reconstruction were removed as unreliable; do not
+  restore them from historical plans.
 - Recent files persist in `phd2_recent_files`; the API client owns requests,
   while the lib helper handles legacy localStorage migration/display utilities.
   Export returns the visible section/time range as a PHD2-format log.

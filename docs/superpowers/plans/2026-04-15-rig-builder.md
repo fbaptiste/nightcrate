@@ -22,7 +22,7 @@
 | `api/rig_models.py` | Pydantic models: RigCreate, RigUpdate, RigOut, RigFilterSlotIn/Out, RigCalculators, SamplingAssessment, RigWarning, EquipmentOptionsOut and per-type option models. |
 | `services/rig_calculators.py` | Pure calculator functions: image scale, FOV, resolution limits, sensor coverage, sampling assessment, guide system metrics, seeing resolution. |
 | `api/rigs.py` | FastAPI router with all rig CRUD endpoints, equipment options, calculator endpoint. |
-| `tests/test_rig_calculators.py` | Unit tests for calculator formulas using Fred's actual equipment values as pinned regression tests. |
+| `tests/test_rig_calculators.py` | Unit tests for calculator formulas using real-world equipment values as pinned regression tests. |
 | `tests/test_rig_api.py` | Integration tests for all rig API endpoints: CRUD, filter slots, clone, restore, default flag, validation, warnings, equipment options. |
 | `tests/test_location_seeing.py` | Tests for seeing fields on location: create/update, validation, seeing resolution chain. |
 
@@ -233,7 +233,7 @@ Create `backend/tests/test_rig_calculators.py`:
 ```python
 """Tests for rig optical calculator formulas.
 
-Pinned regression tests using Fred's actual equipment values from Appendix A of the spec.
+Pinned regression tests using the real-world equipment values from Appendix A of the spec.
 """
 
 import math

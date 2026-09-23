@@ -1,12 +1,78 @@
 # NightCrate — active plan
 
-**Version:** v0.41.6 — General cleanup
+**Version:** v0.41.7 — Agent collaboration
 
-**Branch:** `v0.41.6/general-cleanup`
+**Branch:** `v0.41.7/agent-collaboration`
 
 **Status:** Complete — awaiting merge
 
+## v0.41.7 — Agent collaboration
+
+Record the Claude + Codex operating model Fred approved on 2026-09-22 and apply
+documentation fixes found while reconciling agent notes with the repository.
+Documentation and agent instructions only; application behavior is unchanged.
+Claude writes the changes (documentation with no behavior change), and one fresh
+Codex review covers the whole diff before Fred's acceptance test.
+
+- [x] Start from updated `main` on `v0.41.7/agent-collaboration`.
+- [x] Add `docs/agent-collaboration.md` from the approved draft and link it from
+  `CLAUDE.md`; scope the staging rule to Claude-orchestrated work.
+- [x] Add the Claude-only `codex` skill: command profiles, prompt templates, and
+  the before/after file inventory.
+- [x] Update `start-version` (pending-outcome sweep), `sync-docs` (lifecycle
+  status), and `finalize-session` (Prepare/Publish split, outcome states,
+  remote SHA check).
+- [x] Canary the untested Codex profile combinations in a throwaway repository.
+- [x] Record constraints that existed only in agent notes: tablet input and
+  touch detection, pxiproject stored-path resolution with no project-relative
+  fallback, WCS pixel orientation, sensor
+  effective pixels, SQLite parent-table reshapes, UI consistency, file-browser
+  and stretch interactions, and persistent pages.
+- [x] Fix stale references: the `frontend/README.md` persistent-pages pointer and
+  the PHD2 analyzer tab list.
+- [x] Remove personal details from tracked files (Fred: current files only).
+  Horizon test fixtures and tests use the public test location; color-vision
+  and rig attributions are reworded; the equipment context is generic.
+- [x] Codex review of the full diff; release checks.
+- [x] Synchronize release version files and reference headers to 0.41.7.
+
+Verified by Claude: full backend suite with `-n auto` (2,549 passed, 3 skipped,
+30 warnings); the six directly affected test files (268 passed); Ruff lint and
+formatting (238 files); frontend TypeScript/production build (existing
+bundle-size warning); 147 local links across 24 changed Markdown files; skill
+structure and pointers; diff whitespace; a scan of added lines for private
+data. Bandit found zero medium/high and the three existing low-severity
+findings deferred in v0.41.6. Codex canaries and the file inventory were
+exercised as described in `docs/agent-collaboration.md` §10. Application
+behavior is unchanged apart from test data, comments, and calculator help text.
+
+### Codex review
+
+- Mode: independent review of the full diff (documentation release, so no plan
+  discussion). Reviewer `gpt-5.6-sol`, high, read-only; two cycles; converged
+  with no remaining blocker.
+- Adopted: remaining personal attributions and an overnight-equipment quote made
+  generic; the review template covers uncommitted work; the file inventory also
+  detects index and status changes; canary probes use unique, cleaned-up paths;
+  the `.pxiproject` guidance matches the loader (code fix deferred above); exact
+  outcome-aging wording; the plan-record template requires its own list; the
+  Autocomplete sorting rule. One minor finding was rejected (duplicating
+  device specifications in the equipment context).
+
+#### v0.41.7-R1 — Home-directory paths in historical plans
+
+- **Kind:** rejected finding (independent review)
+- **Claude:** `/Users/<handle>/...` paths in historical plan commands expose only
+  the public repository owner's handle; rewriting ~100 lines adds churn without
+  reducing exposure.
+- **Codex (round 2):** "historical home-directory paths do not expose sensitive
+  personal information and should not block the release."
+- **Disposition:** rejected (Codex agreed). **Implementation:** n/a — no change.
+- **Outcome:** pending — Claude; revisit at the next privacy review of tracked files.
+
 ## v0.41.6 — General cleanup
+
+Merged in [PR #14](https://github.com/fbaptiste/nightcrate/pull/14) on 2026-09-22.
 
 Tighten documentation and development workflows while preserving current design
 and coding decisions. Finalization and PR publication are authorized; merging
@@ -137,6 +203,14 @@ This release changes no weather behavior or scoring decisions.
   thresholds are proposals, not established diagnostic rules.
 - Background-region statistics and quality indicators while browsing frames.
 - Equipment/manufacturer links for specifications, manuals, drivers, and forums.
+
+### Found during v0.41.7 review
+
+- `pxiproject_io.load_image_data` accepts a relative stored `filePath`, which
+  resolves against the server's working directory; reject it, with a test.
+- The rig form's software Autocomplete groups by category, but `/api/rigs`
+  options sort software by name only, so category headers can repeat. Sort by
+  category, then name.
 
 ### Security follow-up
 

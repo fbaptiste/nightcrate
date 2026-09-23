@@ -20,6 +20,8 @@ and [PLAN.md](../PLAN.md) for active work.
 ## Maintained references
 
 - [Development decisions](development-decisions.md): feature constraints and known traps.
+- [Agent collaboration](agent-collaboration.md): Claude–Codex roles, gates,
+  Codex profiles, and review records.
 - [Schema diagrams](../DB_SCHEMA.md), [complete DDL](../DB_SCHEMA_DDL.sql),
   [equipment seed reference](../LLM_DB_SPECS.md).
 - [DSO catalog architecture](dso-catalog-architecture.md).

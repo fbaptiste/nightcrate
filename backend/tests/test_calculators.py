@@ -54,11 +54,11 @@ async def phoenix_location_id():
 async def test_lat_long_to_sexagesimal(client):
     resp = await client.get(
         "/api/calculators/lat-long/to-sexagesimal",
-        params={"latitude": 33.465, "longitude": -112.07388888888888},
+        params={"latitude": 33.44, "longitude": -112.07388888888888},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["latitude_display"] == "33\u00b027\u203254\u2033 N"
+    assert data["latitude_display"] == "33\u00b026\u203224\u2033 N"
     assert data["longitude_display"] == "112\u00b004\u203226\u2033 W"
 
 
@@ -77,7 +77,7 @@ async def test_lat_long_to_sexagesimal_out_of_range(client):
 @pytest.mark.anyio
 async def test_lat_long_to_decimal_roundtrip_string(client):
     # First format a known decimal to sexagesimal
-    decimal_in = {"latitude": 33.465, "longitude": -112.07388888888888}
+    decimal_in = {"latitude": 33.44, "longitude": -112.07388888888888}
     formatted = (
         await client.get("/api/calculators/lat-long/to-sexagesimal", params=decimal_in)
     ).json()
@@ -93,7 +93,7 @@ async def test_lat_long_to_decimal_roundtrip_string(client):
     assert data["latitude_error"] is None
     assert data["longitude_error"] is None
     # Seconds rounding means <1/3600° tolerance.
-    assert abs(data["latitude"] - 33.465) < 1e-3
+    assert abs(data["latitude"] - 33.44) < 1e-3
     assert abs(data["longitude"] - (-112.07388888888888)) < 1e-3
 
 
@@ -101,13 +101,13 @@ async def test_lat_long_to_decimal_roundtrip_string(client):
 async def test_lat_long_to_decimal_ascii_string(client):
     resp = await client.post(
         "/api/calculators/lat-long/to-decimal",
-        json={"latitude": "33 27 54 N", "longitude": "112 04 26 W"},
+        json={"latitude": "33 26 24 N", "longitude": "112 04 26 W"},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["latitude_error"] is None
     assert data["longitude_error"] is None
-    assert abs(data["latitude"] - 33.465) < 1e-3
+    assert abs(data["latitude"] - 33.44) < 1e-3
     assert abs(data["longitude"] - (-112.07388888888888)) < 1e-3
 
 
@@ -117,8 +117,8 @@ async def test_lat_long_to_decimal_components(client):
         "/api/calculators/lat-long/to-decimal",
         json={
             "latitude_deg": 33,
-            "latitude_min": 27,
-            "latitude_sec": 54,
+            "latitude_min": 26,
+            "latitude_sec": 24,
             "latitude_direction": "N",
             "longitude_deg": 112,
             "longitude_min": 4,
@@ -128,7 +128,7 @@ async def test_lat_long_to_decimal_components(client):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert abs(data["latitude"] - 33.465) < 1e-3
+    assert abs(data["latitude"] - 33.44) < 1e-3
     assert abs(data["longitude"] - (-112.07388888888888)) < 1e-3
 
 
@@ -136,10 +136,10 @@ async def test_lat_long_to_decimal_components(client):
 async def test_lat_long_to_decimal_pure_decimal_with_direction(client):
     resp = await client.post(
         "/api/calculators/lat-long/to-decimal",
-        json={"latitude": "33.465 S", "longitude": "112.074 E"},
+        json={"latitude": "33.44 S", "longitude": "112.074 E"},
     )
     data = resp.json()
-    assert abs(data["latitude"] - (-33.465)) < 1e-6
+    assert abs(data["latitude"] - (-33.44)) < 1e-6
     assert abs(data["longitude"] - 112.074) < 1e-6
 
 

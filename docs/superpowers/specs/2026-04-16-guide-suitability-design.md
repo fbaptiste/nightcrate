@@ -191,7 +191,7 @@ Out-of-range values return `422`.
 - Cap wins when both fail
 - Centroid accuracy sweeps change precision/error linearly, G-ratio invariant
 - Rating-band sweep at `effective_error_main_pixels` = 0.5 / 0.8 / 1.1 / 1.5
-- Fred's Askar V, C11 OAG, 30mm counter-example, 50mm borderline, combined binning + centroid
+- Askar V guide scope, C11 OAG, 30mm counter-example, 50mm borderline, combined binning + centroid
 
 ### 6.2 Backend API tests (`test_rig_api.py`)
 

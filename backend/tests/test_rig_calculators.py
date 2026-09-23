@@ -1,6 +1,6 @@
 """Tests for rig optical calculator formulas.
 
-Pinned regression tests using Fred's actual equipment values.
+Pinned regression tests using real-world equipment values.
 """
 
 import pytest

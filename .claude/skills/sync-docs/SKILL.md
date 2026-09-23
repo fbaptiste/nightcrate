@@ -12,8 +12,10 @@ include broader rewrites.
 
 | Document | Update when |
 |---|---|
-| `PLAN.md` | Scope, completed work, verification, or remaining work changes |
+| `PLAN.md` | Scope, completed work, verification, lifecycle status, or remaining work changes |
 | `CLAUDE.md` | Shared architecture, coding rules, or workflow changes |
+| `docs/agent-collaboration.md` | Fred approves a change to the Claude–Codex workflow (never edited on inference alone) |
+| Plan's **Codex review** section | A tracked disagreement or rejected finding changes status (append only) |
 | `docs/development-decisions.md` | A feature gains or changes a durable constraint |
 | `README.md` | User behavior, setup, dependencies, or acknowledgments change |
 | `docs/README.md` | Code locations or maintained documentation change |
@@ -26,6 +28,9 @@ include broader rewrites.
 - Keep planned work distinct from shipped behavior. Check off completed tasks,
   but mark a release done only when its full scope and required verification are
   complete. Do not claim a full repository audit from a narrow feature update.
+- Keep `PLAN.md`'s status literal: **In progress**, **Candidate ready — awaiting
+  Fred's acceptance**, or **Complete — awaiting merge**. The next
+  `start-version` marks the release merged with its PR link.
 - When `VERSION` and `backend/pyproject.toml` are bumped, synchronize the version
   headers in `DB_SCHEMA.md`, `DB_SCHEMA_DDL.sql`, and `LLM_DB_SPECS.md`.
   Otherwise retain their current version.
