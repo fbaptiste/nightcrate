@@ -457,6 +457,37 @@ class TestDeriveEndpoint:
         assert line["sub_count"] == 6
         assert line["session_count"] == 1  # two rows, one night
 
+    async def test_exposures_merge_spellings_nights_and_gains(self, client):
+        pid = await _make_project(client, "Derive Test")
+        # Two nights, two header spellings of one bandpass, two gains, one exposure:
+        # three derived rows that are all "Ha at 300 s".
+        await _add_lights(pid, count=4, filter_hint="Ha", exposure=300.0, gain=101.0)
+        await _add_lights(pid, count=2, filter_hint="Ha", exposure=300.0, gain=200.0)
+        await _add_lights(
+            pid,
+            count=3,
+            filter_hint="H-alpha",
+            exposure=300.0,
+            date_obs="2026-03-17T23:30:00+00:00",
+        )
+        await _add_lights(pid, count=2, filter_hint="L-eXtreme", exposure=600.0)
+        await client.post(f"/api/projects/{pid}/sessions/derive")
+        assert len(await _sessions(client, pid)) == 4
+
+        resp = await client.get(f"/api/projects/{pid}/integration")
+        assert resp.status_code == 200, resp.text
+        # Ha: 9 subs x 300 s = 2700 s = 45 min. L-eXtreme: 2 x 600 s = 20 min,
+        # labelled by its own name rather than "other".
+        assert resp.json()["exposures"] == [
+            {"label": "Ha", "exposure_seconds": 300.0, "sub_count": 9, "actual_minutes": 45.0},
+            {
+                "label": "L-eXtreme",
+                "exposure_seconds": 600.0,
+                "sub_count": 2,
+                "actual_minutes": 20.0,
+            },
+        ]
+
 
 class TestIngestDoesNotDerive:
     """Cataloging frames must never create sessions on its own — a project may

@@ -38,6 +38,7 @@ import {
   listSessions,
   updateSession,
 } from "@/api/projectSessions";
+import ExposureTable from "./ExposureTable";
 import IntegrationBars, { formatHoursMinutes } from "./IntegrationBars";
 import SessionFormDialog from "./SessionFormDialog";
 
@@ -330,7 +331,17 @@ export default function ProjectSessionsTab({ projectId }: Props) {
 
       <Divider sx={{ my: 5 }} />
 
-      {integration && <IntegrationBars summary={integration} />}
+      {integration && (
+        <>
+          <IntegrationBars summary={integration} />
+          {/* The bars already explain an empty project; no empty table under them. */}
+          {integration.exposures.length > 0 && (
+            <Box sx={{ mt: 4 }}>
+              <ExposureTable lines={integration.exposures} />
+            </Box>
+          )}
+        </>
+      )}
 
       {formOpen && (
         <SessionFormDialog

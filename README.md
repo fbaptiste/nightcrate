@@ -17,9 +17,9 @@ forecasts and survey imagery are fetched from external services when needed.
   records within a project. A project can start with a finished image and manual
   sessions; importing raw captures is optional.
 - **Sessions and integration:** enter capture batches manually or derive them
-  from cataloged lights. View totals by filter and observing night. Duoband
-  equipment-filter sessions count toward each passed line and once toward total
-  exposure time.
+  from cataloged lights. View totals by filter and observing night, and sub
+  counts by filter and exposure length. Duoband equipment-filter sessions count
+  toward each passed line and once toward total exposure time.
 - **Frame quality:** batch HFR, star count, star SNR, and background measurements,
   with progress, cancellation, and sorting to find frames worth inspecting.
 - **Planning:** date/location/horizon-aware visibility, rig framing, filter-aware

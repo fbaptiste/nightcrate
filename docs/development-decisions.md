@@ -187,6 +187,14 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - Integration is derived from exposure × sub count. Equipment-filter sessions
   expand into their passband lines, so duoband contributes to both line totals
   while wall-clock exposure counts once. Per-filter goals were removed.
+  The sub-count breakdown (`exposures`) instead labels the filter as shot: an
+  equipment filter by model name, so a duoband filter is one row and its subs
+  count once. It merges nights, rigs, gains, and binnings; exposures are keyed
+  to three decimals as the derive groups them. A filter with no recorded
+  passband (UV/IR cut, L-Pro) adds to the total and the breakdown but to no
+  bar, so "no integration" means a zero total, not empty `lines`. Minutes are
+  returned unrounded; the UI rounds them and shows nonzero time under 30 s as
+  "<1m".
   A capture batch must provide an equipment `filter_id` or generic `line_name`.
   Manual/derived overlap and stale derived rows after catalog changes remain
   explicit limitations; nothing silently re-derives.

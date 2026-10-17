@@ -584,7 +584,7 @@ export default function ProjectDetailPage() {
           )}
 
           {/* Integration — left-aligned, narrow */}
-          {integration && integration.lines.length > 0 && (
+          {integration && integration.total_actual_minutes > 0 && (
             <Box sx={{ mt: 3 }}>
               <IntegrationBars summary={integration} />
             </Box>

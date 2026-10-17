@@ -15,6 +15,7 @@ from nightcrate.services.line_names import LINE_NAMES
 
 __all__ = [
     "LINE_NAMES",
+    "ExposureLine",
     "IntegrationLine",
     "IntegrationSummary",
     "SessionCreate",
@@ -102,8 +103,25 @@ class IntegrationLine(BaseModel):
     sub_count: int
 
 
+class ExposureLine(BaseModel):
+    """Captured subs of one filter at one exposure, summed across every session.
+
+    Merges nights, rigs, gains, and binnings. Unlike the bars, the label is the
+    filter as shot: an equipment filter appears under its model name, so a
+    duoband filter is one row instead of one per passband (which would count its
+    subs twice). Other sessions use the bar label. Ordered like the bars, then by
+    exposure, shortest first.
+    """
+
+    label: str
+    exposure_seconds: float
+    sub_count: int
+    actual_minutes: float
+
+
 class IntegrationSummary(BaseModel):
     lines: list[IntegrationLine]
+    exposures: list[ExposureLine]
     total_actual_minutes: float
     first_session_date: str | None
     last_session_date: str | None

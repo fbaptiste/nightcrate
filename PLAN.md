@@ -1,12 +1,67 @@
 # NightCrate — active plan
 
-**Version:** v0.41.7 — Agent collaboration
+**Version:** v0.41.8 — Subs by filter and exposure
 
-**Branch:** `v0.41.7/agent-collaboration`
+**Branch:** `v0.41.8/exposure-table`
 
 **Status:** Complete — awaiting merge
 
+## v0.41.8 — Subs by filter and exposure
+
+Below the per-filter integration bars on a project's Imaging Sessions tab, add a
+table of sub counts per filter and exposure, so what is available to stack is
+visible at a glance. Fred approved the scope on 2026-10-16 and chose the
+abbreviated process: Claude implements directly ("Fred says so" escape hatch),
+with one fresh Codex review because the `/integration` response contract changes.
+
+- [x] Start from updated `main` on `v0.41.8/exposure-table`.
+- [x] Add a per-(filter, exposure) breakdown to the integration summary. Filters
+  are labelled as shot: an equipment filter by its model name (a duoband filter
+  is one row, not split into its lines), other sessions by the bars' label.
+  Rows merge across nights, rigs, gains, and binnings.
+- [x] Show the breakdown on the Sessions tab below the bars: filter, exposure,
+  sub count, and time.
+- [x] Show nonzero time under 30 s as "<1m" rather than "0m" wherever the
+  shared hours-and-minutes formatter is used (found during the rendered check),
+  and return unrounded minutes from the API so a sub-second session is not
+  reported as zero.
+- [x] A project whose filters have no recorded passband (UV/IR cut, L-Pro)
+  showed "No integration yet" and hid the total on the Overview. Both now key
+  off the total and explain why there are no bars.
+- [x] Backend tests for normal, duoband, no-passband, derived, empty,
+  sub-second, and ordering cases.
+- [x] Rendered check of the Sessions tab and the Overview.
+- [x] Fresh Codex review of the full diff.
+- [x] Fred tested the staged change on 2026-10-16 ("this is good").
+- [x] Release checks; version files and reference headers synchronized to 0.41.8.
+
+Verified by Claude: full backend suite with `-n auto` (2,555 passed, 3 skipped,
+30 warnings); the two affected test modules (91 passed; coverage 100% for the
+models and 97% for the router, whose new uncovered branch is unreachable under
+the table CHECK); `uv lock --check`; Ruff lint and
+formatting; Bandit (only the three deferred low findings); frontend TypeScript
+and production build (existing bundle-size warning). Rendered with Playwright
+against the running development server using GET requests only: three real
+projects' rows match their session rows and integration totals, in light and
+dark mode; long labels truncate with a tooltip; the Overview shows no table.
+Mocked responses covered the empty project, a no-passband-only project
+(Sessions and Overview), and 10 × 0.5 s showing "<1m".
+
+### Codex review
+
+- Mode: independent review of the full diff (contract change; Claude-authored
+  under the "Fred says so" hatch, so no plan discussion). Reviewer
+  `gpt-5.6-sol`, high, read-only; two cycles; converged with no remaining finding.
+- Adopted: both minor findings. The empty state ignored time from filters
+  without passbands, and two-decimal rounding reported a 0.1 s sub as zero
+  minutes. Nothing rejected; no disagreements; no tracked items.
+- Codex could not run the tests or the build: its read-only sandbox has no
+  writable temporary directory. Its review was static, and the test evidence
+  above is Claude's.
+
 ## v0.41.7 — Agent collaboration
+
+Merged in [PR #15](https://github.com/fbaptiste/nightcrate/pull/15) on 2026-09-23.
 
 Record the Claude + Codex operating model Fred approved on 2026-09-22 and apply
 documentation fixes found while reconciling agent notes with the repository.
@@ -211,6 +266,15 @@ This release changes no weather behavior or scoring decisions.
 - The rig form's software Autocomplete groups by category, but `/api/rigs`
   options sort software by name only, so category headers can repeat. Sort by
   category, then name.
+
+### Planner wording
+
+- Stale mode names: the scope toggle reads "Plan a Night" / "Full Catalog"
+  ([PlannerPage.tsx](frontend/src/pages/PlannerPage.tsx)), but the empty-results
+  hint says to switch to "Browse the full catalog" mode, and the Wishlist empty
+  state says "Tonight or Full Catalog tabs"
+  ([WishlistTab.tsx](frontend/src/components/planner/WishlistTab.tsx)).
+  Approved for this list on 2026-09-23; not yet checked in the running app.
 
 ### Security follow-up
 
