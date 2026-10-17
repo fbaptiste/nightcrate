@@ -47,8 +47,20 @@ export interface IntegrationLine {
   sub_count: number;
 }
 
+export interface ExposureLine {
+  /** The filter as shot: an equipment filter's model name (a duoband filter is
+   *  one row, not one per passband), otherwise the same label as the bars. */
+  label: string;
+  exposure_seconds: number;
+  /** Summed across nights, rigs, gains and binnings. */
+  sub_count: number;
+  actual_minutes: number;
+}
+
 export interface IntegrationSummary {
   lines: IntegrationLine[];
+  /** Ordered like `lines`, then by exposure, shortest first. */
+  exposures: ExposureLine[];
   total_actual_minutes: number;
   first_session_date: string | null;
   last_session_date: string | null;

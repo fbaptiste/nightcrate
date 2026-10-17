@@ -6,6 +6,8 @@ import type { IntegrationSummary } from "@/api/projectSessions";
 
 export function formatHoursMinutes(minutes: number): string {
   const total = Math.round(minutes);
+  // Short subs are real time: 10 x 2 s must not read as nothing captured.
+  if (total === 0 && minutes > 0) return "<1m";
   const h = Math.floor(total / 60);
   const m = total % 60;
   if (h === 0) return `${m}m`;
@@ -27,7 +29,9 @@ interface Props {
 // not a tracker — per-filter goals were removed in v0.41.1. Blue fill keeps it
 // colorblind-safe (no red/green).
 export default function IntegrationBars({ summary }: Props) {
-  if (summary.lines.length === 0) {
+  // Every session holds time, so a zero total means no sessions. Empty `lines`
+  // alone does not: a broadband filter (UV/IR cut, L-Pro) has no line to credit.
+  if (summary.total_actual_minutes === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
         No integration yet. Add an imaging session, or derive sessions from your cataloged
@@ -44,6 +48,13 @@ export default function IntegrationBars({ summary }: Props) {
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
         Integration — {formatHoursMinutes(summary.total_actual_minutes)} total
       </Typography>
+
+      {summary.lines.length === 0 && (
+        <Typography variant="body2" color="text.secondary">
+          None of these filters has a known bandpass, so the time has no line to
+          count toward.
+        </Typography>
+      )}
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
         {summary.lines.map((line) => (

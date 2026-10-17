@@ -398,6 +398,7 @@ class TestIntegration:
         pid = await _make_project(client)
         summary = (await client.get(f"/api/projects/{pid}/integration")).json()
         assert summary["lines"] == []
+        assert summary["exposures"] == []
         assert summary["total_actual_minutes"] == 0.0
         assert summary["first_session_date"] is None
 
@@ -411,3 +412,109 @@ class TestIntegration:
         summary = (await client.get(f"/api/projects/{pid}/integration")).json()
         # Canonical LINE_NAMES order: Ha ... Lum ... B
         assert [ln["label"] for ln in summary["lines"]] == ["Ha", "Lum", "B"]
+
+
+class TestIntegrationExposures:
+    """The per-(filter, exposure) breakdown under the integration bars."""
+
+    async def _post(self, client: AsyncClient, pid: int, **body) -> None:
+        resp = await client.post(f"/api/projects/{pid}/sessions", json=body)
+        assert resp.status_code == 201, resp.text
+
+    async def _exposures(self, client: AsyncClient, pid: int) -> list[dict]:
+        resp = await client.get(f"/api/projects/{pid}/integration")
+        assert resp.status_code == 200, resp.text
+        return resp.json()["exposures"]
+
+    async def test_same_filter_and_exposure_merge(self, client: AsyncClient):
+        pid = await _make_project(client)
+        await self._post(client, pid, line_name="Ha", exposure_seconds=300, num_subs=10)
+        await self._post(
+            client,
+            pid,
+            line_name="Ha",
+            exposure_seconds=300,
+            num_subs=10,
+            gain=200,
+            session_date="2026-02-21",
+        )
+        await self._post(client, pid, line_name="Oiii", exposure_seconds=600, num_subs=5)
+        await self._post(client, pid, line_name="Ha", exposure_seconds=180, num_subs=5)
+
+        # Ha 300 s: 20 subs = 6000 s = 100 min, across two nights and two gains.
+        # Ha 180 s: 5 subs = 900 s = 15 min. Oiii 600 s: 5 subs = 3000 s = 50 min.
+        assert await self._exposures(client, pid) == [
+            {"label": "Ha", "exposure_seconds": 180.0, "sub_count": 5, "actual_minutes": 15.0},
+            {"label": "Ha", "exposure_seconds": 300.0, "sub_count": 20, "actual_minutes": 100.0},
+            {"label": "Oiii", "exposure_seconds": 600.0, "sub_count": 5, "actual_minutes": 50.0},
+        ]
+
+    async def test_duoband_filter_is_one_row_under_its_name(self, client: AsyncClient):
+        pid = await _make_project(client)
+        fid, lines = await _filter_with_passbands(2, 2)
+        async with get_db() as conn:
+            cur = await conn.execute("SELECT model_name FROM filter WHERE id = ?", (fid,))
+            model_name = (await cur.fetchone())["model_name"]
+        await self._post(client, pid, filter_id=fid, exposure_seconds=300, num_subs=10)
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        # The bars still credit both passband lines with the full 50 minutes...
+        assert sorted(ln["label"] for ln in summary["lines"]) == lines
+        # ...but the subs were shot once, through one filter: one row, not one per line.
+        assert summary["exposures"] == [
+            {
+                "label": model_name,
+                "exposure_seconds": 300.0,
+                "sub_count": 10,
+                "actual_minutes": 50.0,
+            }
+        ]
+
+    async def test_order_follows_bars_then_exposure(self, client: AsyncClient):
+        pid = await _make_project(client)
+        for line, exposure in (("B", 60), ("Lum", 120), ("Ha", 300), ("Lum", 0.5)):
+            await self._post(client, pid, line_name=line, exposure_seconds=exposure, num_subs=1)
+
+        rows = [(e["label"], e["exposure_seconds"]) for e in await self._exposures(client, pid)]
+        # Canonical LINE_NAMES order (Ha, Lum, B), then shortest exposure first;
+        # a fractional exposure survives unrounded.
+        assert rows == [("Ha", 300.0), ("Lum", 0.5), ("Lum", 120.0), ("B", 60.0)]
+
+    async def test_filter_without_passbands_still_counts(self, client: AsyncClient):
+        pid = await _make_project(client)
+        async with get_db() as conn:
+            cur = await conn.execute(
+                "SELECT id, model_name FROM filter f WHERE NOT EXISTS (SELECT 1 FROM"
+                " filter_passband p WHERE p.filter_id = f.id AND p.active = 1)"
+                " ORDER BY id LIMIT 1"
+            )
+            row = await cur.fetchone()
+        assert row is not None, "no seeded filter without passbands"
+        await self._post(client, pid, filter_id=row["id"], exposure_seconds=120, num_subs=15)
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        # A broadband filter (e.g. UV/IR cut) has no line to credit, so no bar...
+        assert summary["lines"] == []
+        # ...but its 15 x 120 s = 30 min was still captured.
+        assert summary["total_actual_minutes"] == 30.0
+        assert summary["exposures"] == [
+            {
+                "label": row["model_name"],
+                "exposure_seconds": 120.0,
+                "sub_count": 15,
+                "actual_minutes": 30.0,
+            }
+        ]
+
+    async def test_sub_second_time_is_not_rounded_away(self, client: AsyncClient):
+        pid = await _make_project(client)
+        await self._post(client, pid, line_name="Ha", exposure_seconds=0.1, num_subs=1)
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        # 0.1 s = 0.001667 min, which two-decimal rounding used to turn into 0.0.
+        expected = pytest.approx(0.1 / 60.0)
+        assert summary["total_actual_minutes"] == expected
+        assert summary["lines"][0]["actual_minutes"] == expected
+        assert summary["exposures"][0]["actual_minutes"] == expected
+        session = (await client.get(f"/api/projects/{pid}/sessions")).json()[0]
+        assert session["integration_minutes"] == expected

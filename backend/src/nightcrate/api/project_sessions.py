@@ -12,8 +12,9 @@ ways to get one:
   user-initiated; ingest never does this on its own. Derived rows are read-only,
   because the next derive replaces them.
 
-Per-filter integration is computed here from the sessions (exposure x sub count).
-Per-filter goals were removed in v0.41.1 — this is a read-out, not a tracker.
+Per-filter integration is computed here from the sessions (exposure x sub count),
+along with a sub count per filter and exposure (v0.41.8). Per-filter goals were
+removed in v0.41.1 — this is a read-out, not a tracker.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from fastapi import APIRouter, HTTPException
 from nightcrate.api._common import get_or_404, row_to_dict
 from nightcrate.api.project_session_models import (
     LINE_NAMES,
+    ExposureLine,
     IntegrationLine,
     IntegrationSummary,
     SessionCreate,
@@ -66,7 +68,7 @@ _DERIVED_IS_READ_ONLY = (
 
 
 def _session_response(d: dict) -> SessionResponse:
-    d["integration_minutes"] = round(d["exposure_seconds"] * d["num_subs"] / 60.0, 2)
+    d["integration_minutes"] = d["exposure_seconds"] * d["num_subs"] / 60.0
     return SessionResponse(**d)
 
 
@@ -237,8 +239,10 @@ def _label_order(label: str) -> tuple[int, str]:
 
 async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
     cursor = await conn.execute(
-        "SELECT id, filter_id, line_name, filter_label, exposure_seconds, num_subs, session_date"
-        " FROM project_session WHERE project_id = ?",
+        "SELECT ps.id, ps.filter_id, ps.line_name, ps.filter_label, ps.exposure_seconds,"
+        " ps.num_subs, ps.session_date, f.model_name AS filter_name"
+        " FROM project_session ps LEFT JOIN filter f ON f.id = ps.filter_id"
+        " WHERE ps.project_id = ?",
         (project_id,),
     )
     sessions = [row_to_dict(r) for r in await cursor.fetchall()]
@@ -263,6 +267,10 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
     actual_sec: dict[str, float] = defaultdict(float)
     nights: dict[str, set[str]] = defaultdict(set)
     sub_count: dict[str, int] = defaultdict(int)
+    # The exposure breakdown, keyed (filter as shot, exposure). Rounded as the
+    # derive groups it, so float noise can't split one sub length into two rows.
+    exposure_sec: dict[tuple[str, float], float] = defaultdict(float)
+    exposure_subs: dict[tuple[str, float], int] = defaultdict(int)
     total_sec = 0.0
     dates: list[str] = []
 
@@ -273,10 +281,17 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
             dates.append(s["session_date"][:10])
         if s["filter_id"] is not None:
             labels = passband_lines.get(s["filter_id"], [])
+            shot_with = s["filter_name"]
         elif s["line_name"] is not None:
             labels = [_integration_label(s)]
+            shot_with = labels[0]
         else:
             labels = []
+            shot_with = None
+        if shot_with is not None:
+            key = (shot_with, round(s["exposure_seconds"], 3))
+            exposure_sec[key] += secs
+            exposure_subs[key] += s["num_subs"]
         # Derived rows split one night into several rows (per exposure/gain), so
         # counting rows would overstate nights — count the distinct dates, with
         # each undated row standing alone.
@@ -286,19 +301,31 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
             nights[label].add(night)
             sub_count[label] += s["num_subs"]
 
+    # Minutes stay unrounded: display rounding is the UI's, and rounding here
+    # reported a single 0.1 s sub as no time at all.
     lines = [
         IntegrationLine(
             label=label,
-            actual_minutes=round(actual_sec[label] / 60.0, 2),
+            actual_minutes=actual_sec[label] / 60.0,
             session_count=len(nights[label]),
             sub_count=sub_count[label],
         )
         for label in sorted(actual_sec, key=_label_order)
     ]
+    exposures = [
+        ExposureLine(
+            label=label,
+            exposure_seconds=exposure,
+            sub_count=exposure_subs[(label, exposure)],
+            actual_minutes=exposure_sec[(label, exposure)] / 60.0,
+        )
+        for label, exposure in sorted(exposure_sec, key=lambda k: (_label_order(k[0]), k[1]))
+    ]
 
     return IntegrationSummary(
         lines=lines,
-        total_actual_minutes=round(total_sec / 60.0, 2),
+        exposures=exposures,
+        total_actual_minutes=total_sec / 60.0,
         first_session_date=min(dates) if dates else None,
         last_session_date=max(dates) if dates else None,
     )
