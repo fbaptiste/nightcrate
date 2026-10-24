@@ -140,7 +140,8 @@ def test_combiners_and_precedence_tables():
 def test_short_session_combiner_rejects_not_expected_and_preserves_unresolved():
     with pytest.raises(ValueError, match="primary model must be resolved"):
         combine_short_session("not_expected", "impossible", {})
-    assert combine_short_session("unresolved", "unresolved", {}) == "not_enough_data"
+    # An impossible window would otherwise give "uncertain".
+    assert combine_short_session("unresolved", "impossible", {"gfs": "no"}) == "not_enough_data"
 
 
 def test_bounded_gap_reason_and_no_unknown_minutes():

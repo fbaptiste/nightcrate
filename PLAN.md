@@ -163,6 +163,15 @@ the roadmap is not renumbered. Forecast accuracy work is out of scope.
 
   Codex implemented the fixes with tests; Claude reviewed them. Bandit now
   reports no issues.
+- [x] **PR review of the changes made after the independent reviews**
+  (Claude's code-review agent, 2026-10-23). Two findings, both fixed in a
+  follow-up commit:
+  - The missing-stream check raised `RuntimeError`, which both solve routes
+    report as 409 "already in progress". It now raises `OSError`, which is
+    logged with a traceback and returned as 500. A one-off request through
+    the route confirmed this.
+  - The new unresolved-primary combiner test could not fail. It now uses an
+    impossible window, which would otherwise give Uncertain.
 - [ ] Fred's acceptance test. Fred authorized publishing on 2026-10-23 before
   testing; he tests before merging.
 

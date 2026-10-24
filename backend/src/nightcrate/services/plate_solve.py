@@ -677,7 +677,8 @@ async def _run_astap(
         if stdout is None or stderr is None:
             proc.kill()
             await proc.wait()
-            raise RuntimeError("ASTAP process streams are unavailable.")
+            # Not RuntimeError: the routers map that to 409 "already in progress".
+            raise OSError("ASTAP process streams are unavailable.")
         stdout_lines: list[str] = []
         stderr_data = b""
 

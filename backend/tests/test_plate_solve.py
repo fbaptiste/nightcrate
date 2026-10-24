@@ -561,7 +561,7 @@ class TestRunAstap:
             ),
             patch.object(plate_solve, "_solve_process", None),
         ):
-            with pytest.raises(RuntimeError, match="process streams are unavailable"):
+            with pytest.raises(OSError, match="process streams are unavailable"):
                 await plate_solve._run_astap(
                     ["astap", "image.fits"],
                     tmp_path / "result",
