@@ -66,13 +66,13 @@ See [the active plan](PLAN.md) for remaining work and the
 
 ## Run locally
 
-Prerequisites: Python 3.14, [uv](https://docs.astral.sh/uv/), Node 20.19+ or 22.12+.
+Prerequisites: Python 3.14, [uv](https://docs.astral.sh/uv/), Node 22.12+.
 Install [ASTAP](https://www.hnsky.org/astap.htm) and a star database separately if
 using plate solving. Intel Macs also need Xcode Command Line Tools for
 source-built dependencies (`xcode-select --install`).
 
 ```bash
-make install    # install backend/frontend dependencies
+make install    # install backend/frontend dependencies from the lockfiles
 make dev        # backend :8000, frontend :5173
 ```
 
@@ -83,8 +83,9 @@ workspaces and downloads the DSO catalogs.
 
 Other commands: `make backend`, `make frontend`, `make test`, `make test-fast`,
 `make lint`, `make format`. Use `make dev BROWSER=none` to suppress browser launch
-or `make dev LOG=DEBUG` for diagnostic logs. Developer checks and conventions are
-in [CLAUDE.md](CLAUDE.md).
+or `make dev LOG=DEBUG` for diagnostic logs. On macOS, `make dev` opens Brave
+unless `BROWSER` names another browser; elsewhere it opens the default browser.
+Developer checks and conventions are in [CLAUDE.md](CLAUDE.md).
 
 ## Stack
 
@@ -140,6 +141,7 @@ Libraries and data sources used by NightCrate:
 | [py7zr](https://github.com/miurahr/py7zr) | LGPL-2.1+ | Copyright (c) 2019-2025, Hiroshi Miura |
 | [mlx](https://github.com/ml-explore/mlx) | MIT | Copyright (c) 2023-2026, Apple Inc. |
 | [timezonefinder](https://github.com/jannikmi/timezonefinder) | MIT | Copyright (c) 2016-2026, Jannik Michelfeit |
+| [tzdata](https://github.com/python/tzdata) | Apache 2.0 (IANA time zone data: public domain) | Copyright (c) 2020, Paul Ganssle (Google); Copyright (c) 2026, Stan Ulbrych |
 | [astropy-healpix](https://github.com/astropy/astropy-healpix) | BSD 3-Clause | Copyright (c) Astropy Developers |
 
 ### Frontend (TypeScript / React)
@@ -155,7 +157,6 @@ Libraries and data sources used by NightCrate:
 | [React Router](https://reactrouter.com/) | MIT | Copyright (c) React Training LLC 2015-2019; Copyright (c) Remix Software Inc. 2020-2021; Copyright (c) Shopify Inc. 2022-2023 |
 | [dnd kit](https://dndkit.com/) (@dnd-kit/core, @dnd-kit/sortable, @dnd-kit/utilities) | MIT | Copyright (c) 2021, Claudéric Demers |
 | [KaTeX](https://katex.org/) | MIT | Copyright (c) 2013-2020 Khan Academy and other contributors |
-| [react-katex](https://github.com/MatejBransky/react-katex) | MIT | Copyright (c) 2018 Matej Bránsky |
 | [react-markdown](https://github.com/remarkjs/react-markdown) | MIT | Copyright (c) Espen Hovlandsdal |
 | [remark-gfm](https://github.com/remarkjs/remark-gfm) | MIT | Copyright (c) Titus Wormer |
 | [Vite](https://vite.dev/) | MIT | Copyright (c) 2019-present, VoidZero Inc. and Vite contributors |

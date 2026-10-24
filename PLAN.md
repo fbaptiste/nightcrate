@@ -1,12 +1,155 @@
 # NightCrate — active plan
 
-**Version:** v0.41.9 — Personal imaging verdict
+**Version:** v0.41.10 — Dependency fixes from issue #16
 
-**Branch:** `v0.41.9/weather-verdict`
+**Branch:** `v0.41.10/dependency-fixes`
 
 **Status:** Complete — awaiting merge
 
+## v0.41.10 — Dependency fixes from issue #16
+
+A Windows user's [issue #16](https://github.com/fbaptiste/nightcrate/issues/16)
+reported `npm audit` warnings, an `npm ci` failure, and weather-forecast and
+planner crashes. Fred
+approved the triage and fix plan on 2026-10-24 and asked for a separate
+version. Inserted ahead of v0.42.0; the roadmap is not renumbered.
+
+- [x] Start from updated `main` on `v0.41.10/dependency-fixes`.
+- [x] **Triage.** Only Vite affected NightCrate, because users run the Vite
+  development server. On Windows, a malicious web page could leak the user's
+  password hash through Vite 8.0.3's open-in-editor route. Vite's file-read
+  bugs need LAN mode. The React Router advisories cover a server mode we don't
+  use, and KaTeX's needs an existing prototype-pollution bug. The remaining
+  warnings are in build tools.
+- [x] **Frontend dependencies:**
+  - Vite 8.3.4 and React Router 7.18.4 (the minimum range raised to match).
+  - KaTeX 0.19.0. `react-katex` was removed because it pinned KaTeX 0.16.
+    `Math.tsx` now calls KaTeX directly.
+  - The lockfile was resolved with a 7-day release cutoff. The regenerated
+    lockfile also fixes the `npm ci` mismatch.
+  - Checks: `npm audit` reports 0, both full and production-only. The old
+    lockfile reproduced the reporter's `npm ci` error, and the new one installs
+    cleanly. All 20 formulas render at identical sizes, and all 14 sidebar
+    routes load in Playwright.
+- [x] **Backend `tzdata`:** Windows has no system time-zone database. Tests
+  hide the operating system's copy to simulate Windows, and a guard test
+  confirms that lookups fail without the package.
+- [x] **`make` help listing** (found by Fred during acceptance preparation).
+  `make` listed neither `dev` nor `help`. Its help script showed a target only
+  when the line directly above it was a `## ` summary, and variable
+  assignments sat in between. After the PR review, each summary now sits on
+  its target's own line (`target: ## summary`), so nothing can come between
+  them.
+- [x] Fresh Codex review of the full diff.
+- [x] Release checks; version files and reference headers synchronized to
+  0.41.10. Development decisions now record that users run the Vite
+  development server, the `tzdata` requirement, and the KaTeX wrapper.
+- [ ] Fred's acceptance test. Fred authorized publishing on 2026-10-24.
+- [x] The PR description references #16, so the reporter can see which of
+  their findings this release addresses. Fred also asked for a comment on
+  the issue (both 2026-10-24).
+- [x] **PR review of #19** (Claude's code-review agent, 2026-10-24). It found
+  11 issues, none high-severity. Claude verified each one, and Fred asked for
+  all to be fixed:
+  - **Node 22.12+.** KaTeX 0.19's command-line dependency (commander 15)
+    declares Node 22.12+; every KaTeX release with the fix does. Node 20
+    reached end of life on 2026-04-30. The README prerequisite is updated.
+  - **Docs named the planner only.** Issue #16 began with the weather forecast
+    failing, and the planner came later; both had the same cause. The docs,
+    PR description, and issue comment now name both.
+  - **`Math.tsx` safety net.** It again catches what react-katex caught
+    (`ParseError`, `TypeError`) and shows the message as text instead of
+    failing the page. The `trust` comment now names `\includegraphics`.
+  - **Tests:**
+    - The fixture moved to `tests/conftest.py` and restores the previous
+      search path.
+    - `tonight_date` uses a frozen clock with exact dates.
+    - New tests cover the weather forecast route and the time-zone list
+      with the system database hidden.
+    - With `tzdata` hidden as well, all five tzdata-dependent tests fail and
+      the guard passes.
+  - **Vite as a runtime dependency.** `vite` and its two plugins are now in
+    `dependencies`, so `npm audit --omit=dev` covers them. No versions
+    changed.
+  - **`make install` runs `npm ci`**, so installs never rewrite the lockfile.
+  - **`BROWSER` default.** "Brave Browser" is the default only on macOS;
+    elsewhere Vite opens the default browser.
+  - **Help listing.** `make help` uses the inline `target: ## summary`
+    pattern.
+
+Verified by Claude:
+- **Backend:**
+  - The full suite, run with `-n auto`: 2,664 passed, 3 skipped, 24 warnings.
+  - `uv lock --check`, Ruff lint and formatting, and Bandit, which reports no
+    issues.
+- **Frontend:**
+  - The production build passes, with the existing bundle-size warning.
+  - ESLint is clean on `Math.tsx`.
+  - `npm audit` reports 0, both full and production-only.
+  - `npm ci` succeeds in a clean copy.
+  - All 450 lockfile sources resolve to registry.npmjs.org.
+- **Docs:** local links and `git diff --check` are clean.
+- **Rendered checks** are listed above.
+- **After the PR review fixes:**
+  - **Backend:** the affected test files (astronomy, weather API, locations
+    API) gave 119 passed. Ruff, formatting, Bandit, and `uv lock --check` are
+    clean.
+  - **Frontend:**
+    - The build passes, and ESLint is clean on `Math.tsx`.
+    - `npm audit` reports 0, both full and production-only.
+    - `npm ci` succeeds both full and with `--omit=dev`; the production-only
+      install includes Vite.
+    - All 20 formulas match the original captures again.
+  - **Makefile:** all 11 targets are listed. `make -n` confirms the `LOG` and
+    `BROWSER` defaults and overrides, BROWSER unset with `UNAME_S=Linux`, and
+    `npm ci` for `make install`.
+
+Not verified: actual Windows installation and runtime.
+
+### Codex review
+
+- **Mode:** independent review of the full diff. It was required because
+  dependencies and lockfiles are high-stakes. The work was Claude-authored
+  under the "Fred says so" and "narrow, understood fix" hatches, so there
+  was no plan discussion. Reviewer `gpt-5.6-sol`, high effort, read-only; one
+  cycle.
+- **Result:** no blockers or major findings.
+  - One minor finding was adopted: PLAN.md still showed v0.41.9's
+    acceptance test as open, and Weather "in progress". Both are corrected.
+  - Codex independently confirmed lockfile/manifest agreement, the absence of
+    `react-katex` references, the native bindings for Windows and Linux, and
+    the licenses of new lock entries (MIT or Apache-2.0).
+  - It also confirmed that `Math.tsx` behaves like react-katex, that the
+    advisory triage matches the advisories, and that the timezone tests clean
+    up correctly in either order.
+  - Nothing was rejected; there were no disagreements and no tracked items.
+- **Limits:** Codex's read-only sandbox could not run `npm ci`,
+  `npm audit`, the build, or the full suite. That evidence is Claude's.
+
+**Review of the PR review fixes (2026-10-24).** This was a fresh session with
+the same profile, because the dependency classification and lockfile changed.
+- **Result:** no blockers or major findings.
+- **Codex confirmed:**
+  - no package, version, or integrity change in the lockfile, only the 44
+    classification changes;
+  - Vite and both plugins in the production graph;
+  - the GNU Make dry runs for macOS, Linux, and an explicit `BROWSER`;
+  - strict TypeScript on `Math.tsx`;
+  - fixture isolation under pytest-xdist;
+  - documentation accuracy.
+- **One minor finding, open for Fred:** no automated test covers the
+  `Math.tsx` error path. The repository has no frontend test harness, and
+  adding one (for example Vitest) means new dependencies. Claude checked the
+  error path directly against KaTeX 0.19.0:
+  - invalid TeX returns KaTeX's error markup without throwing;
+  - a non-string input throws the `TypeError` the code catches.
+
+  TypeScript already rejects non-string input at build time. Nothing was
+  rejected, and there are no tracked items.
+
 ## v0.41.9 — Personal imaging verdict
+
+Merged in [PR #18](https://github.com/fbaptiste/nightcrate/pull/18) on 2026-10-24.
 
 Replace the weather page's 0–100 imaging score with a per-night verdict
 (Go / Uncertain / No / Not enough data), computed from the hourly forecast and
@@ -172,8 +315,8 @@ the roadmap is not renumbered. Forecast accuracy work is out of scope.
     the route confirmed this.
   - The new unresolved-primary combiner test could not fail. It now uses an
     impossible window, which would otherwise give Uncertain.
-- [ ] Fred's acceptance test. Fred authorized publishing on 2026-10-23 before
-  testing; he tests before merging.
+- [x] Fred's acceptance test. Fred authorized publishing on 2026-10-23 before
+  testing, planning to test before merging. He merged PR #18 on 2026-10-24.
 
 Verified by Claude on the candidate tree:
 - **Full backend suite:** 2,661 passed and 3 skipped, run with `-n auto`
@@ -444,7 +587,7 @@ Session-log, event and autofocus tables exist; the app does not yet populate the
 
 ### Weather
 
-The forecast redesign is in progress as v0.41.9. Deferred by its spec:
+The forecast redesign shipped in v0.41.9 (PR #18). Deferred by its spec:
 per-rig rules, forecast accuracy and validation work, and any new forecast
 sources.
 

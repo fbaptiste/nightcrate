@@ -1,15 +1,19 @@
 """Tests for astronomy service — moon, twilight, darkness computations."""
 
+import sys
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 
+from nightcrate.services import astronomy
 from nightcrate.services.astronomy import (
     NightSummary,
     compute_hourly_astro,
     compute_moon_polyline,
     compute_night_summary,
     dark_intervals_for,
+    tonight_date,
 )
 
 
@@ -355,3 +359,55 @@ class TestTimezoneDecoupling:
         )
         # This happens to work because the tz offset is small enough
         assert s.sunset is not None
+
+
+def _freeze_now(monkeypatch, instant_utc: datetime) -> None:
+    """Make ``astronomy``'s ``datetime.now()`` return ``instant_utc``."""
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant_utc.astimezone(tz)
+
+    monkeypatch.setattr(astronomy, "datetime", FrozenDatetime)
+
+
+class TestBundledTimezoneData:
+    """Windows has no system time-zone database, so the ``tzdata`` package
+    must supply one (GitHub issue #16: the weather forecast and the planner
+    failed for Europe/Rome). ``no_system_tz_database`` hides the operating
+    system's copy to simulate Windows.
+    """
+
+    def test_offsets_come_from_tzdata_package(self, no_system_tz_database):
+        rome = ZoneInfo("Europe/Rome")
+        assert rome.utcoffset(datetime(2026, 1, 15, 12)) == timedelta(hours=1)
+        assert rome.utcoffset(datetime(2026, 7, 15, 12)) == timedelta(hours=2)
+        # Southern hemisphere: Sydney's daylight time falls in January.
+        sydney = ZoneInfo("Australia/Sydney")
+        assert sydney.utcoffset(datetime(2026, 1, 15, 12)) == timedelta(hours=11)
+        assert sydney.utcoffset(datetime(2026, 7, 15, 12)) == timedelta(hours=10)
+
+    @pytest.mark.parametrize(
+        ("now_utc", "expected"),
+        [
+            # 10:00 in Rome (UTC+2 in July) is before local noon: still last night.
+            (datetime(2026, 7, 15, 8, 0, tzinfo=UTC), date(2026, 7, 14)),
+            # 12:30 in Rome is past local noon, though not yet noon in UTC.
+            (datetime(2026, 7, 15, 10, 30, tzinfo=UTC), date(2026, 7, 15)),
+        ],
+    )
+    def test_tonight_date_without_system_database(
+        self, no_system_tz_database, monkeypatch, now_utc, expected
+    ):
+        _freeze_now(monkeypatch, now_utc)
+        assert tonight_date("Europe/Rome") == expected
+
+    def test_fails_without_tzdata_package(self, no_system_tz_database, monkeypatch):
+        """Guards the fixture: with ``tzdata`` hidden too, nothing can load."""
+        # Earlier lookups import tzdata.zoneinfo.<Area> submodules; hide them all.
+        for name in [m for m in sys.modules if m == "tzdata" or m.startswith("tzdata.")]:
+            monkeypatch.setitem(sys.modules, name, None)
+        monkeypatch.setitem(sys.modules, "tzdata", None)
+        with pytest.raises(ZoneInfoNotFoundError):
+            ZoneInfo.no_cache("Europe/Rome")

@@ -381,6 +381,16 @@ async def test_forecast_returns_fourteen_nights(client: AsyncClient):
     assert "transparency_tier" in hour
 
 
+async def test_forecast_without_system_tz_database(client: AsyncClient, no_system_tz_database):
+    """Issue #16: on Windows the forecast failed with ZoneInfoNotFoundError."""
+    location_id = await _location(
+        client, name="Rome", latitude=41.9, longitude=12.5, timezone="Europe/Rome"
+    )
+    response = await _forecast(client, {"location_id": location_id})
+    assert response.status_code == 200, response.text
+    assert len(response.json()["nights"]) == 14
+
+
 async def test_evaluated_at_is_now(client: AsyncClient):
     location_id = await _location(client)
     response = await _forecast(client, {"location_id": location_id})

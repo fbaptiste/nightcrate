@@ -56,6 +56,13 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 
 ## App shell
 
+- Users run the app through the Vite development server (`make dev`); the
+  backend does not serve a built frontend. Vite's development-server advisories
+  therefore reach users. For example, Vite 8.0.3's open-in-editor route could
+  leak a Windows password hash to any web page visited while NightCrate ran.
+  So `vite`, `@vitejs/plugin-react`, and `@vitejs/plugin-basic-ssl` are listed
+  under `dependencies`, which means `npm audit --omit=dev` covers them.
+  `make install` uses `npm ci` so that installs never rewrite the lockfile.
 - `AppShell` keeps the Image Analyzer, Planner, PHD2 Analyzer, DSO Catalog, and
   Weather pages mounted after their first visit, hidden with `display: none`, so
   nested state such as chart zoom survives navigation. To add a page, register
@@ -258,6 +265,12 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 
 - `geo_timezone` is coordinate-derived and controls observing nights/astronomy;
   `timezone` is the user's display choice. Remote sites may legitimately differ.
+- Keep `tzdata` as a backend dependency. Windows has no system time-zone
+  database, so `ZoneInfo` fails without it. In issue #16, the weather forecast
+  and the planner both returned 500 for `Europe/Rome`. Tests using the
+  `no_system_tz_database` fixture (in `tests/conftest.py`) hide the system copy
+  to simulate Windows. They cover `ZoneInfo`, `tonight_date`, the forecast
+  route, and the time-zone list.
 - Each location has at least one horizon and exactly one default; at most one
   custom polyline, any number of artificial flat horizons. Last-horizon deletion
   is 422. Location edits **stage horizons**; Save applies atomically, Cancel
@@ -546,7 +559,10 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
 
 - Calculator math runs server-side. The sidereal clock ticks locally between
   60 s refreshes. Backend `HH:MM` strings are already display-local; pass them
-  through without interpreting them as UTC. Use KaTeX for formulas.
+  through without interpreting them as UTC. Render formulas with
+  `components/calculators/Math.tsx` (`Inline`/`Block`), which calls KaTeX
+  directly. `react-katex` was removed because it pinned KaTeX 0.16. Formulas
+  are hard-coded TeX; keep KaTeX's default `trust: false`.
 - Clock order persists in DB settings; use single-container dnd-kit sorting
   plus click-to-add. Location-aware calculators declare `aware: true` and share
   `CalculatorLocationBar` / the session-only calculators location store.

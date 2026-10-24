@@ -1,13 +1,30 @@
 """Shared test fixtures."""
 
 import importlib.resources
+import zoneinfo
 from pathlib import Path
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 import numpy as np
 import pytest
 from astropy.io import fits
+
+
+@pytest.fixture
+def no_system_tz_database():
+    """Hide the operating system's time-zone database to simulate Windows.
+
+    Windows has none, so ``ZoneInfo`` must load zones from the ``tzdata``
+    package (GitHub issue #16). The previous search path is restored afterwards.
+    """
+    saved = zoneinfo.TZPATH
+    zoneinfo.reset_tzpath(to=[])
+    ZoneInfo.clear_cache()
+    yield
+    zoneinfo.reset_tzpath(to=saved)
+    ZoneInfo.clear_cache()
 
 
 @pytest.fixture(autouse=True)
