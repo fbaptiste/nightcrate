@@ -3,19 +3,29 @@
 Uses mocked HTTP responses — no real API calls in tests.
 """
 
+import asyncio
+import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from nightcrate.services.weather import (
+    CLOUD_REQUEST_MODELS,
+    FORECAST_DAYS,
+    META_DOMAINS,
     HourlyWeather,
+    ModelSeries,
     SupplementaryData,
     WeatherData,
     fetch_air_quality,
+    fetch_cloud_models,
+    fetch_model_meta,
     fetch_pwv,
     fetch_weather,
     nearest_match,
+    parse_cloud_models,
     parse_hourly,
 )
 
@@ -231,8 +241,8 @@ class TestFetchAirQuality:
 
         assert isinstance(result, SupplementaryData)
         assert len(result.values_by_time) == 3
-        assert result.values_by_time["2026-03-15T00:00"] == 0.05
-        assert result.values_by_time["2026-03-15T03:00"] == 0.06
+        assert result.values_by_time[datetime(2026, 3, 15, 0, tzinfo=UTC)] == 0.05
+        assert result.values_by_time[datetime(2026, 3, 15, 3, tzinfo=UTC)] == 0.06
 
 
 class TestFetchPwv:
@@ -252,48 +262,54 @@ class TestFetchPwv:
 
         assert isinstance(result, SupplementaryData)
         assert len(result.values_by_time) == 3
-        assert result.values_by_time["2026-03-15T00:00"] == 8.5
-        assert result.values_by_time["2026-03-15T01:00"] == 9.0
+        assert result.values_by_time[datetime(2026, 3, 15, 0, tzinfo=UTC)] == 8.5
+        assert result.values_by_time[datetime(2026, 3, 15, 1, tzinfo=UTC)] == 9.0
 
 
 class TestNearestMatch:
     def test_exact_match(self):
-        data = {"2026-03-15T00:00": 0.05, "2026-03-15T03:00": 0.06}
-        assert nearest_match(data, "2026-03-15T00:00") == 0.05
+        data = {
+            datetime(2026, 3, 15, 0, tzinfo=UTC): 0.05,
+            datetime(2026, 3, 15, 3, tzinfo=UTC): 0.06,
+        }
+        assert nearest_match(data, datetime(2026, 3, 15, 0, tzinfo=UTC)) == 0.05
 
     def test_nearest_within_gap(self):
         """3-hourly AOD data should match nearby hourly timestamps."""
-        data = {"2026-03-15T00:00": 0.05, "2026-03-15T03:00": 0.06}
+        data = {
+            datetime(2026, 3, 15, 0, tzinfo=UTC): 0.05,
+            datetime(2026, 3, 15, 3, tzinfo=UTC): 0.06,
+        }
         # 01:00 is 1h from 00:00 — should match 00:00
-        assert nearest_match(data, "2026-03-15T01:00") == 0.05
+        assert nearest_match(data, datetime(2026, 3, 15, 1, tzinfo=UTC)) == 0.05
         # 02:00 is 2h from 03:00 and 2h from 00:00 — pick 00:00 (first encountered)
-        result = nearest_match(data, "2026-03-15T02:00")
+        result = nearest_match(data, datetime(2026, 3, 15, 2, tzinfo=UTC))
         assert result in (0.05, 0.06)  # either is acceptable
 
     def test_beyond_max_gap(self):
-        data = {"2026-03-15T00:00": 0.05}
+        data = {datetime(2026, 3, 15, 0, tzinfo=UTC): 0.05}
         # 04:00 is 4h away, beyond default max_gap_hours=3
-        assert nearest_match(data, "2026-03-15T04:00") is None
+        assert nearest_match(data, datetime(2026, 3, 15, 4, tzinfo=UTC)) is None
 
     def test_empty_data(self):
-        assert nearest_match({}, "2026-03-15T00:00") is None
+        assert nearest_match({}, datetime(2026, 3, 15, 0, tzinfo=UTC)) is None
 
     def test_custom_max_gap_rejects_distant_match(self):
         """A match 2 hours away should fail with max_gap_hours=1."""
-        data = {"2026-03-15T00:00": 0.05}
+        data = {datetime(2026, 3, 15, 0, tzinfo=UTC): 0.05}
         # 2h away, max_gap=1 — should return None
-        assert nearest_match(data, "2026-03-15T02:00", max_gap_hours=1.0) is None
+        assert nearest_match(data, datetime(2026, 3, 15, 2, tzinfo=UTC), max_gap_hours=1.0) is None
 
     def test_custom_max_gap_accepts_with_default(self):
         """The same 2-hour gap succeeds with default max_gap_hours=3."""
-        data = {"2026-03-15T00:00": 0.05}
+        data = {datetime(2026, 3, 15, 0, tzinfo=UTC): 0.05}
         # 2h away, max_gap=3 (default) — should match
-        assert nearest_match(data, "2026-03-15T02:00", max_gap_hours=3.0) == 0.05
+        assert nearest_match(data, datetime(2026, 3, 15, 2, tzinfo=UTC), max_gap_hours=3.0) == 0.05
 
     def test_none_value_in_data(self):
         """nearest_match should return None when the matched entry has a None value."""
-        data = {"2026-03-15T00:00": None}
-        assert nearest_match(data, "2026-03-15T00:00") is None
+        data = {datetime(2026, 3, 15, 0, tzinfo=UTC): None}
+        assert nearest_match(data, datetime(2026, 3, 15, 0, tzinfo=UTC)) is None
 
 
 class TestFetchWeatherErrors:
@@ -345,6 +361,52 @@ class TestFetchWeatherErrors:
 
 
 class TestParseHourly:
+    def test_unixtime_is_aware_utc(self):
+        hourly = {"time": [1793131200, 1793134800]}
+        result = parse_hourly(hourly, "forecast", 0)
+        assert result[0].time_utc.tzinfo is UTC
+        assert result[1].time_utc - result[0].time_utc == timedelta(hours=1)
+
+    def test_legacy_iso_uses_fixed_response_offset(self):
+        hourly = {
+            "time": [
+                "2026-11-01T00:00",
+                "2026-11-01T01:00",
+                "2026-11-01T02:00",
+                "2026-11-01T03:00",
+            ]
+        }
+        result = parse_hourly(hourly, "forecast", -14400)
+        assert [row.time_utc.hour for row in result] == [4, 5, 6, 7]
+        assert all(
+            later.time_utc - earlier.time_utc == timedelta(hours=1)
+            for earlier, later in zip(result, result[1:])
+        )
+
+    def test_offset_iso_uses_label_offset_instead_of_response_offset(self):
+        hourly = {"time": ["2026-03-15T01:00:00+02:00"]}
+        result = parse_hourly(hourly, "forecast", -25200)
+        assert result[0].time_utc == datetime(2026, 3, 14, 23, tzinfo=UTC)
+
+    def test_short_field_array_preserves_values_then_returns_none(self):
+        hourly = {
+            "time": [1793131200, 1793134800, 1793138400],
+            "temperature_2m": [8.5],
+        }
+        result = parse_hourly(hourly, "forecast", 0)
+        assert [row.temperature_c for row in result] == [8.5, None, None]
+
+    def test_null_decisive_fields_are_preserved(self):
+        hourly = {
+            "time": [1793131200, 1793134800, 1793138400],
+            "cloud_cover": [10, None, 20],
+            "wind_speed_10m": [5, None, 7],
+        }
+        result = parse_hourly(hourly, "forecast", 0)
+        assert len(result) == 3
+        assert result[1].cloud_cover_pct is None
+        assert result[1].wind_speed_kmh is None
+
     def test_empty_hourly_arrays(self):
         """Empty time/data arrays should produce an empty list."""
         hourly_dict = {
@@ -388,6 +450,148 @@ class TestParseHourly:
         assert h.visibility_m is None
         assert h.precipitation_mm is None
         assert h.precipitation_probability_pct is None
+
+
+def test_parse_cloud_models_uses_utc_datetime_keys():
+    hourly = {
+        "time": [1793131200, 1793134800],
+        "cloud_cover_ecmwf_ifs025": [10, 20],
+        "cloud_cover_low_ecmwf_ifs025": [1, 2],
+        "cloud_cover_mid_ecmwf_ifs025": [3, 4],
+        "cloud_cover_high_ecmwf_ifs025": [5, 6],
+        "cloud_cover_gfs_seamless": [90, 80],
+        "cloud_cover_low_gfs_seamless": [0, 0],
+        "cloud_cover_mid_gfs_seamless": [0, 0],
+        "cloud_cover_high_gfs_seamless": [90, 80],
+    }
+    result = parse_cloud_models(hourly, ("ecmwf_ifs025", "gfs_seamless"), 0)
+    keys = list(result["ecmwf_ifs025"].cloud_total_pct)
+    assert all(key.tzinfo is UTC for key in keys)
+    assert result["ecmwf_ifs025"].cloud_total_pct[keys[0]] == 10.0
+    assert result["ecmwf_ifs025"].cloud_low_pct[keys[0]] == 1.0
+
+
+def test_parse_cloud_models_fields_independent():
+    hourly = {
+        "time": [1793131200, 1793134800],
+        "cloud_cover_ecmwf_ifs025": [10, 20],
+        "cloud_cover_mid_ecmwf_ifs025": [3, 4],
+        "precipitation_ecmwf_ifs025": [0.0, None],
+    }
+    result = parse_cloud_models(hourly, ("ecmwf_ifs025",))
+    series = result["ecmwf_ifs025"]
+    assert isinstance(series, ModelSeries)
+    assert list(series.cloud_total_pct.values()) == [10.0, 20.0]
+    assert series.cloud_low_pct == {}
+    assert list(series.precipitation_mm.values()) == [0.0, None]
+    assert "cloud_cover_low" not in series.fields_present
+
+
+def test_parse_cloud_models_ignores_old_nbm_keys():
+    hourly = {
+        "time": [1793131200],
+        "cloud_cover_ecmwf_ifs025": [10],
+        "precipitation_ecmwf_ifs025": [0],
+        "cloud_cover_ncep_nbm_conus": [20],
+        "precipitation_probability_ncep_nbm_conus": [30],
+    }
+    result = parse_cloud_models(hourly, CLOUD_REQUEST_MODELS)
+    assert "ecmwf_ifs025" in result
+    assert "ncep_nbm_conus" not in result
+
+
+def test_parse_cloud_models_unsuffixed_rejected():
+    with pytest.raises(ValueError, match="unsuffixed"):
+        parse_cloud_models({"time": [1793131200], "cloud_cover": [10]}, CLOUD_REQUEST_MODELS)
+
+
+async def test_fetches_request_gmt_unixtime_and_past_day():
+    response = _make_mock_response(
+        {
+            "latitude": 1,
+            "longitude": 2,
+            "utc_offset_seconds": 0,
+            "hourly": {"time": []},
+        }
+    )
+    with patch("nightcrate.services.weather.http_get", new=AsyncMock(return_value=response)) as get:
+        await fetch_weather(1, 2, "America/Phoenix")
+        params = get.await_args.kwargs["params"]
+        assert params["timezone"] == "GMT"
+        assert params["timeformat"] == "unixtime"
+        assert params["past_days"] == 1
+        assert params["forecast_days"] == FORECAST_DAYS == 16
+
+        await fetch_cloud_models(1, 2, "America/Phoenix")
+        params = get.await_args.kwargs["params"]
+        assert params["timezone"] == "GMT"
+        assert params["timeformat"] == "unixtime"
+        assert params["past_days"] == 1
+        assert params["forecast_days"] == 16
+        assert params["models"] == ",".join(CLOUD_REQUEST_MODELS)
+        hourly = set(params["hourly"].split(","))
+        assert "precipitation" in hourly
+        assert "precipitation_probability" not in hourly
+
+        await fetch_pwv(1, 2, "America/Phoenix")
+        assert get.await_args.kwargs["params"]["timezone"] == "GMT"
+        assert get.await_args.kwargs["params"]["timeformat"] == "unixtime"
+
+        await fetch_air_quality(1, 2, "America/Phoenix")
+        assert get.await_args.kwargs["params"]["timezone"] == "GMT"
+        assert get.await_args.kwargs["params"]["timeformat"] == "unixtime"
+
+
+async def test_cloud_request_params():
+    response = _make_mock_response(
+        {"latitude": 1, "longitude": 2, "utc_offset_seconds": 0, "hourly": {"time": []}}
+    )
+    with patch("nightcrate.services.weather.http_get", new=AsyncMock(return_value=response)) as get:
+        await fetch_cloud_models(1, 2, "America/Phoenix")
+    params = get.await_args.kwargs["params"]
+    assert params["forecast_days"] == 16
+    assert params["models"] == ",".join(CLOUD_REQUEST_MODELS)
+    hourly = set(params["hourly"].split(","))
+    assert "precipitation" in hourly
+    assert "precipitation_probability" not in hourly
+
+
+async def test_forecast_request_days():
+    response = _make_mock_response(
+        {"latitude": 1, "longitude": 2, "utc_offset_seconds": 0, "hourly": {"time": []}}
+    )
+    with patch("nightcrate.services.weather.http_get", new=AsyncMock(return_value=response)) as get:
+        await fetch_weather(1, 2, "America/Phoenix")
+    assert get.await_args.kwargs["params"]["forecast_days"] == 16
+
+
+async def test_fetch_model_meta_returns_all_domains():
+    response = _make_mock_response({"last_run_initialisation_time": 1793131200})
+    with patch("nightcrate.services.weather.http_get", new=AsyncMock(return_value=response)) as get:
+        result = json.loads(await fetch_model_meta())
+    assert set(result) == set(META_DOMAINS.values())
+    assert [call.args[0] for call in get.await_args_list] == [
+        f"https://api.open-meteo.com/data/{domain}/static/meta.json"
+        for domain in META_DOMAINS.values()
+    ]
+
+
+async def test_fetch_model_meta_requests_domains_concurrently():
+    response = _make_mock_response({"last_run_initialisation_time": 1793131200})
+    active = 0
+    max_active = 0
+
+    async def concurrent_get(*_args, **_kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return response
+
+    with patch("nightcrate.services.weather.http_get", new=AsyncMock(side_effect=concurrent_get)):
+        await fetch_model_meta()
+    assert max_active == len(META_DOMAINS)
 
 
 class TestGetAndLogException:

@@ -1,8 +1,11 @@
 """Tests for seeing estimation service."""
 
+import pytest
+
 from nightcrate.services.seeing import (
     estimate_seeing_surface,
     estimate_seeing_wind_shear,
+    score_label,
 )
 
 
@@ -18,6 +21,17 @@ class TestSurfaceModel:
             prev_temperature_c=10.5,
         )
         assert 70 <= score <= 100
+
+    def test_missing_wind_is_none(self):
+        assert (
+            estimate_seeing_surface(
+                temperature_c=10.0,
+                dew_point_c=2.0,
+                humidity_pct=40.0,
+                wind_speed_kmh=None,
+            )
+            is None
+        )
 
     def test_terrible_conditions(self):
         score = estimate_seeing_surface(
@@ -191,6 +205,37 @@ class TestWindShearModel:
         )
         assert 60 <= score <= 100
 
+    @pytest.mark.parametrize(
+        "missing",
+        [
+            "wind_speed_200hpa_kmh",
+            "wind_speed_300hpa_kmh",
+            "wind_speed_500hpa_kmh",
+            "geopotential_200hpa_m",
+            "geopotential_300hpa_m",
+            "geopotential_500hpa_m",
+            "temperature_c",
+            "dew_point_c",
+            "humidity_pct",
+            "wind_speed_surface_kmh",
+        ],
+    )
+    def test_missing_required_input_is_none(self, missing):
+        inputs = {
+            "wind_speed_200hpa_kmh": 20.0,
+            "wind_speed_300hpa_kmh": 15.0,
+            "wind_speed_500hpa_kmh": 10.0,
+            "geopotential_200hpa_m": 11800.0,
+            "geopotential_300hpa_m": 9200.0,
+            "geopotential_500hpa_m": 5500.0,
+            "temperature_c": 10.0,
+            "dew_point_c": 2.0,
+            "humidity_pct": 40.0,
+            "wind_speed_surface_kmh": 5.0,
+        }
+        inputs[missing] = None
+        assert estimate_seeing_wind_shear(**inputs) is None
+
     def test_reference_value_calm_jet_stream(self):
         """Reference value for test_calm_jet_stream inputs, computed by hand.
 
@@ -270,3 +315,11 @@ class TestWindShearModel:
                 wind_speed_surface_kmh=10.0,
             )
             assert 0 <= score <= 100
+
+
+def test_score_label_bands():
+    assert score_label(67) == "good"
+    assert score_label(66) == "fair"
+    assert score_label(34) == "fair"
+    assert score_label(33) == "poor"
+    assert score_label(None) is None

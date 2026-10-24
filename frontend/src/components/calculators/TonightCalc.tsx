@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link as RouterLink } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link as RouterLink, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Link from "@mui/material/Link";
@@ -9,12 +9,15 @@ import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { fetchTonight, type TonightResponse } from "@/api/calculators";
-import { fetchForecast, type ForecastResponse } from "@/api/weather";
+import { forecastQueryOptions } from "@/api/weather";
 import CalculatorAboutSection from "@/components/rigs/CalculatorAboutSection";
 import { useCalculatorLocation } from "@/components/calculators/CalculatorLocationBar";
 import MoonPhaseIcon from "@/components/weather/MoonPhaseIcon";
-import QualityBadge from "@/components/weather/QualityBadge";
-import { todayInTimezone } from "@/lib/timezoneDate";
+import NightCard from "@/components/weather/NightCard";
+import { buildClock } from "@/lib/weatherVerdict";
+import { tonightDate } from "@/lib/timezoneDate";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useNow } from "@/hooks/useNow";
 
 const DASH = "—";
 
@@ -64,20 +67,37 @@ function formatDurationHours(hours: number | null | undefined): string {
   return `${h}h ${m}m`;
 }
 
+function evaluatedLabel(iso: string, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+}
+
 /**
  * "Tonight at a glance" — darkness totals, twilight/sunrise transitions,
  * imaging quality, and moon info for the selected location and date.
  */
 export default function TonightCalc() {
   const { locationId, location } = useCalculatorLocation();
+  const { pathname } = useLocation();
+  const now = useNow(15_000);
+  const routeActive = pathname === "/tonight";
   const timezone =
     location?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const [date, setDate] = useState(() => todayInTimezone(timezone));
+  const [date, setDate] = useState(() => tonightDate(timezone));
+  const dateWasPicked = useRef(false);
+  const units = useSettingsStore((state) => state.settings?.weather_units ?? "metric");
 
-  // Re-seed the date whenever the location's display timezone changes, so we
-  // land on "today" in *that* location by default.
+  // Re-seed the observing night whenever the display timezone changes.
   useEffect(() => {
-    setDate(todayInTimezone(timezone));
+    dateWasPicked.current = false;
+    setDate(tonightDate(timezone));
   }, [timezone]);
 
   const { data, isLoading, error } = useQuery<TonightResponse>({
@@ -86,18 +106,30 @@ export default function TonightCalc() {
     enabled: locationId != null && Boolean(date),
   });
 
-  // Imaging-quality forecast (independent fetch — the weather API runs the
-  // full scoring pipeline; we just pluck the matching day's score).
-  const { data: forecast } = useQuery<ForecastResponse>({
-    queryKey: ["calc-tonight-forecast", locationId],
-    queryFn: () => fetchForecast(locationId!, true),
-    enabled: locationId != null,
+  const forecastQuery = useQuery({
+    ...forecastQueryOptions(locationId ?? 0),
+    enabled: routeActive && locationId != null,
+    refetchInterval: routeActive && locationId != null ? 60_000 : false,
   });
+  const forecast = forecastQuery.data;
+  const forecastNotCurrent = Boolean(
+    forecast
+      && (now - Date.parse(forecast.evaluated_at) > 3 * 60_000 || forecastQuery.isRefetchError),
+  );
+
+  // An unedited date follows the backend's noon-to-noon anchor whenever the
+  // shared forecast refreshes. A date explicitly chosen by the user stays put.
+  useEffect(() => {
+    if (!dateWasPicked.current && forecastQuery.dataUpdatedAt > 0) {
+      setDate(tonightDate(timezone));
+    }
+  }, [forecastQuery.dataUpdatedAt, timezone]);
 
   const tonightForecast = useMemo(
-    () => forecast?.days.find((d) => d.date === date),
+    () => forecast?.nights.find((night) => night.date === date),
     [forecast, date],
   );
+  const forecastClock = useMemo(() => buildClock(forecast?.nights ?? []), [forecast?.nights]);
 
   const tz = data?.timezone ?? timezone;
 
@@ -159,7 +191,10 @@ export default function TonightCalc() {
           type="date"
           size="small"
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(e) => {
+            dateWasPicked.current = true;
+            setDate(e.target.value);
+          }}
           slotProps={{ inputLabel: { shrink: true } }}
         />
         {location && (
@@ -179,75 +214,26 @@ export default function TonightCalc() {
         flexWrap="wrap"
         useFlexGap
       >
-        <Paper
-          variant="outlined"
-          sx={{
-            p: 2.5,
-            height: CARD_HEIGHT,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Tooltip title="Open this date on the Weather page">
-            <Link
-              component={RouterLink}
-              to={weatherHref}
-              variant="subtitle1"
-              underline="none"
-              color="inherit"
-              sx={{
-                display: "block",
-                mb: 2,
-                fontWeight: 600,
-                width: "fit-content",
-                "&:hover": { color: "primary.main" },
-              }}
-            >
-              Imaging quality
-            </Link>
-          </Tooltip>
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {tonightForecast ? (
-              tonightForecast.no_imaging_window ? (
-                <Typography variant="body2" color="text.secondary">
-                  No imaging window for this date.
-                </Typography>
-              ) : (
-                <Link
-                  component={RouterLink}
-                  to={weatherHref}
-                  underline="none"
-                  sx={{ display: "inline-flex", lineHeight: 0, borderRadius: "50%" }}
-                >
-                  <QualityBadge
-                    score={tonightForecast.imaging_quality}
-                    label={tonightForecast.imaging_quality_label}
-                    size="medium"
-                    showLabel
-                    tooltip={`Expected useful data for ${tonightForecast.date} at ${location?.name ?? "this location"}: about ${tonightForecast.expected_useful_hours.toFixed(1)} h. Cloud, darkness, precipitation and wind gate how much of the night is usable; seeing, transparency, wind and the moon set how good it is. Click to open the Weather page.`}
-                  />
-                </Link>
-              )
-            ) : forecast ? (
-              <Typography variant="body2" color="text.secondary">
-                No forecast data for this date — outside the 7-day window.
-              </Typography>
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                Loading forecast&hellip;
-              </Typography>
-            )}
-          </Box>
-        </Paper>
+        {tonightForecast ? (
+          <NightCard
+            night={tonightForecast}
+            clock={forecastClock}
+            units={units}
+            href={weatherHref}
+            notCurrent={forecastNotCurrent}
+            notCurrentLabel={forecastNotCurrent && forecast
+              ? `Not current — last evaluated ${evaluatedLabel(forecast.evaluated_at, forecast.timezone)}`
+              : undefined}
+          />
+        ) : (
+          <Paper variant="outlined" sx={{ p: 2.5, minHeight: CARD_HEIGHT, width: 390, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Typography variant="body2" color="text.secondary">
+              {forecast ? "No forecast data for this date — outside the 14-night forecast." : "Loading forecast…"}
+            </Typography>
+          </Paper>
+        )}
 
-        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+        <Paper variant="outlined" sx={{ p: 2.5, minHeight: CARD_HEIGHT, display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <Stack
             direction={{ xs: "column", sm: "row" }}
             spacing={4}
@@ -300,7 +286,7 @@ export default function TonightCalc() {
           </Stack>
         </Paper>
 
-        <Paper variant="outlined" sx={{ p: 2.5, height: CARD_HEIGHT }}>
+        <Paper variant="outlined" sx={{ p: 2.5, minHeight: CARD_HEIGHT, display: "flex", flexDirection: "column" }}>
           <Tooltip title="Open the Moon Altitude (Year) calculator">
             <Link
               component={RouterLink}
@@ -323,6 +309,7 @@ export default function TonightCalc() {
             direction={{ xs: "column", sm: "row" }}
             spacing={3}
             alignItems={{ xs: "flex-start", sm: "center" }}
+            sx={{ flex: 1, mb: 2 }}
           >
             <Stack direction="row" spacing={2} alignItems="center">
               <Tooltip title="Open the Moon Altitude (Year) calculator">
@@ -470,10 +457,10 @@ export default function TonightCalc() {
           narrowband imaging time when moon illumination is high.
         </p>
         <p>
-          <strong>Imaging quality</strong> reuses the same composite score the
-          Weather page reports for this date &mdash; sky clarity (cloud
-          layers), transparency, seeing, moon, and wind blended into a single
-          0&ndash;100 number with the same colour palette.
+          <strong>Imaging verdict</strong> uses this location&rsquo;s saved
+          imaging rules and the same hourly forecast as the Weather page. It
+          reports whether the remaining dark hours meet your cloud, precipitation,
+          session, and optional wind, dew, or moon limits.
         </p>
         <p>
           At polar latitudes any individual event (e.g. sunset) may be{" "}

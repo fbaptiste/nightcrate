@@ -27,6 +27,7 @@ from nightcrate.api import (
     files,
     horizons,
     images,
+    imaging_rules,
     ingest,
     locations,
     phd2,
@@ -62,6 +63,18 @@ _MAINT_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
     sqlite3.Error,
     OSError,
 )
+
+WEATHER_CACHE_RETENTION_DAYS = 8
+
+
+async def purge_weather_cache(conn) -> int:
+    """Delete provider responses too old to be useful as stale fallbacks."""
+    cursor = await conn.execute(
+        "DELETE FROM weather_cache WHERE fetched_at < datetime('now', ?)",
+        (f"-{WEATHER_CACHE_RETENTION_DAYS} days",),
+    )
+    await conn.commit()
+    return cursor.rowcount
 
 
 def _configure_logging() -> None:
@@ -168,11 +181,7 @@ async def lifespan(app: FastAPI):
         # Purge stale weather cache entries (non-fatal).
         try:
             async with get_db() as conn:
-                await conn.execute(
-                    "DELETE FROM weather_cache WHERE fetched_at < datetime('now', ?)",
-                    (f"-{app_settings.weather_cache_ttl_hours * 2} hours",),
-                )
-                await conn.commit()
+                await purge_weather_cache(conn)
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("weather cache purge failed", exc_info=True)
 
@@ -376,11 +385,9 @@ openapi_tags = [
     {
         "name": "Weather",
         "description": (
-            "Weather forecast and imaging quality predictions. Provides 7-day "
-            "daily summaries with composite imaging quality scores, hourly "
-            "detail breakdowns with seeing estimates, and methodology "
-            "documentation. Integrates Open-Meteo weather data with astronomy, "
-            "seeing estimation, and imaging quality scoring."
+            "Personal imaging verdicts (Go / Uncertain / No / Not enough data) "
+            "for the next 14 nights, from Open-Meteo hourly forecasts and each "
+            "location's imaging rules, with hourly detail and methodology."
         ),
     },
 ]
@@ -405,6 +412,7 @@ app.include_router(aberration.router)
 app.include_router(equipment.router)
 app.include_router(equipment.lookup_router)
 app.include_router(locations.router)
+app.include_router(imaging_rules.router)
 app.include_router(horizons.router)
 app.include_router(horizons.parse_router)
 app.include_router(rigs.router)

@@ -15,8 +15,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TransparencyResult:
-    score: int  # 0-100
-    tier: str  # "primary" | "fallback" | "degraded"
+    score: int | None  # 0-100, or unavailable
+    tier: str | None  # "primary" | "fallback" | "degraded"
     components: dict  # individual sub-scores for debugging / display
 
 
@@ -93,6 +93,4 @@ def estimate_transparency(
             components={"humidity": hum_s, "visibility": vis_s},
         )
 
-    # If we don't even have humidity + visibility, something is very wrong.
-    # Return a neutral score so downstream scoring doesn't crash.
-    return TransparencyResult(score=50, tier="degraded", components={})
+    return TransparencyResult(score=None, tier=None, components={})

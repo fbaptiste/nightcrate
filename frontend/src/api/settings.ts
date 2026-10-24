@@ -22,7 +22,6 @@ export interface Settings {
   browser_favorites: BrowserFavorite[];
   aberration_cache_ttl_days: number;
   weather_cache_ttl_hours: number;
-  weather_moon_penalty: boolean;
   weather_units: WeatherUnits;
   calculators_clock_order: string[];
   nav_order: string[];

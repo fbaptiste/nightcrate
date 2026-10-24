@@ -15,19 +15,17 @@ Kept as delivered.
 **Do not edit these files.** They are a record of what was handed over, not a
 source the app builds from.
 
-- `docs/imaging-quality-model.md` is the maintained descendant of the design
-  document. It carries the same body plus a §7 on the forecast source added in
-  v0.41.5. Read that one for current truth.
-- `backend/src/nightcrate/services/imaging_quality.py` is the shipped model. It
-  follows the reference implementation with three corrections made during the
-  port, recorded in the v0.41.4 commit: `expected_useful_hours` summed the
-  rounded integer score, missing cloud data raised into the request, and the
-  wind-calm curve jumped from 8 to 0 at exactly 30 km/h.
-- The §4 worked examples are reproduced as pinned tests in
-  `backend/tests/test_imaging_quality.py`, and the harness was run against the
-  ported module as the acceptance check — it reproduces the §4 tables exactly.
+- **v0.41.9 retired this model** in favour of the personal imaging verdict
+  (see `docs/weather-algorithms.md`). Its shipped module
+  (`services/imaging_quality.py`) and pinned tests
+  (`tests/test_imaging_quality.py`) were removed; both remain in git history at
+  v0.41.8.
+- `docs/archive/imaging-quality-model.md` is the archived descendant of the
+  design document, with a §7 on the forecast source added in v0.41.5.
 
 ## What was designed and has not been built
+
+*Superseded by v0.41.9: the score these items belonged to has been retired.*
 
 The document's §3 "UI implications" lists more than v0.41.4 and v0.41.5
 delivered. The model returns these and the API passes them through, but nothing

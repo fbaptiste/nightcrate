@@ -1,280 +1,835 @@
-"""Tests for weather cache stats, clear, and polar no-imaging branch.
+"""Weather cache administration, retention, and schema checks."""
 
-Focuses on coverage gaps introduced by the latest additions to
-`nightcrate.api.weather`:
-
-- `GET /api/weather/cache/stats` — row count + byte size (with dbstat fallback).
-- `DELETE /api/weather/cache` — clears the cache.
-- `_compute_night_data` polar branch — `no_imaging_window == True`.
-"""
-
+import asyncio
+import hashlib
 import json
-from datetime import datetime
+import sqlite3
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
-from zoneinfo import ZoneInfo
 
 import aiosqlite
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
+from yoyo import get_backend, read_migrations
 
+from nightcrate.api.weather import (
+    _cloud_cache_rows,
+    _cloud_complete,
+    _fetch_or_cached,
+    _fetch_or_cached_cloud_models,
+    _fetch_or_cached_supplementary,
+    _paired_meta_raw,
+    _weather_from_raw,
+    _write_cache,
+    _write_cloud_cache,
+)
+from nightcrate.db.migrations import MIGRATIONS_DIR, apply_migrations
 from nightcrate.db.session import get_db_path
-from nightcrate.main import app
-from nightcrate.services.weather import HourlyWeather, WeatherData
-
-
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
+from nightcrate.main import app, purge_weather_cache
+from nightcrate.services.forecast_coverage import last_expected_stamp, requested_range
+from nightcrate.services.weather import (
+    CLOUD_SPREAD_MODELS,
+    FORECAST_DAYS,
+    CloudModelData,
+    HourlyWeather,
+    WeatherData,
+    parse_cloud_models,
+)
 
 
 @pytest.fixture
 async def client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as value:
+        yield value
 
 
-async def _create_location(
-    client: AsyncClient,
-    *,
-    name: str = "Cache Test Observatory",
-    latitude: float = 34.05,
-    longitude: float = -118.25,
-    elevation_m: float = 300.0,
-    timezone: str = "America/Los_Angeles",
-) -> int:
-    resp = await client.post(
+async def _location(client: AsyncClient) -> int:
+    response = await client.post(
         "/api/locations",
         json={
-            "name": name,
-            "latitude": latitude,
-            "longitude": longitude,
-            "elevation_m": elevation_m,
-            "timezone": timezone,
-        },
-    )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
-
-
-async def _insert_cache_row(
-    location_id: int,
-    source: str,
-    *,
-    start_date: str = "",
-    end_date: str = "",
-    payload: dict | None = None,
-) -> None:
-    """Directly insert a valid JSON row into weather_cache for the current test DB."""
-    if payload is None:
-        payload = {
+            "name": "Cache Test",
             "latitude": 34.05,
             "longitude": -118.25,
-            "hourly": {
-                "time": ["2026-04-13T00:00"],
-                "temperature_2m": [10.0],
-            },
-        }
-    async with aiosqlite.connect(str(get_db_path())) as conn:
+            "elevation_m": 300,
+            "timezone": "America/Los_Angeles",
+        },
+    )
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
+async def _row(location_id: int, source: str, age: str = "0 hours") -> None:
+    async with aiosqlite.connect(get_db_path()) as conn:
         await conn.execute(
             """INSERT INTO weather_cache
                (location_id, source, start_date, end_date, response_json, fetched_at)
-               VALUES (?, ?, ?, ?, ?, datetime('now'))""",
-            (location_id, source, start_date, end_date, json.dumps(payload)),
+               VALUES (?, ?, '', '', ?, datetime('now', ?))""",
+            (location_id, source, json.dumps({"hourly": {"time": []}}), age),
         )
         await conn.commit()
 
 
-# ---------------------------------------------------------------------------
-# GET /api/weather/cache/stats
-# ---------------------------------------------------------------------------
+def _cloud_json(
+    fetched_at: datetime,
+    *,
+    cutoffs: dict[str, datetime] | None = None,
+    legacy: bool = False,
+    empty_axis: bool = False,
+) -> str:
+    first, last = requested_range(fetched_at, forecast_days=FORECAST_DAYS, past_days=1)
+    times: list[datetime] = []
+    current = first
+    while current <= last:
+        times.append(current)
+        current += timedelta(hours=1)
+    if empty_axis:
+        times = []
+    hourly: dict[str, list[int | float | None]] = {
+        "time": [int(stamp.timestamp()) for stamp in times]
+    }
+    variables = ["cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high"]
+    if not legacy:
+        variables.append("precipitation")
+    for model in CLOUD_SPREAD_MODELS:
+        cutoff = (cutoffs or {}).get(model)
+        for variable in variables:
+            hourly[f"{variable}_{model}"] = [
+                0.0 if cutoff is None or stamp <= cutoff else None for stamp in times
+            ]
+    return json.dumps({"utc_offset_seconds": 0, "hourly": hourly})
 
 
-@pytest.mark.anyio
-async def test_cache_stats_empty(client):
-    """Fresh DB → cache is empty → rows=0."""
-    resp = await client.get("/api/weather/cache/stats")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["rows"] == 0
-    # bytes may be 0 (no rows). dbstat might return 0 or a small non-zero table
-    # overhead depending on whether the table has been populated previously.
-    assert isinstance(data["bytes"], int)
-    assert data["bytes"] >= 0
+def _weather_json(fetched_at: datetime, *, cutoff: datetime | None = None) -> str:
+    first, last = requested_range(fetched_at, forecast_days=FORECAST_DAYS, past_days=1)
+    times: list[datetime] = []
+    current = first
+    while current <= last:
+        times.append(current)
+        current += timedelta(hours=1)
+
+    def values(value: float) -> list[float | None]:
+        return [value if cutoff is None or stamp <= cutoff else None for stamp in times]
+
+    return json.dumps(
+        {
+            "latitude": 34.05,
+            "longitude": -118.25,
+            "utc_offset_seconds": 0,
+            "hourly": {
+                "time": [int(stamp.timestamp()) for stamp in times],
+                "temperature_2m": values(12.0),
+                "dew_point_2m": values(4.0),
+                "relative_humidity_2m": values(40.0),
+                "cloud_cover": values(0.0),
+                "cloud_cover_low": values(0.0),
+                "cloud_cover_mid": values(0.0),
+                "cloud_cover_high": values(0.0),
+                "wind_speed_10m": values(5.0),
+                "wind_direction_10m": values(180.0),
+                "wind_gusts_10m": values(10.0),
+                "visibility": values(25000.0),
+                "precipitation": values(0.0),
+                "precipitation_probability": values(0.0),
+            },
+        }
+    )
 
 
-@pytest.mark.anyio
-async def test_cache_stats_populated(client):
-    """After inserting rows of various sources, stats should reflect them."""
-    loc_id = await _create_location(client)
-
-    await _insert_cache_row(loc_id, "forecast")
-    await _insert_cache_row(loc_id, "ecmwf_pwv")
-    await _insert_cache_row(loc_id, "openmeteo_aq")
-
-    resp = await client.get("/api/weather/cache/stats")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["rows"] == 3
-    # Either dbstat (pgsize) or the LENGTH(response_json) fallback should
-    # report a non-zero byte count since the rows store real JSON.
-    assert data["bytes"] > 0
+def _cloud_data(raw_json: str) -> CloudModelData:
+    raw = json.loads(raw_json)
+    return CloudModelData(
+        models=parse_cloud_models(raw["hourly"], CLOUD_SPREAD_MODELS), raw_json=raw_json
+    )
 
 
-# ---------------------------------------------------------------------------
-# DELETE /api/weather/cache
-# ---------------------------------------------------------------------------
+def _meta_raw(marker: str = "one") -> str:
+    return json.dumps({"ecmwf_ifs025": {"marker": marker}})
 
 
-@pytest.mark.anyio
-async def test_cache_clear_empty(client):
-    """Clearing an empty cache returns deleted=0 and ok=true."""
-    resp = await client.delete("/api/weather/cache")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data == {"ok": True, "deleted": 0}
-
-
-@pytest.mark.anyio
-async def test_cache_clear_populated(client):
-    """Clearing a populated cache deletes all rows."""
-    loc_id = await _create_location(client)
-
-    await _insert_cache_row(loc_id, "forecast")
-    await _insert_cache_row(loc_id, "ecmwf_pwv")
-    await _insert_cache_row(loc_id, "openmeteo_aq")
-
-    resp = await client.delete("/api/weather/cache")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["ok"] is True
-    assert data["deleted"] == 3
-
-    # Verify the table is actually empty.
-    async with aiosqlite.connect(str(get_db_path())) as conn:
-        cursor = await conn.execute("SELECT COUNT(*) FROM weather_cache")
-        remaining = (await cursor.fetchone())[0]
-    assert remaining == 0
-
-    # A follow-up stats call agrees.
+async def test_cache_stats_and_clear(client: AsyncClient):
+    location_id = await _location(client)
+    await _row(location_id, "forecast")
+    await _row(location_id, "ecmwf_pwv")
     stats = await client.get("/api/weather/cache/stats")
     assert stats.status_code == 200
-    assert stats.json()["rows"] == 0
+    assert stats.json()["rows"] == 2
+    assert stats.json()["bytes"] > 0
+
+    cleared = await client.delete("/api/weather/cache")
+    assert cleared.json() == {"ok": True, "deleted": 2}
+    assert (await client.get("/api/weather/cache/stats")).json()["rows"] == 0
 
 
-# ---------------------------------------------------------------------------
-# Polar no-imaging-window branch of _compute_night_data
-# ---------------------------------------------------------------------------
+async def test_purge_keeps_week_old_rows(client: AsyncClient):
+    location_id = await _location(client)
+    await _row(location_id, "forecast", "-2 days")
+    await _row(location_id, "cloud_models", "-9 days")
+    now = datetime.now(UTC)
+    payload = json.dumps({"hourly": {"time": []}})
+    await _write_cache(
+        location_id,
+        "ecmwf_pwv",
+        payload,
+        now - timedelta(days=7, hours=23),
+    )
+    await _write_cache(
+        location_id,
+        "openmeteo_aq",
+        payload,
+        now - timedelta(days=8, hours=1),
+    )
+    async with aiosqlite.connect(get_db_path()) as conn:
+        deleted = await purge_weather_cache(conn)
+        assert deleted == 2
+        cursor = await conn.execute("SELECT source FROM weather_cache ORDER BY source")
+        assert [row[0] for row in await cursor.fetchall()] == ["ecmwf_pwv", "forecast"]
 
 
-def _make_fake_weather_polar_june(n_hours: int = 192) -> WeatherData:
-    """Fake hourly weather for an 85°N location spanning 8 June days."""
-    hours = []
-    for i in range(n_hours):
-        day = 15 + i // 24  # starts 2026-06-15, covers 8 days
-        hour = i % 24
-        hours.append(
-            HourlyWeather(
-                time=f"2026-06-{day:02d}T{hour:02d}:00",
-                temperature_c=2.0,
-                dew_point_c=0.0,
-                humidity_pct=80.0,
-                cloud_cover_pct=40.0,
-                cloud_cover_low_pct=20.0,
-                cloud_cover_mid_pct=10.0,
-                cloud_cover_high_pct=10.0,
-                wind_speed_kmh=15.0,
-                wind_direction_deg=180.0,
-                wind_gusts_kmh=25.0,
-                visibility_m=15000.0,
-                precipitation_mm=0.0,
-                precipitation_probability_pct=10.0,
-                wind_speed_200hpa_kmh=None,
-                wind_speed_300hpa_kmh=None,
-                wind_speed_500hpa_kmh=None,
-                geopotential_200hpa_m=None,
-                geopotential_300hpa_m=None,
-                geopotential_500hpa_m=None,
-            )
+async def test_cloud_models_source_check_constraint(client: AsyncClient):
+    """Migration 0057 accepts the cloud_models cache source."""
+    location_id = await _location(client)
+    await _row(location_id, "cloud_models")
+    async with aiosqlite.connect(get_db_path()) as conn:
+        cursor = await conn.execute(
+            "SELECT COUNT(*) FROM weather_cache WHERE source = 'cloud_models'"
         )
-    return WeatherData(
-        latitude=85.0,
-        longitude=0.0,
-        source="forecast",
-        hourly=hours,
-        raw_json="{}",
+        assert (await cursor.fetchone())[0] == 1
+
+
+def test_migration_0060_adds_model_meta_fresh(tmp_path):
+    path = tmp_path / "fresh.db"
+    apply_migrations(path)
+    with closing(sqlite3.connect(path)) as conn:
+        location_id = conn.execute(
+            "INSERT INTO location (name, latitude, longitude, timezone) VALUES (?, ?, ?, ?)",
+            ("Fresh Migration Site", 33.4484, -112.0740, "America/Phoenix"),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO weather_cache
+               (location_id, source, start_date, end_date, response_json)
+               VALUES (?, 'model_meta', '', '', '{}')""",
+            (location_id,),
+        )
+        conn.commit()
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_migration_0060_preserves_prior_rows_and_ids(tmp_path):
+    path = tmp_path / "upgrade.db"
+    with get_backend(f"sqlite:///{path}") as backend:
+        migrations = read_migrations(str(MIGRATIONS_DIR))
+        through_0059 = backend.to_apply(migrations).filter(
+            lambda migration: migration.id <= "0059.imaging_rules_precipitation"
+        )
+        with backend.lock():
+            backend.apply_migrations(through_0059)
+
+    with closing(sqlite3.connect(path)) as conn:
+        location_id = conn.execute(
+            "INSERT INTO location (name, latitude, longitude, timezone) VALUES (?, ?, ?, ?)",
+            ("Upgrade Migration Site", 33.4484, -112.0740, "America/Phoenix"),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO weather_cache
+               (id, location_id, source, start_date, end_date, response_json)
+               VALUES (42, ?, 'forecast', '', '', '{}')""",
+            (location_id,),
+        )
+        conn.commit()
+
+    apply_migrations(path)
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute(
+            "SELECT id, response_json FROM weather_cache WHERE source = 'forecast'"
+        ).fetchone() == (42, "{}")
+        conn.execute(
+            """INSERT INTO weather_cache
+               (location_id, source, start_date, end_date, response_json)
+               VALUES (?, 'model_meta', '', '', '{}')""",
+            (location_id,),
+        )
+        conn.commit()
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+async def test_model_meta_written_with_cloud_row(client: AsyncClient):
+    location_id = await _location(client)
+    fetched_at = datetime(2026, 10, 17, 23, 30, 45, 123456, tzinfo=UTC)
+    cloud_raw = _cloud_json(fetched_at)
+    await _write_cloud_cache(location_id, cloud_raw, _meta_raw(), fetched_at)
+
+    rows = await _cloud_cache_rows(location_id)
+    assert rows["cloud_models"]["fetched_at"] == rows["model_meta"]["fetched_at"]
+    assert rows["cloud_models"]["fetched_at"].endswith(".123456")
+    stored = json.loads(rows["model_meta"]["response_json"])
+    assert stored["cloud_sha256"] == hashlib.sha256(cloud_raw.encode()).hexdigest()
+    assert stored["domains"] == json.loads(_meta_raw())
+
+    refresh_at = fetched_at + timedelta(hours=7)
+    replacement = _cloud_data(_cloud_json(refresh_at))
+    with (
+        patch("nightcrate.api.weather._now", return_value=refresh_at),
+        patch("nightcrate.api.weather.fetch_cloud_models", new=AsyncMock(return_value=replacement)),
+        patch(
+            "nightcrate.api.weather.fetch_model_meta",
+            new=AsyncMock(side_effect=RuntimeError("metadata unavailable")),
+        ),
+    ):
+        result = await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+    assert result.data is replacement
+    assert result.meta_raw is None
+    assert "model_meta" not in await _cloud_cache_rows(location_id)
+
+
+async def test_meta_from_other_snapshot_not_attached(client: AsyncClient):
+    location_id = await _location(client)
+    fetched_at = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    await _write_cloud_cache(location_id, _cloud_json(fetched_at), _meta_raw(), fetched_at)
+    async with aiosqlite.connect(get_db_path()) as conn:
+        payload = json.loads(
+            (
+                await (
+                    await conn.execute(
+                        "SELECT response_json FROM weather_cache WHERE source = 'model_meta'"
+                    )
+                ).fetchone()
+            )[0]
+        )
+        payload["cloud_sha256"] = hashlib.sha256(b"another payload").hexdigest()
+        await conn.execute(
+            "UPDATE weather_cache SET response_json = ? WHERE source = 'model_meta'",
+            (json.dumps(payload),),
+        )
+        await conn.commit()
+    rows = await _cloud_cache_rows(location_id)
+    assert _paired_meta_raw(rows["cloud_models"], rows["model_meta"]) is None
+
+
+async def test_identical_payloads_pair_by_refresh(client: AsyncClient):
+    location_id = await _location(client)
+    fetched_at = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    cloud_raw = _cloud_json(fetched_at)
+    await _write_cloud_cache(location_id, cloud_raw, _meta_raw("first"), fetched_at)
+    first = await _cloud_cache_rows(location_id)
+    assert (
+        json.loads(_paired_meta_raw(first["cloud_models"], first["model_meta"]))["ecmwf_ifs025"][
+            "marker"
+        ]
+        == "first"
+    )
+
+    await _write_cloud_cache(
+        location_id, cloud_raw, _meta_raw("second"), fetched_at + timedelta(microseconds=1)
+    )
+    second = await _cloud_cache_rows(location_id)
+    assert (
+        json.loads(_paired_meta_raw(second["cloud_models"], second["model_meta"]))["ecmwf_ifs025"][
+            "marker"
+        ]
+        == "second"
     )
 
 
-def _make_fake_supp_empty() -> dict[str, float | None]:
-    return {}
-
-
-@pytest.mark.anyio
-async def test_forecast_polar_no_imaging_window(client):
-    """85°N in June → midnight sun → no_imaging_window=True on returned days."""
-    loc_id = await _create_location(
-        client,
-        name="Extreme Polar Observatory",
-        latitude=85.0,
-        longitude=0.0,
-        elevation_m=10.0,
-        timezone="UTC",
+def test_truncated_axis_does_not_shrink_coverage():
+    fetched_at = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    cutoff = fetched_at + timedelta(days=9)
+    truncated = _cloud_data(
+        _cloud_json(fetched_at, cutoffs={model: cutoff for model in CLOUD_SPREAD_MODELS})
     )
-    fake_weather = _make_fake_weather_polar_june()
-    fake_supplementary = _make_fake_supp_empty()
+    empty = _cloud_data(_cloud_json(fetched_at, empty_axis=True))
+    assert not _cloud_complete(truncated, fetched_at)
+    assert not _cloud_complete(empty, fetched_at)
 
-    fake_now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=ZoneInfo("UTC"))
 
-    class MockDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            if tz is not None:
-                return fake_now.astimezone(tz)
-            return fake_now
+def test_union_axis_does_not_hide_truncation():
+    fetched_at = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    _, last = requested_range(fetched_at, forecast_days=FORECAST_DAYS, past_days=1)
+    cutoffs = {
+        "ecmwf_ifs025": fetched_at + timedelta(days=10),
+        "gfs_seamless": last_expected_stamp("gfs_seamless", fetched_at, last),
+    }
+    assert not _cloud_complete(_cloud_data(_cloud_json(fetched_at, cutoffs=cutoffs)), fetched_at)
+
+
+async def test_incomplete_within_ttl_not_stale(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    fetched_at = now - timedelta(minutes=30)
+    await _write_cache(
+        location_id,
+        "forecast",
+        _weather_json(fetched_at, cutoff=fetched_at + timedelta(days=5)),
+        fetched_at,
+    )
+    cloud_raw = _cloud_json(fetched_at, cutoffs={"icon_seamless": fetched_at + timedelta(days=5)})
+    await _write_cloud_cache(location_id, cloud_raw, _meta_raw(), fetched_at)
 
     with (
+        patch("nightcrate.api.weather._now", return_value=now),
         patch(
-            "nightcrate.api.weather._fetch_or_cached",
-            new_callable=AsyncMock,
-            return_value=fake_weather,
+            "nightcrate.api.weather.fetch_weather",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
         ),
         patch(
-            "nightcrate.api.weather._fetch_or_cached_supplementary",
-            new_callable=AsyncMock,
-            return_value=fake_supplementary,
+            "nightcrate.api.weather.fetch_cloud_models",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
         ),
-        patch("nightcrate.api.weather.datetime", MockDatetime),
+        patch(
+            "nightcrate.api.weather.fetch_model_meta",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
+        ),
     ):
-        resp = await client.get(
-            "/api/weather/forecast",
-            params={"location_id": loc_id, "include_moon": True},
+        forecast_result = await _fetch_or_cached(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+        cloud_result = await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
         )
 
-    assert resp.status_code == 200
-    data = resp.json()
+    assert forecast_result.stale_minutes is None
+    assert cloud_result.stale_minutes is None
+    assert cloud_result.data is not None
 
-    no_imaging_days = [d for d in data["days"] if d["no_imaging_window"]]
-    assert len(no_imaging_days) > 0, "85°N in June should yield at least one no-imaging-window day"
 
-    # Every no-imaging-window day must match the shape produced by the polar
-    # branch in _compute_night_data: all scores zero except moon (100), zero
-    # darkness, dew_safe_window="none", and a valid deepest_darkness_reached.
-    for day in no_imaging_days:
-        assert day["imaging_quality"] == 0
-        assert day["imaging_quality_label"] == "Unusable"
-        assert day["availability"] == 0.0
-        assert day["quality"] == 0.0
-        assert day["expected_useful_hours"] == 0.0
-        assert day["factors"] == []
-        assert day["flags"] == ["no_darkness"]
-        assert day["darkness_hours"] == 0
-        assert day["moonless_dark_hours"] == 0
-        assert day["dew_safe_window"]["label"] == "none"
-        assert day["deepest_darkness_reached"] in ("astro", "nautical", "civil", "none")
-        assert day["avg_cloud_cover_pct"] == 0
-        assert day["avg_cloud_low_pct"] == 0
-        assert day["avg_cloud_mid_pct"] == 0
-        assert day["avg_cloud_high_pct"] == 0
-        assert day["temp_min_c"] == 0
-        assert day["temp_max_c"] == 0
-        assert day["max_precipitation_probability_pct"] == 0
+async def test_missing_meta_within_ttl_not_stale(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    fetched_at = now - timedelta(minutes=30)
+    await _write_cloud_cache(location_id, _cloud_json(fetched_at), None, fetched_at)
+
+    with (
+        patch("nightcrate.api.weather._now", return_value=now),
+        patch(
+            "nightcrate.api.weather.fetch_cloud_models",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
+        ),
+        patch(
+            "nightcrate.api.weather.fetch_model_meta",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
+        ),
+    ):
+        result = await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+
+    assert result.data is not None
+    assert result.meta_raw is None
+    assert result.stale_minutes is None
+
+
+async def test_past_ttl_refresh_failure_is_stale(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    fetched_at = now - timedelta(hours=7)
+    await _write_cache(location_id, "forecast", _weather_json(fetched_at), fetched_at)
+    await _write_cloud_cache(location_id, _cloud_json(fetched_at), _meta_raw(), fetched_at)
+
+    with (
+        patch("nightcrate.api.weather._now", return_value=now),
+        patch(
+            "nightcrate.api.weather.fetch_weather",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
+        ),
+        patch(
+            "nightcrate.api.weather.fetch_cloud_models",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
+        ),
+        patch(
+            "nightcrate.api.weather.fetch_model_meta",
+            new=AsyncMock(side_effect=RuntimeError("offline")),
+        ),
+    ):
+        forecast_result = await _fetch_or_cached(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+        cloud_result = await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+
+    assert forecast_result.stale_minutes == 420
+    assert cloud_result.stale_minutes == 420
+
+
+async def test_failed_refresh_cooldown_sequential_polls(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    fetched_at = now - timedelta(hours=7)
+    await _write_cache(location_id, "forecast", _weather_json(fetched_at), fetched_at)
+    weather_fetch = AsyncMock(side_effect=RuntimeError("offline"))
+
+    with patch("nightcrate.api.weather.fetch_weather", new=weather_fetch):
+        for minute in range(10):
+            with patch("nightcrate.api.weather._now", return_value=now + timedelta(minutes=minute)):
+                result = await _fetch_or_cached(
+                    location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+                )
+                assert result.stale_minutes == 420 + minute
+        weather_fetch.assert_awaited_once()
+
+        with patch("nightcrate.api.weather._now", return_value=now + timedelta(minutes=10)):
+            result = await _fetch_or_cached(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+
+    assert result.stale_minutes == 430
+    assert weather_fetch.await_count == 2
+
+
+async def test_concurrent_failed_refreshes_share_attempt(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    fetched_at = now - timedelta(hours=7)
+    await _write_cache(location_id, "forecast", _weather_json(fetched_at), fetched_at)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_failure(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        raise RuntimeError("offline")
+
+    weather_fetch = AsyncMock(side_effect=slow_failure)
+    with (
+        patch("nightcrate.api.weather._now", return_value=now),
+        patch("nightcrate.api.weather.fetch_weather", new=weather_fetch),
+    ):
+        first = asyncio.create_task(
+            _fetch_or_cached(location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6)
+        )
+        await entered.wait()
+        second = asyncio.create_task(
+            _fetch_or_cached(location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6)
+        )
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.gather(first, second)
+
+    weather_fetch.assert_awaited_once()
+    assert [result.stale_minutes for result in results] == [420, 420]
+
+
+async def test_supplementary_failure_cooldown(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    supplementary_fetch = AsyncMock(side_effect=RuntimeError("offline"))
+
+    for minute in (0, 1, 9):
+        with patch("nightcrate.api.weather._now", return_value=now + timedelta(minutes=minute)):
+            result = await _fetch_or_cached_supplementary(
+                location_id,
+                34.05,
+                -118.25,
+                "America/Los_Angeles",
+                "ecmwf_pwv",
+                supplementary_fetch,
+                ttl_hours=6,
+            )
+            assert result == {}
+    supplementary_fetch.assert_awaited_once()
+
+    with patch("nightcrate.api.weather._now", return_value=now + timedelta(minutes=10)):
+        await _fetch_or_cached_supplementary(
+            location_id,
+            34.05,
+            -118.25,
+            "America/Los_Angeles",
+            "ecmwf_pwv",
+            supplementary_fetch,
+            ttl_hours=6,
+        )
+    assert supplementary_fetch.await_count == 2
+
+
+async def test_no_cache_failure_cooldown_still_503(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    weather_fetch = AsyncMock(side_effect=RuntimeError("offline"))
+
+    with patch("nightcrate.api.weather.fetch_weather", new=weather_fetch):
+        for minute in (0, 1, 9):
+            with patch("nightcrate.api.weather._now", return_value=now + timedelta(minutes=minute)):
+                with pytest.raises(HTTPException) as raised:
+                    await _fetch_or_cached(
+                        location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+                    )
+                assert raised.value.status_code == 503
+
+    weather_fetch.assert_awaited_once()
+
+
+async def test_legacy_cloud_row_refetched_within_ttl(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    await _write_cloud_cache(
+        location_id,
+        _cloud_json(now - timedelta(minutes=30), legacy=True),
+        _meta_raw(),
+        now - timedelta(minutes=30),
+    )
+    replacement = _cloud_data(_cloud_json(now))
+    cloud_fetch = AsyncMock(return_value=replacement)
+    with (
+        patch("nightcrate.api.weather._now", return_value=now),
+        patch("nightcrate.api.weather.fetch_cloud_models", new=cloud_fetch),
+        patch("nightcrate.api.weather.fetch_model_meta", new=AsyncMock(return_value=_meta_raw())),
+    ):
+        result = await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+    cloud_fetch.assert_awaited_once()
+    assert result.data is replacement
+
+
+async def test_old_nbm_keys_do_not_obsolete_cloud_cache(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    payload = json.loads(_cloud_json(now - timedelta(minutes=30)))
+    times = payload["hourly"]["time"]
+    payload["hourly"]["cloud_cover_ncep_nbm_conus"] = [0.0] * len(times)
+    payload["hourly"]["precipitation_probability_ncep_nbm_conus"] = [10.0] * len(times)
+    await _write_cloud_cache(
+        location_id,
+        json.dumps(payload),
+        _meta_raw(),
+        now - timedelta(minutes=30),
+    )
+    cloud_fetch = AsyncMock(side_effect=AssertionError("current cache must not refetch"))
+    with (
+        patch("nightcrate.api.weather._now", return_value=now),
+        patch("nightcrate.api.weather.fetch_cloud_models", new=cloud_fetch),
+    ):
+        result = await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+
+    cloud_fetch.assert_not_awaited()
+    assert result.data is not None
+    assert "ncep_nbm_conus" not in result.data.models
+
+
+async def test_truncated_model_refetched_once(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    _, last = requested_range(now, forecast_days=FORECAST_DAYS, past_days=1)
+    icon_expected = last_expected_stamp("icon_seamless", now, last)
+    truncated_raw = _cloud_json(now, cutoffs={"icon_seamless": icon_expected - timedelta(hours=20)})
+    await _write_cloud_cache(location_id, truncated_raw, _meta_raw(), now)
+    truncated = _cloud_data(truncated_raw)
+    cloud_fetch = AsyncMock(return_value=truncated)
+    with (
+        patch("nightcrate.api.weather._now", return_value=now + timedelta(minutes=10)),
+        patch("nightcrate.api.weather.fetch_cloud_models", new=cloud_fetch),
+        patch("nightcrate.api.weather.fetch_model_meta", new=AsyncMock(return_value=_meta_raw())),
+    ):
+        await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+        await _fetch_or_cached_cloud_models(
+            location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+        )
+    cloud_fetch.assert_awaited_once()
+
+
+async def test_repair_refetch_at_most_hourly(client: AsyncClient):
+    location_id = await _location(client)
+    fetched_at = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    truncated_raw = _cloud_json(
+        fetched_at,
+        cutoffs={"icon_seamless": fetched_at + timedelta(days=5)},
+    )
+    await _write_cloud_cache(location_id, truncated_raw, _meta_raw(), fetched_at)
+    truncated = _cloud_data(truncated_raw)
+    cloud_fetch = AsyncMock(return_value=truncated)
+    meta_fetch = AsyncMock(return_value=_meta_raw())
+    with (
+        patch("nightcrate.api.weather.fetch_cloud_models", new=cloud_fetch),
+        patch("nightcrate.api.weather.fetch_model_meta", new=meta_fetch),
+    ):
+        with patch("nightcrate.api.weather._now", return_value=fetched_at + timedelta(minutes=10)):
+            await _fetch_or_cached_cloud_models(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+        with patch("nightcrate.api.weather._now", return_value=fetched_at + timedelta(minutes=69)):
+            await _fetch_or_cached_cloud_models(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+        cloud_fetch.assert_awaited_once()
+        with patch("nightcrate.api.weather._now", return_value=fetched_at + timedelta(minutes=70)):
+            await _fetch_or_cached_cloud_models(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+    assert cloud_fetch.await_count == 2
+
+
+async def test_concurrent_repairs_coalesce(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    truncated_raw = _cloud_json(now, cutoffs={"ecmwf_ifs025": now + timedelta(days=10)})
+    await _write_cloud_cache(location_id, truncated_raw, _meta_raw(), now)
+    complete = _cloud_data(_cloud_json(now))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_fetch(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        return complete
+
+    cloud_fetch = AsyncMock(side_effect=slow_fetch)
+    with (
+        patch("nightcrate.api.weather._now", return_value=now + timedelta(minutes=10)),
+        patch("nightcrate.api.weather.fetch_cloud_models", new=cloud_fetch),
+        patch("nightcrate.api.weather.fetch_model_meta", new=AsyncMock(return_value=_meta_raw())),
+    ):
+        first = asyncio.create_task(
+            _fetch_or_cached_cloud_models(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+        )
+        await entered.wait()
+        second = asyncio.create_task(
+            _fetch_or_cached_cloud_models(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+        )
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.gather(first, second)
+    cloud_fetch.assert_awaited_once()
+    assert all(result.data is not None for result in results)
+
+
+async def test_concurrent_expired_refreshes_coalesce(client: AsyncClient):
+    location_id = await _location(client)
+    now = datetime(2026, 10, 17, 23, 30, tzinfo=UTC)
+    fetched_at = now - timedelta(hours=7)
+    await _write_cache(location_id, "forecast", _weather_json(fetched_at), fetched_at)
+    replacement_weather = _weather_from_raw(_weather_json(now), "forecast")
+    weather_entered = asyncio.Event()
+    weather_release = asyncio.Event()
+
+    async def slow_weather(*_args, **_kwargs):
+        weather_entered.set()
+        await weather_release.wait()
+        return replacement_weather
+
+    weather_fetch = AsyncMock(side_effect=slow_weather)
+    with (
+        patch("nightcrate.api.weather._now", return_value=now),
+        patch("nightcrate.api.weather.fetch_weather", new=weather_fetch),
+    ):
+        first_weather = asyncio.create_task(
+            _fetch_or_cached(location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6)
+        )
+        await weather_entered.wait()
+        second_weather = asyncio.create_task(
+            _fetch_or_cached(location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6)
+        )
+        await asyncio.sleep(0)
+        weather_release.set()
+        await asyncio.gather(first_weather, second_weather)
+    weather_fetch.assert_awaited_once()
+
+    await _write_cloud_cache(location_id, _cloud_json(fetched_at), _meta_raw(), fetched_at)
+    replacement_cloud = _cloud_data(_cloud_json(now))
+    cloud_entered = asyncio.Event()
+    cloud_release = asyncio.Event()
+
+    async def slow_cloud(*_args, **_kwargs):
+        cloud_entered.set()
+        await cloud_release.wait()
+        return replacement_cloud
+
+    cloud_fetch = AsyncMock(side_effect=slow_cloud)
+    with (
+        patch("nightcrate.api.weather._now", return_value=now),
+        patch("nightcrate.api.weather.fetch_cloud_models", new=cloud_fetch),
+        patch("nightcrate.api.weather.fetch_model_meta", new=AsyncMock(return_value=_meta_raw())),
+    ):
+        first_cloud = asyncio.create_task(
+            _fetch_or_cached_cloud_models(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+        )
+        await cloud_entered.wait()
+        second_cloud = asyncio.create_task(
+            _fetch_or_cached_cloud_models(
+                location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6
+            )
+        )
+        await asyncio.sleep(0)
+        cloud_release.set()
+        await asyncio.gather(first_cloud, second_cloud)
+    cloud_fetch.assert_awaited_once()
+
+
+async def test_legacy_cache_off_grid_is_ignored(client: AsyncClient):
+    location_id = await _location(client)
+    payload = {
+        "latitude": 34.05,
+        "longitude": -118.25,
+        "utc_offset_seconds": 19800,
+        "hourly": {"time": ["2026-10-17T20:00"]},
+    }
+    async with aiosqlite.connect(get_db_path()) as conn:
+        await conn.execute(
+            """INSERT INTO weather_cache
+               (location_id, source, start_date, end_date, response_json, fetched_at)
+               VALUES (?, 'forecast', '', '', ?, datetime('now'))""",
+            (location_id, json.dumps(payload)),
+        )
+        await conn.commit()
+    fetched = WeatherData(
+        latitude=34.05,
+        longitude=-118.25,
+        source="forecast",
+        hourly=[
+            HourlyWeather(
+                time_utc=datetime(2026, 10, 17, 20, tzinfo=UTC),
+                temperature_c=None,
+                dew_point_c=None,
+                humidity_pct=None,
+                cloud_cover_pct=None,
+                cloud_cover_low_pct=None,
+                cloud_cover_mid_pct=None,
+                cloud_cover_high_pct=None,
+                wind_speed_kmh=None,
+                wind_direction_deg=None,
+                wind_gusts_kmh=None,
+                visibility_m=None,
+                precipitation_mm=None,
+                precipitation_probability_pct=None,
+            )
+        ],
+        raw_json=json.dumps({"latitude": 34.05, "longitude": -118.25, "hourly": {"time": []}}),
+    )
+    with patch(
+        "nightcrate.api.weather.fetch_weather", new=AsyncMock(return_value=fetched)
+    ) as fetch:
+        from nightcrate.api.weather import _fetch_or_cached
+
+        result = await _fetch_or_cached(location_id, 34.05, -118.25, "Asia/Kolkata", ttl_hours=6)
+    fetch.assert_awaited_once()
+    assert result.data is fetched
+
+
+async def test_forecast_unavailable_without_cache_is_503(client: AsyncClient):
+    location_id = await _location(client)
+    with patch(
+        "nightcrate.api.weather.fetch_weather",
+        new=AsyncMock(side_effect=RuntimeError("offline")),
+    ):
+        from nightcrate.api.weather import _fetch_or_cached
+
+        with pytest.raises(HTTPException) as raised:
+            await _fetch_or_cached(location_id, 34.05, -118.25, "America/Los_Angeles", ttl_hours=6)
+    assert raised.value.status_code == 503
+    assert raised.value.detail == (
+        "Forecast unavailable — Open-Meteo could not be reached and nothing is cached"
+    )

@@ -3,6 +3,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.db.session import get_db
 from nightcrate.main import app
 
 
@@ -224,6 +225,57 @@ async def test_partial_update_preserves_fields(client):
     assert updated["city"] == original["city"]
     assert updated["country"] == original["country"]
     assert updated["notes"] == original["notes"]
+
+
+async def _seed_weather_cache(location_id: int) -> None:
+    async with get_db() as conn:
+        await conn.execute(
+            """
+            INSERT INTO weather_cache (
+                location_id, source, start_date, end_date, response_json
+            ) VALUES (?, 'forecast', '2026-10-17', '2026-10-24', '{}')
+            """,
+            (location_id,),
+        )
+        await conn.commit()
+
+
+async def _weather_cache_count(location_id: int) -> int:
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT COUNT(*) FROM weather_cache WHERE location_id = ?",
+            (location_id,),
+        )
+        row = await cursor.fetchone()
+    return row[0]
+
+
+@pytest.mark.anyio
+async def test_coordinate_update_clears_weather_cache(client):
+    location = (await client.post("/api/locations", json=SAMPLE_LOCATION)).json()
+    await _seed_weather_cache(location["id"])
+
+    response = await client.put(
+        f"/api/locations/{location['id']}",
+        json={"latitude": 35.0},
+    )
+
+    assert response.status_code == 200
+    assert await _weather_cache_count(location["id"]) == 0
+
+
+@pytest.mark.anyio
+async def test_name_update_preserves_weather_cache(client):
+    location = (await client.post("/api/locations", json=SAMPLE_LOCATION)).json()
+    await _seed_weather_cache(location["id"])
+
+    response = await client.put(
+        f"/api/locations/{location['id']}",
+        json={"name": "Renamed Observatory"},
+    )
+
+    assert response.status_code == 200
+    assert await _weather_cache_count(location["id"]) == 1
 
 
 # ---------------------------------------------------------------------------

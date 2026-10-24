@@ -1,139 +1,200 @@
-"""Pydantic response models for the weather API."""
+"""Pydantic request and response models for the weather verdict API."""
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel, Field
+
+from nightcrate.services.imaging_rules import ImagingRules
+from nightcrate.services.imaging_types import ModelStatus
+from nightcrate.services.imaging_verdict import CheckState, HourState, Verdict
 
 
-class DewSafeWindowResponse(BaseModel):
-    label: Literal["all_night", "until", "after", "none"]
-    until_time: str | None = None
-    after_time: str | None = None
+class NightControlsRequest(BaseModel):
+    gear_out: AwareDatetime | None = None
+    gear_in: AwareDatetime | None = None
+    imaging_from: AwareDatetime | None = None
+    imaging_until: AwareDatetime | None = None
 
 
-class FactorResponse(BaseModel):
-    """One row of the score breakdown.
-
-    ``value`` is the 0-100 figure to display and always reads higher-is-better
-    (cloud shows clear-sky %, precipitation shows dry %). ``effect`` is the
-    multiplier actually applied for a gate/yield/modifier, or the weight for a
-    quality term. ``applied`` is False when the factor is ignored in this mode
-    (moon under narrowband) or its input was absent.
-    """
-
-    key: str
-    role: Literal["gate", "yield", "quality", "modifier"]
-    value: float | None
-    effect: float
-    applied: bool
+class ForecastRequest(BaseModel):
+    location_id: int
+    rules: ImagingRules | None = None
+    night_controls: dict[str, NightControlsRequest] = Field(default_factory=dict)
 
 
-class MoonPolylinePointResponse(BaseModel):
-    time_utc: str
-    altitude_deg: float
+class ReasonResponse(BaseModel):
+    code: str
+    start: str | None = None
+    end: str | None = None
+    start_utc: datetime | None = None
+    end_utc: datetime | None = None
+    value: float | None = None
+    limit: float | None = None
+    requirement: str | None = None
+    models: dict[str, ModelStatus] | None = None
+    bound: Literal["at_most", "at_least"] | None = None
+    model: str | None = None
+    missing_hours: float | None = None
 
 
-class HourlyWeatherResponse(BaseModel):
+class CoverageResponse(BaseModel):
+    model: str
+    status: Literal["go", "no", "unresolved", "not_expected", "not_used"]
+    expected_until: str | None = None
+    expected_until_utc: datetime | None = None
+
+
+class IntervalResponse(BaseModel):
+    start: str
+    end: str
+    start_utc: datetime
+    end_utc: datetime
+
+
+class ExtremesResponse(BaseModel):
+    max_precip_probability_pct: float | None = None
+    max_precip_probability_at: str | None = None
+    max_precip_probability_at_utc: datetime | None = None
+    precip_mm_total: float | None = None
+    precip_missing_hours: int
+    precip_sum_start: str | None = None
+    precip_sum_end: str | None = None
+    precip_sum_start_utc: datetime | None = None
+    precip_sum_end_utc: datetime | None = None
+    max_gust_kmh: float | None = None
+    max_gust_at: str | None = None
+    max_gust_at_utc: datetime | None = None
+    min_dew_spread_c: float | None = None
+    min_dew_spread_at: str | None = None
+    min_dew_spread_at_utc: datetime | None = None
+
+
+class ExpectedFieldsResponse(BaseModel):
+    cloud: bool
+    amount: bool
+
+
+class HourResponse(BaseModel):
     time: str
-    temperature_c: float
-    dew_point_c: float
-    humidity_pct: float
-    cloud_cover_pct: float
-    cloud_cover_low_pct: float
-    cloud_cover_mid_pct: float
-    cloud_cover_high_pct: float
-    wind_speed_kmh: float
-    wind_direction_deg: float
-    wind_gusts_kmh: float
+    start_utc: datetime
+    elapsed: bool
+    excluded: bool
+    dark_minutes: float
+    exposure_minutes: float
+    darkness_category: Literal["day", "civil", "nautical", "astro"]
+    state: HourState
+    session_state: HourState
+    model_states: dict[str, HourState]
+    disagrees: bool
+    checks: dict[str, CheckState]
+    conditions: dict[str, CheckState]
+    cloud_total_pct: float | None
+    cloud_low_pct: float | None
+    cloud_mid_pct: float | None
+    cloud_high_pct: float | None
+    cloud_pct: dict[str, float | None]
+    expected: dict[str, ExpectedFieldsResponse]
+    precip_probability_pct: float | None
+    precip_mm: float | None
+    model_precip_mm: dict[str, float | None]
+    gust_kmh: float | None
+    wind_kmh: float | None
+    temperature_c: float | None
+    dew_point_c: float | None
+    dew_spread_c: float | None
     visibility_m: float | None
-    precipitation_mm: float | None
-    precipitation_probability_pct: float | None
-    pwv_mm: float | None
-    aod: float | None
-    dew_risk: Literal["low", "moderate", "high", "critical"]
-    imaging_quality: int
-    imaging_quality_label: str
-    availability: float
-    quality: float
-    factors: list[FactorResponse]
-    flags: list[str]
-    # Forecast-model spread. None when fewer than two models cover the hour.
-    score_min: int | None = None
-    score_max: int | None = None
-    # True when the extremes fall in different quality labels, i.e. the models
-    # disagree enough to change the decision. The UI shows the range only then.
-    forecast_uncertain: bool = False
     moon_altitude_deg: float | None
-    moon_illumination_pct: float | None
-    darkness_category: str | None
+    seeing: Literal["good", "fair", "poor"] | None
+    transparency: Literal["good", "fair", "poor"] | None
+    transparency_tier: Literal["primary", "fallback", "degraded"] | None
 
 
-class DailySummaryResponse(BaseModel):
+class NightResponse(BaseModel):
     date: str
-    imaging_quality: int
-    imaging_quality_label: str
-    availability: float
-    quality: float
-    expected_useful_hours: float
-    factors: list[FactorResponse]
-    flags: list[str]
-    score_min: int | None = None
-    score_max: int | None = None
-    forecast_uncertain: bool = False
-    sunset: str | None  # HH:MM local — None for polar day
-    sunrise: str | None  # HH:MM local — None for polar day
-    astro_dark_start: str | None  # HH:MM local — None if astro dark not reached
-    astro_dark_end: str | None  # HH:MM local — None if astro dark not reached
-    darkness_hours: float
-    moonless_dark_hours: float
+    verdict: Verdict
+    reason: ReasonResponse
+    other_reasons: list[ReasonResponse]
+    advisory: ReasonResponse | None
+    clear_hours: float
+    dark_hours: float
+    unknown_hours: float
+    clear_pct: float | None
+    longest_gap_start: str | None
+    longest_gap_end: str | None
+    longest_gap_start_utc: datetime | None
+    longest_gap_end_utc: datetime | None
+    window_start: str | None
+    window_end: str | None
+    window_start_utc: datetime | None
+    window_end_utc: datetime | None
+    gear_out_start: str
+    gear_out_end: str
+    gear_out_start_utc: datetime
+    gear_out_end_utc: datetime
+    evaluated_from: str | None
+    evaluated_end: str | None
+    evaluated_from_utc: datetime | None
+    evaluated_end_utc: datetime | None
+    dark_intervals: list[IntervalResponse]
+    # Sun below −6° / −12° / −18°, for the darkness band; display times.
+    darkness_intervals: dict[Literal["civil", "nautical", "astronomical"], list[IntervalResponse]]
+    exposure: IntervalResponse | None
+    imaging: IntervalResponse | None
+    controls: NightControlsRequest
+    model_statuses: dict[str, ModelStatus]
+    primary_model: str
+    cloud_combination: Literal["majority", "uncertain", "single"]
+    differing_hours: int
+    compared_hours: int
+    cloud_models: tuple[str, ...]
+    cloud_models_used: tuple[str, ...]
+    default_cloud_used: bool
+    coverage: list[CoverageResponse]
+    single_model: bool
+    cloud_source: Literal["ecmwf", "best_match_fallback"]
+    layer_model: str
+    cloud_coarse_from: str | None
+    cloud_coarse_from_utc: datetime | None
+    stale_minutes: int | None
+    requirements: dict[
+        str,
+        Literal["pass", "fail", "unknown", "not_counted", "info"],
+    ]
+    extremes: ExtremesResponse
+    sunset: str | None
+    sunset_utc: datetime | None
+    sunrise: str | None
+    sunrise_utc: datetime | None
     moon_illumination_pct: float
     moon_phase_name: str
-    dew_safe_window: DewSafeWindowResponse
-    no_imaging_window: bool
-    deepest_darkness_reached: Literal["astro", "nautical", "civil", "none"]
-    temp_min_c: float
-    temp_max_c: float
-    max_precipitation_probability_pct: float
-    avg_cloud_cover_pct: float
-    avg_cloud_low_pct: float
-    avg_cloud_mid_pct: float
-    avg_cloud_high_pct: float
+    moonrise: str | None
+    moonrise_utc: datetime | None
+    moonset: str | None
+    moonset_utc: datetime | None
+    hours: list[HourResponse]
+
+
+class StaleSourcesResponse(BaseModel):
+    forecast: int | None
+    cloud_models: int | None
 
 
 class ForecastResponse(BaseModel):
     location_id: int
     location_name: str
-    latitude: float
-    longitude: float
     timezone: str
     geo_timezone: str | None
-    moon_included: bool
-    days: list[DailySummaryResponse]
-
-
-class TwilightTimesResponse(BaseModel):
-    """Precise twilight boundary times (HH:MM local). All optional for polar latitudes."""
-
-    civil_end: str | None  # evening: sun crosses -6°
-    nautical_end: str | None  # evening: sun crosses -12°
-    astro_start: str | None  # evening: sun crosses -18° (darkness begins)
-    astro_end: str | None  # morning: sun crosses -18° (darkness ends)
-    nautical_start: str | None  # morning: sun crosses -12°
-    civil_start: str | None  # morning: sun crosses -6°
-
-
-class HourlyDetailResponse(BaseModel):
-    date: str
-    location_id: int
-    location_name: str
-    timezone: str
-    geo_timezone: str | None
-    sunset: str | None
-    sunrise: str | None
-    twilight: TwilightTimesResponse
-    moon_polyline: list[MoonPolylinePointResponse]
-    hours: list[HourlyWeatherResponse]
+    rules: ImagingRules
+    rules_saved: bool
+    fetched_at: str
+    evaluated_at: datetime
+    stale_sources: StaleSourcesResponse
+    run_age_minutes: dict[str, int | None]
+    ignored_controls: list[str]
+    nights: list[NightResponse]
 
 
 class MethodologyResponse(BaseModel):
-    text: str
+    summary: str
+    details: str

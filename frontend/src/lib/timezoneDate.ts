@@ -33,13 +33,29 @@ export function todayInTimezone(timezone: string): string {
   return calendarDate(new Date(), timezone);
 }
 
-/** The current observing night (`YYYY-MM-DD`) in the given IANA timezone:
- *  the location-tz calendar date rolled back 12 h, so "tonight" stays put
- *  until local noon. Mirrors the backend's `tonight_date` (the single
- *  source of truth for "what night is it"). Use THIS — not
- *  `todayInTimezone` — anywhere the value must agree with a planner /
- *  visibility computation, or the display and the computed night drift
- *  apart in the local-midnight-to-noon window. */
+/** The current observing night (`YYYY-MM-DD`) in the given IANA timezone.
+ * Before local noon this returns the previous calendar date; at noon it
+ * advances to today. Calendar-day rollback (rather than subtracting 12
+ * elapsed hours) keeps this aligned with the backend across DST changes. */
 export function tonightDate(timezone: string): string {
-  return calendarDate(new Date(Date.now() - 12 * 60 * 60 * 1000), timezone);
+  const now = new Date();
+  let date = calendarDate(now, timezone);
+  let hour: number;
+  try {
+    const hourPart = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(now).find((part) => part.type === "hour")?.value;
+    hour = Number.parseInt(hourPart ?? "", 10);
+    if (!Number.isFinite(hour)) throw new Error("Missing hour");
+  } catch {
+    hour = now.getHours();
+  }
+  if (hour < 12) {
+    const [year, month, day] = date.split("-").map(Number);
+    const previous = new Date(Date.UTC(year!, month! - 1, day! - 1));
+    date = previous.toISOString().slice(0, 10);
+  }
+  return date;
 }
