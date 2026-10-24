@@ -6,8 +6,19 @@ YELLOW := $(shell tput -Txterm setaf 3)
 WHITE  := $(shell tput -Txterm setaf 7)
 RESET  := $(shell tput -Txterm sgr0)
 
-## Show help
 TARGET_MAX_CHAR_NUM=30
+
+# Log level defaults to INFO; override with `make dev LOG=DEBUG`.
+# BROWSER defaults to Brave; override with `make dev BROWSER=...`
+# or BROWSER=none to suppress auto-opening. Vite's macOS heuristic picks the
+# first running Chromium-family browser from its own list (Chrome before Brave),
+# so setting BROWSER explicitly is needed when multiple are running.
+LOG ?= INFO
+BROWSER ?= Brave Browser
+
+# `make help` lists a target only when the line directly above it is a
+# one-line `## ` summary. Put longer notes in `#` comments further up.
+## Show help
 help:
 	@awk '/^[a-zA-Z\-\_0-9\.]+:/ { \
 		helpMessage = match(lastLine, /^## (.*)/); \
@@ -21,14 +32,7 @@ help:
 
 .PHONY: help dev dev-lan backend backend-lan frontend install lint format test test-fast
 
-## Start backend and frontend together (Ctrl+C stops both).
-## Log level defaults to INFO; override with `make dev LOG=DEBUG`.
-## BROWSER defaults to Brave; override with `make dev BROWSER=...`
-## or BROWSER=none to suppress auto-opening. Vite's macOS heuristic picks the
-## first running Chromium-family browser from its own list (Chrome before Brave),
-## so setting BROWSER explicitly is needed when multiple are running.
-LOG ?= INFO
-BROWSER ?= Brave Browser
+## Start backend and frontend together (Ctrl+C stops both). Options: LOG=DEBUG, BROWSER=... or BROWSER=none.
 dev:
 	@(cd backend && NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --port 8000) & \
 	(cd frontend && BROWSER="$(BROWSER)" npm run dev) & \

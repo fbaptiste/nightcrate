@@ -1,6 +1,9 @@
 """Tests for astronomy service — moon, twilight, darkness computations."""
 
+import sys
+import zoneinfo
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 
@@ -10,6 +13,7 @@ from nightcrate.services.astronomy import (
     compute_moon_polyline,
     compute_night_summary,
     dark_intervals_for,
+    tonight_date,
 )
 
 
@@ -355,3 +359,40 @@ class TestTimezoneDecoupling:
         )
         # This happens to work because the tz offset is small enough
         assert s.sunset is not None
+
+
+class TestBundledTimezoneData:
+    """Windows has no system time-zone database, so the ``tzdata`` package
+    must supply one (GitHub issue #16: the planner failed for Europe/Rome).
+    The fixture hides the operating system's copy to simulate Windows.
+    """
+
+    @pytest.fixture
+    def no_system_tz_database(self):
+        zoneinfo.reset_tzpath(to=[])
+        ZoneInfo.clear_cache()
+        yield
+        zoneinfo.reset_tzpath()
+        ZoneInfo.clear_cache()
+
+    def test_offsets_come_from_tzdata_package(self, no_system_tz_database):
+        rome = ZoneInfo("Europe/Rome")
+        assert rome.utcoffset(datetime(2026, 1, 15, 12)) == timedelta(hours=1)
+        assert rome.utcoffset(datetime(2026, 7, 15, 12)) == timedelta(hours=2)
+        # Southern hemisphere: Sydney's daylight time falls in January.
+        sydney = ZoneInfo("Australia/Sydney")
+        assert sydney.utcoffset(datetime(2026, 1, 15, 12)) == timedelta(hours=11)
+        assert sydney.utcoffset(datetime(2026, 7, 15, 12)) == timedelta(hours=10)
+
+    def test_tonight_date_without_system_database(self, no_system_tz_database):
+        result = tonight_date("Europe/Rome")
+        assert abs((result - datetime.now(UTC).date()).days) <= 1
+
+    def test_fails_without_tzdata_package(self, no_system_tz_database, monkeypatch):
+        """Guards the fixture: with ``tzdata`` hidden too, nothing can load."""
+        # Earlier lookups import tzdata.zoneinfo.<Area> submodules; hide them all.
+        for name in [m for m in sys.modules if m == "tzdata" or m.startswith("tzdata.")]:
+            monkeypatch.setitem(sys.modules, name, None)
+        monkeypatch.setitem(sys.modules, "tzdata", None)
+        with pytest.raises(ZoneInfoNotFoundError):
+            ZoneInfo.no_cache("Europe/Rome")
