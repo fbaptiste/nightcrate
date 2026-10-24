@@ -626,3 +626,13 @@ async def test_create_location_rejects_duplicate_horizon_names(client):
     ]
     resp = await client.post("/api/locations", json=loc)
     assert resp.status_code == 422
+
+
+async def test_timezones_without_system_tz_database(client, no_system_tz_database, monkeypatch):
+    """Issue #16: Windows has no system database, so the list must come from tzdata."""
+    monkeypatch.setattr("nightcrate.api.locations._TIMEZONES", None)
+    response = await client.get("/api/locations/timezones")
+    assert response.status_code == 200
+    zones = response.json()
+    assert "Europe/Rome" in zones
+    assert "Australia/Sydney" in zones

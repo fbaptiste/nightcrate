@@ -9,7 +9,8 @@
 ## v0.41.10 — Dependency fixes from issue #16
 
 A Windows user's [issue #16](https://github.com/fbaptiste/nightcrate/issues/16)
-reported `npm audit` warnings, an `npm ci` failure, and a planner crash. Fred
+reported `npm audit` warnings, an `npm ci` failure, and weather-forecast and
+planner crashes. Fred
 approved the triage and fix plan on 2026-10-24 and asked for a separate
 version. Inserted ahead of v0.42.0; the roadmap is not renumbered.
 
@@ -34,13 +35,11 @@ version. Inserted ahead of v0.42.0; the roadmap is not renumbered.
   hide the operating system's copy to simulate Windows, and a guard test
   confirms that lookups fail without the package.
 - [x] **`make` help listing** (found by Fred during acceptance preparation).
-  `make` listed neither `dev` nor `help`. Its help script shows a target only
-  when the line directly above it is a `## ` summary, and variable assignments
-  sat in between. The variables moved up with the others; `dev` has a
-  one-line summary, and its browser notes are plain `#` comments. All 11
-  targets are now listed. `make -n` confirmed the `LOG` and `BROWSER`
-  defaults and overrides still apply. This change came after the Codex review
-  and was not part of it.
+  `make` listed neither `dev` nor `help`. Its help script showed a target only
+  when the line directly above it was a `## ` summary, and variable
+  assignments sat in between. After the PR review, each summary now sits on
+  its target's own line (`target: ## summary`), so nothing can come between
+  them.
 - [x] Fresh Codex review of the full diff.
 - [x] Release checks; version files and reference headers synchronized to
   0.41.10. Development decisions now record that users run the Vite
@@ -49,6 +48,34 @@ version. Inserted ahead of v0.42.0; the roadmap is not renumbered.
 - [x] The PR description references #16, so the reporter can see which of
   their findings this release addresses. Fred also asked for a comment on
   the issue (both 2026-10-24).
+- [x] **PR review of #19** (Claude's code-review agent, 2026-10-24). It found
+  11 issues, none high-severity. Claude verified each one, and Fred asked for
+  all to be fixed:
+  - **Node 22.12+.** KaTeX 0.19's command-line dependency (commander 15)
+    declares Node 22.12+; every KaTeX release with the fix does. Node 20
+    reached end of life on 2026-04-30. The README prerequisite is updated.
+  - **Docs named the planner only.** Issue #16 began with the weather forecast
+    failing, and the planner came later; both had the same cause. The docs,
+    PR description, and issue comment now name both.
+  - **`Math.tsx` safety net.** It again catches what react-katex caught
+    (`ParseError`, `TypeError`) and shows the message as text instead of
+    failing the page. The `trust` comment now names `\includegraphics`.
+  - **Tests:**
+    - The fixture moved to `tests/conftest.py` and restores the previous
+      search path.
+    - `tonight_date` uses a frozen clock with exact dates.
+    - New tests cover the weather forecast route and the time-zone list
+      with the system database hidden.
+    - With `tzdata` hidden as well, all five tzdata-dependent tests fail and
+      the guard passes.
+  - **Vite as a runtime dependency.** `vite` and its two plugins are now in
+    `dependencies`, so `npm audit --omit=dev` covers them. No versions
+    changed.
+  - **`make install` runs `npm ci`**, so installs never rewrite the lockfile.
+  - **`BROWSER` default.** "Brave Browser" is the default only on macOS;
+    elsewhere Vite opens the default browser.
+  - **Help listing.** `make help` uses the inline `target: ## summary`
+    pattern.
 
 Verified by Claude:
 - **Backend:**
@@ -63,6 +90,19 @@ Verified by Claude:
   - All 450 lockfile sources resolve to registry.npmjs.org.
 - **Docs:** local links and `git diff --check` are clean.
 - **Rendered checks** are listed above.
+- **After the PR review fixes:**
+  - **Backend:** the affected test files (astronomy, weather API, locations
+    API) gave 119 passed. Ruff, formatting, Bandit, and `uv lock --check` are
+    clean.
+  - **Frontend:**
+    - The build passes, and ESLint is clean on `Math.tsx`.
+    - `npm audit` reports 0, both full and production-only.
+    - `npm ci` succeeds both full and with `--omit=dev`; the production-only
+      install includes Vite.
+    - All 20 formulas match the original captures again.
+  - **Makefile:** all 11 targets are listed. `make -n` confirms the `LOG` and
+    `BROWSER` defaults and overrides, BROWSER unset with `UNAME_S=Linux`, and
+    `npm ci` for `make install`.
 
 Not verified: actual Windows installation and runtime.
 
@@ -85,6 +125,27 @@ Not verified: actual Windows installation and runtime.
   - Nothing was rejected; there were no disagreements and no tracked items.
 - **Limits:** Codex's read-only sandbox could not run `npm ci`,
   `npm audit`, the build, or the full suite. That evidence is Claude's.
+
+**Review of the PR review fixes (2026-10-24).** This was a fresh session with
+the same profile, because the dependency classification and lockfile changed.
+- **Result:** no blockers or major findings.
+- **Codex confirmed:**
+  - no package, version, or integrity change in the lockfile, only the 44
+    classification changes;
+  - Vite and both plugins in the production graph;
+  - the GNU Make dry runs for macOS, Linux, and an explicit `BROWSER`;
+  - strict TypeScript on `Math.tsx`;
+  - fixture isolation under pytest-xdist;
+  - documentation accuracy.
+- **One minor finding, open for Fred:** no automated test covers the
+  `Math.tsx` error path. The repository has no frontend test harness, and
+  adding one (for example Vitest) means new dependencies. Claude checked the
+  error path directly against KaTeX 0.19.0:
+  - invalid TeX returns KaTeX's error markup without throwing;
+  - a non-string input throws the `TypeError` the code catches.
+
+  TypeScript already rejects non-string input at build time. Nothing was
+  rejected, and there are no tracked items.
 
 ## v0.41.9 — Personal imaging verdict
 

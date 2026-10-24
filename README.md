@@ -66,13 +66,13 @@ See [the active plan](PLAN.md) for remaining work and the
 
 ## Run locally
 
-Prerequisites: Python 3.14, [uv](https://docs.astral.sh/uv/), Node 20.19+ or 22.12+.
+Prerequisites: Python 3.14, [uv](https://docs.astral.sh/uv/), Node 22.12+.
 Install [ASTAP](https://www.hnsky.org/astap.htm) and a star database separately if
 using plate solving. Intel Macs also need Xcode Command Line Tools for
 source-built dependencies (`xcode-select --install`).
 
 ```bash
-make install    # install backend/frontend dependencies
+make install    # install backend/frontend dependencies from the lockfiles
 make dev        # backend :8000, frontend :5173
 ```
 
@@ -83,8 +83,9 @@ workspaces and downloads the DSO catalogs.
 
 Other commands: `make backend`, `make frontend`, `make test`, `make test-fast`,
 `make lint`, `make format`. Use `make dev BROWSER=none` to suppress browser launch
-or `make dev LOG=DEBUG` for diagnostic logs. Developer checks and conventions are
-in [CLAUDE.md](CLAUDE.md).
+or `make dev LOG=DEBUG` for diagnostic logs. On macOS, `make dev` opens Brave
+unless `BROWSER` names another browser; elsewhere it opens the default browser.
+Developer checks and conventions are in [CLAUDE.md](CLAUDE.md).
 
 ## Stack
 
