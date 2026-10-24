@@ -1,6 +1,6 @@
 """Tests for astronomy service — moon, twilight, darkness computations."""
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -9,6 +9,7 @@ from nightcrate.services.astronomy import (
     compute_hourly_astro,
     compute_moon_polyline,
     compute_night_summary,
+    dark_intervals_for,
 )
 
 
@@ -58,6 +59,10 @@ class TestNightSummary:
             "Last Quarter",
             "Waning Crescent",
         )
+        assert summary.moon.moonrise_utc is not None
+        assert summary.moon.moonrise_utc.tzinfo is UTC
+        assert summary.moon.moonset_utc is not None
+        assert summary.moon.moonset_utc.tzinfo is UTC
 
     def test_elongation_field(self, summary: NightSummary):
         """The renamed field elongation_deg should exist and be in range."""
@@ -104,6 +109,45 @@ class TestPolarLatitude:
         )
         assert 0 <= summary.moon.illumination_pct <= 100
         assert summary.moon.phase_name is not None
+
+
+def test_dark_interval_cases():
+    """Darkness intervals come from solar altitude, even without sunset."""
+    polar_night = compute_night_summary(89, 0, 0, date(2026, 12, 21), "UTC")
+    assert polar_night.dark_intervals["astronomical"] == [
+        (
+            datetime(2026, 12, 21, 12, tzinfo=UTC),
+            datetime(2026, 12, 22, 12, tzinfo=UTC),
+        )
+    ]
+    assert polar_night.deepest_darkness_reached == "astro"
+
+    tromso = compute_night_summary(69.65, 18.96, 0, date(2026, 12, 21), "Europe/Oslo")
+    assert tromso.sunset is None
+    start, end = dark_intervals_for(tromso, "astronomical")[0]
+    assert abs(start - datetime(2026, 12, 21, 15, 56, tzinfo=UTC)) < timedelta(minutes=5)
+    assert abs(end - datetime(2026, 12, 22, 5, 28, tzinfo=UTC)) < timedelta(minutes=5)
+    assert tromso.darkness_hours == pytest.approx(13.55, abs=0.1)
+    assert tromso.no_imaging_window is False
+
+    polar_summer = compute_night_summary(78, 0, 0, date(2026, 6, 21), "UTC")
+    assert polar_summer.dark_intervals["astronomical"] == []
+    assert polar_summer.no_imaging_window is True
+
+    split = compute_night_summary(84.5, -15, 0, date(2026, 12, 21), "UTC")
+    intervals = split.dark_intervals["astronomical"]
+    assert len(intervals) == 2
+    assert abs(intervals[0][1] - datetime(2026, 12, 21, 12, 23, 21, tzinfo=UTC)) < timedelta(
+        minutes=2
+    )
+    assert abs(intervals[1][0] - datetime(2026, 12, 21, 13, 32, 47, tzinfo=UTC)) < timedelta(
+        minutes=2
+    )
+    assert split.darkness_hours == pytest.approx(22.84, abs=0.05)
+
+    normal = compute_night_summary(33.45, -112.07, 0, date(2026, 10, 17), "America/Phoenix")
+    assert len(normal.dark_intervals["astronomical"]) == 1
+    assert 9 < normal.darkness_hours < 11
 
 
 class TestHourlyAstro:

@@ -21,7 +21,7 @@ def apply_migrations(db_path: Path | None = None) -> None:
     """
     _ensure_app_dir()
     path = db_path or get_db_path()
-    backend = get_backend(f"sqlite:///{path}")
-    migrations = read_migrations(str(MIGRATIONS_DIR))
-    with backend.lock():
-        backend.apply_migrations(backend.to_apply(migrations))
+    with get_backend(f"sqlite:///{path}") as backend:
+        migrations = read_migrations(str(MIGRATIONS_DIR))
+        with backend.lock():
+            backend.apply_migrations(backend.to_apply(migrations))

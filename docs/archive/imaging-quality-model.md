@@ -1,5 +1,7 @@
 # Imaging-quality model — design rationale and sources
 
+> **Historical (archived in v0.41.9).** This describes the 0–100 imaging-quality score that the personal imaging verdict replaced. Current behaviour: [development decisions](../development-decisions.md#weather-personal-imaging-verdict) and [weather algorithms](../weather-algorithms.md#4-imaging-verdict-v0419).
+
 Scope: `backend/src/nightcrate/services/imaging_quality.py`, the per-hour 0–100
 "imaging quality" score in the weather panel. Shipped in v0.41.4, replacing a
 model in which cloud was an additive term.
@@ -364,7 +366,14 @@ out to be the larger error source.
 ### What was measured
 
 Day-ahead forecasts against ERA5 reanalysis, **126 night hours** (20:00–04:00)
-over 2026-09-08 to 2026-09-21, at one mid-latitude location:
+over 2026-09-08 to 2026-09-21, at one mid-latitude location.
+
+**Caveat (recorded 2026-10-18).** ERA5 is itself an ECMWF IFS product, so the
+comparison may favour ECMWF. It covered one site over two weeks, and which cloud
+field was scored was not recorded. ECMWF remains the primary as a pragmatic
+choice; the sample does not prove a general ranking.
+
+
 
 | Source | Mean abs error | Bias | Missed-clear hours |
 |---|---|---|---|

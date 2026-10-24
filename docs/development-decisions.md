@@ -274,6 +274,23 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   corrupts the sky direction. Same-frame Sun–Moon separations are safe.
 - Moon rise/set needs a **48 h midnight-anchored grid** (the lunar day is longer
   than 24 h). Now-status calculations need both darkness boundaries.
+- **Dense crossing grids are splined** (v0.41.9).
+  - **Where:** the 24 h Sun grid in `compute_night_summary` and the 48 h Moon
+    grid in `_moon_rise_set`.
+  - **How:** exact astropy altitudes at every 10th sample plus the last; a
+    `CubicSpline` in elapsed seconds fills the samples between
+    (`_spline_altitudes`, called explicitly at those two sites).
+  - **Stays exact:** moonless sampling, `moon_altitudes_at`, the Moon polyline,
+    the Moon phase and `compute_hourly_astro`.
+  - **Before changing the node rule or extending the spline,** keep these
+    passing:
+    - `tests/test_astronomy_spline.py`: equivalence with exact sampling and
+      exact-evaluation counts;
+    - the forecast and Tonight equivalence tests in `test_weather_api.py` and
+      `test_calculators.py`.
+  - **Tolerances:** datetimes within 1 s; unrounded API durations within 2 s;
+    everything shown identical.
+  - [Spec](superpowers/specs/2026-10-23-forecast-astronomy-speed-design.md).
 - `astronomy.tonight_date` rolls site-local time back 12 h. Use its frontend
   mirror `tonightDate` for planner dates/now markers; `todayInTimezone` is an
   ordinary calendar date. Backend annual charts stamp their location-local
@@ -327,37 +344,203 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   persist WCS/object links. Keep these flows distinct. Reference-image mode
   requires matching dimensions; rig/equipment/manual hints supply scale/FOV.
 
-## Weather: existing contract
+## Weather: personal imaging verdict
 
-This records the shipped behavior, not validation of its scientific assumptions.
-Forecast redesign is deferred; sources and judgment calls are documented in
-[imaging-quality-model.md](imaging-quality-model.md).
+v0.41.9 replaced the 0–100 imaging score with a per-night verdict. The design
+and its reasons are in the
+[spec](superpowers/specs/2026-10-17-weather-redesign-design.md) and the
+[plan](superpowers/plans/2026-10-17-weather-verdict.md). They were revised by the
+[forecaster revisions spec](superpowers/specs/2026-10-17-forecaster-revisions-design.md)
+(its §11 holds the agreed clarifications) and its
+[plan](superpowers/plans/2026-10-17-forecaster-revisions.md). The previous model is
+archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
 
-- Join hourly astronomy and weather by **absolute UTC**, not displayed HH:MM.
-  Pad the astronomy grid ±1 h for context columns. Missing astronomy is not a
-  below-horizon Moon. Fetch eight days to include the final night's sunrise.
-- `score = 100 × availability × quality`. Availability multiplies darkness,
-  precipitation, wind, and `(1 − effective_cover)^1.5`. Cloud must remain a gate:
-  100% cover yields zero. Effective cover is the max of total and every layer;
-  adding cloud must never improve the score.
-- Score each hour, then aggregate; never score averaged nightly inputs.
-  `expected_useful_hours` sums availability × quality. Darkness uses exact
-  hourly overlap with twilight (−18°, or −12° in narrowband mode); Moon inputs
-  are hourly, with score `100 × (1 − illumination × sin(altitude))`.
-- `Unusable` follows availability below 0.10, not a numerical score bucket.
-  Prefer the server label; frontend `scoreToLabel` cannot recover it. Use a
-  sequential blue palette, darker for better scores, and hatch unusable hours.
-- Primary cloud comes from ECMWF; other weather still uses Open-Meteo
-  `best_match` for visibility. The source choice rests on one location/two weeks
-  of comparisons, not a universal ranking. Do not switch to a model median
-  without new evidence. Emit the cloud series actually scored in raw rows and
-  nightly averages, leaving source inconsistencies visible.
-- Model disagreement requires both a label difference and material score spread
-  (`FORECAST_UNCERTAIN_MIN_SPREAD`). Judge nights from aggregated extremes,
-  never `any()` over hourly flags.
-- Scoring constants remain fixed. `api/weather.py:METHODOLOGY` is the UI's single
-  methodology source. Supplementary PWV/AOD cache writes are non-fatal; serve
-  available stale data instead of failing the forecast.
+**Verdict and rules**
+
+- **Verdicts:** Go / Uncertain / No / Not enough data, plus Night over. Every
+  non-Go verdict has a reason. There is **no blended score anywhere**: not in
+  an API field, not as a sort key, not in the UI.
+- **Evaluation** is server-side only, in `services/imaging_verdict.py`. The
+  frontend never derives a verdict.
+- **Rules** live per location in `location_imaging_rules` (1:1, typed, CHECK
+  vocabularies).
+  - No row means the `attended_session` default preset, and the UI shows
+    presets only then.
+  - Thresholds are user settings; do not hard-code them into the evaluator.
+- **Usable time** (called "clear time" in the code) counts the exact dark
+  minutes, for the rules' darkness threshold, that pass every counted check.
+  User-facing text says "usable", never "clear", because wind, dew, the Moon
+  and precipitation also remove time (2026-10-18).
+  - All-night rules apply the fraction ("at least", 1–100%), minimum-hours
+    and "longest interruption" tests.
+  - Short sessions need one contiguous run.
+  - Runs and gaps never bridge non-dark time.
+- **Cloud is each model's reported total.** Layers never count, and a missing
+  total is unknown, never rebuilt from layers. For ECMWF on Open-Meteo, the
+  layers are humidity estimates; they are shown under "For information".
+- **Precipitation.**
+  - **Chance comes only from the main forecast,** with **one limit** applied
+    to every hourly value as reported (Fred, 2026-10-18).
+    - Further ahead, the US forecast gives one chance per 6-hour stretch and
+      repeats it in each hour.
+    - A second "per-period" limit, with hour-or-block classification, was
+      built and then removed (spec §11 F3). It couldn't be explained in plain
+      words. Do not reintroduce it without a new decision.
+  - **The amount** fails only above `rain_amount_threshold_mm`.
+  - **"Any model"** (`rain_forecasts`) adds ECMWF's, GFS's and ICON's own
+    amounts inside their coverage.
+  - **Under `night_off`,** precipitation is judged over the exposure interval
+    and acts as a night-level veto. Session states used for the cloud verdict
+    exclude it, and displayed states include it.
+- **Saved rules were reset by 0059** (Fred, 2026-10-18). The table had never
+  shipped, so the new schema starts empty.
+- **Missing data.**
+  - A known fail beats unknown.
+  - Unknowns are evaluated twice: pessimistic passes → Go; optimistic fails →
+    No (with an `at_most` or `at_least` bound); otherwise Not enough data.
+  - Checks that cannot affect the verdict (cloud/wind/dew/moon outside the
+    imaging interval, precipitation outside its interval) are `not_counted`,
+    never unknown.
+  - **The verdict guarantee:** with rules, intervals and declared coverage
+    fixed, replacing a known value with unknown never turns a non-Go into Go.
+    `tests/test_imaging_guarantee.py` enforces it. Any new branch must keep
+    it, and every Go condition must be a pessimistic pass.
+- **Display conditions.** Each hour also carries `conditions`: every enabled
+  rule judged regardless of darkness. The hour strip draws its icons from it so
+  twilight and outside-imaging hours show the full forecast (Fred, 2026-10-17);
+  elapsed hours stay blank. The verdict uses only `checks`.
+- **The hour strip is frozen** (Fred, 2026-10-18): its icons, sizing, geometry
+  and colours. Data may change what it shows: `disagrees`, which is set only on
+  Uncertain nights and only where an expected comparison model's known state
+  differs from the primary's, and positions from UTC timestamps for
+  fractional-offset zones. Its look may not change. The rendered check
+  compares pixels with reference screenshots.
+- **Horizon: 14 nights** (Fred, 2026-10-17), the reach of ECMWF cloud. The
+  Weather page has a "7-day forecast" tab (default) and an "Outlook" tab for
+  nights 8–14, whose far-range hourly cloud changes between runs; a date link
+  opens the tab holding that night. The rules editor's "this week" counts cover
+  nights 1–7. With more than one forecast ticked, night details show a cloud
+  row for each of ECMWF, GFS and ICON, unticked ones marked "Not used for the
+  cloud decision"; with one ticked, only that row, plus a "Show each model's
+  cloud" toggle.
+- **Darkness band.** The Tonight card and the night-detail grid draw darkness
+  from each night's `darkness_intervals` (exact −6°/−12°/−18° crossings), not
+  from the per-hour `darkness_category`: one label per hour hides the half-hour
+  twilight stretches (Fred, 2026-10-17).
+- **Rest of the night.** A night under way is judged from now on. It shows
+  Night over once darkness or the imaging interval has ended (Fred,
+  2026-10-17), and stays listed until local noon. The exposure tail after
+  darkness is not evaluated, and no wording may imply that exposure has ended.
+- **Per-night controls** (session state, never saved) are aware timestamps:
+  - "Gear out at" and "Gear in at" bound the exposure (`night_off`);
+  - "Imaging from" and "Imaging until" narrow imaging, inside the exposure
+    under `night_off`.
+
+  The UI offers only valid combinations. The API returns 422 for invalid ones,
+  and the UI resets them. Controls that don't apply (gear under `hours_lost`,
+  or nights no longer listed) are ignored and reported back. The night's hours
+  always cover the natural span plus any control times.
+- **The night anchor** is the display-timezone wall clock: before local noon it
+  is the previous date (`tonight_date`, and the frontend `tonightDate`).
+- **The darkness setting is independent of the Moon.** The Moon only counts
+  when "Moon must be down" is set.
+
+**Data and time**
+
+- **UTC everywhere.** Open-Meteo uses one fixed offset per response and ignores
+  DST, so every request uses `timezone=GMT` and `timeformat=unixtime`, and
+  series are parsed to aware UTC.
+  - Legacy cache rows are decoded with their own `utc_offset_seconds`.
+  - Rows off the whole-UTC-hour grid are ignored.
+  - Display labels come from `ZoneInfo`.
+- **Preceding-hour fields.** `precipitation`, `precipitation_probability` and
+  `wind_gusts_10m` describe the preceding hour: the value at `T+1h` covers
+  `[T, T+1h)`. The other fields are instantaneous at `T`.
+- **Complete inputs.** `services/forecast_inputs.py` builds one input per whole
+  UTC hour of the night. Each field is resolved from its own timestamp and
+  source; a missing source row leaves only that row's fields `None`.
+- **Darkness.**
+  - `NightSummary.dark_intervals` are the maximal runs at or below
+    −18 / −12 / −6°, found from the sampled sun altitude **independently of
+    sunset**. This covers polar twilight without a sunset, continuous polar
+    night, and two intervals in one night.
+  - `darkness_hours`, `moonless_dark_hours`, `deepest_darkness_reached` and
+    `no_imaging_window` derive from the intervals.
+  - The `DarknessWindow` boundary fields are still chained from sunset; use
+    the intervals for any duration.
+- **Cloud sources and coverage.**
+  - **Declared coverage** (`services/forecast_coverage.py`) decides which
+    models are expected for each hour: fetch time + a fixed per-model value,
+    capped by the request's own range. It is never derived from which values
+    arrived. Missing values inside it are unknown; values outside it are
+    informational. It applies to model cloud and to "Any model" amounts. The
+    main forecast's own fields always count: missing is unknown.
+  - **The rules choose the cloud forecasts** (Fred, 2026-10-18, spec §11
+    F4).
+    - Users tick one to three of ECMWF, GFS and ICON, with a preferred one.
+    - **"Majority for each hour"** (the default) decides each hour's cloud
+      check by the ticked models expected at that hour. A tie goes to the
+      preferred model, or, beyond its reach, to the first expected ticked
+      model in the order ECMWF, GFS, ICON. Unknown votes are bracketed. The
+      night is then judged on that one sequence and is never Uncertain from
+      disagreement.
+    - **A per-night vote was rejected:** two models can each allow a session
+      at different hours with no hour most models support. So was a "follow
+      the preferred forecast" mode: ticking only that model does the same.
+    - **"Show Uncertain"** keeps the comparison rules. All night: a Go/No
+      split is Uncertain. Short session: all expected models must share one
+      usable window, or the night is Uncertain.
+    - **Default forecast and missing values, by mode:**
+      - **Majority:** `best_match` decides an hour, labelled, only where no
+        ticked model is *expected* at that hour.
+      - **Show Uncertain:** `best_match` replaces the whole night's primary
+        only when no ticked model is *expected* for the night.
+      - **In both modes,** a missing expected value is an unknown vote, never
+        a substitution. It gives Not enough data only when it could change
+        the outcome; under the majority, two known agreeing votes still
+        decide the hour.
+    - The cloud choice never changes the "Any model" precipitation check.
+    - Unticked models still show in night details, marked "Not used for the
+      cloud decision".
+  - **Sources** follow Fred's decision not to pursue accuracy work. Do not add
+    sources, medians or benchmarks without a new decision.
+- **Freshness** is tracked per source.
+  - "Stale" means past its TTL **and** the refresh failed. A row within its
+    TTL is never stale, even when incomplete; its gaps are unknown hours.
+  - Rows that are incomplete or from an older contract are refetched at most
+    once an hour per location and source, and concurrent requests share the
+    refetch. Polling once a minute cannot flood Open-Meteo.
+  - A night's staleness counts the main forecast, and the cloud row when it
+    was used (a ticked model's cloud, or "Any model" amounts). Model
+    metadata never makes a verdict stale.
+  - Stale data turns Go, Uncertain and Not enough data into Not enough data;
+    a No stays No and shows the forecast's age.
+  - The cloud row and its `model_meta` row are written in one transaction
+    with the same full-precision `fetched_at`, and are read in one statement.
+  - The startup purge keeps 8 days of rows. No main-forecast row at all →
+    503.
+- **Re-evaluation.** Verdicts are not cached: every request evaluates against
+  now.
+  - Weather and Tonight poll every 60 s, only while their route is active.
+    Persistent routes stay mounted while hidden.
+  - On the browser's clock, a result older than 3 minutes, or one whose
+    refresh failed, is shown as "Last result: … — not current". The frontend
+    never computes a verdict.
+- **Context estimates.** Seeing and transparency are labels only
+  (good/fair/poor). Their required inputs are explicit, and missing stays
+  missing: never a neutral 50.
+- **Dew** has one definition: the temperature − dew-point spread, compared
+  with the rules' `dew_min_spread_c` whether counted or advisory.
+- **"How the verdict works"** comes only from
+  `api/weather_methodology.py`: `METHODOLOGY_SUMMARY` ("In one minute") and
+  `METHODOLOGY_DETAILS` (Fred, 2026-10-18).
+  - The summary stays readable in about a minute.
+  - Both use bullets, short tables and `>` callouts, not paragraphs.
+  - Both use plain words. The API test bans internal terms such as "period",
+    "coverage", "primary" and "fallback".
+- **Rules editor hover notes.** Every setting's label carries a one- or
+  two-sentence hover note on the label text: no icons, no underline. The
+  wording was agreed by Claude and Codex (2026-10-18).
 
 ## Calculators, settings, and diagnostics
 

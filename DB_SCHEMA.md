@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.41.8
+**NightCrate version:** 0.41.9
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -810,7 +810,8 @@ In addition, the migration creates calibration-matching and integration **views*
 | Table | Purpose |
 |-------|---------|
 | `location` | User-defined observing locations (lat/lon, elevation, display timezone, geo_timezone, Bortle, SQM, typical_seeing_low_arcsec, typical_seeing_high_arcsec). Soft-delete via `active=0` (migration 0012) — pre-empts future session-ingestion references. |
-| `weather_cache` | Cached API responses (forecast, ECMWF PWV, AOD) with TTL-based expiry |
+| `location_imaging_rules` | Typed personal imaging-verdict rules saved 1:1 per location, including at-least clear share, one precipitation-chance limit, amount threshold, main/any-model precipitation selection, and the cloud forecasts used (ECMWF/GFS/ICON flags, a preferred model that must be ticked, and majority or Uncertain on disagreement). `location_id` is both the primary key and an `ON DELETE CASCADE` foreign key to `location`; no row means the default preset is in use. |
+| `weather_cache` | Cached API responses with TTL-based expiry. The `source` CHECK allows `forecast`, `archive`, `openmeteo_aq`, `ecmwf_pwv`, `cloud_models`, and paired `model_meta`. |
 
 ### v0.12.0 — Rigs (3 tables + 1 view)
 

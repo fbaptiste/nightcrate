@@ -5,15 +5,17 @@ Pure computation module using astropy. No DB, no HTTP, no FastAPI imports.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
+from scipy.interpolate import CubicSpline
 
 # ── Sun altitude thresholds (degrees) ────────────────────────────────────────
 
@@ -25,6 +27,8 @@ _ASTRONOMICAL = -18.0
 # ── Sampling resolution ─────────────────────────────────────────────────────
 
 _DENSE_SAMPLES = 1440  # 1-minute resolution over 24h for horizon crossings
+# exact altitude every 10th sample of a one-minute grid; cubic spline between
+_SPLINE_NODE_EVERY = 10
 _MOONLESS_INTERVAL_MIN = 5  # minutes between moon altitude samples
 _MOON_POLYLINE_INTERVAL_MIN = 2  # minutes between moon polyline samples
 
@@ -41,6 +45,8 @@ class MoonInfo:
     phase_name: str  # one of 8 standard names
     moonrise: str | None  # HH:MM local or None
     moonset: str | None  # HH:MM local or None
+    moonrise_utc: datetime | None  # aware UTC datetime or None
+    moonset_utc: datetime | None  # aware UTC datetime or None
 
 
 @dataclass(frozen=True)
@@ -62,11 +68,15 @@ class NightSummary:
     sunset: datetime | None  # UTC
     sunrise: datetime | None  # UTC
     darkness: DarknessWindow
+    dark_intervals: dict[
+        Literal["astronomical", "nautical", "civil"],
+        list[tuple[datetime, datetime]],
+    ]
     darkness_hours: float  # hours of deepest available darkness
     moonless_dark_hours: float  # hours of darkness with moon below horizon
     moon: MoonInfo
     deepest_darkness_reached: str  # "astro" | "nautical" | "civil" | "none"
-    no_imaging_window: bool  # True when no sunset or no darkness at all
+    no_imaging_window: bool  # True when no supported darkness threshold is reached
 
 
 @dataclass(frozen=True)
@@ -152,6 +162,26 @@ def _moon_altitudes(times: Time, location: EarthLocation) -> np.ndarray:
     moon = get_body("moon", times, location)
     moon_altaz = moon.transform_to(altaz_frame)
     return np.asarray(moon_altaz.alt.deg)
+
+
+def _spline_altitudes(
+    altitude_fn: Callable[[Time, EarthLocation], np.ndarray],
+    times: Time,
+    location: EarthLocation,
+    node_every: int = _SPLINE_NODE_EVERY,
+) -> np.ndarray:
+    """Interpolate altitudes from every ``node_every`` sample plus the last.
+
+    The last sample is always included and duplicate node indices are removed.
+    Grids that produce fewer than four nodes fall back to exact evaluation.
+    """
+    nodes = np.unique(np.append(np.arange(0, len(times), node_every), len(times) - 1))
+    if len(nodes) < 4:
+        return altitude_fn(times, location)
+
+    elapsed_seconds = np.asarray((times - times[0]).sec)
+    node_altitudes = altitude_fn(times[nodes], location)
+    return np.asarray(CubicSpline(elapsed_seconds[nodes], node_altitudes)(elapsed_seconds))
 
 
 def moon_altitudes_at(
@@ -246,6 +276,34 @@ def _find_crossing_independent(
     return _find_crossing(times, altitudes, threshold, direction, start_idx=0)
 
 
+def _intervals_below(
+    times: Time,
+    altitudes: np.ndarray,
+    threshold: float,
+) -> list[tuple[datetime, datetime]]:
+    """Return maximal sampled intervals at or below an altitude threshold."""
+    intervals: list[tuple[datetime, datetime]] = []
+    current_start = _time_to_utc_datetime(times[0]) if altitudes[0] <= threshold else None
+    for index in range(len(altitudes) - 1):
+        below_now = altitudes[index] <= threshold
+        below_next = altitudes[index + 1] <= threshold
+        if below_now == below_next:
+            continue
+        alt0 = float(altitudes[index])
+        alt1 = float(altitudes[index + 1])
+        fraction = (threshold - alt0) / (alt1 - alt0)
+        seconds = (times[index + 1] - times[index]).sec
+        crossing = _time_to_utc_datetime(times[index] + TimeDelta(fraction * seconds, format="sec"))
+        if below_next:
+            current_start = crossing
+        elif current_start is not None:
+            intervals.append((current_start, crossing))
+            current_start = None
+    if current_start is not None:
+        intervals.append((current_start, _time_to_utc_datetime(times[-1])))
+    return intervals
+
+
 def compute_illumination_pct(time: Time) -> float:
     """Moon illumination fraction (0–100) at ``time`` via the Meeus method.
 
@@ -290,6 +348,8 @@ def _moon_phase_info(time: Time, location: EarthLocation) -> MoonInfo:
         phase_name=_phase_name_from_delta_lon(delta_lon),
         moonrise=None,  # filled in by caller
         moonset=None,  # filled in by caller
+        moonrise_utc=None,  # filled in by caller
+        moonset_utc=None,  # filled in by caller
     )
 
 
@@ -340,7 +400,7 @@ def _moon_rise_set(
     night_date: date,
     location: EarthLocation,
     tz: ZoneInfo,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, datetime | None, datetime | None]:
     """Find the moonrise + moonset most relevant to ``night_date``'s night.
 
     Searches a **48h** window starting at local midnight of ``night_date``
@@ -361,11 +421,11 @@ def _moon_rise_set(
     start_utc = start_local.astimezone(UTC)
     end_utc = end_local.astimezone(UTC)
 
-    # 1-minute resolution over 48h — same resolution as the existing
-    # sun-crossing grid so rise/set precision stays at ±30 s.
+    # Samples are one minute apart over 48h, with exact values at every 10th
+    # sample (about 10 minutes) and a cubic spline between.
     n_samples = 48 * 60 + 1
     times = _make_time_grid(start_utc, end_utc, n_samples)
-    moon_alts = _moon_altitudes(times, location)
+    moon_alts = _spline_altitudes(_moon_altitudes, times, location)
 
     rise_dt = _find_crossing(times, moon_alts, _HORIZON, direction="up")
 
@@ -382,7 +442,7 @@ def _moon_rise_set(
     rise_str = rise_dt.astimezone(tz).strftime("%H:%M") if rise_dt else None
     set_str = set_dt.astimezone(tz).strftime("%H:%M") if set_dt else None
 
-    return rise_str, set_str
+    return rise_str, set_str, rise_dt, set_dt
 
 
 def _compute_moonless_dark_hours(
@@ -417,29 +477,38 @@ def _classify_darkness(sun_alt: float) -> str:
     return "night"
 
 
-def _determine_deepest_darkness(darkness: DarknessWindow) -> str:
+def _determine_deepest_darkness(
+    dark_intervals: dict[str, list[tuple[datetime, datetime]]],
+) -> str:
     """Determine the deepest darkness level reached."""
-    if darkness.astro_start is not None and darkness.astro_end is not None:
+    if dark_intervals["astronomical"]:
         return "astro"
-    if darkness.nautical_end is not None and darkness.nautical_start is not None:
+    if dark_intervals["nautical"]:
         return "nautical"
-    if darkness.civil_end is not None and darkness.civil_start is not None:
+    if dark_intervals["civil"]:
         return "civil"
     return "none"
 
 
-def _get_darkness_window_times(
-    darkness: DarknessWindow,
-    deepest: str,
-) -> tuple[datetime | None, datetime | None]:
-    """Get the start/end times for the deepest available darkness level."""
+def _deepest_intervals(
+    dark_intervals: dict[str, list[tuple[datetime, datetime]]], deepest: str
+) -> list[tuple[datetime, datetime]]:
+    """Get intervals for the deepest available darkness level."""
     if deepest == "astro":
-        return darkness.astro_start, darkness.astro_end
+        return dark_intervals["astronomical"]
     if deepest == "nautical":
-        return darkness.nautical_end, darkness.nautical_start
+        return dark_intervals["nautical"]
     if deepest == "civil":
-        return darkness.civil_end, darkness.civil_start
-    return None, None
+        return dark_intervals["civil"]
+    return []
+
+
+def dark_intervals_for(
+    summary: NightSummary,
+    threshold: Literal["astronomical", "nautical", "civil"],
+) -> list[tuple[datetime, datetime]]:
+    """Return the darkness intervals selected by an imaging rule."""
+    return summary.dark_intervals[threshold]
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -472,7 +541,12 @@ def compute_night_summary(
 
     # Dense time samples for crossing detection
     times = _make_time_grid(noon_utc, noon_next_utc, _DENSE_SAMPLES)
-    sun_alts = _sun_altitudes(times, location)
+    sun_alts = _spline_altitudes(_sun_altitudes, times, location)
+    dark_intervals = {
+        "astronomical": _intervals_below(times, sun_alts, _ASTRONOMICAL),
+        "nautical": _intervals_below(times, sun_alts, _NAUTICAL),
+        "civil": _intervals_below(times, sun_alts, _CIVIL),
+    }
 
     # Find sunset and sunrise independently
     sunset = _find_crossing_independent(times, sun_alts, _HORIZON, direction="down")
@@ -529,16 +603,12 @@ def compute_night_summary(
     )
 
     # Determine deepest darkness and compute hours
-    deepest = _determine_deepest_darkness(darkness)
-    dark_start, dark_end = _get_darkness_window_times(darkness, deepest)
-
-    if dark_start is not None and dark_end is not None:
-        darkness_hours = (dark_end - dark_start).total_seconds() / 3600.0
-    else:
-        darkness_hours = 0.0
+    deepest = _determine_deepest_darkness(dark_intervals)
+    deepest_intervals = _deepest_intervals(dark_intervals, deepest)
+    darkness_hours = sum((end - start).total_seconds() / 3600.0 for start, end in deepest_intervals)
 
     # No imaging window: no sunset or no darkness at all
-    no_imaging_window = sunset is None or deepest == "none"
+    no_imaging_window = deepest == "none"
 
     # Moon info at midnight local
     midnight_local = datetime(
@@ -559,25 +629,27 @@ def compute_night_summary(
     # window internally — the 24h sun grid above is too narrow given
     # the lunar period, and we want to capture rises that happened in
     # the daytime before tonight's astro-dark window.
-    moonrise_str, moonset_str = _moon_rise_set(night_date, location, tz)
+    moonrise_str, moonset_str, moonrise_utc, moonset_utc = _moon_rise_set(night_date, location, tz)
     moon_info = MoonInfo(
         illumination_pct=moon_info.illumination_pct,
         elongation_deg=moon_info.elongation_deg,
         phase_name=moon_info.phase_name,
         moonrise=moonrise_str,
         moonset=moonset_str,
+        moonrise_utc=moonrise_utc,
+        moonset_utc=moonset_utc,
     )
 
     # Moonless dark hours
-    if dark_start is not None and dark_end is not None:
-        moonless_dark_hours = _compute_moonless_dark_hours(dark_start, dark_end, location)
-    else:
-        moonless_dark_hours = 0.0
+    moonless_dark_hours = sum(
+        _compute_moonless_dark_hours(start, end, location) for start, end in deepest_intervals
+    )
 
     return NightSummary(
         sunset=sunset,
         sunrise=sunrise,
         darkness=darkness,
+        dark_intervals=dark_intervals,
         darkness_hours=round(darkness_hours, 2),
         moonless_dark_hours=round(moonless_dark_hours, 2),
         moon=moon_info,

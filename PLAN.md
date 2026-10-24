@@ -1,12 +1,228 @@
 # NightCrate — active plan
 
-**Version:** v0.41.8 — Subs by filter and exposure
+**Version:** v0.41.9 — Personal imaging verdict
 
-**Branch:** `v0.41.8/exposure-table`
+**Branch:** `v0.41.9/weather-verdict`
 
 **Status:** Complete — awaiting merge
 
+## v0.41.9 — Personal imaging verdict
+
+Replace the weather page's 0–100 imaging score with a per-night verdict
+(Go / Uncertain / No / Not enough data), computed from the hourly forecast and
+the user's own imaging rules, saved per location. Fred approved the
+[design spec](docs/superpowers/specs/2026-10-17-weather-redesign-design.md) on
+2026-10-17 after a Claude–Codex design discussion. Inserted ahead of v0.42.0;
+the roadmap is not renumbered. Forecast accuracy work is out of scope.
+
+- [x] Start from updated `main` on `v0.41.9/weather-verdict`.
+- [x] Implementation plan ([plan](docs/superpowers/plans/2026-10-17-weather-verdict.md)).
+  Codex plan review converged in 4 of 5 rounds with nothing rejected.
+  Fred decided D1 ("Night over" once darkness ends) and authorized
+  implementation.
+- [x] Implementation by phase, with review (migration, API contract, and decision
+  logic are high-stakes). Codex implemented three phases (rules storage and
+  evaluator; data layer and endpoint; frontend); Claude reviewed each, sent one
+  batch of findings per phase, re-ran the checks, and staged the work.
+- [x] Migration gate: a copy of a real workspace database rolled back to 0057
+  and upgraded through yoyo. The only change is the new empty table; every other
+  row count is unchanged; integrity and foreign-key checks are clean; re-running
+  is a no-op.
+- [x] Rendered checks with Playwright: light and dark themes, 1500 px and 820 px,
+  keyboard selection, live preview, Save and Cancel, presets hidden after Save,
+  an unsaved draft discarded on a location switch, and the Tonight card opening
+  the night's details. These ran against a disposable backend with live
+  Open-Meteo data.
+- [x] Documentation: development decisions, weather algorithms, README, and
+  the docs index; the 0–100 model is archived.
+- [x] Independent Codex review of the whole change, before Fred's
+  acceptance test. A fresh read-only session found no blockers, 2 major
+  issues and 4 minor ones, all accepted and fixed:
+  - Editing a location's coordinates now clears its weather cache.
+  - ECMWF coverage ignores elapsed and post-cap hours.
+  - Moon rise and set times are in the display timezone.
+  - The rules editor and bar follow imperial units.
+  - The final stop-time option is offered.
+  - The astronomy docs are corrected.
+
+  A follow-up check confirmed the fixes; one further edge case (an empty
+  evaluated interval inside a single hour) was fixed with a test.
+- [x] **Forecaster revisions.** Fable and Astra's consolidated spec was
+  planned with Codex over 5 rounds: the
+  [spec](docs/superpowers/specs/2026-10-17-forecaster-revisions-design.md),
+  whose §11 holds the agreed clarifications, and the
+  [plan](docs/superpowers/plans/2026-10-17-forecaster-revisions.md).
+  - **What it adds:**
+    - total-only cloud;
+    - one precipitation-chance limit, an amount threshold, and "Any model"
+      amounts;
+    - declared per-model coverage;
+    - a shared window for short sessions;
+    - vetoes, precedence and freshness;
+    - per-night gear and imaging times;
+    - minute re-evaluation and the "not current" state.
+  - **Fred's decisions (2026-10-18):**
+    - saved rules are reset (F1);
+    - the gap label is "Longest interruption" (F2);
+    - one precipitation-chance limit, with no hour-or-block distinction and no
+      "?" marks (F3, after he saw the result).
+  - **Implementation:** Codex implemented 10 tasks, and Claude reviewed each,
+    ran the full suite outside the sandbox and did rendered checks:
+    - the hour strip is pixel-identical against pre-change references;
+    - fractional time zones line up;
+    - controls and editor work against the live backend.
+
+    The migrations were verified on a copy of a real workspace database.
+- [x] **Coverage constants.** Set from a 24-hour hourly observation at three
+  sites (25 runs, 2026-10-18/19; the lowest reach minus 6 h, never above the
+  spec's starting values): ECMWF 334 h, GFS 353 h, ICON 158 h, best_match
+  331 h (NBM was dropped with F3).
+- [x] **Independent Codex review of the revisions.** A fresh read-only
+  session found no blockers, no contract mismatches and no
+  verdict-guarantee violations, plus 3 major findings and 1 minor. All were
+  accepted and fixed:
+  - a 10-minute cooldown after failed refreshes, PWV and AQ included;
+  - the clock axis groups by local hour, so a half-hour DST change can't
+    double the strip;
+  - the coverage constants above;
+  - single-model reporting when the comparison models are beyond their
+    coverage.
+
+  After the fixes, the full backend suite passes. Its first run showed a single
+  failure, a coverage test pinned to the old constant; it was rewritten to set
+  the long value itself.
+- [x] **Batched Codex review of Claude-authored changes** (the rules-editor
+  changes of 2026-10-17, the coverage constants, the docs, the agent-process
+  notes). It found no blockers and confirmed the constants' arithmetic. Its
+  1 major and 4 minor findings were all about wording, and all are fixed:
+  - the docs now say coverage applies to model cloud and "Any model"
+    amounts, while the main forecast's own fields always count;
+  - the rules bar always shows the amount rule;
+  - precipitation labels no longer mention gear-out or dark hours under the
+    hours-lost policy;
+  - the ECMWF horizon comment is corrected;
+  - the ERA5 caveat is reworded.
+- [x] **Cloud forecasts, plain wording, and "How the verdict works"**
+  (2026-10-18).
+  - **Problem:** Fred found that "models disagree" came up too often. A replay
+    of 14 nights at his site gave 8 Uncertain with the preset rules.
+  - **The cloud forecasts (F4):** Claude and Codex designed this blind first,
+    then converged in 2 rounds, and Fred chose the majority vote. Users tick
+    ECMWF, GFS and/or ICON and a preferred forecast, and by default each
+    hour's cloud check follows the majority (spec §11 F4).
+  - **The wording:** Codex drafted "How the verdict works" ("In one minute"
+    plus "The details") and every rules label with a hover note. Claude
+    checked the facts and adopted "usable time" in place of "clear".
+  - **Status:** done (Codex implementation, Claude review, a fresh Codex
+    review with no blockers, rendered check). Details are in the plan's F4
+    section.
+- [x] **Faster first forecast load and model-detail notes** (2026-10-23).
+  - **Problem:** Fred found the first forecast after a backend start slow, at
+    about 7.5 s. Most of the time went to Sun and Moon positions for 14
+    nights, calculated every minute.
+  - **Speed-up:** exact positions are now calculated at every 10th sample,
+    with a smooth curve between. For 14 nights that takes 1.2 s instead of
+    6.7 s, and results match exact sampling. Measured on a disposable backend
+    after a restart, the first forecast now takes 1.5 s with a fresh saved
+    forecast and 2.5 s with a stale one.
+  - **Hover notes:** the ECMWF, GFS and ICON notes say where each model has
+    finer detail, never which is more accurate.
+  - **Process:**
+    - the [spec](docs/superpowers/specs/2026-10-23-forecast-astronomy-speed-design.md)
+      and [plan](docs/superpowers/plans/2026-10-23-forecast-astronomy-speed.md);
+    - Codex plan review converged in 3 of 5 rounds with nothing rejected;
+    - Fred decided to leave out Outlook nights on demand, accepted a 2 s
+      tolerance for unrounded API durations, and accepted the node wording;
+    - Codex implemented both tasks; Claude reviewed and staged them.
+  - **Verification:**
+    - 266 targeted tests pass;
+    - the 210-night run showed a largest difference of 0.0003 s and no label
+      changes;
+    - rendered hover notes were checked in light and dark themes.
+  - [x] **Fresh Codex review** (high-stakes calculation, plus Claude's
+    wording and doc edits).
+    - **Result:** no blockers or majors. One minor finding was fixed: the
+      test's copy of the UI's number formatting now rounds midpoints like
+      JavaScript (1.25 shows as 1.3), with regression cases.
+    - **Not re-checked by the reviewer:** external model facts.
+- [x] **Candidate preparation** (2026-10-23).
+  - **Version:** files and reference headers are synchronized to 0.41.9.
+  - **Coverage check against `main`:**
+    - **Untested behavior found:** the dew rule when counted, missing-data
+      parsing, and model-metadata defenses.
+    - **Unused code found:** two cloud-model methods left over from the old
+      spread code.
+    - **Fix:** Codex added 27 tests and removed the methods, with no behavior
+      change; Claude reviewed the work and re-ran the checks.
+- [x] **Bandit findings fixed** (Fred, 2026-10-23). The three long-deferred
+  low findings in [plate_solve.py](backend/src/nightcrate/services/plate_solve.py)
+  are fixed, with no suppressions:
+  - the two stream assertions are explicit checks that stop the solve;
+  - the optional image-size fallback logs at debug instead of passing
+    silently.
+
+  Codex implemented the fixes with tests; Claude reviewed them. Bandit now
+  reports no issues.
+- [ ] Fred's acceptance test. Fred authorized publishing on 2026-10-23 before
+  testing; he tests before merging.
+
+Verified by Claude on the candidate tree:
+- **Full backend suite:** 2,661 passed and 3 skipped, run with `-n auto`
+  outside the sandbox after the Bandit fixes.
+- **Static checks:**
+  - `uv lock --check`;
+  - Ruff lint and formatting;
+  - Bandit: no issues;
+  - frontend TypeScript and production build (the existing bundle-size
+    warning remains).
+- **Docs:** relative links, skill structure and `git diff --check`.
+- **Branch coverage of the weather verdict modules:**
+  - `forecast_coverage`, `forecast_inputs`, `imaging_hours`, `imaging_rules`,
+    `imaging_session`, `imaging_types` and `services/weather.py`: 100%.
+  - `imaging_verdict`: 99%. Its uncovered branches are handled earlier, and
+    one is a pass-through return.
+  - Line coverage that changed against `main`:
+    - `astronomy` 89 → 91%;
+    - `api/weather` 88 → 91%;
+    - `seeing` 100 → 98%. The one uncovered line only satisfies the type
+      checker and cannot run.
+
+**Release notes (v0.41.9 revisions):**
+
+- **Saved weather rules are reset** by migration 0059; set your rules again.
+  The share rule is now "clear for at least X%" (1–100); a night exactly at
+  the share is now Go.
+- **Cloud** is judged on each model's total cloud. ECMWF's low, mid and high
+  layers, which Open-Meteo estimates from humidity, are shown for information
+  only.
+- **New precipitation settings:**
+  - "Maximum precipitation amount";
+  - "Precipitation amount forecasts": Main forecast, or Main forecast + ECMWF,
+    GFS and ICON.
+  Locations keep Main forecast unless you choose otherwise.
+- **Presets:** "Left out all night" uses a 10% chance limit, counts wind and
+  checks every model's amount.
+- **Cloud forecasts:** choose ECMWF, GFS and/or ICON and a preferred one. By
+  default each hour follows the majority, with the preferred forecast breaking
+  ties, so disagreement no longer makes a night Uncertain. "Show Uncertain"
+  keeps the stricter comparison. Saved rules start on the majority with all
+  three (migration 0062).
+- **Wording:** "usable time" replaces "clear" where wind, dew, the Moon or
+  precipitation also count. Every rules setting has a hover note. "How the
+  verdict works" has an "In one minute" summary and a details section.
+- **Per night:** gear-out and gear-in times (whole night off), or imaging
+  times. "Night over" still means darkness has ended.
+- **Pages** re-evaluate every minute, and an old result is marked "not
+  current".
+- **Faster first load:** the Weather page's first forecast after the app
+  starts takes about 1.5–2.5 s instead of about 7.5 s, with the same results.
+- **Model notes:** the ECMWF, GFS and ICON hover notes in the rules editor
+  say where each model has finer detail (the contiguous US for GFS, Europe for
+  ICON).
+
 ## v0.41.8 — Subs by filter and exposure
+
+Merged in [PR #17](https://github.com/fbaptiste/nightcrate/pull/17) on 2026-10-17.
 
 Below the per-filter integration bars on a project's Imaging Sessions tab, add a
 table of sub counts per filter and exposure, so what is available to stack is
@@ -219,12 +435,19 @@ Session-log, event and autofocus tables exist; the app does not yet populate the
 
 ### Weather
 
-Discuss separately after general cleanup. The prior proposals for configurable
-quality terms, precipitation tolerance, rig-aware wind limits, score validation,
-and unrendered model details remain in the
-[historical weather plan](docs/archive/plan-through-v0.41.5.md#v0416--configurable-score--rig-aware-gates).
-Existing formulas and their evidence remain in [the model rationale](docs/imaging-quality-model.md).
-This release changes no weather behavior or scoring decisions.
+The forecast redesign is in progress as v0.41.9. Deferred by its spec:
+per-rig rules, forecast accuracy and validation work, and any new forecast
+sources.
+
+- **Outlook nights on demand.** Fred decided on 2026-10-23 to defer computing
+  nights 8–14 only when the Outlook tab opens. It would save about 0.6 s on a
+  first, uncached load. It would also need:
+  - a range field on the request;
+  - handling for date links into Outlook nights;
+  - the tab's night count;
+  - keeping per-night controls for nights that weren't returned.
+
+  Revisit if the page still feels slow.
 
 ### Frame quality and consolidation
 
@@ -275,15 +498,6 @@ This release changes no weather behavior or scoring decisions.
   state says "Tonight or Full Catalog tabs"
   ([WishlistTab.tsx](frontend/src/components/planner/WishlistTab.tsx)).
   Approved for this list on 2026-09-23; not yet checked in the running app.
-
-### Security follow-up
-
-- Review three existing low-severity Bandit findings in
-  [plate_solve.py](backend/src/nightcrate/services/plate_solve.py): B101 on the
-  subprocess stream assertions (lines 679 and 690), and B110 on the optional
-  image-dimension fallback (line 789). The v0.41.6 scan found no medium/high
-  findings. Fred approved deferring these to the later code review; keep them
-  visible rather than adding suppressions for this documentation release.
 
 ## Settled scope
 

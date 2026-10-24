@@ -2,6 +2,7 @@
 ASTAP binary resolution, hint extraction, header passthrough, and coordinate formatting."""
 
 import io
+import logging
 import math
 from pathlib import Path
 from unittest.mock import patch
@@ -496,6 +497,82 @@ class TestGetImageDimensions:
         w, h = get_image_dimensions(str(fits_path))
         assert w == 120
         assert h == 80
+
+    def test_pixel_fallback_failure_logs_debug_and_returns_missing(self, caplog):
+        image_path = "/fake/missing-dimensions.fits"
+
+        with (
+            patch.object(
+                plate_solve,
+                "_resolve_path",
+                return_value=(Path(image_path), "fits", 0, None),
+            ),
+            patch.object(plate_solve, "read_header_cards", return_value=[]),
+            patch.object(plate_solve, "cards_to_dict", return_value={}),
+            patch.object(plate_solve, "_get_dimensions_from_file", return_value=(None, None)),
+            patch.object(
+                plate_solve.fits_io,
+                "load_image_data",
+                side_effect=RuntimeError("pixel read failed"),
+            ),
+            caplog.at_level(logging.DEBUG, logger="nightcrate"),
+        ):
+            dimensions = plate_solve.get_image_dimensions(image_path)
+
+        assert dimensions == (None, None)
+        debug_records = [record for record in caplog.records if record.levelno == logging.DEBUG]
+        assert len(debug_records) == 1
+        assert debug_records[0].message.startswith("[plate-solve]")
+        assert image_path in debug_records[0].message
+        assert debug_records[0].exc_info is not None
+
+
+# ── _run_astap ─────────────────────────────────────────────────────────
+
+
+class TestRunAstap:
+    @pytest.mark.parametrize("missing_stream", ["stdout", "stderr"])
+    async def test_missing_process_stream_kills_waits_and_clears_progress(
+        self, tmp_path, missing_stream
+    ):
+        class FakeProcess:
+            def __init__(self):
+                self.stdout = None if missing_stream == "stdout" else object()
+                self.stderr = None if missing_stream == "stderr" else object()
+                self.killed = False
+                self.waited = False
+
+            def kill(self):
+                self.killed = True
+
+            async def wait(self):
+                self.waited = True
+
+        proc = FakeProcess()
+
+        async def fake_create_subprocess_exec(*_args, **_kwargs):
+            return proc
+
+        with (
+            patch.object(
+                plate_solve.asyncio,
+                "create_subprocess_exec",
+                fake_create_subprocess_exec,
+            ),
+            patch.object(plate_solve, "_solve_process", None),
+        ):
+            with pytest.raises(RuntimeError, match="process streams are unavailable"):
+                await plate_solve._run_astap(
+                    ["astap", "image.fits"],
+                    tmp_path / "result",
+                    60,
+                    None,
+                    None,
+                )
+
+            assert proc.killed is True
+            assert proc.waited is True
+            assert plate_solve._solve_progress == ""
 
 
 # ── Archive / BytesIO source handling ───────────────────────────────────

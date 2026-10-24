@@ -99,15 +99,7 @@ export function SettingsPage() {
               </Typography>
             </AccordionSummary>
             <AccordionDetails>
-              <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-                <Typography variant="body1">Include moon in quality score by default</Typography>
-                <Switch
-                  checked={settings.weather_moon_penalty}
-                  onChange={(e) => update({ weather_moon_penalty: e.target.checked })}
-                />
-              </Box>
-
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 2 }}>
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <Box>
                   <Typography variant="body1">Temperature &amp; wind units</Typography>
                   <Typography variant="body2" color="text.secondary">

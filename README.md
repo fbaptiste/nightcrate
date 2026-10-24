@@ -31,9 +31,19 @@ forecasts and survey imagery are fetched from external services when needed.
   section/selection statistics, calibration geometry and range export.
 - **Equipment:** editable component catalog, personal rigs and smart-scope
   presets, filter loadouts, imaging and guiding calculators.
-- **Weather:** nightly/hourly forecasts with astronomical context and an
-  imaging-quality breakdown. The current model and its limitations are described
-  in [the scoring rationale](docs/imaging-quality-model.md).
+- **Weather:** a personal Go / Uncertain / No verdict for each of the next 14
+  nights (the second week shown as an outlook). It uses imaging rules saved
+  per location:
+  - a total-cloud ceiling;
+  - a maximum precipitation chance, an amount threshold, and an optional
+    check of every model's amount;
+  - optional wind, dew and Moon limits.
+
+  You choose which cloud forecasts count (ECMWF, GFS, ICON); by default each
+  hour follows the majority, or disagreement can be shown as Uncertain.
+  Each night has per-night gear and imaging times and an hour-by-hour
+  breakdown against those limits. See
+  [weather algorithms](docs/weather-algorithms.md).
 - **Reference tools:** DSO catalog, locations/custom horizons, astronomy
   calculators, Tonight summary, API documentation and activity console.
 

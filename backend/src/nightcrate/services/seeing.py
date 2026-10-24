@@ -19,14 +19,16 @@ This module is pure computation — no database, no HTTP, no FastAPI dependencie
 
 from __future__ import annotations
 
+from typing import Literal, cast
+
 
 def estimate_seeing_surface(
-    temperature_c: float,
-    dew_point_c: float,
-    humidity_pct: float,
-    wind_speed_kmh: float,
+    temperature_c: float | None,
+    dew_point_c: float | None,
+    humidity_pct: float | None,
+    wind_speed_kmh: float | None,
     prev_temperature_c: float | None = None,
-) -> int:
+) -> int | None:
     """Estimate seeing quality from surface weather observations.
 
     Uses the JAG Lab methodology, combining four weighted components:
@@ -47,6 +49,15 @@ def estimate_seeing_surface(
     Returns:
         Seeing quality score from 0 (terrible) to 100 (excellent).
     """
+    if None in (temperature_c, dew_point_c, humidity_pct, wind_speed_kmh):
+        return None
+
+    # The guard above establishes that these optionals are concrete inputs.
+    temperature_c = cast(float, temperature_c)
+    dew_point_c = cast(float, dew_point_c)
+    humidity_pct = cast(float, humidity_pct)
+    wind_speed_kmh = cast(float, wind_speed_kmh)
+
     # --- Component 1: Temperature–dew point spread (30%) ---
     # Spread of 0°C (saturated air) = 0; spread of 20°C+ = 100.
     spread = temperature_c - dew_point_c
@@ -82,18 +93,18 @@ def estimate_seeing_surface(
 
 
 def estimate_seeing_wind_shear(
-    wind_speed_200hpa_kmh: float,
-    wind_speed_300hpa_kmh: float,
-    wind_speed_500hpa_kmh: float,
-    geopotential_200hpa_m: float,
-    geopotential_300hpa_m: float,
-    geopotential_500hpa_m: float,
-    temperature_c: float,
-    dew_point_c: float,
-    humidity_pct: float,
-    wind_speed_surface_kmh: float,
+    wind_speed_200hpa_kmh: float | None,
+    wind_speed_300hpa_kmh: float | None,
+    wind_speed_500hpa_kmh: float | None,
+    geopotential_200hpa_m: float | None,
+    geopotential_300hpa_m: float | None,
+    geopotential_500hpa_m: float | None,
+    temperature_c: float | None,
+    dew_point_c: float | None,
+    humidity_pct: float | None,
+    wind_speed_surface_kmh: float | None,
     prev_temperature_c: float | None = None,
-) -> int:
+) -> int | None:
     """Estimate seeing quality using upper-atmosphere wind shear and surface data.
 
     Combines two components:
@@ -126,6 +137,35 @@ def estimate_seeing_wind_shear(
     Returns:
         Seeing quality score from 0 (terrible) to 100 (excellent).
     """
+    values = (
+        wind_speed_200hpa_kmh,
+        wind_speed_300hpa_kmh,
+        wind_speed_500hpa_kmh,
+        geopotential_200hpa_m,
+        geopotential_300hpa_m,
+        geopotential_500hpa_m,
+        temperature_c,
+        dew_point_c,
+        humidity_pct,
+        wind_speed_surface_kmh,
+    )
+    if any(value is None for value in values):
+        return None
+
+    # Assigning concrete locals keeps arithmetic type-safe for static checkers.
+    (
+        wind_speed_200hpa_kmh,
+        wind_speed_300hpa_kmh,
+        wind_speed_500hpa_kmh,
+        geopotential_200hpa_m,
+        geopotential_300hpa_m,
+        geopotential_500hpa_m,
+        temperature_c,
+        dew_point_c,
+        humidity_pct,
+        wind_speed_surface_kmh,
+    ) = (float(value) for value in values)
+
     # Convert km/h → m/s for atmospheric calculations
     v200_ms = wind_speed_200hpa_kmh / 3.6
     v300_ms = wind_speed_300hpa_kmh / 3.6
@@ -152,17 +192,29 @@ def estimate_seeing_wind_shear(
     upper_score = jet_score * 0.60 + shear_score * 0.40
 
     # --- Surface score ---
-    surface_score = float(
-        estimate_seeing_surface(
-            temperature_c=temperature_c,
-            dew_point_c=dew_point_c,
-            humidity_pct=humidity_pct,
-            wind_speed_kmh=wind_speed_surface_kmh,
-            prev_temperature_c=prev_temperature_c,
-        )
+    surface_score_value = estimate_seeing_surface(
+        temperature_c=temperature_c,
+        dew_point_c=dew_point_c,
+        humidity_pct=humidity_pct,
+        wind_speed_kmh=wind_speed_surface_kmh,
+        prev_temperature_c=prev_temperature_c,
     )
+    if surface_score_value is None:
+        return None
+    surface_score = float(surface_score_value)
 
     # --- Final combined score ---
     combined = upper_score * 0.60 + surface_score * 0.40
 
     return int(round(max(0.0, min(100.0, combined))))
+
+
+def score_label(score: int | None) -> Literal["good", "fair", "poor"] | None:
+    """Convert a context estimate to its display band."""
+    if score is None:
+        return None
+    if score >= 67:
+        return "good"
+    if score >= 34:
+        return "fair"
+    return "poor"

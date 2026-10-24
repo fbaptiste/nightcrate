@@ -27,9 +27,9 @@ and [PLAN.md](../PLAN.md) for active work.
 - [DSO catalog architecture](dso-catalog-architecture.md).
 - [Target planner](target-planner.md), [scoring](planner-scoring.md),
   [annual-hours algorithm](planner-annual-hours-algorithm.md).
-- [Weather algorithms](weather-algorithms.md) and the newer
-  [imaging-quality model](imaging-quality-model.md). The latter supersedes older
-  composite-score descriptions; forecast redesign is deferred.
+- [Weather algorithms](weather-algorithms.md): the personal imaging verdict
+  (v0.41.9). The retired 0–100 score is archived in
+  [imaging-quality model](archive/imaging-quality-model.md).
 
 ## Historical material
 

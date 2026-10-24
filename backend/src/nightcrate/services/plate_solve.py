@@ -671,13 +671,18 @@ async def _run_astap(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        stdout = proc.stdout
+        stderr = proc.stderr
         _solve_process = proc
+        if stdout is None or stderr is None:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError("ASTAP process streams are unavailable.")
         stdout_lines: list[str] = []
         stderr_data = b""
 
         async def _read_stdout():
-            assert proc.stdout
-            async for raw_line in proc.stdout:
+            async for raw_line in stdout:
                 line = raw_line.decode(errors="replace").rstrip()
                 stdout_lines.append(line)
                 if line:
@@ -687,8 +692,7 @@ async def _run_astap(
 
         async def _read_stderr():
             nonlocal stderr_data
-            assert proc.stderr
-            stderr_data = await proc.stderr.read()
+            stderr_data = await stderr.read()
 
         try:
             await asyncio.wait_for(
@@ -787,7 +791,11 @@ def get_image_dimensions(image_path: str, hdu: int = 0) -> tuple[int | None, int
         if data is not None and data.ndim >= 2:
             return data.shape[-1], data.shape[-2]
     except Exception:
-        pass
+        logger.debug(
+            "[plate-solve] failed to load pixel data for dimensions: %s",
+            image_path,
+            exc_info=True,
+        )
     return None, None
 
 
