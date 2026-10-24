@@ -11,6 +11,27 @@ from astropy.io import fits
 
 
 @pytest.fixture(autouse=True)
+def _clear_weather_summary_cache():
+    """Keep API-local weather state isolated between tests and event loops."""
+    from nightcrate.api.weather import (
+        _cache_locks,
+        _night_summary_cached,
+        _refresh_failures,
+        _repair_attempts,
+    )
+
+    _night_summary_cached.cache_clear()
+    _cache_locks.clear()
+    _refresh_failures.clear()
+    _repair_attempts.clear()
+    yield
+    _night_summary_cached.cache_clear()
+    _cache_locks.clear()
+    _refresh_failures.clear()
+    _repair_attempts.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_cloud_model_network(monkeypatch):
     """Keep the multi-model cloud fetch off the network in every test.
 
@@ -27,6 +48,10 @@ def _no_cloud_model_network(monkeypatch):
     monkeypatch.setattr(
         "nightcrate.api.weather._fetch_or_cached_cloud_models",
         AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "nightcrate.api.weather.fetch_model_meta",
+        AsyncMock(side_effect=RuntimeError("network disabled in tests")),
     )
 
 

@@ -1,4 +1,4 @@
--- NightCrate version: 0.41.8
+-- NightCrate version: 0.41.9
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -902,6 +902,61 @@ BEGIN
     UPDATE location SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
+CREATE TABLE location_imaging_rules (
+    location_id INTEGER PRIMARY KEY REFERENCES location(id) ON DELETE CASCADE,
+    session_style TEXT NOT NULL CHECK (session_style IN ('all_night', 'short_session')),
+    min_clear_fraction_pct REAL NOT NULL
+        CHECK (min_clear_fraction_pct >= 1 AND min_clear_fraction_pct <= 100),
+    min_clear_hours REAL NOT NULL CHECK (min_clear_hours >= 0),
+    max_cloudy_gap_hours REAL CHECK (max_cloudy_gap_hours > 0),
+    short_session_hours REAL NOT NULL
+        CHECK (short_session_hours > 0 AND short_session_hours <= 24),
+    darkness TEXT NOT NULL CHECK (darkness IN ('astronomical', 'nautical', 'civil')),
+    cloud_max_pct REAL NOT NULL CHECK (cloud_max_pct >= 0 AND cloud_max_pct <= 100),
+    gear_out_before_sunset_min INTEGER NOT NULL
+        CHECK (gear_out_before_sunset_min >= 0 AND gear_out_before_sunset_min <= 240),
+    gear_out_after_sunrise_min INTEGER NOT NULL
+        CHECK (gear_out_after_sunrise_min >= 0 AND gear_out_after_sunrise_min <= 240),
+    rain_max_probability_pct REAL NOT NULL
+        CHECK (rain_max_probability_pct >= 0 AND rain_max_probability_pct <= 100),
+    rain_amount_threshold_mm REAL NOT NULL CHECK (rain_amount_threshold_mm >= 0),
+    rain_forecasts TEXT NOT NULL CHECK (rain_forecasts IN ('main', 'any_model')),
+    rain_policy TEXT NOT NULL CHECK (rain_policy IN ('night_off', 'hours_lost')),
+    wind_counted INTEGER NOT NULL CHECK (wind_counted IN (0, 1)),
+    wind_max_kmh REAL NOT NULL CHECK (wind_max_kmh > 0),
+    gust_max_kmh REAL NOT NULL CHECK (gust_max_kmh > 0),
+    dew_counted INTEGER NOT NULL CHECK (dew_counted IN (0, 1)),
+    dew_min_spread_c REAL NOT NULL CHECK (dew_min_spread_c >= 0),
+    moon_must_be_down INTEGER NOT NULL CHECK (moon_must_be_down IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Added by 0062 (cloud forecasts): which models decide cloud, and how.
+    cloud_use_ecmwf INTEGER NOT NULL DEFAULT 1 CHECK (cloud_use_ecmwf IN (0, 1)),
+    cloud_use_gfs INTEGER NOT NULL DEFAULT 1 CHECK (cloud_use_gfs IN (0, 1)),
+    cloud_use_icon INTEGER NOT NULL DEFAULT 1 CHECK (cloud_use_icon IN (0, 1)),
+    cloud_combination TEXT NOT NULL DEFAULT 'majority'
+        CHECK (cloud_combination IN ('majority', 'uncertain')),
+    cloud_preferred_model TEXT NOT NULL DEFAULT 'ecmwf_ifs025' CHECK (
+        cloud_preferred_model IN ('ecmwf_ifs025', 'gfs_seamless', 'icon_seamless')
+        AND (cloud_use_ecmwf = 1 OR cloud_use_gfs = 1 OR cloud_use_icon = 1)
+        AND (
+            (cloud_preferred_model = 'ecmwf_ifs025' AND cloud_use_ecmwf = 1)
+            OR (cloud_preferred_model = 'gfs_seamless' AND cloud_use_gfs = 1)
+            OR (cloud_preferred_model = 'icon_seamless' AND cloud_use_icon = 1)
+        )
+    )
+);
+
+CREATE TRIGGER trg_location_imaging_rules_updated_at
+AFTER UPDATE ON location_imaging_rules
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE location_imaging_rules
+    SET updated_at = datetime('now')
+    WHERE location_id = NEW.location_id;
+END;
+
 -- ─── Weather Cache ─────────────────────────────────────────────────────────
 
 -- Cache for Open-Meteo API responses (weather forecast, ECMWF PWV, air quality AOD).
@@ -911,7 +966,10 @@ CREATE TABLE IF NOT EXISTS weather_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     location_id INTEGER NOT NULL REFERENCES location(id) ON DELETE CASCADE,
     source TEXT NOT NULL CHECK (
-        source IN ('forecast', 'archive', 'openmeteo_aq', 'ecmwf_pwv', 'cloud_models')
+        source IN (
+            'forecast', 'archive', 'openmeteo_aq', 'ecmwf_pwv',
+            'cloud_models', 'model_meta'
+        )
     ),
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,

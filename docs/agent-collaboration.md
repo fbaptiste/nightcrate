@@ -276,6 +276,12 @@ Canaried on 2026-09-22 (tool inventories are as reported by the model):
   inventory showed no changes;
 - a resume launched from a different folder used that folder as its writable
   workspace and wrote a file there; Git writes stayed blocked.
+- 2026-10-18: inside the implementation sandbox, Metal reports no GPU device.
+  MLX then aborts the interpreter when a test initialises it, and every aborted
+  pytest-xdist worker raised a macOS "Python quit unexpectedly" dialog on
+  Fred's screen. Handoffs therefore name the test modules Codex runs, and never
+  include the whole suite or GPU tests. Claude runs the full suite outside the
+  sandbox.
 
 The `codex` skill records how to re-run these checks.
 

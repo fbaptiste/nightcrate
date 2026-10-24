@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from nightcrate.db.session import get_db
 from nightcrate.main import app
+from nightcrate.services import astronomy
 
 
 @pytest.fixture
@@ -307,6 +308,33 @@ async def test_tonight_phoenix(client, phoenix_location_id):
     # ~5 hours of astronomical darkness in mid-April.
     assert 2.0 < data["astronomical_dark_hours"] < 10.0
     assert 0.0 <= data["moon_illumination_pct"] <= 100.0
+
+
+@pytest.mark.anyio
+async def test_tonight_response_equivalent_to_exact_astronomy(
+    client,
+    phoenix_location_id,
+    monkeypatch,
+):
+    from nightcrate.api.weather import _night_summary_cached
+
+    params = {"location_id": phoenix_location_id, "date": "2026-10-23"}
+
+    with monkeypatch.context() as exact_patch:
+        exact_patch.setattr(
+            astronomy,
+            "_spline_altitudes",
+            lambda fn, times, location, node_every=10: fn(times, location),
+        )
+        _night_summary_cached.cache_clear()
+        exact_response = await client.get("/api/calculators/tonight", params=params)
+
+    _night_summary_cached.cache_clear()
+    fast_response = await client.get("/api/calculators/tonight", params=params)
+
+    assert exact_response.status_code == 200, exact_response.text
+    assert fast_response.status_code == 200, fast_response.text
+    assert fast_response.json() == exact_response.json()
 
 
 @pytest.mark.anyio

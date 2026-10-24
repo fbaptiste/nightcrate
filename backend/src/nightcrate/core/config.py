@@ -35,7 +35,6 @@ class Settings(BaseModel):
     browser_favorites: list[BrowserFavorite] = []
     aberration_cache_ttl_days: int = 30
     weather_cache_ttl_hours: int = 6
-    weather_moon_penalty: bool = True
     weather_units: Literal["metric", "imperial"] = "metric"
     # User-chosen display order for the Calculators "Clocks" view. Empty list
     # means "use the component's default order"; unknown ids are filtered on

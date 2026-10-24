@@ -10,6 +10,11 @@ From: Claude. To: Codex (implementation profile). Phase <n> of <m>.
 - **Facts:** <labeled verified/assumed>.
 - **Acceptance commands:** <exact commands>. If `uv run` cannot use its cache,
   use `.venv/bin/python -m pytest` and say which ran.
+- **Tests:** run only the test modules named here, by path. Never run the
+  whole backend suite or any GPU test (`tests/test_compute.py`). The sandbox
+  hides the GPU, so MLX aborts the interpreter and macOS shows a crash dialog on
+  Fred's screen for each aborted process. Claude runs the full suite outside
+  the sandbox.
 - **Stop conditions:** stop and report if <contradiction with the plan, needed
   dependency, schema change not in the plan, scope expansion>.
 

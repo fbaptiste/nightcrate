@@ -139,7 +139,7 @@ the rig's major/minor ratio so the cell reads like a viewfinder.
 - **Mosaic planning:** extend the simulator to support multi-panel
   layout; `FovSimulator` becomes a single panel with a sibling
   "add panel" action.
-- **Weather integration:** surface `imaging_quality` + cloud gating
+- **Weather integration:** surface the night's imaging verdict
   per-target in the list. The weather snapshot is already keyed by
   location + date.
 - **Date picker:** the API already accepts `date` — just surface it in

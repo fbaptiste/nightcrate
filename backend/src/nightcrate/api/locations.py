@@ -477,6 +477,11 @@ async def update_location(location_id: int, body: LocationUpdate):
             lon = updates.get("longitude", existing_row["longitude"])
             updates["geo_timezone"] = _lookup_geo_timezone(lat, lon)
 
+        weather_inputs_changed = any(
+            field in updates and updates[field] != existing_row[field]
+            for field in ("latitude", "longitude", "elevation_m")
+        )
+
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [location_id]
@@ -485,6 +490,12 @@ async def update_location(location_id: int, body: LocationUpdate):
                     f"UPDATE location SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
                     values,
                 )
+
+        if weather_inputs_changed:
+            await conn.execute(
+                "DELETE FROM weather_cache WHERE location_id = ?",
+                (location_id,),
+            )
 
         if updates.get("is_default") == 1:
             await _ensure_single_default(conn, location_id)

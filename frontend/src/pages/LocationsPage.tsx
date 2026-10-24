@@ -746,6 +746,11 @@ export default function LocationsPage() {
         if (hasDirtyHorizons(stagedHorizons)) {
           await replaceLocationHorizons(editingLocation.id, toReplaceItems(stagedHorizons));
         }
+        // Coordinates, timezone and horizons feed many cached views (the
+        // detail panel's horizon, weather, Tonight, planner hours), not all
+        // keyed by location id. Mark everything stale: only mounted queries
+        // refetch now, the rest on next use.
+        await queryClient.invalidateQueries();
         setSnack({ msg: "Location updated.", severity: "info" });
       } else {
         // New location — atomic create path. Seed horizons are derived

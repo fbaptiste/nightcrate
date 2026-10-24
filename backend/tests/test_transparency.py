@@ -48,8 +48,17 @@ class TestTransparencyTiers:
             humidity_pct=None,
             visibility_m=None,
         )
-        assert result.tier == "degraded"
-        assert result.score == 50  # neutral fallback
+        assert result.tier is None
+        assert result.score is None
+
+    def test_one_required_input_missing_is_none(self):
+        result = estimate_transparency(
+            pwv_mm=None,
+            aod=None,
+            humidity_pct=40.0,
+            visibility_m=None,
+        )
+        assert result.score is None
 
 
 class TestTransparencyScores:
