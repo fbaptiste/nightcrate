@@ -1,7 +1,7 @@
 /**
  * Planner detail panel — larger thumbnail + sky-position graph + metadata.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
@@ -23,6 +23,8 @@ import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import StarIcon from "@mui/icons-material/Star";
+import StarBorderIcon from "@mui/icons-material/StarBorder";
 import {
   fetchAnnualHours,
   fetchSkyTrack,
@@ -47,6 +49,7 @@ import { ScoreChip } from "./ScoreChip";
 import SkyPositionView from "./SkyPositionView";
 import FovSimulator from "./FovSimulator";
 import { renderHorizonMenuItems } from "./horizonMenuItems";
+import { RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {
   dsoId: number | null;
@@ -74,6 +77,8 @@ interface Props {
    *  simulator's annotation popover's "Show details" button). The
    *  dialog stays open; rig / location selections persist. */
   onSelectDso?: (dsoId: number) => void;
+  isFavorite?: boolean;
+  onToggleFavorite?: (dsoId: number) => void;
   onClose: () => void;
 }
 
@@ -151,10 +156,17 @@ export default function PlannerDetailPanel({
   selectedDate,
   rigs,
   onSelectDso,
+  isFavorite,
+  onToggleFavorite,
   onClose,
 }: Props) {
   const detailTheme = useTheme();
   const isNarrow = useMediaQuery(detailTheme.breakpoints.down("md"));
+  // The dialog is named by the designation alone. Left to MUI, it takes the
+  // whole title row, which starts with the wishlist star's label. The row
+  // needs its own id, or MUI would give it the designation's.
+  const nameId = useId();
+  const titleRowId = useId();
 
   // Local preview overrides — distinct from the parent's
   // ``selectedLocationId``, ``selectedHorizonId``, and ``selectedRigId``.
@@ -334,14 +346,42 @@ export default function PlannerDetailPanel({
   const distance = formatDistance(dso?.distance_pc);
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" fullScreen={isNarrow}>
-      <DialogTitle sx={{ display: "flex", alignItems: "flex-start", gap: 2, py: 1.25 }}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="md"
+      fullScreen={isNarrow}
+      aria-labelledby={nameId}
+    >
+      <DialogTitle
+        id={titleRowId}
+        sx={{ display: "flex", alignItems: "flex-start", gap: 2, py: 1.25 }}
+      >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {/* Title row: primary designation + constellation. Distance
               moved to the fact grid below so the header stays focused
               on identifiers (name + cross-refs + type). */}
           <Stack direction="row" gap={1.5} alignItems="baseline" flexWrap="wrap">
-            <Typography variant="h6">{dso?.primary_designation ?? "…"}</Typography>
+            {onToggleFavorite && dsoId != null && (
+              <IconButton
+                size="small"
+                onClick={() => onToggleFavorite(dsoId)}
+                // Unset when off: the dialog's paper is light enough that
+                // ``text.disabled`` all but disappears in dark mode.
+                sx={{
+                  alignSelf: "center",
+                  mx: -0.75,
+                  color: isFavorite ? RIG_ORANGE : undefined,
+                }}
+                aria-label={isFavorite ? "Remove from wishlist" : "Add to wishlist"}
+              >
+                {isFavorite ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
+              </IconButton>
+            )}
+            <Typography id={nameId} variant="h6">
+              {dso?.primary_designation ?? "…"}
+            </Typography>
             {dso?.constellation && (
               <Typography variant="body2" color="text.secondary">
                 {displayConstellation(dso.constellation)}
@@ -497,7 +537,7 @@ export default function PlannerDetailPanel({
             </Stack>
           )}
         </Stack>
-        <IconButton size="small" onClick={onClose}>
+        <IconButton size="small" onClick={onClose} aria-label="Close">
           <CloseIcon />
         </IconButton>
       </DialogTitle>

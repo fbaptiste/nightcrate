@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from nightcrate.catalog_loader import load_catalogs
+from nightcrate.catalog_loader.augment_loader import load_augment
+from nightcrate.catalog_loader.registry import get_sources
 
 MINI_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "catalogs"
 
@@ -41,6 +43,34 @@ def test_augment_overrides_common_name(db, catalogs_root):
     row = cur.fetchone()
     assert row["common_name"] == "Orion Nebula"
     assert row["common_name_augmented"] == 1
+
+
+def test_augment_unchanged_file_returns_stored_state(db, catalogs_root):
+    load_catalogs(db, catalogs_root)
+    source = next(
+        source for source in get_sources(catalogs_root) if source.source_id == "nightcrate_augment"
+    )
+    stored = db.execute(
+        "SELECT row_count, file_hash FROM dso_catalog_source WHERE source_id = ?",
+        (source.source_id,),
+    ).fetchone()
+    common_name = db.execute(
+        "SELECT common_name FROM dso WHERE primary_designation = 'M 42'"
+    ).fetchone()[0]
+
+    result = load_augment(db, source, force=False)
+
+    current = db.execute(
+        "SELECT file_hash FROM dso_catalog_source WHERE source_id = ?",
+        (source.source_id,),
+    ).fetchone()
+    current_common_name = db.execute(
+        "SELECT common_name FROM dso WHERE primary_designation = 'M 42'"
+    ).fetchone()[0]
+    assert result.status == "unchanged"
+    assert result.dso_count == stored["row_count"]
+    assert current["file_hash"] == stored["file_hash"]
+    assert current_common_name == common_name == "Orion Nebula"
 
 
 def test_augment_sets_curated_distance(db, catalogs_root):
@@ -99,3 +129,26 @@ def test_augment_unresolved_designation_logged_not_fatal(db, catalogs_root, capl
     # Bundled augment CSV references many designations (IC 1805 etc.) that
     # aren't in the mini fixture, so we expect at least one warning.
     assert any("[augment] designation" in record.getMessage() for record in caplog.records)
+
+
+def test_augment_reload_preserves_inactive_enrichment(db, catalogs_root):
+    load_catalogs(db, catalogs_root)
+    db.execute(
+        """
+        UPDATE dso SET active=0, common_name='Preserved inactive',
+            common_name_augmented=1, distance_pc=999, distance_method='curated'
+        WHERE primary_designation='M 42'
+        """
+    )
+    db.execute("UPDATE dso_catalog_source SET file_hash='' WHERE source_id='nightcrate_augment'")
+    db.commit()
+
+    load_catalogs(db, catalogs_root)
+
+    row = db.execute(
+        """
+        SELECT active, common_name, common_name_augmented, distance_pc, distance_method
+        FROM dso WHERE primary_designation='M 42'
+        """
+    ).fetchone()
+    assert tuple(row) == (0, "Preserved inactive", 1, 999.0, "curated")

@@ -1,6 +1,7 @@
 """Shared test fixtures."""
 
 import importlib.resources
+import logging
 import zoneinfo
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -10,6 +11,20 @@ import aiosqlite
 import numpy as np
 import pytest
 from astropy.io import fits
+from yoyo import get_backend, read_migrations
+
+
+@pytest.fixture(autouse=True)
+def _restore_nightcrate_logger():
+    """Keep app logging configuration isolated between tests."""
+    logger = logging.getLogger("nightcrate")
+    saved_level = logger.level
+    saved_propagate = logger.propagate
+    saved_handlers = logger.handlers.copy()
+    yield
+    logger.setLevel(saved_level)
+    logger.propagate = saved_propagate
+    logger.handlers[:] = saved_handlers
 
 
 @pytest.fixture
@@ -149,6 +164,17 @@ async def _test_db(tmp_path: Path, monkeypatch):
                 await conn.executescript(body)
 
         await conn.commit()
+
+        # The fixture materializes SQL migrations directly above for speed.
+        # Mark those exact migrations as applied, then let yoyo load and run
+        # Python migrations in their required module-loading context.
+        with get_backend(f"sqlite:///{test_db}") as backend:
+            migrations = read_migrations(str(migrations_dir))
+            sql_migrations = [
+                migration for migration in migrations if Path(migration.path).suffix == ".sql"
+            ]
+            backend.mark_migrations(sql_migrations)
+            backend.apply_migrations(backend.to_apply(migrations))
 
     # Load seed data (filter_type and any other seed CSVs) using a separate
     # sync connection — aiosqlite's internal connection has thread restrictions.

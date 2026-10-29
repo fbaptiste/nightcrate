@@ -3,6 +3,7 @@ import type { WcsParams } from "./plateSolve";
 
 export interface IdentifiedDso {
   dso_id: number;
+  active: boolean;
   primary_designation: string;
   common_name: string | null;
   obj_type: string;

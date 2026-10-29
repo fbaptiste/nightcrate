@@ -31,6 +31,7 @@ import {
   projectSolveImageUrl,
   type ProjectSolve,
 } from "@/api/projectSolve";
+import NotListedTag from "@/components/dso/NotListedTag";
 
 function fileName(path: string): string {
   return path.split("/").pop()?.split("::").pop() ?? path;
@@ -317,6 +318,7 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
                         e.stopPropagation();
                         mainMut.mutate({ dsoId: o.dso_id, isMain: !o.is_main });
                       }}
+                      disabled={!o.active && !o.is_main}
                       sx={{ color: o.is_main ? "warning.main" : "action.disabled", p: 0.25 }}
                     >
                       {o.is_main ? (
@@ -329,10 +331,12 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
                   <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                     <Typography variant="body2" noWrap>
                       {o.common_name ?? o.primary_designation}
+                      {!o.common_name && !o.active && <NotListedTag />}
                     </Typography>
                     {o.common_name && (
                       <Typography variant="caption" color="text.secondary" noWrap>
                         {o.primary_designation}
+                        {!o.active && <NotListedTag />}
                       </Typography>
                     )}
                   </Box>

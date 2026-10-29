@@ -1,12 +1,305 @@
 # NightCrate — active plan
 
-**Version:** v0.41.10 — Dependency fixes from issue #16
+**Version:** v0.42.0 — Catalog preservation, licence, planner star, mirrored overlays
 
-**Branch:** `v0.41.10/dependency-fixes`
+**Branch:** `v0.42.0/catalog-preservation`
 
 **Status:** Complete — awaiting merge
 
+## v0.42.0 — Catalog preservation, licence, planner star, mirrored overlays
+
+Fred started this version on 2026-10-27. Its scope is the four roadmap items
+below. The licence change was already in the working tree and moved onto this
+branch uncommitted. The native plate solver follows in the next version.
+
+- [x] Start from updated `main` on `v0.42.0/catalog-preservation`.
+- **Authorization (Fred, 2026-10-27 evening): "just build everything."** He
+  waived his spec and plan approvals for the overnight run ("Fred says so") and
+  asked Claude to settle open questions itself; those calls are listed in the
+  spec's §6 for his review. Nothing is committed. High-stakes checks still
+  apply.
+- **Fred's decisions (2026-10-27):**
+  - an object a catalog update merges into another moves the user's records to
+    the survivor silently, keeping the old name as a designation;
+  - an object a catalog update removes is kept, marked "no longer listed"
+    wherever the user's records show it, and hidden from browsing and search;
+  - reloads update objects in place;
+  - fetching one catalog no longer reloads the others.
+- **Worktree.** Fred's `make dev` server from 2026-10-24 is still running from
+  the main checkout, and its auto-reload would apply new migrations to his
+  real database. Code is therefore built in a detached worktree
+  (`../nightcrate-v042-wt`) and brought back once that server is stopped.
+- [x] Spec: [design](docs/superpowers/specs/2026-10-27-catalog-preservation-design.md).
+  Before writing it, Claude confirmed the bugs on copies:
+  - one Admin reload deleted every target, solved-field object and wishlist
+    entry in a copy of Fred's database;
+  - both mirrored-overlay cases appear on screen;
+  - an experiment confirmed ASTAP's bottom-up rows for PNG, JPEG and TIFF.
+- [x] Plan: [implementation plan](docs/superpowers/plans/2026-10-27-catalog-preservation.md).
+  - **Builder check:** a fresh reviewer found 5 gaps, all settled as
+    Claude's calls.
+  - **Codex plan review:** converged in 4 of 5 rounds. Every finding was
+    accepted; nothing was rejected, and there are no tracked items. The
+    review section is at the end of the plan.
+  - **Main changes:**
+    - identity never comes from shared names;
+    - catalog reloads wait while a loaded catalog's file is missing;
+    - failed steps retry;
+    - removed objects keep their wishlist data;
+    - the existing CDELT/CROTA conversion swaps two scales, and is now fixed.
+- [x] Implementation and review (Codex implements in the worktree; Claude
+  reviews, re-runs the checks, and stages in the worktree):
+  - [x] **Phase A, catalog object step** (migration 0063; reconcile engine;
+    user-record moves; load orchestration; Admin fetch routes no longer force
+    a full reload).
+    - **Claude's review:** 9 findings, all fixed. The worst: matching was
+      quadratic; display-name matching could still run after the upgrade; a
+      failing object step escaped the loader; and merged plans dropped most
+      differing settings from the notes.
+    - **On a copy of Fred's database with the real catalog files:**
+      - the one-time keying step took 3.5 s, and a forced reload 2.0 s (13.8 s
+        before);
+      - all 3 targets, 16 solved-field objects, 3 wishlist entries and 701
+        sub-frame links survived, and every object kept its id;
+      - all 42,088 designations, 35,951 external links, names and distances
+        are identical; integrity and foreign-key checks are clean.
+    - **Tests:** 235 targeted tests pass; Ruff, format and Bandit are clean.
+  - [x] **Phase B:** API `active`, the "Not listed" tags, and the planner star.
+    - Removed objects stay readable through the user's records and are refused
+      as new wishlist entries or main targets (409).
+    - **Tests:** 138 targeted tests pass; the build is clean.
+    - **Rendered check** on a database copy with three objects marked removed,
+      light and dark, 1500 and 820 px:
+      - the tags show on the wishlist, the target chip and solve objects;
+      - the main toggle is disabled for a removed non-main object;
+      - catalog search hides the object;
+      - the planner star syncs with the card both ways.
+  - [x] **Phase C:** WCS row order, the CDELT fix, and migration 0064 (the
+    first Python migration).
+    - **Claude's review:**
+      - **On-screen regression:** a real XISF lost its WCS, because one stray
+        PixInsight property made the reader skip the FITS keywords. Fixed.
+      - **Image height:** the flip now always uses the image's real height.
+    - **After the fix, on screen:** the NGC 7380 XISF and the same image as a
+      PNG solved with ASTAP both show Sh2-143 at the top edge, rotation
+      28.71°.
+    - **Across all 56 corpus XISF files:** exactly the 3 known mirrored ones
+      flip; the other 53 are unchanged.
+  - [x] **Migration gate:** a copy of Fred's database at 0062 → 0064 through
+    the app's migration runner.
+    - No row count changed in any table, either after migrating or after the
+      first-startup load (5.2 s).
+    - Integrity and foreign-key checks are clean; re-running is a no-op.
+    - A fresh database builds cleanly.
+- [x] **Fresh independent Codex review** of the whole change: no blockers;
+  2 major findings and 1 minor, all fixed. The main one: a changed augment file
+  was applied while object updates waited for a missing catalog file.
+- [x] **Final checks in the worktree:**
+  - full backend suite (`-n auto`): 2,749 passed, 3 skipped;
+  - Ruff, format, Bandit (no issues) and `uv lock --check`;
+  - frontend build.
+- [x] **Integration into the main checkout (2026-10-28).**
+  - The worktree's staged diff was applied and staged; it is byte-identical
+    to the worktree and does not overlap the uncommitted licence and doc
+    edits.
+  - Checks in the main checkout:
+    - full backend suite: 2,749 passed, 3 skipped;
+    - Ruff, format, Bandit and `uv lock --check`;
+    - frontend build.
+- [x] **Release checks (2026-10-28).** Fred read the spec's §6 calls and asked
+  for no changes.
+  - Version files and reference headers synchronized to 0.42.0. README notes
+    that catalog updates keep the user's records; the code map mentions
+    Python migrations.
+  - **Fixed during preparation** (Codex implemented, Claude reviewed):
+    - **A test-isolation bug, already present before this release.** Tests that
+      start the app left the `nightcrate` logger without propagation, so a later
+      plate-solve log test failed in serial runs (`make test`). A conftest
+      fixture now restores the logger after each test. Fred approved the fix.
+    - **Coverage against base 115f18f:** two catalog helpers left without
+      callers by the rewrite were removed, and the augment and external-refs
+      loaders' "unchanged file" path has direct tests again.
+    - **Test runs deleted the user's real planner thumbnails** (found by Fred
+      during acceptance, 2026-10-28; present since v0.16–v0.17).
+      - **Cause:** `services/thumbnails.py` and `services/sky_tile_cache.py`
+        copied `APP_DIR` at import, so the tests' redirect never reached them.
+        Tests that start the app ran the thumbnail orphan sweep against the
+        real folder with a test database, and every file looked orphaned.
+      - **Fix (Fred approved):**
+        - those two modules, `db/session.py` and `api/admin.py` read
+          `app_config.APP_DIR` at call time;
+        - `tests/test_app_dir_isolation.py` fails on any import-time copy, and
+          checks that the caches and the sweep follow the redirect.
+      - **Evidence:**
+        - reproduced with a fake home: the startup tests deleted a fake
+          thumbnail before the fix and kept it after;
+        - the whole suite under a fake home passed (2,755), and no file was
+          added to or removed from the fake app-data folder.
+      - Fred's cache index is intact, and the images download again as he
+        views them. CDS was unreachable that evening, so the downloads failed
+        and back off for an hour.
+  - **Checks:**
+    - full backend suite, serial, with coverage: 2,755 passed, 3 skipped;
+      the real app-data caches' file counts were unchanged by the run;
+    - coverage 92% (base 91%), with no module below its base figure;
+      `api/plate_solve.py` shows 65% → 64% only through rounding, because
+      the same lines are uncovered and there are two fewer statements;
+    - Ruff, format, Bandit (0 findings at any severity), `uv lock --check`;
+    - frontend build;
+    - documentation links and `git diff --check`; no private paths in the
+      staged changes.
+- [x] **Fix during acceptance (2026-10-28): the planner star.** Fred could
+  not find the star in the open object's panel: in dark mode its off colour
+  had almost no contrast against the dialog. At his request:
+  - in the panel it sits left of the object name;
+  - on the planner's cards it moved from the far right to a column left of
+    the thumbnails, outside the clickable area, so starring never opens the
+    object;
+  - on the wishlist tab it moved from the right-hand column to the left of
+    the thumbnail (after the drag handle in planned sections);
+  - the off star in the panel and on the cards has the same colour as the
+    close button.
+  - Rendered check on a database copy, light and dark, 1500 and 820 px:
+    visible in both themes; toggling in the panel updates the card, and the
+    reverse; a card's star does not open the object; the wishlist star
+    still removes the entry.
+  - Frontend build clean.
+- [x] Fred's acceptance test. Fred accepted the candidate (staged tree
+  `98af670`) and authorized publishing on 2026-10-28.
+- [x] **PR review of #20** (Claude's code-review agent, 2026-10-28), covering
+  the changes made after the independent Codex review: the test-isolation,
+  coverage and app-data fixes, and the star moves. No high or medium
+  findings; five low ones, all verified by Claude. Fred asked for all five to
+  be fixed:
+  - **The app-data guard skipped code Python runs at import.** Class bodies,
+    default arguments, decorators, class bases and aliased imports of
+    `app_config` went unchecked. They are now checked, with nine self-tests
+    including a negative case for function bodies. The guard still flags the
+    pre-fix `thumbnails.py`, `sky_tile_cache.py` and `admin.py`.
+  - **The orphan-sweep test would have deleted real thumbnails before
+    failing.** It now checks the redirected folder before the sweep.
+  - **The source scan could pass with nothing scanned.** It now requires
+    `services/thumbnails.py` and at least 100 files.
+  - **Screen readers named the object panel "Add to wishlist, …".** The
+    dialog is now named by the designation alone.
+  - **Wishlist rows kept an empty column** when no sections exist. It is no
+    longer rendered.
+  - Codex implemented the three test fixes and Claude the two screen fixes.
+    Checks: the guard, thumbnail, sky-tile and startup tests (51 passed), the
+    real app-data caches' file counts unchanged by the run, Ruff, the
+    frontend build, and a headless browser check of both screen fixes on a
+    database copy.
+
+### Catalog preservation
+
+Fred decided on 2026-10-24 that this fix is part of the next version, whatever
+else it contains.
+
+Before this release, updating or reloading a catalog deleted and reinserted
+that source's `dso` rows. With foreign keys on, this cascaded away main targets
+(`project_target`), solved-field objects (`project_dso`) and wishlist entries,
+and cleared frame and folder target links. The gallery, the Messier checklist
+and object search all depend on these rows.
+
+- **Built:** catalog rows are reconciled by a stable source identity
+  (`dso.source_key`, migration 0063), so `dso` IDs survive every update.
+  - Only explicit catalog merge signals merge objects, and the user's records
+    move to the survivor.
+  - Objects a catalog drops are kept inactive. They are marked "Not listed" in
+    the user's records, hidden from browsing and search, and refused as new
+    wishlist entries or main targets.
+  - Admin fetches update only the fetched catalog.
+- Tests cover targets, solved-field objects, wishlist entries and frame/folder
+  links surviving reloads, merges and removals.
+
+### Licence: GPL-3.0-or-later
+
+Fred decided on 2026-10-26 to relicense NightCrate from MIT to GPL-3.0-or-later.
+His aim is that nobody can turn NightCrate into a closed product they sell. The
+GPL still permits selling copies, but only with source.
+
+- This covers this release and later ones. v0.41.10 and the other MIT releases
+  remain MIT, and a closed fork of them is still possible.
+- Releases v0.3.0a–v0.10.1 were GPL-3.0. The project went back to MIT on
+  2026-04-14 because no dependency needed the GPL.
+
+- Changed in the working tree (uncommitted):
+  - `LICENSE` holds the verified GNU GPL v3 text from gnu.org.
+  - README: a licence notice; earlier releases keep their original licences;
+    NightCrate's own catalog data stays MIT; Pillow (MIT-CMU) and sep
+    (LGPL-3.0-or-later) identifiers corrected.
+  - `CLAUDE.md`: product statement and dependency policy.
+    - GPL-3.0-compatible dependencies only.
+    - BSD-4-Clause and GPL-2.0-only are incompatible.
+    - MPL-2.0 needs the Exhibit B check and notice/source obligations.
+    - AGPL needs Fred.
+  - Codex's independent licence review confirmed that every entry in both
+    lockfiles is compatible.
+  - The catalog attribution dialog's sentence about the application licence.
+- Also corrected: README listed ASTAP as GPL-3.0. ASTAP's main program is
+  MPL-2.0, with some LGPL-3.0+ and GPL-2.0+ files (SourceForge, Debian
+  metadata).
+- Follow-ups for Distribution (deferred until installers exist):
+  - Declare `license = "GPL-3.0-or-later"` in `backend/pyproject.toml`
+    (uv_build) and `frontend/package.json`. Deferred to avoid lockfile churn
+    now.
+  - Installers must ship the GPL text, the exact Corresponding Source for the
+    shipped version (including build scripts), and a generated third-party
+    notice bundle with the LGPL/MPL source obligations.
+  - PyInstaller is GPL-2.0-or-later with a Bootloader Exception. That
+    exception is what permits its frozen output under any licence.
+  - Optional: `SPDX-License-Identifier: GPL-3.0-or-later` headers in
+    NightCrate-owned source files, as GNU recommends; not required.
+
+### Planner: wishlist star on the open object
+
+Requested by Fred on 2026-10-24. In the planner, each object in the list has a
+wishlist star (`PlannerTargetCard`), but the opened object
+(`PlannerDetailPanel`) has none, so it cannot be added or removed there.
+
+- **Built:** the detail panel has the same star, using the wishlist hooks in
+  `api/wishlist.ts`, so the list and the panel always agree.
+- The star shows only in the planner. `PlannerDetailPanel` also opens from a
+  project's Catalog tab (`ProjectCatalogTab`); Fred decided on 2026-10-24 that
+  no star appears there.
+
+### Mirrored object overlays
+
+Fred decided on 2026-10-27 to fix these in the next version. The native solver
+benchmark found them. In both cases NightCrate reads a stored plate solution
+with its rows counted from the wrong end. Overlays then appear mirrored top to
+bottom; only the image centre is labelled correctly. Found from the benchmark
+numbers and the code. Confirm both on screen in the app before fixing.
+
+- **XISF files whose solution is stored as FITS keywords.** PixInsight can
+  store a solution as its own XISF properties or as FITS keywords. The
+  properties are read correctly. `xisf_io._astrometric_wcs_cards` uses the
+  FITS keywords as they are, without the vertical flip they need.
+  - Evidence:
+    - Three corpus files (the M74 final and master, and the NGC 7380 master)
+      are mirrored against both native and ASTAP.
+    - After a vertical flip, the M74 final agrees with native to 0.29 px.
+    - All 32 property-based XISF files agree.
+  - The "Real FITS WCS wins" rule in `docs/development-decisions.md` (XISF
+    WCS) was corrected with the fix.
+- **PNG and JPG files solved with ASTAP.** `plate_solve` passes these files to
+  ASTAP unchanged and stores ASTAP's CD matrix as it is. ASTAP counts rows from
+  the bottom for these files; the overlays count from the top.
+  - Evidence: on two M3 PNGs, ASTAP's solution is the native one mirrored. After
+    a vertical flip they agree to 0.3 and 0.5 px. An experiment confirmed the
+    same for TIFF and JPEG.
+- **Built:**
+  - Both readers flip the rows to NightCrate's top-down order.
+  - Migration 0064 repairs solutions already saved for on-disk PNG, JPEG and
+    TIFF images, so no re-solve is needed.
+  - Also fixed: converting a header's pixel scale and rotation (CDELT/CROTA)
+    swapped the two scales.
+- Tests: one solution per affected format, checking an off-centre object's
+  pixel position against a known answer.
+
 ## v0.41.10 — Dependency fixes from issue #16
+
+Merged in [PR #19](https://github.com/fbaptiste/nightcrate/pull/19) on 2026-10-24.
 
 A Windows user's [issue #16](https://github.com/fbaptiste/nightcrate/issues/16)
 reported `npm audit` warnings, an `npm ci` failure, and weather-forecast and
@@ -44,7 +337,8 @@ version. Inserted ahead of v0.42.0; the roadmap is not renumbered.
 - [x] Release checks; version files and reference headers synchronized to
   0.41.10. Development decisions now record that users run the Vite
   development server, the `tzdata` requirement, and the KaTeX wrapper.
-- [ ] Fred's acceptance test. Fred authorized publishing on 2026-10-24.
+- [x] Fred's acceptance test. Fred authorized publishing on 2026-10-24
+  and merged PR #19 the same day.
 - [x] The PR description references #16, so the reporter can see which of
   their findings this release addresses. Fred also asked for a comment on
   the issue (both 2026-10-24).
@@ -492,6 +786,9 @@ behavior is unchanged apart from test data, comments, and calculator help text.
   personal information and should not block the release."
 - **Disposition:** rejected (Codex agreed). **Implementation:** n/a — no change.
 - **Outcome:** pending — Claude; revisit at the next privacy review of tracked files.
+- **2026-10-27 (v0.42.0 sweep):** closed as inconclusive with Fred's
+  agreement. Three releases completed with no privacy review of tracked files,
+  and none is scheduled. The handle is the public repository owner's name.
 
 ## v0.41.6 — General cleanup
 
@@ -528,7 +825,217 @@ These are planned capabilities, not implemented behavior. Current functionality
 is in [README.md](README.md#features); coding constraints
 are in [development decisions](docs/development-decisions.md).
 
-### v0.42.0 — Calibration coverage and gallery promotion
+Fred reordered the roadmap on 2026-10-24: galleries first, then distribution.
+Claude and Codex agreed the order below; Codex's first round was a blinded
+pre-pass, and the second round converged. On 2026-10-26 Fred placed a native
+plate solver after catalog preservation, ahead of the gallery. Version numbers
+are assigned when each version starts.
+
+### Native plate solver
+
+Fred decided on 2026-10-26 to solve images inside NightCrate by default, with
+ASTAP kept as an option. The method is derived from published work: 4-star
+geometric hashing and Bayesian verification (Lang et al. 2010, AJ 139, 1782),
+and TAN/SIP WCS (Calabretta & Greisen 2002; Shupe et al. 2005). Since the move
+to GPL-3.0-or-later, Fred has allowed (2026-10-27) reading the source of
+open-source solvers for concepts: Seti Astro Suite Pro, astrometry.net, ASTAP,
+tetra3 and twirl. NightCrate writes its own code, copies none, and credits the
+projects that informed the design in README's acknowledgments.
+
+- **Stars.** Changed by Fred on 2026-10-26 after a Claude–Codex review.
+  - The app downloads the **Siril Astrometry Catalogue extracted from Gaia
+    DR3** (Zenodo DOI 10.5281/zenodo.14692304; CC BY 4.0; derived from Gaia
+    DR3, whose data licence is CC BY-NC 3.0 IGO).
+    - One 1.14 GB file, with published SHA-256 checksums.
+    - It holds the 127 brightest stars in each level-8 HEALPix cell, to
+      G = 20.
+  - NightCrate reads the file from its published format specification
+    (DOI 10.5281/zenodo.14697486, CC BY 4.0), not from Siril's code.
+  - Each user downloads the file directly from Zenodo. A local copy can also
+    be imported, for example one downloaded on another computer.
+  - Stored in `APP_DIR/star_catalogs/` on the DSO catalog pattern (staging
+    folder, atomic rename, `version.json`) and shared across workspaces.
+  - NightCrate publishes and bundles no star files.
+  - The 4-star index is built locally for the user's field-of-view range.
+  - After the download, solving is fully offline and self-contained.
+  - Credit both the Siril team and ESA/Gaia (DPAC). NightCrate's code is
+    GPL-3.0-or-later; the star data keeps its own terms.
+  - The CC BY 4.0 label on the Siril record (Zenodo API `license: cc-by-4.0`,
+    checked 2026-10-26) cannot remove Gaia's non-commercial terms. NightCrate
+    makes no claim that the star data may be used commercially. A user's use
+    of it is governed by ESA's CC BY-NC 3.0 IGO terms as well.
+- **Scope.**
+  - Fields of 0.2–10°.
+  - Fully blind: position and scale both unknown. Hints from the header,
+    target or rig only speed the solve.
+  - TAN output, so existing overlays, FOV and object search work unchanged.
+    SIP comes later.
+  - Each solve records its solver, catalog version, detected and matched
+    stars, RMS and confidence.
+- **ASTAP.** It stays user-installed. A setting picks the default solver. A
+  failed native solve offers "Solve with ASTAP"; it never retries
+  automatically.
+- **No new Python dependencies.** numpy, scipy, astropy, sep and
+  astropy-healpix cover the method. Avoid healpy, which is GPL.
+- **First step: a throwaway prototype and benchmark against ASTAP.**
+  - It runs outside the checkout and is not committed.
+  - It measures solve and wrong-solution rates, speed, and the local index
+    size and build time for the narrowest field range, using the Siril
+    catalogue.
+  - **Complete; Fred accepted it on 2026-10-27.** On the 106 subs and masters
+    that the hinted prototype solved, measured one image at a time, including
+    image load and star detection:
+
+    | Solver | Solved | Median | 95% within |
+    |---|---:|---:|---:|
+    | Native, header position + index | 106 | 0.48 s | 1.4 s |
+    | Native, fully blind | 104 | 0.75 s | 3.9 s |
+    | ASTAP, header position | 106 | 0.70 s | 2.5 s |
+    | ASTAP, position removed, field size given | 96 | 18 s | 60 s (limit) |
+
+    - Of the 143 corpus images that should solve, native fully blind solved
+      128 and ASTAP with header positions 123. Neither solver gave a wrong
+      answer, and no negative image solved. The two solvers' solutions differ
+      by 0.37 px at the median.
+    - The index for fields of 0.4° and wider is 505 MB and builds in 35 s.
+      The layer for 0.2–0.4° fields adds 1.3 GB.
+    - 1,000 random-dot fields produced no solve. Simulated real-sky fields
+      produced no wrong answer.
+- **Carried into the spec from the prototype:**
+  - Solve hinted images through the index restricted around the hint. The
+    prototype's separate hinted solver is slower and needs no index.
+  - Header scales can be wrong (binned masters were 2× off). Fall back to a
+    fully blind solve when a scale-known solve fails.
+  - Whether to offer the 1.3 GB narrow-field layer, chosen from the user's
+    rigs.
+  - Native fully blind missed two narrowband subs that ASTAP and the hinted
+    path solve.
+  - Calibrate the synthetic trials to real images before using them as a
+    recovery measure. The prototype's generator made its spurious stars
+    brighter than all real stars and scattered brightness about five times
+    more than real images do.
+  - Credit SASpro and astrometry.net in README's acknowledgments.
+- **Test images.**
+  - Fred's images plus licence-checked public samples, kept local and never
+    committed.
+  - The repo holds only the benchmark script, plus synthetic tests that
+    generate their star fields in memory.
+- **Bar for native as the default:**
+  - a solve rate at least ASTAP's on the corpus;
+  - no wrong solutions, on the corpus or in thousands of synthetic trials;
+  - a median time no worse than ASTAP's;
+  - fully blind solves in a few seconds (Fred, 2026-10-27). Working target:
+    a median of 3 s or less and 95% within 10 s on the corpus, including
+    image loading.
+
+### Gallery
+
+One page of finished images, possibly shipped in two parts: list and grid views
+first, then the slideshow.
+
+- **Cards.** One card per project, showing its main image. Several targets
+  appear as labels on one card. Projects without targets still appear; retired
+  projects are hidden by default.
+- **Views.** A list of small thumbnails beside the project details; grids of
+  small, medium and large thumbnails; a slideshow. Clicking an image in the grid
+  or the slideshow flips it to a back with basic project details.
+- **Filters.** Name or designation, catalog (through any designation), object
+  type group, constellation, status, rig and imaging dates.
+  - "Imaged between" means at least one session date falls in the range.
+    Projects without session dates show when no date filter is set, with an
+    "include unknown dates" option alongside one. No other date substitutes for
+    a missing session date.
+  - The default sort is latest session, with unknown dates last. `updated_at`
+    is never an imaging date.
+  - Integration filters and sorts wait until the manual/derived session overlap
+    (see Later) is resolved; until then, totals can count the same subs twice.
+- **Data.** One batched endpoint selects and sorts on the server; the views
+  present the result.
+- **Images.** The main image's aspect-preserving renditions (180/400/800 px);
+  the slideshow uses the full image and preloads its neighbours. Whether to use
+  the project's custom crops instead is decided in the spec. Fix cache busting
+  first: thumbnail URLs are versioned by `project.updated_at`, which does not
+  change when the main image or crops change.
+- **Flip cards.** A labelled control that also responds to Enter and Space. The
+  hidden face is out of the focus order, reduced motion swaps without rotating,
+  and "Open project" is a separate control.
+- **Slideshow.** Starts paused. Previous, next, play and pause, with ←, →, Space
+  and Esc. Pauses on hover or focus, on a flipped card, and when hidden. Key
+  handlers act only in the visible view, because persistent routes stay mounted.
+- Test with a synthetic library of several hundred projects.
+
+### Messier checklist
+
+- 110 numbered slots from an explicit checklist mapping, separate from catalog
+  designations: today the catalog merges M102 into M101 (110 numbers on 109
+  objects), and one designation can belong to only one object.
+- A slot is filled only by a project with that object among its main targets
+  and a main image. The latest project wins, by latest session date: dated
+  projects before undated ones, then creation time, then ID. The back of the
+  card lists the other projects.
+- Empty slots distinguish "no project" from "a project without an image".
+- M102 needs Fred's decision; the recommendation is NGC 5866 with a note on the
+  ambiguity. The M101 slot is never filled twice through the shared designation.
+
+### Object search
+
+- A submitted search matches identifiers exactly ("M1" is not M10–M110); prefix
+  suggestions appear while typing. Common names and aliases are searched and
+  deduplicated by object.
+- Results are labelled "Main target", "In the plate-solved image", or both.
+  In-field results show the solve image with the object marked; the solve image
+  can differ from the gallery's main image.
+- In-field membership is computed at query time from stored solves through one
+  shared overlap function. Stored `project_dso` rows are computed once at solve
+  time, from a capped candidate list, and can be incomplete.
+- Messier slots gain an "in a solved field" marker.
+
+### Distribution
+
+Make NightCrate installable without Python or Node, and let it update itself.
+A throwaway feasibility spike starts during the gallery work, in a separate
+worktree: static serving, Windows and both Mac architectures, native imports,
+image decoding, one spawned processing job, and one update between test builds.
+
+- **Production runtime.**
+  - FastAPI serves the built frontend.
+  - A real entrypoint: no reload, a port choice, a readiness check, a single
+    instance, and `freeze_support`.
+  - The version comes from package metadata, not the repository's `VERSION`.
+  - Rotating log files.
+  - CI runs the tests.
+- **Packaged app.** A Tauri shell with a frozen Python backend.
+  - cx_Freeze is tried first (PSF licence). PyInstaller (GPL-2.0) and Nuitka
+    (AGPL-3.0) carry exceptions for the apps they build, but need Fred's
+    licence ruling before use.
+  - Targets: macOS arm64, Windows x64 and a Linux x64 AppImage; Intel Mac is
+    Fred's decision.
+  - ASTAP stays user-installed. The package carries sep's and py7zr's LGPL
+    notices and obligations.
+  - Each target gets a clean-machine test of the built artifact.
+  - LAN access is off by default, and needs access protection before a package
+    offers it.
+- **Updates.**
+  - Signed artifacts, with their signatures in an HTTPS manifest on GitHub
+    Releases. The updater rejects downgrades and mismatched versions, and
+    signing-key recovery is planned.
+  - The update check is disclosed, can be turned off, and can be run manually.
+  - Workers stop before an update installs.
+  - On every workspace activation, before migrations or seed and catalog
+    reconciliation, the app refuses a database newer than itself and takes a
+    consistent backup.
+  - Tests cover an interrupted install, a failed migration and restoring the
+    backup.
+  - App updates and catalog updates stay separate.
+- **Decisions for Fred.**
+  - Code signing: the Apple Developer Program costs US$99 a year, and Windows
+    signing goes through SignPath Foundation (free for open source, subject to
+    acceptance) or Azure Artifact Signing.
+  - Intel Mac builds.
+  - Whether the update check is on by default.
+  - LAN access in the packaged app.
+
+### Later: calibration coverage and session overlap
 
 - Show per-light dark/flat/bias coverage from the existing `calibration_coverage`
   view. Matching remains per project and rig; there is no shared calibration
@@ -542,7 +1049,7 @@ are in [development decisions](docs/development-decisions.md).
 - Verify against real calibration data and gallery output. Integration describes
   cataloged capture time; it does not imply which subs survived processing.
 
-### v0.43.0 — Guiding association and session timeline
+### Later: guiding association and session timeline
 
 Guiding storage tables exist; the app does not yet populate them.
 
@@ -562,7 +1069,7 @@ Guiding storage tables exist; the app does not yet populate them.
   moonrise/set, and transit from the existing astronomy services.
 - Verify alignment on a real night, including multiple rigs and gap folding.
 
-### v0.44.0 — Capture logs and timeline context
+### Later: capture logs and timeline context
 
 Session-log, event and autofocus tables exist; the app does not yet populate them.
 
@@ -616,14 +1123,15 @@ sources.
 
 ### Project workflow
 
-- Cross-project object/filter/date search; planner "already imaged" indicators.
+- Cross-project filter search beyond the gallery and object search; planner
+  "already imaged" indicators.
 - Create a project from a planner target; richer home dashboard and equipment
   usage totals from catalog data.
 - Track processed-image provenance (subs → stack → final).
-- Slideshows, collections, curated observing lists, and export/sharing integrations.
+- Collections, curated observing lists, and export/sharing integrations.
 - Catalog file verification and a database backup/export interface.
 - Optional file copy/reorganization; cataloging in place remains the default.
-- Native distribution (Tauri) and broader smart-scope ingest after the core workflow.
+- Broader smart-scope ingest.
 
 ### Analysis tools
 

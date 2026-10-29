@@ -243,6 +243,19 @@ class TestGetSolve:
         resp = await client.get(f"/api/projects/{pid}/solve")
         assert resp.status_code == 204
 
+    async def test_get_marks_inactive_object(self, client: AsyncClient):
+        big, _ = await _seed_two_dsos()
+        pid = await _make_project(client, "Inactive Solve Object")
+        with _mock_solve([_dso_dict(big, "M 101", 210.0, 54.0, 28.0)]):
+            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+        async with get_db() as conn:
+            await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (big,))
+            await conn.commit()
+
+        resp = await client.get(f"/api/projects/{pid}/solve")
+        assert resp.status_code == 200
+        assert resp.json()["objects"][0]["active"] is False
+
 
 class TestSetMain:
     async def test_toggle_main_on(self, client: AsyncClient):
@@ -270,6 +283,35 @@ class TestSetMain:
         resp = await client.put(f"/api/projects/{pid}/solve/objects/{big}", json={"is_main": False})
         assert resp.status_code == 200
         assert all(not o["is_main"] for o in resp.json()["objects"])
+
+    async def test_inactive_object_cannot_become_main_but_existing_main_can_be_unset(
+        self, client: AsyncClient
+    ):
+        big, small = await _seed_two_dsos()
+        pid = await _make_project(client, "Inactive Main")
+        dsos = [
+            _dso_dict(big, "M 101", 210.0, 54.0, 28.0),
+            _dso_dict(small, "NGC 5474", 210.1, 54.05, 4.8),
+        ]
+        with _mock_solve(dsos):
+            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+        async with get_db() as conn:
+            await conn.execute("UPDATE dso SET active = 0 WHERE id IN (?, ?)", (big, small))
+            await conn.commit()
+
+        refused = await client.put(
+            f"/api/projects/{pid}/solve/objects/{small}", json={"is_main": True}
+        )
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == "This object is no longer listed in its catalog."
+
+        no_op = await client.put(f"/api/projects/{pid}/solve/objects/{big}", json={"is_main": True})
+        assert no_op.status_code == 200
+        removed = await client.put(
+            f"/api/projects/{pid}/solve/objects/{big}", json={"is_main": False}
+        )
+        assert removed.status_code == 200
+        assert all(not o["is_main"] for o in removed.json()["objects"])
 
     async def test_unknown_dso_404(self, client: AsyncClient):
         big, _ = await _seed_two_dsos()

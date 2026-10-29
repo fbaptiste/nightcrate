@@ -17,7 +17,6 @@ from nightcrate.services.image_annotation_models import (
 from nightcrate.services.image_annotations import (
     compute_fov,
     compute_rotation,
-    detect_wcs_from_cards,
     project_dsos,
 )
 from nightcrate.services.path_resolver import resolve_path
@@ -26,6 +25,7 @@ from nightcrate.services.plate_solve import (
     get_image_dimensions,
     get_solve_progress,
     read_header_cards,
+    read_wcs_params,
     run_plate_solve,
     validate_astap_path,
 )
@@ -152,8 +152,7 @@ async def detect_wcs(
 ) -> WcsParams | None:
     """Check if an image has WCS information in its headers."""
     source, file_type, image_index, _ck = resolve_path(path)
-    cards = read_header_cards(source, file_type, image_index, hdu)
-    return detect_wcs_from_cards(cards)
+    return read_wcs_params(source, file_type, image_index, hdu)
 
 
 @router.get("/annotate")
@@ -206,8 +205,7 @@ async def annotate(
         )
     else:
         source, file_type, image_index, _ck = resolve_path(path)
-        cards = read_header_cards(source, file_type, image_index, hdu)
-        wcs_params = detect_wcs_from_cards(cards)
+        wcs_params = read_wcs_params(source, file_type, image_index, hdu)
         if wcs_params is None:
             raise HTTPException(
                 status_code=422,

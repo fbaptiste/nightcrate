@@ -104,14 +104,15 @@ def load_augment(
             UPDATE dso
             SET common_name_augmented = 0,
                 surface_brightness_augmented = 0
-            WHERE common_name_augmented = 1 OR surface_brightness_augmented = 1
+            WHERE active = 1
+              AND (common_name_augmented = 1 OR surface_brightness_augmented = 1)
             """,
         )
         cur.execute(
             """
             UPDATE dso
             SET distance_pc = NULL, distance_method = NULL
-            WHERE distance_method = 'curated'
+            WHERE distance_method = 'curated' AND active = 1
             """,
         )
 

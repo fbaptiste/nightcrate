@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 
 from nightcrate.catalog_loader import load_catalogs
-from nightcrate.catalog_loader.registry import CatalogSource
-from nightcrate.catalog_loader.sharpless_loader import load_crossref_csv, load_sharpless
+from nightcrate.catalog_loader.sharpless_loader import load_crossref_csv
 
 MINI_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "catalogs"
 
@@ -131,19 +130,7 @@ def test_sharpless_constellation_computed_from_coords(db, catalogs_root):
 
 
 def test_sharpless_missing_file_is_missing_status(db, tmp_path):
-    """When the TSV doesn't exist, load_sharpless returns status='missing'
-    rather than raising. conftest.py already applied migrations to the shared
-    test DB, so the dso table exists."""
-    fake_source = CatalogSource(
-        source_id="vizier_sharpless",
-        category="vizier",
-        display_name="Sharpless test",
-        file_path=tmp_path / "does_not_exist.tsv",
-        version=None,
-        source_url=None,
-        license=None,
-        attribution="",
-        parser="sharpless",
-    )
-    result = load_sharpless(db, fake_source, crossref_path=None, force=False)
+    """A never-loaded, absent Sharpless input reports missing without a source row."""
+    summary = load_catalogs(db, tmp_path / "catalogs")
+    result = next(row for row in summary.results if row.source_id == "vizier_sharpless")
     assert result.status == "missing"

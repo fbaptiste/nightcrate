@@ -6,7 +6,8 @@ from pathlib import Path
 
 import aiosqlite
 
-from nightcrate.core.app_config import APP_DIR, get_active_db_path, get_default_db_path
+from nightcrate.core import app_config
+from nightcrate.core.app_config import get_active_db_path, get_default_db_path
 
 # Runtime-mutable path — set during startup or hot-swapped by admin API
 _db_path: Path | None = None
@@ -29,7 +30,7 @@ def set_db_path(path: Path) -> None:
 
 
 def _ensure_app_dir() -> None:
-    APP_DIR.mkdir(parents=True, exist_ok=True)
+    app_config.APP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager

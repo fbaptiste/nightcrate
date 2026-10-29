@@ -8,9 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from nightcrate.core import app_config
 from nightcrate.core.app_config import (
-    APP_DIR,
-    CONFIG_PATH,
     DatabaseEntry,
     load_config,
     save_config,
@@ -44,6 +43,13 @@ class RemoveDatabaseRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _clear_planner_visibility_cache() -> None:
+    """Discard database-specific planner snapshots after catalog or DB changes."""
+    from nightcrate.services import planner_visibility
+
+    planner_visibility.default_cache.clear()
 
 
 def _db_size(workspace_path: str) -> int | None:
@@ -81,6 +87,7 @@ def _initialize_database(db_path: Path) -> None:
         load_catalogs(sync_conn, user_catalogs_root())
     finally:
         sync_conn.close()
+    _clear_planner_visibility_cache()
 
 
 # Same tuple-constant pattern used in main.py's lifespan hook — sidesteps
@@ -172,8 +179,8 @@ async def admin_info() -> dict:
     workspace = get_active_workspace()
     projects_root = get_projects_root()
     return {
-        "config_file": str(CONFIG_PATH),
-        "app_data_dir": str(APP_DIR),
+        "config_file": str(app_config.CONFIG_PATH),
+        "app_data_dir": str(app_config.APP_DIR),
         "backend_root": str(Path(__file__).resolve().parents[1]),
         "seed_data_dir": str(importlib.resources.files("nightcrate") / "data" / "seed"),
         "workspace_dir": str(workspace) if workspace else None,
@@ -287,6 +294,7 @@ async def activate_database(req: ActivateDatabaseRequest) -> dict:
 
     # Hot-swap the runtime database path
     set_db_path(db_path)
+    _clear_planner_visibility_cache()
 
     # Re-index the on-disk thumbnail + sky-tile caches into the newly-
     # active DB so the user doesn't pay a CDS re-fetch cost for tiles
@@ -331,6 +339,7 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
 
     # Hot-swap the runtime database path
     set_db_path(db_path)
+    _clear_planner_visibility_cache()
 
     # Re-index the on-disk thumbnail + sky-tile caches into the newly-
     # active DB so the user doesn't pay a CDS re-fetch cost for tiles
@@ -413,7 +422,7 @@ async def filesystem_shortcuts() -> dict:
     return {
         "home": str(home),
         "documents": str(docs) if docs.is_dir() else str(home),
-        "app_data": str(APP_DIR),
+        "app_data": str(app_config.APP_DIR),
     }
 
 
@@ -528,6 +537,7 @@ def _run_loader(force: bool):
         return load_catalogs(sync_conn, user_catalogs_root(), force=force)
     finally:
         sync_conn.close()
+        _clear_planner_visibility_cache()
 
 
 @router.post("/catalogs/reload")
@@ -590,7 +600,7 @@ async def fetch_catalogs_from_github() -> dict:
             detail=f"Failed to download catalog from GitHub: {exc}",
         ) from exc
 
-    summary = _run_loader(force=True)
+    summary = _run_loader(force=False)
     return {
         "fetched_version": release.tag_name,
         **_summary_to_dict(summary),
@@ -696,7 +706,7 @@ async def vizier_fetch(source_id: str) -> dict:
             detail=f"Failed to download {spec.display_name} from VizieR: {exc}",
         ) from exc
 
-    summary = _run_loader(force=True)
+    summary = _run_loader(force=False)
     return {
         "source_id": spec.source_id,
         "fetched_at": result.fetched_at,
@@ -772,7 +782,7 @@ async def mgc50_fetch() -> dict:
             detail=f"Failed to download 50 MGC from GitHub: {exc}",
         ) from exc
 
-    summary = _run_loader(force=True)
+    summary = _run_loader(force=False)
     return {
         "source_id": "github_50mgc",
         "fetched_at": result.fetched_at,
@@ -842,7 +852,7 @@ async def wikidata_fetch() -> dict:
             detail=f"Failed to fetch Wikidata SPARQL: {exc}",
         ) from exc
 
-    summary = _run_loader(force=True)
+    summary = _run_loader(force=False)
     return {
         "source_id": "wikidata_external_refs",
         "fetched_at": result.fetched_at,

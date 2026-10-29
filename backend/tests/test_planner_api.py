@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from nightcrate.db.session import get_db
 from nightcrate.main import app
+from nightcrate.services.planner_visibility import default_cache
 
 
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _planner_cache_dirs(tmp_path, monkeypatch):
+    """Keep planner disk-cache writes inside each test's temporary directory."""
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
 
 
 @pytest.fixture
@@ -418,6 +426,65 @@ async def test_score_endpoint_includes_visibility_facts(client: TestClient, seed
     assert data["transit_time_utc"] is not None
 
 
+async def test_inactive_object_is_hidden_from_warm_target_cache_but_scores_by_id(
+    client: TestClient, seed_db
+):
+    location_id = seed_db
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = int((await cursor.fetchone())["id"])
+
+    params = {
+        "location_id": location_id,
+        "date": "2026-04-19",
+        "restrict_tonight": "true",
+        "min_hours": 0,
+        "limit": 100,
+    }
+    default_cache.clear()
+    try:
+        warm = client.get("/api/planner/targets", params=params)
+        assert warm.status_code == 200
+        assert m42 in {item["dso_id"] for item in warm.json()["items"]}
+
+        baseline = client.get(
+            f"/api/planner/targets/{m42}/score",
+            params={"location_id": location_id, "date": "2026-04-19"},
+        )
+        assert baseline.status_code == 200
+
+        async with get_db() as conn:
+            await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (m42,))
+            await conn.commit()
+
+        cached = client.get("/api/planner/targets", params=params)
+        assert cached.status_code == 200
+        assert m42 not in {item["dso_id"] for item in cached.json()["items"]}
+
+        default_cache.clear()
+        without_object = client.get("/api/planner/targets", params=params)
+        assert without_object.status_code == 200
+        inactive = client.get(
+            f"/api/planner/targets/{m42}/score",
+            params={"location_id": location_id, "date": "2026-04-19"},
+        )
+        assert inactive.status_code == 200
+        for key in (
+            "score_pct",
+            "quality_label",
+            "score_breakdown",
+            "hours_visible",
+            "max_altitude_deg",
+            "peak_time_utc",
+            "transit_time_utc",
+            "altitude_at_transit_deg",
+            "min_moon_separation_deg",
+        ):
+            assert inactive.json()[key] == baseline.json()[key]
+    finally:
+        default_cache.clear()
+
+
 async def test_annual_hours_endpoint_returns_one_point_per_night(client: TestClient, seed_db):
     location_id = seed_db
     async with get_db() as conn:
@@ -451,6 +518,49 @@ async def test_annual_hours_endpoint_returns_one_point_per_night(client: TestCli
     if data["today"] is not None:
         assert data["today"].startswith("2026-")
         assert data["points"][0]["date"] <= data["today"] <= data["points"][-1]["date"]
+
+
+async def test_inactive_object_sky_track_and_annual_hours_match_active(client: TestClient, seed_db):
+    location_id = seed_db
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = int((await cursor.fetchone())["id"])
+
+    sky_params = {"location_id": location_id, "date": "2026-04-19"}
+    annual_params = {"location_id": location_id, "year": 2026, "moon_sep_deg": 0.0}
+    active_sky = client.get(f"/api/planner/targets/{m42}/sky-track", params=sky_params)
+    active_annual = client.get(f"/api/planner/targets/{m42}/annual-hours", params=annual_params)
+    assert active_sky.status_code == 200
+    assert active_annual.status_code == 200
+
+    async with get_db() as conn:
+        await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (m42,))
+        await conn.commit()
+
+    inactive_sky = client.get(f"/api/planner/targets/{m42}/sky-track", params=sky_params)
+    inactive_annual = client.get(f"/api/planner/targets/{m42}/annual-hours", params=annual_params)
+    assert inactive_sky.status_code == 200
+    assert inactive_annual.status_code == 200
+    assert inactive_sky.json() == active_sky.json()
+    assert inactive_annual.json() == active_annual.json()
+
+
+async def test_inactive_object_thumbnail_is_still_available(
+    client: TestClient, seed_db, monkeypatch
+):
+    async with get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        m42 = int((await cursor.fetchone())["id"])
+        await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (m42,))
+        await conn.commit()
+
+    async def _thumbnail(*args, **kwargs):
+        return SimpleNamespace(status="hit", body=b"jpeg", content_type="image/jpeg")
+
+    monkeypatch.setattr("nightcrate.api.planner.thumbnails.get_thumbnail", _thumbnail)
+    response = client.get(f"/api/planner/thumbnails/{m42}")
+    assert response.status_code == 200
+    assert response.content == b"jpeg"
 
 
 async def test_annual_hours_unknown_horizon_returns_404(client: TestClient, seed_db):

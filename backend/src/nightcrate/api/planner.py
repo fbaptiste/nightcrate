@@ -85,6 +85,7 @@ from nightcrate.services.planner_visibility import (
     DsoVisibility,
     PlannerHorizon,
     PlannerLocation,
+    compute_visibility_snapshot,
     default_cache,
 )
 from nightcrate.services.rig_calculators import (
@@ -446,7 +447,7 @@ async def _load_dso_metadata(conn, dso_ids: list[int]) -> dict[int, dict]:
                maj_axis_arcmin, min_axis_arcmin,
                mag_v, distance_pc
         FROM dso
-        WHERE id IN ({placeholders})
+        WHERE id IN ({placeholders}) AND active = 1
         """,  # noqa: S608  # nosec B608 — placeholders built from int list
         dso_ids,
     )
@@ -1075,12 +1076,23 @@ async def score_single_target(
         if rig_id is not None:
             _, fov_major, fov_minor = await _load_rig_fov(conn, rig_id)
             rig_fov = (fov_major, fov_minor)
-        metadata = await _load_dso_metadata(conn, [dso_id])
+        cursor = await conn.execute(
+            """
+            SELECT id, primary_designation, common_name, obj_type,
+                   ra_deg, dec_deg, constellation,
+                   maj_axis_arcmin, min_axis_arcmin,
+                   mag_v, distance_pc
+            FROM dso
+            WHERE id = ?
+            """,
+            (dso_id,),
+        )
+        metadata_row = await cursor.fetchone()
         dsos = await _load_dso_coords(conn)
 
-    meta = metadata.get(dso_id)
-    if meta is None:
+    if metadata_row is None:
         raise HTTPException(status_code=404, detail=f"DSO {dso_id} not found")
+    meta = dict(metadata_row)
 
     night_date = date_ if date_ is not None else _tonight_date(location.timezone)
     snapshot = await asyncio.to_thread(
@@ -1088,6 +1100,26 @@ async def score_single_target(
     )
 
     vis = snapshot.per_dso.get(dso_id)
+    if vis is None and meta["ra_deg"] is not None and meta["dec_deg"] is not None:
+        snapshot = await asyncio.to_thread(
+            compute_visibility_snapshot,
+            location,
+            horizon,
+            night_date,
+            [
+                DsoCoord(
+                    dso_id=dso_id,
+                    ra_deg=float(meta["ra_deg"]),
+                    dec_deg=float(meta["dec_deg"]),
+                    maj_axis_arcmin=(
+                        float(meta["maj_axis_arcmin"])
+                        if meta["maj_axis_arcmin"] is not None
+                        else None
+                    ),
+                )
+            ],
+        )
+        vis = snapshot.per_dso.get(dso_id)
     coverage = (
         compute_coverage_pct(
             rig_fov[0],
@@ -1153,9 +1185,7 @@ async def target_sky_track(
     async with get_db() as conn:
         location = await _load_planner_location(conn, location_id)
         horizon = await _load_planner_horizon(conn, location_id, horizon_id)
-        cursor = await conn.execute(
-            "SELECT ra_deg, dec_deg FROM dso WHERE id = ? AND active = 1", (dso_id,)
-        )
+        cursor = await conn.execute("SELECT ra_deg, dec_deg FROM dso WHERE id = ?", (dso_id,))
         row = await cursor.fetchone()
 
     if row is None or row["ra_deg"] is None or row["dec_deg"] is None:
@@ -1246,9 +1276,7 @@ async def target_annual_hours(
     async with get_db() as conn:
         location = await _load_planner_location(conn, location_id)
         horizon = await _load_planner_horizon(conn, location_id, horizon_id)
-        cursor = await conn.execute(
-            "SELECT ra_deg, dec_deg FROM dso WHERE id = ? AND active = 1", (dso_id,)
-        )
+        cursor = await conn.execute("SELECT ra_deg, dec_deg FROM dso WHERE id = ?", (dso_id,))
         row = await cursor.fetchone()
 
     if row is None or row["ra_deg"] is None or row["dec_deg"] is None:
@@ -1395,7 +1423,7 @@ async def get_thumbnail(
 
     async with get_db() as conn:
         cursor = await conn.execute(
-            "SELECT ra_deg, dec_deg, maj_axis_arcmin FROM dso WHERE id = ? AND active = 1",
+            "SELECT ra_deg, dec_deg, maj_axis_arcmin FROM dso WHERE id = ?",
             (dso_id,),
         )
         dso_row = await cursor.fetchone()

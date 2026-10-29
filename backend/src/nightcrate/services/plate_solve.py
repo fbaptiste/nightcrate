@@ -26,6 +26,8 @@ from nightcrate.services import (
     xisf_io,
 )
 from nightcrate.services.coordinate_format import format_dec_dms, format_ra_hms
+from nightcrate.services.image_annotation_models import WcsParams
+from nightcrate.services.image_annotations import detect_wcs_from_cards
 from nightcrate.services.path_resolver import (
     FITS_EXTENSIONS,
     STANDARD_EXTENSIONS,
@@ -136,6 +138,18 @@ def read_header_cards(
     if file_type == "xisf":
         return xisf_io.read_header(source, hdu)
     return standard_io.read_header(source)
+
+
+def read_wcs_params(
+    source: Path | BinaryIO,
+    file_type: str,
+    image_index: int,
+    hdu: int,
+) -> WcsParams | None:
+    """Read WCS parameters with format-specific row-order handling."""
+    if file_type == "xisf":
+        return xisf_io.read_wcs_params(source, hdu)
+    return detect_wcs_from_cards(read_header_cards(source, file_type, image_index, hdu))
 
 
 def cards_to_dict(cards: list[dict]) -> dict[str, str]:
@@ -423,6 +437,7 @@ def _compute_results(
     ini_data: dict[str, str],
     image_width: int | None,
     image_height: int | None,
+    flip_rows: bool = False,
 ) -> PlateSolveResult:
     """Derive user-facing values from raw ASTAP .ini data."""
     solved = ini_data.get("PLTSOLVD", "F").strip().upper() == "T"
@@ -447,13 +462,21 @@ def _compute_results(
     crpix2 = _safe_float(ini_data.get("CRPIX2"))
     crota2 = _safe_float(ini_data.get("CROTA2"))
 
+    if flip_rows:
+        if crpix2 is not None and image_height is not None:
+            crpix2 = image_height + 1 - crpix2
+        if cd1_2 is not None:
+            cd1_2 = -cd1_2
+        if cd2_2 is not None:
+            cd2_2 = -cd2_2
+
     pixel_scale: float | None = None
     if cd2_1 is not None and cd2_2 is not None:
         pixel_scale = math.sqrt(cd2_1**2 + cd2_2**2) * 3600.0
 
     rotation: float | None = crota2
-    if rotation is None and cd1_1 is not None and cd2_1 is not None:
-        rotation = math.degrees(math.atan2(cd2_1, cd1_1))
+    if (flip_rows or rotation is None) and cd1_2 is not None and cd2_2 is not None:
+        rotation = math.degrees(math.atan2(-cd1_2, cd2_2))
 
     fov_w: float | None = None
     fov_h: float | None = None
@@ -628,6 +651,7 @@ async def _do_solve(
             timeout,
             width,
             height,
+            flip_rows=image_file.suffix.lower() in STANDARD_EXTENSIONS,
         )
 
         if not result.solved and result.error_message:
@@ -645,6 +669,7 @@ async def _do_solve(
                     remaining,
                     width,
                     height,
+                    flip_rows=image_file.suffix.lower() in STANDARD_EXTENSIONS,
                 )
                 result.solve_time_seconds = round(first_elapsed + retry_elapsed, 1)
 
@@ -657,6 +682,7 @@ async def _run_astap(
     timeout: int,
     width: int | None,
     height: int | None,
+    flip_rows: bool = False,
 ) -> tuple[PlateSolveResult, float]:
     """Run ASTAP subprocess and parse result. Returns (result, elapsed_seconds)."""
     global _solve_progress
@@ -744,7 +770,7 @@ async def _run_astap(
         ), elapsed
 
     ini_data = _parse_astap_ini(ini_path)
-    result = _compute_results(ini_data, width, height)
+    result = _compute_results(ini_data, width, height, flip_rows=flip_rows)
     result.solve_time_seconds = round(elapsed, 1)
 
     if not result.solved and not result.error_message:

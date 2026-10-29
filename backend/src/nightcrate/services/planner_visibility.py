@@ -552,6 +552,7 @@ class VisibilityCache:
     _entries: dict[tuple[Any, ...], tuple[datetime, VisibilitySnapshot]] = field(
         default_factory=dict
     )
+    _generation: int = field(default=0, init=False, repr=False)
 
     def _key(
         self,
@@ -584,7 +585,10 @@ class VisibilityCache:
                 self._entries[key] = (fetched_at, snapshot)
                 return snapshot
 
+        generation = self._generation
         snapshot = compute_visibility_snapshot(location, horizon, night_date, dsos)
+        if generation != self._generation:
+            return snapshot
         self._entries[key] = (now, snapshot)
         # Drop oldest entries while over budget.
         while len(self._entries) > self.max_entries:
@@ -593,6 +597,7 @@ class VisibilityCache:
         return snapshot
 
     def clear(self) -> None:
+        self._generation += 1
         self._entries.clear()
 
 

@@ -10,7 +10,7 @@ and [PLAN.md](../PLAN.md) for active work.
 | [backend/src/nightcrate/main.py](../backend/src/nightcrate/main.py) | Startup, router registration, maintenance |
 | [api/](../backend/src/nightcrate/api/) | HTTP, DB access, transactions, orchestration |
 | [services/](../backend/src/nightcrate/services/) | Astronomy, imaging, parsing, scoring, ingest and session derivation |
-| [db/](../backend/src/nightcrate/db/) | Connections and ordered SQL migrations |
+| [db/](../backend/src/nightcrate/db/) | Connections and ordered yoyo migrations (SQL; Python where SQL cannot express the change, e.g. 0064) |
 | [seed_loader/](../backend/src/nightcrate/seed_loader/), [catalog_loader/](../backend/src/nightcrate/catalog_loader/) | Equipment seeds and external DSO catalogs |
 | [data/](../backend/src/nightcrate/data/) | Equipment CSVs and NightCrate editorial catalog data |
 | [backend/tests/](../backend/tests/) | Backend regression and integration tests |

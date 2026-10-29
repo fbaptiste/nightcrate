@@ -47,7 +47,7 @@ def apply_redshift_distances(conn: sqlite3.Connection) -> RedshiftAugmentSummary
         """
         UPDATE dso
         SET distance_pc = NULL, distance_method = NULL
-        WHERE distance_method = 'redshift'
+        WHERE distance_method = 'redshift' AND active = 1
         """,
     )
 

@@ -72,6 +72,7 @@ import PlanAssignmentEditor from "./PlanAssignmentEditor";
 import PlanSparkline from "./PlanSparkline";
 import ThumbnailCell from "./ThumbnailCell";
 import WishlistCalendarView from "./WishlistCalendarView";
+import NotListedTag from "@/components/dso/NotListedTag";
 
 type SubView = "list" | "calendar";
 
@@ -443,6 +444,7 @@ export default function WishlistTab() {
                         <ThumbnailCell dsoId={activeItem.dso.dso_id} size={48} />
                         <Typography variant="body2" fontWeight={600}>
                           {activeItem.dso.primary_designation}
+                          {!activeItem.dso.active && <NotListedTag />}
                         </Typography>
                         {activeItem.dso.common_name && (
                           <Typography variant="body2" color="text.secondary">
@@ -721,6 +723,15 @@ function FavoriteCard({
             <DragIndicatorIcon sx={{ fontSize: 20 }} />
           </Box>
         )}
+        <Tooltip title="Remove from wishlist" arrow>
+          <IconButton
+            size="small"
+            onClick={onRemoveFavorite}
+            sx={{ color: RIG_ORANGE, flexShrink: 0, mt: -0.5, mx: -0.5 }}
+          >
+            <StarIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
         <Box sx={{ flexShrink: 0 }}>
           <ThumbnailCell dsoId={dso.dso_id} size={72} />
         </Box>
@@ -729,6 +740,7 @@ function FavoriteCard({
           <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
             <Typography variant="body1" fontWeight={600}>
               {dso.primary_designation}
+              {!dso.active && <NotListedTag />}
             </Typography>
             {dso.common_name && (
               <Typography variant="body2" color="text.secondary">
@@ -779,47 +791,38 @@ function FavoriteCard({
           </Stack>
         </Stack>
 
-        <Stack sx={{ flexShrink: 0 }} gap={0.25}>
-          <Tooltip title="Remove from wishlist" arrow>
-            <IconButton
-              size="small"
-              onClick={onRemoveFavorite}
-              sx={{ color: RIG_ORANGE }}
+        {/* Rendered only with content: an empty column still takes the
+            row's gap. */}
+        {onMoveToSection && sections.length > 0 && (
+          <Stack sx={{ flexShrink: 0 }} gap={0.25}>
+            <Tooltip title="Move to section" arrow>
+              <IconButton size="small" onClick={(e) => setMoveAnchor(e.currentTarget)}>
+                <MoveDownIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+            <Menu
+              anchorEl={moveAnchor}
+              open={Boolean(moveAnchor)}
+              onClose={() => setMoveAnchor(null)}
             >
-              <StarIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          {onMoveToSection && sections.length > 0 && (
-            <>
-              <Tooltip title="Move to section" arrow>
-                <IconButton size="small" onClick={(e) => setMoveAnchor(e.currentTarget)}>
-                  <MoveDownIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-              <Menu
-                anchorEl={moveAnchor}
-                open={Boolean(moveAnchor)}
-                onClose={() => setMoveAnchor(null)}
+              <MenuItem
+                onClick={() => { onMoveToSection(null); setMoveAnchor(null); }}
+                selected={item.section_id === null}
               >
+                General
+              </MenuItem>
+              {sections.map((sec) => (
                 <MenuItem
-                  onClick={() => { onMoveToSection(null); setMoveAnchor(null); }}
-                  selected={item.section_id === null}
+                  key={sec.id}
+                  onClick={() => { onMoveToSection(sec.id); setMoveAnchor(null); }}
+                  selected={item.section_id === sec.id}
                 >
-                  General
+                  {sec.name}
                 </MenuItem>
-                {sections.map((sec) => (
-                  <MenuItem
-                    key={sec.id}
-                    onClick={() => { onMoveToSection(sec.id); setMoveAnchor(null); }}
-                    selected={item.section_id === sec.id}
-                  >
-                    {sec.name}
-                  </MenuItem>
-                ))}
-              </Menu>
-            </>
-          )}
-        </Stack>
+              ))}
+            </Menu>
+          </Stack>
+        )}
       </Stack>
     </Card>
   );

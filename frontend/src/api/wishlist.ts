@@ -18,6 +18,7 @@ export interface FavoriteIdsResponse {
 
 export interface FavoriteDsoSummary {
   dso_id: number;
+  active: boolean;
   primary_designation: string;
   common_name: string | null;
   obj_type: string;
@@ -254,6 +255,7 @@ export async function deletePlan(planId: number): Promise<void> {
 
 export interface CalendarTargetRow {
   dso_id: number;
+  active: boolean;
   primary_designation: string;
   common_name: string | null;
   plan_id: number;

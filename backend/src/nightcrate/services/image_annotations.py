@@ -48,8 +48,8 @@ def detect_wcs_from_cards(cards: list[dict]) -> WcsParams | None:
         cos_r = math.cos(math.radians(crota2))
         sin_r = math.sin(math.radians(crota2))
         cd1_1 = cdelt1 * cos_r
-        cd1_2 = -cdelt1 * sin_r
-        cd2_1 = cdelt2 * sin_r
+        cd1_2 = -cdelt2 * sin_r
+        cd2_1 = cdelt1 * sin_r
         cd2_2 = cdelt2 * cos_r
     else:
         return None
@@ -78,6 +78,17 @@ def detect_wcs_from_cards(cards: list[dict]) -> WcsParams | None:
         crpix2=crpix2,
         naxis1=naxis1,
         naxis2=naxis2,
+    )
+
+
+def flip_wcs_rows(params: WcsParams) -> WcsParams:
+    """Convert a bottom-up FITS WCS to the top-down displayed row order."""
+    return params.model_copy(
+        update={
+            "crpix2": params.naxis2 + 1 - params.crpix2,
+            "cd1_2": -params.cd1_2,
+            "cd2_2": -params.cd2_2,
+        }
     )
 
 

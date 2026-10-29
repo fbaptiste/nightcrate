@@ -40,7 +40,7 @@ router = APIRouter(prefix="/api/projects", tags=["Projects"])
 _VALID_VARIANTS = set(VARIANT_SIZES.keys())
 
 _DSO_COLUMNS = (
-    "d.primary_designation, d.obj_type, d.ra_deg, d.dec_deg,"
+    "d.active, d.primary_designation, d.obj_type, d.ra_deg, d.dec_deg,"
     " d.maj_axis_arcmin, d.min_axis_arcmin, d.position_angle_deg,"
     " d.common_name, d.constellation, d.distance_pc, d.distance_method, d.mag_b"
 )
@@ -102,10 +102,12 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     annotated_list = await asyncio.to_thread(project_dsos, wcs, dso_dicts)
     annotated = {a.id: a for a in annotated_list}
     is_main = {r["dso_id"]: r["dso_id"] in main_dso_ids for r in link_rows}
+    active = {r["dso_id"]: bool(r["active"]) for r in link_rows}
 
     objects = [
         IdentifiedDso(
             dso_id=a.id,
+            active=active[a.id],
             primary_designation=a.primary_designation,
             common_name=a.common_name,
             obj_type=a.obj_type,
@@ -342,10 +344,24 @@ async def set_object_main(
 
         # Source of truth for "is main" is project_target; sync that.
         if body.is_main:
-            await conn.execute(
-                "INSERT OR IGNORE INTO project_target (project_id, dso_id) VALUES (?, ?)",
+            cursor = await conn.execute(
+                "SELECT 1 FROM project_target WHERE project_id = ? AND dso_id = ?",
                 (project_id, dso_id),
             )
+            if await cursor.fetchone() is None:
+                cursor = await conn.execute("SELECT active FROM dso WHERE id = ?", (dso_id,))
+                dso_row = await cursor.fetchone()
+                if dso_row is None:
+                    raise HTTPException(status_code=404, detail=f"DSO {dso_id} not found")
+                if not dso_row["active"]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This object is no longer listed in its catalog.",
+                    )
+                await conn.execute(
+                    "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+                    (project_id, dso_id),
+                )
         else:
             await conn.execute(
                 "DELETE FROM project_target WHERE project_id = ? AND dso_id = ?",

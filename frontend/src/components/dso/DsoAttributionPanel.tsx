@@ -34,7 +34,7 @@ export default function DsoAttributionPanel({ open, onClose }: Props) {
       <DialogContent dividers>
         <Typography variant="body2" sx={{ mb: 2 }}>
           Deep-sky object data in NightCrate is sourced from the catalogs below.
-          NightCrate application code is MIT-licensed; each catalog's data file
+          NightCrate application code is licensed GPL-3.0-or-later; each catalog's data file
           carries its own license, which must be preserved on redistribution.
         </Typography>
 

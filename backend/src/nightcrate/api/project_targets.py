@@ -29,6 +29,7 @@ class TargetResponse(BaseModel):
     # catalog's per-frame target correction (v0.41.1) needs it on the wire.
     id: int
     dso_id: int
+    active: bool
     primary_designation: str
     common_name: str | None
     obj_type: str
@@ -39,7 +40,7 @@ class TargetResponse(BaseModel):
 
 _TARGET_SELECT = (
     "SELECT pt.id, pt.dso_id, pt.created_at,"
-    " d.primary_designation, d.common_name, d.obj_type, d.ra_deg, d.dec_deg"
+    " d.active, d.primary_designation, d.common_name, d.obj_type, d.ra_deg, d.dec_deg"
     " FROM project_target pt JOIN dso d ON d.id = pt.dso_id"
 )
 
@@ -60,7 +61,15 @@ async def list_targets(project_id: int) -> list[TargetResponse]:
 async def add_target(project_id: int, body: TargetCreate) -> TargetResponse:
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
-        await get_or_404(conn, "dso", body.dso_id, "DSO")
+        cursor = await conn.execute("SELECT active FROM dso WHERE id = ?", (body.dso_id,))
+        dso_row = await cursor.fetchone()
+        if dso_row is None:
+            raise HTTPException(status_code=404, detail=f"DSO not found: {body.dso_id}")
+        if not dso_row["active"]:
+            raise HTTPException(
+                status_code=409,
+                detail="This object is no longer listed in its catalog.",
+            )
         with integrity_guard(conflict_detail="DSO is already a target of this project"):
             await conn.execute(
                 "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",

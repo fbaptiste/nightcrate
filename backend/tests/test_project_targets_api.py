@@ -65,6 +65,26 @@ class TestProjectTargets:
         assert len(rows) == 1
         assert rows[0]["dso_id"] == dso_id
 
+    async def test_inactive_target_is_listed_but_cannot_be_added(self, client: AsyncClient):
+        pid = await _make_project(client)
+        linked_id = await _make_dso("Inactive Linked")
+        refused_id = await _make_dso("Inactive New")
+        await client.post(f"/api/projects/{pid}/targets", json={"dso_id": linked_id})
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE dso SET active = 0 WHERE id IN (?, ?)", (linked_id, refused_id)
+            )
+            await conn.commit()
+
+        rows = (await client.get(f"/api/projects/{pid}/targets")).json()
+        assert len(rows) == 1
+        assert rows[0]["dso_id"] == linked_id
+        assert rows[0]["active"] is False
+
+        refused = await client.post(f"/api/projects/{pid}/targets", json={"dso_id": refused_id})
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == "This object is no longer listed in its catalog."
+
     async def test_duplicate_409(self, client: AsyncClient):
         pid = await _make_project(client)
         dso_id = await _make_dso("Test Gxy B")

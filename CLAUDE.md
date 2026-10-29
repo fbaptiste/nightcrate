@@ -10,10 +10,11 @@ loaded. It holds optional machine-specific guidance and must remain untracked.
 
 ## Product and scope
 
-NightCrate is a free, MIT-licensed application for astrophotographers to plan,
-catalog, and understand their imaging work. It runs locally on Mac, Windows,
-and Linux, between capture software (N.I.N.A./ASIAIR) and processing software
-(PixInsight/Siril). Files are cataloged in place by default.
+NightCrate is a free, open-source (GPL-3.0-or-later) application for
+astrophotographers to plan, catalog, and understand their imaging work. It runs
+locally on Mac, Windows, and Linux, between capture software (N.I.N.A./ASIAIR)
+and processing software (PixInsight/Siril). Files are cataloged in place by
+default.
 
 - Prioritize connections between projects, exposures, equipment, guiding, and
   conditions. New features should support a concrete imaging decision.
@@ -106,6 +107,9 @@ instructions to restore removed features.
   worker-safe. Two older resolved-source dispatchers remain to be consolidated.
 - Disk caches that outlive a database use stable content/sky identities, never
   database IDs. Rehydrate their index before sweeping orphans.
+- Read `app_config.APP_DIR` at call time; never copy it at import. Tests
+  redirect it, and before v0.42.0 an import-time copy let test runs sweep the
+  user's real thumbnails. `tests/test_app_dir_isolation.py` enforces this.
 - All frontend API calls are same-origin. LAN mode proxies through Vite; never
   hardcode a backend origin into frontend requests.
 
@@ -193,18 +197,30 @@ publishing; do not rewrite history without an explicit decision.
 
 ## Dependencies and licenses
 
-Review licenses before adding dependencies; record additions and required credits
-in README's acknowledgments. Check data-source terms separately from library terms.
+NightCrate is GPL-3.0-or-later (Fred, 2026-10-26). Earlier releases keep their
+original licences: v0.3.0a–v0.10.1 GPL-3.0, v0.12.0–v0.41.10 MIT.
+Every dependency must be compatible with GPL-3.0. NightCrate's own catalog data
+in `data/catalogs/nightcrate/` stays MIT. Review licenses before adding
+dependencies; record additions and required credits in README's acknowledgments.
+Check data-source terms separately from library terms.
 
-- Permissive MIT/BSD/Apache/ISC/HPND/PSF/CC0/Unlicense/0BSD are acceptable. SIL OFL
-  fonts are acceptable; BSD-4-Clause needs its advertising attribution. MPL-2.0
-  requires preserving obligations on modified MPL files.
+- Permissive MIT/BSD-2-Clause/BSD-3-Clause/Apache-2.0/ISC/HPND/MIT-CMU/PSF/CC0/
+  Unlicense/0BSD are acceptable. SIL OFL fonts are acceptable. BSD-4-Clause (the
+  advertising clause) is incompatible with the GPL.
+- MPL-2.0 is compatible unless the component carries an Exhibit B "Incompatible
+  With Secondary Licenses" notice; check for it. When distributing builds,
+  preserve MPL notices and tell recipients where the MPL files' source is
+  (currently `certifi` and `lightningcss`).
 - LGPL Python runtime imports are permitted (e.g. sep, py7zr). Discuss modified
   library source, static linking, or redistribution/bundling before proceeding;
   carry the applicable source and license obligations into packaging.
-- Do not add GPL/AGPL or non-open-source SSPL, BUSL, Commons Clause, Elastic,
-  Confluent, or Redis Source Available dependencies. For dual licensing, select
-  the compatible license explicitly.
+- GPL-3.0, GPL-3.0-or-later and GPL-2.0-or-later dependencies are compatible but
+  still need review and an acknowledgment. GPL-2.0-only is incompatible with
+  GPL-3.0. AGPL-3.0 adds network-use obligations to the whole program and needs
+  Fred's decision.
+- Do not add non-open-source SSPL, BUSL, Commons Clause, Elastic, Confluent, or
+  Redis Source Available dependencies. For dual licensing, select the compatible
+  license explicitly.
 - External programs such as ASTAP may be called across a process boundary.
   Bundling them needs a separate distribution/license review.
 - Only MUI X Community features. Keep the clean-room XISF reader. Prefer
