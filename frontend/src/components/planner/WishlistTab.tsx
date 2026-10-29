@@ -791,38 +791,38 @@ function FavoriteCard({
           </Stack>
         </Stack>
 
-        <Stack sx={{ flexShrink: 0 }} gap={0.25}>
-          {onMoveToSection && sections.length > 0 && (
-            <>
-              <Tooltip title="Move to section" arrow>
-                <IconButton size="small" onClick={(e) => setMoveAnchor(e.currentTarget)}>
-                  <MoveDownIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-              <Menu
-                anchorEl={moveAnchor}
-                open={Boolean(moveAnchor)}
-                onClose={() => setMoveAnchor(null)}
+        {/* Rendered only with content: an empty column still takes the
+            row's gap. */}
+        {onMoveToSection && sections.length > 0 && (
+          <Stack sx={{ flexShrink: 0 }} gap={0.25}>
+            <Tooltip title="Move to section" arrow>
+              <IconButton size="small" onClick={(e) => setMoveAnchor(e.currentTarget)}>
+                <MoveDownIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+            <Menu
+              anchorEl={moveAnchor}
+              open={Boolean(moveAnchor)}
+              onClose={() => setMoveAnchor(null)}
+            >
+              <MenuItem
+                onClick={() => { onMoveToSection(null); setMoveAnchor(null); }}
+                selected={item.section_id === null}
               >
+                General
+              </MenuItem>
+              {sections.map((sec) => (
                 <MenuItem
-                  onClick={() => { onMoveToSection(null); setMoveAnchor(null); }}
-                  selected={item.section_id === null}
+                  key={sec.id}
+                  onClick={() => { onMoveToSection(sec.id); setMoveAnchor(null); }}
+                  selected={item.section_id === sec.id}
                 >
-                  General
+                  {sec.name}
                 </MenuItem>
-                {sections.map((sec) => (
-                  <MenuItem
-                    key={sec.id}
-                    onClick={() => { onMoveToSection(sec.id); setMoveAnchor(null); }}
-                    selected={item.section_id === sec.id}
-                  >
-                    {sec.name}
-                  </MenuItem>
-                ))}
-              </Menu>
-            </>
-          )}
-        </Stack>
+              ))}
+            </Menu>
+          </Stack>
+        )}
       </Stack>
     </Card>
   );

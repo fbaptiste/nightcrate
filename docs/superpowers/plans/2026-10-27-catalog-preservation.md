@@ -751,3 +751,10 @@ The worktree never changes those five files.
   state takes the default icon colour, like the close button. A small layout
   change with a rendered check, so no Codex review. No tracked items arise
   from it.
+- **PR review fixes** (Fred, 2026-10-28, after publishing PR #20; records
+  82–85). A code-review agent found five low-severity issues in the changes
+  made after the independent review. Codex hardened the app-data guard test
+  (import-time code in class bodies, defaults, decorators and aliased
+  imports; a pre-sweep folder check; a non-empty scan), and Claude fixed the
+  dialog's accessible name and an empty wishlist column. No tracked items
+  arise from them.

@@ -166,6 +166,29 @@ branch uncommitted. The native plate solver follows in the next version.
   - Frontend build clean.
 - [x] Fred's acceptance test. Fred accepted the candidate (staged tree
   `98af670`) and authorized publishing on 2026-10-28.
+- [x] **PR review of #20** (Claude's code-review agent, 2026-10-28), covering
+  the changes made after the independent Codex review: the test-isolation,
+  coverage and app-data fixes, and the star moves. No high or medium
+  findings; five low ones, all verified by Claude. Fred asked for all five to
+  be fixed:
+  - **The app-data guard skipped code Python runs at import.** Class bodies,
+    default arguments, decorators, class bases and aliased imports of
+    `app_config` went unchecked. They are now checked, with nine self-tests
+    including a negative case for function bodies. The guard still flags the
+    pre-fix `thumbnails.py`, `sky_tile_cache.py` and `admin.py`.
+  - **The orphan-sweep test would have deleted real thumbnails before
+    failing.** It now checks the redirected folder before the sweep.
+  - **The source scan could pass with nothing scanned.** It now requires
+    `services/thumbnails.py` and at least 100 files.
+  - **Screen readers named the object panel "Add to wishlist, …".** The
+    dialog is now named by the designation alone.
+  - **Wishlist rows kept an empty column** when no sections exist. It is no
+    longer rendered.
+  - Codex implemented the three test fixes and Claude the two screen fixes.
+    Checks: the guard, thumbnail, sky-tile and startup tests (51 passed), the
+    real app-data caches' file counts unchanged by the run, Ruff, the
+    frontend build, and a headless browser check of both screen fixes on a
+    database copy.
 
 ### Catalog preservation
 

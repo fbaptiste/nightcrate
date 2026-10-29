@@ -1,7 +1,7 @@
 /**
  * Planner detail panel — larger thumbnail + sky-position graph + metadata.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
@@ -162,6 +162,11 @@ export default function PlannerDetailPanel({
 }: Props) {
   const detailTheme = useTheme();
   const isNarrow = useMediaQuery(detailTheme.breakpoints.down("md"));
+  // The dialog is named by the designation alone. Left to MUI, it takes the
+  // whole title row, which starts with the wishlist star's label. The row
+  // needs its own id, or MUI would give it the designation's.
+  const nameId = useId();
+  const titleRowId = useId();
 
   // Local preview overrides — distinct from the parent's
   // ``selectedLocationId``, ``selectedHorizonId``, and ``selectedRigId``.
@@ -341,8 +346,18 @@ export default function PlannerDetailPanel({
   const distance = formatDistance(dso?.distance_pc);
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" fullScreen={isNarrow}>
-      <DialogTitle sx={{ display: "flex", alignItems: "flex-start", gap: 2, py: 1.25 }}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="md"
+      fullScreen={isNarrow}
+      aria-labelledby={nameId}
+    >
+      <DialogTitle
+        id={titleRowId}
+        sx={{ display: "flex", alignItems: "flex-start", gap: 2, py: 1.25 }}
+      >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {/* Title row: primary designation + constellation. Distance
               moved to the fact grid below so the header stays focused
@@ -364,7 +379,9 @@ export default function PlannerDetailPanel({
                 {isFavorite ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
               </IconButton>
             )}
-            <Typography variant="h6">{dso?.primary_designation ?? "…"}</Typography>
+            <Typography id={nameId} variant="h6">
+              {dso?.primary_designation ?? "…"}
+            </Typography>
             {dso?.constellation && (
               <Typography variant="body2" color="text.secondary">
                 {displayConstellation(dso.constellation)}
