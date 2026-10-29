@@ -114,3 +114,42 @@ def test_50mgc_row_count_tracks_dsos_updated(db, catalogs_root):
 def test_50mgc_mpc_to_parsec_conversion_unit():
     """Sanity: 1 Mpc = 1,000,000 pc — the one multiplication used inside."""
     assert 1.0 * 1_000_000.0 == 1_000_000.0
+
+
+def test_50mgc_reload_preserves_inactive_distance(db, catalogs_root):
+    load_catalogs(db, catalogs_root)
+    db.execute(
+        """
+        UPDATE dso SET active=0, distance_pc=123, distance_method='redshift'
+        WHERE primary_designation='M 31'
+        """
+    )
+    db.execute("UPDATE dso_catalog_source SET file_hash='' WHERE source_id='github_50mgc'")
+    db.commit()
+
+    load_catalogs(db, catalogs_root)
+
+    row = db.execute(
+        "SELECT active, distance_pc, distance_method FROM dso WHERE primary_designation='M 31'"
+    ).fetchone()
+    assert tuple(row) == (0, 123.0, "redshift")
+
+
+def test_new_50mgc_distance_replaces_stale_redshift(db, catalogs_root):
+    load_catalogs(db, catalogs_root)
+    db.execute(
+        """
+        UPDATE dso SET distance_pc=123, distance_method='redshift'
+        WHERE primary_designation='M 31'
+        """
+    )
+    db.execute("UPDATE dso_catalog_source SET file_hash='' WHERE source_id='github_50mgc'")
+    db.commit()
+
+    load_catalogs(db, catalogs_root)
+
+    row = db.execute(
+        "SELECT distance_pc, distance_method FROM dso WHERE primary_designation='M 31'"
+    ).fetchone()
+    assert row["distance_method"] == "50mgc"
+    assert row["distance_pc"] == pytest.approx(770_000.0, rel=1e-4)

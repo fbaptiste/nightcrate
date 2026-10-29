@@ -16,6 +16,7 @@ from nightcrate.services.xisf_io import (
     list_extensions,
     load_image_data,
     read_header,
+    read_wcs_params,
 )
 
 # ── Helpers to build test XISF files ─────────────────────────────────────────
@@ -430,6 +431,168 @@ class TestAstrometricWcs:
         crval1 = [c for c in read_header(path) if c["key"] == "CRVAL1"]
         assert len(crval1) == 1
         assert crval1[0]["value"] == "42.0"
+
+    def test_xisf_properties_win_whole(self, tmp_path):
+        data = np.zeros((80, 100), dtype=np.uint16)
+        properties = self._astro_xml(
+            [300.0, 35.0],
+            [49.0, 39.0],
+            [1e-5, -3e-4, 3e-4, 1e-5],
+        )
+        keywords = [
+            ("CRVAL1", "42.0", ""),
+            ("CRVAL2", "-10.0", ""),
+            ("CRPIX1", "12.0", ""),
+            ("CRPIX2", "15.0", ""),
+            ("CD1_1", "-0.001", ""),
+            ("CD1_2", "0.0", ""),
+            ("CD2_1", "0.0", ""),
+            ("CD2_2", "0.001", ""),
+        ]
+        path = tmp_path / "properties_win.xisf"
+        path.write_bytes(
+            _make_xisf(
+                100,
+                80,
+                1,
+                "UInt16",
+                data.tobytes(),
+                fits_keywords=keywords,
+                extra_xml=properties,
+            )
+        )
+
+        result = read_wcs_params(path, 0)
+
+        assert result is not None
+        assert result.crval1 == pytest.approx(300.0)
+        assert result.crval2 == pytest.approx(35.0)
+        assert result.crpix1 == pytest.approx(50.0)
+        assert result.crpix2 == pytest.approx(40.0)
+        assert result.cd1_1 == pytest.approx(1e-5)
+        assert result.cd1_2 == pytest.approx(-3e-4)
+        assert result.cd2_1 == pytest.approx(3e-4)
+        assert result.cd2_2 == pytest.approx(1e-5)
+
+    def test_incomplete_astrometric_properties_fall_back_to_fits_keywords(self, tmp_path):
+        data = np.zeros((80, 100), dtype=np.uint16)
+        keywords = [
+            ("CRVAL1", "83.633", ""),
+            ("CRVAL2", "-5.375", ""),
+            ("CRPIX1", "50.0", ""),
+            ("CRPIX2", "30.0", ""),
+            ("CD1_1", "-0.0002", ""),
+            ("CD1_2", "-0.00015", ""),
+            ("CD2_1", "-0.0001", ""),
+            ("CD2_2", "0.00025", ""),
+        ]
+        path = tmp_path / "information_only.xisf"
+        path.write_bytes(
+            _make_xisf(
+                100,
+                80,
+                1,
+                "UInt16",
+                data.tobytes(),
+                fits_keywords=keywords,
+                properties=[
+                    (
+                        "PCL:AstrometricSolution:Information",
+                        "String",
+                        "metadata but no solution",
+                    )
+                ],
+            )
+        )
+
+        result = read_wcs_params(path, 0)
+
+        assert result is not None
+        assert result.crval1 == pytest.approx(83.633)
+        assert result.crpix2 == pytest.approx(51.0)
+        assert result.cd1_2 == pytest.approx(0.00015)
+        assert result.cd2_2 == pytest.approx(-0.00025)
+
+    def test_xisf_keyword_flip_uses_geometry_dimensions(self, tmp_path):
+        width, height = 100, 3000
+        data = np.zeros((height, width), dtype=np.uint16)
+        keywords = [
+            ("NAXIS1", "5000", "stale pre-crop width"),
+            ("NAXIS2", "4000", "stale pre-crop height"),
+            ("CRVAL1", "83.633", ""),
+            ("CRVAL2", "-5.375", ""),
+            ("CRPIX1", "50.0", ""),
+            ("CRPIX2", "100.0", ""),
+            ("CD1_1", "-0.0002", ""),
+            ("CD1_2", "-0.00015", ""),
+            ("CD2_1", "-0.0001", ""),
+            ("CD2_2", "0.00025", ""),
+        ]
+        path = tmp_path / "cropped_keywords.xisf"
+        path.write_bytes(
+            _make_xisf(
+                width,
+                height,
+                1,
+                "UInt16",
+                data.tobytes(),
+                fits_keywords=keywords,
+            )
+        )
+
+        result = read_wcs_params(path, 0)
+
+        assert result is not None
+        assert result.naxis1 == width
+        assert result.naxis2 == height
+        assert result.crpix2 == pytest.approx(2901.0)
+
+    @pytest.mark.parametrize("matrix_form", ["cd", "cdelt"])
+    def test_xisf_fits_keywords_are_flipped(self, tmp_path, matrix_form):
+        from nightcrate.services.image_annotations import build_wcs, detect_wcs_from_cards
+
+        width, height = 100, 80
+        data = np.zeros((height, width), dtype=np.uint16)
+        common = [
+            ("CRVAL1", "83.633", ""),
+            ("CRVAL2", "-5.375", ""),
+            ("CRPIX1", "50.0", ""),
+            ("CRPIX2", "30.0", ""),
+        ]
+        if matrix_form == "cd":
+            matrix = [
+                ("CD1_1", "-0.0002", ""),
+                ("CD1_2", "-0.00015", ""),
+                ("CD2_1", "-0.0001", ""),
+                ("CD2_2", "0.000259807621135", ""),
+            ]
+        else:
+            matrix = [
+                ("CDELT1", "-0.0002", ""),
+                ("CDELT2", "0.0003", ""),
+                ("CROTA2", "30.0", ""),
+            ]
+        path = tmp_path / f"keywords_{matrix_form}.xisf"
+        path.write_bytes(
+            _make_xisf(
+                width,
+                height,
+                1,
+                "UInt16",
+                data.tobytes(),
+                fits_keywords=[*common, *matrix],
+            )
+        )
+
+        unflipped = detect_wcs_from_cards(read_header(path))
+        flipped = read_wcs_params(path, 0)
+        assert unflipped is not None
+        assert flipped is not None
+        sky = build_wcs(unflipped).pixel_to_world(31.0, 17.0)
+        x, y = build_wcs(flipped).world_to_pixel(sky)
+
+        assert float(x) == pytest.approx(31.0, abs=1e-6)
+        assert float(y) == pytest.approx(height - 1 - 17.0, abs=1e-6)
 
     def test_non_gnomonic_skipped(self, tmp_path):
         from nightcrate.services.image_annotations import detect_wcs_from_cards

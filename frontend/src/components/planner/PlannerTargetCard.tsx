@@ -139,20 +139,23 @@ export default function PlannerTargetCard({
     restrictTonight && (item.score_pct !== null || item.score_breakdown !== null);
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2, position: "relative" }}>
+    <Card
+      variant="outlined"
+      sx={{ borderRadius: 2, display: "flex", alignItems: "flex-start" }}
+    >
+      {/* Star column left of the thumbnails. It sits outside the action
+          area because a button cannot be nested inside another. */}
       {onToggleFavorite && (
         <IconButton
           size="small"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleFavorite(item.dso_id);
-          }}
+          onClick={() => onToggleFavorite(item.dso_id)}
           sx={{
-            position: "absolute",
-            top: 4,
-            right: 4,
-            zIndex: 1,
-            color: isFavorite ? RIG_ORANGE : "text.disabled",
+            flexShrink: 0,
+            mt: 0.75,
+            ml: 0.5,
+            // Unset when off: ``text.disabled`` is too faint to find in
+            // dark mode; the default matches the detail panel's star.
+            color: isFavorite ? RIG_ORANGE : undefined,
           }}
           aria-label={isFavorite ? "Remove from wishlist" : "Add to wishlist"}
         >
@@ -161,7 +164,7 @@ export default function PlannerTargetCard({
       )}
       <CardActionArea
         onClick={() => onClick(item.dso_id)}
-        sx={{ p: 1.5 }}
+        sx={{ p: 1.5, pl: onToggleFavorite ? 0.5 : 1.5, flex: 1, minWidth: 0 }}
       >
         <Stack direction="row" gap={2} alignItems="flex-start">
           {/* DSS2 thumbnail with now-status glyph pinned top-left. */}

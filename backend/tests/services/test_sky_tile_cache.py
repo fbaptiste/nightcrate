@@ -65,7 +65,7 @@ def fake_hips(monkeypatch):
 @pytest.fixture(autouse=True)
 def _redirect_cell_dir(tmp_path, monkeypatch):
     """Send APP_DIR at the test's tmp_path so cell writes are isolated."""
-    monkeypatch.setattr("nightcrate.services.sky_tile_cache.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
 
 
 @pytest.fixture(autouse=True)

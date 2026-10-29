@@ -3,9 +3,8 @@
 v0.14.0 had a single OpenNGC-specific loader. v0.15.0 added four more
 parser strategies (Sharpless, Barnard, 50 MGC, augment CSV) that all
 share the same low-level patterns — file-hash check, source-registry
-upsert, DSO/designation inserts, string normalisation. This module
-holds those primitives so the per-strategy loaders stay focused on
-their parser-specific logic.
+upsert, and string normalisation. This module holds those primitives so
+the per-strategy loaders stay focused on their parser-specific logic.
 """
 
 from __future__ import annotations
@@ -139,121 +138,6 @@ def upsert_catalog_source(
         ),
     )
     return existing[0]
-
-
-def clear_previous_source_rows(
-    cur: sqlite3.Cursor,
-    source: CatalogSource,
-    *,
-    logger: logging.Logger,
-) -> None:
-    """Delete DSOs previously inserted by *source*, if any.
-
-    Scoped via the ``source_catalog_id`` FK; the ``ON DELETE CASCADE`` on
-    ``dso_designation`` cleans up the children. No-op when the source
-    has never been loaded before. Logs the deleted-row count at INFO.
-    """
-    cur.execute(
-        "SELECT id FROM dso_catalog_source WHERE source_id = ?",
-        (source.source_id,),
-    )
-    existing = cur.fetchone()
-    if existing is None:
-        return
-    cur.execute("DELETE FROM dso WHERE source_catalog_id = ?", (existing[0],))
-    label = logger.name.rsplit(".", 1)[-1]
-    logger.info("[%s] %s: cleared %d previous rows", label, source.source_id, cur.rowcount)
-
-
-# ── DSO + designation inserts ───────────────────────────────────────────────
-
-
-def insert_dso(
-    cur: sqlite3.Cursor,
-    *,
-    primary_designation: str,
-    obj_type: str,
-    ra_deg: float | None,
-    dec_deg: float | None,
-    constellation: str | None,
-    maj_axis_arcmin: float | None,
-    min_axis_arcmin: float | None,
-    common_name: str | None,
-    openngc_notes: str | None,
-    source_catalog_id: int,
-    source_row_hash: str,
-) -> int:
-    """Insert a minimal DSO row used by Sharpless/Barnard loaders.
-
-    OpenNGC has its own richer insert in ``loader.py:_insert_dso`` — this
-    helper covers the simpler case where only coordinates + geometry +
-    common_name are known.
-    """
-    cur.execute(
-        """
-        INSERT INTO dso (
-            primary_designation, obj_type, ra_deg, dec_deg, constellation,
-            maj_axis_arcmin, min_axis_arcmin, common_name, openngc_notes,
-            source_catalog_id, source_row_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            primary_designation,
-            obj_type,
-            ra_deg,
-            dec_deg,
-            constellation,
-            maj_axis_arcmin,
-            min_axis_arcmin,
-            common_name,
-            openngc_notes,
-            source_catalog_id,
-            source_row_hash,
-        ),
-    )
-    dso_id = cur.lastrowid
-    if dso_id is None:
-        raise RuntimeError("dso INSERT returned no row id")
-    return dso_id
-
-
-def insert_designation(
-    cur: sqlite3.Cursor,
-    *,
-    dso_id: int,
-    catalog: str,
-    identifier: str,
-    display_form: str,
-    search_key: str,
-    is_primary: bool,
-    logger: logging.Logger | None = None,
-) -> bool:
-    """Insert a designation; return True if inserted, False on UNIQUE collision.
-
-    A collision means another DSO already claims this (catalog, identifier)
-    pair — the existing owner wins and the incoming row loses that
-    cross-reference. Caller gets False so it can keep its own counters
-    accurate.
-    """
-    try:
-        cur.execute(
-            """
-            INSERT INTO dso_designation
-                (dso_id, catalog, identifier, display_form, search_key, is_primary)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (dso_id, catalog, identifier, display_form, search_key, 1 if is_primary else 0),
-        )
-        return True
-    except sqlite3.IntegrityError:
-        if logger is not None:
-            logger.debug(
-                "[%s] designation collision: %s %s already claimed",
-                logger.name.rsplit(".", 1)[-1],
-                catalog,
-                identifier,
-            )
-        return False
 
 
 # ── Hash-check preamble used by every loader ────────────────────────────────

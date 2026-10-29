@@ -42,7 +42,7 @@ def fake_hips(monkeypatch):
 @pytest.fixture(autouse=True)
 def _redirect_thumb_dir(tmp_path, monkeypatch):
     """Steer ``APP_DIR/thumbnails`` into the test's tmp_path."""
-    monkeypatch.setattr("nightcrate.services.thumbnails.APP_DIR", tmp_path)
+    monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
 
 
 @pytest.fixture(autouse=True)

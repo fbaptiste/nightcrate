@@ -26,10 +26,15 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - I/O accepts `Path | BinaryIO`. zip/tar entries extract in memory; 7z uses a
   cleaned-up temporary directory. Header reads can close a passed buffer:
   read bytes once and give each consumer a fresh `BytesIO`, not a re-seek.
-- XISF WCS comes from `PCL:AstrometricSolution`: decode its base64 properties
-  to TAN/FITS cards. **CD = matrix as-is, CRVAL = reference sky coordinates,
-  CRPIX = reference image coordinates + 1.** No transpose or y-flip. Real FITS
-  WCS wins; nonlinear spline distortion is not modeled for annotations.
+- XISF `PCL:AstrometricSolution` properties form one complete WCS and win as a
+  whole over contradictory FITS keywords: **CD = matrix as-is, CRVAL = reference
+  sky coordinates, CRPIX = reference image coordinates + 1.** No transpose or
+  y-flip. If the properties do not produce a complete solution, use the FITS
+  keyword WCS: convert CDELT/CROTA to CD first and then flip it to displayed
+  top-down rows (`CRPIX2 = H + 1 - CRPIX2`; negate the second CD column). The
+  XISF `geometry` dimensions are authoritative over stale FITS `NAXIS` cards.
+  `read_header` still reports the file's real keywords for the Header tab;
+  nonlinear spline distortion is not modeled for annotations.
 - `astropy.wcs.WCS.world_to_pixel` returns 0-based coordinates that match numpy
   indexing and the displayed image (row 0 at the top). Use them directly for
   annotations; a y-flip misaligns every overlay.
@@ -142,6 +147,18 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   solve-tab stars). Main targets survive deletion of a solve; derived solve
   objects and its rendered image do not. Reuse `DsoAnnotationOverlay` in both
   analyzers; main objects are teal and others blue.
+- Catalog objects keep their row identity by `(source_catalog_id, source_key)`:
+  exact OpenNGC `Name`, or normalized Sharpless/Barnard number. Reconciliation
+  runs each matching pass across the complete object set; shared or former
+  designations never prove identity. The one-time legacy pass is guarded by
+  `dso_catalog_source.keys_assigned`, and loaded object sources with missing
+  files defer the whole object step rather than guessing.
+- Only explicit OpenNGC duplicate rows and Sharpless cross-references merge
+  catalog objects. Known user links move to the survivor. Other unclaimed rows
+  become inactive and retain their names, enrichment, and user relationships.
+  Any new table with a foreign key to `dso` must be classified in
+  `catalog_loader.user_links` as user-linked or catalog-derived; the fresh-DB
+  foreign-key guard test must fail until that classification is made.
 - `MarkdownEditor` defaults to rendered Markdown, enters editing explicitly,
   and saves only changed text. Reuse it for descriptions and notes.
 - A project owns every `sub_frame`, `processed_image`, and `file_location` row.
@@ -351,6 +368,14 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - Convert archive/project images and XISF to temporary FITS, retaining focal
   length, pixel size and coordinate hints. Ordinary supported files pass
   directly. Use a fresh buffer for each header/dimension/image consumer.
+- ASTAP returns bottom-up FITS row order when PNG, JPG/JPEG, or TIF/TIFF files
+  are passed through unchanged. Flip `CRPIX2` and the second CD column before
+  returning or storing those solves. Archive entries, XISF, and `.pxiproject`
+  inputs are converted to temporary FITS and must not be flipped again.
+- Corrected solutions, and all ASTAP results without CROTA2, use
+  `degrees(atan2(-CD1_2, CD2_2))` for rotation. Unflipped results with CROTA2
+  retain ASTAP's value. Migration 0064 applies the same correction and rotation
+  rule to existing standard-image project solves.
 - Allow one solve (`Semaphore(1)`); check/acquire without an intervening await,
   return 409 for concurrent requests, cancel only through the explicit endpoint.
 - Image Analyzer solves display results without persistence; project solves

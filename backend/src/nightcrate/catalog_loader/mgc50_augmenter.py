@@ -90,14 +90,13 @@ def augment_from_mgc50(
     try:
         conn.execute("BEGIN")
 
-        # Reset distances previously set by 50 MGC so a newer release can
-        # correct / remove them. Curated + redshift distances stay intact —
-        # redshift is reapplied after this pass anyway.
+        # Reset 50 MGC and lower-precedence redshift values on active rows so
+        # a changed catalog can replace either while removed rows keep history.
         cur.execute(
             """
             UPDATE dso
             SET distance_pc = NULL, distance_method = NULL
-            WHERE distance_method = '50mgc'
+            WHERE distance_method IN ('50mgc', 'redshift') AND active = 1
             """,
         )
         cleared = cur.rowcount

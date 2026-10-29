@@ -79,7 +79,9 @@ make dev        # backend :8000, frontend :5173
 The setup wizard creates or opens a workspace containing `nightcrate.db` and
 rendered `project_data/`. Source images remain in their original locations;
 copying a workspace does not copy that source library. Admin manages multiple
-workspaces and downloads the DSO catalogs.
+workspaces and downloads the DSO catalogs. Catalog updates keep your wishlist,
+project targets and solved-field objects; an object a catalog no longer lists
+stays in your records, marked "Not listed".
 
 Other commands: `make backend`, `make frontend`, `make test`, `make test-fast`,
 `make lint`, `make format`. Use `make dev BROWSER=none` to suppress browser launch
@@ -108,7 +110,20 @@ otherwise a self-signed certificate. Never commit certificates or databases.
 
 ## License
 
-[MIT](LICENSE). Dependency and data-source acknowledgments follow.
+Copyright (C) 2026 Fred Baptiste.
+
+NightCrate is free software: you can redistribute it and/or modify it under the
+terms of the [GNU General Public License](LICENSE) as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the license for details.
+
+Earlier releases keep the licence they were released under: v0.3.0a–v0.10.1
+GPL-3.0, v0.12.0–v0.41.10 MIT. NightCrate's
+own catalog data in `backend/src/nightcrate/data/catalogs/nightcrate/` remains
+MIT-licensed ([LICENSE-MIT.txt](backend/src/nightcrate/data/catalogs/nightcrate/LICENSE-MIT.txt)).
+Dependency and data-source acknowledgments follow.
 
 ## Open Source Acknowledgments
 
@@ -121,7 +136,7 @@ Libraries and data sources used by NightCrate:
 | [NumPy](https://numpy.org/) | BSD 3-Clause | Copyright (c) 2005-2025, NumPy Developers |
 | [SciPy](https://scipy.org/) | BSD 3-Clause | Copyright (c) 2001-2025, SciPy Developers |
 | [Astropy](https://www.astropy.org/) | BSD 3-Clause | Copyright (c) 2011-2025, Astropy Developers |
-| [Pillow](https://python-pillow.org/) | HPND (PIL License) | Copyright (c) 1997-2011 by Secret Labs AB; Copyright (c) 1995-2011 by Fredrik Lundh; Copyright (c) 2010-2025 by Jeffrey A. Clark and contributors |
+| [Pillow](https://python-pillow.org/) | MIT-CMU (PIL License) | Copyright (c) 1997-2011 by Secret Labs AB; Copyright (c) 1995-2011 by Fredrik Lundh; Copyright (c) 2010-2025 by Jeffrey A. Clark and contributors |
 | [FastAPI](https://fastapi.tiangolo.com/) | MIT | Copyright (c) 2018 Sebastián Ramírez |
 | [Uvicorn](https://www.uvicorn.org/) | BSD 3-Clause | Copyright (c) 2017-present, Encode OSS Ltd |
 | [Pydantic](https://docs.pydantic.dev/) | MIT | Copyright (c) 2017-2025, Samuel Colvin and Pydantic Contributors |
@@ -137,7 +152,7 @@ Libraries and data sources used by NightCrate:
 | [tifffile](https://github.com/cgohlke/tifffile) | BSD 3-Clause | Copyright (c) 2008-2026, Christoph Gohlke |
 | [imagecodecs](https://github.com/cgohlke/imagecodecs) | BSD 3-Clause | Copyright (c) 2008-2026, Christoph Gohlke |
 | [bottleneck](https://github.com/pydata/bottleneck) | BSD 2-Clause | Copyright (c) 2010-2019, Keith Goodman |
-| [sep](https://github.com/kbarbary/sep) | LGPL-3.0 | Copyright (c) 2014, Kyle Barbary |
+| [sep](https://github.com/kbarbary/sep) | LGPL-3.0-or-later | Copyright (c) 2014, Kyle Barbary |
 | [py7zr](https://github.com/miurahr/py7zr) | LGPL-2.1+ | Copyright (c) 2019-2025, Hiroshi Miura |
 | [mlx](https://github.com/ml-explore/mlx) | MIT | Copyright (c) 2023-2026, Apple Inc. |
 | [timezonefinder](https://github.com/jannikmi/timezonefinder) | MIT | Copyright (c) 2016-2026, Jannik Michelfeit |
@@ -168,7 +183,7 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 
 | Program | License | Notes |
 |---|---|---|
-| [ASTAP](https://www.hnsky.org/astap.htm) | GPL-3.0 | Optional external plate solver, invoked via subprocess. Not bundled. |
+| [ASTAP](https://www.hnsky.org/astap.htm) | MPL-2.0 (main program; some files LGPL-3.0+ or GPL-2.0+) | Optional external plate solver, invoked via subprocess. Not bundled. |
 
 ### Data Sources
 

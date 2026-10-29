@@ -70,6 +70,7 @@ class DsoListResponse(BaseModel):
 
 class DsoDetail(BaseModel):
     id: int
+    active: bool
     primary_designation: str
     obj_type: str
     raw_obj_type: str | None

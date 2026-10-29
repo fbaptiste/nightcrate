@@ -15,7 +15,7 @@ import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import StarIcon from "@mui/icons-material/Star";
 import Dialog from "@mui/material/Dialog";
 import DialogContent from "@mui/material/DialogContent";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import FormControl from "@mui/material/FormControl";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
@@ -36,6 +36,7 @@ import {
   formatRa,
   formatSize,
 } from "@/lib/dsoFormatters";
+import { catalogShortName } from "@/components/dso/NotListedTag";
 
 interface Props {
   dsoId: number | null;
@@ -134,6 +135,11 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                     <AugmentedBadge tooltip="Refined by NightCrate editorial data" />
                   )}
                 </Stack>
+              )}
+              {!data.active && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  No longer listed in {catalogShortName(data.source.display_name)}
+                </Typography>
               )}
             </>
           )}
@@ -543,39 +549,29 @@ function AnnualHoursSection({ dsoId }: { dsoId: number }) {
   });
 
   const locations = locationsQuery.data ?? [];
-
-  useEffect(() => {
-    if (locationId == null && locations.length > 0) {
-      const def = locations.find((l: any) => l.is_default) ?? locations[0];
-      setLocationId(def.id);
-    }
-  }, [locations, locationId]);
+  const effectiveLocationId =
+    locationId ?? (locations.find((location) => location.is_default) ?? locations[0])?.id ?? null;
 
   const horizonsQuery = useQuery({
-    queryKey: ["horizons", locationId],
-    queryFn: () => fetchHorizons(locationId as number),
-    enabled: locationId != null,
+    queryKey: ["horizons", effectiveLocationId],
+    queryFn: () => fetchHorizons(effectiveLocationId as number),
+    enabled: effectiveLocationId != null,
     staleTime: 5 * 60_000,
   });
 
   const horizons: Horizon[] = horizonsQuery.data ?? [];
-
-  useEffect(() => {
-    if (horizonId == null && horizons.length > 0) {
-      const def = horizons.find((h) => h.is_default) ?? horizons[0];
-      setHorizonId(def.id);
-    }
-  }, [horizons, horizonId]);
+  const effectiveHorizonId =
+    horizonId ?? (horizons.find((horizon) => horizon.is_default) ?? horizons[0])?.id ?? null;
 
   const annualHoursQuery = useQuery({
-    queryKey: ["annual-hours", dsoId, locationId, horizonId, "moon"],
+    queryKey: ["annual-hours", dsoId, effectiveLocationId, effectiveHorizonId, "moon"],
     queryFn: () =>
-      fetchAnnualHours(dsoId, locationId!, {
-        horizonId,
+      fetchAnnualHours(dsoId, effectiveLocationId!, {
+        horizonId: effectiveHorizonId,
         moonSepDeg: 0,
         includeMoon: true, // chart draws the Moon-altitude line + illumination
       }),
-    enabled: locationId != null,
+    enabled: effectiveLocationId != null,
     staleTime: 5 * 60_000,
   });
 
@@ -590,7 +586,7 @@ function AnnualHoursSection({ dsoId }: { dsoId: number }) {
       <Stack direction="row" spacing={2} sx={{ mb: 1.5 }}>
         <FormControl size="small" sx={{ minWidth: 160 }}>
           <Select
-            value={locationId ?? ""}
+            value={effectiveLocationId ?? ""}
             onChange={(e) => {
               setLocationId(Number(e.target.value));
               setHorizonId(null);
@@ -598,7 +594,7 @@ function AnnualHoursSection({ dsoId }: { dsoId: number }) {
             displayEmpty
             sx={{ fontSize: "0.8rem" }}
           >
-            {locations.map((loc: any) => (
+            {locations.map((loc) => (
               <MenuItem key={loc.id} value={loc.id} sx={{ fontSize: "0.8rem" }}>
                 {loc.name}
               </MenuItem>
@@ -607,7 +603,7 @@ function AnnualHoursSection({ dsoId }: { dsoId: number }) {
         </FormControl>
         <FormControl size="small" sx={{ minWidth: 140 }}>
           <Select
-            value={horizonId ?? ""}
+            value={effectiveHorizonId ?? ""}
             onChange={(e) => setHorizonId(Number(e.target.value))}
             displayEmpty
             disabled={horizons.length === 0}
@@ -629,7 +625,7 @@ function AnnualHoursSection({ dsoId }: { dsoId: number }) {
       {annualHoursQuery.data && (
         <BestTimeOfYearChart track={annualHoursQuery.data} height={180} />
       )}
-      {!locationId && (
+      {!effectiveLocationId && (
         <Typography variant="caption" color="text.secondary">
           Select a location to see visibility chart.
         </Typography>

@@ -1,4 +1,40 @@
-# DSO catalog architecture (v0.15.0)
+# DSO catalog architecture (v0.42.0)
+
+## Object identity and reloads
+
+Catalog reloads reconcile one complete in-memory object set instead of deleting
+and recreating rows source by source. OpenNGC uses its exact `Name` value as the
+source key; Sharpless and Barnard use normalized catalog numbers. A row matched
+by `(source_catalog_id, source_key)` is updated in place, preserving its
+`dso.id`, creation time, and every user relationship. The one-time upgrade from
+older databases pairs unchanged files by legacy display text in file order, or
+changed files only by an unambiguous `source_row_hash`.
+
+OpenNGC main, addendum, Sharpless, Barnard, the Sharpless cross-reference, and
+the editorial augment hash form the object step's inputs. Designation ownership
+is resolved first-owner-wins across the complete new set before a single
+database transaction updates objects and rebuilds designations. Explicit
+OpenNGC `Dup` rows and Sharpless cross-references are the only merge signals.
+Known user links move to the survivor; an unknown future foreign key keeps the
+old row inactive as a safety net. Other unclaimed rows become inactive and
+retain their catalog and enrichment values.
+
+Every table with a foreign key to `dso` must be classified in
+`catalog_loader.user_links` as a catalog-derived table that may be rebuilt or a
+user-link table whose records must move during a merge. A fresh-database guard
+test enumerates those foreign keys and fails when a new table is unclassified;
+the runtime reference count still keeps a merged row inactive if an unknown
+reference reaches production.
+
+Reload invalidation is persisted in `dso_catalog_source.file_hash`: an empty
+hash means the source is due again. After an object step, augmentation and every
+enrichment pass are invalidated and rerun in precedence order. A failed pass
+therefore stays due after a restart. If a previously loaded object input is
+missing, the object step is deferred without changing objects, while enrichment
+still processes its own changes; a never-loaded absent optional source does not
+block other inputs. A failed object reconciliation is reported for each object
+source and likewise does not prevent independently changed enrichment from
+running.
 
 ## Data-source precedence
 
@@ -30,7 +66,9 @@ cross-checks:
    `catalog_loader/mgc50_augmenter.py`) fills `distance_pc` on galaxy
    DSOs that don't yet have one, using `bestdist` (linear Mpc) from the
    50 Mpc Galaxy Catalog. The `WHERE distance_pc IS NULL` guard means a
-   curated distance (step 3) is never overwritten. The file is fetched
+   curated distance (step 3) is never overwritten. A rerun first clears active
+   50 MGC and lower-precedence redshift values, while inactive objects retain
+   their history. The file is fetched
    from the author's **GitHub mirror** (`github.com/davidohlson/50MGC`,
    default branch `master`) rather than VizieR because the CDS endpoint
    has been intermittently flaky; the underlying data is the same. The
@@ -78,12 +116,16 @@ NGC 7023 are pointing at the nebulosity, not the embedded cluster.
 ## When to add a new catalog source
 
 1. Add a `CatalogSource` entry in `registry.py:get_sources()`.
-2. Write a new loader module in `catalog_loader/` with the same
-   signature as the existing ones (`load_*(conn, source, *, force)
-   -> SourceResult`).
-3. Register the `parser` string in `loader.py:_dispatch_source`.
+2. For a source that creates objects, add a pure collector and place it in
+   `reconcile.build_object_set`'s ownership order. Extend the reconciliation
+   tests for legacy matching, designation collisions, removal, and merges.
+3. For an enrichment source, implement its transactional loader, register the
+   `parser` string in `loader.py:_dispatch_source`, and add it to the persisted
+   invalidation order.
 4. If the source augments (like 50 MGC) rather than creates DSOs,
    put its row count on `dso_catalog_source.row_count` as
    "DSOs updated" and document the semantic in the Admin panel.
 5. Add corresponding admin endpoints + frontend UI if fetchable.
 6. Update this file and `CLAUDE.md` with the new precedence position.
+7. If any new table references `dso`, classify it as catalog-derived or
+   user-linked and extend merge handling before the foreign-key guard can pass.

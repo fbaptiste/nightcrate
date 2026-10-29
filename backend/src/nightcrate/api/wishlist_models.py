@@ -57,6 +57,7 @@ class FavoriteIdsResponse(BaseModel):
 
 class FavoriteDsoSummary(BaseModel):
     dso_id: int
+    active: bool
     primary_designation: str
     common_name: str | None
     obj_type: str
@@ -178,6 +179,7 @@ class PlanListResponse(BaseModel):
 
 class CalendarTargetRow(BaseModel):
     dso_id: int
+    active: bool
     primary_designation: str
     common_name: str | None
     plan_id: int

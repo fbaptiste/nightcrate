@@ -200,7 +200,7 @@ async def list_favorites_full() -> FavoritesFullResponse:
         cursor = await conn.execute(
             """
             SELECT ft.dso_id, ft.sort_order, ft.section_id, ft.created_at,
-                   d.primary_designation, d.common_name, d.obj_type,
+                   d.active, d.primary_designation, d.common_name, d.obj_type,
                    d.constellation, d.ra_deg, d.dec_deg, d.mag_v,
                    d.maj_axis_arcmin
             FROM favorite_target ft
@@ -267,6 +267,7 @@ async def list_favorites_full() -> FavoritesFullResponse:
             FavoriteFullItem(
                 dso=FavoriteDsoSummary(
                     dso_id=dso_id,
+                    active=bool(r["active"]),
                     primary_designation=r["primary_designation"],
                     common_name=r["common_name"],
                     obj_type=r["obj_type"],
@@ -291,11 +292,17 @@ async def list_favorites_full() -> FavoritesFullResponse:
 async def add_favorite(body: AddFavoriteRequest) -> FavoriteIdsResponse:
     async with get_db() as conn:
         cursor = await conn.execute(
-            "SELECT id FROM dso WHERE id = ? AND active = 1",
+            "SELECT active FROM dso WHERE id = ?",
             (body.dso_id,),
         )
-        if await cursor.fetchone() is None:
+        dso_row = await cursor.fetchone()
+        if dso_row is None:
             raise HTTPException(status_code=404, detail=f"DSO {body.dso_id} not found")
+        if not dso_row["active"]:
+            raise HTTPException(
+                status_code=409,
+                detail="This object is no longer listed in its catalog.",
+            )
 
         cursor = await conn.execute(
             "SELECT dso_id FROM favorite_target WHERE dso_id = ?",
@@ -402,11 +409,23 @@ async def create_plan(body: CreatePlanRequest) -> PlanResponse:
 
     async with get_db() as conn:
         cursor = await conn.execute(
-            "SELECT id FROM dso WHERE id = ? AND active = 1",
+            "SELECT active FROM dso WHERE id = ?",
             (body.dso_id,),
         )
-        if await cursor.fetchone() is None:
+        dso_row = await cursor.fetchone()
+        if dso_row is None:
             raise HTTPException(status_code=404, detail=f"DSO {body.dso_id} not found")
+
+        cursor = await conn.execute(
+            "SELECT dso_id FROM favorite_target WHERE dso_id = ?",
+            (body.dso_id,),
+        )
+        is_favorite = await cursor.fetchone() is not None
+        if not dso_row["active"] and not is_favorite:
+            raise HTTPException(
+                status_code=409,
+                detail="This object is no longer listed in its catalog.",
+            )
 
         cursor = await conn.execute(
             "SELECT id FROM location WHERE id = ? AND active = 1",
@@ -432,11 +451,7 @@ async def create_plan(body: CreatePlanRequest) -> PlanResponse:
         if await cursor.fetchone() is None:
             raise HTTPException(status_code=404, detail=f"Rig {body.rig_id} not found")
 
-        cursor = await conn.execute(
-            "SELECT dso_id FROM favorite_target WHERE dso_id = ?",
-            (body.dso_id,),
-        )
-        if await cursor.fetchone() is None:
+        if not is_favorite:
             next_cursor = await conn.execute(
                 "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM favorite_target"
             )
@@ -721,7 +736,7 @@ async def get_calendar_data(
         plan_cursor = await conn.execute(
             """
             SELECT tp.id AS plan_id, tp.dso_id, tp.notes,
-                   d.primary_designation, d.common_name,
+                   d.active, d.primary_designation, d.common_name,
                    ft.section_id, ws.name AS section_name,
                    COALESCE(ws.sort_order, -1) AS section_sort
             FROM target_plan tp
@@ -768,6 +783,7 @@ async def get_calendar_data(
     targets_out = [
         CalendarTargetRow(
             dso_id=int(r["dso_id"]),
+            active=bool(r["active"]),
             primary_designation=r["primary_designation"],
             common_name=r["common_name"],
             plan_id=int(r["plan_id"]),

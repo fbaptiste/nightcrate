@@ -10,6 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from nightcrate.catalog_loader import load_catalogs
+from nightcrate.db.session import get_db
 from nightcrate.main import app
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "catalogs" / "openngc"
@@ -179,6 +180,22 @@ async def test_detail_returns_full_designation_list(client, dso_loaded):
     assert "lbn" in catalogs
     assert "pgc" in catalogs
     assert detail["source"]["source_id"] == "openngc"
+
+
+@pytest.mark.anyio
+async def test_detail_returns_inactive_object_while_list_and_search_hide_it(client, dso_loaded):
+    search = (await client.get("/api/dso?q=M42")).json()
+    m42 = next(i for i in search["items"] if i["primary_designation"] == "M 42")
+    async with get_db() as conn:
+        await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (m42["id"],))
+        await conn.commit()
+
+    detail = await client.get(f"/api/dso/{m42['id']}")
+    assert detail.status_code == 200
+    detail_body = detail.json()
+    assert detail_body["active"] is False
+    assert detail_body["source"]["source_id"] == "openngc"
+    assert (await client.get("/api/dso?q=M42")).json()["items"] == []
 
 
 @pytest.mark.anyio

@@ -30,7 +30,7 @@ from typing import Literal
 
 import aiosqlite
 
-from nightcrate.core.app_config import APP_DIR
+from nightcrate.core import app_config
 from nightcrate.services.hips_client import (
     HIPS_DSS2_COLOR,
     HIPS_DSS2_RED,
@@ -125,10 +125,11 @@ def make_cell_key(
 # ── Disk layout ──────────────────────────────────────────────────────────────
 
 
-def cell_dir() -> Path:
+def cell_dir(*, create: bool = True) -> Path:
     """User-writable directory. Created on first access."""
-    d = APP_DIR / "sky_tiles"
-    d.mkdir(parents=True, exist_ok=True)
+    d = app_config.APP_DIR / "sky_tiles"
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -477,7 +478,7 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
 
     Returns the number of rows inserted.
     """
-    d = APP_DIR / "sky_tiles"
+    d = cell_dir(create=False)
     if not d.is_dir():
         return 0
 
@@ -548,7 +549,7 @@ async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
     left is either corrupt, from an unrecognised hips survey, or has
     been removed from the cache table explicitly.
     """
-    d = APP_DIR / "sky_tiles"
+    d = cell_dir(create=False)
     if not d.is_dir():
         return 0
 

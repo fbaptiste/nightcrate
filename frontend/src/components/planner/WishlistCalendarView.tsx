@@ -248,8 +248,16 @@ function CalendarChart({
     x: number; y: number; phase: string; date: string;
   } | null>(null);
 
-  const fmtLabel = (t: { primary_designation: string; common_name: string | null }) =>
-    t.common_name ? `${t.primary_designation} (${t.common_name})` : t.primary_designation;
+  const fmtLabel = (t: {
+    primary_designation: string;
+    common_name: string | null;
+    active: boolean;
+  }) => {
+    const name = t.common_name
+      ? `${t.primary_designation} (${t.common_name})`
+      : t.primary_designation;
+    return t.active ? name : `${name} · not listed`;
+  };
 
   const hasSections = data.sections.length > 0 &&
     data.targets.some((t) => t.section_id != null);
@@ -721,6 +729,9 @@ function CalendarChart({
             <tspan fill={isDark ? "#cccccc" : "#333333"}>{target.primary_designation}</tspan>
             {target.common_name && (
               <tspan fill={isDark ? "#888888" : "#999999"}>{` (${target.common_name})`}</tspan>
+            )}
+            {!target.active && (
+              <tspan fill={isDark ? "#888888" : "#999999"}> · not listed</tspan>
             )}
           </text>
         ))}

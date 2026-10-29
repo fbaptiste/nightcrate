@@ -1,0 +1,8 @@
+Name;Type;RA;Dec;Const;MajAx;MinAx;PosAng;B-Mag;V-Mag;J-Mag;H-Mag;K-Mag;SurfBr;Hubble;Pax;Pm-RA;Pm-Dec;RadVel;Redshift;Cstar U-Mag;Cstar B-Mag;Cstar V-Mag;M;NGC;IC;Cstar Names;Identifiers;Common names;NED notes;OpenNGC notes;Sources
+NGC0001;G;00:07:15.8;+27:42:29;Peg;2.00;1.50;45;13.20;12.30;;;;13.80;Sb;;;;1000;0.0033;;;;007;;;;UGC 00057;Legacy One;;;Type:1|RA:1|Dec:1
+NGC0002;G;00:07:17.0;+27:41:40;Peg;1.80;1.20;35;13.50;12.60;;;;14.10;Sc;;;;1100;0.0037;;;;007;;;;UGC 00058;Legacy Two;;;Type:1|RA:1|Dec:1
+NGC0003;HII;00:07:20.0;+27:40:00;Peg;10.00;8.00;;;;;;;;;;;;;;;;;;;;;LBN 3;Crossref Target;;;Type:1|RA:1|Dec:1
+NGC0005;G;00:07:30.0;+27:38:00;Peg;2.50;1.00;80;14.00;13.00;;;;14.50;E;;;;1200;0.0040;;;;;;0009;;UGC 00060;Shared-name Host;;;Type:1|RA:1|Dec:1
+IC0009;G;00:07:40.0;+27:36:00;Peg;1.50;1.00;10;14.50;13.50;;;;15.00;S0;;;;1300;0.0043;;;;;;;;;Shared-name Object;;;Type:1|RA:1|Dec:1
+NGC0008;G;00:08:00.0;+27:34:00;Peg;3.00;2.00;20;12.80;11.90;;;;13.50;Sb;;;;900;0.0030;;;;;;;;;Duplicate Survivor;;;Type:1|RA:1|Dec:1
+NGC0007;Dup;00:08:00.0;+27:34:00;Peg;;;;;;;;;;;;;;;;;;;;0008;;;;;;;Type:1|RA:1|Dec:1

@@ -520,7 +520,7 @@ async def get_dso(dso_id: int) -> DsoDetail:
 
 
 async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
-    cursor = await conn.execute("SELECT * FROM dso WHERE id = ? AND active = 1", (dso_id,))
+    cursor = await conn.execute("SELECT * FROM dso WHERE id = ?", (dso_id,))
     row = await cursor.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"DSO not found: {dso_id}")
@@ -550,6 +550,7 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
 
     return DsoDetail(
         id=row["id"],
+        active=bool(row["active"]),
         primary_designation=row["primary_designation"],
         obj_type=row["obj_type"],
         raw_obj_type=row["raw_obj_type"],

@@ -226,6 +226,28 @@ class TestFavorites:
         )
         assert resp.status_code == 404
 
+    async def test_inactive_favorite_contract(self, client, seed_dso_and_location):
+        ids = seed_dso_and_location
+        client.post(
+            "/api/planner/wishlist/favorites",
+            json={"dso_id": ids["m42_id"]},
+        )
+        async with get_db() as conn:
+            await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (ids["m42_id"],))
+            await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (ids["ngc7000_id"],))
+            await conn.commit()
+
+        full = client.get("/api/planner/wishlist/favorites/full")
+        assert full.status_code == 200
+        assert full.json()["items"][0]["dso"]["active"] is False
+
+        refused = client.post(
+            "/api/planner/wishlist/favorites",
+            json={"dso_id": ids["ngc7000_id"]},
+        )
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == "This object is no longer listed in its catalog."
+
     def test_remove_favorite(self, client, seed_dso_and_location):
         ids = seed_dso_and_location
         client.post(
@@ -306,6 +328,42 @@ class TestFavorites:
 
 
 class TestPlans:
+    async def test_inactive_plan_requires_existing_favorite(self, client, seed_dso_and_location):
+        ids = seed_dso_and_location
+        client.post("/api/planner/wishlist/favorites", json={"dso_id": ids["m42_id"]})
+        async with get_db() as conn:
+            await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (ids["m42_id"],))
+            await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (ids["ngc7000_id"],))
+            await conn.commit()
+
+        body = {
+            "location_id": ids["location_id"],
+            "horizon_id": ids["horizon_id"],
+            "rig_id": ids["rig_id"],
+            "date_ranges": [{"start_date": "2026-06-01", "end_date": "2026-06-30"}],
+        }
+        created = client.post("/api/planner/wishlist/plans", json={**body, "dso_id": ids["m42_id"]})
+        assert created.status_code == 201
+
+        refused = client.post(
+            "/api/planner/wishlist/plans", json={**body, "dso_id": ids["ngc7000_id"]}
+        )
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == "This object is no longer listed in its catalog."
+
+        calendar = client.get(
+            "/api/planner/wishlist/calendar",
+            params={
+                "location_id": ids["location_id"],
+                "horizon_id": ids["horizon_id"],
+                "rig_id": ids["rig_id"],
+                "start_month": "2026-06",
+                "months": 1,
+            },
+        )
+        assert calendar.status_code == 200
+        assert calendar.json()["targets"][0]["active"] is False
+
     def test_create_plan_with_date_ranges(self, client, seed_dso_and_location):
         ids = seed_dso_and_location
         client.post("/api/planner/wishlist/favorites", json={"dso_id": ids["m42_id"]})

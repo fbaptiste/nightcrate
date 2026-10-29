@@ -4,6 +4,7 @@ export interface ProjectTarget {
   /** project_target PK — what sub_frame.project_target_id references. */
   id: number;
   dso_id: number;
+  active: boolean;
   primary_designation: string;
   common_name: string | null;
   obj_type: string;

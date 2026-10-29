@@ -226,6 +226,53 @@ class TestComputeResults:
         assert result.fov_width_arcmin is None
         assert result.fov_height_arcmin is None
 
+    @pytest.mark.parametrize("include_crota", [True, False])
+    def test_compute_results_flip(self, include_crota):
+        ini_data = {
+            "PLTSOLVD": "T",
+            "CRVAL1": "24.174044",
+            "CRVAL2": "15.783461",
+            "CD1_1": "3.1708226849663004e-4",
+            "CD1_2": "1.6613319845650712e-4",
+            "CD2_1": "1.6618754352258259e-4",
+            "CD2_2": "-3.1700913753065986e-4",
+            "CRPIX1": "1504.5",
+            "CRPIX2": "1504.5",
+        }
+        if include_crota:
+            ini_data["CROTA2"] = "-152.33486201188387"
+
+        result = _compute_results(ini_data, 3008, 3008, flip_rows=True)
+
+        assert result.crpix1 == pytest.approx(1504.5)
+        assert result.crpix2 == pytest.approx(1504.5)
+        assert result.cd1_1 == pytest.approx(3.1708226849663004e-4)
+        assert result.cd1_2 == pytest.approx(-1.6613319845650712e-4)
+        assert result.cd2_1 == pytest.approx(1.6618754352258259e-4)
+        assert result.cd2_2 == pytest.approx(3.1700913753065986e-4)
+        assert result.rotation_deg == pytest.approx(27.657, abs=0.001)
+
+    def test_compute_results_fits_input_is_unchanged(self):
+        ini_data = {
+            "PLTSOLVD": "T",
+            "CRVAL1": "24.174044",
+            "CRVAL2": "15.783461",
+            "CD1_1": "3.1708226849663004e-4",
+            "CD1_2": "1.6613319845650712e-4",
+            "CD2_1": "1.6618754352258259e-4",
+            "CD2_2": "-3.1700913753065986e-4",
+            "CRPIX1": "1504.5",
+            "CRPIX2": "1504.5",
+            "CROTA2": "-152.33486201188387",
+        }
+
+        result = _compute_results(ini_data, 3008, 3008)
+
+        assert result.crpix2 == pytest.approx(1504.5)
+        assert result.cd1_2 == pytest.approx(1.6613319845650712e-4)
+        assert result.cd2_2 == pytest.approx(-3.1700913753065986e-4)
+        assert result.rotation_deg == pytest.approx(-152.335, abs=0.001)
+
 
 # ── _extract_hints ──────────────────────────────────────────────────────
 
@@ -589,7 +636,8 @@ class TestArchiveSourceSolve:
         def fake_resolve(_path):
             return io.BytesIO(raw), "fits", 0, ("archive.zip", 1.0, "sub.fits")
 
-        async def fake_run_astap(_args, _output_base, _timeout, _width, _height):
+        async def fake_run_astap(_args, _output_base, _timeout, _width, _height, flip_rows=False):
+            assert flip_rows is False
             return PlateSolveResult(solved=True, ra_deg=210.0, dec_deg=54.0), 0.1
 
         with (
@@ -608,3 +656,52 @@ class TestArchiveSourceSolve:
             )
 
         assert result.solved is True
+
+    @pytest.mark.parametrize(
+        ("image_path", "prepared_path", "expected_flip"),
+        [
+            ("X.PNG", "/images/X.PNG", True),
+            ("a.zip::b.png", "/tmp/solve_input.fits", False),
+            ("c.fits", "/images/c.fits", False),
+        ],
+    )
+    async def test_flip_decision_by_input(self, image_path, prepared_path, expected_flip):
+        observed: list[bool] = []
+
+        async def fake_run_astap(_args, _output_base, _timeout, _width, _height, flip_rows=False):
+            observed.append(flip_rows)
+            return PlateSolveResult(solved=True, ra_deg=210.0, dec_deg=54.0), 0.1
+
+        with (
+            patch.object(
+                plate_solve,
+                "_resolve_path",
+                return_value=(Path("/source/input"), "standard", 0, None),
+            ),
+            patch.object(
+                plate_solve,
+                "read_header_cards",
+                return_value=[
+                    {"key": "NAXIS1", "value": "3008"},
+                    {"key": "NAXIS2", "value": "3008"},
+                ],
+            ),
+            patch.object(
+                plate_solve,
+                "_prepare_image_file",
+                return_value=Path(prepared_path),
+            ),
+            patch.object(plate_solve, "_run_astap", fake_run_astap),
+        ):
+            await plate_solve._do_solve(
+                Path("/fake/astap"),
+                image_path,
+                hdu=0,
+                mode="auto",
+                ra_hint=None,
+                dec_hint=None,
+                fov_hint=None,
+                timeout=60,
+            )
+
+        assert observed == [expected_flip]

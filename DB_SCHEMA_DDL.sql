@@ -1,4 +1,4 @@
--- NightCrate version: 0.41.10
+-- NightCrate version: 0.42.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1206,7 +1206,8 @@ CREATE TABLE dso_catalog_source (
     license       TEXT,
     attribution   TEXT,
     loaded_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    row_count     INTEGER NOT NULL DEFAULT 0
+    row_count     INTEGER NOT NULL DEFAULT 0,
+    keys_assigned INTEGER NOT NULL DEFAULT 0 CHECK (keys_assigned IN (0, 1))
 );
 
 CREATE TABLE dso (
@@ -1262,6 +1263,7 @@ CREATE TABLE dso (
 
     source_catalog_id       INTEGER NOT NULL REFERENCES dso_catalog_source(id),
     source_row_hash         TEXT NOT NULL,
+    source_key              TEXT,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
     active                  INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
@@ -1271,6 +1273,8 @@ CREATE INDEX idx_dso_obj_type            ON dso(obj_type);
 CREATE INDEX idx_dso_constellation       ON dso(constellation);
 CREATE INDEX idx_dso_primary_designation ON dso(primary_designation);
 CREATE INDEX idx_dso_source_catalog      ON dso(source_catalog_id);
+CREATE UNIQUE INDEX idx_dso_source_key
+    ON dso(source_catalog_id, source_key) WHERE source_key IS NOT NULL;
 
 CREATE TRIGGER trg_dso_updated_at
 AFTER UPDATE ON dso

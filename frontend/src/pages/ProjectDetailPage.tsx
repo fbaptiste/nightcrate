@@ -54,6 +54,7 @@ import {
   listProjectTargets,
   removeProjectTarget,
 } from "@/api/projectTargets";
+import NotListedTag from "@/components/dso/NotListedTag";
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
@@ -522,7 +523,12 @@ export default function ProjectDetailPage() {
                     {mainTargets.map((t) => (
                       <Chip
                         key={t.dso_id}
-                        label={t.common_name ?? t.primary_designation}
+                        label={
+                          <Box component="span" sx={{ display: "inline-flex", alignItems: "center" }}>
+                            {t.common_name ?? t.primary_designation}
+                            {!t.active && <NotListedTag />}
+                          </Box>
+                        }
                         size="small"
                         onClick={solveDsoIds.has(t.dso_id) ? () => setTab(3) : undefined}
                         onDelete={() => removeTargetMut.mutate(t.dso_id)}

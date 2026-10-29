@@ -3,6 +3,8 @@
 import math
 
 import pytest
+from astropy.io import fits
+from astropy.wcs import WCS
 
 from nightcrate.services.image_annotation_models import WcsParams
 from nightcrate.services.image_annotations import (
@@ -72,9 +74,36 @@ class TestDetectWcsFromCards:
         cos_r = math.cos(math.radians(45.0))
         sin_r = math.sin(math.radians(45.0))
         assert result.cd1_1 == pytest.approx(-0.000278 * cos_r)
-        assert result.cd1_2 == pytest.approx(-(-0.000278) * sin_r)
-        assert result.cd2_1 == pytest.approx(0.000278 * sin_r)
+        assert result.cd1_2 == pytest.approx(-0.000278 * sin_r)
+        assert result.cd2_1 == pytest.approx(-0.000278 * sin_r)
         assert result.cd2_2 == pytest.approx(0.000278 * cos_r)
+
+    def test_cdelt_crota_matches_astropy(self):
+        values = {
+            "CRVAL1": 83.633,
+            "CRVAL2": -5.375,
+            "CDELT1": -2.0e-4,
+            "CDELT2": 3.0e-4,
+            "CROTA2": 30.0,
+            "CRPIX1": 600.0,
+            "CRPIX2": 500.0,
+            "NAXIS1": 1200,
+            "NAXIS2": 1000,
+            "CTYPE1": "RA---TAN",
+            "CTYPE2": "DEC--TAN",
+        }
+        cards = _make_cards(**{key: str(value) for key, value in values.items()})
+        result = detect_wcs_from_cards(cards)
+        assert result is not None
+
+        header = fits.Header()
+        for key, value in values.items():
+            header[key] = value
+        expected_x, expected_y = WCS(header).world_to_pixel_values(83.733, -5.275)
+        actual_x, actual_y = build_wcs(result).world_to_pixel_values(83.733, -5.275)
+
+        assert actual_x == pytest.approx(expected_x, abs=1e-6)
+        assert actual_y == pytest.approx(expected_y, abs=1e-6)
 
     def test_missing_crval_returns_none(self):
         cards = _make_cards(

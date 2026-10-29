@@ -32,7 +32,7 @@ from typing import Literal
 
 import aiosqlite
 
-from nightcrate.core.app_config import APP_DIR
+from nightcrate.core import app_config
 from nightcrate.services.hips_client import (
     HIPS_DSS2_COLOR,
     HIPS_DSS2_RED,
@@ -233,10 +233,11 @@ def make_key(
 # ── Filesystem helpers ───────────────────────────────────────────────────────
 
 
-def thumb_dir() -> Path:
+def thumb_dir(*, create: bool = True) -> Path:
     """User-writable directory under APP_DIR. Created on first access."""
-    d = APP_DIR / "thumbnails"
-    d.mkdir(parents=True, exist_ok=True)
+    d = app_config.APP_DIR / "thumbnails"
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -701,7 +702,7 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
 
     Returns the number of rows inserted.
     """
-    d = APP_DIR / "thumbnails"
+    d = thumb_dir(create=False)
     if not d.is_dir():
         return 0
 
@@ -794,7 +795,7 @@ async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
 
     Returns the count of files removed.
     """
-    d = APP_DIR / "thumbnails"
+    d = thumb_dir(create=False)
     if not d.is_dir():
         return 0
 

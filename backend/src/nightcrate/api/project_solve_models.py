@@ -27,6 +27,7 @@ class IdentifiedDso(BaseModel):
     position for the overlay and whether it's flagged as a main subject."""
 
     dso_id: int
+    active: bool
     primary_designation: str
     common_name: str | None = None
     obj_type: str

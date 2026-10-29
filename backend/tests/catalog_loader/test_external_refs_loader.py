@@ -121,6 +121,44 @@ def test_external_refs_upsert_adds_new_row(db, tmp_path):
     assert refs[0]["label"] == "Orion Nebula"
 
 
+def test_external_refs_unchanged_file_returns_stored_state(db, tmp_path):
+    root = _base_catalogs(tmp_path)
+    source = next(
+        source for source in get_sources(root) if source.source_id == "nightcrate_external_refs"
+    )
+    _write_csv(
+        source.file_path,
+        [
+            "M42,wikipedia,en,Orion_Nebula,"
+            "https://en.wikipedia.org/wiki/Orion_Nebula,Orion Nebula,",
+        ],
+    )
+    load_catalogs(db, root)
+    stored = db.execute(
+        "SELECT id, row_count, file_hash FROM dso_catalog_source WHERE source_id = ?",
+        (source.source_id,),
+    ).fetchone()
+    ref_count = db.execute(
+        "SELECT COUNT(*) FROM dso_external_ref WHERE source_catalog_id = ?",
+        (stored["id"],),
+    ).fetchone()[0]
+
+    result = load_external_refs(db, source, force=False)
+
+    current = db.execute(
+        "SELECT file_hash FROM dso_catalog_source WHERE source_id = ?",
+        (source.source_id,),
+    ).fetchone()
+    current_ref_count = db.execute(
+        "SELECT COUNT(*) FROM dso_external_ref WHERE source_catalog_id = ?",
+        (stored["id"],),
+    ).fetchone()[0]
+    assert result.status == "unchanged"
+    assert result.dso_count == stored["row_count"]
+    assert current["file_hash"] == stored["file_hash"]
+    assert current_ref_count == ref_count == 1
+
+
 def test_external_refs_suppression_deletes_existing_row(db, tmp_path):
     """Wikidata inserts a row, then the override CSV suppresses it."""
     root = _base_catalogs(tmp_path)

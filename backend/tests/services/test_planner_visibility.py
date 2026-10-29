@@ -295,6 +295,25 @@ def test_cache_invalidates_on_location_updated_at_change():
     assert second is not first
 
 
+def test_clear_during_compute_prevents_stale_cache_insert(monkeypatch):
+    cache = VisibilityCache()
+    computed = object()
+
+    def compute_and_clear(*args, **kwargs):
+        cache.clear()
+        return computed
+
+    monkeypatch.setattr(
+        "nightcrate.services.planner_visibility.compute_visibility_snapshot",
+        compute_and_clear,
+    )
+
+    result = cache.get_or_compute(PHOENIX, FLAT_30, date(2026, 4, 19), [M42])
+
+    assert result is computed
+    assert cache._entries == {}
+
+
 @pytest.mark.parametrize(
     "azimuths_deg, expected_altitude",
     [

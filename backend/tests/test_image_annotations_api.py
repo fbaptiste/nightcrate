@@ -8,6 +8,7 @@ from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
 from nightcrate.main import app
+from nightcrate.services.image_annotation_models import WcsParams
 
 
 @pytest.fixture
@@ -71,6 +72,37 @@ class TestDetectWcs:
         )
         assert resp.status_code == 200
         assert resp.json() is None
+
+    @pytest.mark.anyio
+    async def test_uses_format_specific_wcs_reader(self, client, monkeypatch):
+        expected = WcsParams(
+            crval1=300.0,
+            crval2=35.0,
+            cd1_1=1e-5,
+            cd1_2=-3e-4,
+            cd2_1=3e-4,
+            cd2_2=1e-5,
+            crpix1=500.0,
+            crpix2=400.0,
+            naxis1=1000,
+            naxis2=800,
+        )
+        monkeypatch.setattr(
+            "nightcrate.api.plate_solve.resolve_path",
+            lambda _path: (Path("test.xisf"), "xisf", 0, None),
+        )
+        monkeypatch.setattr(
+            "nightcrate.api.plate_solve.read_wcs_params",
+            lambda *_args: expected,
+        )
+
+        resp = await client.get(
+            "/api/plate-solve/detect-wcs",
+            params={"path": "test.xisf"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == expected.model_dump()
 
 
 class TestAnnotate:

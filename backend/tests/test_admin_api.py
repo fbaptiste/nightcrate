@@ -172,6 +172,48 @@ async def test_activate_database(client, tmp_path):
     assert status_data["active_db"]["path"] == db_path
 
 
+@pytest.mark.anyio
+async def test_activate_database_clears_planner_cache(client, tmp_path):
+    from datetime import UTC, datetime
+    from typing import cast
+
+    from nightcrate.services.planner_visibility import (
+        VisibilitySnapshot,
+        default_cache,
+    )
+
+    first_path = str(tmp_path / "first_workspace")
+    second_path = str(tmp_path / "second_workspace")
+    for path in (first_path, second_path):
+        response = await client.post(
+            "/api/admin/database/create",
+            json={"path": path, "name": Path(path).name},
+        )
+        assert response.status_code == 200
+
+    response = await client.post(
+        "/api/admin/database/activate",
+        json={"path": first_path},
+    )
+    assert response.status_code == 200
+
+    default_cache._entries[("sentinel",)] = (
+        datetime.now(UTC),
+        cast(VisibilitySnapshot, object()),
+    )
+
+    try:
+        response = await client.post(
+            "/api/admin/database/activate",
+            json={"path": second_path},
+        )
+
+        assert response.status_code == 200
+        assert default_cache._entries == {}
+    finally:
+        default_cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # POST /api/admin/database/activate — unknown path
 # ---------------------------------------------------------------------------
@@ -762,6 +804,88 @@ async def test_fetch_from_github_network_failure_returns_502(client, tmp_path, m
     resp = await client.post("/api/admin/catalogs/fetch-from-github")
     assert resp.status_code == 502
     assert "Failed to download" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_fetch_routes_do_not_force(client, tmp_path, monkeypatch):
+    from nightcrate.catalog_loader.loader import LoadSummary
+    from nightcrate.catalog_loader.remote import RemoteReleaseInfo
+
+    db_path = str(tmp_path / "fetch_force_db")
+    assert (
+        await client.post(
+            "/api/admin/database/setup", json={"path": db_path, "name": "Fetch force"}
+        )
+    ).status_code == 200
+
+    async def fake_fetch():
+        return RemoteReleaseInfo("v-test", "2026-01-01", "https://example.invalid")
+
+    async def fake_download(_release, _root):
+        return None
+
+    seen: list[bool] = []
+
+    def fake_run_loader(force: bool):
+        seen.append(force)
+        return LoadSummary()
+
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.fetch_latest_release", fake_fetch)
+    monkeypatch.setattr("nightcrate.catalog_loader.remote.download_openngc", fake_download)
+    monkeypatch.setattr("nightcrate.api.admin._run_loader", fake_run_loader)
+
+    response = await client.post("/api/admin/catalogs/fetch-from-github")
+    assert response.status_code == 200
+    assert seen == [False]
+
+
+@pytest.mark.anyio
+async def test_reload_route_still_forces(client, tmp_path, monkeypatch):
+    from nightcrate.catalog_loader.loader import LoadSummary
+
+    db_path = str(tmp_path / "reload_force_db")
+    assert (
+        await client.post(
+            "/api/admin/database/setup", json={"path": db_path, "name": "Reload force"}
+        )
+    ).status_code == 200
+    seen: list[bool] = []
+
+    def fake_run_loader(force: bool):
+        seen.append(force)
+        return LoadSummary()
+
+    monkeypatch.setattr("nightcrate.api.admin._run_loader", fake_run_loader)
+    response = await client.post("/api/admin/catalogs/reload")
+    assert response.status_code == 200
+    assert seen == [True]
+
+
+@pytest.mark.anyio
+async def test_admin_reload_clears_planner_cache(client, tmp_path, monkeypatch):
+    from nightcrate.api import admin
+    from nightcrate.services import planner_visibility
+
+    db_path = str(tmp_path / "cache_clear_db")
+    assert (
+        await client.post(
+            "/api/admin/database/setup", json={"path": db_path, "name": "Cache clear"}
+        )
+    ).status_code == 200
+    cleared = 0
+
+    def fake_clear():
+        nonlocal cleared
+        cleared += 1
+
+    def fail_load(*_args, **_kwargs):
+        raise RuntimeError("injected")
+
+    monkeypatch.setattr(planner_visibility.default_cache, "clear", fake_clear)
+    monkeypatch.setattr("nightcrate.catalog_loader.load_catalogs", fail_load)
+    with pytest.raises(RuntimeError, match="injected"):
+        admin._run_loader(force=False)
+    assert cleared == 1
 
 
 # ---------------------------------------------------------------------------

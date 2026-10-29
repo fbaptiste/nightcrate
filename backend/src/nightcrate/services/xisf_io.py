@@ -18,6 +18,8 @@ import numpy as np
 import zstandard
 
 from nightcrate.services.fits_header_map import get_keyword_description
+from nightcrate.services.image_annotation_models import WcsParams
+from nightcrate.services.image_annotations import detect_wcs_from_cards, flip_wcs_rows
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 
 logger = logging.getLogger("nightcrate")
@@ -427,6 +429,46 @@ def read_header(source: Path | BinaryIO, hdu: int = 0) -> list[dict]:
     cards.extend(_astrometric_wcs_cards(img_elem, existing_keys))
 
     return cards
+
+
+def read_wcs_params(source: Path | BinaryIO, hdu: int = 0) -> WcsParams | None:
+    """Read an XISF WCS in the top-down row order used by displayed pixels.
+
+    PixInsight astrometric properties already use top-down image coordinates
+    and form one complete solution. FITS-keyword WCS instead uses FITS row
+    order and is flipped only when no astrometric property solution is present.
+    """
+    root, _ = _parse_xml_header(source)
+    images = list(root.iter(_tag("Image")))
+    if hdu < 0 or hdu >= len(images):
+        raise ValueError(f"Image index {hdu} out of range (file has {len(images)} images)")
+    img_elem = images[hdu]
+
+    geometry_cards: list[dict] = []
+    geom_parts = img_elem.get("geometry", "").split(":")
+    if len(geom_parts) >= 2:
+        geometry_cards = [
+            {"key": "NAXIS1", "value": geom_parts[0]},
+            {"key": "NAXIS2", "value": geom_parts[1]},
+        ]
+
+    property_cards = _astrometric_wcs_cards(img_elem, set())
+    property_params = detect_wcs_from_cards([*property_cards, *geometry_cards])
+    if property_params is not None:
+        return property_params
+
+    fits_cards = [
+        {
+            "key": kw.get("name", ""),
+            "value": kw.get("value", "").strip("'\""),
+        }
+        for kw in img_elem.iter(_tag("FITSKeyword"))
+    ]
+    # XISF geometry is the image's authoritative post-crop size. Appending it
+    # makes it win over stale FITS NAXIS cards when cards become a key/value map.
+    fits_cards.extend(geometry_cards)
+    params = detect_wcs_from_cards(fits_cards)
+    return flip_wcs_rows(params) if params is not None else None
 
 
 def list_extensions(source: Path | BinaryIO) -> list[dict]:

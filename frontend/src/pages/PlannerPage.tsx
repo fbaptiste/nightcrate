@@ -1010,6 +1010,8 @@ export default function PlannerPage() {
         selectedDate={selectedDate}
         rigs={rigsQuery.data ?? []}
         onSelectDso={(id) => setDetailId(id)}
+        isFavorite={favoriteIds?.has(detailId ?? -1)}
+        onToggleFavorite={handleToggleFavorite}
         onClose={() => setDetailId(null)}
       />
     </Box>

@@ -57,6 +57,7 @@ export interface CatalogSource {
 }
 
 export interface DsoDetail extends Omit<DsoListItem, "designations"> {
+  active: boolean;
   raw_obj_type: string | null;
   position_angle_deg: number | null;
   mag_j: number | null;

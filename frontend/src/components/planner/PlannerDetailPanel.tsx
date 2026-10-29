@@ -23,6 +23,8 @@ import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import StarIcon from "@mui/icons-material/Star";
+import StarBorderIcon from "@mui/icons-material/StarBorder";
 import {
   fetchAnnualHours,
   fetchSkyTrack,
@@ -47,6 +49,7 @@ import { ScoreChip } from "./ScoreChip";
 import SkyPositionView from "./SkyPositionView";
 import FovSimulator from "./FovSimulator";
 import { renderHorizonMenuItems } from "./horizonMenuItems";
+import { RIG_ORANGE } from "@/lib/rigColors";
 
 interface Props {
   dsoId: number | null;
@@ -74,6 +77,8 @@ interface Props {
    *  simulator's annotation popover's "Show details" button). The
    *  dialog stays open; rig / location selections persist. */
   onSelectDso?: (dsoId: number) => void;
+  isFavorite?: boolean;
+  onToggleFavorite?: (dsoId: number) => void;
   onClose: () => void;
 }
 
@@ -151,6 +156,8 @@ export default function PlannerDetailPanel({
   selectedDate,
   rigs,
   onSelectDso,
+  isFavorite,
+  onToggleFavorite,
   onClose,
 }: Props) {
   const detailTheme = useTheme();
@@ -341,6 +348,22 @@ export default function PlannerDetailPanel({
               moved to the fact grid below so the header stays focused
               on identifiers (name + cross-refs + type). */}
           <Stack direction="row" gap={1.5} alignItems="baseline" flexWrap="wrap">
+            {onToggleFavorite && dsoId != null && (
+              <IconButton
+                size="small"
+                onClick={() => onToggleFavorite(dsoId)}
+                // Unset when off: the dialog's paper is light enough that
+                // ``text.disabled`` all but disappears in dark mode.
+                sx={{
+                  alignSelf: "center",
+                  mx: -0.75,
+                  color: isFavorite ? RIG_ORANGE : undefined,
+                }}
+                aria-label={isFavorite ? "Remove from wishlist" : "Add to wishlist"}
+              >
+                {isFavorite ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
+              </IconButton>
+            )}
             <Typography variant="h6">{dso?.primary_designation ?? "…"}</Typography>
             {dso?.constellation && (
               <Typography variant="body2" color="text.secondary">
@@ -497,7 +520,7 @@ export default function PlannerDetailPanel({
             </Stack>
           )}
         </Stack>
-        <IconButton size="small" onClick={onClose}>
+        <IconButton size="small" onClick={onClose} aria-label="Close">
           <CloseIcon />
         </IconButton>
       </DialogTitle>
