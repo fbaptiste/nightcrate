@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.42.0
+**NightCrate version:** 0.43.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -871,7 +871,7 @@ In addition, the migration creates calibration-matching and integration **views*
 
 | Table | Purpose |
 |-------|---------|
-| `project_solve` (migration 0034) | One plate solve per project (`project_id` FK CASCADE `UNIQUE`) of a **standalone** non-gallery image. Stores `image_path`, `image_width`/`image_height`, the WCS solution (`center_ra_deg`/`center_dec_deg` = ASTAP CRVAL, full CD matrix, `crpix1`/`crpix2`) and display fields (`ra_hms`, `dec_dms`, `pixel_scale_arcsec`, `rotation_deg`, `fov_width_arcmin`, `fov_height_arcmin`), `solved_at`. View-only; delete to re-solve. Index on `project_id`. **Migration 0064** repairs saved solves of on-disk PNG/JPEG/TIFF files from ASTAP's bottom-up row order to NightCrate's top-down display order; archive/project virtual paths and FITS solves are unchanged. Corrected rotation is `degrees(atan2(-CD1_2, CD2_2))`. |
+| `project_solve` (migrations 0034, 0065) | One plate solve per project (`project_id` FK CASCADE `UNIQUE`) of a **standalone** non-gallery image. Stores `image_path`, dimensions, the WCS solution, display fields, and solver provenance (`solver`, `star_catalog`, detected/matched counts, `rms_px`, `log_odds`, `solve_path`, `scale_stage`). Existing rows default to `solver='astap'`; native-only metrics are nullable. `rms_arcsec` is derived from `rms_px × pixel_scale_arcsec`. View-only; delete to re-solve. **Migration 0064** repairs saved standard-image row order; corrected rotation is `degrees(atan2(-CD1_2, CD2_2))`. |
 | `project_dso` (migration 0034) | Catalog objects found in a solved frame. `solve_id` FK CASCADE, `dso_id` FK CASCADE, `is_main` (vestigial — v0.38.0 derives is_main from `project_target` instead; this column is no longer authoritative), `created_at`, `UNIQUE(solve_id, dso_id)`. **Every** in-FOV object is stored (not just mains) to power a future cross-project DSO search; one is auto-flagged main (nearest frame centre, tie-break largest). Deleting the solve cascades these rows. Indexes on `solve_id` and `dso_id`. |
 | `project_rig` (migration 0035, v0.38.0) | Multi-rig project association. `project_id` FK CASCADE, `rig_id` FK, PRIMARY KEY (both). Indexes on each column. Supports dual-rig projects. |
 | `project.location_id` (migration 0035, v0.38.0) | ALTER ADDed nullable `INTEGER REFERENCES location(id)` on `project`. No CASCADE: locations soft-delete; the row is preserved so references stay valid. |
@@ -939,3 +939,9 @@ rows. Nullable terms in a match view must use `IS`.
 |-----------|--------|
 | `0063.dso_source_key` | Adds `dso.source_key`, its partial unique source/key index, and `dso_catalog_source.keys_assigned` for stable catalog identity and the one-time legacy reconciliation pass. |
 | `0064.project_solve_row_order` | Python migration that flips `crpix2`, `cd1_2`, and `cd2_2` and recomputes rotation for saved on-disk PNG/JPEG/TIFF project solves. It excludes paths containing `::` and all other formats. |
+
+### v0.43.0 — Native Plate Solver (migration 0065)
+
+| Migration | Change |
+|-----------|--------|
+| `0065.project_solve_solver` | Adds solver provenance and nullable built-in-solver quality fields to `project_solve`; existing rows are marked `astap`. |

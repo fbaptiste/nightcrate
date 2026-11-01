@@ -362,12 +362,16 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 
 ## Plate solving
 
+**ASTAP**
+
 - Run ASTAP through `asyncio.create_subprocess_exec`; **never pass `-update`**.
   Direct outputs to a temporary directory with `-o` and read the `.ini` sidecar.
   Resolve macOS `.app` executables under `Contents/MacOS/`.
-- Convert archive/project images and XISF to temporary FITS, retaining focal
-  length, pixel size and coordinate hints. Ordinary supported files pass
-  directly. Use a fresh buffer for each header/dimension/image consumer.
+- Convert archive/project images, XISF, and FITS whose image is in an
+  extension (HDU > 0) to temporary FITS, retaining focal length, pixel size and
+  coordinate hints. Ordinary supported files pass directly. Use a fresh buffer
+  for each header/dimension/image consumer. Resolve, read and prepare the file
+  in worker threads, never on the event loop.
 - ASTAP returns bottom-up FITS row order when PNG, JPG/JPEG, or TIF/TIFF files
   are passed through unchanged. Flip `CRPIX2` and the second CD column before
   returning or storing those solves. Archive entries, XISF, and `.pxiproject`
@@ -376,11 +380,252 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   `degrees(atan2(-CD1_2, CD2_2))` for rotation. Unflipped results with CROTA2
   retain ASTAP's value. Migration 0064 applies the same correction and rotation
   rule to existing standard-image project solves.
-- Allow one solve (`Semaphore(1)`); check/acquire without an intervening await,
-  return 409 for concurrent requests, cancel only through the explicit endpoint.
-- Image Analyzer solves display results without persistence; project solves
-  persist WCS/object links. Keep these flows distinct. Reference-image mode
-  requires matching dimensions; rig/equipment/manual hints supply scale/FOV.
+- ASTAP runs as a step chain under one 180-second deadline that includes file
+  preparation:
+  - **Near step:** used only when a position is known; `-r 30` and a
+    timeout of the smaller of 60 seconds and the remaining time.
+  - **Whole-sky step:** `-r 180`. It runs after `no_match` or a step
+    timeout, and directly when there is no position.
+  - **Field (`-fov`):** the pixel scale × the height of the file ASTAP reads,
+    not the sensor's. With no scale, `-fov 0`.
+  - **Stopping:** `too_few_stars`, `cancelled`, `error` and the overall time
+    limit end the chain.
+  - **Retries:** the old `-speed slow` retry is gone; the chain solved 130 of
+    143 corpus images against 123.
+  - **Results:** the result's `failure_reason` uses the built-in solver's
+    vocabulary (`no_match`, `time_limit`, `cancelled`, `too_few_stars`,
+    `error`). A result counts as solved only when its WCS is complete:
+    CRVAL, CRPIX and all four CD values.
+- An ASTAP command-line run with `-fov 0` rewrites the user's `astap.cfg`
+  (search field, radius, position, last file), and later runs and the user's
+  ASTAP GUI then use those values.
+  - Every ASTAP subprocess runs with `HOME` and `XDG_CONFIG_HOME` pointing at a
+    fresh temporary folder that holds a copy of the user's `astap.cfg`, so
+    their settings apply and are never written. This is verified on macOS.
+  - On Windows (`%LOCALAPPDATA%\astap\astap.cfg`, unverified), ASTAP may
+    ignore the redirected variables. A guard restores the user's file if a
+    solve changed it.
+  - Run hand experiments the same way, with a private `HOME`.
+
+**Built-in star data and field ranges**
+
+- The source is the pinned Siril Astrometry Catalogue extracted from Gaia DR3,
+  including its sizes and SHA-256 checksums; keep the authority in
+  `services/star_catalog/store.py`. Under `APP_DIR/star_catalogs/`, the catalog
+  and `version.json` live in `siril-astro-gaia-dr3-1.0.0/`, layer files live at
+  `indexes/<layer>.ncidx`, the range manifest is `indexes/ranges.json`, and
+  in-progress work lives in `.staging/`.
+- Download and import only when the catalog is not installed. Downloads stream
+  to disk and resume only from a validated byte range. Claiming the single
+  star-data operation removes stale staging left by a crashed operation.
+  Publish the catalog first and write `version.json` last; its presence is the
+  installed marker. An import never reads from inside `star_root()`: check
+  containment by filesystem identity, not path spelling (macOS is
+  case-insensitive), and reject hard links to the staging destinations. The
+  import opens its destination for writing, so an alias would truncate the
+  source.
+- Store one index file per layer, not per user-facing range. `ranges.json`
+  records the ranges the user owns; a layer remains while any remaining
+  manifest entry names it. Each layer build runs in one fresh child process and
+  keeps all temporary files in its parent-owned staging directory. Never hold
+  a file per partition open: a process started from a macOS terminal may open
+  only 256 files, while agent shells often allow far more, so a limit failure
+  shows only on users' machines. Tests that guard this lower the limit
+  themselves. Publish
+  layers and the manifest under the solve slot, after `handles.close_all()`, so
+  no mapped file is replaced under a reader.
+- Build requested ranges one at a time in `FIELD_RANGES` order (Standard
+  first), and publish each as soon as its layers are ready, so Standard is
+  usable while Narrow fields builds. Weight a range's progress by its layers'
+  `estimated_bytes`; build time tracks size (about 16 MB/s per layer). A
+  cancel or failure keeps ranges already published. `/status` reports the
+  current range as `building`, and requested ranges not yet started as
+  `waiting`, each with its own progress.
+- Offer two user-facing index choices: recommended **Standard** covers 0.4°–10°
+  with q008 through q256, while optional **Narrow fields** covers 0.2°–0.4°
+  with q004. Neighbouring layers overlap, and a field near a layer's lower edge
+  needs the next smaller layer, so exposing each layer as a separate field range
+  would leave gaps near the boundaries.
+
+**Built-in solve**
+
+- Quads and verification use one saturation-inclusive detection population.
+  - Rejecting stars with clipped cores removed every bright star from
+    stretched finals. Verification compares detections with the brightest
+    catalog stars, so the true pose of the NA Nebula final scored log-odds
+    −208.
+  - With the clipped stars kept, it solves in 0.35 s.
+  - The corpus and the false-match trials were unchanged.
+- Acceptance settings are fixed. Every index search uses `BlindSolverConfig`:
+  at least 12 matches, at most 0.2° axis non-orthogonality, and code tolerance
+  0.010. The catalog-only position search uses `SolverConfig`: 10 matches and
+  3° axis non-orthogonality. Both require `log_odds_threshold = ln(1e18)` and
+  three quadrants. Do not loosen any of these values without Fred's decision.
+- An early-stopped ambiguity scan is never a solve. If deadline or cancellation
+  arrives after a first acceptance but before ambiguity checking finishes,
+  return `time_limit` or `cancelled` with no WCS.
+- Keep the measured solve order:
+  - position and scale: search the index near the position when that field range
+    is built, otherwise use the catalog-only position search; if it misses, run
+    blind scale-known and then blind unknown-scale;
+  - position without scale: run blind unknown-scale, then the catalog-only
+    position search if blind misses or cannot run;
+  - no position: run blind only, scale-known first when a scale is available,
+    then unknown-scale.
+
+  Blind steps require at least one built layer. `ambiguous` and `cancelled` stop
+  the sequence.
+- Budgets are 20 seconds for a near/catalog step, 10 seconds for blind
+  scale-known, 30 seconds for blind unknown-scale, and 60 seconds overall
+  including image loading. A step receives the smaller of its budget and the
+  remaining overall time. Index steps need 12 detections; catalog-only needs 10.
+  Report `too_few_stars` only when the image is below every step that could run.
+- When all attempted steps miss, outcome precedence is `field_not_built`, then
+  `time_limit` if any search hit its deadline, then `no_match` when all searches
+  exhausted their candidates.
+- The native solve runs in a worker thread, but that thread retains the single
+  solve slot until it actually stops, including after cancellation or request
+  teardown. An ASTAP solve is owned the same way:
+  - it runs as a task;
+  - a cancel or shutdown sets its stop flag and kills the process;
+  - no new step starts after the stop, and the flag is checked again
+    once a new process exists, since a cancel during the launch has no
+    process to kill;
+  - the slot is released only when the task has ended, so the temporary
+    directory outlives the worker.
+
+  Native solving and star-catalog work are numpy-only and never use the GPU
+  backend.
+- Solver output uses top-down rows exactly as `pixel_loader` returns them,
+  1-based `CRPIX` at `((width + 1) / 2, (height + 1) / 2)`, and CD in degrees
+  per pixel. Compute rotation through the shared `rotation_from_cd` rule,
+  `degrees(atan2(-CD1_2, CD2_2))`, without normalizing it.
+
+**Results and display**
+
+- Migration 0065 adds `solver` and the native metrics to `project_solve`:
+  catalog, detected/matched stars, pixel RMS, log odds, solve path and scale
+  stage. Existing rows are `solver = 'astap'`; ASTAP leaves the native metrics
+  null.
+- Image Analyzer solves are shown without persistence ("Shown here only. The
+  file isn't changed."). A solved WCS always overrides the header's in
+  annotations, and the annotation query key fingerprints the complete WCS.
+  Project solves persist the WCS and object links. Keep these flows distinct.
+
+**Hints**
+
+- The scale hint is a pixel scale, `scale_hint_arcsec` (″/px), never a field
+  height. A field computed from the full sensor was 14% wrong for a cropped
+  final, and ASTAP's position search failed with it.
+- **Precedence:** the request's scale, then the deprecated `fov_hint`, then
+  the header (`YPIXSZ`, falling back to `XPIXSZ`, with `FOCALLEN`). Header
+  pixel sizes already include binning.
+- **Sending hints:**
+  - while the user keeps the header choice, the client sends no scale or
+    position, so the backend's header rule is the only one;
+  - `position: "none"` and `scale: "none"` ignore the header explicitly;
+  - rig and manual entries compute physical pixel × binning ÷ focal length.
+- **Validation:** RA/Dec only as a finite, in-range pair; scales finite and
+  > 0.
+
+**Solve operations**
+
+- **Identity.** Each solve has a client-generated `operation_id` (UUID),
+  required on solve, cancel and progress requests. A request without one,
+  and a request with an unknown field such as the removed `mode`, gets 422.
+- **Cancel** touches only its own ID.
+  - A cancel for an ID that hasn't started yet is kept (at most 64, for
+    10 minutes). It is checked when the solve claims the slot and again
+    before a project commit.
+  - Used IDs can't be reused; the last 1,024 are remembered.
+- **Progress** returns the finished attempts, the active step, the planned
+  steps and the elapsed time. The UI never infers steps from time or text.
+- **Lifetime.** The endpoint owns the operation through rendering and
+  saving, not just the solver.
+  - `begin_commit()` checks for a cancel and closes the cancel window in one
+    locked step. A cancel after that returns `cancelled: false`, and the save
+    completes.
+  - The solve slot is shared with star-data publication.
+
+**Project solves**
+
+- **Replace after success.** A replacement (`replace: true`) and a first
+  solve both render into `solve/.staging-<operation id>/`. Then, under the
+  per-project lock, in one transaction:
+  - re-check for a cancel;
+  - delete the old row (its objects cascade);
+  - insert the new row and its objects;
+  - remove any leftover folder for a reused row ID;
+  - rename the staging folder to `solve/<new id>/`;
+  - commit.
+- **Failures and cleanup.**
+  - Any failure before the commit, including a failed commit, removes the
+    new folders and leaves the old row and images untouched.
+  - After the commit, only the old generation and legacy top-level images
+    are removed, while the lock and slot are still held.
+  - Delete sweeps stray folders.
+  - A render failure saves nothing.
+- **Images.** The image route serves the current row's generation, falling
+  back to the legacy `solve/<variant>.jpg`. Image URLs carry `?_v=<solve id>`;
+  `solved_at` has one-second precision.
+- **Main targets** live in `project_target` and survive a replacement.
+- **HDU.** A project solve takes HDU 0 only. A FITS whose image is in an
+  extension gets a 422 that points to the Image Analyzer.
+- **422 detail.** Every application-level 422 is
+  `{message, failure_reason, attempts}`. Besides the solver's own reasons,
+  the reasons include `read_error`, `invalid_configuration`, `render_failed`,
+  `invalid_wcs` and `invalid_image`.
+
+**Preview route**
+
+- `GET /api/images/preview?path=&hdu=&max_px=` returns a JPEG of the chosen
+  image before any solve, for any path `path_resolver` handles.
+- **It must look like the project's rendered image.**
+  - PNG, JPEG and 8- or 16-bit TIFF are shown as they are.
+  - FITS, XISF, float TIFF and project images are normalized by data type
+    (`normalize_to_01`; FITS uses the type implied by `BITPIX`/`BSCALE`/`BZERO`).
+    They are then stretched only when `resolve_auto_stretch`'s linear test
+    says so.
+  - This is mirrored in numpy, because the preview runs in concurrent
+    threads. A single always-on stretch over-brightened processed finals.
+- **Memory.** FITS samples a stride of the memory map before scaling;
+  standard images use PIL's reduced decoding; full-decode formats run one at
+  a time. A 540 MB XISF final peaked at 2.7 GB, against 5 GB for the
+  project render.
+- **Caching.** Only encoded JPEGs are cached, within 32 MB, keyed by a stat
+  identity taken before decoding:
+  - plain files: path, size and mtime;
+  - archive entries: the archive's identity plus the member name;
+  - project images: the manifest's identity, the image index and the backing
+    file's identity.
+
+  Responses carry an ETag with `Cache-Control: no-cache`.
+
+**Solve UI**
+
+- **The panel.** One inline `PlateSolvePanel` sits beside the image: in the
+  project tab, and in the Image Analyzer's Identify sidebar.
+  - Solving is never modal.
+  - The old dialog was removed (Fred, 2026-10-30), together with "From
+    Reference Image" and the equipment scale picker.
+- **Requests.**
+  - Each request's token is bound to its image and HDU; late results,
+    progress and callbacks are dropped.
+  - Leaving a page, changing the image or hiding the Analyzer route cancels
+    the solve. Persistent routes stay mounted with `display: none`.
+  - A stale project response refetches the saved solve rather than trusting
+    the response.
+- **Mount guards under StrictMode.** A hook that clears a mounted flag in an
+  effect cleanup must set it again in the effect's setup. Otherwise
+  StrictMode's mount → cleanup → mount leaves it false, and every result is
+  treated as stale.
+- **Setup round trip.** Applied hints and the solver survive a trip to setup
+  through a session snapshot and `?tab=plate-solve&solve=&hdu=`. Setup links
+  carry `?returnTo=`, which is accepted only as a same-origin app path (no
+  `//`, no scheme, no backslash). Admin scrolls to `#plate-solving-stars`.
+- **Failure reasons.** Both solvers share one list: a cancel, a time limit,
+  or an error or read error offers "Try again"; other failures offer
+  "Change hints" and the other solver.
 
 ## Weather: personal imaging verdict
 

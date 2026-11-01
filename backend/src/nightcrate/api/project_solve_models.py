@@ -2,20 +2,44 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nightcrate.services.image_annotation_models import WcsParams
+from nightcrate.services.plate_solve_models import SolveAttempt, check_solve_hints
 
 
 class ProjectSolveRequest(BaseModel):
     """Solve a standalone image for a project. Header coordinate hints are
     used automatically; ra/dec/fov hints are optional manual overrides."""
 
+    model_config = ConfigDict(extra="forbid")
+
     image_path: str
-    hdu: int = 0
+    hdu: int = Field(default=0, ge=0, le=0)
+    operation_id: UUID
+    replace: bool = False
     ra_hint: float | None = None
     dec_hint: float | None = None
-    fov_hint: float | None = None
+    fov_hint: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    scale_hint_arcsec: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    position: Literal["auto", "none"] = "auto"
+    scale: Literal["auto", "none"] = "auto"
+    solver: Literal["native", "astap"] | None = None
+
+    @model_validator(mode="after")
+    def validate_hints(self) -> ProjectSolveRequest:
+        check_solve_hints(
+            ra_hint=self.ra_hint,
+            dec_hint=self.dec_hint,
+            fov_hint=self.fov_hint,
+            scale_hint_arcsec=self.scale_hint_arcsec,
+            position=self.position,
+            scale=self.scale,
+        )
+        return self
 
 
 class SetMainRequest(BaseModel):
@@ -62,5 +86,15 @@ class ProjectSolveResponse(BaseModel):
     fov_width_arcmin: float | None
     fov_height_arcmin: float | None
     solved_at: str
+    solver: Literal["native", "astap"]
+    star_catalog: str | None = None
+    stars_detected: int | None = None
+    stars_matched: int | None = None
+    rms_px: float | None = None
+    rms_arcsec: float | None = None
+    log_odds: float | None = None
+    solve_path: Literal["near_index", "near_catalog", "blind"] | None = None
+    scale_stage: str | None = None
+    attempts: list[SolveAttempt] = Field(default_factory=list)
     wcs: WcsParams
     objects: list[IdentifiedDso]

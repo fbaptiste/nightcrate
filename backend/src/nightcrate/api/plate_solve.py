@@ -1,14 +1,16 @@
 """Plate solving API — ASTAP integration + image annotation endpoints."""
 
-import asyncio
 import logging
 import math
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from nightcrate.api._common import row_to_dict
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
+from nightcrate.services import solve_operations
 from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.image_annotation_models import (
     ImageAnnotationResult,
@@ -22,11 +24,9 @@ from nightcrate.services.image_annotations import (
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import (
     cards_to_dict,
-    get_image_dimensions,
-    get_solve_progress,
     read_header_cards,
     read_wcs_params,
-    run_plate_solve,
+    run_solve,
     validate_astap_path,
 )
 from nightcrate.services.plate_solve_models import PlateSolveRequest, PlateSolveResult
@@ -36,73 +36,68 @@ logger = logging.getLogger("nightcrate")
 router = APIRouter(prefix="/api/plate-solve", tags=["Plate Solve"])
 
 
-@router.post("/validate-reference-image")
-async def validate_reference_image(
-    current_path: str = Query(...),
-    current_hdu: int = Query(0),
-    reference_path: str = Query(...),
-) -> dict:
-    """Validate that a reference image matches the current image dimensions."""
-    try:
-        cw, ch = await asyncio.to_thread(get_image_dimensions, current_path, current_hdu)
-    except ValueError as exc:
-        return {"valid": False, "error": f"Current image: {exc}"}
-    except Exception as exc:
-        return {"valid": False, "error": f"Failed to read current image: {exc}"}
-    try:
-        sw, sh = await asyncio.to_thread(get_image_dimensions, reference_path, 0)
-    except ValueError as exc:
-        return {"valid": False, "error": f"Reference image: {exc}"}
-    except Exception as exc:
-        return {"valid": False, "error": f"Failed to read reference image: {exc}"}
-
-    if cw is None or ch is None:
-        return {"valid": False, "error": "Cannot determine current image dimensions"}
-    if sw is None or sh is None:
-        return {"valid": False, "error": "Cannot determine reference image dimensions"}
-    if cw != sw or ch != sh:
-        return {
-            "valid": False,
-            "error": (
-                f"Dimension mismatch: current image is {cw}×{ch}, reference image is {sw}×{sh}"
-            ),
-        }
-    return {"valid": True, "width": cw, "height": ch}
+class CancelSolveRequest(BaseModel):
+    operation_id: UUID
 
 
 @router.post("/solve")
 async def solve(request: PlateSolveRequest) -> PlateSolveResult:
-    """Plate solve an image via ASTAP."""
+    """Plate solve an image with the selected solver."""
     logger.info(
-        "[plate-solve] solve request: path=%r mode=%r hdu=%d",
+        "[plate-solve] solve request: path=%r hdu=%d",
         request.image_path,
-        request.mode,
         request.hdu,
     )
     settings = await get_settings()
-    if not settings.astap_executable_path:
+    solver = request.solver or settings.default_solver
+    if solver == "astap" and not settings.astap_executable_path:
         raise HTTPException(
             status_code=422,
             detail="ASTAP executable path is not configured. Set it in Settings.",
         )
 
-    validation = validate_astap_path(settings.astap_executable_path)
-    if not validation["valid"]:
-        raise HTTPException(
-            status_code=422,
-            detail=f"ASTAP path is invalid: {validation['error']}",
-        )
+    if solver == "astap":
+        validation = validate_astap_path(settings.astap_executable_path)
+        if not validation["valid"]:
+            raise HTTPException(
+                status_code=422,
+                detail=f"ASTAP path is invalid: {validation['error']}",
+            )
 
     try:
-        return await run_plate_solve(
+        operation = solve_operations.claim(request.operation_id, solver)
+    except solve_operations.SolveCancelled:
+        return PlateSolveResult(
+            solved=False,
+            solver=solver,
+            error_message="Plate solve cancelled.",
+            failure_reason="cancelled",
+        )
+    except solve_operations.SolveBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        operation.checkpoint()
+        return await run_solve(
+            solver=solver,
             astap_path=settings.astap_executable_path,
             image_path=request.image_path,
             hdu=request.hdu,
-            mode=request.mode,
             ra_hint=request.ra_hint,
             dec_hint=request.dec_hint,
             fov_hint=request.fov_hint,
+            scale_hint_arcsec=request.scale_hint_arcsec,
+            ignore_position=request.position == "none",
+            ignore_scale=request.scale == "none",
             timeout=request.timeout,
+            operation=operation,
+        )
+    except solve_operations.SolveCancelled:
+        return PlateSolveResult(
+            solved=False,
+            solver=solver,
+            error_message="Plate solve cancelled.",
+            failure_reason="cancelled",
+            attempts=operation.attempts(),
         )
     except FileNotFoundError as exc:
         # A referenced source file wasn't reachable — usually a disconnected
@@ -120,6 +115,8 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
     except Exception as exc:
         logger.exception("[plate-solve] unexpected error for %s", request.image_path)
         raise HTTPException(status_code=500, detail="Internal plate solve error") from exc
+    finally:
+        solve_operations.release(operation)
 
 
 @router.post("/validate-path")
@@ -131,18 +128,19 @@ async def validate_path(
 
 
 @router.get("/progress")
-async def progress() -> dict:
-    """Return the current plate solve progress message."""
-    return {"message": get_solve_progress()}
+async def progress(operation_id: UUID = Query(...)) -> dict:
+    """Return structured progress for one operation."""
+    progress_snapshot = solve_operations.snapshot(operation_id)
+    if progress_snapshot is None:
+        raise HTTPException(status_code=404, detail="Unknown plate solve operation.")
+    return progress_snapshot.model_dump(mode="json")
 
 
 @router.post("/cancel")
-async def cancel() -> dict:
-    """Cancel a running plate solve."""
-    from nightcrate.services.plate_solve import cancel_solve
-
-    cancelled = cancel_solve()
-    return {"cancelled": cancelled}
+async def cancel(request: CancelSolveRequest) -> dict:
+    """Cancel one identified operation."""
+    result = solve_operations.cancel(request.operation_id)
+    return result.model_dump()
 
 
 @router.get("/detect-wcs")

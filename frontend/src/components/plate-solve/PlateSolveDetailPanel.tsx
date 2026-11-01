@@ -7,7 +7,12 @@ import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import type { AnnotatedDso, ImageAnnotationResult, WcsParams } from "@/api/plateSolve";
+import type {
+  AnnotatedDso,
+  ImageAnnotationResult,
+  PlateSolveResult,
+  WcsParams,
+} from "@/api/plateSolve";
 import { fetchDso } from "@/api/dsos";
 import { formatDistance } from "@/lib/distanceFormat";
 import { SidebarSection } from "@/components/SidebarSection";
@@ -18,6 +23,10 @@ interface Props {
   dso: AnnotatedDso | null;
   annotationResult: ImageAnnotationResult | null;
   wcs: WcsParams | null | undefined;
+  solveResult: PlateSolveResult | null;
+  hasHeaderSolution: boolean;
+  onSolveAgain: () => void;
+  onUseHeaderSolution: () => void;
 }
 
 const gridSx = {
@@ -33,12 +42,32 @@ const gridSx = {
 
 const labelCellSx = { fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", whiteSpace: "nowrap" } as const;
 const valueCellSx = { fontSize: "inherit", fontFamily: "inherit" } as const;
+const skyGridSx = {
+  ...gridSx,
+  fontSize: 13,
+  rowGap: 0.5,
+} as const;
 
-export function PlateSolveDetailPanel({ dso, annotationResult, wcs }: Props) {
+export function PlateSolveDetailPanel({
+  dso,
+  annotationResult,
+  wcs,
+  solveResult,
+  hasHeaderSolution,
+  onSolveAgain,
+  onUseHeaderSolution,
+}: Props) {
   return (
     <>
       {(annotationResult || wcs) && (
-        <AstrometricSolutionSection result={annotationResult} wcs={wcs ?? undefined} />
+        <AstrometricSolutionSection
+          result={annotationResult}
+          wcs={wcs ?? undefined}
+          solveResult={solveResult}
+          hasHeaderSolution={hasHeaderSolution}
+          onSolveAgain={onSolveAgain}
+          onUseHeaderSolution={onUseHeaderSolution}
+        />
       )}
       {dso ? <DsoDetailSection dso={dso} /> : (
         <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, py: 1.5, fontSize: "0.65rem", display: "block" }}>
@@ -59,8 +88,31 @@ function GridRow({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function SkyGridRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <>
+      <Typography sx={{ ...labelCellSx, fontSize: 12 }}>{label}</Typography>
+      <Typography sx={{ ...valueCellSx, fontSize: 13 }}>{value}</Typography>
+    </>
+  );
+}
 
-function AstrometricSolutionSection({ result, wcs }: { result: ImageAnnotationResult | null; wcs?: WcsParams }) {
+
+function AstrometricSolutionSection({
+  result,
+  wcs,
+  solveResult,
+  hasHeaderSolution,
+  onSolveAgain,
+  onUseHeaderSolution,
+}: {
+  result: ImageAnnotationResult | null;
+  wcs?: WcsParams;
+  solveResult: PlateSolveResult | null;
+  hasHeaderSolution: boolean;
+  onSolveAgain: () => void;
+  onUseHeaderSolution: () => void;
+}) {
   const centerRa = result?.center_ra_deg ?? (wcs ? wcs.crval1 : 0);
   const centerDec = result?.center_dec_deg ?? (wcs ? wcs.crval2 : 0);
   const pixelScale = result?.pixel_scale_arcsec ?? (wcs ? Math.sqrt(wcs.cd2_1 ** 2 + wcs.cd2_2 ** 2) * 3600 : null);
@@ -79,17 +131,43 @@ function AstrometricSolutionSection({ result, wcs }: { result: ImageAnnotationRe
   const decSec = ((decAbs - decDeg) * 60 - decMin) * 60;
   const decSign = centerDec >= 0 ? "+" : "-";
 
+  const fieldWidth = result?.fov_width_arcmin ?? (pixelScale != null && naxis1 != null ? pixelScale * naxis1 / 60 : null);
+  const fieldHeight = result?.fov_height_arcmin ?? (pixelScale != null && naxis2 != null ? pixelScale * naxis2 / 60 : null);
+  const field = fieldWidth != null && fieldHeight != null
+    ? fieldWidth >= 60 || fieldHeight >= 60
+      ? `${(fieldWidth / 60).toFixed(2)}° × ${(fieldHeight / 60).toFixed(2)}°`
+      : `${fieldWidth.toFixed(1)}′ × ${fieldHeight.toFixed(1)}′`
+    : null;
+  const source = solveResult?.solver === "native"
+    ? "From a built-in solve."
+    : solveResult?.solver === "astap"
+      ? "From an ASTAP solve."
+      : "From the image header.";
+
   return (
-    <SidebarSection label="Astrometric Solution">
-      <Box sx={gridSx}>
-        <GridRow label="Center RA" value={`${String(raHours).padStart(2, "0")}h ${String(raMin).padStart(2, "0")}m ${raSec.toFixed(1)}s`} />
-        <GridRow label="Center Dec" value={`${decSign}${String(decDeg).padStart(2, "0")}° ${String(decMin).padStart(2, "0")}′ ${decSec.toFixed(1)}″`} />
-        {pixelScale != null && <GridRow label="Pixel scale" value={`${pixelScale.toFixed(3)} ″/px`} />}
-        {rotation != null && <GridRow label="Rotation" value={`${rotation.toFixed(2)}°`} />}
-        {result && <GridRow label="FOV" value={`${result.fov_width_arcmin.toFixed(1)}′ × ${result.fov_height_arcmin.toFixed(1)}′`} />}
-        {naxis1 != null && naxis2 != null && <GridRow label="Image" value={`${naxis1} × ${naxis2} px`} />}
-        {result && <GridRow label="Objects" value={`${result.dsos.length}`} />}
+    <SidebarSection label="Sky position">
+      <Typography sx={{ px: 1.5, pt: 0.75, fontSize: 13 }}>{source}</Typography>
+      {solveResult && (
+        <Typography color="text.secondary" sx={{ px: 1.5, pt: 0.5, fontSize: 13 }}>
+          Shown here only. The file isn't changed.
+        </Typography>
+      )}
+      <Box sx={skyGridSx}>
+        <SkyGridRow label="Centre" value={<>{`${String(raHours).padStart(2, "0")}h ${String(raMin).padStart(2, "0")}m ${raSec.toFixed(1)}s`}<br />{`${decSign}${String(decDeg).padStart(2, "0")}° ${String(decMin).padStart(2, "0")}′ ${decSec.toFixed(1)}″`}</>} />
+        {pixelScale != null && <SkyGridRow label="Pixel scale" value={`${pixelScale.toFixed(3)} ″/px`} />}
+        {rotation != null && <SkyGridRow label="Rotation" value={`${rotation.toFixed(2)}°`} />}
+        {field && <SkyGridRow label="Field" value={field} />}
       </Box>
+      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ px: 1.5, pb: 1 }}>
+        <Button variant="outlined" onClick={onSolveAgain} sx={{ minHeight: 40, textTransform: "none", fontSize: 13 }}>
+          Solve again
+        </Button>
+        {solveResult && hasHeaderSolution && (
+          <Button variant="text" onClick={onUseHeaderSolution} sx={{ minHeight: 40, textTransform: "none", fontSize: 13 }}>
+            Use the image-header solution
+          </Button>
+        )}
+      </Stack>
     </SidebarSection>
   );
 }

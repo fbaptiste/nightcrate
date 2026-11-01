@@ -65,6 +65,7 @@ export interface Settings {
   phd2_help_expanded: Record<string, boolean>;
   phd2_recurrence_mode: "boundary_skip" | "verbatim";
   astap_executable_path: string | null;
+  default_solver: "native" | "astap";
   // ─── Target Planner UI state (v0.34.0) ──────────────────────
   planner_selected_location_id: number | null;
   planner_selected_horizon_id: number | null;

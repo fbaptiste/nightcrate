@@ -11,6 +11,7 @@ import asyncio
 import logging
 import math
 import shutil
+from collections.abc import Awaitable
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -27,10 +28,12 @@ from nightcrate.api.project_solve_models import (
 from nightcrate.core.app_config import get_projects_root
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
+from nightcrate.services import fits_io, solve_operations
 from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.image_annotation_models import WcsParams
 from nightcrate.services.image_annotations import compute_fov, project_dsos
-from nightcrate.services.plate_solve import run_plate_solve, validate_astap_path
+from nightcrate.services.path_resolver import resolve_path
+from nightcrate.services.plate_solve import run_solve, validate_astap_path
 from nightcrate.services.project_images import VARIANT_SIZES, generate_rendered_images
 
 logger = logging.getLogger("nightcrate")
@@ -38,6 +41,7 @@ logger = logging.getLogger("nightcrate")
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 _VALID_VARIANTS = set(VARIANT_SIZES.keys())
+_project_solve_locks: dict[int, asyncio.Lock] = {}
 
 _DSO_COLUMNS = (
     "d.active, d.primary_designation, d.obj_type, d.ra_deg, d.dec_deg,"
@@ -51,6 +55,97 @@ def _solve_dir(project_id: int) -> Path:
     if root is None:
         raise HTTPException(status_code=503, detail="No database configured")
     return root / str(project_id) / "solve"
+
+
+def _staging_dir(project_id: int, operation_id) -> Path:
+    return _solve_dir(project_id) / f".staging-{operation_id}"
+
+
+def _failure_detail(message: str, failure_reason: str | None, attempts) -> dict:
+    return {
+        "message": message,
+        "failure_reason": failure_reason,
+        "attempts": [attempt.model_dump(mode="json") for attempt in attempts],
+    }
+
+
+def _ensure_primary_fits_image(image_path: str) -> None:
+    """Reject an existing FITS whose primary HDU has no image data."""
+    left = Path(image_path.rsplit("::", 1)[0])
+    if not left.exists():
+        return
+    source, file_type, _image_index, _cache_key = resolve_path(image_path)
+    if file_type != "fits":
+        return
+    try:
+        extensions = fits_io.list_extensions(source)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=_failure_detail(
+                f"NightCrate couldn't read this file: {exc}", "invalid_image", []
+            ),
+        ) from exc
+    if not extensions or not extensions[0]["has_image"]:
+        raise HTTPException(
+            status_code=422,
+            detail=_failure_detail(
+                "This file's image isn't in its primary extension. "
+                "Open it in the Image Analyzer to solve it.",
+                "invalid_image",
+                [],
+            ),
+        )
+
+
+async def _finish_awaitable[T](awaitable: Awaitable[T]) -> tuple[T, bool]:
+    """Finish an already-started worker operation despite request cancellation."""
+    task = asyncio.ensure_future(awaitable)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    return task.result(), cancelled
+
+
+async def _render_to_staging(image_path: str, staging: Path) -> None:
+    """Keep request cancellation from outliving the render worker."""
+    _, cancelled = await _finish_awaitable(
+        asyncio.to_thread(generate_rendered_images, image_path, staging)
+    )
+    if cancelled:
+        raise asyncio.CancelledError
+
+
+def _cleanup_generations(solve_dir: Path, old_id: int | None, staging: Path) -> None:
+    """Remove only the image paths made obsolete by one publication."""
+    try:
+        for path in solve_dir.glob("*.jpg"):
+            try:
+                path.unlink()
+            except OSError:
+                logger.warning("[project-solve] failed to remove legacy image %s", path)
+        if old_id is not None:
+            old_generation = solve_dir / str(old_id)
+            try:
+                shutil.rmtree(old_generation)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.warning(
+                    "[project-solve] failed to remove obsolete generation %s",
+                    old_generation,
+                )
+        try:
+            shutil.rmtree(staging)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("[project-solve] failed to remove staging directory %s", staging)
+    except OSError:
+        logger.warning("[project-solve] failed to scan solve generations in %s", solve_dir)
 
 
 def _wcs_from_solve(row: dict) -> WcsParams:
@@ -146,20 +241,41 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
         fov_width_arcmin=solve["fov_width_arcmin"],
         fov_height_arcmin=solve["fov_height_arcmin"],
         solved_at=solve["solved_at"],
+        solver=solve["solver"],
+        star_catalog=solve["star_catalog"],
+        stars_detected=solve["stars_detected"],
+        stars_matched=solve["stars_matched"],
+        rms_px=solve["rms_px"],
+        rms_arcsec=(
+            solve["rms_px"] * solve["pixel_scale_arcsec"]
+            if solve["rms_px"] is not None and solve["pixel_scale_arcsec"] is not None
+            else None
+        ),
+        log_odds=solve["log_odds"],
+        solve_path=solve["solve_path"],
+        scale_stage=solve["scale_stage"],
         wcs=wcs,
         objects=objects,
     )
 
 
-async def _require_response(conn, project_id: int) -> ProjectSolveResponse:
+async def _require_response(conn, project_id: int, *, attempts=None) -> ProjectSolveResponse:
     response = await _assemble_response(conn, project_id)
     if response is None:
         raise HTTPException(status_code=500, detail="Plate solve state could not be assembled")
+    if attempts is not None:
+        response.attempts = list(attempts)
     return response
 
 
-@router.post("/{project_id}/solve")
-async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSolveResponse:
+async def _create_solve_claimed(
+    project_id: int,
+    body: ProjectSolveRequest,
+    *,
+    settings,
+    solver,
+    operation: solve_operations.SolveOperation,
+) -> ProjectSolveResponse:
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
 
@@ -168,43 +284,47 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
         cursor = await conn.execute(
             "SELECT id FROM project_solve WHERE project_id = ?", (project_id,)
         )
-        if await cursor.fetchone() is not None:
+        if await cursor.fetchone() is not None and not body.replace:
             raise HTTPException(
                 status_code=409,
                 detail="A plate solve already exists for this project. Delete it first.",
             )
 
-        settings = await get_settings()
-        if not settings.astap_executable_path:
-            raise HTTPException(
-                status_code=422,
-                detail="ASTAP executable path is not configured. Set it in Settings.",
-            )
-        validation = validate_astap_path(settings.astap_executable_path)
-        if not validation["valid"]:
-            raise HTTPException(
-                status_code=422, detail=f"ASTAP path is invalid: {validation['error']}"
-            )
+        await asyncio.to_thread(_ensure_primary_fits_image, body.image_path)
 
         try:
-            result = await run_plate_solve(
+            operation.checkpoint()
+            result = await run_solve(
+                solver=solver,
                 astap_path=settings.astap_executable_path,
                 image_path=body.image_path,
                 hdu=body.hdu,
-                mode="auto",
                 ra_hint=body.ra_hint,
                 dec_hint=body.dec_hint,
                 fov_hint=body.fov_hint,
+                scale_hint_arcsec=body.scale_hint_arcsec,
+                ignore_position=body.position == "none",
+                ignore_scale=body.scale == "none",
+                operation=operation,
             )
         except FileNotFoundError as exc:
             # A referenced source file (e.g. a pxiproject's master on another
             # drive) wasn't reachable — usually a disconnected drive, not a bug.
             raise HTTPException(
                 status_code=422,
-                detail=f"{exc} — is the source file's drive connected?",
+                detail=_failure_detail(
+                    f"{exc} — is the source file's drive connected?",
+                    "read_error",
+                    operation.attempts(),
+                ),
             ) from exc
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=422,
+                detail=_failure_detail(str(exc), "read_error", operation.attempts()),
+            ) from exc
+        except solve_operations.SolveCancelled:
+            raise
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except TimeoutError as exc:
@@ -216,11 +336,20 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
         if not result.solved:
             raise HTTPException(
                 status_code=422,
-                detail=result.error_message or "Plate solve did not find a solution.",
+                detail=_failure_detail(
+                    result.error_message or "Plate solve did not find a solution.",
+                    result.failure_reason,
+                    result.attempts,
+                ),
             )
         if result.cd1_1 is None or result.crpix1 is None or not result.image_width:
             raise HTTPException(
-                status_code=422, detail="Plate solve did not return usable WCS data."
+                status_code=422,
+                detail=_failure_detail(
+                    "Plate solve did not return usable WCS data.",
+                    "invalid_wcs",
+                    result.attempts,
+                ),
             )
 
         wcs = WcsParams(
@@ -252,60 +381,195 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
             )
             best_id = best.id
 
-        with integrity_guard(
-            conflict_detail="A plate solve already exists for this project. Delete it first."
-        ):
-            cursor = await conn.execute(
-                """INSERT INTO project_solve
-                   (project_id, image_path, image_width, image_height,
-                    center_ra_deg, center_dec_deg, ra_hms, dec_dms,
-                    pixel_scale_arcsec, rotation_deg, fov_width_arcmin, fov_height_arcmin,
-                    cd1_1, cd1_2, cd2_1, cd2_2, crpix1, crpix2)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    project_id,
-                    body.image_path,
-                    result.image_width,
-                    result.image_height,
-                    result.ra_deg,
-                    result.dec_deg,
-                    result.ra_hms,
-                    result.dec_dms,
-                    result.pixel_scale_arcsec,
-                    result.rotation_deg,
-                    result.fov_width_arcmin,
-                    result.fov_height_arcmin,
-                    result.cd1_1,
-                    result.cd1_2,
-                    result.cd2_1,
-                    result.cd2_2,
-                    result.crpix1,
-                    result.crpix2,
+        solve_dir = _solve_dir(project_id)
+        staging = _staging_dir(project_id, operation.operation_id)
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True, exist_ok=True)
+        try:
+            operation.checkpoint()
+            await _render_to_staging(body.image_path, staging)
+            operation.checkpoint()
+        except solve_operations.SolveCancelled, asyncio.CancelledError:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        except Exception as exc:
+            shutil.rmtree(staging, ignore_errors=True)
+            logger.warning("[project-solve] render failed for %s", body.image_path, exc_info=True)
+            raise HTTPException(
+                status_code=422,
+                detail=_failure_detail(
+                    "The image solved, but NightCrate couldn't render it for display. "
+                    "Nothing was saved.",
+                    "render_failed",
+                    result.attempts,
+                ),
+            ) from exc
+
+        lock = _project_solve_locks.setdefault(project_id, asyncio.Lock())
+        new_generation: Path | None = None
+        committed = False
+        async with lock:
+            try:
+                await conn.execute("BEGIN IMMEDIATE")
+                operation.checkpoint()
+                cursor = await conn.execute(
+                    "SELECT id FROM project_solve WHERE project_id = ?", (project_id,)
+                )
+                old_row = await cursor.fetchone()
+                old_id = int(old_row["id"]) if old_row is not None else None
+                if old_id is not None and not body.replace:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="A plate solve already exists for this project. Delete it first.",
+                    )
+                if old_id is not None:
+                    await conn.execute("DELETE FROM project_solve WHERE id = ?", (old_id,))
+            except BaseException:
+                try:
+                    await conn.rollback()
+                finally:
+                    shutil.rmtree(staging, ignore_errors=True)
+                raise
+
+            try:
+                with integrity_guard(
+                    conflict_detail=(
+                        "A plate solve already exists for this project. Delete it first."
+                    )
+                ):
+                    cursor = await conn.execute(
+                        """INSERT INTO project_solve
+                           (project_id, image_path, image_width, image_height,
+                            center_ra_deg, center_dec_deg, ra_hms, dec_dms,
+                            pixel_scale_arcsec, rotation_deg,
+                            fov_width_arcmin, fov_height_arcmin,
+                            cd1_1, cd1_2, cd2_1, cd2_2, crpix1, crpix2,
+                            solver, star_catalog, stars_detected, stars_matched,
+                            rms_px, log_odds, solve_path, scale_stage)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                   ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            project_id,
+                            body.image_path,
+                            result.image_width,
+                            result.image_height,
+                            result.ra_deg,
+                            result.dec_deg,
+                            result.ra_hms,
+                            result.dec_dms,
+                            result.pixel_scale_arcsec,
+                            result.rotation_deg,
+                            result.fov_width_arcmin,
+                            result.fov_height_arcmin,
+                            result.cd1_1,
+                            result.cd1_2,
+                            result.cd2_1,
+                            result.cd2_2,
+                            result.crpix1,
+                            result.crpix2,
+                            result.solver,
+                            result.star_catalog,
+                            result.stars_detected,
+                            result.stars_matched,
+                            result.rms_px,
+                            result.log_odds,
+                            result.solve_path,
+                            result.scale_stage,
+                        ),
+                    )
+                solve_id = int(cursor.lastrowid)
+                for item in annotated:
+                    await conn.execute(
+                        "INSERT INTO project_dso (solve_id, dso_id, is_main) VALUES (?, ?, ?)",
+                        (solve_id, item.id, 1 if item.id == best_id else 0),
+                    )
+                if best_id is not None:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO project_target (project_id, dso_id) VALUES (?, ?)",
+                        (project_id, best_id),
+                    )
+
+                new_generation = solve_dir / str(solve_id)
+                if new_generation.exists():
+                    await asyncio.to_thread(shutil.rmtree, new_generation)
+                _, rename_cancelled = await _finish_awaitable(
+                    asyncio.to_thread(staging.rename, new_generation)
+                )
+                if rename_cancelled:
+                    raise asyncio.CancelledError
+                operation.begin_commit()
+                _, commit_cancelled = await _finish_awaitable(conn.commit())
+                committed = True
+                _, cleanup_cancelled = await _finish_awaitable(
+                    asyncio.to_thread(_cleanup_generations, solve_dir, old_id, staging)
+                )
+                if commit_cancelled or cleanup_cancelled:
+                    raise asyncio.CancelledError
+            except BaseException:
+                if not committed:
+                    try:
+                        await conn.rollback()
+                    finally:
+                        shutil.rmtree(staging, ignore_errors=True)
+                        if new_generation is not None:
+                            shutil.rmtree(new_generation, ignore_errors=True)
+                raise
+            return await _require_response(conn, project_id, attempts=result.attempts)
+
+
+@router.post("/{project_id}/solve")
+async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSolveResponse:
+    settings = await get_settings()
+    solver = body.solver or settings.default_solver
+    if solver == "astap" and not settings.astap_executable_path:
+        raise HTTPException(
+            status_code=422,
+            detail=_failure_detail(
+                "ASTAP executable path is not configured. Set it in Settings.",
+                "invalid_configuration",
+                [],
+            ),
+        )
+    if solver == "astap":
+        validation = validate_astap_path(settings.astap_executable_path)
+        if not validation["valid"]:
+            raise HTTPException(
+                status_code=422,
+                detail=_failure_detail(
+                    f"ASTAP path is invalid: {validation['error']}",
+                    "invalid_configuration",
+                    [],
                 ),
             )
-        solve_id = cursor.lastrowid
-        for a in annotated:
-            await conn.execute(
-                "INSERT INTO project_dso (solve_id, dso_id, is_main) VALUES (?, ?, ?)",
-                (solve_id, a.id, 1 if a.id == best_id else 0),
-            )
-        # Auto-flag the best-guess main into the persistent target table.
-        if best_id is not None:
-            await conn.execute(
-                "INSERT OR IGNORE INTO project_target (project_id, dso_id) VALUES (?, ?)",
-                (project_id, best_id),
-            )
-        await conn.commit()
-
-        # Pre-render the standalone solve image for the overlay viewer.
-        try:
-            await asyncio.to_thread(
-                generate_rendered_images, body.image_path, _solve_dir(project_id)
-            )
-        except Exception:
-            logger.warning("[project-solve] render failed for %s", body.image_path, exc_info=True)
-
-        return await _require_response(conn, project_id)
+    try:
+        operation = solve_operations.claim(body.operation_id, solver)
+    except solve_operations.SolveCancelled:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Plate solve cancelled.",
+                "failure_reason": "cancelled",
+                "attempts": [],
+            },
+        ) from None
+    except solve_operations.SolveBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        return await _create_solve_claimed(
+            project_id,
+            body,
+            settings=settings,
+            solver=solver,
+            operation=operation,
+        )
+    except solve_operations.SolveCancelled:
+        shutil.rmtree(_staging_dir(project_id, operation.operation_id), ignore_errors=True)
+        raise HTTPException(
+            status_code=422,
+            detail=_failure_detail("Plate solve cancelled.", "cancelled", operation.attempts()),
+        ) from None
+    finally:
+        solve_operations.release(operation)
 
 
 @router.get("/{project_id}/solve")
@@ -374,14 +638,16 @@ async def set_object_main(
 
 @router.delete("/{project_id}/solve", status_code=204)
 async def delete_solve(project_id: int) -> None:
-    async with get_db() as conn:
-        await get_or_404(conn, "project", project_id, "Project")
-        await conn.execute("DELETE FROM project_solve WHERE project_id = ?", (project_id,))
-        await conn.commit()
+    lock = _project_solve_locks.setdefault(project_id, asyncio.Lock())
+    async with lock:
+        async with get_db() as conn:
+            await get_or_404(conn, "project", project_id, "Project")
+            await conn.execute("DELETE FROM project_solve WHERE project_id = ?", (project_id,))
+            await conn.commit()
 
-    solve_dir = _solve_dir(project_id)
-    if solve_dir.is_dir():
-        shutil.rmtree(solve_dir, ignore_errors=True)
+        solve_dir = _solve_dir(project_id)
+        if solve_dir.is_dir():
+            shutil.rmtree(solve_dir, ignore_errors=True)
 
 
 @router.get("/{project_id}/solve/image/{variant}")
@@ -391,7 +657,15 @@ async def get_solve_image(project_id: int, variant: str) -> Response:
             status_code=422,
             detail=f"Invalid variant: {variant}. Must be one of {sorted(_VALID_VARIANTS)}",
         )
-    path = _solve_dir(project_id) / f"{variant}.jpg"
+    solve_dir = _solve_dir(project_id)
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT id FROM project_solve WHERE project_id = ?", (project_id,)
+        )
+        row = await cursor.fetchone()
+    path = solve_dir / str(row["id"]) / f"{variant}.jpg" if row is not None else None
+    if path is None or not path.is_file():
+        path = solve_dir / f"{variant}.jpg"
     if not path.is_file():
         return Response(status_code=204)
     return FileResponse(

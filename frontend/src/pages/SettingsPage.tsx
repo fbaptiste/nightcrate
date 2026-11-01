@@ -6,9 +6,12 @@ import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import FormControl from "@mui/material/FormControl";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import FormHelperText from "@mui/material/FormHelperText";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
+import Radio from "@mui/material/Radio";
+import RadioGroup from "@mui/material/RadioGroup";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
@@ -24,6 +27,7 @@ import { FileBrowser } from "@/components/fits/FileBrowser";
 import { validateAstapPath } from "@/api/plateSolve";
 import { fetchComputeInfo } from "@/api/settings";
 import { monoFontFamily } from "@/theme/theme";
+import BackToPlateSolve from "@/components/common/BackToPlateSolve";
 
 const sectionHeaderSx = {
   textTransform: "uppercase",
@@ -62,6 +66,7 @@ export function SettingsPage() {
   return (
     <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 4 }}>
       <Box sx={{ maxWidth: 960 }}>
+        <BackToPlateSolve />
         <Typography variant="h5" sx={{ mb: 2 }}>Settings</Typography>
       <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems="flex-start">
         {/* Left column */}
@@ -324,6 +329,8 @@ function AstapPathSection() {
 
   useEffect(() => {
     if (currentPath) doValidate(currentPath);
+    // Validate the saved value on mount; edits validate on blur instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleBrowseSelect = useCallback(
@@ -344,7 +351,19 @@ function AstapPathSection() {
           </Typography>
         </AccordionSummary>
         <AccordionDetails>
-          <Typography variant="body1" gutterBottom>ASTAP Executable</Typography>
+          <Typography variant="body1">Default solver</Typography>
+          <RadioGroup
+            row
+            value={settings?.default_solver ?? "native"}
+            onChange={(event) =>
+              update({ default_solver: event.target.value as "native" | "astap" })
+            }
+            sx={{ mb: 1 }}
+          >
+            <FormControlLabel value="native" control={<Radio size="small" />} label="Built-in" />
+            <FormControlLabel value="astap" control={<Radio size="small" />} label="ASTAP" />
+          </RadioGroup>
+          <Typography variant="body1" gutterBottom>ASTAP executable path</Typography>
           <Stack direction="row" spacing={1} alignItems="center">
             <TextField
               size="small"
@@ -378,8 +397,7 @@ function AstapPathSection() {
             <FormHelperText error>{validation.error}</FormHelperText>
           )}
           <FormHelperText>
-            Path to the ASTAP executable. On macOS you can select the .app bundle — the binary
-            inside will be resolved automatically.
+            Optional. Used when ASTAP is the default, or when you choose "Solve with ASTAP".
           </FormHelperText>
         </AccordionDetails>
       </Accordion>

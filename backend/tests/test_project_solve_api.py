@@ -7,16 +7,25 @@ exercised end to end.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
+import numpy as np
 import pytest
+from aiosqlite import Connection
+from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.api import project_solve as project_solve_api
 from nightcrate.db.session import get_db
 from nightcrate.main import app
-from nightcrate.services.plate_solve_models import PlateSolveResult
+from nightcrate.services import solve_operations
+from nightcrate.services.plate_solve_models import PlateSolveResult, SolveAttempt
 
 _SCALE = 3.0 / 3600.0  # 3 arcsec/px in degrees
 
@@ -51,6 +60,13 @@ def anyio_backend():
 async def client():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def reset_solve_operations():
+    solve_operations._reset_for_tests()
+    yield
+    solve_operations._reset_for_tests()
 
 
 def _dso_dict(dso_id: int, designation: str, ra: float, dec: float, maj: float) -> dict:
@@ -103,28 +119,49 @@ async def _seed_two_dsos() -> tuple[int, int]:
     return big, small
 
 
+def _renderer(payload: bytes):
+    def render(_image_path, output_dir):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for variant in ("full", "thumb_lg", "thumb_md", "thumb_sm"):
+            (output_dir / f"{variant}.jpg").write_bytes(payload)
+
+    return render
+
+
 @contextlib.contextmanager
-def _mock_solve(dso_dicts: list[dict], result_kwargs: dict | None = None):
+def _mock_solve(
+    dso_dicts: list[dict],
+    result_kwargs: dict | None = None,
+    *,
+    renderer=None,
+):
     """Patch ASTAP + cone query + render so the solve runs without external deps."""
     result = PlateSolveResult(**(result_kwargs or _SOLVE))
     with (
         patch(
             "nightcrate.api.project_solve.get_settings",
-            new=AsyncMock(return_value=SimpleNamespace(astap_executable_path="/fake/astap")),
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    astap_executable_path="/fake/astap", default_solver="astap"
+                )
+            ),
         ),
         patch(
             "nightcrate.api.project_solve.validate_astap_path",
             new=MagicMock(return_value={"valid": True, "error": None}),
         ),
         patch(
-            "nightcrate.api.project_solve.run_plate_solve",
+            "nightcrate.api.project_solve.run_solve",
             new=AsyncMock(return_value=result),
         ),
         patch(
             "nightcrate.api.project_solve.query_dsos_in_cone",
             new=AsyncMock(return_value=dso_dicts),
         ),
-        patch("nightcrate.api.project_solve.generate_rendered_images", new=MagicMock()),
+        patch(
+            "nightcrate.api.project_solve.generate_rendered_images",
+            new=MagicMock(side_effect=renderer),
+        ),
     ):
         yield
 
@@ -134,7 +171,26 @@ async def _make_project(client: AsyncClient, name: str) -> int:
     return r.json()["id"]
 
 
+def _solve_payload(image_path: str, **values) -> dict:
+    return {"image_path": image_path, "operation_id": str(uuid4()), **values}
+
+
 class TestCreateSolve:
+    async def test_solve_requires_operation_id_and_rejects_mode(self, client: AsyncClient):
+        pid = await _make_project(client, "Solve Contract")
+
+        missing_id = await client.post(
+            f"/api/projects/{pid}/solve",
+            json={"image_path": "/fake/image.fits"},
+        )
+        legacy_mode = await client.post(
+            f"/api/projects/{pid}/solve",
+            json=_solve_payload("/fake/image.fits", mode="blind"),
+        )
+
+        assert missing_id.status_code == 422
+        assert legacy_mode.status_code == 422
+
     async def test_stores_all_objects_and_flags_main(self, client: AsyncClient):
         big, small = await _seed_two_dsos()
         pid = await _make_project(client, "Solve Create")
@@ -144,7 +200,7 @@ class TestCreateSolve:
         ]
         with _mock_solve(dsos):
             resp = await client.post(
-                f"/api/projects/{pid}/solve", json={"image_path": "/fake/light.fits"}
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/light.fits")
             )
         assert resp.status_code == 200
         data = resp.json()
@@ -164,9 +220,9 @@ class TestCreateSolve:
         pid = await _make_project(client, "Solve Conflict")
         dsos = [_dso_dict(big, "M 101", 210.0, 54.0, 28.0)]
         with _mock_solve(dsos):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
             second = await client.post(
-                f"/api/projects/{pid}/solve", json={"image_path": "/fake/b.fits"}
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/b.fits")
             )
         assert second.status_code == 409
 
@@ -174,30 +230,57 @@ class TestCreateSolve:
         pid = await _make_project(client, "Solve Fail")
         with _mock_solve([], result_kwargs={"solved": False, "error_message": "No stars"}):
             resp = await client.post(
-                f"/api/projects/{pid}/solve", json={"image_path": "/fake/blank.fits"}
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/blank.fits")
             )
         assert resp.status_code == 422
-        assert "No stars" in resp.json()["detail"]
+        assert resp.json()["detail"] == {
+            "message": "No stars",
+            "failure_reason": None,
+            "attempts": [],
+        }
 
     async def test_no_astap_path_422(self, client: AsyncClient):
         pid = await _make_project(client, "No ASTAP")
         with patch(
             "nightcrate.api.project_solve.get_settings",
-            new=AsyncMock(return_value=SimpleNamespace(astap_executable_path="")),
+            new=AsyncMock(
+                return_value=SimpleNamespace(astap_executable_path="", default_solver="astap")
+            ),
         ):
             resp = await client.post(
-                f"/api/projects/{pid}/solve", json={"image_path": "/fake/x.fits"}
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/x.fits")
             )
         assert resp.status_code == 422
+        assert resp.json()["detail"] == {
+            "message": "ASTAP executable path is not configured. Set it in Settings.",
+            "failure_reason": "invalid_configuration",
+            "attempts": [],
+        }
 
     async def test_solve_empty_field_stores_no_objects(self, client: AsyncClient):
         pid = await _make_project(client, "Empty Field")
         with _mock_solve([]):
             resp = await client.post(
-                f"/api/projects/{pid}/solve", json={"image_path": "/fake/sparse.fits"}
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/sparse.fits")
             )
         assert resp.status_code == 200
         assert resp.json()["objects"] == []
+
+    async def test_post_returns_attempts_but_get_does_not_persist_them(self, client: AsyncClient):
+        pid = await _make_project(client, "Solve Attempts")
+        attempt = SolveAttempt(
+            solver="astap",
+            step="astap_blind",
+            position_source="none",
+            scale_source="none",
+            outcome="solved",
+        )
+        with _mock_solve([], result_kwargs={**_SOLVE, "attempts": [attempt]}):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
+            )
+        assert created.json()["attempts"][0]["step"] == "astap_blind"
+        assert (await client.get(f"/api/projects/{pid}/solve")).json()["attempts"] == []
 
     async def test_referenced_file_missing_422(self, client: AsyncClient):
         """A missing referenced source file (e.g. a pxiproject master on a
@@ -206,26 +289,432 @@ class TestCreateSolve:
         with (
             patch(
                 "nightcrate.api.project_solve.get_settings",
-                new=AsyncMock(return_value=SimpleNamespace(astap_executable_path="/fake/astap")),
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path="/fake/astap", default_solver="astap"
+                    )
+                ),
             ),
             patch(
                 "nightcrate.api.project_solve.validate_astap_path",
                 new=MagicMock(return_value={"valid": True, "error": None}),
             ),
             patch(
-                "nightcrate.api.project_solve.run_plate_solve",
+                "nightcrate.api.project_solve.run_solve",
                 new=AsyncMock(
                     side_effect=FileNotFoundError("Referenced file not found: /Volumes/X/m.xisf")
                 ),
             ),
         ):
             resp = await client.post(
-                f"/api/projects/{pid}/solve", json={"image_path": "/fake/p.pxiproject::3"}
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/p.pxiproject::3"),
             )
         assert resp.status_code == 422
         detail = resp.json()["detail"]
-        assert "Referenced file not found" in detail
-        assert "drive connected" in detail
+        assert detail == {
+            "message": (
+                "Referenced file not found: /Volumes/X/m.xisf — "
+                "is the source file's drive connected?"
+            ),
+            "failure_reason": "read_error",
+            "attempts": [],
+        }
+
+    async def test_read_value_error_is_structured_422(self, client: AsyncClient):
+        pid = await _make_project(client, "Read Error")
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.project_solve.run_solve",
+                new=AsyncMock(side_effect=ValueError("Unsupported image data")),
+            ),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/bad.fits", solver="native"),
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == {
+            "message": "Unsupported image data",
+            "failure_reason": "read_error",
+            "attempts": [],
+        }
+
+    async def test_cancel_before_claim_stops_project_solver(self, client: AsyncClient):
+        pid = await _make_project(client, "Pending Cancel")
+        operation_id = uuid4()
+        cancelled = await client.post(
+            "/api/plate-solve/cancel", json={"operation_id": str(operation_id)}
+        )
+        runner = AsyncMock(side_effect=AssertionError("solver ran"))
+        with patch("nightcrate.api.project_solve.run_solve", new=runner):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json={
+                    "image_path": "/fake/image.fits",
+                    "operation_id": str(operation_id),
+                    "solver": "native",
+                },
+            )
+        assert cancelled.json() == {"cancelled": False, "pending": True}
+        assert response.status_code == 422
+        assert response.json()["detail"]["failure_reason"] == "cancelled"
+        runner.assert_not_awaited()
+
+    async def test_cancel_during_project_render_saves_nothing(self, client: AsyncClient):
+        pid = await _make_project(client, "Render Cancel")
+        operation_id = uuid4()
+        render_started = threading.Event()
+        release_render = threading.Event()
+
+        def blocked_render(*_args):
+            render_started.set()
+            release_render.wait(2)
+
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.project_solve.run_solve",
+                new=AsyncMock(return_value=PlateSolveResult(**_SOLVE, solver="native")),
+            ),
+            patch(
+                "nightcrate.api.project_solve.query_dsos_in_cone",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("nightcrate.api.project_solve.generate_rendered_images", new=blocked_render),
+        ):
+            solve_task = asyncio.create_task(
+                client.post(
+                    f"/api/projects/{pid}/solve",
+                    json={
+                        "image_path": "/fake/image.fits",
+                        "operation_id": str(operation_id),
+                    },
+                )
+            )
+            assert await asyncio.to_thread(render_started.wait, 1)
+            cancelled = await client.post(
+                "/api/plate-solve/cancel", json={"operation_id": str(operation_id)}
+            )
+            release_render.set()
+            response = await solve_task
+
+        assert cancelled.json() == {"cancelled": True, "pending": False}
+        assert response.status_code == 422
+        assert response.json()["detail"]["failure_reason"] == "cancelled"
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) FROM project_solve WHERE project_id = ?", (pid,)
+            )
+            assert (await cursor.fetchone())[0] == 0
+
+    async def test_replace_swaps_row_images_and_keeps_main_targets(self, client: AsyncClient):
+        big, small = await _seed_two_dsos()
+        pid = await _make_project(client, "Replace Success")
+        dsos = [
+            _dso_dict(big, "M 101", 210.0, 54.0, 28.0),
+            _dso_dict(small, "NGC 5474", 210.1, 54.05, 4.8),
+        ]
+        with _mock_solve(dsos, renderer=_renderer(b"old")):
+            first = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits")
+            )
+        old_id = first.json()["id"]
+        await client.put(f"/api/projects/{pid}/solve/objects/{small}", json={"is_main": True})
+
+        with _mock_solve(dsos, renderer=_renderer(b"new")):
+            replaced = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/new.fits", replace=True),
+            )
+
+        assert replaced.status_code == 200, replaced.text
+        data = replaced.json()
+        assert data["id"] != old_id
+        assert {item["dso_id"] for item in data["objects"] if item["is_main"]} == {
+            big,
+            small,
+        }
+        solve_dir = project_solve_api._solve_dir(pid)
+        assert not (solve_dir / str(old_id)).exists()
+        assert (solve_dir / str(data["id"]) / "full.jpg").read_bytes() == b"new"
+        image = await client.get(f"/api/projects/{pid}/solve/image/full")
+        assert image.content == b"new"
+
+    async def test_failed_solve_and_render_keep_old_generation(self, client: AsyncClient):
+        pid = await _make_project(client, "Replace Failures")
+        with _mock_solve([], renderer=_renderer(b"old")):
+            first = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits")
+            )
+        old_id = first.json()["id"]
+
+        with _mock_solve(
+            [],
+            result_kwargs={"solved": False, "error_message": "No stars"},
+            renderer=_renderer(b"unused"),
+        ):
+            failed_solve = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/fail.fits", replace=True),
+            )
+        assert failed_solve.status_code == 422
+
+        def fail_render(*_args):
+            raise OSError("render failed")
+
+        with _mock_solve([], renderer=fail_render):
+            failed_render = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/render.fits", replace=True),
+            )
+        assert failed_render.status_code == 422
+        assert failed_render.json()["detail"] == {
+            "message": (
+                "The image solved, but NightCrate couldn't render it for display. "
+                "Nothing was saved."
+            ),
+            "failure_reason": "render_failed",
+            "attempts": [],
+        }
+        current = await client.get(f"/api/projects/{pid}/solve")
+        assert current.json()["id"] == old_id
+        assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"old"
+        assert not list(project_solve_api._solve_dir(pid).glob(".staging-*"))
+
+    @pytest.mark.parametrize("failure", ["rename", "after_rename", "commit"])
+    async def test_publication_failure_rolls_back_and_keeps_old(
+        self, client: AsyncClient, failure: str
+    ):
+        pid = await _make_project(client, f"Replace {failure}")
+        with _mock_solve([], renderer=_renderer(b"old")):
+            first = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits")
+            )
+        old_id = first.json()["id"]
+        original_rename = Path.rename
+
+        def fail_rename(_self, _target):
+            raise OSError("rename failed")
+
+        def rename_then_fail(path, target):
+            original_rename(path, target)
+            raise RuntimeError("interrupted after rename")
+
+        if failure == "rename":
+            failure_patch = patch.object(Path, "rename", fail_rename)
+        elif failure == "after_rename":
+            failure_patch = patch.object(Path, "rename", rename_then_fail)
+        else:
+            failure_patch = patch(
+                "aiosqlite.core.Connection.commit",
+                new=AsyncMock(side_effect=OSError("commit failed")),
+            )
+
+        with _mock_solve([], renderer=_renderer(b"new")), failure_patch:
+            with pytest.raises((OSError, RuntimeError)):
+                await client.post(
+                    f"/api/projects/{pid}/solve",
+                    json=_solve_payload("/fake/new.fits", replace=True),
+                )
+
+        current = await client.get(f"/api/projects/{pid}/solve")
+        assert current.json()["id"] == old_id
+        assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"old"
+        solve_dir = project_solve_api._solve_dir(pid)
+        assert {path.name for path in solve_dir.iterdir()} == {str(old_id)}
+
+    async def test_reused_row_id_residue_is_replaced(self, client: AsyncClient):
+        pid = await _make_project(client, "Replace Residue")
+        with _mock_solve([], renderer=_renderer(b"old")):
+            first = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits")
+            )
+        next_id = first.json()["id"] + 1
+        residue = project_solve_api._solve_dir(pid) / str(next_id)
+        residue.mkdir(parents=True)
+        (residue / "full.jpg").write_bytes(b"residue")
+
+        with _mock_solve([], renderer=_renderer(b"new")):
+            replaced = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/new.fits", replace=True),
+            )
+
+        assert replaced.json()["id"] == next_id
+        assert (residue / "full.jpg").read_bytes() == b"new"
+
+    async def test_hdu_contract_primary_image_and_attempts(self, client: AsyncClient, tmp_path):
+        pid = await _make_project(client, "Project HDU")
+        invalid_hdu = await client.post(
+            f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits", hdu=1)
+        )
+        assert invalid_hdu.status_code == 422
+
+        no_primary = tmp_path / "extension.fits"
+        fits.HDUList(
+            [fits.PrimaryHDU(), fits.ImageHDU(np.ones((10, 10), dtype=np.float32))]
+        ).writeto(no_primary)
+        runner = AsyncMock(side_effect=AssertionError("solver ran"))
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch("nightcrate.api.project_solve.run_solve", new=runner),
+        ):
+            no_image = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload(str(no_primary), solver="native"),
+            )
+        assert no_image.status_code == 422
+        assert no_image.json()["detail"]["message"] == (
+            "This file's image isn't in its primary extension. "
+            "Open it in the Image Analyzer to solve it."
+        )
+        runner.assert_not_awaited()
+
+        attempt = SolveAttempt(
+            solver="astap",
+            step="astap_blind",
+            position_source="none",
+            scale_source="none",
+            outcome="no_match",
+        )
+        with _mock_solve(
+            [],
+            result_kwargs={
+                "solved": False,
+                "error_message": "No solution",
+                "failure_reason": "no_match",
+                "attempts": [attempt],
+            },
+        ):
+            failed = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
+            )
+        assert failed.json()["detail"]["attempts"][0]["step"] == "astap_blind"
+
+    async def test_unreadable_primary_fits_is_structured_422(self, client, tmp_path):
+        pid = await _make_project(client, "Unreadable FITS")
+        corrupt = tmp_path / "corrupt.fits"
+        corrupt.write_bytes(b"not a FITS file")
+        runner = AsyncMock(side_effect=AssertionError("solver ran"))
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch("nightcrate.api.project_solve.run_solve", new=runner),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload(str(corrupt), solver="native"),
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["failure_reason"] == "invalid_image"
+        assert response.json()["detail"]["message"].startswith(
+            "NightCrate couldn't read this file:"
+        )
+        runner.assert_not_awaited()
+
+    async def test_cancel_during_commit_is_too_late(self, client: AsyncClient):
+        pid = await _make_project(client, "Commit Cancel")
+        operation_id = uuid4()
+        original_commit = Connection.commit
+        cancel_result = None
+
+        async def commit_after_cancel(conn):
+            nonlocal cancel_result
+            cancel_result = solve_operations.cancel(operation_id)
+            await original_commit(conn)
+
+        with (
+            _mock_solve([], renderer=_renderer(b"new")),
+            patch("aiosqlite.core.Connection.commit", new=commit_after_cancel),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json={
+                    "image_path": "/fake/new.fits",
+                    "operation_id": str(operation_id),
+                },
+            )
+
+        assert cancel_result is not None
+        assert cancel_result.model_dump() == {"cancelled": False, "pending": False}
+        assert response.status_code == 200, response.text
+        assert response.json()["image_path"] == "/fake/new.fits"
+
+    async def test_cancel_during_cleanup_holds_lock_and_slot(self, client: AsyncClient):
+        pid = await _make_project(client, "Cleanup Cancel")
+        operation_id = uuid4()
+        cleanup_started = threading.Event()
+        release_cleanup = threading.Event()
+        original_cleanup = project_solve_api._cleanup_generations
+
+        def blocked_cleanup(solve_dir, old_id, staging):
+            cleanup_started.set()
+            release_cleanup.wait(2)
+            original_cleanup(solve_dir, old_id, staging)
+
+        with (
+            _mock_solve([], renderer=_renderer(b"new")),
+            patch.object(project_solve_api, "_cleanup_generations", new=blocked_cleanup),
+        ):
+            solve_task = asyncio.create_task(
+                client.post(
+                    f"/api/projects/{pid}/solve",
+                    json={
+                        "image_path": "/fake/new.fits",
+                        "operation_id": str(operation_id),
+                    },
+                )
+            )
+            assert await asyncio.to_thread(cleanup_started.wait, 1)
+            next_staging = project_solve_api._solve_dir(pid) / ".staging-next-operation"
+            next_staging.mkdir()
+            solve_task.cancel()
+            await asyncio.sleep(0)
+
+            lock = project_solve_api._project_solve_locks[pid]
+            assert lock.locked()
+            assert solve_operations.active_operation() is not None
+            assert solve_operations.active_operation().operation_id == operation_id
+            assert not solve_task.done()
+
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await solve_task
+
+        assert not lock.locked()
+        assert solve_operations.active_operation() is None
+        assert next_staging.is_dir()
 
 
 class TestGetSolve:
@@ -233,7 +722,7 @@ class TestGetSolve:
         big, _ = await _seed_two_dsos()
         pid = await _make_project(client, "Solve Get")
         with _mock_solve([_dso_dict(big, "M 101", 210.0, 54.0, 28.0)]):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
         resp = await client.get(f"/api/projects/{pid}/solve")
         assert resp.status_code == 200
         assert resp.json()["objects"][0]["dso_id"] == big
@@ -247,7 +736,7 @@ class TestGetSolve:
         big, _ = await _seed_two_dsos()
         pid = await _make_project(client, "Inactive Solve Object")
         with _mock_solve([_dso_dict(big, "M 101", 210.0, 54.0, 28.0)]):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
         async with get_db() as conn:
             await conn.execute("UPDATE dso SET active = 0 WHERE id = ?", (big,))
             await conn.commit()
@@ -266,7 +755,7 @@ class TestSetMain:
             _dso_dict(small, "NGC 5474", 210.1, 54.05, 4.8),
         ]
         with _mock_solve(dsos):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
         # Add the small one as a second main (multi-main allowed).
         resp = await client.put(
             f"/api/projects/{pid}/solve/objects/{small}", json={"is_main": True}
@@ -279,7 +768,7 @@ class TestSetMain:
         big, _ = await _seed_two_dsos()
         pid = await _make_project(client, "Set Main Off")
         with _mock_solve([_dso_dict(big, "M 101", 210.0, 54.0, 28.0)]):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
         resp = await client.put(f"/api/projects/{pid}/solve/objects/{big}", json={"is_main": False})
         assert resp.status_code == 200
         assert all(not o["is_main"] for o in resp.json()["objects"])
@@ -294,7 +783,7 @@ class TestSetMain:
             _dso_dict(small, "NGC 5474", 210.1, 54.05, 4.8),
         ]
         with _mock_solve(dsos):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
         async with get_db() as conn:
             await conn.execute("UPDATE dso SET active = 0 WHERE id IN (?, ?)", (big, small))
             await conn.commit()
@@ -317,7 +806,7 @@ class TestSetMain:
         big, _ = await _seed_two_dsos()
         pid = await _make_project(client, "Set Main 404")
         with _mock_solve([_dso_dict(big, "M 101", 210.0, 54.0, 28.0)]):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
         resp = await client.put(f"/api/projects/{pid}/solve/objects/999999", json={"is_main": True})
         assert resp.status_code == 404
 
@@ -336,7 +825,7 @@ class TestDeleteSolve:
             _dso_dict(small, "NGC 5474", 210.1, 54.05, 4.8),
         ]
         with _mock_solve(dsos):
-            await client.post(f"/api/projects/{pid}/solve", json={"image_path": "/fake/a.fits"})
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits"))
 
         assert (await client.delete(f"/api/projects/{pid}/solve")).status_code == 204
         assert (await client.get(f"/api/projects/{pid}/solve")).status_code == 204
@@ -364,3 +853,235 @@ class TestSolveImage:
         pid = await _make_project(client, "Solve Img Missing")
         resp = await client.get(f"/api/projects/{pid}/solve/image/full")
         assert resp.status_code == 204
+
+    async def test_legacy_layout_is_served_and_removed_on_replace(self, client: AsyncClient):
+        pid = await _make_project(client, "Legacy Solve Images")
+        with _mock_solve([], renderer=_renderer(b"legacy")):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits")
+            )
+        solve_dir = project_solve_api._solve_dir(pid)
+        generation = solve_dir / str(created.json()["id"])
+        for image in generation.glob("*.jpg"):
+            image.rename(solve_dir / image.name)
+        generation.rmdir()
+        assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"legacy"
+
+        with _mock_solve([], renderer=_renderer(b"new")):
+            replaced = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/new.fits", replace=True),
+            )
+        assert replaced.status_code == 200
+        assert not (solve_dir / "full.jpg").exists()
+        assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"new"
+
+
+class TestNativeSolverPersistence:
+    async def test_project_route_calls_the_real_dispatcher(self, client: AsyncClient):
+        """The route's call must match run_solve's real signature: only the
+        native worker underneath is faked. (Every other route test replaces
+        run_solve with a mock that accepts any arguments, which hid a missing
+        ``timeout`` argument until a rendered check.)"""
+        pid = await _make_project(client, "Real Dispatcher")
+        solved = PlateSolveResult(**_SOLVE, solver="native", solve_path="blind")
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.services.native_solver.solve_image.solve_image",
+                new=MagicMock(return_value=solved),
+            ),
+            patch(
+                "nightcrate.api.project_solve.query_dsos_in_cone",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("nightcrate.api.project_solve.generate_rendered_images", new=MagicMock()),
+        ):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/native.fits")
+            )
+
+        assert created.status_code == 200, created.text
+        assert created.json()["solver"] == "native"
+        assert created.json()["solve_path"] == "blind"
+
+    async def test_project_solve_saves_native_fields(self, client: AsyncClient):
+        pid = await _make_project(client, "Native Fields")
+        result = PlateSolveResult(
+            **_SOLVE,
+            solver="native",
+            star_catalog="siril-gaia",
+            stars_detected=87,
+            stars_matched=31,
+            rms_px=0.42,
+            log_odds=27.5,
+            solve_path="near_index",
+            scale_stage="exact",
+        )
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.project_solve.run_solve",
+                new=AsyncMock(return_value=result),
+            ),
+            patch(
+                "nightcrate.api.project_solve.query_dsos_in_cone",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("nightcrate.api.project_solve.generate_rendered_images", new=MagicMock()),
+        ):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/native.fits")
+            )
+
+        assert created.status_code == 200
+        data = created.json()
+        assert data["solver"] == "native"
+        assert data["star_catalog"] == "siril-gaia"
+        assert data["stars_detected"] == 87
+        assert data["stars_matched"] == 31
+        assert data["rms_px"] == 0.42
+        assert data["rms_arcsec"] == pytest.approx(1.26)
+        assert data["log_odds"] == 27.5
+        assert data["solve_path"] == "near_index"
+        assert data["scale_stage"] == "exact"
+
+        read_back = await client.get(f"/api/projects/{pid}/solve")
+        assert read_back.status_code == 200
+        assert read_back.json() == data
+
+    async def test_project_solve_unsolved_detail_object(self, client: AsyncClient):
+        pid = await _make_project(client, "Native Failure")
+        result = PlateSolveResult(
+            solved=False,
+            solver="native",
+            error_message="No matching star pattern was found.",
+            failure_reason="no_match",
+        )
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.project_solve.run_solve",
+                new=AsyncMock(return_value=result),
+            ),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/native.fits")
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == {
+            "message": "No matching star pattern was found.",
+            "failure_reason": "no_match",
+            "attempts": [],
+        }
+
+    async def test_project_solve_forwards_solver_astap(self, client: AsyncClient):
+        pid = await _make_project(client, "Explicit ASTAP")
+        runner = AsyncMock(return_value=PlateSolveResult(**_SOLVE))
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path="/fake/astap", default_solver="native"
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.project_solve.validate_astap_path",
+                new=MagicMock(return_value={"valid": True, "error": None}),
+            ),
+            patch("nightcrate.api.project_solve.run_solve", new=runner),
+            patch(
+                "nightcrate.api.project_solve.query_dsos_in_cone",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("nightcrate.api.project_solve.generate_rendered_images", new=MagicMock()),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/astap.fits", solver="astap"),
+            )
+
+        assert response.status_code == 200
+        assert runner.await_args.kwargs["solver"] == "astap"
+        assert runner.await_args.kwargs["astap_path"] == "/fake/astap"
+
+    async def test_project_solve_cancelled_saves_nothing(self, client: AsyncClient):
+        pid = await _make_project(client, "Cancelled Native")
+        result = PlateSolveResult(
+            solved=False,
+            solver="native",
+            error_message="Plate solve cancelled.",
+            failure_reason="cancelled",
+        )
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=None, default_solver="native"
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.project_solve.run_solve",
+                new=AsyncMock(return_value=result),
+            ),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/native.fits")
+            )
+
+        assert response.status_code == 422
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) FROM project_solve WHERE project_id = ?", (pid,)
+            )
+            assert (await cursor.fetchone())[0] == 0
+            cursor = await conn.execute("SELECT COUNT(*) FROM project_dso")
+            assert (await cursor.fetchone())[0] == 0
+
+    async def test_existing_astap_project_solve_reads_back_as_astap(self, client: AsyncClient):
+        pid = await _make_project(client, "Legacy ASTAP")
+        with _mock_solve([]):
+            response = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/astap.fits")
+            )
+
+        assert response.status_code == 200
+        read_back = (await client.get(f"/api/projects/{pid}/solve")).json()
+        assert read_back["solver"] == "astap"
+        for field in (
+            "star_catalog",
+            "stars_detected",
+            "stars_matched",
+            "rms_px",
+            "rms_arcsec",
+            "log_odds",
+            "solve_path",
+            "scale_stage",
+        ):
+            assert read_back[field] is None

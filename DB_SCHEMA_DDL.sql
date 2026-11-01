@@ -1,4 +1,4 @@
--- NightCrate version: 0.42.0
+-- NightCrate version: 0.43.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1580,6 +1580,16 @@ CREATE TABLE project_solve (
     crpix1             REAL    NOT NULL,
     crpix2             REAL    NOT NULL,
     solved_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    -- Added by migration 0065 (ALTER TABLE ADD COLUMN appends after solved_at).
+    solver             TEXT    NOT NULL DEFAULT 'astap'
+                                CHECK (solver IN ('native', 'astap')),
+    star_catalog       TEXT,
+    stars_detected     INTEGER,
+    stars_matched      INTEGER,
+    rms_px             REAL,
+    log_odds           REAL,
+    solve_path         TEXT,
+    scale_stage        TEXT,
     UNIQUE (project_id)
 );
 

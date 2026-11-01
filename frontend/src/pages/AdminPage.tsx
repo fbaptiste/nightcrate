@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -43,6 +43,9 @@ import {
 } from "@/api/admin";
 import CatalogsAdminSection from "@/components/dso/CatalogsAdminSection";
 import CachesAdminSection from "@/components/admin/CachesAdminSection";
+import StarCatalogAdminSection from "@/components/admin/StarCatalogAdminSection";
+import BackToPlateSolve from "@/components/common/BackToPlateSolve";
+import { useLocation } from "react-router-dom";
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return "unknown";
@@ -621,6 +624,7 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
 // ---------------------------------------------------------------------------
 
 export function AdminPage() {
+  const location = useLocation();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [reseeding, setReseeding] = useState(false);
   const [reseedResult, setReseedResult] = useState<ReseedResult | null>(null);
@@ -653,8 +657,15 @@ export function AdminPage() {
     }
   };
 
+  useEffect(() => {
+    if (!location.hash) return;
+    const element = document.getElementById(location.hash.slice(1));
+    element?.scrollIntoView({ block: "start" });
+  }, [location.hash]);
+
   return (
-    <Box sx={{ p: 3, maxWidth: 900, mx: "auto" }}>
+    <Box sx={{ p: 3, width: "100%", maxWidth: 900, mx: "auto" }}>
+      <BackToPlateSolve />
       <Typography variant="h5" sx={{ mb: 3 }}>
         Admin
       </Typography>
@@ -741,6 +752,8 @@ export function AdminPage() {
 
 
       <CatalogsAdminSection />
+
+      <StarCatalogAdminSection />
 
       <CachesAdminSection />
 

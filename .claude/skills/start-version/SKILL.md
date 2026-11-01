@@ -10,12 +10,17 @@ description: Start a release branch from updated main after the previous work is
    worktree only as `docs/agent-collaboration.md` §4 allows.
 2. Preserve existing work. If the tree is dirty, ask how to carry it forward;
    stash only with authorization, include untracked files, and record the stash.
-3. Switch to `main`, then `git pull --ff-only`. Confirm the preceding work is
-   merged (including squash merges). If it is not, resolve that with the user
-   before starting a new release; do not discard or rewrite it.
+3. Update `main` before checking it out: from the current branch, run
+   `git fetch origin main:main` (fast-forward only); if `main` is already
+   checked out, `git pull --ff-only`. A running `make dev` reloads on every
+   checkout, so switching to a stale `main` would briefly run old code against
+   the user's database. Confirm the preceding work is merged (including squash
+   merges). If it is not, resolve that with the user before starting a new
+   release; do not discard or rewrite it.
 4. Use the user's release scope, otherwise the next clear planned version.
    Ask only when version or scope is ambiguous. Name the branch
-   `v{version}/{short-description}` and create it from updated main.
+   `v{version}/{short-description}` and create it from updated main
+   (`git switch -c <branch> main`).
 5. Restore any authorized stash and resolve conflicts without losing work.
 6. Record the branch, scope, and **In progress** status in `PLAN.md`, and mark
    the previous release merged with its PR link. Leave release

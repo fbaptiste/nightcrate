@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -51,17 +52,25 @@ import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
 import { EasterEggWand } from "@/components/EasterEggWand";
 import { PlateSolveDetailPanel } from "@/components/plate-solve/PlateSolveDetailPanel";
-import { PlateSolveDialog } from "@/components/plate-solve/PlateSolveDialog";
+import PlateSolvePanel, { type SolveOutcome } from "@/components/plate-solve/PlateSolvePanel";
 import { PlateSolveDsoGrid } from "@/components/plate-solve/PlateSolveDsoGrid";
 import { PlateSolveFilters, applyFilters, DEFAULT_FILTERS, type AnnotationFilters } from "@/components/plate-solve/PlateSolveFilters";
-import { detectWcs, fetchAnnotations, type WcsParams } from "@/api/plateSolve";
+import {
+  detectWcs,
+  fetchAnnotations,
+  parseApiError,
+  plateSolve,
+  type PlateSolveRequest,
+  type PlateSolveResult,
+  type WcsParams,
+} from "@/api/plateSolve";
 import { setActivity } from "@/api/client";
 import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
 import { monoFontFamily } from "@/theme/theme";
-import { headerNumber, headerValue, parseHeaderCoord as parseHeaderCoordShared } from "./analyzerHelpers";
+import { headerNumber, headerValue } from "./analyzerHelpers";
 
 const IMAGE_COMMENTARY = [
   "Ah yes, the classic 'is it signal or noise?' game",
@@ -219,6 +228,7 @@ export default function ImageAnalyzerView({
   onError,
 }: ImageAnalyzerViewProps) {
   const queryClient = useQueryClient();
+  const location = useLocation();
   // Per-file state. This was a module-level Zustand store until v0.41.1, purely
   // so it would "survive navigation" — but AppShell's PersistentPages mounts
   // this page once and only ever toggles `display`, so it never unmounts and
@@ -240,13 +250,27 @@ export default function ImageAnalyzerView({
   >(() => [...DEFAULT_PER_CHANNEL] as [StretchParams, StretchParams, StretchParams]);
   const [isLinked, setIsLinked] = useState(true);
   const [solvedWcs, setSolvedWcs] = useState<WcsParams | null>(null);
+  const [solvedResult, setSolvedResult] = useState<PlateSolveResult | null>(null);
   const [imageActivity, setImageActivity] = useState("");
   const [appliedDefaultsFor, setAppliedDefaultsFor] = useState("");
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
   const imageRef = useRef<FitsImageHandle>(null);
+  const annotationObserverRef = useRef<ResizeObserver | null>(null);
+  const [annotationViewerWidth, setAnnotationViewerWidth] = useState(0);
   const [currentZoom, setCurrentZoom] = useState(1);
 
   const [plateSolveOpen, setPlateSolveOpen] = useState(false);
+
+  const setAnnotationViewerElement = useCallback((viewer: HTMLDivElement | null) => {
+    annotationObserverRef.current?.disconnect();
+    annotationObserverRef.current = null;
+    if (!viewer) return;
+    const updateWidth = () => setAnnotationViewerWidth(viewer.getBoundingClientRect().width);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(viewer);
+    annotationObserverRef.current = observer;
+  }, []);
 
   // Plate Solve tab (annotations) — state lives in the store
   const [annotationFilters, setAnnotationFilters] = useState<AnnotationFilters>(DEFAULT_FILTERS);
@@ -362,14 +386,14 @@ export default function ImageAnalyzerView({
       activePath,
       selectedHdu,
       solvedWcs
-        ? `solved:${solvedWcs.crval1},${solvedWcs.crval2},${solvedWcs.crpix1},${solvedWcs.crpix2}`
+        ? `solved:${solvedWcs.crval1},${solvedWcs.crval2},${solvedWcs.crpix1},${solvedWcs.crpix2},${solvedWcs.cd1_1},${solvedWcs.cd1_2},${solvedWcs.cd2_1},${solvedWcs.cd2_2},${solvedWcs.naxis1},${solvedWcs.naxis2}`
         : wcsQuery.data
           ? "hdr"
           : "none",
     ],
     queryFn: () => {
-      if (effectiveWcs && !wcsQuery.data) {
-        return fetchAnnotations(activePath, selectedHdu, effectiveWcs);
+      if (solvedWcs) {
+        return fetchAnnotations(activePath, selectedHdu, solvedWcs);
       }
       return fetchAnnotations(activePath, selectedHdu);
     },
@@ -459,6 +483,8 @@ export default function ImageAnalyzerView({
     setIsLinked(true);
     setSelectedSquare(null);
     setSolvedWcs(null);
+    setSolvedResult(null);
+    setPlateSolveOpen(false);
     setSelectedAnnotationId(null);
     setAnnotationFilters(DEFAULT_FILTERS);
     setAppliedDefaultsFor("");
@@ -575,10 +601,31 @@ export default function ImageAnalyzerView({
   const dateObs = formatDateObs(headerVal("DATE-OBS"));
   const exposure = headerVal("EXPTIME");
   const filter = headerVal("FILTER");
-  const parseHeaderCoord = (isRa: boolean, ...keys: string[]) =>
-    parseHeaderCoordShared(headerCards, isRa, ...keys);
-
   const activePerChannel = (isColor && !isLinked) ? appliedPerChannel : undefined;
+
+  const openPlateSolve = () => {
+    setActivity("Plate solve");
+    setTab(2);
+    setRightSidebarOpen(true);
+    setPlateSolveOpen(true);
+  };
+
+  const solveAdapter = useCallback(async (request: PlateSolveRequest): Promise<SolveOutcome> => {
+    try {
+      const result = await plateSolve(request);
+      if (!result.solved) {
+        return {
+          kind: "failed",
+          message: result.error_message || "Plate solve failed.",
+          failureReason: result.failure_reason,
+          attempts: result.attempts,
+        };
+      }
+      return { kind: "solved", result };
+    } catch (reason: unknown) {
+      return { kind: "failed", ...parseApiError(reason) };
+    }
+  }, []);
 
   return (
     <Box
@@ -600,7 +647,13 @@ export default function ImageAnalyzerView({
               <HduSelector
                 hdus={extensions}
                 selected={selectedHdu}
-                onChange={(i) => { setActivity(`Switch HDU ${i}`); setSelectedHdu(i); setTab(0); }}
+                onChange={(i) => {
+                  setActivity(`Switch HDU ${i}`);
+                  setSelectedHdu(i);
+                  setSolvedWcs(null);
+                  setSolvedResult(null);
+                  setTab(0);
+                }}
               />
             </>
           )}
@@ -627,7 +680,7 @@ export default function ImageAnalyzerView({
                 <Tab label="Aberration" disabled={!hasFile || !selectedExtInfo?.has_image} />
               </Tabs>
               {/* Format and linearity indicators */}
-              <Box sx={{ display: "flex", gap: 0.5, ml: "auto", mr: 2 }}>
+              <Box sx={{ display: "flex", gap: 0.5, ml: "auto" }}>
                 {/* Format of the IMAGE, not of its container. A `.fit` inside a
                     zip is a FITS file — labelling every `::` path "PXI" (both
                     conventions share the separator) claimed otherwise. */}
@@ -679,6 +732,16 @@ export default function ImageAnalyzerView({
                 )}
                 <EasterEggWand lines={IMAGE_COMMENTARY} tooltip="Expert analysis" size={12} />
               </Box>
+              {selectedExtInfo?.has_image && (tab === 0 || tab === 2) && (
+                <Button
+                  variant="text"
+                  size="small"
+                  onClick={openPlateSolve}
+                  sx={{ mx: 1, textTransform: "none", whiteSpace: "nowrap" }}
+                >
+                  Plate solve
+                </Button>
+              )}
             </Box>
 
             {/* Image tab — kept mounted, hidden via CSS to avoid re-fetching */}
@@ -853,12 +916,12 @@ export default function ImageAnalyzerView({
                 const filtered = applyFilters(allDsos, annotationFilters);
                 const typeCounts = new Map<string, number>();
                 for (const d of allDsos) typeCounts.set(d.type_group, (typeCounts.get(d.type_group) ?? 0) + 1);
-                const imgW = annotationQuery.data?.wcs.naxis1 ?? effectiveWcs?.naxis1 ?? 0;
-                const imgH = annotationQuery.data?.wcs.naxis2 ?? effectiveWcs?.naxis2 ?? 0;
+                const imgW = annotationQuery.data?.wcs.naxis1 ?? effectiveWcs?.naxis1 ?? headerNumber(headerCards, "NAXIS1") ?? 0;
+                const imgH = annotationQuery.data?.wcs.naxis2 ?? effectiveWcs?.naxis2 ?? headerNumber(headerCards, "NAXIS2") ?? 0;
 
                 return (
                   <>
-                    <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                    <Box ref={setAnnotationViewerElement} sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                       <DsoAnnotationOverlay
                         imageHref={imageUrl(activePath, selectedHdu, appliedLinked, activePerChannel, imageActivity)}
                         imgW={imgW}
@@ -866,7 +929,29 @@ export default function ImageAnalyzerView({
                         dsos={filtered}
                         selectedId={selectedAnnotationId}
                         onSelect={setSelectedAnnotationId}
+                        displayWidthPx={annotationViewerWidth}
                       />
+                      {effectiveWcs && (
+                        <Box
+                          sx={{
+                            position: "absolute",
+                            left: 8,
+                            bottom: 8,
+                            px: 1,
+                            py: 0.5,
+                            borderRadius: 1,
+                            bgcolor: "rgba(0, 0, 0, 0.72)",
+                            color: "common.white",
+                            fontSize: "0.7rem",
+                          }}
+                        >
+                          Objects from: {solvedResult?.solver === "native"
+                            ? "a built-in solve"
+                            : solvedResult?.solver === "astap"
+                              ? "an ASTAP solve"
+                              : "the image header"}
+                        </Box>
+                      )}
                       {!effectiveWcs && !wcsQuery.isLoading && (
                         <Box sx={{
                           position: "absolute", inset: 0,
@@ -880,9 +965,9 @@ export default function ImageAnalyzerView({
                             variant="contained"
                             size="small"
                             startIcon={<TravelExploreIcon />}
-                            onClick={() => setPlateSolveOpen(true)}
+                            onClick={openPlateSolve}
                           >
-                            Plate Solve
+                            Plate solve
                           </Button>
                         </Box>
                       )}
@@ -930,7 +1015,7 @@ export default function ImageAnalyzerView({
       {hasFile && selectedExtInfo?.has_image && (tab === 0 || tab === 2 || tab === 3) && (
         <Box
           sx={{
-            width: rightSidebarOpen ? 220 : 24,
+            width: rightSidebarOpen ? (tab === 2 ? 340 : 220) : 24,
             flexShrink: 0,
             borderLeft: 1,
             borderColor: "divider",
@@ -1358,11 +1443,58 @@ export default function ImageAnalyzerView({
           </>
           )}
           {tab === 2 && (
-            <PlateSolveDetailPanel
-              dso={(annotationQuery.data?.dsos ?? []).find((d) => d.id === selectedAnnotationId) ?? null}
-              annotationResult={annotationQuery.data ?? null}
-              wcs={effectiveWcs}
-            />
+            plateSolveOpen ? (
+              <PlateSolvePanel
+                image={{ path: activePath, hdu: selectedHdu, cards: headerCards }}
+                scope={{ surface: "analyzer" }}
+                solve={solveAdapter}
+                primaryLabel="Solve"
+                active={location.pathname === "/image-analyzer" && tab === 2}
+                onSolved={(res) => {
+                  setSolvedResult(res);
+                  if (
+                    res.cd1_1 != null && res.cd1_2 != null &&
+                    res.cd2_1 != null && res.cd2_2 != null &&
+                    res.crpix1 != null && res.crpix2 != null &&
+                    res.ra_deg != null && res.dec_deg != null &&
+                    res.image_width != null && res.image_height != null
+                  ) {
+                    setSolvedWcs({
+                      crval1: res.ra_deg,
+                      crval2: res.dec_deg,
+                      cd1_1: res.cd1_1,
+                      cd1_2: res.cd1_2,
+                      cd2_1: res.cd2_1,
+                      cd2_2: res.cd2_2,
+                      crpix1: res.crpix1,
+                      crpix2: res.crpix2,
+                      naxis1: res.image_width,
+                      naxis2: res.image_height,
+                    });
+                  }
+                  setPlateSolveOpen(false);
+                }}
+                onStale={() => undefined}
+                onChooseImage={() => setPlateSolveOpen(false)}
+                dismiss={{
+                  label: effectiveWcs ? "Keep the current solution" : "Close",
+                  onClick: () => setPlateSolveOpen(false),
+                }}
+              />
+            ) : (
+              <PlateSolveDetailPanel
+                dso={(annotationQuery.data?.dsos ?? []).find((d) => d.id === selectedAnnotationId) ?? null}
+                annotationResult={annotationQuery.data ?? null}
+                wcs={effectiveWcs}
+                solveResult={solvedResult}
+                hasHeaderSolution={wcsQuery.data != null}
+                onSolveAgain={openPlateSolve}
+                onUseHeaderSolution={() => {
+                  setSolvedWcs(null);
+                  setSolvedResult(null);
+                }}
+              />
+            )
           )}
           {tab === 3 && (
             <AberrationSidebar
@@ -1372,29 +1504,6 @@ export default function ImageAnalyzerView({
           </Box>)}
         </Box>
       )}
-
-      {/* Plate solve dialog */}
-      <PlateSolveDialog
-        open={plateSolveOpen}
-        onClose={() => setPlateSolveOpen(false)}
-        imagePath={activePath}
-        hdu={selectedHdu}
-        headerRa={parseHeaderCoord(true, "RA", "OBJCTRA", "CRVAL1")}
-        headerDec={parseHeaderCoord(false, "DEC", "OBJCTDEC", "CRVAL2")}
-        headerFocalLength={headerNumber(headerCards, "FOCALLEN")}
-        headerPixelSize={headerNumber(headerCards, "XPIXSZ")}
-        headerBinning={headerNumber(headerCards, "XBINNING")}
-        onSolved={(res) => {
-          if (res.cd1_1 != null && res.cd1_2 != null && res.cd2_1 != null && res.cd2_2 != null && res.crpix1 != null && res.crpix2 != null && res.ra_deg != null && res.dec_deg != null && res.image_width != null && res.image_height != null) {
-            setSolvedWcs({
-              crval1: res.ra_deg, crval2: res.dec_deg,
-              cd1_1: res.cd1_1, cd1_2: res.cd1_2, cd2_1: res.cd2_1, cd2_2: res.cd2_2,
-              crpix1: res.crpix1, crpix2: res.crpix2,
-              naxis1: res.image_width, naxis2: res.image_height,
-            });
-          }
-        }}
-      />
 
       {/* Error notification */}
       <Snackbar

@@ -9,12 +9,19 @@ from pathlib import Path
 from typing import BinaryIO, Literal
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from nightcrate.db.session import get_db
-from nightcrate.services import archive_io, fits_io, pxiproject_io, standard_io, xisf_io
+from nightcrate.services import (
+    archive_io,
+    fits_io,
+    image_preview,
+    pxiproject_io,
+    standard_io,
+    xisf_io,
+)
 from nightcrate.services.fits_header_map import (
     FITS_KEYWORD_ALIASES,
     extract_metadata,
@@ -601,6 +608,33 @@ async def get_image(
     except Exception as exc:
         logger.exception("image render failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
+
+
+@router.get("/preview")
+async def get_preview(
+    path: str = Query(..., description="Absolute or virtual image path"),
+    hdu: int = Query(0, ge=0, description="Extension index"),
+    max_px: int = Query(image_preview.DEFAULT_MAX_PX, description="Maximum long-side pixels"),
+    if_none_match: str | None = Header(None, alias="If-None-Match"),
+) -> Response:
+    """Return a bounded, auto-stretched JPEG preview with revalidation headers."""
+    try:
+        preview = await asyncio.to_thread(
+            image_preview.get_preview,
+            path,
+            hdu=hdu,
+            max_px=max_px,
+            if_none_match=if_none_match,
+        )
+    except image_preview.PreviewNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except image_preview.PreviewUnreadable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    headers = {"ETag": preview.etag, "Cache-Control": "no-cache"}
+    if preview.not_modified:
+        return Response(status_code=304, headers=headers)
+    return Response(content=preview.content, media_type="image/jpeg", headers=headers)
 
 
 # ── Recent files ─────────────────────────────────────────────────────────────

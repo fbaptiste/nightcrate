@@ -124,6 +124,10 @@ def test_migration_0064_rotation_cases(tmp_path):
     runtime = _compute_results(
         {
             "PLTSOLVD": "T",
+            # An ASTAP result counts as solved only with a complete WCS.
+            "CRVAL1": "10.0",
+            "CRVAL2": "40.0",
+            "CRPIX1": "600.0",
             "CD1_1": str(unequal["cd1_1"]),
             "CD1_2": str(unequal["cd1_2"]),
             "CD2_1": str(unequal["cd2_1"]),
