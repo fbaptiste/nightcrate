@@ -42,6 +42,20 @@ class TestSettingsModel:
 
 
 class TestSettingsPersistence:
+    async def test_default_solver_setting(self):
+        from nightcrate.db.session import get_db
+
+        assert Settings().default_solver == "native"
+        async with get_db() as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value_json) VALUES (?, ?)",
+                ("default_solver", '"invalid"'),
+            )
+            await conn.commit()
+        assert (await get_settings()).default_solver == "native"
+        await update_settings(Settings(default_solver="astap"))
+        assert (await get_settings()).default_solver == "astap"
+
     async def test_get_returns_defaults(self):
         s = await get_settings()
         assert s.theme == "browser"

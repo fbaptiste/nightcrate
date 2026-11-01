@@ -1,17 +1,75 @@
 import { apiFetch } from "./client";
 
+export type PlateSolver = "native" | "astap";
+
+export type SolveStep =
+  | "load"
+  | "near_index"
+  | "near_catalog"
+  | "blind_known_scale"
+  | "blind_unknown_scale"
+  | "astap_near"
+  | "astap_blind";
+
+export type AttemptOutcome =
+  | "solved"
+  | "no_match"
+  | "skipped"
+  | "step_timeout"
+  | "overall_timeout"
+  | "cancelled"
+  | "ambiguous"
+  | "too_few_stars"
+  | "error";
+
+export interface SolveAttempt {
+  solver: PlateSolver;
+  step: SolveStep;
+  position_source: "request" | "header" | "none";
+  scale_source: "request" | "header" | "none";
+  ranges: string[];
+  layers: string[];
+  outcome: AttemptOutcome | null;
+  seconds: number | null;
+  detail: string | null;
+}
+
+export interface ProgressSnapshot {
+  operation_id: string;
+  solver: PlateSolver;
+  attempts: SolveAttempt[];
+  active_step: SolveAttempt | null;
+  planned: SolveStep[];
+  elapsed_seconds: number;
+  state: "running" | "finished";
+}
+
 export interface PlateSolveRequest {
   image_path: string;
   hdu?: number;
-  mode?: "auto" | "near" | "blind";
+  operation_id: string;
   ra_hint?: number;
   dec_hint?: number;
   fov_hint?: number;
+  scale_hint_arcsec?: number;
+  position?: "auto" | "none";
+  scale?: "auto" | "none";
   timeout?: number;
+  solver?: PlateSolver;
 }
 
 export interface PlateSolveResult {
   solved: boolean;
+  solver: PlateSolver;
+  star_catalog: string | null;
+  stars_detected: number | null;
+  stars_matched: number | null;
+  rms_px: number | null;
+  rms_arcsec: number | null;
+  log_odds: number | null;
+  solve_path: "near_index" | "near_catalog" | "blind" | null;
+  scale_stage: string | null;
+  failure_reason: string | null;
   ra_deg: number | null;
   dec_deg: number | null;
   ra_hms: string | null;
@@ -31,6 +89,47 @@ export interface PlateSolveResult {
   error_message: string | null;
   warning: string | null;
   solve_time_seconds: number | null;
+  attempts: SolveAttempt[];
+}
+
+export function parseApiError(
+  err: unknown,
+): { message: string; failureReason: string | null; attempts: SolveAttempt[] } {
+  const raw = err instanceof Error ? err.message : typeof err === "string" ? err : String(err ?? "");
+  const fallback = raw.trim() || "Plate solve failed.";
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || !("detail" in parsed)) {
+      return { message: fallback, failureReason: null, attempts: [] };
+    }
+    const detail = (parsed as { detail: unknown }).detail;
+    if (typeof detail === "string") {
+      return { message: detail || fallback, failureReason: null, attempts: [] };
+    }
+    if (typeof detail === "object" && detail !== null) {
+      const message = "message" in detail ? (detail as { message: unknown }).message : null;
+      const failureReason =
+        "failure_reason" in detail
+          ? (detail as { failure_reason: unknown }).failure_reason
+          : null;
+      const attempts = "attempts" in detail ? (detail as { attempts: unknown }).attempts : null;
+      return {
+        message: typeof message === "string" && message ? message : fallback,
+        failureReason: typeof failureReason === "string" ? failureReason : null,
+        attempts: Array.isArray(attempts) ? (attempts as SolveAttempt[]) : [],
+      };
+    }
+  } catch {
+    // apiFetch also uses plain response text for non-JSON errors.
+  }
+  if (raw.trimStart().startsWith("<")) {
+    return {
+      message: "The server returned an unexpected response. Check that NightCrate's backend is running.",
+      failureReason: null,
+      attempts: [],
+    };
+  }
+  return { message: fallback, failureReason: null, attempts: [] };
 }
 
 export interface AstapValidation {
@@ -47,27 +146,23 @@ export function plateSolve(req: PlateSolveRequest): Promise<PlateSolveResult> {
   });
 }
 
-export async function validateReferenceImage(
-  currentPath: string,
-  currentHdu: number,
-  referencePath: string,
-): Promise<{ valid: boolean; error?: string; width?: number; height?: number }> {
-  const qs = new URLSearchParams({
-    current_path: currentPath,
-    current_hdu: String(currentHdu),
-    reference_path: referencePath,
-  });
-  return apiFetch(`/plate-solve/validate-reference-image?${qs.toString()}`, {
+export function fetchSolveProgress(operationId: string): Promise<ProgressSnapshot> {
+  return apiFetch<ProgressSnapshot>(
+    `/plate-solve/progress?operation_id=${encodeURIComponent(operationId)}`,
+  );
+}
+
+export function cancelSolve(operationId: string): Promise<{ cancelled: boolean; pending: boolean }> {
+  return apiFetch<{ cancelled: boolean; pending: boolean }>("/plate-solve/cancel", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operation_id: operationId }),
   });
 }
 
-export function fetchSolveProgress(): Promise<{ message: string }> {
-  return apiFetch<{ message: string }>("/plate-solve/progress");
-}
-
-export function cancelSolve(): Promise<{ cancelled: boolean }> {
-  return apiFetch<{ cancelled: boolean }>("/plate-solve/cancel", { method: "POST" });
+export function previewUrl(path: string, hdu: number = 0, maxPx: number = 1600): string {
+  const qs = new URLSearchParams({ path, hdu: String(hdu), max_px: String(maxPx) });
+  return `/api/images/preview?${qs.toString()}`;
 }
 
 export function validateAstapPath(path: string): Promise<AstapValidation> {

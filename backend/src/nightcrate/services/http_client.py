@@ -3,9 +3,12 @@ transient failures (timeout / connection reset / 5xx), and structured log
 lines for every attempt."""
 
 import asyncio
+import errno
 import logging
 import random
 import time
+from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 
@@ -14,6 +17,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_S: float = 30.0
 _RETRY_BACKOFF_MIN_S: float = 0.4
 _RETRY_BACKOFF_MAX_S: float = 0.7
+
+
+class ShortTransfer(OSError):
+    """The peer ended a streamed response before the published size."""
+
+
+class MalformedRange(ValueError):
+    """A resumed response did not describe the requested byte range."""
+
+
+class OperationCancelled(RuntimeError):
+    """A caller-requested streaming operation was cancelled."""
 
 
 def _is_retryable(exc: BaseException | None, status_code: int | None) -> bool:
@@ -87,3 +102,97 @@ async def get(
     if last_exc is not None:
         raise last_exc
     raise RuntimeError("http_client.get: exhausted retries without a response")
+
+
+async def stream_to_file(
+    url: str,
+    dest: Path,
+    *,
+    expected_size: int,
+    on_bytes: Callable[[int], None],
+    cancel: asyncio.Event,
+    label: str,
+) -> None:
+    """Resume a bounded HTTP download into *dest* with one transient retry."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and dest.stat().st_size > expected_size:
+        dest.unlink()
+        raise ValueError("partial download is larger than the published file")
+    if dest.exists() and dest.stat().st_size == expected_size:
+        on_bytes(expected_size)
+        return
+
+    for attempt in (1, 2):
+        start = dest.stat().st_size if dest.exists() else 0
+        headers = {"Range": f"bytes={start}-"}
+        logger.info("[http] %s → %s attempt=%d range=%d-", label, url, attempt, start)
+        t0 = time.perf_counter()
+        status_code: int | None = None
+        try:
+            async with httpx.AsyncClient(
+                timeout=DEFAULT_TIMEOUT_S, follow_redirects=True
+            ) as client:
+                async with client.stream("GET", url, headers=headers) as response:
+                    status_code = response.status_code
+                    if response.status_code == 206:
+                        expected_range = f"bytes {start}-{expected_size - 1}/{expected_size}"
+                        if response.headers.get("Content-Range") != expected_range:
+                            raise MalformedRange(
+                                "unexpected Content-Range "
+                                f"{response.headers.get('Content-Range')!r}; "
+                                f"expected {expected_range!r}"
+                            )
+                        mode = "ab"
+                    elif response.status_code == 200:
+                        start = 0
+                        mode = "wb"
+                    else:
+                        response.raise_for_status()
+                        raise RuntimeError("unreachable")
+
+                    done = start
+                    with dest.open(mode) as output:
+                        async for chunk in response.aiter_bytes():
+                            if cancel.is_set():
+                                raise OperationCancelled("operation cancelled")
+                            remaining = expected_size - done
+                            if remaining <= 0:
+                                break
+                            bounded = chunk[:remaining]
+                            output.write(bounded)
+                            done += len(bounded)
+                            on_bytes(done)
+                            if len(bounded) < len(chunk):
+                                break
+                    if done < expected_size:
+                        raise ShortTransfer(
+                            errno.ECONNRESET,
+                            f"stream ended at {done} bytes; expected {expected_size}",
+                        )
+                    logger.info(
+                        "[http] %s ← %s in %.0f ms (%d bytes, attempt %d)",
+                        label,
+                        response.status_code,
+                        (time.perf_counter() - t0) * 1000,
+                        done - start,
+                        attempt,
+                    )
+                    return
+        except asyncio.CancelledError:
+            raise
+        except OperationCancelled:
+            raise
+        except MalformedRange:
+            raise
+        except OSError as exc:
+            if exc.errno == errno.ENOSPC:
+                raise
+            retryable = isinstance(exc, ShortTransfer)
+            if attempt == 2 or not retryable:
+                raise
+        except Exception as exc:
+            if attempt == 2 or not _is_retryable(exc, status_code):
+                raise
+        delay = random.uniform(_RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S)  # nosec B311
+        await asyncio.sleep(delay)

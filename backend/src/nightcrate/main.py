@@ -39,6 +39,7 @@ from nightcrate.api import (
     projects,
     rigs,
     settings,
+    star_catalog,
     weather,
     wishlist,
 )
@@ -48,6 +49,8 @@ from nightcrate.core.compute import set_gpu_enabled
 from nightcrate.core.config import get_settings
 from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import get_db, set_db_path
+from nightcrate.services import plate_solve as plate_solve_service
+from nightcrate.services.star_catalog import fetch as star_catalog_fetch
 
 _LOG_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -224,7 +227,11 @@ async def lifespan(app: FastAPI):
         except _MAINT_EXPECTED_ERRS:
             startup_logger.warning("sky-tile cache maintenance failed", exc_info=True)
 
-    yield
+    try:
+        yield
+    finally:
+        await star_catalog_fetch.shutdown()
+        await plate_solve_service.shutdown()
 
 
 openapi_tags = [
@@ -374,6 +381,13 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Star catalog",
+        "description": (
+            "Manage the shared Siril Gaia DR3 star catalog and locally built "
+            "field-range indexes used by the built-in plate solver."
+        ),
+    },
+    {
         "name": "Target Planner",
         "description": (
             "Tonight's visibility planning for DSO targets. Computes altitude tracks, "
@@ -428,6 +442,7 @@ app.include_router(project_sessions.router)
 app.include_router(project_solve.router)
 app.include_router(project_targets.router)
 app.include_router(settings.router)
+app.include_router(star_catalog.router)
 app.include_router(admin.router)
 app.include_router(wishlist.router)
 app.include_router(diagnostics.router)

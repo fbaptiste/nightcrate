@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { WcsParams } from "./plateSolve";
+import type { PlateSolver, SolveAttempt, WcsParams } from "./plateSolve";
 
 export interface IdentifiedDso {
   dso_id: number;
@@ -38,6 +38,16 @@ export interface ProjectSolve {
   fov_width_arcmin: number | null;
   fov_height_arcmin: number | null;
   solved_at: string;
+  solver: PlateSolver;
+  star_catalog: string | null;
+  stars_detected: number | null;
+  stars_matched: number | null;
+  rms_px: number | null;
+  rms_arcsec: number | null;
+  log_odds: number | null;
+  solve_path: "near_index" | "near_catalog" | "blind" | null;
+  scale_stage: string | null;
+  attempts: SolveAttempt[];
   wcs: WcsParams;
   objects: IdentifiedDso[];
 }
@@ -45,9 +55,15 @@ export interface ProjectSolve {
 export interface CreateSolveRequest {
   image_path: string;
   hdu?: number;
+  operation_id: string;
+  replace?: boolean;
   ra_hint?: number;
   dec_hint?: number;
   fov_hint?: number;
+  scale_hint_arcsec?: number;
+  position?: "auto" | "none";
+  scale?: "auto" | "none";
+  solver?: PlateSolver;
 }
 
 export async function getProjectSolve(projectId: number): Promise<ProjectSolve | null> {
@@ -84,8 +100,8 @@ export async function deleteProjectSolve(projectId: number): Promise<void> {
 export function projectSolveImageUrl(
   projectId: number,
   variant: "full" | "thumb_lg" | "thumb_md" | "thumb_sm" = "full",
-  solvedAt?: string,
+  solveId?: number,
 ): string {
-  const v = solvedAt ? `?_v=${encodeURIComponent(solvedAt)}` : "";
+  const v = solveId != null ? `?_v=${solveId}` : "";
   return `/api/projects/${projectId}/solve/image/${variant}${v}`;
 }

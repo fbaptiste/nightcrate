@@ -1,12 +1,671 @@
 # NightCrate — active plan
 
-**Version:** v0.42.0 — Catalog preservation, licence, planner star, mirrored overlays
+**Version:** v0.43.0 — Native plate solver
 
-**Branch:** `v0.42.0/catalog-preservation`
+**Branch:** `v0.43.0/native-plate-solver`
 
 **Status:** Complete — awaiting merge
 
+## v0.43.0 — Native plate solver
+
+Fred started this version on 2026-10-28, after merging v0.42.0. Its scope is
+the native plate solver, moved here from the roadmap. The spec starts from the
+accepted prototype's findings.
+
+- [x] Start from updated `main` on `v0.43.0/native-plate-solver`.
+  - **Start-version fix (Fred approved, 2026-10-28).** The skill switched to
+    `main` before pulling. Local `main` was a release behind, so Fred's
+    running `make dev` briefly ran v0.41.10 code against his database.
+    Checked afterwards: no catalog reloaded and every user record survived.
+    The skill now updates `main` without checking it out.
+- **Fred's decisions (2026-10-28):**
+  - the native solver replaces ASTAP in the two places that solve today, the
+    Image Analyzer and a project's Plate Solve tab. Nothing new, such as
+    solving subs during cataloging, is in scope.
+  - star data is managed in Admin, next to the DSO catalog downloads:
+    - download Siril's file, or import a copy. Zenodo publishes it only as
+      one 1.14 GB file, but serves byte ranges (checked 2026-10-28), so the
+      download resumes after an interruption;
+    - users pick which field ranges to index, each shown with its size, with
+      ranges matching their rigs' fields ticked to start with; each range
+      builds and can be removed on its own;
+    - an image whose field falls in an unbuilt range cannot solve fully
+      blind, and the dialog names the range to build. With a header
+      position it can still solve by the slower route that needs no index.
+  - the star file and indexes live in the app data folder and are shared by
+    every database; solve results and settings stay per database.
+  - Fred approved the Admin "Plate-solving stars" mockup (three states:
+    before download, downloading, installed with field ranges), with
+    "blind solve" as the term for a solve without a position.
+  - Fred approved the solve-dialog mockup: no near/blind choice (solve near
+    a known position, then fall back to a blind solve); solver, stars
+    matched and fit error added to results; "Solve with ASTAP" only after a
+    failure or while stars are missing, and only when ASTAP is set up; a
+    default-solver choice in Settings → Plate Solving. Confidence is saved
+    but not shown (Claude's call).
+  - the dialog keeps closing itself on a successful solve. The new rows go
+    in the Image Analyzer's Astrometric Solution sidebar and the project's
+    saved solve, not in an open "Solved" dialog.
+  - Fred stopped his `make dev` server, so work happens in the main
+    checkout with no worktree. It stays stopped until the migration gate
+    passes; until then, any server running this branch uses a temporary home
+    folder with a copy of his database.
+- [x] Spec, brainstormed with Fred:
+  [design](docs/superpowers/specs/2026-10-28-native-plate-solver-design.md).
+  A fresh builder check raised four questions. Two were settled from the
+  prototype's evidence: index searches use the blind acceptance limits they
+  were measured with, and the bar's measurement method is fixed in advance.
+  Fred answered the other two (above). Fred approved the spec on
+  2026-10-28.
+- [x] Implementation plan and Codex plan review:
+  [plan](docs/superpowers/plans/2026-10-28-native-plate-solver.md).
+  The independent Codex plan review converged in 4 of 5 rounds. Every
+  finding was accepted; nothing was rejected, and there are no tracked items.
+  The main changes:
+  - a search cut short is never a solve;
+  - the solve slot is held until the worker stops;
+  - the prototype's whole-sky index builder runs in a child process, instead
+    of building in sky portions;
+  - a manifest records the built ranges;
+  - the solve order uses only the measured modes.
+
+  The review section is at the end of the plan.
+- [x] Fred approves the final plan (2026-10-28). He accepted the build
+  memory: about 5.4 GB for the 0.2–0.4° range and 3.2 GB for 0.4–0.8°,
+  shown in Admin. That replaces the dropped plan to build in sky portions.
+- [x] Implementation by phase, with Claude's review:
+  - [x] **Phase A, star data** (Tasks 1–4): the Siril reader, the pinned
+    download and import, the index format, field ranges and manifest, the
+    builder in a child process, and the Admin routes. Staged.
+    - **Claude's review** sent 4 major and 4 minor findings, all fixed:
+      - thread and child ownership when the task is cancelled from outside;
+      - the `.bz2` import disk check, and cleanup after a failed import;
+      - build progress that jumped from 5% to 100%;
+      - about 20 planned tests that were missing.
+    - **Checks:** 121 targeted tests pass; Ruff, format and Bandit are
+      clean. All the work stayed in scope.
+  - [x] **Phase B, the solver** (Tasks 5–7): the ported solver core, the
+    solve order and budgets, the dispatcher with the worker holding the
+    solve slot, migration 0065, the `default_solver` setting and the API
+    contracts. Staged.
+    - **Codex stopped once** on a contradiction in the plan: one test
+      conflicted with the agreed rule for which failure message wins. The
+      rule was settled in the plan review, so Claude corrected the test.
+    - **Claude's review:** 3 major and 2 minor findings, all fixed:
+      - "field not built" was missing when there was no position;
+      - the near index search used fewer layers than the measured mode;
+      - the image header was read on the event loop;
+      - a second cancellation released the slot early;
+      - the early-stop checks re-read the clock instead of recording why the
+        search stopped.
+    - Claude fixed the DDL so the new columns follow `solved_at`, the order
+      `ALTER TABLE` produces.
+    - **Checks:** 222 targeted tests pass, including real end-to-end solves
+      of synthetic FITS and PNG images. Ruff, format and Bandit are clean.
+  - [x] **Phase C, frontend** (Tasks 8–9): the Admin section, the dialog's
+    states A, C and D, the Settings radio, and the sidebar and project rows.
+    Staged.
+    - **Claude's review and rendered checks** found, across two cycles:
+      - Retry re-ran the solve instead of returning to the form;
+      - table cells wrapped ("✓ / Built"), doubling the table's height;
+      - the wrong state D line for `no_ranges`;
+      - an ASTAP-only hint;
+      - discarded error parses;
+      - then an 820 px regression, where the table widened the whole Admin
+        page.
+    - Codex fixed the first five. After its third cycle, Claude fixed the
+      last itself:
+      - the page box had shrink-wrapped to its widest content (its centring
+        margins in a flex column), and now has `width: 100%`;
+      - the narrow-screen column minimums and the actions column padding were
+        trimmed.
+    - **Measured with headless Chrome:** at 820 and 1500 px, neither the page
+      nor the table scrolls sideways.
+    - **Rendered against the approved mockups**, light and dark, 1500 and
+      820 px:
+      - the three Admin states;
+      - dialog states A and C (a Moon JPEG: "Only 0 stars were detected…");
+      - the Settings radio;
+      - the sidebar rows;
+      - an old ASTAP project solve showing "Solver: ASTAP".
+  - **A real project solve through the built-in solver** (on the copy)
+    first failed with a 500: the project route called `run_solve` without
+    `timeout`.
+    - Every route test mocked `run_solve` itself, so none caught it.
+    - **Fixed** (180 s default, as `run_plate_solve` had) with a test that
+      drives the route through the real dispatcher, faking only the worker.
+      The test fails without the fix.
+    - **After the fix,** the Pacman Nebula sub solves near its header
+      position and saves. It is within 0.15″ and 0.008° of the old ASTAP
+      solution, and finds the same NGC 281 and IC 1590. The fit is 1.48 px
+      RMS over the full 6248 × 4176 frame, as expected with TAN only.
+  - **Claude's fixes found during the checks** (staged, with tests):
+    - "Your rigs" listed every seeded smart telescope. Rig coverage now uses
+      only rigs marked as the user's (`is_mine = 1`). The old test mocked the
+      database and only checked the query text; the new one uses the seeded
+      test database and fails without the fix.
+    - A hard kill during unpacking left a hidden temporary file of up to
+      1.5 GB, and a killed build left its folder; nothing removed them.
+      Claiming an operation now removes these, and keeps the resumable
+      partial and the verified compressed file.
+  - [x] **Phase D, benchmark, trials and docs** (Task 10). Staged.
+    - Codex wrote:
+      - the corpus benchmark script, which runs every image in its own child
+        process, judges wrongness by the prototype's rule, and writes the
+        §11.2 bar with a PASS/FAIL per item;
+      - the opt-in real-sky trials, which write a fixture of their inputs;
+      - the README credits, setup and "Methods and prior work";
+      - the "Plate solving" rules in development decisions;
+      - the code map.
+    - **Claude's review:** checked the bar computation against spec §11.2 and
+      the rule for using target positions. The documentation facts and the
+      four external links resolve.
+    - Claude added the corpus's two `variant-*` categories, which the
+      handoff had left out of the script's list.
+  - [x] **Phase E, two index choices** (Task 10b, added after Task 11's
+    range check; Fred, 2026-10-29). Staged. Details are under the
+    measurements below.
+  - [x] **Two review-fix rounds** from the independent reviews. Staged.
+    Details are under the measurements below.
+- [x] **Migration gate (2026-10-29):** a copy of Fred's database at 0064,
+  upgraded through the app's runner.
+  - No row count changed in any of the 72 tables.
+  - The 3 existing solves keep every original value and read back as
+    `solver = 'astap'`, with the new columns NULL.
+  - The 16 `project_dso` rows keep their ids and links.
+  - The CHECK rejects an unknown solver.
+  - `integrity_check` is `ok` and `foreign_key_check` is empty.
+  - Re-running is a no-op, and a fresh database migrates to 0065.
+- **Measurements so far (Task 11, 2026-10-29).** All against a temporary
+  HOME with a database copy.
+  - **Real download** through the Admin route: about 10 minutes for 1.14 GB
+    (Zenodo varied between 0.6 and 1.9 MB/s).
+    - Cancel, then Download, resumed with `Range: bytes=18553816-` against
+      Zenodo itself.
+    - A server stop during unpacking kept the verified compressed file, and
+      the restart skipped the download.
+    - A hard kill during unpacking left a hidden temporary file (fixed;
+      see above).
+  - **Every range built through the Admin route.** Each file is
+    byte-identical in size to the prototype's (3.44 GB in all).
+    - `q004` peaked at 5.4 GB in the build process, with the server at
+      0.2 GB. It took 175 s through the server (which ran at nice 5) and
+      81 s directly with 15 threads.
+    - `q008` with the small layers peaked at 3.1 GB.
+    - The first `q004` build took 1,100 s and did not reproduce.
+      Hypothesis, not checked: the machine was busy indexing the newly
+      unpacked file.
+  - **Rendered solves through the dialog:**
+    - the M3 PNG crop (no header) blind-solved, labelling M3 and NGC 5263,
+      with 164 of 250 stars matched and a 0.71 px RMS;
+    - the IC 1805 Hα sub (one of the two narrowband subs the prototype's
+      fully blind mode missed) solved near its header position in 1.6 s.
+  - **Native against ASTAP on that FITS sub:** 0.12 px median grid
+    distance (max 0.21 px), and rotation differs by 0.004°. The rotation rule
+    agrees with ASTAP's CROTA2 on FITS.
+  - **Thread against process** (spec §5.4), on 20 corpus subs and masters
+    after one warm-up: a worker thread takes 0.30 s at the median, and a
+    per-run spawned process 0.82 s. The process adds 0.52 s per solve, so
+    the thread stays.
+  - **Corpus benchmark** (149 images, one child process per image and
+    mode, 2026-10-29):
+    - native solved 132 of 143 and ASTAP 123; ASTAP solved one image native
+      missed (the M106 JPEG);
+    - no wrong solution in any mode, and no negative solved;
+    - fully blind on the 106 subs and masters: 0.63 s median, 2.2 s P95;
+      it missed the two narrowband subs the prototype also missed;
+    - against ASTAP: 0.35 px median grid distance (P90 1.4 px) and 0.006°
+      median rotation difference;
+    - peak memory follows image size: 5.4 GB native and 3.9 GB in ASTAP
+      mode, both on the Veil mosaic XISF.
+    - **Median time missed under the fixed method:** native 0.53 s against
+      ASTAP's 0.39 s over the 122 images both solve.
+      - The script counts the solver modules' import (0.13 s) inside the
+        native timer but not ASTAP's.
+      - A fresh process also opens the star files for every image.
+      - Timed the server's way (one process, one uncounted warm-up),
+        interleaved with ASTAP on the same 122 images: native 0.35 s
+        against ASTAP's 0.37 s.
+      - **Fred (2026-10-29):** the built-in solver stays the default; some
+        users won't have ASTAP set up at all.
+    - **Re-run with the solver imports before the timer** (Claude's fix):
+      every bar item passes. Native took 0.35 s against ASTAP's 0.43 s at
+      the median; fully blind took 0.46 s at the median and 2.0 s at P95.
+      Solve counts, safety results and agreement were unchanged. ASTAP's
+      median moved 0.39 → 0.43 s between runs, so the margin is about as
+      large as the run-to-run variation.
+  - **Port check:** the product against the prototype's phase 2c results
+    on the same corpus images, as a 7 × 7 grid median distance.
+    - Fully blind: both solve the same 128 images, with a median distance
+      of 0.001 px and a maximum of 0.008 px.
+    - The product flow against the prototype's header-plus-index mode:
+      115 images both solve, with a maximum of 0.007 px. The product also
+      solves 17 images that mode missed.
+  - **Rendered checks, round 2** (headless, on a second temporary home
+    with no stars):
+    - Admin "before download" in light and dark at 1500 and 820 px, with
+      no page overflow;
+    - dialog state D (stars not installed) in the Image Analyzer, in both
+      themes and at both widths, and in the project tab;
+    - keyboard order in state D: Cancel → Open Admin → Solve with ASTAP;
+    - "Solve with ASTAP" from state D closes the dialog in both views; the
+      sidebar shows "Solver ASTAP", and the project's saved row has
+      `solver = 'astap'` with null native metrics.
+  - **Failure transports**, faked at the network layer in both views:
+    `field_not_built` (a 200 result in the analyzer, an object-detail 422
+    in the project tab), a string-detail 422, and a non-JSON 500. Each
+    shows its message with Close, Solve with ASTAP and Retry.
+    - A non-JSON body is shown raw (`<html>…`). Main did the same; it goes
+      in the review-fix round.
+    - The Image Analyzer's MUI X "empty height" console warning is
+      pre-existing; this branch adds no DataGrid.
+  - **Independent Codex review** (gpt-5.6-sol, high, read-only;
+    `.superpowers/codex/v0.43.0/47-*`). Six findings:
+    - **Accepted, five:**
+      - an ASTAP process could outlive its solve slot on cancellation
+        (also true on main);
+      - an import could truncate NightCrate's own staged file if picked;
+      - no cancel or deadline check between load, extraction and search;
+      - native pixel scale and field use `sqrt(|det CD|)`, not ASTAP's
+        rule (spec §5.3; at most 0.06% on the corpus);
+      - Admin's rig field uses the arctangent formula, not the dialog's
+        (spec §4.4).
+    - **Rejected:** "the Siril licence is unconfirmed". Zenodo's API record
+      has `license.id = cc-by-4.0`.
+    - **Fix round** (Codex, `.superpowers/codex/v0.43.0/48–51`):
+      - all five accepted fixes, plus a plain message for a non-JSON error
+        body;
+      - in scope (inventory: 9 files modified, none added or deleted);
+      - Claude reviewed the diff, re-ran the six affected test modules
+        (154 passed) and ruff, and staged it;
+      - the browser now shows "The server returned an unexpected response…"
+        instead of raw HTML, in both views.
+  - **Range boundaries** (spec §4.4): one range's layers alone miss fields
+    near the bottom of that range.
+    - **Synthetic edges:** 100 seeded real-sky fields per edge. At 1.02 ×
+      each range's minimum, the range's own layers solved 22–46, against
+      38–98 with every layer. Near the top edge the gap was 1–15. None was
+      wrong.
+    - **Layer sweep:** 60 fields at the bottom, middle and top of each
+      range. Own layers plus the next smaller layer solve as many as every
+      layer, within 0–4 fields, except at the 0.4–0.8° top (35 against
+      42). The 0.2–0.4° range has no smaller layer, and its own already
+      matches every layer.
+    - **Corpus, one range built alone** (product flow, images with a
+      position):
+      - 0.8–1.6° lost three M66 images at 1.01–1.04°;
+      - 1.6–3.2° lost four images at 1.64–1.69°;
+      - 0.2–0.4° lost one header-less PNG crop;
+      - 0.4–0.8° and 3.2–6.4° lost none.
+    - **Corpus, blind:** 11 losses in all; none wrong.
+    - Every lost image solves with every range built.
+    - The build already shares layers between ranges: it skips ready
+      layers, and removal keeps layers a remaining range uses.
+    - **Fred (2026-10-29):** two choices instead of six ranges, as Seti
+      Astro Suite Pro does:
+      - Standard (8′–256′, fields 0.4°–10°, 529 MB), ticked by default;
+      - Narrow fields (4′, 0.2°–0.4°, 1.39 GB), ticked when a rig needs it.
+
+      SASpro's help page builds every inexpensive layer by default, and
+      says neighbouring layers overlap so a boundary field is covered
+      twice. Spec §4.4 and the plan's Task 10b are revised; Codex is
+      implementing it as Phase E.
+  - **Real-sky synthetic trials** (product, seed 20261029, 53 min):
+    - positives: 1,540 of 2,000 solved, none wrong;
+    - negatives: 0 of 1,000 random-dot fields solved;
+    - by field band: 158/334, 209/334, 258/333, 291/333, 313/333 and
+      311/333, from 0.2° up to 10°;
+    - by declination: −90…−30 425/541, −30…30 724/970, 30…90 391/489.
+    - **Prototype on the same fixture** (its own `solve_blind`, layers and
+      catalogue, 30 s, through a local script outside the repository):
+      also 1,540 of 2,000 and 0 of 1,000. Recovery is identical in every
+      field band and declination band (the bar allowed 2 points below).
+      No search hit its time budget.
+  - **Phase E reviewed and staged** (Codex, records `52–55`):
+    - inventory: 15 files modified, none added or deleted;
+    - Claude re-ran the star-catalogue, native-solver, star-catalogue API
+      and plate-solve test modules: 208 passed, 1 skipped (the real-sky
+      trials).
+  - **Builds of the two choices through the Admin route** (2026-10-29):
+    - **Standard:** 39 s; build child 3.09 GB, with the server 3.29 GB;
+      temporary disk 695 MB (preflight 1.15 GB).
+    - **Narrow fields:** 92 s; build child 5.41 GB, with the server
+      6.03 GB; temporary disk 2.87 GB (preflight 4.16 GB). Layer sizes
+      are unchanged.
+    - **A solve during the Narrow build** (IC 1805 Hα sub) took 1.3 s by
+      `near_index`. Server plus child was 5.72 GB while it ran.
+    - `build_memory_bytes` (3.2 GB and 5.4 GB) and the 3 × disk preflight
+      stand.
+  - **Admin with two choices,** rendered headless:
+    - light and dark at 1500 and 820 px, with no page or table overflow;
+    - Standard is listed first with four of the test database's rigs, and
+      Narrow fields with a 0.39° rig;
+    - before a build (status faked at the network layer), Standard starts
+      ticked with no rigs, and Narrow fields only when a rig needs it.
+  - **Corpus with Standard alone** (`--ranges 0.4-10`):
+    - every image 0.4° or wider solves as it does with every layer (normal
+      flow 118 of 119, blind 114 of 119);
+    - under 0.4°, 12 of 14 still solve in the normal flow (11 by
+      `near_catalog`); two integrated images (0.24° and 0.30°) need Narrow
+      fields;
+    - no wrong answer, and no negative solved.
+  - **Second independent review** (`56–57`, of the fix round and Phase E):
+    three findings, each verified and accepted as minor:
+    - ASTAP's ownership begins only once its process exists;
+    - no stop check before a new extraction;
+    - the import guard is case-sensitive.
+    - Brief `58` sent them back to the writer session (records `58–61`):
+      - ASTAP now runs as a task owned like the native worker. A stop flag
+        prevents any start or retry after a cancel or shutdown, and the
+        slot is held until the task ends.
+      - Stop and deadline checks run before every new extraction.
+      - The import guard compares folders by filesystem identity.
+      - In scope (6 files modified). Claude reviewed it, re-ran the
+        affected modules (214 passed, 1 skipped) and ruff, and staged it.
+  - **Release checks on the final code:**
+    - `bandit` exit 0;
+    - `uv lock --check` in sync;
+    - `npm run build` passed (only the existing chunk-size warning);
+    - ruff and format clean;
+    - full `uv run pytest` outside the sandbox: 2,902 passed, 4 skipped
+      (including the opt-in real-sky trials), in 33 min 42 s.
+  - **Cycle 3** (`62–69`):
+    - The round 2 re-review found that `/cancel` didn't set ASTAP's stop
+      flag. Codex fixed it, Claude reviewed it, and 104 tests passed;
+      staged.
+    - The full suite on that code: 2,902 passed, 4 skipped.
+    - **Version files bumped to 0.43.0;** the schema and reference headers
+      are synchronized.
+    - **The closing re-review found one last window:** a cancel while
+      ASTAP's process is being created. The cycle limit is reached, so it
+      went to Fred with Claude's recommendation (a post-launch stop check).
+    - **Fred (2026-10-29): make the fix,** as recommended, with no fourth
+      review cycle. Claude added it:
+      - once ASTAP's process exists, a cancel that came in during the
+        launch kills it, and the solve reports "Solve cancelled.";
+      - a new test holds the launch while Cancel arrives. It fails on the
+        earlier code, and passed six runs in a row with the fix.
+      - Afterwards the plate-solve, solve API and native-solver modules
+        gave 152 passed, 1 skipped; ruff, format and bandit are clean.
+        The full suite ran before this fix and was not repeated.
+- [x] Benchmark against ASTAP on Fred's local corpus, and synthetic
+  false-match trials (results above).
+- [x] Rendered checks (above).
+- [x] Fresh independent Codex review: two reviews (`47`, `57`) and two
+  re-reviews (`63`, `69`), above and in the plan's Codex review section.
+- [x] Release checks (above).
+- [x] Fred's acceptance test. It led to the fixes and the rework below;
+  Fred accepted the new candidate on 2026-11-01.
+- [x] **Fix during acceptance (2026-10-30): index builds ran out of open
+  files.** Fred's first build failed with "Too many open files". The builder
+  kept all 256 of its temporary part files open at once. A process started
+  from a macOS terminal may open 256 files, while Claude's shell allowed over a
+  million, so no earlier build or test could fail.
+  - The builder now opens one part file at a time, while appending to it.
+  - A new test lowers the limit itself and fails on the old code.
+  - At the 256 limit, all seven layers rebuilt from the real star file
+    match the earlier builds byte for byte after the header, which differs
+    only in build statistics. Times were 35 s for Standard and 88 s for
+    Narrow fields, no slower than before. The two largest layers also build
+    with a limit of 32 files.
+  - At the 256 limit, the star-catalog, native-solver and star-catalog API
+    tests gave 111 passed, 1 skipped; ruff is clean.
+- [x] **Fix during acceptance (2026-10-30): build progress and the range
+  table.** Building Standard and Narrow fields together, Fred saw both bars
+  move in lockstep, and the table scrolled sideways with Cancel cut off.
+  - **Causes:**
+    - every building row showed the whole job's progress;
+    - that progress counted layers equally, so Standard's six quick layers
+      took it to 86% and Narrow's single 88 s layer filled the rest;
+    - nothing was published until every layer was done;
+    - each building row added a bar and a Cancel button that pushed the
+      table past the card.
+  - **Fred approved the fix:**
+    - ranges build one at a time, Standard first, each published as soon
+      as it is ready;
+    - each range shows its own progress, weighted by layer size;
+    - a queued range shows "Waiting";
+    - one Cancel, on the row being built, which keeps finished ranges;
+    - rig labels wrap rather than widen or truncate the table.
+
+    Codex implemented it (records `70–75`); Claude reviewed it and sent one
+    defect back (chips truncated with "…", hiding the field value).
+  - **Checks:**
+    - star-catalog, star-catalog API, native-solver and plate-solve API
+      tests at a 256-file limit: 121 passed, 1 skipped; ruff clean;
+      `npm run build` passed;
+    - rendered headless at 820, 900, 1000, 1100, 1280 and 1500 px, dark and
+      light, in four states (not built; Standard building with Narrow
+      waiting; Standard built with Narrow building; both built): no
+      sideways scroll and no truncated chip;
+    - a real build of both ranges on the test copy: Standard built at 36 s
+      while Narrow fields kept building; both were done at 130 s.
+- [x] **Reopened during acceptance (2026-10-30): plate solving and its UI.**
+  Fred's NA Nebula final (a stretched, cropped stack) solved with neither
+  solver from the project Plate Solve tab, and he found the solve UI
+  confusing: unclear options, an unexplained "From Reference Image", no view
+  of the chosen image, and a failure that meant choosing the image again.
+  - **Causes, each reproduced:**
+    - the built-in solver's verification set left out stars with clipped
+      cores, which in a stretched image are all the bright ones;
+    - Rig and Equipment hints sent a field height computed from the full
+      sensor, 14% too large for this crop, and ASTAP's position search
+      failed with it;
+    - ASTAP had no blind step, and its message suggested one.
+  - **Other defects found in the audit:**
+    - manual hints are never sent;
+    - header binning is counted twice;
+    - the project tab never prefills header equipment;
+    - an ASTAP "solved" result isn't checked for a complete WCS;
+    - an ASTAP failure can be hidden behind the star-setup screen;
+    - dismissing the dialog doesn't cancel, so a late result can attach to
+      another image;
+    - cancel isn't tied to one solve.
+  - **Fred (2026-10-30): fix all of it in v0.43.0 and redesign the
+    plate-solving UI** for simplicity and clear options, using the design
+    skill and a discussion with Codex. The backend design converged with
+    Codex in five rounds (records `78–87`). The UI design follows in
+    `docs/superpowers/specs/2026-10-30-plate-solve-ux-design.md`, with
+    mockups for Fred's approval, then an implementation plan and a new
+    candidate.
+  - **Fred (2026-10-30):**
+    - approved the clickable mockup ("I like this UX much better");
+    - removed "From Reference Image";
+    - dropped the telescope-and-camera scale picker;
+    - chose ASTAP's automatic whole-sky step;
+    - kept project solves on a file's first image;
+    - asked for the tab's explanation text.
+  - **The plan** (`docs/superpowers/plans/2026-10-30-plate-solve-fixes-and-ux.md`)
+    converged with Codex in an independent review (records `94–99`). Fred
+    approved it on 2026-10-30. Implementation: Phase A (built-in solver),
+    Phase B (backend contracts and the ASTAP chain), Phase C (the panel).
+  - **Implemented and reviewed** (Codex wrote, Claude reviewed each phase).
+    The plan's Codex review section lists the review findings.
+    - **Corpus benchmark** (143 images that should solve):
+      - built-in 132 (unchanged);
+      - ASTAP 130, up from 123: near the position, then the whole sky;
+      - no wrong verified solution and no negative image solved;
+      - the user's `astap.cfg` byte-identical after the run.
+    - **The NA Nebula final** solves with both solvers through both the
+      Image Analyzer and the project endpoints. The two agree to about 0.3″.
+    - **Rendered checks** (headless, against a test copy):
+      - project tab 44 of 44;
+      - Image Analyzer and Admin 35 of 35.
+    - **Preview speed:** a 26 MP FITS shows in 0.09 s. A 540 MB XISF shows
+      in 0.27 s, using 2.7 GB at its peak; the existing project render uses
+      5 GB.
+    - **Removed:**
+      - the solve dialog, "From Reference Image" and its route;
+      - the request `mode`;
+      - the old cancel and progress forms without an ID.
+  - **Still failing with the built-in solver:** 10 finals, of which ASTAP
+    solves 2, plus the Veil mosaic, which ASTAP solves.
+    - A time-boxed look found that in a processed nebula final (IC 1805),
+      only about 40% of the brightest detections are stars.
+    - A fix changes the search design, so it is proposed for v0.43.1 (see
+      the roadmap), not made now.
+    - The failure screen points to the stacked image, which the built-in
+      solver solved for 9 of the 10.
+  - **Release checks on the new candidate (2026-10-30):**
+    - ruff, format and bandit: clean (bandit: 0 issues at any severity);
+    - `npm run build`: passed, with only the existing chunk-size warning;
+    - **full backend suite** (`pytest -n auto`): 3,003 passed, 4 skipped,
+      1 failed;
+    - the failure was `test_migration_0064_rotation_cases`. It fed ASTAP's
+      result parser a WCS without centre or reference pixel, which Phase B
+      now correctly treats as unsolved. Claude completed the test's WCS, and
+      the module now passes (3 of 3).
+    - **Final tree (2026-11-01):** full backend suite (`pytest -n auto`)
+      3,004 passed, 4 skipped; ruff, format, `uv lock --check` and
+      `npm run build` clean; bandit reports no issues, with one new
+      `# nosec B311` (random jitter for download retry delays).
+    - **Coverage of the changed modules:** 86% overall, with
+      `solve_operations` at 97% and the plate-solve routes at 82% (counting
+      the annotation tests). The routes' remaining gap is error handling
+      that was already untested.
+  - [x] Fred accepted the new candidate (staged tree `9428a6e`) as feature
+    complete and asked to finalize it on 2026-11-01.
+- [x] **PR review of #21** (Claude's code-review agent, 2026-11-01), covering
+  the changes made after the independent Codex review. Seven findings, all
+  verified by Claude, none high; Fred asked for all seven to be fixed before
+  merging:
+  - **An unfinished step showed as "Done".** A project solve that couldn't
+    read its image listed the reading step as done.
+  - **"Try again" had gone missing** for errors sent without a reason, such
+    as a busy solver. The previous fix round caused this.
+  - **Two contract tests proved nothing:** they passed with the contract
+    reverted.
+  - **Failure titles were missing** for render, image, star-setup and range
+    failures. A render failure read "No solution found" above "The image
+    solved, but…".
+  - **Deleting a solve during a replacement** in another tab could make the
+    replacement fail with a server error.
+  - **Folders left by a crash** stayed until the solve was deleted.
+  - **Error labels were wrong:** internal errors were reported as reading
+    errors, and a missing ASTAP program asked about a disconnected drive.
+
+  **The fixes:**
+  - Both solve endpoints now send every error as `{message,
+    failure_reason, attempts}`, with reasons `invalid_configuration`,
+    `read_error`, `busy`, `solve_exists`, `time_limit` and `error`.
+  - The solvers mark reading failures and ASTAP launch failures with their
+    own error types.
+  - An unfinished step is reported as stopped.
+  - The panel has a title for every reason, and "Try again" where retrying
+    can help.
+  - A successful save clears every leftover folder, and delete leaves
+    in-progress renders alone.
+
+  Codex implemented them in two rounds (records `150–156`); Claude
+  reviewed them and updated the development decisions.
+  - **Checks:**
+    - the affected test modules (237 passed in Codex's run);
+    - the full backend suite: 3,045 passed, 4 skipped;
+    - ruff, format and bandit (no issues); `npm run build`;
+    - rendered headless against a test copy: the failure screen 30 of 30
+      (eight reasons, including an older server's responses), project tab
+      44 of 44, Image Analyzer and Admin 35 of 35.
+
+### Scope
+
+Fred decided on 2026-10-26 to solve images inside NightCrate by default, with
+ASTAP kept as an option. The method is derived from published work: 4-star
+geometric hashing and Bayesian verification (Lang et al. 2010, AJ 139, 1782),
+and TAN/SIP WCS (Calabretta & Greisen 2002; Shupe et al. 2005). Since the move
+to GPL-3.0-or-later, Fred has allowed (2026-10-27) reading the source of
+open-source solvers for concepts: Seti Astro Suite Pro, astrometry.net, ASTAP,
+tetra3 and twirl. NightCrate writes its own code, copies none, and credits the
+projects that informed the design in README's acknowledgments.
+
+- **Stars.** Changed by Fred on 2026-10-26 after a Claude–Codex review.
+  - The app downloads the **Siril Astrometry Catalogue extracted from Gaia
+    DR3** (Zenodo DOI 10.5281/zenodo.14692304; CC BY 4.0; derived from Gaia
+    DR3, whose data licence is CC BY-NC 3.0 IGO).
+    - One 1.14 GB file, with published SHA-256 checksums.
+    - It holds the 127 brightest stars in each level-8 HEALPix cell, to
+      G = 20.
+  - NightCrate reads the file from its published format specification
+    (DOI 10.5281/zenodo.14697486, CC BY 4.0), not from Siril's code.
+  - Each user downloads the file directly from Zenodo. A local copy can also
+    be imported, for example one downloaded on another computer.
+  - Stored in `APP_DIR/star_catalogs/` on the DSO catalog pattern (staging
+    folder, atomic rename, `version.json`) and shared across workspaces.
+  - NightCrate publishes and bundles no star files.
+  - The 4-star index is built locally for the user's field-of-view range.
+  - After the download, solving is fully offline and self-contained.
+  - Credit both the Siril team and ESA/Gaia (DPAC). NightCrate's code is
+    GPL-3.0-or-later; the star data keeps its own terms.
+  - The CC BY 4.0 label on the Siril record (Zenodo API `license: cc-by-4.0`,
+    checked 2026-10-26) cannot remove Gaia's non-commercial terms. NightCrate
+    makes no claim that the star data may be used commercially. A user's use
+    of it is governed by ESA's CC BY-NC 3.0 IGO terms as well.
+- **Scope.**
+  - Fields of 0.2–10°.
+  - Fully blind: position and scale both unknown. Hints from the header,
+    target or rig only speed the solve.
+  - TAN output, so existing overlays, FOV and object search work unchanged.
+    SIP comes later.
+  - Each solve records its solver, catalog version, detected and matched
+    stars, RMS and confidence.
+- **ASTAP.** It stays user-installed. A setting picks the default solver. A
+  failed native solve offers "Solve with ASTAP"; it never retries
+  automatically.
+- **No new Python dependencies.** numpy, scipy, astropy, sep and
+  astropy-healpix cover the method. Avoid healpy, which is GPL.
+- **First step: a throwaway prototype and benchmark against ASTAP.**
+  - It runs outside the checkout and is not committed.
+  - It measures solve and wrong-solution rates, speed, and the local index
+    size and build time for the narrowest field range, using the Siril
+    catalogue.
+  - **Complete; Fred accepted it on 2026-10-27.** On the 106 subs and masters
+    that the hinted prototype solved, measured one image at a time, including
+    image load and star detection:
+
+    | Solver | Solved | Median | 95% within |
+    |---|---:|---:|---:|
+    | Native, header position + index | 106 | 0.48 s | 1.4 s |
+    | Native, fully blind | 104 | 0.75 s | 3.9 s |
+    | ASTAP, header position | 106 | 0.70 s | 2.5 s |
+    | ASTAP, position removed, field size given | 96 | 18 s | 60 s (limit) |
+
+    - Of the 143 corpus images that should solve, native fully blind solved
+      128 and ASTAP with header positions 123. Neither solver gave a wrong
+      answer, and no negative image solved. The two solvers' solutions differ
+      by 0.37 px at the median.
+    - The index for fields of 0.4° and wider is 505 MB and builds in 35 s.
+      The layer for 0.2–0.4° fields adds 1.3 GB.
+    - 1,000 random-dot fields produced no solve. Simulated real-sky fields
+      produced no wrong answer.
+- **Carried into the spec from the prototype:**
+  - Solve hinted images through the index restricted around the hint. The
+    prototype's separate hinted solver is slower and needs no index.
+  - Header scales can be wrong (binned masters were 2× off). Fall back to a
+    fully blind solve when a scale-known solve fails.
+  - Whether to offer the 1.3 GB narrow-field layer, chosen from the user's
+    rigs.
+  - Native fully blind missed two narrowband subs that ASTAP and the hinted
+    path solve.
+  - Calibrate the synthetic trials to real images before using them as a
+    recovery measure. The prototype's generator made its spurious stars
+    brighter than all real stars and scattered brightness about five times
+    more than real images do.
+  - Credit SASpro and astrometry.net in README's acknowledgments.
+- **Test images.**
+  - Fred's images plus licence-checked public samples, kept local and never
+    committed.
+  - The repo holds only the benchmark script, plus synthetic tests that
+    generate their star fields in memory.
+- **Bar for native as the default:**
+  - a solve rate at least ASTAP's on the corpus;
+  - no wrong solutions, on the corpus or in thousands of synthetic trials;
+  - a median time no worse than ASTAP's;
+  - fully blind solves in a few seconds (Fred, 2026-10-27). Working target:
+    a median of 3 s or less and 95% within 10 s on the corpus, including
+    image loading.
+
 ## v0.42.0 — Catalog preservation, licence, planner star, mirrored overlays
+
+Merged in [PR #20](https://github.com/fbaptiste/nightcrate/pull/20) on 2026-10-28.
 
 Fred started this version on 2026-10-27. Its scope is the four roadmap items
 below. The licence change was already in the working tree and moved onto this
@@ -828,105 +1487,50 @@ are in [development decisions](docs/development-decisions.md).
 Fred reordered the roadmap on 2026-10-24: galleries first, then distribution.
 Claude and Codex agreed the order below; Codex's first round was a blinded
 pre-pass, and the second round converged. On 2026-10-26 Fred placed a native
-plate solver after catalog preservation, ahead of the gallery. Version numbers
-are assigned when each version starts.
+plate solver after catalog preservation, ahead of the gallery; it is now
+v0.43.0, above. On 2026-10-30 he added a faster star download as v0.43.1.
+Version numbers are otherwise assigned when each version starts.
 
-### Native plate solver
+### Faster star download (v0.43.1)
 
-Fred decided on 2026-10-26 to solve images inside NightCrate by default, with
-ASTAP kept as an option. The method is derived from published work: 4-star
-geometric hashing and Bayesian verification (Lang et al. 2010, AJ 139, 1782),
-and TAN/SIP WCS (Calabretta & Greisen 2002; Shupe et al. 2005). Since the move
-to GPL-3.0-or-later, Fred has allowed (2026-10-27) reading the source of
-open-source solvers for concepts: Seti Astro Suite Pro, astrometry.net, ASTAP,
-tetra3 and twirl. NightCrate writes its own code, copies none, and credits the
-projects that informed the design in README's acknowledgments.
+Fred's acceptance download of Siril's star file (1.14 GB) ran at about
+0.66 MB/s. Zenodo is its only host; no mirror was found. On 2026-10-30 Fred
+chose to download it in four parallel pieces, in v0.43.1 rather than in the
+v0.43.0 candidate.
 
-- **Stars.** Changed by Fred on 2026-10-26 after a Claude–Codex review.
-  - The app downloads the **Siril Astrometry Catalogue extracted from Gaia
-    DR3** (Zenodo DOI 10.5281/zenodo.14692304; CC BY 4.0; derived from Gaia
-    DR3, whose data licence is CC BY-NC 3.0 IGO).
-    - One 1.14 GB file, with published SHA-256 checksums.
-    - It holds the 127 brightest stars in each level-8 HEALPix cell, to
-      G = 20.
-  - NightCrate reads the file from its published format specification
-    (DOI 10.5281/zenodo.14697486, CC BY 4.0), not from Siril's code.
-  - Each user downloads the file directly from Zenodo. A local copy can also
-    be imported, for example one downloaded on another computer.
-  - Stored in `APP_DIR/star_catalogs/` on the DSO catalog pattern (staging
-    folder, atomic rename, `version.json`) and shared across workspaces.
-  - NightCrate publishes and bundles no star files.
-  - The 4-star index is built locally for the user's field-of-view range.
-  - After the download, solving is fully offline and self-contained.
-  - Credit both the Siril team and ESA/Gaia (DPAC). NightCrate's code is
-    GPL-3.0-or-later; the star data keeps its own terms.
-  - The CC BY 4.0 label on the Siril record (Zenodo API `license: cc-by-4.0`,
-    checked 2026-10-26) cannot remove Gaia's non-commercial terms. NightCrate
-    makes no claim that the star data may be used commercially. A user's use
-    of it is governed by ESA's CC BY-NC 3.0 IGO terms as well.
-- **Scope.**
-  - Fields of 0.2–10°.
-  - Fully blind: position and scale both unknown. Hints from the header,
-    target or rig only speed the solve.
-  - TAN output, so existing overlays, FOV and object search work unchanged.
-    SIP comes later.
-  - Each solve records its solver, catalog version, detected and matched
-    stars, RMS and confidence.
-- **ASTAP.** It stays user-installed. A setting picks the default solver. A
-  failed native solve offers "Solve with ASTAP"; it never retries
-  automatically.
-- **No new Python dependencies.** numpy, scipy, astropy, sep and
-  astropy-healpix cover the method. Avoid healpy, which is GPL.
-- **First step: a throwaway prototype and benchmark against ASTAP.**
-  - It runs outside the checkout and is not committed.
-  - It measures solve and wrong-solution rates, speed, and the local index
-    size and build time for the narrowest field range, using the Siril
-    catalogue.
-  - **Complete; Fred accepted it on 2026-10-27.** On the 106 subs and masters
-    that the hinted prototype solved, measured one image at a time, including
-    image load and star detection:
+- **Measured on 2026-10-30** (range requests, data discarded):
+  - one connection: 0.77 MB/s, about 25 minutes for the file;
+  - four in parallel: 2.36 MB/s, about 8 minutes;
+  - eight in parallel: 4.33 MB/s, each still at 0.5–0.7 MB/s.
 
-    | Solver | Solved | Median | 95% within |
-    |---|---:|---:|---:|
-    | Native, header position + index | 106 | 0.48 s | 1.4 s |
-    | Native, fully blind | 104 | 0.75 s | 3.9 s |
-    | ASTAP, header position | 106 | 0.70 s | 2.5 s |
-    | ASTAP, position removed, field size given | 96 | 18 s | 60 s (limit) |
-
-    - Of the 143 corpus images that should solve, native fully blind solved
-      128 and ASTAP with header positions 123. Neither solver gave a wrong
-      answer, and no negative image solved. The two solvers' solutions differ
-      by 0.37 px at the median.
-    - The index for fields of 0.4° and wider is 505 MB and builds in 35 s.
-      The layer for 0.2–0.4° fields adds 1.3 GB.
-    - 1,000 random-dot fields produced no solve. Simulated real-sky fields
-      produced no wrong answer.
-- **Carried into the spec from the prototype:**
-  - Solve hinted images through the index restricted around the hint. The
-    prototype's separate hinted solver is slower and needs no index.
-  - Header scales can be wrong (binned masters were 2× off). Fall back to a
-    fully blind solve when a scale-known solve fails.
-  - Whether to offer the 1.3 GB narrow-field layer, chosen from the user's
-    rigs.
-  - Native fully blind missed two narrowband subs that ASTAP and the hinted
-    path solve.
-  - Calibrate the synthetic trials to real images before using them as a
-    recovery measure. The prototype's generator made its spurious stars
-    brighter than all real stars and scattered brightness about five times
-    more than real images do.
-  - Credit SASpro and astrometry.net in README's acknowledgments.
-- **Test images.**
-  - Fred's images plus licence-checked public samples, kept local and never
-    committed.
-  - The repo holds only the benchmark script, plus synthetic tests that
-    generate their star fields in memory.
-- **Bar for native as the default:**
-  - a solve rate at least ASTAP's on the corpus;
-  - no wrong solutions, on the corpus or in thousands of synthetic trials;
-  - a median time no worse than ASTAP's;
-  - fully blind solves in a few seconds (Fred, 2026-10-27). Working target:
-    a median of 3 s or less and 95% within 10 s on the corpus, including
-    image loading.
+  A single connection later reached 2.83 MB/s, so Zenodo's speed varies.
+- Four pieces rather than eight keep the load modest on a free service.
+- Keep resuming after an interruption, progress, cancel and the SHA-256
+  check. Fall back to one connection when the server doesn't return the
+  requested range.
+- **Also (Fred, 2026-10-30): an already-built range in a build request.**
+  Codex's review of the v0.43.0 acceptance fixes (record `77`, minor) found
+  that a request naming an already-built range makes it `current_range`.
+  `/status` then reports it as building at 100% until it publishes, which
+  can wait on an active solve. The Admin page never sends one, because it
+  leaves built ranges out.
+  - Fix: leave already-built ranges out of the build, but still publish a
+    range whose layers are ready and whose manifest entry is missing; give
+    `built` precedence in `/status`.
+  - Test it through the API: a request including a built range reports that
+    range as built while another range builds.
+- **Proposed by Claude (2026-10-30), for Fred to decide: processed finals.**
+  The built-in solver still fails 10 corpus finals and a mosaic.
+  - **Finding:** in the IC 1805 final, only about 40% of the brightest
+    detections are stars. Nebula knots and stars shrunk by star reduction
+    crowd them out. The NA Nebula final, which now solves, matched 72%.
+  - **Proposal:** a stellarity filter that rejects extended sources by
+    shape and width against the image's typical star. Measure it on the
+    corpus and the false-match trials, with no change to the acceptance
+    thresholds.
+  - **Open:** for the M106 JPEG and the mosaic, the detections barely line
+    up with ASTAP's unconfirmed solutions under any flip. That needs its own
+    check.
 
 ### Gallery
 
@@ -985,10 +1589,29 @@ first, then the slideshow.
 - Results are labelled "Main target", "In the plate-solved image", or both.
   In-field results show the solve image with the object marked; the solve image
   can differ from the gallery's main image.
+- **Fred (2026-10-30): the user chooses the scope.** A search covers either
+  main targets only or every catalog object identified in a project's solve.
+  A project can have several main targets; the Plate Solve tab already lets
+  the user tick more than one.
 - In-field membership is computed at query time from stored solves through one
   shared overlap function. Stored `project_dso` rows are computed once at solve
   time, from a capped candidate list, and can be incomplete.
 - Messier slots gain an "in a solved field" marker.
+
+### Updated XISF specification (before Distribution)
+
+Fred (2026-10-30): PixInsight has published an updated XISF specification. A
+version before Distribution reviews it against NightCrate's clean-room XISF
+reader (`services/xisf_io.py`) and fixes what it affects. Nothing has been
+assessed yet. The review should cover:
+- image data;
+- compression;
+- properties, including the astrometric solution;
+- FITS keywords;
+- reading files written by older PixInsight versions.
+
+The review uses the published specification only, as the existing reader
+does.
 
 ### Distribution
 
@@ -1034,6 +1657,29 @@ image decoding, one spawned processing job, and one update between test builds.
   - Intel Mac builds.
   - Whether the update check is on by default.
   - LAN access in the packaged app.
+
+### Project images: file locations, watermarks and export (after Distribution)
+
+Fred (2026-10-30) asked for these, after the installable release. Nothing is
+designed yet.
+
+- **See where each image is stored.** A project's image strip shows
+  thumbnails with "Set as main image" and "Remove", but not where each file
+  lives (`ImageGalleryStrip.tsx`). Show each image's full file location,
+  with a way to copy it and to reveal it in Finder or Explorer. Show
+  clearly when the file is missing or its drive is offline.
+- **Watermark an image.**
+  - Choose from several styles: position, size, opacity and font.
+  - Customizable content: text, with fields such as the target, the
+    capture dates or the equipment taken from the project.
+  - Overlay images that keep their transparency (a logo PNG, for example).
+  - The original file is never changed: a watermark makes a new image.
+- **Export an image**, watermarked or not, as JPEG (with a user-chosen
+  quality / compression level), PNG or TIFF.
+  - Decisions for the design:
+    - bit depth and colour handling for TIFF;
+    - whether to carry metadata (and plate-solve WCS) into exports;
+    - where exports are saved.
 
 ### Later: calibration coverage and session overlap
 

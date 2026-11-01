@@ -15,7 +15,9 @@ forecasts and survey imagery are fetched from external services when needed.
   headers, tag rigs/targets, inspect frames, keep notes and finished images.
   Files stay where they are. Rescanning updates the catalog without duplicating
   records within a project. A project can start with a finished image and manual
-  sessions; importing raw captures is optional.
+  sessions; importing raw captures is optional. Plate solving a project image
+  identifies the catalog objects in it, and you choose one or more as main
+  targets.
 - **Sessions and integration:** enter capture batches manually or derive them
   from cataloged lights. View totals by filter and observing night, and sub
   counts by filter and exposure length. Duoband equipment-filter sessions count
@@ -26,7 +28,9 @@ forecasts and survey imagery are fetched from external services when needed.
   target scores, sky tracks, annual visibility, wishlists and calendars.
 - **Image analysis:** FITS, XISF, PixInsight projects, PNG/JPEG/TIFF and archive
   entries; auto/manual stretch, histogram, pixel inspection, FITS header editing,
-  aberration inspection, plate solving and catalog-object overlays.
+  aberration inspection, built-in plate solving (Gaia DR3 stars, offline after a
+  one-time download), with ASTAP optional, and catalog-object overlays. Either
+  solver searches near the header position first and then the whole sky.
 - **Guiding:** standalone PHD2 log analysis with time-series and dispersion plots,
   section/selection statistics, calibration geometry and range export.
 - **Equipment:** editable component catalog, personal rigs and smart-scope
@@ -67,9 +71,9 @@ See [the active plan](PLAN.md) for remaining work and the
 ## Run locally
 
 Prerequisites: Python 3.14, [uv](https://docs.astral.sh/uv/), Node 22.12+.
-Install [ASTAP](https://www.hnsky.org/astap.htm) and a star database separately if
-using plate solving. Intel Macs also need Xcode Command Line Tools for
-source-built dependencies (`xcode-select --install`).
+[ASTAP](https://www.hnsky.org/astap.htm) is an optional alternative plate solver
+and uses its separately installed star database. Intel Macs also need Xcode
+Command Line Tools for source-built dependencies (`xcode-select --install`).
 
 ```bash
 make install    # install backend/frontend dependencies from the lockfiles
@@ -79,9 +83,11 @@ make dev        # backend :8000, frontend :5173
 The setup wizard creates or opens a workspace containing `nightcrate.db` and
 rendered `project_data/`. Source images remain in their original locations;
 copying a workspace does not copy that source library. Admin manages multiple
-workspaces and downloads the DSO catalogs. Catalog updates keep your wishlist,
-project targets and solved-field objects; an object a catalog no longer lists
-stays in your records, marked "Not listed".
+workspaces and downloads the DSO catalogs. For built-in plate solving, Admin can
+download the stars once (1.14 GB; about 2–3.5 GB on disk, depending on whether
+the optional narrow-field index is built). Catalog updates keep your wishlist, project targets and
+solved-field objects; an object a catalog no longer lists stays in your records,
+marked "Not listed".
 
 Other commands: `make backend`, `make frontend`, `make test`, `make test-fast`,
 `make lint`, `make format`. Use `make dev BROWSER=none` to suppress browser launch
@@ -183,12 +189,14 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 
 | Program | License | Notes |
 |---|---|---|
-| [ASTAP](https://www.hnsky.org/astap.htm) | MPL-2.0 (main program; some files LGPL-3.0+ or GPL-2.0+) | Optional external plate solver, invoked via subprocess. Not bundled. |
+| [ASTAP](https://www.hnsky.org/astap.htm) | MPL-2.0 (main program; some files LGPL-3.0+ or GPL-2.0+) | Optional alternative plate solver, invoked via subprocess. Not bundled. |
 
 ### Data Sources
 
 | Dataset | License | Attribution |
 |---|---|---|
+| [Siril Astrometry Catalogue extracted from Gaia DR3](https://doi.org/10.5281/zenodo.14692304) | CC BY 4.0 | Prepared by the Siril team. Downloaded at runtime from Zenodo into the user's app-data folder and not bundled. The Gaia data is also under ESA's CC BY-NC 3.0 IGO terms; NightCrate makes no claim that it may be used commercially. |
+| [ESA Gaia DR3](https://www.cosmos.esa.int/gaia) | CC BY-NC 3.0 IGO | This work has made use of data from the European Space Agency (ESA) mission Gaia (https://www.cosmos.esa.int/gaia), processed by the Gaia Data Processing and Analysis Consortium (DPAC, https://www.cosmos.esa.int/web/gaia/dpac/consortium). Funding for the DPAC has been provided by national institutions, in particular the institutions participating in the Gaia Multilateral Agreement. |
 | [OpenNGC](https://github.com/mattiaverga/OpenNGC) | CC-BY-SA-4.0 | Verga, Mattia. OpenNGC — Database of NGC and IC objects. Fetched at runtime from GitHub into the user's app-data folder (`APP_DIR/catalogs/openngc/`); no catalog data is bundled with the repo. OpenNGC aggregates data from NED, SIMBAD, HyperLEDA, and other public astronomical databases. |
 | Sharpless 2 (VizieR VII/20) | CDS public | Sharpless, S. 1959, ApJS 4, 257. HII regions, fetched at runtime from CDS VizieR. |
 | Barnard (VizieR VII/220A) | CDS public | Barnard, E. E. 1927, *Barnard's Catalogue of 349 Dark Objects in the Sky*. Fetched at runtime from CDS VizieR. |
@@ -196,3 +204,12 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 | [Wikidata](https://www.wikidata.org/) | CC0-1.0 | External reference IDs (Wikipedia, SIMBAD) via SPARQL, fetched at runtime. |
 | [Open-Meteo](https://open-meteo.com/) | Attribution required — see [their license](https://open-meteo.com/en/license) | Weather, ECMWF and air-quality forecast data, queried at runtime. |
 | [CDS hips2fits / Aladin](https://alasky.cds.unistra.fr/hips-image-services/hips2fits) | CDS terms | DSS2 sky survey imagery for target thumbnails and the FOV simulator, fetched at runtime and cached locally. |
+
+### Methods and prior work
+
+The built-in plate solver uses 4-star geometric hashing and Bayesian verification
+following Lang et al. (2010, *AJ* 139, 1782), and the TAN projection described by
+Calabretta & Greisen (2002). The design was informed by the open-source
+[Seti Astro Suite Pro](https://github.com/SetiAstro/setiastrosuitepro) (GPL-3.0)
+and [astrometry.net](https://github.com/dstndstn/astrometry.net) (GPL-3).
+NightCrate's implementation is its own and copies no code from either project.

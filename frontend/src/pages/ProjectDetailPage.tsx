@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -103,9 +103,10 @@ function openImageWindow(url: string, title: string) {
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const projectId = Number(id);
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState(searchParams.get("tab") === "plate-solve" ? 3 : 0);
   const [snack, setSnack] = useState<string | null>(null);
 
   const [editingName, setEditingName] = useState(false);
@@ -397,7 +398,17 @@ export default function ProjectDetailPage() {
       </Box>
 
       {/* Tabs */}
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
+      <Tabs value={tab} onChange={(_, v) => {
+        setTab(v);
+        const next = new URLSearchParams(searchParams);
+        if (v === 3) next.set("tab", "plate-solve");
+        else {
+          next.delete("tab");
+          next.delete("solve");
+          next.delete("hdu");
+        }
+        setSearchParams(next, { replace: true });
+      }} sx={{ mb: 2 }}>
         <Tab label="Overview" />
         <Tab label="Sessions" />
         <Tab label="Catalog" />
@@ -530,7 +541,12 @@ export default function ProjectDetailPage() {
                           </Box>
                         }
                         size="small"
-                        onClick={solveDsoIds.has(t.dso_id) ? () => setTab(3) : undefined}
+                        onClick={solveDsoIds.has(t.dso_id) ? () => {
+                          setTab(3);
+                          const next = new URLSearchParams(searchParams);
+                          next.set("tab", "plate-solve");
+                          setSearchParams(next, { replace: true });
+                        } : undefined}
                         onDelete={() => removeTargetMut.mutate(t.dso_id)}
                       />
                     ))}

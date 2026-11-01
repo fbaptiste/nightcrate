@@ -21,6 +21,8 @@ interface Props {
   onSelect: (id: number) => void;
   /** Object ids to render as "main" subjects (teal). Optional. */
   mainIds?: Set<number>;
+  /** Displayed SVG width, used to keep project labels legible on screen. */
+  displayWidthPx?: number;
 }
 
 /**
@@ -36,6 +38,7 @@ export default function DsoAnnotationOverlay({
   selectedId,
   onSelect,
   mainIds,
+  displayWidthPx,
 }: Props) {
   return (
     <Box
@@ -50,11 +53,13 @@ export default function DsoAnnotationOverlay({
           const isSelected = dso.id === selectedId;
           const isMain = mainIds?.has(dso.id) ?? false;
           const refDim = Math.max(imgW, imgH);
-          const sw = refDim * (isSelected ? 0.0025 : 0.0015);
-          const fs = refDim * 0.012;
-          const ts = refDim * 0.002;
-          const minR = refDim * 0.004;
-          const gap = refDim * 0.003;
+          const baseFs = refDim * 0.012;
+          const fs = displayWidthPx ? (12 * imgW) / displayWidthPx : baseFs;
+          const displayScale = fs / baseFs;
+          const sw = refDim * (isSelected ? 0.0025 : 0.0015) * displayScale;
+          const ts = refDim * 0.002 * displayScale;
+          const minR = refDim * 0.004 * displayScale;
+          const gap = refDim * 0.003 * displayScale;
           const color = isSelected ? RIG_ORANGE : isMain ? RIG_TEAL : RIG_BLUE;
           const hasEllipse =
             dso.ellipse_semi_major_px != null &&

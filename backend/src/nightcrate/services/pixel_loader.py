@@ -44,7 +44,10 @@ def resolve(path: str) -> tuple[object, str, int]:
         resolved, ft, idx, _cache_key = _resolve_path_raw(path)
     except Exception as exc:
         if type(exc).__name__ == "HTTPException":
-            raise ValueError(getattr(exc, "detail", str(exc))) from None
+            detail = getattr(exc, "detail", str(exc))
+            if getattr(exc, "status_code", None) == 404:
+                raise FileNotFoundError(detail) from None
+            raise ValueError(detail) from None
         raise
     return resolved, ft, idx
 

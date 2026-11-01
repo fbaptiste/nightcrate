@@ -21,11 +21,15 @@ from __future__ import annotations
 
 import io
 import logging
+from typing import Literal
 
 import numpy as np
 from PIL import Image
 
 from nightcrate.services.imaging import (
+    LUM_B,
+    LUM_G,
+    LUM_R,
     STF_SHADOWS_CLIP,
     STF_TARGET_BG,
     _mtf_scalar,
@@ -80,32 +84,87 @@ def _stretch_u8(
     return (np.clip(out, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
+def _linear_u8(data: np.ndarray) -> np.ndarray:
+    """Encode normalized data directly, without min-max scaling or an STF."""
+    return (np.clip(data, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
+def _auto_uses_stf(data: np.ndarray) -> bool:
+    """Mirror imaging.resolve_auto_stretch's linearity decision in NumPy."""
+    if data.ndim == 2:
+        mid_range = data
+        _shadow, midtone = _stf_params(data)
+    else:
+        mid_range = LUM_R * data[0] + LUM_G * data[1] + LUM_B * data[2]
+        medians = []
+        shadows = []
+        for plane in data:
+            flat = plane.ravel()
+            median = float(np.median(flat))
+            avg_dev = float(np.mean(np.abs(flat - median)))
+            medians.append(median)
+            shadows.append(median + STF_SHADOWS_CLIP * avg_dev)
+        shadow = min(max(float(np.mean(shadows)), 0.0), 1.0)
+        b0 = float(np.mean(medians)) - shadow
+        if b0 <= 0.0:
+            midtone = 0.0
+        elif b0 >= 1.0:
+            midtone = 0.5
+        else:
+            midtone = _mtf_scalar(b0, STF_TARGET_BG)
+
+    flat = mid_range.ravel()
+    mid_range_fraction = float(np.count_nonzero((flat >= 0.1) & (flat <= 0.9)) / max(flat.size, 1))
+    return mid_range_fraction <= 0.001 and midtone < 0.1
+
+
+def render_array_jpeg(
+    data: np.ndarray,
+    max_px: int,
+    *,
+    quality: int = 70,
+    stretch: Literal["stf", "auto", "none"] = "stf",
+) -> bytes:
+    """Render a normalized mono or planar-RGB array as a JPEG."""
+    if data.ndim == 2:
+        step = _decimate_step(max(data.shape), max_px)
+        small = np.ascontiguousarray(data[::step, ::step])
+    elif data.ndim == 3 and data.shape[0] == 3:
+        _, h, w = data.shape
+        step = _decimate_step(max(h, w), max_px)
+        small = np.ascontiguousarray(data[:, ::step, ::step])
+    else:
+        raise ValueError(f"unsupported thumbnail array shape: {data.shape}")
+
+    apply_stf = stretch == "stf" or (stretch == "auto" and _auto_uses_stf(small))
+    if small.ndim == 2:
+        if apply_stf:
+            shadow, midtone = _stf_params(small)
+            rendered = _stretch_u8(small, shadow, midtone)
+        else:
+            rendered = _linear_u8(small)
+        img = Image.fromarray(rendered, mode="L")
+    else:
+        if apply_stf:
+            planes = []
+            for plane in small:
+                shadow, midtone = _stf_params(plane)
+                planes.append(_stretch_u8(plane, shadow, midtone))
+            rendered = np.stack(planes, axis=-1)
+        else:
+            rendered = np.moveaxis(_linear_u8(small), 0, -1)
+        img = Image.fromarray(rendered, mode="RGB")
+
+    img.thumbnail((max_px, max_px))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
 def render_thumbnail_bytes(path: str, max_px: int = DEFAULT_MAX_PX) -> bytes:
     """Render *path* to a small auto-stretched JPEG (<= max_px on the long side).
 
     Raises on unreadable / unsupported sources — the caller maps that to a 404 and
     simply shows no thumbnail (a missing preview is never fatal).
     """
-    data = _load_normalized(path)
-
-    if data.ndim == 2:
-        step = _decimate_step(max(data.shape), max_px)
-        small = np.ascontiguousarray(data[::step, ::step])
-        shadow, midtone = _stf_params(small)
-        img = Image.fromarray(_stretch_u8(small, shadow, midtone), mode="L")
-    elif data.ndim == 3 and data.shape[0] == 3:
-        _, h, w = data.shape
-        step = _decimate_step(max(h, w), max_px)
-        planes = []
-        for i in range(3):
-            plane = np.ascontiguousarray(data[i, ::step, ::step])
-            shadow, midtone = _stf_params(plane)
-            planes.append(_stretch_u8(plane, shadow, midtone))
-        img = Image.fromarray(np.stack(planes, axis=-1), mode="RGB")
-    else:
-        raise ValueError(f"unsupported thumbnail array shape: {data.shape}")
-
-    img.thumbnail((max_px, max_px))
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=70)
-    return buf.getvalue()
+    return render_array_jpeg(_load_normalized(path), max_px)

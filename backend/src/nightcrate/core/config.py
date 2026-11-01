@@ -140,6 +140,7 @@ class Settings(BaseModel):
     # the panel and the state should persist.
     phd2_help_expanded: dict[str, bool] = Field(default_factory=dict)
     astap_executable_path: str | None = None
+    default_solver: Literal["native", "astap"] = "native"
     # ─── Target Planner UI state ───────────────────────────────────
     # Persisted across sessions so iPad/Mac/etc share the same state.
     # `searchQuery` (free-text search box) is intentionally NOT here —
