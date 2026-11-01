@@ -1,6 +1,7 @@
 """API-level tests for the plate solve endpoints."""
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import numpy as np
@@ -10,7 +11,11 @@ from httpx import ASGITransport, AsyncClient
 
 from nightcrate.main import app
 from nightcrate.services import solve_operations
-from nightcrate.services.plate_solve_models import SolveAttempt
+from nightcrate.services.plate_solve_models import (
+    AstapLaunchError,
+    ImageReadError,
+    SolveAttempt,
+)
 from nightcrate.services.star_catalog import handles
 from tests.native_solver.test_solve_image import _install_real_assets
 
@@ -89,7 +94,11 @@ class TestSolveEndpoint:
             },
         )
         assert resp.status_code == 422
-        assert "not configured" in resp.json()["detail"].lower()
+        assert resp.json()["detail"] == {
+            "message": "ASTAP executable path is not configured. Set it in Settings.",
+            "failure_reason": "invalid_configuration",
+            "attempts": [],
+        }
 
     @pytest.mark.anyio
     async def test_solve_route_native_default_without_astap(self, client, tmp_path, monkeypatch):
@@ -146,6 +155,9 @@ class TestSolveEndpoint:
             },
         )
         assert response.status_code == 422
+        item = response.json()["detail"][0]
+        assert item["type"] == "extra_forbidden"
+        assert item["loc"] == ["body", "mode"]
 
     @pytest.mark.anyio
     async def test_solve_requires_operation_id(self, client):
@@ -155,6 +167,185 @@ class TestSolveEndpoint:
         )
 
         assert response.status_code == 422
+        item = response.json()["detail"][0]
+        assert item["type"] == "missing"
+        assert item["loc"] == ["body", "operation_id"]
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("error", "status", "reason", "message"),
+        [
+            (ImageReadError("unsupported image"), 422, "read_error", "unsupported image"),
+            (
+                AstapLaunchError("ASTAP couldn't be started"),
+                422,
+                "invalid_configuration",
+                "ASTAP couldn't be started",
+            ),
+            (TimeoutError("too slow"), 408, "time_limit", "too slow"),
+            (ValueError("internal invariant"), 500, "error", "Internal plate solve error"),
+        ],
+    )
+    async def test_application_errors_have_structured_details(
+        self, client, error, status, reason, message
+    ):
+        with patch("nightcrate.api.plate_solve.run_solve", new=AsyncMock(side_effect=error)):
+            response = await client.post(
+                "/api/plate-solve/solve",
+                json={"image_path": "/fake/image.fits", "operation_id": str(uuid4())},
+            )
+
+        assert response.status_code == status
+        assert response.json()["detail"] == {
+            "message": message,
+            "failure_reason": reason,
+            "attempts": [],
+        }
+
+    @pytest.mark.anyio
+    async def test_open_load_attempt_is_closed_on_read_error(self, client):
+        async def fail_with_open_attempt(**values):
+            operation = values["operation"]
+            operation.start(
+                SolveAttempt(
+                    solver="native",
+                    step="load",
+                    position_source="none",
+                    scale_source="none",
+                )
+            )
+            raise ImageReadError("corrupt FITS")
+
+        with patch("nightcrate.api.plate_solve.run_solve", new=fail_with_open_attempt):
+            response = await client.post(
+                "/api/plate-solve/solve",
+                json={"image_path": "/fake/image.fits", "operation_id": str(uuid4())},
+            )
+
+        attempt = response.json()["detail"]["attempts"][0]
+        assert attempt["outcome"] == "error"
+        assert attempt["seconds"] is not None
+        assert attempt["detail"] == "corrupt FITS"
+
+    @pytest.mark.anyio
+    async def test_open_attempt_uses_overall_timeout_outcome(self, client):
+        async def timeout_with_open_attempt(**values):
+            operation = values["operation"]
+            operation.start(
+                SolveAttempt(
+                    solver="native",
+                    step="load",
+                    position_source="none",
+                    scale_source="none",
+                )
+            )
+            raise TimeoutError("too slow")
+
+        with patch("nightcrate.api.plate_solve.run_solve", new=timeout_with_open_attempt):
+            response = await client.post(
+                "/api/plate-solve/solve",
+                json={"image_path": "/fake/image.fits", "operation_id": str(uuid4())},
+            )
+
+        assert response.status_code == 408
+        detail = response.json()["detail"]
+        assert detail["failure_reason"] == "time_limit"
+        assert detail["attempts"][0]["outcome"] == "overall_timeout"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("solver", ["native", "astap"])
+    async def test_real_garbage_fits_is_read_error(self, client, tmp_path, solver):
+        image = tmp_path / f"garbage-{solver}.fits"
+        image.write_bytes(b"not a FITS file")
+        executable = tmp_path / "astap"
+        executable.write_text("#!/bin/sh\nexit 1\n")
+        executable.chmod(0o755)
+
+        with (
+            patch(
+                "nightcrate.api.plate_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path=str(executable), default_solver=solver
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.plate_solve.validate_astap_path",
+                new=MagicMock(return_value={"valid": True, "error": None}),
+            ),
+            patch(
+                "nightcrate.services.native_solver.solve_image.installed",
+                return_value=SimpleNamespace(version="1.0.0"),
+            ),
+        ):
+            response = await client.post(
+                "/api/plate-solve/solve",
+                json={
+                    "image_path": str(image),
+                    "operation_id": str(uuid4()),
+                    "solver": solver,
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["failure_reason"] == "read_error"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("solver", ["native", "astap"])
+    @pytest.mark.parametrize(
+        ("error_type", "text", "expected"),
+        [
+            (
+                FileNotFoundError,
+                "missing image.fits",
+                "missing image.fits — is the source file's drive connected?",
+            ),
+            (ImageReadError, "unsupported image type", "unsupported image type"),
+            (ImageReadError, "corrupt FITS", "corrupt FITS"),
+            (
+                ImageReadError,
+                "unresolvable pxiproject reference",
+                "unresolvable pxiproject reference",
+            ),
+        ],
+    )
+    async def test_read_error_cases_for_both_solvers(
+        self, client, solver, error_type, text, expected
+    ):
+        with (
+            patch(
+                "nightcrate.api.plate_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path="/fake/astap", default_solver=solver
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.plate_solve.validate_astap_path",
+                new=MagicMock(return_value={"valid": True, "error": None}),
+            ),
+            patch(
+                "nightcrate.api.plate_solve.run_solve",
+                new=AsyncMock(side_effect=error_type(text)),
+            ),
+        ):
+            response = await client.post(
+                "/api/plate-solve/solve",
+                json={
+                    "image_path": "/fake/image.fits",
+                    "operation_id": str(uuid4()),
+                    "solver": solver,
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == {
+            "message": expected,
+            "failure_reason": "read_error",
+            "attempts": [],
+        }
 
 
 class TestSolveOperationsApi:
@@ -224,6 +415,11 @@ class TestSolveOperationsApi:
         finally:
             solve_operations.release(operation)
         assert response.status_code == 409
+        assert response.json()["detail"] == {
+            "message": "A plate solve is already in progress.",
+            "failure_reason": "busy",
+            "attempts": [],
+        }
 
     @pytest.mark.anyio
     async def test_late_cancel_does_not_stop_next_operation(self, client):

@@ -525,6 +525,46 @@ accepted prototype's findings.
       that was already untested.
   - [x] Fred accepted the new candidate (staged tree `9428a6e`) as feature
     complete and asked to finalize it on 2026-11-01.
+- [x] **PR review of #21** (Claude's code-review agent, 2026-11-01), covering
+  the changes made after the independent Codex review. Seven findings, all
+  verified by Claude, none high; Fred asked for all seven to be fixed before
+  merging:
+  - **An unfinished step showed as "Done".** A project solve that couldn't
+    read its image listed the reading step as done.
+  - **"Try again" had gone missing** for errors sent without a reason, such
+    as a busy solver. The previous fix round caused this.
+  - **Two contract tests proved nothing:** they passed with the contract
+    reverted.
+  - **Failure titles were missing** for render, image, star-setup and range
+    failures. A render failure read "No solution found" above "The image
+    solved, but…".
+  - **Deleting a solve during a replacement** in another tab could make the
+    replacement fail with a server error.
+  - **Folders left by a crash** stayed until the solve was deleted.
+  - **Error labels were wrong:** internal errors were reported as reading
+    errors, and a missing ASTAP program asked about a disconnected drive.
+
+  **The fixes:**
+  - Both solve endpoints now send every error as `{message,
+    failure_reason, attempts}`, with reasons `invalid_configuration`,
+    `read_error`, `busy`, `solve_exists`, `time_limit` and `error`.
+  - The solvers mark reading failures and ASTAP launch failures with their
+    own error types.
+  - An unfinished step is reported as stopped.
+  - The panel has a title for every reason, and "Try again" where retrying
+    can help.
+  - A successful save clears every leftover folder, and delete leaves
+    in-progress renders alone.
+
+  Codex implemented them in two rounds (records `150–156`); Claude
+  reviewed them and updated the development decisions.
+  - **Checks:**
+    - the affected test modules (237 passed in Codex's run);
+    - the full backend suite: 3,045 passed, 4 skipped;
+    - ruff, format and bandit (no issues); `npm run build`;
+    - rendered headless against a test copy: the failure screen 30 of 30
+      (eight reasons, including an older server's responses), project tab
+      44 of 44, Image Analyzer and Admin 35 of 35.
 
 ### Scope
 

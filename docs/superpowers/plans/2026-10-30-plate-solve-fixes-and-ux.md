@@ -700,6 +700,21 @@ The checks cover:
   plan):** Task B1 kept `operation_id` optional and ignored unknown fields
   only so the old dialog kept working. Once C5 removed that dialog, both
   solve endpoints require the ID and reject unknown fields such as `mode`.
+- **PR review of #21 (2026-11-01).**
+  - **Scope:** Claude's code-review agent read the changes made after the
+    independent review (`465875c → 9428a6e`).
+  - **Findings:** seven, none high, all verified by Claude:
+    - an unfinished step shown as "Done";
+    - "Try again" lost for errors without a reason;
+    - contract tests that passed with the contract reverted;
+    - missing failure titles;
+    - a delete racing a replacement's render;
+    - crash leftovers kept;
+    - wrong error labels.
+  - **Fred's decision:** fix all seven before merging.
+  - **Fixed** in records `150–156`: one structured error shape with typed
+    reasons on both endpoints, read and launch error types, open steps
+    closed, titles and retry rules, and the folder rules.
 
 ### v0.43.0-D1 — Extension (HDU) support for project solves
 

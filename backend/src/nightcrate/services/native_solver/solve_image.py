@@ -8,10 +8,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from nightcrate.services import pixel_loader
+from nightcrate.services import pixel_loader, pxiproject_io, xisf_io
 from nightcrate.services.coordinate_format import format_dec_dms, format_ra_hms
 from nightcrate.services.plate_solve_models import (
     AttemptOutcome,
+    ImageReadError,
     PlateSolveResult,
     SolveAttempt,
     SolveStep,
@@ -181,17 +182,25 @@ def solve_image(
         result.attempts = [attempt.model_copy(deep=True) for attempt in events.attempts]
         return result
 
-    source, file_type, image_index = pixel_loader.resolve(image_path)
+    def read_image(call):
+        try:
+            return call()
+        except FileNotFoundError:
+            raise
+        except (OSError, ValueError, xisf_io.XISFError, pxiproject_io.PxiProjectError) as exc:
+            raise ImageReadError(str(exc)) from exc
+
+    source, file_type, image_index = read_image(lambda: pixel_loader.resolve(image_path))
     from nightcrate.services.plate_solve import read_header_cards
 
-    cards = read_header_cards(source, file_type, image_index, hdu)
+    cards = read_image(lambda: read_header_cards(source, file_type, image_index, hdu))
     if cancel.is_set():
         events.finish("cancelled")
         return done(_unsolved("cancelled"))
     if time.perf_counter() >= overall_deadline:
         events.finish("overall_timeout")
         return done(_unsolved("time_limit"))
-    data = pixel_loader.load_normalized_mono(image_path, hdu)
+    data = read_image(lambda: pixel_loader.load_normalized_mono(image_path, hdu))
     height, width = np.asarray(data).shape
     hints = hints_for(
         cards,

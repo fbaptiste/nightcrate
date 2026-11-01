@@ -27,7 +27,11 @@ from nightcrate.services.plate_solve import (
     resolve_astap_binary,
     validate_astap_path,
 )
-from nightcrate.services.plate_solve_models import PlateSolveResult
+from nightcrate.services.plate_solve_models import (
+    AstapLaunchError,
+    ImageReadError,
+    PlateSolveResult,
+)
 
 
 def _reset_solve_state():
@@ -620,6 +624,23 @@ class TestGetImageDimensions:
 
 
 class TestRunAstap:
+    async def test_launch_failure_is_configuration_error(self, tmp_path, monkeypatch):
+        async def fail_launch(*_args, **_kwargs):
+            raise FileNotFoundError("missing executable")
+
+        monkeypatch.setattr(plate_solve.asyncio, "create_subprocess_exec", fail_launch)
+
+        with pytest.raises(
+            AstapLaunchError,
+            match=(
+                "ASTAP couldn't be started from /missing/astap. "
+                "Check the path in Settings → Plate Solving."
+            ),
+        ):
+            await plate_solve._run_astap(
+                ["/missing/astap", "image.fits"], tmp_path / "result", 60, 100, 100
+            )
+
     @pytest.mark.parametrize("missing_stream", ["stdout", "stderr"])
     async def test_missing_process_stream_kills_waits_and_clears_progress(
         self, tmp_path, missing_stream
@@ -1687,6 +1708,37 @@ def test_prepare_hdu_one_writes_selected_extension(tmp_path):
     with astro_fits.open(prepared) as hdul:
         assert hdul[0].data.shape == (4, 5)
         assert np.all(hdul[0].data == 7)
+
+
+def test_read_astap_source_wraps_real_garbage_fits(tmp_path):
+    path = tmp_path / "garbage.fits"
+    path.write_bytes(b"not a FITS file")
+
+    with pytest.raises(ImageReadError):
+        plate_solve._read_astap_source(str(path), 0)
+
+
+def test_read_astap_source_preserves_real_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        plate_solve._read_astap_source(str(tmp_path / "missing.fits"), 0)
+
+
+def test_read_astap_source_wraps_real_unsupported_extension(tmp_path):
+    path = tmp_path / "image.abc"
+    path.write_bytes(b"unsupported")
+
+    with pytest.raises(ImageReadError):
+        plate_solve._read_astap_source(str(path), 0)
+
+
+def test_prepare_image_wraps_real_conversion_failure(tmp_path):
+    path = tmp_path / "garbage.fits"
+    path.write_bytes(b"not a FITS file")
+    prepared_dir = tmp_path / "prepared"
+    prepared_dir.mkdir()
+
+    with pytest.raises(ImageReadError):
+        plate_solve._prepare_image_file(path, "fits", 0, 1, prepared_dir)
 
 
 async def test_astap_field_uses_prepared_height_and_shared_header_scale(tmp_path):

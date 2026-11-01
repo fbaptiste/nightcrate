@@ -29,7 +29,12 @@ from nightcrate.services.plate_solve import (
     run_solve,
     validate_astap_path,
 )
-from nightcrate.services.plate_solve_models import PlateSolveRequest, PlateSolveResult
+from nightcrate.services.plate_solve_models import (
+    AstapLaunchError,
+    ImageReadError,
+    PlateSolveRequest,
+    PlateSolveResult,
+)
 
 logger = logging.getLogger("nightcrate")
 
@@ -38,6 +43,14 @@ router = APIRouter(prefix="/api/plate-solve", tags=["Plate Solve"])
 
 class CancelSolveRequest(BaseModel):
     operation_id: UUID
+
+
+def _failure_detail(message: str, failure_reason: str | None, attempts) -> dict:
+    return {
+        "message": message,
+        "failure_reason": failure_reason,
+        "attempts": [attempt.model_dump(mode="json") for attempt in attempts],
+    }
 
 
 @router.post("/solve")
@@ -53,7 +66,11 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
     if solver == "astap" and not settings.astap_executable_path:
         raise HTTPException(
             status_code=422,
-            detail="ASTAP executable path is not configured. Set it in Settings.",
+            detail=_failure_detail(
+                "ASTAP executable path is not configured. Set it in Settings.",
+                "invalid_configuration",
+                [],
+            ),
         )
 
     if solver == "astap":
@@ -61,7 +78,11 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
         if not validation["valid"]:
             raise HTTPException(
                 status_code=422,
-                detail=f"ASTAP path is invalid: {validation['error']}",
+                detail=_failure_detail(
+                    f"ASTAP path is invalid: {validation['error']}",
+                    "invalid_configuration",
+                    [],
+                ),
             )
 
     try:
@@ -74,7 +95,7 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
             failure_reason="cancelled",
         )
     except solve_operations.SolveBusy as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=_failure_detail(str(exc), "busy", [])) from exc
     try:
         operation.checkpoint()
         return await run_solve(
@@ -97,24 +118,58 @@ async def solve(request: PlateSolveRequest) -> PlateSolveResult:
             solver=solver,
             error_message="Plate solve cancelled.",
             failure_reason="cancelled",
-            attempts=operation.attempts(),
+            attempts=operation.attempts(open_outcome="cancelled", detail="Plate solve cancelled."),
         )
     except FileNotFoundError as exc:
         # A referenced source file wasn't reachable — usually a disconnected
         # drive (e.g. a pxiproject master on another volume), not a bug.
         raise HTTPException(
             status_code=422,
-            detail=f"{exc} — is the source file's drive connected?",
+            detail=_failure_detail(
+                f"{exc} — is the source file's drive connected?",
+                "read_error",
+                operation.attempts(open_outcome="error", detail=str(exc)),
+            ),
         ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ImageReadError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=_failure_detail(
+                str(exc),
+                "read_error",
+                operation.attempts(open_outcome="error", detail=str(exc)),
+            ),
+        ) from exc
+    except AstapLaunchError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=_failure_detail(
+                str(exc),
+                "invalid_configuration",
+                operation.attempts(open_outcome="error", detail=str(exc)),
+            ),
+        ) from exc
     except TimeoutError as exc:
-        raise HTTPException(status_code=408, detail=str(exc)) from exc
+        message = str(exc) or "Plate solve timed out."
+        raise HTTPException(
+            status_code=408,
+            detail=_failure_detail(
+                message,
+                "time_limit",
+                operation.attempts(open_outcome="overall_timeout", detail=message),
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("[plate-solve] unexpected error for %s", request.image_path)
-        raise HTTPException(status_code=500, detail="Internal plate solve error") from exc
+        message = "Internal plate solve error"
+        raise HTTPException(
+            status_code=500,
+            detail=_failure_detail(
+                message,
+                "error",
+                operation.attempts(open_outcome="error", detail=message),
+            ),
+        ) from exc
     finally:
         solve_operations.release(operation)
 

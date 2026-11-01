@@ -132,11 +132,21 @@ class SolveOperation:
         if self.stop.is_set():
             raise SolveCancelled("Plate solve cancelled.")
 
-    def attempts(self) -> list[SolveAttempt]:
+    def attempts(
+        self,
+        *,
+        open_outcome: AttemptOutcome | None = None,
+        detail: str | None = None,
+    ) -> list[SolveAttempt]:
         with self._lock:
             attempts = [attempt.model_copy(deep=True) for attempt in self._attempts]
             if self._active_step is not None:
-                attempts.append(self._active_step.model_copy(deep=True))
+                active = self._active_step.model_copy(deep=True)
+                if open_outcome is not None:
+                    active.outcome = open_outcome
+                    active.seconds = max(0.0, time.monotonic() - self._active_started)
+                    active.detail = detail
+                attempts.append(active)
             return attempts
 
     def snapshot(self, *, state: Literal["running", "finished"] = "running") -> ProgressSnapshot:

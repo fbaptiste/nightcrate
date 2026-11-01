@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from nightcrate.api._common import get_or_404, integrity_guard, row_to_dict
-from nightcrate.api.plate_solve import query_dsos_in_cone
+from nightcrate.api.plate_solve import _failure_detail, query_dsos_in_cone
 from nightcrate.api.project_solve_models import (
     IdentifiedDso,
     ProjectSolveRequest,
@@ -34,6 +34,7 @@ from nightcrate.services.image_annotation_models import WcsParams
 from nightcrate.services.image_annotations import compute_fov, project_dsos
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import run_solve, validate_astap_path
+from nightcrate.services.plate_solve_models import AstapLaunchError, ImageReadError
 from nightcrate.services.project_images import VARIANT_SIZES, generate_rendered_images
 
 logger = logging.getLogger("nightcrate")
@@ -61,31 +62,25 @@ def _staging_dir(project_id: int, operation_id) -> Path:
     return _solve_dir(project_id) / f".staging-{operation_id}"
 
 
-def _failure_detail(message: str, failure_reason: str | None, attempts) -> dict:
-    return {
-        "message": message,
-        "failure_reason": failure_reason,
-        "attempts": [attempt.model_dump(mode="json") for attempt in attempts],
-    }
-
-
 def _ensure_primary_fits_image(image_path: str) -> None:
     """Reject an existing FITS whose primary HDU has no image data."""
     left = Path(image_path.rsplit("::", 1)[0])
     if not left.exists():
         return
-    source, file_type, _image_index, _cache_key = resolve_path(image_path)
+    try:
+        source, file_type, _image_index, _cache_key = resolve_path(image_path)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise FileNotFoundError(exc.detail) from None
+        raise ImageReadError(str(exc.detail)) from exc
     if file_type != "fits":
         return
     try:
         extensions = fits_io.list_extensions(source)
+    except FileNotFoundError:
+        raise
     except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=_failure_detail(
-                f"NightCrate couldn't read this file: {exc}", "invalid_image", []
-            ),
-        ) from exc
+        raise ImageReadError(f"NightCrate couldn't read this file: {exc}") from exc
     if not extensions or not extensions[0]["has_image"]:
         raise HTTPException(
             status_code=422,
@@ -119,33 +114,35 @@ async def _render_to_staging(image_path: str, staging: Path) -> None:
         raise asyncio.CancelledError
 
 
-def _cleanup_generations(solve_dir: Path, old_id: int | None, staging: Path) -> None:
-    """Remove only the image paths made obsolete by one publication."""
+def _cleanup_generations(solve_dir: Path, current_id: int) -> None:
+    """Leave only the newly published generation in the solve directory."""
     try:
-        for path in solve_dir.glob("*.jpg"):
+        for path in solve_dir.iterdir():
+            if path.name == str(current_id):
+                continue
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except OSError:
+                logger.warning("[project-solve] failed to remove obsolete path %s", path)
+    except OSError:
+        logger.warning("[project-solve] failed to scan solve generations in %s", solve_dir)
+
+
+def _delete_published_generations(solve_dir: Path) -> None:
+    """Delete published images while leaving in-flight staging directories alone."""
+    if not solve_dir.is_dir():
+        return
+    for path in solve_dir.iterdir():
+        if path.is_dir() and path.name.isdigit():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.is_file() and path.suffix.lower() == ".jpg":
             try:
                 path.unlink()
             except OSError:
-                logger.warning("[project-solve] failed to remove legacy image %s", path)
-        if old_id is not None:
-            old_generation = solve_dir / str(old_id)
-            try:
-                shutil.rmtree(old_generation)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                logger.warning(
-                    "[project-solve] failed to remove obsolete generation %s",
-                    old_generation,
-                )
-        try:
-            shutil.rmtree(staging)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            logger.warning("[project-solve] failed to remove staging directory %s", staging)
-    except OSError:
-        logger.warning("[project-solve] failed to scan solve generations in %s", solve_dir)
+                logger.warning("[project-solve] failed to remove image %s", path)
 
 
 def _wcs_from_solve(row: dict) -> WcsParams:
@@ -262,7 +259,10 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
 async def _require_response(conn, project_id: int, *, attempts=None) -> ProjectSolveResponse:
     response = await _assemble_response(conn, project_id)
     if response is None:
-        raise HTTPException(status_code=500, detail="Plate solve state could not be assembled")
+        raise HTTPException(
+            status_code=500,
+            detail=_failure_detail("Internal plate solve error", "error", attempts or []),
+        )
     if attempts is not None:
         response.attempts = list(attempts)
     return response
@@ -287,12 +287,15 @@ async def _create_solve_claimed(
         if await cursor.fetchone() is not None and not body.replace:
             raise HTTPException(
                 status_code=409,
-                detail="A plate solve already exists for this project. Delete it first.",
+                detail=_failure_detail(
+                    "A plate solve already exists for this project. Delete it first.",
+                    "solve_exists",
+                    [],
+                ),
             )
 
-        await asyncio.to_thread(_ensure_primary_fits_image, body.image_path)
-
         try:
+            await asyncio.to_thread(_ensure_primary_fits_image, body.image_path)
             operation.checkpoint()
             result = await run_solve(
                 solver=solver,
@@ -315,23 +318,52 @@ async def _create_solve_claimed(
                 detail=_failure_detail(
                     f"{exc} — is the source file's drive connected?",
                     "read_error",
-                    operation.attempts(),
+                    operation.attempts(open_outcome="error", detail=str(exc)),
                 ),
             ) from exc
-        except ValueError as exc:
+        except ImageReadError as exc:
             raise HTTPException(
                 status_code=422,
-                detail=_failure_detail(str(exc), "read_error", operation.attempts()),
+                detail=_failure_detail(
+                    str(exc),
+                    "read_error",
+                    operation.attempts(open_outcome="error", detail=str(exc)),
+                ),
             ) from exc
         except solve_operations.SolveCancelled:
             raise
-        except RuntimeError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except AstapLaunchError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=_failure_detail(
+                    str(exc),
+                    "invalid_configuration",
+                    operation.attempts(open_outcome="error", detail=str(exc)),
+                ),
+            ) from exc
         except TimeoutError as exc:
-            raise HTTPException(status_code=408, detail=str(exc)) from exc
+            message = str(exc) or "Plate solve timed out."
+            raise HTTPException(
+                status_code=408,
+                detail=_failure_detail(
+                    message,
+                    "time_limit",
+                    operation.attempts(open_outcome="overall_timeout", detail=message),
+                ),
+            ) from exc
         except Exception as exc:
             logger.exception("[project-solve] unexpected error for %s", body.image_path)
-            raise HTTPException(status_code=500, detail="Internal plate solve error") from exc
+            message = "Internal plate solve error"
+            raise HTTPException(
+                status_code=500,
+                detail=_failure_detail(
+                    message,
+                    "error",
+                    operation.attempts(open_outcome="error", detail=message),
+                ),
+            ) from exc
 
         if not result.solved:
             raise HTTPException(
@@ -420,7 +452,11 @@ async def _create_solve_claimed(
                 if old_id is not None and not body.replace:
                     raise HTTPException(
                         status_code=409,
-                        detail="A plate solve already exists for this project. Delete it first.",
+                        detail=_failure_detail(
+                            "A plate solve already exists for this project. Delete it first.",
+                            "solve_exists",
+                            result.attempts,
+                        ),
                     )
                 if old_id is not None:
                     await conn.execute("DELETE FROM project_solve WHERE id = ?", (old_id,))
@@ -433,8 +469,10 @@ async def _create_solve_claimed(
 
             try:
                 with integrity_guard(
-                    conflict_detail=(
-                        "A plate solve already exists for this project. Delete it first."
+                    conflict_detail=_failure_detail(
+                        "A plate solve already exists for this project. Delete it first.",
+                        "solve_exists",
+                        result.attempts,
                     )
                 ):
                     cursor = await conn.execute(
@@ -492,16 +530,27 @@ async def _create_solve_claimed(
                 new_generation = solve_dir / str(solve_id)
                 if new_generation.exists():
                     await asyncio.to_thread(shutil.rmtree, new_generation)
-                _, rename_cancelled = await _finish_awaitable(
-                    asyncio.to_thread(staging.rename, new_generation)
-                )
+                try:
+                    _, rename_cancelled = await _finish_awaitable(
+                        asyncio.to_thread(staging.rename, new_generation)
+                    )
+                except OSError as exc:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=_failure_detail(
+                            "The image solved, but NightCrate couldn't render it for display. "
+                            "Nothing was saved.",
+                            "render_failed",
+                            result.attempts,
+                        ),
+                    ) from exc
                 if rename_cancelled:
                     raise asyncio.CancelledError
                 operation.begin_commit()
                 _, commit_cancelled = await _finish_awaitable(conn.commit())
                 committed = True
                 _, cleanup_cancelled = await _finish_awaitable(
-                    asyncio.to_thread(_cleanup_generations, solve_dir, old_id, staging)
+                    asyncio.to_thread(_cleanup_generations, solve_dir, solve_id)
                 )
                 if commit_cancelled or cleanup_cancelled:
                     raise asyncio.CancelledError
@@ -553,7 +602,7 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
             },
         ) from None
     except solve_operations.SolveBusy as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=_failure_detail(str(exc), "busy", [])) from exc
     try:
         return await _create_solve_claimed(
             project_id,
@@ -566,8 +615,25 @@ async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSol
         shutil.rmtree(_staging_dir(project_id, operation.operation_id), ignore_errors=True)
         raise HTTPException(
             status_code=422,
-            detail=_failure_detail("Plate solve cancelled.", "cancelled", operation.attempts()),
+            detail=_failure_detail(
+                "Plate solve cancelled.",
+                "cancelled",
+                operation.attempts(open_outcome="cancelled", detail="Plate solve cancelled."),
+            ),
         ) from None
+    except HTTPException, asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception("[project-solve] unexpected error for %s", body.image_path)
+        message = "Internal plate solve error"
+        raise HTTPException(
+            status_code=500,
+            detail=_failure_detail(
+                message,
+                "error",
+                operation.attempts(open_outcome="error", detail=message),
+            ),
+        ) from exc
     finally:
         solve_operations.release(operation)
 
@@ -646,8 +712,7 @@ async def delete_solve(project_id: int) -> None:
             await conn.commit()
 
         solve_dir = _solve_dir(project_id)
-        if solve_dir.is_dir():
-            shutil.rmtree(solve_dir, ignore_errors=True)
+        _delete_published_generations(solve_dir)
 
 
 @router.get("/{project_id}/solve/image/{variant}")

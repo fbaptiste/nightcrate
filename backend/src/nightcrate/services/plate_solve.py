@@ -43,7 +43,13 @@ from nightcrate.services.path_resolver import (
 from nightcrate.services.path_resolver import (
     resolve_path as _resolve_path_raw,
 )
-from nightcrate.services.plate_solve_models import AttemptOutcome, PlateSolveResult, SolveAttempt
+from nightcrate.services.plate_solve_models import (
+    AstapLaunchError,
+    AttemptOutcome,
+    ImageReadError,
+    PlateSolveResult,
+    SolveAttempt,
+)
 from nightcrate.services.star_catalog import handles
 
 logger = logging.getLogger("nightcrate")
@@ -69,20 +75,34 @@ def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int, tuple | None]:
         return _resolve_path_raw(path)
     except Exception as exc:
         if type(exc).__name__ == "HTTPException":
-            raise ValueError(getattr(exc, "detail", str(exc))) from None
+            detail = getattr(exc, "detail", str(exc))
+            if getattr(exc, "status_code", None) == 404:
+                raise FileNotFoundError(detail) from None
+            raise ValueError(detail) from None
         raise
 
 
 def _read_astap_source(image_path: str, hdu: int):
     """Resolve and read the source metadata in one blocking worker."""
-    source, file_type, image_index, _cache_key = _resolve_path(image_path)
-    raw_bytes: bytes | None = None
-    if not isinstance(source, Path):
-        raw_bytes = source.read()
+    try:
+        source, file_type, image_index, _cache_key = _resolve_path(image_path)
+        raw_bytes: bytes | None = None
+        if not isinstance(source, Path):
+            raw_bytes = source.read()
 
-    header_source = io.BytesIO(raw_bytes) if raw_bytes is not None else source
-    cards = read_header_cards(header_source, file_type, image_index, hdu)
-    return source if isinstance(source, Path) else None, file_type, image_index, raw_bytes, cards
+        header_source = io.BytesIO(raw_bytes) if raw_bytes is not None else source
+        cards = read_header_cards(header_source, file_type, image_index, hdu)
+        return (
+            source if isinstance(source, Path) else None,
+            file_type,
+            image_index,
+            raw_bytes,
+            cards,
+        )
+    except FileNotFoundError:
+        raise
+    except (OSError, ValueError, xisf_io.XISFError, pxiproject_io.PxiProjectError) as exc:
+        raise ImageReadError(str(exc)) from exc
 
 
 _solve_process: asyncio.subprocess.Process | None = None
@@ -363,28 +383,33 @@ def _prepare_image_file(
     For virtual paths (archive, pxiproject) or unsupported formats
     (compressed XISF), writes a temporary FITS file and returns its path.
     """
-    if isinstance(source, Path):
-        ext = source.suffix.lower()
-        if ext in FITS_EXTENSIONS and hdu > 0:
-            data = fits_io.load_image_data(source, hdu)
-            return _write_temp_fits(data, temp_dir, header_keywords)
-        if ext in FITS_EXTENSIONS | STANDARD_EXTENSIONS:
+    try:
+        if isinstance(source, Path):
+            ext = source.suffix.lower()
+            if ext in FITS_EXTENSIONS and hdu > 0:
+                data = fits_io.load_image_data(source, hdu)
+                return _write_temp_fits(data, temp_dir, header_keywords)
+            if ext in FITS_EXTENSIONS | STANDARD_EXTENSIONS:
+                return source
+            if ext == ".xisf":
+                data = xisf_io.load_image_data(source, hdu)
+                return _write_temp_fits(data, temp_dir, header_keywords)
+            if file_type == "pxiproject":
+                data = pxiproject_io.load_image_data(source, image_index)
+                return _write_temp_fits(data, temp_dir, header_keywords)
             return source
-        if ext == ".xisf":
-            data = xisf_io.load_image_data(source, hdu)
-            return _write_temp_fits(data, temp_dir, header_keywords)
-        if file_type == "pxiproject":
-            data = pxiproject_io.load_image_data(source, image_index)
-            return _write_temp_fits(data, temp_dir, header_keywords)
-        return source
 
-    if file_type == "fits" and hdu == 0:
-        temp_path = temp_dir / "solve_input.fits"
-        temp_path.write_bytes(source.read())
-        return temp_path
+        if file_type == "fits" and hdu == 0:
+            temp_path = temp_dir / "solve_input.fits"
+            temp_path.write_bytes(source.read())
+            return temp_path
 
-    data = _load_data_from_buf(source, file_type, hdu)
-    return _write_temp_fits(data, temp_dir, header_keywords)
+        data = _load_data_from_buf(source, file_type, hdu)
+        return _write_temp_fits(data, temp_dir, header_keywords)
+    except FileNotFoundError:
+        raise
+    except (OSError, ValueError, xisf_io.XISFError, pxiproject_io.PxiProjectError) as exc:
+        raise ImageReadError(str(exc)) from exc
 
 
 def _load_data_from_buf(buf: BinaryIO, file_type: str, hdu: int) -> np.ndarray:
@@ -1037,12 +1062,18 @@ async def _run_astap_step(
         tempfile.TemporaryDirectory(prefix="nightcrate_astap_home_") as home,
     ):
         env = _private_astap_environment(Path(home))
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except (FileNotFoundError, PermissionError) as exc:
+            raise AstapLaunchError(
+                f"ASTAP couldn't be started from {args[0]}. "
+                "Check the path in Settings → Plate Solving."
+            ) from exc
         _solve_process = proc
         if operation is not None:
             operation.process = proc
@@ -1343,15 +1374,20 @@ async def _do_solve(
             failure_reason="time_limit",
         )
     with tempfile.TemporaryDirectory(prefix="nightcrate_solve_") as tmp:
-        image_file = await asyncio.to_thread(
-            _prepare_image_file,
-            fresh_source(),
-            file_type,
-            image_index,
-            hdu,
-            Path(tmp),
-            header_keywords=raw_header,
-        )
+        try:
+            image_file = await asyncio.to_thread(
+                _prepare_image_file,
+                fresh_source(),
+                file_type,
+                image_index,
+                hdu,
+                Path(tmp),
+                header_keywords=raw_header,
+            )
+        except FileNotFoundError:
+            raise
+        except (OSError, ValueError, xisf_io.XISFError, pxiproject_io.PxiProjectError) as exc:
+            raise ImageReadError(str(exc)) from exc
         try:
             width, height = await asyncio.to_thread(_get_dimensions_from_file, image_file)
         except OSError, ValueError:

@@ -44,6 +44,27 @@ def test_progress_snapshot_lists_attempts():
     assert finished.attempts[0].outcome == "no_match"
 
 
+def test_error_attempts_close_an_active_step(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(solve_operations.time, "monotonic", lambda: now)
+    operation = solve_operations.claim(uuid4(), "native")
+    operation.start(
+        SolveAttempt(
+            solver="native",
+            step="load",
+            position_source="none",
+            scale_source="none",
+        )
+    )
+    now += 1.25
+
+    attempts = operation.attempts(open_outcome="error", detail="could not read")
+
+    assert attempts[0].outcome == "error"
+    assert attempts[0].seconds == pytest.approx(1.25)
+    assert attempts[0].detail == "could not read"
+
+
 def test_cancel_before_claim_stops_solve():
     operation_id = uuid4()
     result = solve_operations.cancel(operation_id)

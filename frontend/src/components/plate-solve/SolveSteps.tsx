@@ -34,8 +34,11 @@ interface Props {
 }
 
 function completedState(outcome: AttemptOutcome | null): Pick<Row, "state" | "word"> {
-  if (outcome === "solved" || outcome == null) {
+  if (outcome === "solved") {
     return { state: "done", word: "Done" };
+  }
+  if (outcome == null) {
+    return { state: "miss", word: "Stopped" };
   }
   if (outcome === "skipped") {
     return { state: "waiting", word: "Skipped" };

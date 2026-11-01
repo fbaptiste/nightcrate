@@ -546,6 +546,27 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
     locked step. A cancel after that returns `cancelled: false`, and the save
     completes.
   - The solve slot is shared with star-data publication.
+- **Error detail.** Every error from either solve endpoint (Image Analyzer
+  or project) has the detail `{message, failure_reason, attempts}`, never a
+  bare string. FastAPI's own request-validation 422s are the exception.
+  - **Reasons and statuses:**
+    - `invalid_configuration` (422): ASTAP isn't set up, its path is
+      invalid, or it can't be started;
+    - `read_error` (422): the image can't be resolved, read or converted;
+      a missing file adds the hint about a disconnected drive;
+    - `busy` (409);
+    - `solve_exists` (409);
+    - `time_limit` (408);
+    - `error` (500), for anything else, including internal invariants.
+
+    Project solves add `invalid_image`, `invalid_wcs` and `render_failed`.
+  - **Reading errors.** The solvers wrap failures at their read sites in
+    `ImageReadError`, and an ASTAP launch failure in `AstapLaunchError`.
+    A plain `ValueError` from a solve is therefore an internal error, not
+    a reading error.
+  - **Attempts.** An error never carries an attempt with a null outcome. A
+    step still open is reported as `cancelled`, `overall_timeout` or
+    `error`.
 
 **Project solves**
 
@@ -561,20 +582,21 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - **Failures and cleanup.**
   - Any failure before the commit, including a failed commit, removes the
     new folders and leaves the old row and images untouched.
-  - After the commit, only the old generation and legacy top-level images
-    are removed, while the lock and slot are still held.
-  - Delete sweeps stray folders.
-  - A render failure saves nothing.
+  - **After the commit,** while the lock and slot are still held, every
+    other entry in `solve/` is removed: older generations, legacy
+    top-level images, and staging folders left by a crash. No render can
+    be running then, because the solve slot is global.
+  - **Delete** removes the row, the generations and legacy images, but
+    leaves `.staging-*` folders: a replacement may be rendering into one
+    outside the lock.
+  - **A render failure saves nothing,** and neither does a failure to
+    move the staging folder into place (`render_failed`).
 - **Images.** The image route serves the current row's generation, falling
   back to the legacy `solve/<variant>.jpg`. Image URLs carry `?_v=<solve id>`;
   `solved_at` has one-second precision.
 - **Main targets** live in `project_target` and survive a replacement.
 - **HDU.** A project solve takes HDU 0 only. A FITS whose image is in an
   extension gets a 422 that points to the Image Analyzer.
-- **422 detail.** Every application-level 422 is
-  `{message, failure_reason, attempts}`. Besides the solver's own reasons,
-  the reasons include `read_error`, `invalid_configuration`, `render_failed`,
-  `invalid_wcs` and `invalid_image`.
 
 **Preview route**
 
@@ -623,9 +645,15 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   through a session snapshot and `?tab=plate-solve&solve=&hdu=`. Setup links
   carry `?returnTo=`, which is accepted only as a same-origin app path (no
   `//`, no scheme, no backslash). Admin scrolls to `#plate-solving-stars`.
-- **Failure reasons.** Both solvers share one list: a cancel, a time limit,
-  or an error or read error offers "Try again"; other failures offer
-  "Change hints" and the other solver.
+- **Failure reasons.** Both solvers share one list, and every reason has its
+  own title.
+  - **"Try again"** follows a cancel, a time limit, an error, a read error,
+    a busy slot, a render failure, or a response without a reason. It also
+    follows missing stars or ranges once the built-in solver is available.
+  - **Every failure** also offers "Change hints", and the other solver when
+    it is set up.
+  - **Unfinished steps.** A finished step list never shows an unfinished
+    step as "Done"; it reads "Stopped".
 
 ## Weather: personal imaging verdict
 

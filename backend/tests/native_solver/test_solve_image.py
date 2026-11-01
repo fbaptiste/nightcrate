@@ -20,6 +20,7 @@ from nightcrate.services.native_solver.models import (
     SolveOutcome,
     TanWCS,
 )
+from nightcrate.services.plate_solve_models import ImageReadError
 from nightcrate.services.star_catalog import handles, ranges, store
 from nightcrate.services.star_catalog import index as catalog_index
 from nightcrate.services.star_catalog.index import BandSpec, write_band
@@ -110,7 +111,7 @@ def _write_empty_layer(path, name: str, source_hash: str) -> None:
     )
 
 
-def _setup(monkeypatch, *, ready: set[str], count: int = 20):
+def _setup(monkeypatch, *, ready: set[str], count: int = 20, mock_image: bool = True):
     layer_names = sorted(
         {name for item in FIELD_RANGES if item.id in ready for name in item.layers}
     )
@@ -124,13 +125,14 @@ def _setup(monkeypatch, *, ready: set[str], count: int = 20):
         "get_layers",
         lambda names: [SimpleNamespace(name=name) for name in names],
     )
-    monkeypatch.setattr(subject.pixel_loader, "resolve", lambda _path: (object(), "fits", 0))
-    monkeypatch.setattr(
-        subject.pixel_loader,
-        "load_normalized_mono",
-        lambda _path, _hdu: np.zeros((1600, 2400), dtype=np.float32),
-    )
-    monkeypatch.setattr(plate_solve, "read_header_cards", lambda *_args: [])
+    if mock_image:
+        monkeypatch.setattr(subject.pixel_loader, "resolve", lambda _path: (object(), "fits", 0))
+        monkeypatch.setattr(
+            subject.pixel_loader,
+            "load_normalized_mono",
+            lambda _path, _hdu: np.zeros((1600, 2400), dtype=np.float32),
+        )
+        monkeypatch.setattr(plate_solve, "read_header_cards", lambda *_args: [])
     monkeypatch.setattr(subject, "extract_near", lambda *_args, **_kwargs: detections)
     monkeypatch.setattr(
         subject,
@@ -158,6 +160,48 @@ def _solve_mock(
         cancel=cancel or threading.Event(),
         reporter=reporter or NullSolveReporter(),
     )
+
+
+@pytest.mark.parametrize("site", ["resolve", "header", "pixels"])
+def test_image_read_sites_raise_domain_error(monkeypatch, site):
+    _setup(monkeypatch, ready={"0.4-10"})
+    if site == "resolve":
+        monkeypatch.setattr(
+            subject.pixel_loader,
+            "resolve",
+            lambda _path: (_ for _ in ()).throw(OSError("resolve failed")),
+        )
+    elif site == "header":
+        monkeypatch.setattr(
+            plate_solve,
+            "read_header_cards",
+            lambda *_args: (_ for _ in ()).throw(OSError("header failed")),
+        )
+    else:
+        monkeypatch.setattr(
+            subject.pixel_loader,
+            "load_normalized_mono",
+            lambda *_args: (_ for _ in ()).throw(OSError("pixels failed")),
+        )
+
+    with pytest.raises(ImageReadError, match=f"{site} failed"):
+        _solve_mock("broken.fits")
+
+
+def test_real_garbage_fits_raises_image_read_error(tmp_path, monkeypatch):
+    _setup(monkeypatch, ready={"0.4-10"}, mock_image=False)
+    path = tmp_path / "garbage.fits"
+    path.write_bytes(b"not a FITS file")
+
+    with pytest.raises(ImageReadError):
+        _solve_mock(str(path))
+
+
+def test_real_missing_file_raises_file_not_found(tmp_path, monkeypatch):
+    _setup(monkeypatch, ready={"0.4-10"}, mock_image=False)
+
+    with pytest.raises(FileNotFoundError):
+        _solve_mock(str(tmp_path / "missing.fits"))
 
 
 def _install_real_assets(tmp_path, monkeypatch, *, seed: int):

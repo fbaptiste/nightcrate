@@ -280,7 +280,14 @@ export function PanelFailure({
   const theme = useTheme();
   const other: PlateSolver = failure.solver === "native" ? "astap" : "native";
   const otherAvailable = other === "native" ? nativeAvailable : astapAvailable;
-  const retryReasons = new Set(["cancelled", "time_limit", "error", "read_error"]);
+  const retryReasons = new Set([
+    "cancelled",
+    "time_limit",
+    "error",
+    "read_error",
+    "busy",
+    "render_failed",
+  ]);
   const preciseTitles: Record<string, string> = {
     cancelled: "Solve cancelled",
     time_limit: "Time limit reached",
@@ -289,9 +296,18 @@ export function PanelFailure({
     error: "Plate solve error",
     read_error: "Couldn't read the image",
     invalid_configuration: "Setup needed",
+    busy: "Another solve is running",
+    solve_exists: "A solution is already saved",
+    render_failed: "Solved, but not saved",
+    invalid_image: "Can't solve this file here",
+    invalid_wcs: "The solution was incomplete",
+    stars_not_installed: "Plate-solving stars not installed",
+    no_ranges: "No field ranges built",
+    field_not_built: "Field range not built",
   };
   const canRetry =
-    (failure.failureReason !== null && retryReasons.has(failure.failureReason)) ||
+    failure.failureReason === null ||
+    retryReasons.has(failure.failureReason) ||
     (failure.failureReason === "stars_not_installed" && nativeAvailable) ||
     (failure.failureReason === "no_ranges" && nativeAvailable);
 

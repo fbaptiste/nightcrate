@@ -25,7 +25,12 @@ from nightcrate.api import project_solve as project_solve_api
 from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services import solve_operations
-from nightcrate.services.plate_solve_models import PlateSolveResult, SolveAttempt
+from nightcrate.services.plate_solve_models import (
+    AstapLaunchError,
+    ImageReadError,
+    PlateSolveResult,
+    SolveAttempt,
+)
 
 _SCALE = 3.0 / 3600.0  # 3 arcsec/px in degrees
 
@@ -190,6 +195,12 @@ class TestCreateSolve:
 
         assert missing_id.status_code == 422
         assert legacy_mode.status_code == 422
+        missing_item = missing_id.json()["detail"][0]
+        assert missing_item["type"] == "missing"
+        assert missing_item["loc"] == ["body", "operation_id"]
+        mode_item = legacy_mode.json()["detail"][0]
+        assert mode_item["type"] == "extra_forbidden"
+        assert mode_item["loc"] == ["body", "mode"]
 
     async def test_stores_all_objects_and_flags_main(self, client: AsyncClient):
         big, small = await _seed_two_dsos()
@@ -225,6 +236,11 @@ class TestCreateSolve:
                 f"/api/projects/{pid}/solve", json=_solve_payload("/fake/b.fits")
             )
         assert second.status_code == 409
+        assert second.json()["detail"] == {
+            "message": "A plate solve already exists for this project. Delete it first.",
+            "failure_reason": "solve_exists",
+            "attempts": [],
+        }
 
     async def test_failed_solve_422(self, client: AsyncClient):
         pid = await _make_project(client, "Solve Fail")
@@ -321,7 +337,7 @@ class TestCreateSolve:
             "attempts": [],
         }
 
-    async def test_read_value_error_is_structured_422(self, client: AsyncClient):
+    async def test_internal_value_error_is_structured_500(self, client: AsyncClient):
         pid = await _make_project(client, "Read Error")
         with (
             patch(
@@ -342,9 +358,117 @@ class TestCreateSolve:
                 json=_solve_payload("/fake/bad.fits", solver="native"),
             )
 
+        assert response.status_code == 500
+        assert response.json()["detail"] == {
+            "message": "Internal plate solve error",
+            "failure_reason": "error",
+            "attempts": [],
+        }
+
+    @pytest.mark.parametrize(
+        ("error", "status", "reason", "message"),
+        [
+            (ImageReadError("unsupported image"), 422, "read_error", "unsupported image"),
+            (
+                AstapLaunchError("ASTAP couldn't be started"),
+                422,
+                "invalid_configuration",
+                "ASTAP couldn't be started",
+            ),
+            (TimeoutError("too slow"), 408, "time_limit", "too slow"),
+        ],
+    )
+    async def test_application_errors_have_structured_details(
+        self, client: AsyncClient, error, status, reason, message
+    ):
+        pid = await _make_project(client, f"Structured {reason}")
+        with patch("nightcrate.api.project_solve.run_solve", new=AsyncMock(side_effect=error)):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/image.fits", solver="native"),
+            )
+
+        assert response.status_code == status
+        assert response.json()["detail"] == {
+            "message": message,
+            "failure_reason": reason,
+            "attempts": [],
+        }
+
+    async def test_open_attempt_uses_overall_timeout_outcome(self, client: AsyncClient):
+        pid = await _make_project(client, "Timeout Attempt")
+
+        async def timeout_with_open_attempt(**values):
+            operation = values["operation"]
+            operation.start(
+                SolveAttempt(
+                    solver="native",
+                    step="load",
+                    position_source="none",
+                    scale_source="none",
+                )
+            )
+            raise TimeoutError("too slow")
+
+        with patch("nightcrate.api.project_solve.run_solve", new=timeout_with_open_attempt):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/image.fits", solver="native"),
+            )
+
+        assert response.status_code == 408
+        detail = response.json()["detail"]
+        assert detail["failure_reason"] == "time_limit"
+        assert detail["attempts"][0]["outcome"] == "overall_timeout"
+
+    @pytest.mark.parametrize("solver", ["native", "astap"])
+    @pytest.mark.parametrize(
+        ("error_type", "text", "expected"),
+        [
+            (
+                FileNotFoundError,
+                "missing image.fits",
+                "missing image.fits — is the source file's drive connected?",
+            ),
+            (ImageReadError, "unsupported image type", "unsupported image type"),
+            (ImageReadError, "corrupt FITS", "corrupt FITS"),
+            (
+                ImageReadError,
+                "unresolvable pxiproject reference",
+                "unresolvable pxiproject reference",
+            ),
+        ],
+    )
+    async def test_read_error_cases_for_both_solvers(
+        self, client: AsyncClient, solver, error_type, text, expected
+    ):
+        pid = await _make_project(client, f"{solver} {text}")
+        with (
+            patch(
+                "nightcrate.api.project_solve.get_settings",
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        astap_executable_path="/fake/astap", default_solver=solver
+                    )
+                ),
+            ),
+            patch(
+                "nightcrate.api.project_solve.validate_astap_path",
+                new=MagicMock(return_value={"valid": True, "error": None}),
+            ),
+            patch(
+                "nightcrate.api.project_solve.run_solve",
+                new=AsyncMock(side_effect=error_type(text)),
+            ),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/image.fits", solver=solver),
+            )
+
         assert response.status_code == 422
         assert response.json()["detail"] == {
-            "message": "Unsupported image data",
+            "message": expected,
             "failure_reason": "read_error",
             "attempts": [],
         }
@@ -437,6 +561,11 @@ class TestCreateSolve:
             )
         old_id = first.json()["id"]
         await client.put(f"/api/projects/{pid}/solve/objects/{small}", json={"is_main": True})
+        solve_dir = project_solve_api._solve_dir(pid)
+        (solve_dir / "orphan.jpg").write_bytes(b"legacy")
+        (solve_dir / "999999").mkdir()
+        (solve_dir / "999999" / "full.jpg").write_bytes(b"orphan")
+        (solve_dir / ".staging-stray").mkdir()
 
         with _mock_solve(dsos, renderer=_renderer(b"new")):
             replaced = await client.post(
@@ -451,8 +580,7 @@ class TestCreateSolve:
             big,
             small,
         }
-        solve_dir = project_solve_api._solve_dir(pid)
-        assert not (solve_dir / str(old_id)).exists()
+        assert {path.name for path in solve_dir.iterdir()} == {str(data["id"])}
         assert (solve_dir / str(data["id"]) / "full.jpg").read_bytes() == b"new"
         image = await client.get(f"/api/projects/{pid}/solve/image/full")
         assert image.content == b"new"
@@ -498,6 +626,36 @@ class TestCreateSolve:
         assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"old"
         assert not list(project_solve_api._solve_dir(pid).glob(".staging-*"))
 
+    async def test_delete_during_replace_render_leaves_staging_for_publication(
+        self, client: AsyncClient
+    ):
+        pid = await _make_project(client, "Delete During Replace")
+        with _mock_solve([], renderer=_renderer(b"old")):
+            await client.post(f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits"))
+        render_started = threading.Event()
+        release_render = threading.Event()
+
+        def blocked_render(_image_path, output_dir):
+            render_started.set()
+            release_render.wait(2)
+            _renderer(b"new")(_image_path, output_dir)
+
+        with _mock_solve([], renderer=blocked_render):
+            replace_task = asyncio.create_task(
+                client.post(
+                    f"/api/projects/{pid}/solve",
+                    json=_solve_payload("/fake/new.fits", replace=True),
+                )
+            )
+            assert await asyncio.to_thread(render_started.wait, 1)
+            assert (await client.delete(f"/api/projects/{pid}/solve")).status_code == 204
+            assert list(project_solve_api._solve_dir(pid).glob(".staging-*"))
+            release_render.set()
+            replaced = await replace_task
+
+        assert replaced.status_code == 200, replaced.text
+        assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"new"
+
     @pytest.mark.parametrize("failure", ["rename", "after_rename", "commit"])
     async def test_publication_failure_rolls_back_and_keeps_old(
         self, client: AsyncClient, failure: str
@@ -528,11 +686,20 @@ class TestCreateSolve:
             )
 
         with _mock_solve([], renderer=_renderer(b"new")), failure_patch:
-            with pytest.raises((OSError, RuntimeError)):
-                await client.post(
+            if failure == "rename":
+                response = await client.post(
                     f"/api/projects/{pid}/solve",
                     json=_solve_payload("/fake/new.fits", replace=True),
                 )
+                assert response.status_code == 422
+                assert response.json()["detail"]["failure_reason"] == "render_failed"
+            else:
+                response = await client.post(
+                    f"/api/projects/{pid}/solve",
+                    json=_solve_payload("/fake/new.fits", replace=True),
+                )
+                assert response.status_code == 500
+                assert response.json()["detail"]["failure_reason"] == "error"
 
         current = await client.get(f"/api/projects/{pid}/solve")
         assert current.json()["id"] == old_id
@@ -637,7 +804,7 @@ class TestCreateSolve:
             )
 
         assert response.status_code == 422
-        assert response.json()["detail"]["failure_reason"] == "invalid_image"
+        assert response.json()["detail"]["failure_reason"] == "read_error"
         assert response.json()["detail"]["message"].startswith(
             "NightCrate couldn't read this file:"
         )
@@ -678,10 +845,10 @@ class TestCreateSolve:
         release_cleanup = threading.Event()
         original_cleanup = project_solve_api._cleanup_generations
 
-        def blocked_cleanup(solve_dir, old_id, staging):
+        def blocked_cleanup(solve_dir, current_id):
             cleanup_started.set()
             release_cleanup.wait(2)
-            original_cleanup(solve_dir, old_id, staging)
+            original_cleanup(solve_dir, current_id)
 
         with (
             _mock_solve([], renderer=_renderer(b"new")),
@@ -714,7 +881,7 @@ class TestCreateSolve:
 
         assert not lock.locked()
         assert solve_operations.active_operation() is None
-        assert next_staging.is_dir()
+        assert not next_staging.exists()
 
 
 class TestGetSolve:
@@ -841,6 +1008,21 @@ class TestDeleteSolve:
     async def test_delete_no_solve_is_noop(self, client: AsyncClient):
         pid = await _make_project(client, "Delete No Solve")
         assert (await client.delete(f"/api/projects/{pid}/solve")).status_code == 204
+
+    async def test_delete_keeps_in_flight_staging(self, client: AsyncClient):
+        pid = await _make_project(client, "Delete Staging")
+        with _mock_solve([], renderer=_renderer(b"published")):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
+            )
+        solve_dir = project_solve_api._solve_dir(pid)
+        staging = solve_dir / ".staging-in-flight"
+        staging.mkdir()
+        (staging / "full.jpg").write_bytes(b"staging")
+
+        assert (await client.delete(f"/api/projects/{pid}/solve")).status_code == 204
+        assert staging.is_dir()
+        assert not (solve_dir / str(created.json()["id"])).exists()
 
 
 class TestSolveImage:

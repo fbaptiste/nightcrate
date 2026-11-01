@@ -28,6 +28,14 @@ AttemptOutcome = Literal[
 ]
 
 
+class ImageReadError(ValueError):
+    """A source image could not be resolved, decoded, or prepared."""
+
+
+class AstapLaunchError(RuntimeError):
+    """The configured ASTAP executable could not be launched."""
+
+
 def check_solve_hints(
     *,
     ra_hint: float | None,
