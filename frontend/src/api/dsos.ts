@@ -22,6 +22,7 @@ export type DistanceMethod = "50mgc" | "curated" | "redshift";
 export interface DsoListItem {
   id: number;
   primary_designation: string;
+  display_designation: string;
   obj_type: string;
   ra_deg: number | null;
   dec_deg: number | null;
@@ -56,7 +57,7 @@ export interface CatalogSource {
   row_count: number;
 }
 
-export interface DsoDetail extends Omit<DsoListItem, "designations"> {
+export interface DsoDetail extends Omit<DsoListItem, "designations" | "display_designation"> {
   active: boolean;
   raw_obj_type: string | null;
   position_angle_deg: number | null;
@@ -195,6 +196,24 @@ export interface ReloadCatalogsResponse {
 
 export const reloadCatalogs = () =>
   apiFetch<ReloadCatalogsResponse>("/admin/catalogs/reload", { method: "POST" });
+
+export type CatalogFetchOutcome = "success" | "warning" | "failed";
+
+export interface CatalogFetchStatus {
+  operation_id: string;
+  action: string;
+  source: string | null;
+  phase: string;
+  message: string;
+  bytes_received: number;
+  bytes_total: number | null;
+  phase_elapsed_s: number;
+  outcome: CatalogFetchOutcome | null;
+  detail: string | null;
+}
+
+export const fetchCatalogStatus = () =>
+  apiFetch<CatalogFetchStatus | null>("/admin/catalogs/fetch-status");
 
 export interface RemoteCatalogStatus {
   latest_tag: string;

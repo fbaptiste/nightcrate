@@ -30,7 +30,8 @@ services/planner_sky_track.py
   compute_sky_track()        per-DSO high-res track for the detail graph
 
 services/thumbnails.py       DSS2 Color JPEGs under APP_DIR/thumbnails/
-services/hips_client.py      thin wrapper over CDS hips2fits
+services/hips_tiles.py       DSS2 colour HiPS tile fetch + render service
+services/sky_tile_cache.py   DSO-agnostic rendered-cell disk cache
 services/rig_calculators.py  + compute_coverage_pct / frames_well
 
 frontend/
@@ -59,14 +60,29 @@ frontend/
 
 - Misses return a 1×1 transparent PNG with HTTP 202 and enqueue a
   background fetch. The frontend detects the placeholder via
-  `img.naturalWidth <= 1` and retries every 2 seconds (cache-buster
-  query param) until the real image lands.
-- Primary source: `CDS/P/DSS2/color`. Fallback: `CDS/P/DSS2/red`. Both
-  via `hips2fits` with a 20-second timeout.
-- Double-failure inserts a `fetch_error` sentinel row so follow-up
-  polls don't restart fetch storms. Errors expire after 1 hour.
+  `img.naturalWidth <= 1` and polls on a bounded backoff schedule with
+  a cache-buster query parameter until the real image lands.
+- The backend renders `CDS/P/DSS2/color` from 512 px HiPS tiles, trying
+  CDS first and ESA's ESASky mirror second. There is no red-survey fallback.
+- Failure of every source inserts a `fetch_error` sentinel row so follow-up
+  polls don't restart fetch storms. Errors expire after 10 minutes.
+- JPEGs are written to a temporary file and atomically replaced.
 - LRU eviction runs after every successful fetch — deterministic, no
   background sweeper.
+
+## Sky-cell cache
+
+- Planner composites use the existing HEALPix-region TAN cell keys and
+  filenames. Existing cached cells remain valid; rehydrate and sweep behavior
+  is unchanged.
+- A render chooses the coarsest HiPS order that meets the output scale and
+  coarsens further when more than 32 source tiles would be required.
+- CDS or ESA tiles are retained in a 64 MiB in-memory LRU only. There is no
+  disk tile cache; only finished cells are persisted.
+- A timed-out source is skipped for 10 minutes. Tile requests are limited to
+  eight at once and whole-image renders to four at once.
+- Cell failures use the same 10-minute sentinel backoff and atomic file
+  replacement as thumbnails.
 
 ## Pass B additions (v0.17.0)
 
@@ -105,10 +121,11 @@ so a `list` or `detail` entry (FOV = NULL) doesn't collide with a
 ### Orphan sweep
 
 `services.thumbnails.sync_orphan_files()` runs once on app startup
-(from `main.py` lifespan). It scans `APP_DIR/thumbnails/`, parses each
-file with `_THUMB_FILENAME_RE`, and deletes any file whose name
-doesn't correspond to a live row. Non-thumbnail files (README, etc.)
-are left alone. Needed because migration 0018 wipes the DB rows but
+(from `main.py` lifespan), after reconciliation succeeds. It scans
+`APP_DIR/thumbnails/`, recognizes cache files by the shared patterns in
+`services/image_cache.py`, and deletes any whose name doesn't correspond to
+a live row. Rows store the file name, so a moved app-data folder keeps its
+images. Unrecognized files (README, etc.) are left alone. Needed because migration 0018 wipes the DB rows but
 SQL migrations can't `unlink()`.
 
 ### Frontend — FOV simulator

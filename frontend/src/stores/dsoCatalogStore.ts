@@ -18,8 +18,7 @@ interface DsoCatalogState {
   setCatalogFilter: (f: string[]) => void;
   setPage: (p: number) => void;
   setPageSize: (s: number) => void;
-  setSortField: (f: string) => void;
-  setSortDir: (d: "asc" | "desc") => void;
+  setSort: (field: string, direction: "asc" | "desc") => void;
   setDetailId: (id: number | null) => void;
 }
 
@@ -41,7 +40,13 @@ export const useDsoCatalogStore = create<DsoCatalogState>()((set) => ({
   setCatalogFilter: (f) => set({ catalogFilter: f, page: 0 }),
   setPage: (p) => set({ page: p }),
   setPageSize: (s) => set({ pageSize: s }),
-  setSortField: (f) => set({ sortField: f }),
-  setSortDir: (d) => set({ sortDir: d }),
+  // Only a real sort change returns to the first page; an unchanged one
+  // leaves the store untouched.
+  setSort: (sortField, sortDir) =>
+    set((state) =>
+      state.sortField === sortField && state.sortDir === sortDir
+        ? state
+        : { sortField, sortDir, page: 0 },
+    ),
   setDetailId: (id) => set({ detailId: id }),
 }));

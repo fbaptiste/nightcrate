@@ -9,6 +9,7 @@ import numpy as np
 from astropy_healpix import HEALPix
 
 from nightcrate.services.native_solver import index_search, verify
+from nightcrate.services.native_solver.extract import ExtractionConfig
 from nightcrate.services.native_solver.geometry import gnomonic_inverse, gnomonic_project
 from nightcrate.services.native_solver.index_search import search_index
 from nightcrate.services.native_solver.models import (
@@ -302,6 +303,7 @@ def test_cancel_stops_quickly():
 
 
 def test_configs_match_prototype():
+    assert ExtractionConfig().max_width_ratio == 6.0
     assert dataclasses.asdict(SolverConfig()) == {
         "code_tolerance": 0.025,
         "code_tolerance_min": 0.0025,

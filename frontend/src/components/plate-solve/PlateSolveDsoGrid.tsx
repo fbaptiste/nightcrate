@@ -9,6 +9,7 @@ import TableRow from "@mui/material/TableRow";
 import TableSortLabel from "@mui/material/TableSortLabel";
 
 import type { AnnotatedDso } from "@/api/plateSolve";
+import { compareDesignations } from "@/lib/designationSort";
 import { formatDistance } from "@/lib/distanceFormat";
 import { monoFontFamily } from "@/theme/theme";
 
@@ -23,6 +24,29 @@ interface Props {
 
 const cellSx = { fontSize: "0.75rem", py: 0.5, px: 1, whiteSpace: "nowrap" } as const;
 const headerSx = { ...cellSx, fontWeight: 600 } as const;
+
+export function comparePlateSolveDsoRows(
+  a: AnnotatedDso,
+  b: AnnotatedDso,
+  sortKey: SortKey,
+  sortDir: SortDir,
+) {
+  const av = a[sortKey];
+  const bv = b[sortKey];
+  if (av == null && bv == null) return 0;
+  if (av == null) return 1;
+  if (bv == null) return -1;
+  if (sortKey === "primary_designation") {
+    const designationCmp = compareDesignations(av as string, bv as string);
+    const directedCmp = sortDir === "asc" ? designationCmp : -designationCmp;
+    return directedCmp || a.id - b.id;
+  }
+  const cmp =
+    typeof av === "string"
+      ? av.localeCompare(bv as string)
+      : (av as number) - (bv as number);
+  return sortDir === "asc" ? cmp : -cmp;
+}
 
 export function PlateSolveDsoGrid({ dsos, selectedId, onSelect }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("maj_axis_arcmin");
@@ -47,15 +71,7 @@ export function PlateSolveDsoGrid({ dsos, selectedId, onSelect }: Props) {
     });
   }, []);
 
-  const sorted = [...dsos].sort((a, b) => {
-    const av = a[sortKey];
-    const bv = b[sortKey];
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
-    return sortDir === "asc" ? cmp : -cmp;
-  });
+  const sorted = [...dsos].sort((a, b) => comparePlateSolveDsoRows(a, b, sortKey, sortDir));
 
   return (
     <TableContainer component={Box} sx={{ maxHeight: "100%", overflow: "auto" }}>

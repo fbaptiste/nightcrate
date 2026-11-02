@@ -16,24 +16,40 @@ import hashlib
 import json
 import logging
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nightcrate.catalog_loader._common import retry_with_backoff
+import httpx
+
 from nightcrate.services import http_client
+from nightcrate.services.catalog_progress import ProgressCallback, ProgressUpdate
 
 logger = logging.getLogger("nightcrate.catalog_loader.vizier")
 
 VIZIER_PATH = "/viz-bin/asu-tsv"
-# Mirror order: primary (Strasbourg) → India → South Africa. Used as a
-# fallback when the primary host fails after `retry_with_backoff` gives up.
+# Mirror order: Strasbourg (the cited primary) → CfA Harvard → IDIA South
+# Africa, each tried once over HTTPS. Checked 2026-11-01 during the CDS
+# outage: these two mirrors returned rows identical to each other; Tokyo and
+# Beijing serve plain HTTP only; Pune (vizier.iucaa.in) and Moscow time out;
+# the old South Africa name vizieridia.saao.ac.za fails HTTPS (certificate).
 VIZIER_HOSTS: tuple[str, ...] = (
     "vizier.cds.unistra.fr",
-    "vizier.iucaa.in",
-    "vizieridia.saao.ac.za",
+    "vizier.cfa.harvard.edu",
+    "vizier.idia.ac.za",
 )
 VIZIER_BASE = f"https://{VIZIER_HOSTS[0]}{VIZIER_PATH}"
+_HOST_NAMES = {
+    VIZIER_HOSTS[0]: "CDS Strasbourg",
+    VIZIER_HOSTS[1]: "the Harvard mirror",
+    VIZIER_HOSTS[2]: "the South Africa mirror",
+}
+_HOST_SUBJECTS = {
+    VIZIER_HOSTS[0]: "Strasbourg",
+    VIZIER_HOSTS[1]: "Harvard",
+    VIZIER_HOSTS[2]: "South Africa",
+}
 
 # Smallest plausible TSV body. Anything shorter is a truncated / error
 # response masquerading as HTTP 200.
@@ -51,6 +67,11 @@ _VERSION_JSON_ERRS: tuple[type[BaseException], ...] = (json.JSONDecodeError, OSE
 # VizieR downloads can take a while over a slow CDS connection (Barnard
 # VII/220A can stretch past a minute). Give them a generous timeout.
 _DOWNLOAD_TIMEOUT_S = 180.0
+# A host that is down never completes the TCP handshake. Without a separate
+# connect limit each attempt waits for the OS (about 75 s on macOS) before the
+# next mirror is tried; working mirrors connect in well under a second.
+_CONNECT_TIMEOUT_S = 10.0
+_clock = time.monotonic
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +94,55 @@ class VizierFetchResult:
     sha256: str
     size_bytes: int
     fetched_at: str
+    # URL of the mirror that actually served the data.
+    source_url: str
+
+
+class NoVizierSource(RuntimeError):
+    """No configured VizieR host returned a usable catalog."""
+
+
+class _HttpFailure(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"HTTP {status_code}")
+
+
+class _NoData(RuntimeError):
+    pass
+
+
+class _InvalidCatalog(RuntimeError):
+    pass
+
+
+def _emit(on_progress: ProgressCallback | None, progress: ProgressUpdate) -> None:
+    if on_progress is not None:
+        on_progress(progress)
+
+
+def _catalog_name(spec: VizierFetchSpec) -> str:
+    if "Sharpless" in spec.display_name:
+        return "Sharpless"
+    if "Barnard" in spec.display_name:
+        return "Barnard"
+    return spec.display_name
+
+
+def _failure_reason(exc: BaseException) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "timed out"
+    if isinstance(exc, httpx.ConnectError):
+        return "couldn't connect"
+    if isinstance(exc, httpx.TransportError):
+        return "dropped the connection"
+    if isinstance(exc, _HttpFailure):
+        return f"returned an error (HTTP {exc.status_code})"
+    if isinstance(exc, _NoData):
+        return "returned no data"
+    if isinstance(exc, _InvalidCatalog):
+        return "returned something that isn't the catalog"
+    return "failed"
 
 
 def _build_url(spec: VizierFetchSpec, host: str = VIZIER_HOSTS[0]) -> str:
@@ -95,26 +165,44 @@ def _build_url(spec: VizierFetchSpec, host: str = VIZIER_HOSTS[0]) -> str:
     return f"https://{host}{VIZIER_PATH}?{'&'.join(parts)}"
 
 
-def _verify_tsv_shape(path: Path) -> None:
-    """Smoke-check that the downloaded file looks like a VizieR TSV.
+def _verify_tsv_shape(path: Path, required_columns: tuple[str, ...] = ()) -> None:
+    """Check that the downloaded file has VizieR's ``asu-tsv`` envelope.
 
-    We don't parse fully here; the parser does that. This just confirms we
-    have a header row after the metadata so we fail fast on obvious wire
-    problems (HTML error pages, truncated responses).
+    After the ``#`` metadata, VizieR writes a tab-separated header row, a
+    units row, a separator row of hyphens with one field per column, then
+    data rows. Anything else (an HTML or proxy error page served with
+    HTTP 200, a truncated body) raises ``ValueError`` so the next mirror is
+    tried instead of replacing a working catalog.
     """
     with path.open("r", encoding="utf-8", newline="") as fh:
-        saw_header = False
-        for line in fh:
+        lines = (line.rstrip("\r\n") for line in fh)
+        header = next(
+            (line for line in lines if line.strip() and not line.strip().startswith("#")),
+            None,
+        )
+        if header is None or "\t" not in header:
+            raise ValueError(f"{path}: no tab-separated header row")
+        columns = [name.strip() for name in header.split("\t")]
+        missing = [name for name in required_columns if name not in columns]
+        if missing:
+            raise ValueError(f"{path}: header lacks requested columns {missing}")
+        if next(lines, None) is None:
+            raise ValueError(f"{path}: missing units row after header")
+        separator = next(lines, None)
+        fields = separator.split("\t") if separator is not None else []
+        if len(fields) != len(columns) or not all(
+            field.strip() and set(field.strip()) == {"-"} for field in fields
+        ):
+            raise ValueError(f"{path}: missing hyphen separator row after units")
+        for line in lines:
             stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
+            if not stripped:
                 continue
-            # The first non-comment, non-empty line is the header row.
-            if "\t" not in line:
-                raise ValueError(f"{path}: expected tab-separated header, got {line[:80]!r}")
-            saw_header = True
-            break
-        if not saw_header:
-            raise ValueError(f"{path}: no tab-separated header found")
+            if stripped.startswith("#"):
+                break
+            if len(line.split("\t")) == len(columns):
+                return
+        raise ValueError(f"{path}: no data row matching the header's {len(columns)} columns")
 
 
 def _write_version_json(
@@ -140,7 +228,7 @@ def _write_version_json(
     payload["files"][spec.output_filename] = {
         "source_id": spec.source_id,
         "catalog_id": spec.catalog_id,
-        "source_url": _build_url(spec),
+        "source_url": result.source_url,
         "fetch_date": result.fetched_at,
         "sha256": result.sha256,
         "size_bytes": result.size_bytes,
@@ -154,17 +242,21 @@ def _write_version_json(
 async def fetch_vizier_catalog(
     spec: VizierFetchSpec,
     catalogs_root: Path,
+    on_progress: ProgressCallback | None = None,
 ) -> VizierFetchResult:
     """Download the TSV for *spec* atomically into *catalogs_root*/vizier.
 
     Flow:
-      1. GET the TSV to ``<vizier>/.download/<output_filename>``.
-      2. Smoke-check the shape.
-      3. Invalidate the entry in ``vizier/version.json`` so a crash mid-
+      1. GET the TSV to ``<vizier>/.download/<output_filename>`` from the
+         first mirror in ``VIZIER_HOSTS`` that answers with a TSV-shaped body.
+      2. Invalidate the entry in ``vizier/version.json`` so a crash mid-
          rename leaves an "install in progress" state (similar to OpenNGC's
          version.json commit marker).
-      4. Atomic rename into place.
-      5. Write the new version.json entry as the commit.
+      3. Atomic rename into place.
+      4. Write the new version.json entry as the commit.
+
+    If every mirror fails, the installed file and its version.json entry are
+    left untouched.
     """
     vizier_dir = catalogs_root / "vizier"
     tmp_dir = vizier_dir / ".download"
@@ -175,55 +267,119 @@ async def fetch_vizier_catalog(
     tmp_path = tmp_dir / spec.output_filename
     final_path = vizier_dir / spec.output_filename
 
-    def _make_download_for_host(host: str):
-        async def _download() -> bytes:
-            response = await http_client.get(
-                _build_url(spec, host),
-                label=f"vizier:{spec.source_id}@{host}",
-                follow_redirects=True,
-                timeout=_DOWNLOAD_TIMEOUT_S,
-            )
-            if response.status_code >= 400:
-                raise RuntimeError(
-                    f"VizieR {host} returned {response.status_code} for {spec.source_id}"
-                )
-            content = response.content
-            if not content:
-                raise RuntimeError(f"VizieR {host} returned empty body for {spec.source_id}")
-            if len(content) < _MIN_BODY_BYTES:
-                raise RuntimeError(
-                    f"VizieR {host} body suspiciously short "
-                    f"({len(content)} bytes) for {spec.source_id}"
-                )
-            tmp_path.write_bytes(content)
-            return content
+    # Columns added with ``-out.add`` must appear in the header, so a generic
+    # tabular page cannot pass for this catalog.
+    required_columns = tuple(
+        name for name in spec.additional_params.get("-out.add", "").split(",") if name
+    )
 
-        return _download
+    async def _download(url: str, host: str, attempt_message: str) -> bytes:
+        host_name = _HOST_NAMES[host]
+
+        def _http_event(event: http_client.GetEvent) -> None:
+            if event.kind == "attempt":
+                _emit(on_progress, ProgressUpdate("trying_source", attempt_message))
+            elif event.kind == "response" and event.status_code is not None:
+                if event.status_code < 400:
+                    _emit(
+                        on_progress,
+                        ProgressUpdate(
+                            "downloading",
+                            f"Downloading {_catalog_name(spec)} from {host_name}…",
+                            bytes_total=event.content_length,
+                        ),
+                    )
+            elif event.kind == "bytes" and event.status_code is not None:
+                if event.status_code < 400:
+                    _emit(
+                        on_progress,
+                        ProgressUpdate(
+                            "downloading",
+                            f"Downloading {_catalog_name(spec)} from {host_name}…",
+                            bytes_received=event.bytes_received,
+                            bytes_total=event.content_length,
+                        ),
+                    )
+
+        response = await http_client.get(
+            url,
+            label=f"vizier:{spec.source_id}@{host}",
+            follow_redirects=True,
+            timeout=_DOWNLOAD_TIMEOUT_S,
+            connect_timeout=_CONNECT_TIMEOUT_S,
+            on_event=_http_event if on_progress is not None else None,
+        )
+        if response.status_code >= 400:
+            raise _HttpFailure(response.status_code)
+        content = response.content
+        if not content:
+            raise _NoData("empty body")
+        if len(content) < _MIN_BODY_BYTES:
+            raise _InvalidCatalog(f"body suspiciously short ({len(content)} bytes)")
+        tmp_path.write_bytes(content)
+        # An HTML or proxy error page served with HTTP 200 fails here, so the
+        # next mirror still gets its turn.
+        try:
+            _verify_tsv_shape(tmp_path, required_columns)
+        except ValueError as exc:
+            raise _InvalidCatalog(str(exc)) from exc
+        return content
 
     try:
-        # Try each VizieR host in order. ``retry_with_backoff`` handles the
-        # per-host transient failures (3 attempts with jittered backoff); we
-        # fall through to the next host only after that exhausts.
-        last_exc: BaseException | None = None
+        # One pass over the mirrors. ``http_client.get`` already retries a
+        # transient failure once per host; the next mirror is the retry after
+        # that, so an unreachable host costs about twice the connect timeout.
+        failures: list[str] = []
         content: bytes | None = None
-        for host in VIZIER_HOSTS:
+        source_url = ""
+        attempt_message = f"Trying {_HOST_NAMES[VIZIER_HOSTS[0]]}…"
+        for index, host in enumerate(VIZIER_HOSTS):
+            url = _build_url(spec, host)
+            _emit(
+                on_progress,
+                ProgressUpdate("trying_source", attempt_message),
+            )
+            host_started = _clock()
             try:
-                content = await retry_with_backoff(
-                    _make_download_for_host(host),
-                    label=f"fetch:{spec.source_id}",
-                    logger=logger,
-                )
-                break
+                content = await _download(url, host, attempt_message)
             except Exception as exc:  # noqa: BLE001 — rotate to next mirror
-                last_exc = exc
+                host_duration_s = round(max(0.0, _clock() - host_started))
+                error_name = type(exc).__name__
+                if isinstance(exc, (_HttpFailure, _NoData)):
+                    error_name = "RuntimeError"
+                elif isinstance(exc, _InvalidCatalog):
+                    error_name = "ValueError"
+                reason = f"{error_name}: {exc}" if str(exc) else error_name
+                failures.append(f"{host} ({reason})")
                 logger.warning(
-                    "[vizier] %s: all retries exhausted on %s, trying next mirror",
+                    "[vizier] %s: %s failed (%s), trying next mirror",
                     spec.source_id,
                     host,
+                    reason,
                 )
+                if index + 1 < len(VIZIER_HOSTS):
+                    next_host = VIZIER_HOSTS[index + 1]
+                    attempt_message = (
+                        f"{_HOST_SUBJECTS[host]} {_failure_reason(exc)} "
+                        f"after {host_duration_s} s. "
+                        f"Trying {_HOST_NAMES[next_host]}…"
+                    )
+                    _emit(
+                        on_progress,
+                        ProgressUpdate(
+                            "moving_source",
+                            attempt_message,
+                        ),
+                    )
+                continue
+            source_url = url
+            break
         if content is None:
-            raise RuntimeError(f"All VizieR mirrors failed for {spec.source_id}: {last_exc}")
-        _verify_tsv_shape(tmp_path)
+            raise NoVizierSource(
+                f"All VizieR mirrors failed for {spec.source_id}: {'; '.join(failures)}"
+            )
+
+        _emit(on_progress, ProgressUpdate("checking", "Checking downloaded files…"))
 
         # Invalidate this source's entry in version.json BEFORE renaming — a
         # crash between here and the post-rename write leaves the file
@@ -238,6 +394,7 @@ async def fetch_vizier_catalog(
                 # Corrupt version.json — drop it entirely and rebuild below.
                 version_json.unlink(missing_ok=True)
 
+        _emit(on_progress, ProgressUpdate("saving", "Saving files to the local cache…"))
         tmp_path.replace(final_path)
 
         result = VizierFetchResult(
@@ -246,13 +403,15 @@ async def fetch_vizier_catalog(
             sha256=hashlib.sha256(content).hexdigest(),
             size_bytes=len(content),
             fetched_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            source_url=source_url,
         )
         _write_version_json(vizier_dir, spec, result)
 
         logger.info(
-            "[vizier] %s: downloaded %d bytes → %s",
+            "[vizier] %s: downloaded %d bytes from %s → %s",
             spec.source_id,
             result.size_bytes,
+            source_url,
             final_path,
         )
         return result

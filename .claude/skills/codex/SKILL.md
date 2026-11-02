@@ -39,11 +39,15 @@ REVIEW=(-m gpt-5.6-sol -c 'model_reasoning_effort="high"' -s read-only)
 ```bash
 codex exec "${COMMON[@]}" "${PLAN[@]}" -C "$REPO" -o "$REC/02-codex-round1.md" \
   "Read $REC/01-claude-round1.md and do what it asks. Read-only." \
-  > "$REC/02-codex-round1.log" 2>&1
+  < /dev/null > "$REC/02-codex-round1.log" 2>&1
 ```
 
 Run it with `run_in_background`; the completion notice re-invokes Claude. Take
-the session ID from the log's `session id:` header line.
+the session ID from the log's `session id:` header line. Always redirect
+stdin from `/dev/null`, for `resume` too: with stdin left open, `codex exec`
+can wait at "Reading additional input from stdin..." indefinitely (a
+v0.43.1 review sat idle for three hours). Check the log a few seconds after
+launch; the header should follow that line.
 
 **Resume** by ID, never `--last`, from the repository directory: `resume` takes
 the shell's current directory as its workspace, whatever the original session
@@ -53,12 +57,13 @@ used (a canary resumed from another folder wrote there). It accepts no `-s`,
 ```bash
 # Plan discussion or review
 codex exec resume "$SID" "${COMMON[@]}" -m gpt-6-astra \
-  -c 'model_reasoning_effort="xhigh"' -c 'sandbox_mode="read-only"' -o ... "<prompt>"
+  -c 'model_reasoning_effort="xhigh"' -c 'sandbox_mode="read-only"' -o ... "<prompt>" \
+  < /dev/null > ... 2>&1
 # Implementation
 codex exec resume "$SID" "${COMMON[@]}" -m gpt-5.6-sol \
   -c 'model_reasoning_effort="high"' -c 'sandbox_mode="workspace-write"' \
   -c "sandbox_workspace_write.writable_roots=[\"$HOME/.cache/uv\"]" \
-  -c 'web_search="disabled"' -o ... "<prompt>"
+  -c 'web_search="disabled"' -o ... "<prompt>" < /dev/null > ... 2>&1
 ```
 
 A resumed session keeps the tools and context it started with, so every plan

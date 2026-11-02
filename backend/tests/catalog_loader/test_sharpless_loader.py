@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import shutil
 import sqlite3
 from pathlib import Path
@@ -79,7 +80,8 @@ def test_sharpless_merges_crossref_target(db, catalogs_root):
 def test_sharpless_standalone_when_no_crossref(db, catalogs_root):
     load_catalogs(db, catalogs_root)
     cur = db.cursor()
-    # Sh2-155 isn't in the crossref — must be a standalone DSO.
+    # C 9 is absent from this fixture, so the cross-reference remains unresolved
+    # and Sh2-155 must stay standalone.
     cur.execute(
         """
         SELECT d.id, d.primary_designation, d.obj_type
@@ -92,6 +94,46 @@ def test_sharpless_standalone_when_no_crossref(db, catalogs_root):
     assert row is not None
     assert row["primary_designation"] == "Sh2-155"
     assert row["obj_type"] == "HII"
+
+
+def test_sharpless_155_merges_into_caldwell_9_when_target_exists(db, catalogs_root):
+    addendum = catalogs_root / "openngc" / "addendum.csv"
+    with addendum.open(encoding="utf-8", newline="") as stream:
+        reader = csv.DictReader(stream, delimiter=";")
+        fieldnames = reader.fieldnames
+        rows = list(reader)
+    assert fieldnames is not None
+    row = dict.fromkeys(fieldnames, "")
+    row.update(
+        {
+            "Name": "C009",
+            "Type": "DrkN",
+            "RA": "22:56:30",
+            "Dec": "+62:37:00",
+            "Const": "Cep",
+            "Common names": "Cave Nebula",
+        }
+    )
+    rows.append(row)
+    with addendum.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames, delimiter=";")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    load_catalogs(db, catalogs_root)
+
+    target = db.execute(
+        """
+        SELECT d.id, d.primary_designation, dd.is_primary
+        FROM dso d JOIN dso_designation dd ON dd.dso_id=d.id
+        WHERE dd.catalog='sharpless2' AND dd.identifier='155'
+        """
+    ).fetchone()
+    assert tuple(target) == (target["id"], "C 9", 0)
+    assert (
+        db.execute("SELECT COUNT(*) FROM dso WHERE primary_designation='Sh2-155'").fetchone()[0]
+        == 0
+    )
 
 
 def test_sharpless_loader_is_idempotent(db, catalogs_root):

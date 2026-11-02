@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import shutil
 import sqlite3
 from pathlib import Path
@@ -37,7 +38,7 @@ def db(tmp_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def test_every_barnard_row_creates_dso(db, catalogs_root):
+def test_matching_openngc_own_name_replaces_standalone_barnard_row(db, catalogs_root):
     load_catalogs(db, catalogs_root)
     cur = db.cursor()
     cur.execute(
@@ -48,8 +49,16 @@ def test_every_barnard_row_creates_dso(db, catalogs_root):
         )
         """,
     )
-    # Mini fixture has 5 Barnard rows; expect 5 DSOs.
-    assert cur.fetchone()[0] == 5
+    # B 33 merges into the addendum's own B033 object; the other four stay standalone.
+    assert cur.fetchone()[0] == 4
+    cur.execute(
+        """
+        SELECT d.source_key
+        FROM dso d JOIN dso_designation dd ON dd.dso_id=d.id
+        WHERE dd.catalog='barnard' AND dd.identifier='33'
+        """
+    )
+    assert cur.fetchone()[0] == "B033"
 
 
 def test_all_barnard_dsos_are_drkn(db, catalogs_root):
@@ -86,14 +95,33 @@ def test_barnard_common_name_from_names_column(db, catalogs_root):
 
 def test_barnard_no_crossref_merge_even_if_emission_region_coincides(db, catalogs_root):
     """B33 and IC 434 share a line of sight but are NOT merged."""
+    ngc_path = catalogs_root / "openngc" / "NGC.csv"
+    with ngc_path.open(encoding="utf-8", newline="") as stream:
+        reader = csv.DictReader(stream, delimiter=";")
+        fieldnames = reader.fieldnames
+    assert fieldnames is not None
+    row = dict.fromkeys(fieldnames, "")
+    row.update(
+        {
+            "Name": "IC0434",
+            "Type": "HII",
+            "RA": "05:41:00",
+            "Dec": "-02:27:00",
+            "Const": "Ori",
+            "Identifiers": "B 33",
+        }
+    )
+    with ngc_path.open("a", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames, delimiter=";")
+        writer.writerow(row)
     load_catalogs(db, catalogs_root)
     cur = db.cursor()
-    # There's no designation named `ic 434` in our fixture, so we can only
-    # confirm B33 is its own DSO.
     cur.execute(
         """
-        SELECT COUNT(DISTINCT dso_id) FROM dso_designation
-        WHERE (catalog = 'barnard' AND identifier = '33')
+        SELECT
+            (SELECT dso_id FROM dso_designation WHERE catalog='barnard' AND identifier='33'),
+            (SELECT dso_id FROM dso_designation WHERE catalog='ic' AND identifier='434')
         """,
     )
-    assert cur.fetchone()[0] == 1
+    barnard_id, ic_id = cur.fetchone()
+    assert barnard_id != ic_id

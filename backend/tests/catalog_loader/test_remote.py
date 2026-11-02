@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from nightcrate.catalog_loader import remote
@@ -29,24 +31,30 @@ def anyio_backend():
 
 @pytest.fixture
 def fake_transport(monkeypatch):
-    """Install a drop-in replacement for ``services.http_client.get``.
-
-    Tests register URL → response mappings or a per-URL callable. Each call
-    is logged in ``calls`` for assertion.
-    """
+    """Run the real shared client over a programmable mock transport."""
     calls: list[str] = []
     mapping: dict[str, Any] = {}
+    original = httpx.AsyncClient
 
-    async def fake_get(url, *args, **kwargs):
+    def transport_handler(request):
+        url = str(request.url)
         calls.append(url)
         handler = mapping.get(url)
         if handler is None:
             raise AssertionError(f"unexpected URL: {url}")
         if callable(handler):
-            return handler()
-        return handler
+            handler = handler()
+        content = handler.content
+        if handler._json is not None:
+            return httpx.Response(handler.status_code, json=handler._json, request=request)
+        return httpx.Response(handler.status_code, content=content, request=request)
 
-    monkeypatch.setattr("nightcrate.catalog_loader.remote.http_client.get", fake_get)
+    monkeypatch.setattr(
+        remote.http_client.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(transport_handler), **kwargs),
+    )
+    monkeypatch.setattr(remote.http_client.random, "uniform", lambda *_: 0)
 
     # Collapse retry backoff to zero so tests run fast.
     async def _noop_sleep(_):
@@ -99,7 +107,7 @@ async def test_fetch_latest_release_exhausts_retries(fake_transport):
     fake_transport["mapping"][remote.GITHUB_RELEASES_URL] = _always_boom
     with pytest.raises(RuntimeError, match="upstream down"):
         await remote.fetch_latest_release()
-    # Default max_attempts=3 → 3 attempts total
+    # RuntimeError is not a shared-client transient; the outer layer tries three times.
     assert len(fake_transport["calls"]) == 3
 
 
@@ -126,7 +134,8 @@ async def test_download_openngc_writes_files_and_version_json(fake_transport, tm
         FakeResponse(body=addendum_body)
     )
 
-    report = await remote.download_openngc(release, tmp_path)
+    updates = []
+    report = await remote.download_openngc(release, tmp_path, updates.append)
 
     openngc_dir = tmp_path / "openngc"
     assert (openngc_dir / "NGC.csv").read_bytes() == ngc_body
@@ -147,6 +156,9 @@ async def test_download_openngc_writes_files_and_version_json(fake_transport, tm
 
     assert report.tag == "v20260307"
     assert {f.name for f in report.files} == {"NGC.csv", "addendum.csv"}
+    transfer = [update for update in updates if update.phase == "downloading"][-1]
+    assert transfer.bytes_received == len(ngc_body) + len(addendum_body)
+    assert transfer.bytes_total == len(ngc_body) + len(addendum_body)
 
 
 @pytest.mark.anyio
@@ -155,7 +167,9 @@ async def test_download_openngc_rejects_empty_body(fake_transport, tmp_path: Pat
     fake_transport["mapping"][f"{remote.RAW_BASE}/v20260307/database_files/NGC.csv"] = FakeResponse(
         body=b""
     )
-    # Second URL never reached — we fail on the first empty body.
+    fake_transport["mapping"][f"{remote.RAW_BASE}/v20260307/database_files/addendum.csv"] = (
+        FakeResponse(body=b"valid sibling")
+    )
     with pytest.raises(RuntimeError, match="empty body"):
         await remote.download_openngc(release, tmp_path)
 
@@ -217,3 +231,47 @@ async def test_download_openngc_retries_individual_file(fake_transport, tmp_path
     await remote.download_openngc(release, tmp_path)
     assert attempts["ngc"] == 2
     assert (tmp_path / "openngc" / "NGC.csv").read_bytes() == b"NEW_NGC"
+
+
+@pytest.mark.anyio
+async def test_download_failure_cancels_and_drains_sibling_before_cleanup(monkeypatch, tmp_path):
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    release_sibling = asyncio.Event()
+    original = httpx.AsyncClient
+
+    class GatedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            sibling_started.set()
+            yield b"partial addendum"
+            try:
+                await release_sibling.wait()
+                yield b"late write"
+            finally:
+                sibling_cancelled.set()
+
+    def handler(request):
+        if str(request.url).endswith("NGC.csv"):
+            return httpx.Response(200, content=b"", request=request)
+        return httpx.Response(200, stream=GatedStream(), request=request)
+
+    monkeypatch.setattr(
+        remote.http_client.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(remote.http_client.random, "uniform", lambda *_: 0)
+    monkeypatch.setattr("nightcrate.catalog_loader._common.random.uniform", lambda *_: 0)
+    updates = []
+    release = remote.RemoteReleaseInfo("v-test", None, "")
+
+    task = asyncio.create_task(remote.download_openngc(release, tmp_path, updates.append))
+    await asyncio.wait_for(sibling_started.wait(), timeout=1)
+    with pytest.raises(RuntimeError, match="empty body"):
+        await asyncio.wait_for(task, timeout=1)
+    assert sibling_cancelled.is_set()
+    assert not (tmp_path / "openngc" / ".download").exists()
+    update_count = len(updates)
+    release_sibling.set()
+    await asyncio.sleep(0)
+    assert len(updates) == update_count

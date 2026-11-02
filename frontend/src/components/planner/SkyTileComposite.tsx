@@ -301,7 +301,7 @@ export default function SkyTileComposite({
       }}
     >
       {/* Phase 1 — centre cell. Alone on screen until it paints so
-          the backend's 8-slot CDS semaphore is fully dedicated to the
+          the backend's tile-render capacity is initially dedicated to the
           target-containing tile on cold cache. */}
       {partition.centreCell && (
         <Box

@@ -65,8 +65,9 @@ from nightcrate.api.planner_models import (
 )
 from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
-from nightcrate.services import sky_tile_cache, thumbnails
+from nightcrate.services import image_cache, sky_tile_cache, thumbnails
 from nightcrate.services.astronomy import tonight_date
+from nightcrate.services.dso_sorting import designation_sort_key
 from nightcrate.services.planner_annual_hours import (
     compute_annual_hours,
     compute_moon_year,
@@ -225,6 +226,8 @@ def _sort_value(item: PlannerTargetItem, field: str):
         stripped = value.strip()
         if not stripped:
             return None
+        if field == "primary_designation":
+            return designation_sort_key(stripped)
         return stripped.lower()
     return value
 
@@ -262,6 +265,7 @@ def _sort_items(
 
         return cmp_to_key(cmp)
 
+    items.sort(key=lambda entry: entry[0].dso_id)
     for field, direction in reversed(sort_entries):
         items.sort(key=make_cmp(field, direction))
 
@@ -1546,7 +1550,9 @@ async def dsos_in_region(
 @router.post("/thumbnails/cache/clear", response_model=CacheClearResponse)
 async def clear_thumbnail_cache() -> CacheClearResponse:
     async with get_db() as conn:
-        deleted = await thumbnails.clear_cache(conn)
+        deleted = await image_cache.clear_all(conn)
+    thumbnails.reset_failure_backoff()
+    sky_tile_cache.reset_failure_backoff()
     # Bump the cache-generation counter so clients can discriminate
     # newly-fetched images from whatever the browser HTTP-cache holds
     # under the old URLs. Every thumbnail URL carries ``&_g=N`` sourced
@@ -1562,7 +1568,7 @@ async def thumbnail_cache_stats() -> ThumbnailCacheStats:
     settings = await get_settings()
     max_bytes = settings.thumbnail_cache_max_mb * 1024 * 1024
     async with get_db() as conn:
-        stats = await thumbnails.cache_stats(conn, max_bytes=max_bytes)
+        stats = await image_cache.combined_stats(conn, max_bytes=max_bytes)
     return ThumbnailCacheStats(
         **stats,
         generation=settings.thumbnail_cache_generation,
@@ -1659,13 +1665,13 @@ async def get_sky_tile(
     Cells are keyed by sky region + tier + cell offset — no DSO. Two
     DSOs whose 5×5 simulator views overlap in the same HEALPix region
     share every cell in the overlap. On a cache miss the endpoint
-    schedules a background ``hips2fits`` fetch with a custom WCS
-    header (shared tangent point for every cell in the region) and,
+    schedules a background render from DSS2 colour HiPS tiles using the
+    shared cell WCS (one tangent point for every cell in the region) and,
     with ``wait_ms > 0``, holds the request open under
     ``asyncio.shield`` so the real image ships in the same round trip.
 
     Returns 200 with the JPEG on a hit, 202 + 1×1 PNG placeholder on
-    miss (client polls), or 204 during the 1-hour failure backoff.
+    miss (client polls), or 204 during the 10-minute failure backoff.
     """
     if hips not in _ALLOWED_HIPS_SURVEYS:
         raise HTTPException(status_code=400, detail=f"Unsupported HiPS survey: {hips!r}")

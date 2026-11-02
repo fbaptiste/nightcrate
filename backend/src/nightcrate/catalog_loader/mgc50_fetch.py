@@ -22,8 +22,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nightcrate.catalog_loader._common import retry_with_backoff
+from nightcrate.catalog_loader._common import RetryEvent, retry_with_backoff
 from nightcrate.services import http_client
+from nightcrate.services.catalog_progress import ProgressCallback, ProgressUpdate
 
 logger = logging.getLogger("nightcrate.catalog_loader.mgc50_fetch")
 
@@ -80,7 +81,15 @@ def read_installed_fetch(catalogs_root: Path) -> dict:
         return {}
 
 
-async def fetch_50mgc_from_github(catalogs_root: Path) -> Mgc50FetchResult:
+def _emit(on_progress: ProgressCallback | None, progress: ProgressUpdate) -> None:
+    if on_progress is not None:
+        on_progress(progress)
+
+
+async def fetch_50mgc_from_github(
+    catalogs_root: Path,
+    on_progress: ProgressCallback | None = None,
+) -> Mgc50FetchResult:
     """Download ``catalog.fits`` atomically into ``<catalogs_root>/github/50mgc/``.
 
     Flow:
@@ -102,11 +111,42 @@ async def fetch_50mgc_from_github(catalogs_root: Path) -> Mgc50FetchResult:
     final_path = dest_dir / MGC50_OUTPUT_FILENAME
 
     async def _download():
+        def _http_event(event: http_client.GetEvent) -> None:
+            if event.kind == "attempt":
+                _emit(on_progress, ProgressUpdate("contacting", "Contacting GitHub for 50 MGC…"))
+            elif event.kind == "response" and event.status_code is not None:
+                if event.status_code < 400:
+                    _emit(
+                        on_progress,
+                        ProgressUpdate(
+                            "downloading",
+                            "Downloading 50 MGC…",
+                            bytes_total=event.content_length,
+                        ),
+                    )
+            elif event.kind == "bytes" and event.status_code is not None:
+                if event.status_code < 400:
+                    _emit(
+                        on_progress,
+                        ProgressUpdate(
+                            "downloading",
+                            "Downloading 50 MGC…",
+                            bytes_received=event.bytes_received,
+                            bytes_total=event.content_length,
+                        ),
+                    )
+            elif event.kind == "retry_delay":
+                _emit(
+                    on_progress,
+                    ProgressUpdate("retrying", "GitHub request failed. Retrying…"),
+                )
+
         response = await http_client.get(
             MGC50_RAW_URL,
             label="50mgc_github",
             follow_redirects=True,
             timeout=_DOWNLOAD_TIMEOUT_S,
+            on_event=_http_event if on_progress is not None else None,
         )
         if response.status_code >= 400:
             raise RuntimeError(f"GitHub returned {response.status_code} for 50 MGC")
@@ -119,11 +159,26 @@ async def fetch_50mgc_from_github(catalogs_root: Path) -> Mgc50FetchResult:
         return content
 
     try:
-        content = await retry_with_backoff(_download, label="fetch:50mgc", logger=logger)
+
+        def _outer_retry(_event: RetryEvent) -> None:
+            _emit(
+                on_progress,
+                ProgressUpdate("retrying", "GitHub request failed. Retrying…"),
+            )
+
+        content = await retry_with_backoff(
+            _download,
+            label="fetch:50mgc",
+            logger=logger,
+            on_retry=_outer_retry if on_progress is not None else None,
+        )
+
+        _emit(on_progress, ProgressUpdate("checking", "Checking downloaded files…"))
 
         version_json = dest_dir / "version.json"
         version_json.unlink(missing_ok=True)
 
+        _emit(on_progress, ProgressUpdate("saving", "Saving files to the local cache…"))
         tmp_path.replace(final_path)
 
         result = Mgc50FetchResult(

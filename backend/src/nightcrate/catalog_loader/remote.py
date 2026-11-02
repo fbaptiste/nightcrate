@@ -24,17 +24,20 @@ import hashlib
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nightcrate.catalog_loader._common import retry_with_backoff
+from nightcrate.catalog_loader._common import RetryEvent, retry_with_backoff
 from nightcrate.catalog_loader.registry import (
     OPENNGC_CITATION,
     OPENNGC_LICENSE,
     OPENNGC_SOURCE_URL,
 )
+from nightcrate.core.tasks import settle
 from nightcrate.services import http_client
+from nightcrate.services.catalog_progress import ProgressCallback, ProgressUpdate
 
 logger = logging.getLogger("nightcrate.catalog_loader.remote")
 
@@ -64,15 +67,45 @@ class DownloadReport:
     version_json_path: Path
 
 
-async def fetch_latest_release() -> RemoteReleaseInfo:
+def _emit(on_progress: ProgressCallback | None, progress: ProgressUpdate) -> None:
+    if on_progress is not None:
+        on_progress(progress)
+
+
+def _retry_callback(on_progress: ProgressCallback | None) -> Callable[[RetryEvent], None] | None:
+    if on_progress is None:
+        return None
+
+    def _retry(_event: RetryEvent) -> None:
+        on_progress(ProgressUpdate("retrying", "GitHub request failed. Retrying…"))
+
+    return _retry
+
+
+async def fetch_latest_release(
+    on_progress: ProgressCallback | None = None,
+) -> RemoteReleaseInfo:
     """Query the GitHub API for the latest tagged OpenNGC release."""
 
     async def _call():
+        _emit(
+            on_progress,
+            ProgressUpdate("checking_release", "Checking the latest OpenNGC release on GitHub…"),
+        )
+
+        def _http_event(event: http_client.GetEvent) -> None:
+            if event.kind == "retry_delay":
+                _emit(
+                    on_progress,
+                    ProgressUpdate("retrying", "GitHub request failed. Retrying…"),
+                )
+
         response = await http_client.get(
             GITHUB_RELEASES_URL,
             label="openngc_latest_release",
             follow_redirects=True,
             headers={"Accept": "application/vnd.github+json"},
+            on_event=_http_event if on_progress is not None else None,
         )
         if response.status_code >= 400:
             raise RuntimeError(f"GitHub API returned {response.status_code} for latest release")
@@ -86,12 +119,30 @@ async def fetch_latest_release() -> RemoteReleaseInfo:
             release_url=data.get("html_url") or f"{OPENNGC_SOURCE_URL}/releases/tag/{tag}",
         )
 
-    return await retry_with_backoff(_call, logger=logger, label="fetch_latest_release")
+    return await retry_with_backoff(
+        _call,
+        logger=logger,
+        label="fetch_latest_release",
+        on_retry=_retry_callback(on_progress),
+    )
 
 
-async def _download_file(url: str, dest: Path, *, label: str) -> DownloadedFile:
+async def _download_file(
+    url: str,
+    dest: Path,
+    *,
+    label: str,
+    on_http_event: Callable[[http_client.GetEvent], None] | None = None,
+    on_progress: ProgressCallback | None = None,
+) -> DownloadedFile:
     async def _call():
-        response = await http_client.get(url, label=label, follow_redirects=True, timeout=60.0)
+        response = await http_client.get(
+            url,
+            label=label,
+            follow_redirects=True,
+            timeout=60.0,
+            on_event=on_http_event,
+        )
         if response.status_code >= 400:
             raise RuntimeError(f"download {label} failed with status {response.status_code}")
         content = response.content
@@ -102,7 +153,80 @@ async def _download_file(url: str, dest: Path, *, label: str) -> DownloadedFile:
         digest = hashlib.sha256(content).hexdigest()
         return DownloadedFile(name=dest.name, size_bytes=len(content), sha256=digest)
 
-    return await retry_with_backoff(_call, logger=logger, label=f"download:{label}")
+    return await retry_with_backoff(
+        _call,
+        logger=logger,
+        label=f"download:{label}",
+        on_retry=_retry_callback(on_progress),
+    )
+
+
+class _OpenNgcTransferProgress:
+    def __init__(self, on_progress: ProgressCallback | None) -> None:
+        self.on_progress = on_progress
+        self.received = dict.fromkeys(DOWNLOAD_FILES, 0)
+        self.totals: dict[str, int | None] = dict.fromkeys(DOWNLOAD_FILES)
+
+    def callback(self, filename: str) -> Callable[[http_client.GetEvent], None] | None:
+        if self.on_progress is None:
+            return None
+
+        def _event(event: http_client.GetEvent) -> None:
+            if event.kind == "attempt":
+                self.received[filename] = 0
+                self.totals[filename] = None
+            elif event.kind == "response":
+                self.totals[filename] = event.content_length
+            elif event.kind == "bytes":
+                self.received[filename] = event.bytes_received
+            elif event.kind == "retry_delay":
+                _emit(
+                    self.on_progress,
+                    ProgressUpdate("retrying", "GitHub request failed. Retrying…"),
+                )
+                return
+            else:
+                return
+            total = (
+                sum(value for value in self.totals.values() if value is not None)
+                if all(value is not None for value in self.totals.values())
+                else None
+            )
+            _emit(
+                self.on_progress,
+                ProgressUpdate(
+                    "downloading",
+                    "Downloading OpenNGC files from GitHub…",
+                    bytes_received=sum(self.received.values()),
+                    bytes_total=total,
+                ),
+            )
+
+        return _event
+
+
+async def _download_owned(tasks: list[asyncio.Task[DownloadedFile]]) -> list[DownloadedFile]:
+    """Return both results, cancelling and draining siblings on every exit."""
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        error = next(
+            (task.exception() for task in done if not task.cancelled() and task.exception()),
+            None,
+        )
+        if error is not None:
+            for task in pending:
+                task.cancel()
+            await settle(asyncio.gather(*tasks, return_exceptions=True))
+            raise error
+        if pending:
+            await asyncio.gather(*pending)
+        return [task.result() for task in tasks]
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await settle(asyncio.gather(*tasks, return_exceptions=True))
+        raise
 
 
 def _write_version_json(
@@ -130,6 +254,7 @@ def _write_version_json(
 async def download_openngc(
     release: RemoteReleaseInfo,
     catalogs_root: Path,
+    on_progress: ProgressCallback | None = None,
 ) -> DownloadReport:
     """Download both OpenNGC files for *release* into *catalogs_root*.
 
@@ -160,15 +285,26 @@ async def download_openngc(
         # Download both files in parallel. They write to distinct tmp paths
         # and don't share state, so gather is safe. Halves wall-clock time
         # on the NGC.csv + addendum.csv pair (~4 MB + ~20 KB).
+        transfer = _OpenNgcTransferProgress(on_progress)
+        _emit(
+            on_progress,
+            ProgressUpdate("downloading", "Downloading OpenNGC files from GitHub…"),
+        )
         tasks = [
-            _download_file(
-                f"{RAW_BASE}/{release.tag_name}/database_files/{filename}",
-                tmp_dir / filename,
-                label=f"openngc/{release.tag_name}/{filename}",
+            asyncio.create_task(
+                _download_file(
+                    f"{RAW_BASE}/{release.tag_name}/database_files/{filename}",
+                    tmp_dir / filename,
+                    label=f"openngc/{release.tag_name}/{filename}",
+                    on_http_event=transfer.callback(filename),
+                    on_progress=on_progress,
+                )
             )
             for filename in DOWNLOAD_FILES
         ]
-        downloaded = list(await asyncio.gather(*tasks))
+        downloaded = await _download_owned(tasks)
+
+        _emit(on_progress, ProgressUpdate("checking", "Checking downloaded files…"))
 
         # Invalidate the commit marker BEFORE the CSV renames. If we crash
         # anywhere between here and the _write_version_json call below, the
@@ -178,6 +314,7 @@ async def download_openngc(
         version_json_path.unlink(missing_ok=True)
 
         # Per-file atomic rename into place.
+        _emit(on_progress, ProgressUpdate("saving", "Saving files to the local cache…"))
         for f in downloaded:
             src = tmp_dir / f.name
             dest = openngc_dir / f.name

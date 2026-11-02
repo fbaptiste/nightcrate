@@ -153,9 +153,12 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   designations never prove identity. The one-time legacy pass is guarded by
   `dso_catalog_source.keys_assigned`, and loaded object sources with missing
   files defer the whole object step rather than guessing.
-- Only explicit OpenNGC duplicate rows and Sharpless cross-references merge
-  catalog objects. Known user links move to the survivor. Other unclaimed rows
-  become inactive and retain their names, enrichment, and user relationships.
+- Only explicit OpenNGC duplicate rows, Sharpless cross-references, and an
+  unambiguous full Barnard identifier matching an OpenNGC object's parsed own
+  name merge catalog objects. Alternate names never prove a Barnard merge, and
+  an object's parsed own designation outranks another object's alternate claim.
+  Known user links move to the survivor. Other unclaimed rows become inactive
+  and retain their names, enrichment, and user relationships.
   Any new table with a foreign key to `dso` must be classified in
   `catalog_loader.user_links` as user-linked or catalog-derived; the fresh-DB
   foreign-key guard test must fail until that classification is made.
@@ -276,6 +279,57 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - One article/entity may describe several objects; do not enforce cross-DSO
   uniqueness. A partial index on `(dso_id, provider) WHERE language IS NULL`
   supplies the deduplication SQLite's nullable UNIQUE constraint does not.
+- **VizieR mirrors.** Use HTTPS mirrors only. Mirror availability changes, so
+  recheck the list with real downloads before editing `VIZIER_HOSTS`.
+  - **Checked 2026-11-01**, during the CDS outage that began about
+    2026-10-21:
+    - Harvard and IDIA South Africa work;
+    - Tokyo and Beijing serve plain HTTP only;
+    - Pune and Moscow time out;
+    - `vizieridia.saao.ac.za` fails HTTPS on its certificate.
+  - **Fail fast.** Make one pass over the hosts; each gets only the shared
+    HTTP client's single retry, with a 10 s connect limit. Stacked retries
+    on a dead host once cost about 7 minutes per host.
+  - **Name the failed mirror's own time** when moving on ("Strasbourg timed
+    out after 21 s. Trying the Harvard mirror…"), measured around the host's
+    whole download; the progress counter restarts with each message, so it
+    always counts the attempt in progress. Harvard has been seen holding a
+    connection silent for about 60 s; the 180 s silence limit is kept for
+    slow large downloads.
+- **Sky images.** Render DSS2 colour images directly from 512 px HiPS tiles.
+  Try `HIPS_TILE_SOURCES` in order: CDS alasky, then ESA ESASky. Split each
+  nested index at order `k+9`; in the decoded JPEG, `column = iy` and
+  `row = ix`, then flip the completed FITS-order output vertically for JPEG.
+  Coarsen until a render needs at most 32 tiles, mark timed-out sources down
+  for 10 minutes, and keep validated compressed tiles in memory only. Do not
+  add a disk tile cache. A render holds its permit until its worker thread
+  exits, even after repeated cancellation (see the star-data operation rule).
+- **Catalog actions** (fetches and reloads on the Catalogs page) run one at a
+  time; a second returns 409, and database create/add/activate/setup are
+  refused while one runs. The page polls `GET /api/admin/catalogs/fetch-status`
+  for the step, seconds and bytes (`services/catalog_progress.py`); fetchers
+  report through `http_client.get`'s opt-in event callback. The catalog load
+  stays on the event loop by design (0.1–3.1 s measured on a real-size
+  database); moving it to a thread needs a database-contention policy first.
+- **Designation order** uses one natural key (`services/dso_sorting.py`,
+  registered as a SQLite function and mirrored in
+  `frontend/src/lib/designationSort.ts`): display prefix case-insensitively,
+  then each number numerically (M 2 before M 10; ESO 107-2 before 107-010),
+  then `id`. With catalogs selected, the list shows and sorts by each
+  object's name from those catalogs (`display_designation`), chosen by
+  `catalog_rank` (Messier, NGC, IC, Caldwell, then other codes
+  alphabetically), then its lowest number; rank only chooses the name and
+  never orders rows. With none selected, the primary name. Type and
+  Constellation sort by the labels shown (`services/dso_display.py`, kept in
+  step with the frontend maps by a parity test).
+- The list response carries every designation of each row, in rank then
+  natural order; the table shows the other names as pills beside
+  Designation. Keep the table's `sortModel` identity stable (memoized):
+  MUI DataGrid treats a new array as a sort change and returns to page 1.
+- OpenNGC names whose catalog has no NightCrate code display their own prefix
+  and number ("H 5", "MWSC 3561"), never a synthetic "OTHER"; HCG names map to
+  `hickson`. A PGC number fused to the next name by a missing upstream comma
+  ("PGC 056771SDSS J…", two OpenNGC rows) is split into both names.
 - See [catalog architecture](dso-catalog-architecture.md) for source layering.
 
 ## Locations, horizons, and target planning
@@ -415,15 +469,30 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   and `version.json` live in `siril-astro-gaia-dr3-1.0.0/`, layer files live at
   `indexes/<layer>.ncidx`, the range manifest is `indexes/ranges.json`, and
   in-progress work lives in `.staging/`.
-- Download and import only when the catalog is not installed. Downloads stream
-  to disk and resume only from a validated byte range. Claiming the single
-  star-data operation removes stale staging left by a crashed operation.
+- Download and import only when the catalog is not installed. Downloads use
+  four fixed byte-range pieces, resume each piece only from a validated range,
+  then assemble and SHA-256-check a hidden temporary archive before publishing
+  it. If a server does not honour ranges, keep piece 1 as the prefix and fall
+  back to the resumable single stream. Claiming the single star-data operation
+  removes stale staging left by a crashed operation while retaining resumable
+  pieces.
   Publish the catalog first and write `version.json` last; its presence is the
   installed marker. An import never reads from inside `star_root()`: check
   containment by filesystem identity, not path spelling (macOS is
   case-insensitive), and reject hard links to the staging destinations. The
   import opens its destination for writing, so an alias would truncate the
   source.
+- The star-data operation keeps ownership until its worker threads and network
+  tasks have finished, however many times it is cancelled. Wait with
+  `core/tasks.py:settle`, which re-raises the cancellation only afterwards.
+  - A plain `await` after the first cancellation lets a second one release
+    ownership while a thread still writes to staging.
+  - Shielding the worker itself is not enough: in Python 3.14 each abandoned
+    shield logs "exception in shielded future" when the worker later raises.
+    `settle` shields a waiter that never raises (found in v0.43.1). The plate
+    solver's ASTAP, native and project-save waits use it too; a project save
+    runs its commit, `committed = True` and cleanup as one settled step, so a
+    cancel never deletes committed images.
 - Store one index file per layer, not per user-facing range. `ranges.json`
   records the ranges the user owns; a layer remains while any remaining
   manifest entry names it. Each layer build runs in one fresh child process and
@@ -438,9 +507,11 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   first), and publish each as soon as its layers are ready, so Standard is
   usable while Narrow fields builds. Weight a range's progress by its layers'
   `estimated_bytes`; build time tracks size (about 16 MB/s per layer). A
-  cancel or failure keeps ranges already published. `/status` reports the
-  current range as `building`, and requested ranges not yet started as
-  `waiting`, each with its own progress.
+  cancel or failure keeps ranges already published. A build request drops
+  ranges already built, but a ready range missing from the manifest takes the
+  publish-only path. `/status` reports a ready range as `built` before
+  considering the operation's current range; remaining requested ranges are
+  `building` or `waiting`, each with its own progress.
 - Offer two user-facing index choices: recommended **Standard** covers 0.4°–10°
   with q008 through q256, while optional **Narrow fields** covers 0.2°–0.4°
   with q004. Neighbouring layers overlap, and a field near a layer's lower edge
@@ -449,6 +520,9 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 
 **Built-in solve**
 
+- Before brightness and spatial selection, reject extraction candidates wider
+  than six times the median width of candidates that passed the existing shape,
+  PSF and saturation checks. This applies to every extraction profile.
 - Quads and verification use one saturation-inclusive detection population.
   - Rejecting stars with clipped cores removed every bright star from
     stretched finals. Verification compares detections with the brightest
@@ -871,6 +945,15 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
   retain `pendingDate` in state until the matching forecast arrives, then apply
   only dates in its range. Declare this effect after default-location selection.
 - Cache budgets/clear controls belong in **Admin → Caches**, not Settings.
+- **Rendered-image caches** (`services/image_cache.py`): rows store the file's
+  name, resolved inside today's `APP_DIR` cache folder; legacy absolute paths
+  resolve by their name, never at the old location, so a moved app-data folder
+  keeps its images. Thumbnails and planner cells share one budget, one lock
+  (publication, eviction, clearing, reconciliation and the sweep) and one
+  "Clear All", which also deletes recognized cache files without a row and
+  leaves unknown files alone. The startup sweep runs only after a
+  reconciliation with no unresolved errors. A render that started before a
+  clear never publishes after it.
 - Diagnostics middleware records requests. Use `X-Activity` for fetch and
   `_activity` for image URLs; keep an image's activity label stable from file
   open so cache busting does not split request groups.

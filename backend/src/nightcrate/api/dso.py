@@ -21,6 +21,12 @@ from nightcrate.api.dso_models import (
     TypeGroupFacet,
 )
 from nightcrate.db.session import get_db
+from nightcrate.services.dso_display import (
+    CONSTELLATION_NAMES,
+    DSO_TYPE_DISPLAY,
+    label_sort_expression,
+)
+from nightcrate.services.dso_sorting import catalog_rank, designation_sort_key
 from nightcrate.services.dso_type_groups import TYPE_GROUPS, raw_types_for_group
 
 router = APIRouter(prefix="/api/dso", tags=["Deep-Sky Objects"])
@@ -33,16 +39,13 @@ SORT_COLUMNS: dict[str, str] = {
     "dec_deg": "dec_deg",
     "obj_type": "obj_type",
     "constellation": "constellation",
+    "common_name": "common_name",
     # The UI's "Size" column is derived (``maj_axis × min_axis``), but sorting
     # by the major axis alone is the intuitive behavior — the largest
     # dimension drives the perceived footprint even when the minor is missing.
     "size": "maj_axis_arcmin",
     "distance_pc": "distance_pc",
 }
-
-# Catalogs whose designations ship alongside the list response. Detail
-# returns the full set; list payloads stay compact.
-LIST_DESIGNATION_CATALOGS: tuple[str, ...] = ("messier", "caldwell")
 
 # Pattern-matches search keys a user might type into the "go to object"
 # box: strip whitespace + dashes, lowercase. Equivalent to the loader's
@@ -119,28 +122,24 @@ async def _load_external_refs(conn, dso_id: int) -> list[ExternalRef]:
     return refs
 
 
-async def _load_designations(
-    conn, dso_ids: list[int], *, catalog_filter: tuple[str, ...] | None = None
-) -> dict[int, list[DsoDesignation]]:
-    """Fetch designations for a set of DSO ids, optionally filtered by catalog.
-
-    Returns a mapping ``dso_id → [designations]`` with the primary first.
-    """
+async def _load_designations(conn, dso_ids: list[int]) -> dict[int, list[DsoDesignation]]:
+    """Fetch every designation for the given DSOs in canonical display order."""
     if not dso_ids:
         return {}
 
+    await conn.create_function("designation_key", 1, designation_sort_key, deterministic=True)
+    await conn.create_function("catalog_rank", 1, catalog_rank, deterministic=True)
     id_placeholders = ",".join("?" * len(dso_ids))
-    params: list = list(dso_ids)
+    # Placeholders are generated from the page's validated integer IDs.
+    sql = f"""
+        SELECT id, dso_id, catalog, identifier, display_form, is_primary
+        FROM dso_designation
+        WHERE dso_id IN ({id_placeholders})
+        ORDER BY dso_id, catalog_rank(catalog), catalog,
+                 designation_key(display_form), id
+    """  # noqa: S608  # nosec B608
 
-    # Placeholders generated from validated id list + whitelist catalog names, not user input.
-    base = f"SELECT dso_id, catalog, identifier, display_form, is_primary FROM dso_designation WHERE dso_id IN ({id_placeholders})"  # noqa: S608, E501  # nosec B608
-    if catalog_filter:
-        cat_placeholders = ",".join("?" * len(catalog_filter))
-        base += f" AND (is_primary = 1 OR catalog IN ({cat_placeholders}))"  # nosec B608
-        params.extend(catalog_filter)
-    sql = base + " ORDER BY is_primary DESC, catalog, identifier"
-
-    cursor = await conn.execute(sql, params)
+    cursor = await conn.execute(sql, dso_ids)
     rows = await cursor.fetchall()
 
     grouped: dict[int, list[DsoDesignation]] = {dso_id: [] for dso_id in dso_ids}
@@ -228,8 +227,9 @@ async def list_dsos(
     elif has_distance is False:
         where_clauses.append("d.distance_pc IS NULL")
 
+    catalog_codes: list[str] = []
     if catalog:
-        catalog_codes = [c.strip() for c in catalog.split(",") if c.strip()]
+        catalog_codes = list(dict.fromkeys(c.strip() for c in catalog.split(",") if c.strip()))
         if catalog_codes:
             placeholders = ",".join("?" * len(catalog_codes))
             where_clauses.append(
@@ -249,34 +249,88 @@ async def list_dsos(
         params.append(f"%{q.lower()}%")
 
     where_sql = " AND ".join(where_clauses)
-
     async with get_db() as conn:
+        await conn.create_function("designation_key", 1, designation_sort_key, deterministic=True)
+        await conn.create_function("catalog_rank", 1, catalog_rank, deterministic=True)
         # Total count
         count_sql = f"SELECT COUNT(*) AS n FROM dso d WHERE {where_sql}"  # nosec B608 - internal
         cursor = await conn.execute(count_sql, params)
         count_row = await cursor.fetchone()
         total = int(count_row["n"])
 
-        order_col = SORT_COLUMNS[sort]
         order_dir = "DESC" if sort_dir == "desc" else "ASC"
+        cte_params: list[str] = []
+        if catalog_codes:
+            catalog_placeholders = ",".join("?" * len(catalog_codes))
+            cte_params.extend(catalog_codes)
+            # The interpolated text contains only one ``?`` per parsed catalog
+            # value; every value itself remains a bound parameter.
+            designation_cte = (
+                "WITH ranked_designation AS (\n"  # nosec B608
+                "SELECT dd.dso_id, dd.display_form,\n"
+                "ROW_NUMBER() OVER (\n"
+                "PARTITION BY dd.dso_id\n"
+                "ORDER BY catalog_rank(dd.catalog), dd.catalog,\n"
+                "designation_key(dd.display_form), dd.id\n"
+                ") AS rn\n"
+                "FROM dso_designation dd\n"
+                "WHERE dd.catalog IN (" + catalog_placeholders + ")\n"
+                ")\n"
+            )
+        else:
+            designation_cte = """
+                WITH ranked_designation AS (
+                    SELECT dd.dso_id, dd.display_form,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY dd.dso_id
+                               ORDER BY designation_key(dd.display_form), dd.id
+                           ) AS rn
+                    FROM dso_designation dd
+                    WHERE dd.is_primary = 1
+                )
+            """
+
+        sort_params: list[str] = []
+        if sort == "primary_designation":
+            order_expression = "designation_key(COALESCE(rd.display_form, d.primary_designation))"
+        elif sort == "obj_type":
+            order_expression, sort_params = label_sort_expression("d.obj_type", DSO_TYPE_DISPLAY)
+        elif sort == "constellation":
+            order_expression, sort_params = label_sort_expression(
+                "d.constellation", CONSTELLATION_NAMES
+            )
+        elif sort == "common_name":
+            order_expression = "NULLIF(TRIM(d.common_name), '') COLLATE NOCASE"
+        else:
+            order_expression = f"d.{SORT_COLUMNS[sort]}"
         # Secondary ordering on id for deterministic pagination. `NULLS LAST`
         # on the primary sort so rows with missing values (no magnitude, no
         # coordinates) sink to the bottom regardless of direction — users
         # expect "unknown" at the end, not at the top of an ascending list.
         # order_col/order_dir from SORT_COLUMNS whitelist; params use placeholders.
-        list_sql = f"SELECT d.id, d.primary_designation, d.obj_type, d.ra_deg, d.dec_deg, d.constellation, d.maj_axis_arcmin, d.min_axis_arcmin, d.mag_v, d.mag_b, d.distance_pc, d.distance_method, d.common_name FROM dso d WHERE {where_sql} ORDER BY d.{order_col} {order_dir} NULLS LAST, d.id ASC LIMIT ? OFFSET ?"  # noqa: S608, E501  # nosec B608
-        cursor = await conn.execute(list_sql, [*params, limit, offset])
+        list_sql = f"""{designation_cte}
+            SELECT d.id, d.primary_designation,
+                   COALESCE(rd.display_form, d.primary_designation) AS display_designation,
+                   d.obj_type, d.ra_deg, d.dec_deg, d.constellation,
+                   d.maj_axis_arcmin, d.min_axis_arcmin, d.mag_v, d.mag_b,
+                   d.distance_pc, d.distance_method, d.common_name
+            FROM dso d
+            LEFT JOIN ranked_designation rd ON rd.dso_id = d.id AND rd.rn = 1
+            WHERE {where_sql}
+            ORDER BY {order_expression} {order_dir} NULLS LAST, d.id ASC
+            LIMIT ? OFFSET ?
+        """  # noqa: S608  # nosec B608 - expressions come from fixed registries
+        cursor = await conn.execute(list_sql, [*cte_params, *params, *sort_params, limit, offset])
         rows = await cursor.fetchall()
 
         dso_ids = [row["id"] for row in rows]
-        designations = await _load_designations(
-            conn, dso_ids, catalog_filter=LIST_DESIGNATION_CATALOGS
-        )
+        designations = await _load_designations(conn, dso_ids)
 
         items = [
             DsoListItem(
                 id=row["id"],
                 primary_designation=row["primary_designation"],
+                display_designation=row["display_designation"],
                 obj_type=row["obj_type"],
                 ra_deg=row["ra_deg"],
                 dec_deg=row["dec_deg"],

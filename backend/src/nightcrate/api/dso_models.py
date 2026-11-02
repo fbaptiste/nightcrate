@@ -46,6 +46,7 @@ class CatalogSource(BaseModel):
 class DsoListItem(BaseModel):
     id: int
     primary_designation: str
+    display_designation: str
     obj_type: str
     ra_deg: float | None
     dec_deg: float | None
@@ -57,7 +58,7 @@ class DsoListItem(BaseModel):
     distance_pc: float | None
     distance_method: str | None
     common_name: str | None
-    # Shortlist: primary + messier + caldwell (see api/dso.py).
+    # Complete designation list, in catalog-rank then natural-name order.
     designations: list[DsoDesignation]
 
 

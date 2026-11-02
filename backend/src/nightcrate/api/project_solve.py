@@ -11,7 +11,6 @@ import asyncio
 import logging
 import math
 import shutil
-from collections.abc import Awaitable
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -27,6 +26,7 @@ from nightcrate.api.project_solve_models import (
 )
 from nightcrate.core.app_config import get_projects_root
 from nightcrate.core.config import get_settings
+from nightcrate.core.tasks import settle
 from nightcrate.db.session import get_db
 from nightcrate.services import fits_io, solve_operations
 from nightcrate.services.dso_type_groups import group_for_raw_type
@@ -93,25 +93,11 @@ def _ensure_primary_fits_image(image_path: str) -> None:
         )
 
 
-async def _finish_awaitable[T](awaitable: Awaitable[T]) -> tuple[T, bool]:
-    """Finish an already-started worker operation despite request cancellation."""
-    task = asyncio.ensure_future(awaitable)
-    cancelled = False
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancelled = True
-    return task.result(), cancelled
-
-
 async def _render_to_staging(image_path: str, staging: Path) -> None:
     """Keep request cancellation from outliving the render worker."""
-    _, cancelled = await _finish_awaitable(
-        asyncio.to_thread(generate_rendered_images, image_path, staging)
+    await settle(
+        asyncio.create_task(asyncio.to_thread(generate_rendered_images, image_path, staging))
     )
-    if cancelled:
-        raise asyncio.CancelledError
 
 
 def _cleanup_generations(solve_dir: Path, current_id: int) -> None:
@@ -295,7 +281,10 @@ async def _create_solve_claimed(
             )
 
         try:
-            await asyncio.to_thread(_ensure_primary_fits_image, body.image_path)
+            await settle(
+                asyncio.create_task(asyncio.to_thread(_ensure_primary_fits_image, body.image_path)),
+                on_cancel=operation.cancel,
+            )
             operation.checkpoint()
             result = await run_solve(
                 solver=solver,
@@ -529,10 +518,12 @@ async def _create_solve_claimed(
 
                 new_generation = solve_dir / str(solve_id)
                 if new_generation.exists():
-                    await asyncio.to_thread(shutil.rmtree, new_generation)
+                    await settle(
+                        asyncio.create_task(asyncio.to_thread(shutil.rmtree, new_generation))
+                    )
                 try:
-                    _, rename_cancelled = await _finish_awaitable(
-                        asyncio.to_thread(staging.rename, new_generation)
+                    await settle(
+                        asyncio.create_task(asyncio.to_thread(staging.rename, new_generation))
                     )
                 except OSError as exc:
                     raise HTTPException(
@@ -544,16 +535,15 @@ async def _create_solve_claimed(
                             result.attempts,
                         ),
                     ) from exc
-                if rename_cancelled:
-                    raise asyncio.CancelledError
-                operation.begin_commit()
-                _, commit_cancelled = await _finish_awaitable(conn.commit())
-                committed = True
-                _, cleanup_cancelled = await _finish_awaitable(
-                    asyncio.to_thread(_cleanup_generations, solve_dir, solve_id)
-                )
-                if commit_cancelled or cleanup_cancelled:
-                    raise asyncio.CancelledError
+
+                async def commit_and_cleanup() -> None:
+                    nonlocal committed
+                    operation.begin_commit()
+                    await conn.commit()
+                    committed = True
+                    await asyncio.to_thread(_cleanup_generations, solve_dir, solve_id)
+
+                await settle(asyncio.create_task(commit_and_cleanup()))
             except BaseException:
                 if not committed:
                     try:

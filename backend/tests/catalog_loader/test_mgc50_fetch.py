@@ -1,7 +1,8 @@
 """Tests for the GitHub-backed 50 MGC fetcher.
 
-Mocks ``services.http_client.get`` to verify atomic rename, version.json
-commit marker, retry exhaustion, and short-body rejection.
+Runs the real ``services.http_client.get`` over ``httpx.MockTransport`` to
+verify atomic rename, version.json commit marker, retry exhaustion, progress,
+and short-body rejection.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from nightcrate.catalog_loader import mgc50_fetch
@@ -32,17 +34,24 @@ def anyio_backend():
 def fake_transport(monkeypatch):
     calls: list[str] = []
     mapping: dict[str, object] = {}
+    original = httpx.AsyncClient
 
-    async def fake_get(url, *args, **kwargs):
+    def handler(request):
+        url = str(request.url)
         calls.append(url)
         handler = mapping.get(url)
         if handler is None:
             raise AssertionError(f"unexpected URL: {url}")
         if callable(handler):
-            return handler()
-        return handler
+            handler = handler()
+        return httpx.Response(handler.status_code, content=handler.content, request=request)
 
-    monkeypatch.setattr("nightcrate.catalog_loader.mgc50_fetch.http_client.get", fake_get)
+    monkeypatch.setattr(
+        mgc50_fetch.http_client.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(mgc50_fetch.http_client.random, "uniform", lambda *_: 0)
 
     async def _noop_sleep(_):
         return None
@@ -75,6 +84,25 @@ async def test_fetch_writes_file_and_version_json(fake_transport, tmp_path: Path
 
 
 @pytest.mark.anyio
+async def test_fetch_reports_steps_and_total(fake_transport, tmp_path: Path):
+    fake_transport["mapping"][mgc50_fetch.MGC50_RAW_URL] = FakeResponse(body=_SIZEABLE_BODY)
+    updates = []
+
+    await mgc50_fetch.fetch_50mgc_from_github(tmp_path, updates.append)
+
+    assert [update.phase for update in updates] == [
+        "contacting",
+        "downloading",
+        "downloading",
+        "checking",
+        "saving",
+    ]
+    transfer = [update for update in updates if update.phase == "downloading"][-1]
+    assert transfer.bytes_received == len(_SIZEABLE_BODY)
+    assert transfer.bytes_total == len(_SIZEABLE_BODY)
+
+
+@pytest.mark.anyio
 async def test_fetch_retries_on_transient_failure(fake_transport, tmp_path: Path):
     attempts = {"n": 0}
 
@@ -98,7 +126,7 @@ async def test_fetch_exhausts_retries(fake_transport, tmp_path: Path):
     fake_transport["mapping"][mgc50_fetch.MGC50_RAW_URL] = _always_fail
     with pytest.raises(RuntimeError, match="upstream down"):
         await mgc50_fetch.fetch_50mgc_from_github(tmp_path)
-    # Default max_attempts=3 → 3 upstream calls
+    # RuntimeError is not a shared-client transient; the outer layer tries three times.
     assert len(fake_transport["calls"]) == 3
     # Partial download dir cleaned up
     assert not (tmp_path / "github" / "50mgc" / "catalog.fits").exists()

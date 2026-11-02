@@ -203,7 +203,7 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 | [50 MGC](https://github.com/davidohlson/50MGC) | CDS public | Ohlson, D. et al. 2024, AJ 167, 31 (J/AJ/167/31). Galaxy distance augmenter, fetched at runtime from the author's GitHub mirror. |
 | [Wikidata](https://www.wikidata.org/) | CC0-1.0 | External reference IDs (Wikipedia, SIMBAD) via SPARQL, fetched at runtime. |
 | [Open-Meteo](https://open-meteo.com/) | Attribution required — see [their license](https://open-meteo.com/en/license) | Weather, ECMWF and air-quality forecast data, queried at runtime. |
-| [CDS hips2fits / Aladin](https://alasky.cds.unistra.fr/hips-image-services/hips2fits) | CDS terms | DSS2 sky survey imagery for target thumbnails and the FOV simulator, fetched at runtime and cached locally. |
+| [DSS2 colour HiPS (CDS)](https://alasky.cds.unistra.fr/DSS/DSSColor) | CDS terms | Digitized Sky Survey imagery (STScI/NASA; colour HiPS by CDS), fetched at runtime as HiPS tiles from CDS (alasky) or ESA's ESASky mirror and cached locally. |
 
 ### Methods and prior work
 

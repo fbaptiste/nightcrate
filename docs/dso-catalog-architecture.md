@@ -7,14 +7,22 @@ and recreating rows source by source. OpenNGC uses its exact `Name` value as the
 source key; Sharpless and Barnard use normalized catalog numbers. A row matched
 by `(source_catalog_id, source_key)` is updated in place, preserving its
 `dso.id`, creation time, and every user relationship. The one-time upgrade from
-older databases pairs unchanged files by legacy display text in file order, or
-changed files only by an unambiguous `source_row_hash`.
+older databases first pairs rows by an unambiguous `source_row_hash`, checked
+across OpenNGC's main and addendum files together so a row that moved between
+them keeps its identity, then within each source; for
+unchanged files only, the remaining rows then pair by legacy display text in
+file order. Hash first keeps two old rows that share a stored name (a corrected
+false primary) from trading identities and user links.
 
 OpenNGC main, addendum, Sharpless, Barnard, the Sharpless cross-reference, and
 the editorial augment hash form the object step's inputs. Designation ownership
-is resolved first-owner-wins across the complete new set before a single
-database transaction updates objects and rebuilds designations. Explicit
-OpenNGC `Dup` rows and Sharpless cross-references are the only merge signals.
+is resolved own-name-first, then first-owner-wins for alternate claims, across
+the complete new set before a single database transaction updates objects and
+rebuilds designations. An object's parsed own designation therefore outranks
+alternate-name claims regardless of source row order. Explicit OpenNGC `Dup`
+rows, Sharpless cross-references, and an
+unambiguous full Barnard identifier matching an OpenNGC parsed own name are the
+only merge signals.
 Known user links move to the survivor; an unknown future foreign key keeps the
 old row inactive as a safety net. Other unclaimed rows become inactive and
 retain their catalog and enrichment values.
@@ -52,9 +60,10 @@ cross-checks:
    new DSOs. Sharpless consults `nightcrate/sharpless_crossref.csv` as a
    side-input to merge selected Sh2 identifiers onto existing OpenNGC
    DSOs (e.g. Sh2-281 → NGC 1976); unmapped Sh2 rows become standalone
-   DSOs with `Sh2-<n>` as the primary designation. Barnard does not
-   crossref-merge — dark nebulae and backing emission regions are
-   physically distinct.
+   DSOs with `Sh2-<n>` as the primary designation. Barnard rows normally stay
+   separate because dark nebulae and backing emission regions are physically
+   distinct; they merge only when the full normalized identifier unambiguously
+   matches an OpenNGC object's own parsed Barnard name, never an alternate.
 3. **NightCrate editorial augmentation**
    (`data/catalogs/nightcrate/dso_augment.csv`, loaded by
    `catalog_loader/augment_loader.py`) refines fields on existing DSOs:
@@ -83,10 +92,13 @@ cross-checks:
    a pure post-load computation, so it always re-runs on every
    `load_catalogs` call and doesn't appear in `dso_catalog_source`.
 
-VizieR fetches (Sharpless, Barnard) rotate through three CDS mirrors
-(Strasbourg → India → South Africa) when a host exhausts its retries;
-the GitHub fetches (OpenNGC, 50 MGC) use `raw.githubusercontent.com`
-exclusively.
+VizieR fetches (Sharpless, Barnard) make one pass over three HTTPS
+hosts: Strasbourg, then the CfA Harvard and IDIA South Africa mirrors.
+Each host gets the shared HTTP client's single retry and a 10 s connect
+limit, so an unreachable host is skipped in about 20 s. A failed request,
+an error status, or a body that isn't a VizieR TSV moves on to the next
+host. `version.json` records the URL that served the data. The GitHub
+fetches (OpenNGC, 50 MGC) use `raw.githubusercontent.com` exclusively.
 
 The **commit marker for every remote download is the `version.json`
 file** alongside the data files — it's written LAST, so a crash

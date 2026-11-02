@@ -158,6 +158,9 @@ APP_DIR/star_catalogs/
   rejected; writes never go past the published size; and a verified
   compressed file survives a failed unpack, so the next attempt only
   unpacks.
+  - **Superseded 2026-11-01 by v0.43.1:** the download now uses four parallel
+    byte-range pieces with verified assembly and retains this single stream as
+    the fallback when a server does not honour ranges.
 - **Only when not installed.** Download and import run only when the stars
   aren't installed; to replace them, the user removes them first.
 - After the compressed checksum passes, the file is decompressed (about 40 s)

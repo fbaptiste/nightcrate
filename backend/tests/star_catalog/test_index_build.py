@@ -230,6 +230,32 @@ async def test_builds_and_publishes_ranges_in_field_order(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_ready_but_unlisted_range_is_published_without_rebuild(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
+    standard = ranges.FIELD_RANGES[0]
+    for name in standard.layers:
+        ranges.layer_path(name).parent.mkdir(parents=True, exist_ok=True)
+        ranges.layer_path(name).write_bytes(b"ready")
+
+    monkeypatch.setattr(index_build, "layer_state", lambda name: "ready")
+    monkeypatch.setattr(
+        index_build,
+        "build_layer",
+        lambda *args, **kwargs: pytest.fail("ready layer was rebuilt"),
+    )
+    monkeypatch.setattr(index_build, "get_settings", _settings)
+    fetch._operation = fetch.StarOperation(kind="build", phase="building", ranges=[standard.id])
+    fetch._thread_cancel = threading.Event()
+
+    await index_build.run_build([standard.id])
+
+    assert ranges.read_manifest() == {standard.id}
+    assert fetch._operation.range_progress == {standard.id: 1.0}
+    fetch._operation = None
+    fetch._thread_cancel = None
+
+
+@pytest.mark.asyncio
 async def test_build_progress_is_weighted_by_estimated_bytes(tmp_path, monkeypatch):
     monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
     q128_entered = threading.Event()
