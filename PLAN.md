@@ -280,6 +280,24 @@ pills, and Enter opening the details; a live Sharpless reload read
 "Strasbourg timed out after 21 s", then "Harvard dropped the connection
 after 60 s", then loaded from South Africa. Accepted by Fred (2026-11-01).
 
+- [x] **PR review of #22** (Claude's code-review agent, 2026-11-01), covering
+  the changes made after the independent Codex reviews. Four findings, all
+  verified by Claude, none high; Fred asked for all four to be fixed before
+  merging:
+  - **Two outcomes of the fused-name repair check were untested:** a missing
+    split name, and one another object already owns (which must not trigger
+    a rebuild on every load).
+  - **A test that proved nothing:** the cheap-check assertion passed against
+    a per-object query loop.
+  - **An undeclared package:** the catalog table imported a helper from
+    `@mui/utils`, installed only through MUI; replaced by a local style.
+  - **Question-mark help icons** in the object detail panel (older than this
+    version): Distance now has a "How it's computed" link, and B magnitude's
+    note is plain text under the value.
+  - Found while checking the fix in a browser (older than this version): the
+    panel put chips inside a paragraph element, which React reported as an
+    error in the console; the value is now a block element.
+
 ### Found in passing (kept, with reasons)
 
 - **The catalog load blocks the server while it runs.** `api/admin.py`

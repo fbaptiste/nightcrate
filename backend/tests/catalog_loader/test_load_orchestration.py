@@ -214,12 +214,14 @@ def test_legacy_other_name_repair_keeps_missing_source_deferral(db, catalogs_roo
     assert "addendum.csv" in (result.error or "")
 
 
-def test_fused_pgc_repair_preserves_identity_and_is_idempotent(db, catalogs_root, monkeypatch):
+FUSED_PGC_CASES = {
+    "IC1166 NED01": ("56771", "056771", "SDSS J160208.91+261945.5"),
+    "IC1191 NED01": ("57152", "057152", "SDSS J160628.98+181603.9"),
+}
+
+
+def _load_fused_pgc_fixture(db, catalogs_root) -> dict[str, int]:
     ngc = catalogs_root / "openngc" / "NGC.csv"
-    cases = {
-        "IC1166 NED01": ("56771", "056771", "SDSS J160208.91+261945.5"),
-        "IC1191 NED01": ("57152", "057152", "SDSS J160628.98+181603.9"),
-    }
     _append_openngc_rows(
         ngc,
         tuple(
@@ -227,19 +229,23 @@ def test_fused_pgc_repair_preserves_identity_and_is_idempotent(db, catalogs_root
                 "Name": source_key,
                 "Identifiers": f"PGC {raw_pgc}{sdss}",
             }
-            for source_key, (_pgc, raw_pgc, sdss) in cases.items()
+            for source_key, (_pgc, raw_pgc, sdss) in FUSED_PGC_CASES.items()
         ),
     )
     load_catalogs(db, catalogs_root)
-    before = {
+    return {
         row["source_key"]: row["id"]
         for row in db.execute(
             "SELECT id, source_key FROM dso WHERE source_key IN ('IC1166 NED01', 'IC1191 NED01')"
         )
     }
-    assert set(before) == set(cases)
 
-    for source_key, (_pgc, raw_pgc, sdss) in cases.items():
+
+def test_fused_pgc_repair_preserves_identity_and_is_idempotent(db, catalogs_root, monkeypatch):
+    before = _load_fused_pgc_fixture(db, catalogs_root)
+    assert set(before) == set(FUSED_PGC_CASES)
+
+    for source_key, (_pgc, raw_pgc, sdss) in FUSED_PGC_CASES.items():
         dso_id = before[source_key]
         db.execute(
             "DELETE FROM dso_designation WHERE dso_id = ? AND catalog = 'pgc'",
@@ -274,7 +280,8 @@ def test_fused_pgc_repair_preserves_identity_and_is_idempotent(db, catalogs_root
         for statement in statements
         if "dso_designation" in statement.casefold()
     ]
-    assert designation_queries
+    assert len(designation_queries) == 1
+    assert any(f"dso_id = {dso_id}" in designation_queries[0] for dso_id in before.values())
     assert all(" where " in query for query in designation_queries)
     assert not any("join dso_designation" in query for query in designation_queries)
 
@@ -317,6 +324,44 @@ def test_fused_pgc_repair_preserves_identity_and_is_idempotent(db, catalogs_root
     monkeypatch.setattr("nightcrate.catalog_loader.reconcile.apply_object_set", unexpected)
     repeat = load_catalogs(db, catalogs_root)
     assert next(row for row in repeat.results if row.source_id == "openngc").status == "unchanged"
+
+
+def test_fused_pgc_repair_restores_missing_claimable_designation(db, catalogs_root):
+    ids = _load_fused_pgc_fixture(db, catalogs_root)
+    db.execute(
+        "DELETE FROM dso_designation WHERE dso_id = ? AND catalog = 'pgc' AND identifier = '56771'",
+        (ids["IC1166 NED01"],),
+    )
+    db.commit()
+
+    assert _fused_pgc_repair_due(db.cursor()) is True
+    summary = load_catalogs(db, catalogs_root)
+    owner = db.execute(
+        "SELECT dso_id FROM dso_designation WHERE catalog = 'pgc' AND identifier = '56771'"
+    ).fetchone()
+    assert owner[0] == ids["IC1166 NED01"]
+    assert next(row for row in summary.results if row.source_id == "openngc").status == "loaded"
+    assert _fused_pgc_repair_due(db.cursor()) is False
+
+
+def test_fused_pgc_repair_ignores_designation_owned_by_another_object(db, catalogs_root):
+    ids = _load_fused_pgc_fixture(db, catalogs_root)
+    db.execute(
+        """
+        UPDATE dso_designation SET dso_id = ?
+        WHERE dso_id = ? AND catalog = 'pgc' AND identifier = '56771'
+        """,
+        (ids["IC1191 NED01"], ids["IC1166 NED01"]),
+    )
+    db.commit()
+
+    owner = db.execute(
+        "SELECT dso_id FROM dso_designation WHERE catalog = 'pgc' AND identifier = '56771'"
+    ).fetchone()
+    assert owner[0] == ids["IC1191 NED01"]
+    assert _fused_pgc_repair_due(db.cursor()) is False
+    summary = load_catalogs(db, catalogs_root)
+    assert next(row for row in summary.results if row.source_id == "openngc").status == "unchanged"
 
 
 def test_own_name_ownership_repairs_on_unchanged_hash_and_is_idempotent(

@@ -24,7 +24,6 @@ import CloseIcon from "@mui/icons-material/Close";
 import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import SearchIcon from "@mui/icons-material/Search";
-import { visuallyHidden } from "@mui/utils";
 import { Link as RouterLink } from "react-router-dom";
 import { fetchDsoFacets, fetchDsos, type DsoListItem } from "@/api/dsos";
 import { useDebounce } from "@/lib/useDebounce";
@@ -47,6 +46,20 @@ import {
   formatRa,
   formatSize,
 } from "@/lib/dsoFormatters";
+
+// Screen-reader-only text. Explicit px: in `sx`, a bare 1 means 100% and a
+// bare -1 a theme spacing step.
+const visuallyHiddenSx = {
+  border: 0,
+  clip: "rect(0 0 0 0)",
+  height: "1px",
+  margin: "-1px",
+  overflow: "hidden",
+  padding: 0,
+  position: "absolute",
+  whiteSpace: "nowrap",
+  width: "1px",
+} as const;
 
 export default function DsoCatalogPage() {
   const store = useDsoCatalogStore();
@@ -238,7 +251,7 @@ export default function DsoCatalogPage() {
                 />
                 <Box
                   component="span"
-                  sx={visuallyHidden}
+                  sx={visuallyHiddenSx}
                 >
                   {hidden.length} more: {hidden.join(", ")}.
                 </Box>
@@ -246,7 +259,7 @@ export default function DsoCatalogPage() {
             )}
             <Box
               component="span"
-              sx={visuallyHidden}
+              sx={visuallyHiddenSx}
             >
               Press Enter for details.
             </Box>

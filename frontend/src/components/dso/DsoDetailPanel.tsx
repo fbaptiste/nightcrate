@@ -9,7 +9,6 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import CloseIcon from "@mui/icons-material/Close";
-import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import StarIcon from "@mui/icons-material/Star";
@@ -68,7 +67,8 @@ function Field({ label, value }: { label: React.ReactNode; value: React.ReactNod
       >
         {label}
       </Typography>
-      <Typography variant="body2" sx={{ flex: 1 }}>
+      {/* A div, not the default <p>: values can hold chips and boxes. */}
+      <Typography component="div" variant="body2" sx={{ flex: 1 }}>
         {value}
       </Typography>
     </Box>
@@ -290,23 +290,19 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
               />
               <Field label="V (visual) magnitude" value={formatMagnitude(data.mag_v)} />
               <Field
-                label={
-                  <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
-                    B (blue) magnitude
-                    <Tooltip
-                      title={
-                        "\u2248 photographic magnitude (Johnson B is modern CCD photometry; " +
-                        "historical mpg values differ by ~0.1\u20130.3 mag)."
-                      }
-                      placement="top"
-                    >
-                      <HelpOutlineIcon
-                        sx={{ fontSize: 14, color: "text.disabled", cursor: "help" }}
-                      />
-                    </Tooltip>
-                  </Box>
+                label="B (blue) magnitude"
+                value={
+                  data.mag_b != null ? (
+                    <Box component="span" sx={{ display: "flex", flexDirection: "column" }}>
+                      <Box component="span">{formatMagnitude(data.mag_b)}</Box>
+                      <Typography component="span" variant="caption" color="text.secondary">
+                        Close to the older photographic magnitude, which can differ by 0.1–0.3 mag.
+                      </Typography>
+                    </Box>
+                  ) : (
+                    "—"
+                  )
                 }
-                value={formatMagnitude(data.mag_b)}
               />
               <Field
                 label="J / H / K"
@@ -335,23 +331,7 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
               />
               {data.distance_pc != null && (
                 <Field
-                  label={
-                    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
-                      Distance
-                      <Tooltip title="How distances are computed" placement="top">
-                        <IconButton
-                          size="small"
-                          onClick={() => setDistanceHelpOpen(true)}
-                          sx={{ p: 0 }}
-                          aria-label="distance help"
-                        >
-                          <HelpOutlineIcon
-                            sx={{ fontSize: 14, color: "text.disabled" }}
-                          />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  }
+                  label="Distance"
                   value={
                     <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
                       {data.distance_method === "redshift" ? "~" : ""}
@@ -362,6 +342,15 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                         variant="outlined"
                         sx={{ height: 18, fontSize: "0.65rem" }}
                       />
+                      <Link
+                        component="button"
+                        type="button"
+                        variant="caption"
+                        color="primary"
+                        onClick={() => setDistanceHelpOpen(true)}
+                      >
+                        How it's computed
+                      </Link>
                     </Box>
                   }
                 />
