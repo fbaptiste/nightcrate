@@ -15,6 +15,8 @@ class ExtractionConfig:
     threshold_sigma: float = 3.5
     min_area: int = 5
     max_elongation: float = 2.5
+    # Reject extended sources wider than this multiple of the typical candidate.
+    max_width_ratio: float | None = 6.0
     edge_margin: int = 8
     max_sources: int = 250
     grid_size: int = 5
@@ -225,6 +227,11 @@ def extract_array(
             patch = working[max(0, yy - 2) : yy + 3, max(0, xx - 2) : xx + 3]
             saturated.append(int(np.count_nonzero(patch >= saturation_level) >= 3))
         candidate_indices = candidate_indices[~np.asarray(saturated, dtype=bool)]
+    if config.max_width_ratio is not None and len(candidate_indices):
+        typical = float(np.median(fwhm_working[candidate_indices]))
+        candidate_indices = candidate_indices[
+            fwhm_working[candidate_indices] <= config.max_width_ratio * typical
+        ]
     if not len(candidate_indices):
         empty = np.empty(0, dtype=np.float64)
         return DetectedStars(empty, empty, empty, empty, original_width, original_height)

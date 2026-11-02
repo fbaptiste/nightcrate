@@ -44,6 +44,52 @@ async def dso_loaded(tmp_path):
     conn.close()
 
 
+async def _insert_sort_dso(
+    primary: str,
+    *,
+    marker: str,
+    obj_type: str = "G",
+    constellation: str | None = "Ori",
+    common_name: str | None = None,
+    designations: tuple[tuple[str, str, str, bool], ...] = (),
+) -> int:
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'openngc'")
+        source_id = int((await source.fetchone())["id"])
+        cursor = await conn.execute(
+            """
+            INSERT INTO dso (
+                primary_designation, obj_type, constellation, common_name,
+                source_catalog_id, source_row_hash, source_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                primary,
+                obj_type,
+                constellation,
+                common_name,
+                source_id,
+                f"phase-f-{marker}",
+                f"phase-f-{marker}",
+            ),
+        )
+        assert cursor.lastrowid is not None
+        dso_id = int(cursor.lastrowid)
+        await conn.executemany(
+            """
+            INSERT INTO dso_designation (
+                dso_id, catalog, identifier, display_form, search_key, is_primary
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (dso_id, catalog, identifier, display, f"phasef{marker}", int(is_primary))
+                for catalog, identifier, display, is_primary in designations
+            ),
+        )
+        await conn.commit()
+    return dso_id
+
+
 # ── List ──────────────────────────────────────────────────────────────────────
 
 
@@ -150,16 +196,418 @@ async def test_list_invalid_sort_returns_400(client, dso_loaded):
 
 
 @pytest.mark.anyio
-async def test_list_designations_contain_messier_only(client, dso_loaded):
-    """List endpoint trims designations to primary + messier + caldwell."""
+async def test_list_invalid_sort_direction_returns_422(client, dso_loaded):
+    resp = await client.get("/api/dso?sort_dir=sideways")
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_designation_sort_is_natural_stable_and_keeps_missing_primary_rows(
+    client, dso_loaded
+):
+    values = [
+        "NGC 800010",
+        "NGC 800002",
+        "ESO 800107-010",
+        "ESO 800107-2",
+        "M 9001",
+        "Mel 9001",
+    ]
+    catalogs = ["ngc", "ngc", "eso", "eso", "messier", "mel"]
+    inserted: list[int] = []
+    for index, (display, catalog) in enumerate(zip(values, catalogs, strict=True)):
+        identifier = display.split(" ", 1)[1]
+        inserted.append(
+            await _insert_sort_dso(
+                display,
+                marker=f"natural-{index}",
+                common_name="Phase F natural",
+                designations=((catalog, identifier, display, True),),
+            )
+        )
+    missing_id = await _insert_sort_dso(
+        "ZZ 3", marker="natural-missing", common_name="Phase F natural"
+    )
+    inserted.append(missing_id)
+
+    ascending = (
+        await client.get(
+            "/api/dso",
+            params={"q": "Phase F natural", "sort": "primary_designation", "limit": 500},
+        )
+    ).json()
+    assert [item["display_designation"] for item in ascending["items"]] == [
+        "ESO 800107-2",
+        "ESO 800107-010",
+        "M 9001",
+        "Mel 9001",
+        "NGC 800002",
+        "NGC 800010",
+        "ZZ 3",
+    ]
+    assert (
+        next(item for item in ascending["items"] if item["id"] == missing_id)["designations"] == []
+    )
+
+    descending = (
+        await client.get(
+            "/api/dso",
+            params={
+                "q": "Phase F natural",
+                "sort": "primary_designation",
+                "sort_dir": "desc",
+                "limit": 500,
+            },
+        )
+    ).json()
+    assert [item["display_designation"] for item in descending["items"]] == list(
+        reversed([item["display_designation"] for item in ascending["items"]])
+    )
+
+    paged_ids: list[int] = []
+    for offset in (0, 3, 6):
+        page = (
+            await client.get(
+                "/api/dso",
+                params={"q": "Phase F natural", "limit": 3, "offset": offset},
+            )
+        ).json()
+        paged_ids.extend(item["id"] for item in page["items"])
+    assert len(paged_ids) == len(set(paged_ids)) == 7
+    assert set(paged_ids) == set(inserted)
+
+
+@pytest.mark.anyio
+async def test_single_catalog_uses_lowest_alias_before_pagination_in_both_directions(
+    client, dso_loaded
+):
+    await _insert_sort_dso(
+        "NGC 800001",
+        marker="catalog-a",
+        common_name="Phase F catalog",
+        designations=(
+            ("ngc", "800001", "NGC 800001", True),
+            ("caldwell", "20", "C 20", False),
+            ("caldwell", "3", "C 3", False),
+        ),
+    )
+    await _insert_sort_dso(
+        "NGC 800002",
+        marker="catalog-b",
+        common_name="Phase F catalog",
+        designations=(
+            ("ngc", "800002", "NGC 800002", True),
+            ("caldwell", "10", "C 10", False),
+        ),
+    )
+
+    params = {
+        "q": "Phase F catalog",
+        "catalog": "caldwell,caldwell",
+        "sort": "primary_designation",
+        "sort_dir": "desc",
+    }
+    body = (await client.get("/api/dso", params=params)).json()
+    assert body["total"] == 2
+    assert [item["display_designation"] for item in body["items"]] == ["C 10", "C 3"]
+    first_aliases = {d["display_form"] for d in body["items"][1]["designations"]}
+    assert {"NGC 800001", "C 3", "C 20"} <= first_aliases
+
+
+@pytest.mark.anyio
+async def test_multi_catalog_display_rank_and_exact_order_are_filter_order_independent(
+    client, dso_loaded
+):
+    groups = {
+        "G2 MI": (
+            (
+                "M 9010",
+                (("messier", "9010", "M 9010", True), ("ic", "9099", "IC 9099", False)),
+            ),
+            ("IC 9002", (("ic", "9002", "IC 9002", True),)),
+            ("M 9002", (("messier", "9002", "M 9002", True),)),
+            ("IC 9010", (("ic", "9010", "IC 9010", True),)),
+        ),
+        "G2 MC": (
+            (
+                "M 9110",
+                (
+                    ("messier", "9110", "M 9110", True),
+                    ("caldwell", "9199", "C 9199", False),
+                ),
+            ),
+            ("C 9102", (("caldwell", "9102", "C 9102", True),)),
+            ("M 9102", (("messier", "9102", "M 9102", True),)),
+            ("C 9110", (("caldwell", "9110", "C 9110", True),)),
+        ),
+        "G2 NI": (
+            (
+                "NGC 9210",
+                (("ngc", "9210", "NGC 9210", True), ("ic", "9201", "IC 9201", False)),
+            ),
+            ("IC 9203", (("ic", "9203", "IC 9203", True),)),
+            ("NGC 9202", (("ngc", "9202", "NGC 9202", True),)),
+        ),
+        "G2 SB": (
+            (
+                "B 9320",
+                (
+                    ("barnard", "9320", "B 9320", True),
+                    ("sharpless2", "9301", "Sh2-9301", False),
+                ),
+            ),
+            ("Sh2-9302", (("sharpless2", "9302", "Sh2-9302", True),)),
+            ("B 9303", (("barnard", "9303", "B 9303", True),)),
+        ),
+    }
+    for group, objects in groups.items():
+        for index, (primary, designations) in enumerate(objects):
+            await _insert_sort_dso(
+                primary,
+                marker=f"{group}-{index}",
+                common_name=group,
+                designations=designations,
+            )
+
+    cases = (
+        ("G2 MI", "messier,ic", ["IC 9002", "IC 9010", "M 9002", "M 9010"]),
+        ("G2 MC", "messier,caldwell", ["C 9102", "C 9110", "M 9102", "M 9110"]),
+        ("G2 NI", "ngc,ic", ["IC 9203", "NGC 9202", "NGC 9210"]),
+        ("G2 SB", "sharpless2,barnard", ["B 9303", "B 9320", "Sh2-9302"]),
+    )
+    for query, catalogs, expected in cases:
+        ascending = (
+            await client.get(
+                "/api/dso",
+                params={"q": query, "catalog": catalogs, "sort": "primary_designation"},
+            )
+        ).json()
+        descending = (
+            await client.get(
+                "/api/dso",
+                params={
+                    "q": query,
+                    "catalog": catalogs,
+                    "sort": "primary_designation",
+                    "sort_dir": "desc",
+                },
+            )
+        ).json()
+        assert ascending["total"] == len(expected)
+        assert [item["display_designation"] for item in ascending["items"]] == expected
+        assert [item["display_designation"] for item in descending["items"]] == list(
+            reversed(expected)
+        )
+
+    canonical = (
+        await client.get(
+            "/api/dso",
+            params={"q": "G2 MI", "catalog": "messier,ic", "sort": "primary_designation"},
+        )
+    ).json()
+    reversed_duplicated = (
+        await client.get(
+            "/api/dso",
+            params={
+                "q": "G2 MI",
+                "catalog": "ic,messier,ic,messier",
+                "sort": "primary_designation",
+            },
+        )
+    ).json()
+    assert [item["id"] for item in reversed_duplicated["items"]] == [
+        item["id"] for item in canonical["items"]
+    ]
+    assert [item["display_designation"] for item in reversed_duplicated["items"]] == [
+        item["display_designation"] for item in canonical["items"]
+    ]
+
+    single_catalog = (
+        await client.get(
+            "/api/dso",
+            params={"q": "G2 MI", "catalog": "ic", "sort": "primary_designation"},
+        )
+    ).json()
+    assert [item["display_designation"] for item in single_catalog["items"]] == [
+        "IC 9002",
+        "IC 9010",
+        "IC 9099",
+    ]
+    unfiltered = (
+        await client.get("/api/dso", params={"q": "G2 MI", "sort": "primary_designation"})
+    ).json()
+    assert [item["display_designation"] for item in unfiltered["items"]] == [
+        "IC 9002",
+        "IC 9010",
+        "M 9002",
+        "M 9010",
+    ]
+
+
+@pytest.mark.anyio
+async def test_multi_catalog_equal_keys_paging_and_combined_alias_search(client, dso_loaded):
+    tie_first = await _insert_sort_dso(
+        "IC 0002",
+        marker="g2-tie-first",
+        common_name="G2 paging",
+        designations=(("ic", "9402a", "IC 0002", True),),
+    )
+    tie_second = await _insert_sort_dso(
+        "IC 2",
+        marker="g2-tie-second",
+        common_name="G2 paging",
+        designations=(("ic", "9402b", "IC 2", True),),
+    )
+    for marker, display, catalog, identifier in (
+        ("one", "IC 1", "ic", "9401"),
+        ("ten", "IC 10", "ic", "9410"),
+        ("messier", "M 3", "messier", "9403"),
+    ):
+        await _insert_sort_dso(
+            display,
+            marker=f"g2-page-{marker}",
+            common_name="G2 paging",
+            designations=((catalog, identifier, display, True),),
+        )
+
+    for direction, expected_names in (
+        ("asc", ["IC 1", "IC 0002", "IC 2", "IC 10", "M 3"]),
+        ("desc", ["M 3", "IC 10", "IC 0002", "IC 2", "IC 1"]),
+    ):
+        params = {
+            "q": "G2 paging",
+            "catalog": "messier,ic",
+            "sort": "primary_designation",
+            "sort_dir": direction,
+        }
+        full = (await client.get("/api/dso", params=params)).json()["items"]
+        paged = []
+        for offset in (0, 2, 4):
+            page = (
+                await client.get("/api/dso", params={**params, "limit": 2, "offset": offset})
+            ).json()["items"]
+            paged.extend(page)
+        assert [item["display_designation"] for item in full] == expected_names
+        assert [item["id"] for item in paged] == [item["id"] for item in full]
+        tie_ids = [
+            item["id"] for item in full if item["display_designation"] in {"IC 0002", "IC 2"}
+        ]
+        assert tie_ids == [tie_first, tie_second]
+
+    combined_id = await _insert_sort_dso(
+        "M 9509",
+        marker="g2-combined",
+        common_name="Independent filters",
+        obj_type="HII",
+        constellation="Ori",
+        designations=(
+            ("messier", "9509", "M 9509", True),
+            ("ic", "9599", "IC 9599", False),
+            ("pgc", "987654", "PGC 987654", False),
+        ),
+    )
+    async with get_db() as conn:
+        await conn.execute(
+            "UPDATE dso_designation SET search_key = 'pgc987654' "
+            "WHERE dso_id = ? AND catalog = 'pgc'",
+            (combined_id,),
+        )
+        await conn.commit()
+    combined = (
+        await client.get(
+            "/api/dso",
+            params={
+                "q": "PGC 987654",
+                "catalog": "messier,ic",
+                "type": "HII",
+                "constellation": "Ori",
+                "sort": "primary_designation",
+            },
+        )
+    ).json()
+    assert combined["total"] == 1
+    assert combined["items"][0]["id"] == combined_id
+    assert combined["items"][0]["display_designation"] == "M 9509"
+
+
+@pytest.mark.anyio
+async def test_label_and_common_name_sorts_match_display_with_missing_last(client, dso_loaded):
+    await _insert_sort_dso(
+        "TYPE STAR",
+        marker="type-star",
+        obj_type="*",
+        designations=(("abell", "9002", "Abell 9002", False),),
+    )
+    await _insert_sort_dso(
+        "TYPE GALAXY",
+        marker="type-galaxy",
+        obj_type="G",
+        designations=(("abell", "9001", "Abell 9001", False),),
+    )
+    type_items = (
+        await client.get("/api/dso", params={"catalog": "abell", "sort": "obj_type"})
+    ).json()["items"]
+    assert [item["primary_designation"] for item in type_items] == ["TYPE GALAXY", "TYPE STAR"]
+
+    for index, constellation in enumerate(("CMa", "Cam")):
+        await _insert_sort_dso(
+            f"CONST {constellation}",
+            marker=f"const-{index}",
+            constellation=constellation,
+            designations=(("arp", str(9001 + index), f"Arp {9001 + index}", False),),
+        )
+    constellation_items = (
+        await client.get("/api/dso", params={"catalog": "arp", "sort": "constellation"})
+    ).json()["items"]
+    assert [
+        item["constellation"]
+        for item in constellation_items
+        if item["primary_designation"].startswith("CONST ")
+    ] == ["Cam", "CMa"]
+
+    common_values = ("alpha", "Beta", "", None)
+    for index, common_name in enumerate(common_values):
+        await _insert_sort_dso(
+            f"COMMON {index}",
+            marker=f"common-{index}",
+            common_name=common_name,
+            designations=(("hickson", str(9001 + index), f"HCG {9001 + index}", False),),
+        )
+    ascending = (
+        await client.get("/api/dso", params={"catalog": "hickson", "sort": "common_name"})
+    ).json()["items"]
+    descending = (
+        await client.get(
+            "/api/dso",
+            params={"catalog": "hickson", "sort": "common_name", "sort_dir": "desc"},
+        )
+    ).json()["items"]
+    assert [
+        item["common_name"]
+        for item in ascending
+        if item["primary_designation"].startswith("COMMON ")
+    ] == ["alpha", "Beta", "", None]
+    assert [
+        item["common_name"]
+        for item in descending
+        if item["primary_designation"].startswith("COMMON ")
+    ] == ["Beta", "alpha", "", None]
+
+
+@pytest.mark.anyio
+async def test_list_designations_are_complete_ranked_and_keep_primary_flags(client, dso_loaded):
     resp = await client.get("/api/dso?q=M42")
     items = resp.json()["items"]
     m42 = next(i for i in items if i["primary_designation"] == "M 42")
-    catalogs = {d["catalog"] for d in m42["designations"]}
-    # Must include primary (messier) but NOT the LBN/PGC extras.
-    assert "messier" in catalogs
-    assert "lbn" not in catalogs
-    assert "pgc" not in catalogs
+    assert [
+        (designation["catalog"], designation["display_form"], designation["is_primary"])
+        for designation in m42["designations"]
+    ] == [
+        ("messier", "M 42", True),
+        ("ngc", "NGC 1976", False),
+        ("lbn", "LBN 974", False),
+        ("pgc", "PGC 26257", False),
+    ]
 
 
 # ── Detail ───────────────────────────────────────────────────────────────────

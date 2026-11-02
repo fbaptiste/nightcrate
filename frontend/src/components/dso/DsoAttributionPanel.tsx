@@ -10,6 +10,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import CloseIcon from "@mui/icons-material/Close";
 import { fetchCatalogSources } from "@/api/dsos";
+import { formatLocalDate } from "@/lib/localDate";
 
 interface Props {
   open: boolean;
@@ -44,6 +45,11 @@ export default function DsoAttributionPanel({ open, onClose }: Props) {
           of VizieR data should acknowledge that service.
         </Typography>
 
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
+          Sky images: Digitized Sky Survey (STScI/NASA), colour HiPS by CDS, served by
+          CDS or ESA ESASky.
+        </Typography>
+
         {isLoading && <CircularProgress size={20} />}
 
         <Stack spacing={2}>
@@ -63,7 +69,9 @@ export default function DsoAttributionPanel({ open, onClose }: Props) {
               <Stack spacing={0.5} sx={{ mt: 1 }}>
                 {source.version && (
                   <Typography variant="caption" color="text.secondary">
-                    Version: {source.version}
+                    {formatLocalDate(source.version)
+                      ? `Fetched: ${formatLocalDate(source.version)}`
+                      : `Version: ${source.version}`}
                   </Typography>
                 )}
                 <Typography variant="caption" color="text.secondary">

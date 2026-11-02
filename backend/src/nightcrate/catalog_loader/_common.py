@@ -206,12 +206,22 @@ _RETRY_BACKOFF_MIN_S = 0.6
 _RETRY_BACKOFF_MAX_S = 1.4
 
 
+@dataclass(frozen=True, slots=True)
+class RetryEvent:
+    label: str
+    failed_attempt: int
+    next_attempt: int
+    delay_s: float
+    error: str
+
+
 async def retry_with_backoff[T](
     coro_factory: Callable[[], Awaitable[T]],
     *,
     label: str,
     logger: logging.Logger,
     max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+    on_retry: Callable[[RetryEvent], None] | None = None,
 ) -> T:
     """Run *coro_factory* up to *max_attempts* times with jittered backoff.
 
@@ -235,7 +245,18 @@ async def retry_with_backoff[T](
             )
             if attempt == max_attempts:
                 raise
-            await asyncio.sleep(
-                random.uniform(_RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S)  # nosec B311
+            delay = random.uniform(  # nosec B311 - retry jitter, not security-sensitive
+                _RETRY_BACKOFF_MIN_S, _RETRY_BACKOFF_MAX_S
             )
+            if on_retry is not None:
+                on_retry(
+                    RetryEvent(
+                        label=label,
+                        failed_attempt=attempt,
+                        next_attempt=attempt + 1,
+                        delay_s=delay,
+                        error=str(exc) or type(exc).__name__,
+                    )
+                )
+            await asyncio.sleep(delay)
     raise last_exc if last_exc is not None else RuntimeError("retry loop exhausted")

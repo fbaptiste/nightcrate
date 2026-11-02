@@ -124,6 +124,8 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
     hashes: dict[str, str] = {}
     unresolved = 0
     pending_dups: list[tuple[str, object]] = []
+    openngc_rows: list[tuple[int, object, list[tuple[str, str]], int]] = []
+    openngc_barnard_names: dict[str, list[int]] = defaultdict(list)
     file_order = 0
 
     def claim(index: int, catalog: str, identifier: str, primary: bool) -> bool:
@@ -164,11 +166,7 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
                 )
             )
             file_order += 1
-            for pos, (catalog, identifier) in enumerate(canonicals):
-                if catalog != "other":
-                    claim(index, catalog, identifier, pos == primary_idx)
-            for ref in parse_other_id(row.raw_other_id):
-                claim(index, ref.catalog, ref.identifier, False)
+            openngc_rows.append((index, row, canonicals, primary_idx))
         return duplicates
 
     def resolve_dup(source_id: str, dup: object) -> bool:
@@ -195,10 +193,32 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
             if identifier
         )
 
-    main_dups = add_openngc("openngc")
-    pending_dups.extend(item for item in main_dups if not resolve_dup(*item))
-    addendum_dups = add_openngc("openngc_addendum")
-    pending_dups.extend(item for item in addendum_dups if not resolve_dup(*item))
+    pending_dups.extend(add_openngc("openngc"))
+    pending_dups.extend(add_openngc("openngc_addendum"))
+
+    # Own parsed names outrank every other object's alternate names. Claim all
+    # own names before considering dedicated cross-reference columns or the
+    # Identifiers field so ownership is independent of source row order.
+    for index, row, canonicals, primary_idx in openngc_rows:
+        own_name = (row.name_catalog, row.name_identifier)
+        if row.name_catalog is None or row.name_identifier is None:
+            continue
+        own_primary = canonicals[primary_idx] == own_name
+        claim(index, row.name_catalog, row.name_identifier, own_primary)
+        if row.name_catalog == "barnard":
+            match_key = _normalise_barn_id(row.name_identifier).casefold()
+            openngc_barnard_names[match_key].append(index)
+
+    for index, row, canonicals, primary_idx in openngc_rows:
+        own_name = (row.name_catalog, row.name_identifier)
+        for pos, (catalog, identifier) in enumerate(canonicals):
+            if catalog != "other" and (catalog, identifier) != own_name:
+                claim(index, catalog, identifier, pos == primary_idx)
+        for token in row.other_identifiers:
+            for ref in parse_other_id(token):
+                claim(index, ref.catalog, ref.identifier, False)
+
+    pending_dups = [item for item in pending_dups if not resolve_dup(*item)]
     waiting: dict[tuple[str, str], list[int]] = defaultdict(list)
     ready: deque[int] = deque()
     queued: set[int] = set()
@@ -286,6 +306,19 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
             if raw is None or not raw.strip():
                 continue
             source_key = _normalise_barn_id(raw.strip())
+            own_name_targets = openngc_barnard_names.get(source_key.casefold(), ())
+            if len(own_name_targets) == 1:
+                target = own_name_targets[0]
+                merges[(barnard.source_id, source_key)] = target
+                claim(target, "barnard", source_key, False)
+                continue
+            if len(own_name_targets) > 1:
+                unresolved += 1
+                logger.warning(
+                    "[reconcile] Barnard %s matches multiple OpenNGC own names; "
+                    "keeping the objects separate",
+                    source_key,
+                )
             ra_deg = maybe_float(row.get("_RAJ2000"))
             dec_deg = maybe_float(row.get("_DEJ2000"))
             diameter = maybe_float(row.get("Diam"))
@@ -322,6 +355,28 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
     augment = sources.get("nightcrate_augment")
     if augment is not None and augment.file_path.exists():
         hashes[augment.source_id] = file_sha256(augment.file_path)
+
+    # A preferred canonical designation can lose its claim to another
+    # OpenNGC object's own name.  Choose the primary only after every claim is
+    # settled so the stored name and is_primary row always describe a
+    # designation this object actually owns.  Own names were claimed first,
+    # so _pick_primary's first-seen fallback selects the own name when none of
+    # the priority catalogs is available.
+    for index, _row, _canonicals, _primary_idx in openngc_rows:
+        draft = drafts[index]
+        if not draft.designations:
+            continue
+        primary_idx = _pick_primary(
+            [(catalog, identifier) for catalog, identifier, _primary in draft.designations]
+        )
+        primary_catalog, primary_identifier, _primary = draft.designations[primary_idx]
+        draft.columns["primary_designation"] = _build_display_form(
+            primary_catalog, primary_identifier
+        )
+        draft.designations = [
+            (catalog, identifier, position == primary_idx)
+            for position, (catalog, identifier, _primary) in enumerate(draft.designations)
+        ]
 
     objects = tuple(
         NewObject(
@@ -452,6 +507,37 @@ def apply_object_set(
             if len(candidates) == 1:
                 pair(index, candidates[0])
 
+        for index, obj in enumerate(new.objects):
+            if index in matched_new or obj.source_id not in {"openngc", "openngc_addendum"}:
+                continue
+            other_source = "openngc_addendum" if obj.source_id == "openngc" else "openngc"
+            candidates = [
+                row
+                for row in existing_by_source_key.get((other_source, obj.source_key), ())
+                if int(row["id"]) not in claimed_old
+            ]
+            if len(candidates) == 1:
+                pair(index, candidates[0])
+
+        openngc_source_ids = ("openngc", "openngc_addendum")
+        combined_openngc_old_by_hash: dict[str, list[dict[str, object]]] = defaultdict(list)
+        combined_openngc_new_by_hash: dict[str, list[int]] = defaultdict(list)
+        for source_id in openngc_source_ids:
+            state = stored_state.get(source_id)
+            if state is None or not state["keys_assigned"]:
+                for row_hash, old_group in keyless_by_hash[source_id].items():
+                    combined_openngc_old_by_hash[row_hash].extend(
+                        row for row in old_group if int(row["id"]) not in claimed_old
+                    )
+            for row_hash, new_group in new_by_hash[source_id].items():
+                combined_openngc_new_by_hash[row_hash].extend(
+                    index for index in new_group if index not in matched_new
+                )
+        for row_hash, old_candidates in combined_openngc_old_by_hash.items():
+            new_candidates = combined_openngc_new_by_hash.get(row_hash, ())
+            if len(old_candidates) == 1 and len(new_candidates) == 1:
+                pair(new_candidates[0], old_candidates[0])
+
         for source_id in OBJECT_SOURCE_IDS:
             if not new_by_source.get(source_id):
                 continue
@@ -459,6 +545,15 @@ def apply_object_set(
             if state is not None and state["keys_assigned"]:
                 continue
             unchanged = state is not None and state["file_hash"] == new.hashes.get(source_id)
+            for row_hash, old_group in keyless_by_hash[source_id].items():
+                old_candidates = [row for row in old_group if int(row["id"]) not in claimed_old]
+                new_candidates = [
+                    index
+                    for index in new_by_hash[source_id].get(row_hash, ())
+                    if index not in matched_new
+                ]
+                if len(old_candidates) == 1 and len(new_candidates) == 1:
+                    pair(new_candidates[0], old_candidates[0])
             if unchanged:
                 for designation, old_group in keyless_by_designation[source_id].items():
                     old_group = [row for row in old_group if int(row["id"]) not in claimed_old]
@@ -471,28 +566,6 @@ def apply_object_set(
                     new_group.sort(key=lambda index: new.objects[index].file_order)
                     for index, old in zip(new_group, old_group, strict=False):
                         pair(index, old)
-            else:
-                for row_hash, old_group in keyless_by_hash[source_id].items():
-                    old_candidates = [row for row in old_group if int(row["id"]) not in claimed_old]
-                    new_candidates = [
-                        index
-                        for index in new_by_hash[source_id].get(row_hash, ())
-                        if index not in matched_new
-                    ]
-                    if len(old_candidates) == 1 and len(new_candidates) == 1:
-                        pair(new_candidates[0], old_candidates[0])
-
-        for index, obj in enumerate(new.objects):
-            if index in matched_new or obj.source_id not in {"openngc", "openngc_addendum"}:
-                continue
-            other_source = "openngc_addendum" if obj.source_id == "openngc" else "openngc"
-            candidates = [
-                row
-                for row in existing_by_source_key.get((other_source, obj.source_key), ())
-                if int(row["id"]) not in claimed_old
-            ]
-            if len(candidates) == 1:
-                pair(index, candidates[0])
 
         object_ids: dict[int, int] = {}
         for index, obj in enumerate(new.objects):

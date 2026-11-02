@@ -9,8 +9,8 @@ neighbouring DSOs in the same region share cells naturally.
 
 Request lifecycle mirrors ``services/thumbnails.py`` — lookup, background
 fetch via ``asyncio.create_task`` with an in-flight dedup map, optional
-long-poll under ``asyncio.shield``, 1-hour failure backoff,
-``hips2fits`` render via the WCS URL builder so every cell in a region
+long-poll under ``asyncio.shield``, 10-minute failure backoff, and a
+HiPS-tile render using the shared regional WCS so every cell in a region
 lands on the same tangent plane.
 
 Files live under ``APP_DIR/sky_tiles/`` (separate from
@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,18 +32,12 @@ from typing import Literal
 
 import aiosqlite
 
-from nightcrate.core import app_config
-from nightcrate.services.hips_client import (
-    HIPS_DSS2_COLOR,
-    HIPS_DSS2_RED,
-    build_hips2fits_wcs_url,
-    fetch_hips_image,
-)
+from nightcrate.services import hips_tiles, image_cache
 from nightcrate.services.sky_tiles import (
     TIERS,
     Tier,
     TierSpec,
-    cell_wcs_dict,
+    cell_wcs,
 )
 
 logger = logging.getLogger("nightcrate.sky_tile_cache")
@@ -57,13 +53,11 @@ _PLACEHOLDER_PNG = bytes.fromhex(
     "44ae426082"
 )
 
-_FETCH_ERROR_BACKOFF = timedelta(hours=1)
+_FETCH_ERROR_BACKOFF = timedelta(minutes=10)
 
-# Matches the browser's conventional 6-per-origin limit (some modern
-# browsers default to 6–8 for HTTP/1.1) so the backend no longer
-# bottlenecks below what the frontend is already firing in parallel.
-# CDS can handle this from a single user; keep well under any
-# rate-limit threshold — don't bump this past ~10 without measuring.
+# Cap how many cache-miss tasks can queue renders at once. The shared HiPS
+# service applies the tighter CPU and upstream-request limits across both
+# rendered-image caches.
 _MAX_CONCURRENT_FETCHES = 8
 _fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
 
@@ -127,10 +121,7 @@ def make_cell_key(
 
 def cell_dir(*, create: bool = True) -> Path:
     """User-writable directory. Created on first access."""
-    d = app_config.APP_DIR / "sky_tiles"
-    if create:
-        d.mkdir(parents=True, exist_ok=True)
-    return d
+    return image_cache.cache_dir("sky_tile", create=create)
 
 
 def _hips_slug(hips_survey: str) -> str:
@@ -152,10 +143,7 @@ def _cell_path(key: CellKey) -> Path:
 # Filename pattern — kept loose enough to evolve without breaking the
 # orphan sweep. The sweep only deletes files that BOTH match this regex
 # AND are absent from the cache table, so a stricter match is preferred.
-_CELL_FILENAME_RE = re.compile(
-    r"^[A-Za-z0-9_]+_n\d+_p\d+_(narrow|med|wide)_\d+_"
-    r"\d+x\d+_-?\d+_-?\d+\.jpg$"
-)
+_CELL_FILENAME_RE = image_cache.SKY_TILE_FILENAME_RE
 
 
 # ── Cache lookup + mutation ──────────────────────────────────────────────────
@@ -237,36 +225,68 @@ async def _insert_cache_row(
 
 
 async def _evict_lru(conn: aiosqlite.Connection, max_bytes: int) -> int:
-    """Evict LRU rows until the cache's total size is under ``max_bytes``.
-
-    Deletes the on-disk file before the DB row so a crash in the middle
-    doesn't leave an orphan file outliving its metadata.
-    """
-    cursor = await conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM sky_tile_cache")
-    total_row = await cursor.fetchone()
-    total = int(total_row[0]) if total_row else 0
-    if total <= max_bytes:
-        return 0
-
-    evicted = 0
-    while total > max_bytes:
-        cursor = await conn.execute(
-            "SELECT id, file_path, bytes FROM sky_tile_cache ORDER BY last_access_at ASC LIMIT 1"
-        )
-        oldest = await cursor.fetchone()
-        if oldest is None:
-            break
-        Path(oldest["file_path"]).unlink(missing_ok=True)
-        await conn.execute("DELETE FROM sky_tile_cache WHERE id = ?", (oldest["id"],))
-        total -= int(oldest["bytes"])
-        evicted += 1
-    await conn.commit()
-    return evicted
+    """Evict against the budget shared with DSO thumbnails."""
+    async with image_cache.lock:
+        return await image_cache.evict_lru_locked(conn, max_bytes)
 
 
 # ── Background fetch ─────────────────────────────────────────────────────────
 
 _in_flight: dict[CellKey, asyncio.Task] = {}
+_failure_backoff: dict[CellKey, float] = {}
+
+
+def _clock() -> float:
+    return time.monotonic()
+
+
+def _failure_backoff_active(key: CellKey) -> bool:
+    deadline = _failure_backoff.get(key)
+    if deadline is None:
+        return False
+    if deadline > _clock():
+        return True
+    _failure_backoff.pop(key, None)
+    return False
+
+
+async def _record_fetch_failure(
+    conn: aiosqlite.Connection,
+    key: CellKey,
+    *,
+    file_path: str,
+    error: Exception,
+    expected_generation: int | None = None,
+) -> None:
+    """Persist a failure sentinel, falling back to a process-local backoff."""
+    async with image_cache.lock:
+        if expected_generation is not None and expected_generation != image_cache.generation():
+            return
+        try:
+            await conn.rollback()
+        except Exception:  # noqa: BLE001 — recovery is best effort
+            logger.debug("[sky_tiles] rollback before failure sentinel failed", exc_info=True)
+        try:
+            await _insert_cache_row(
+                conn,
+                key,
+                file_path=file_path,
+                source="placeholder",
+                bytes_size=0,
+                fetch_error=str(error),
+            )
+        except Exception:  # noqa: BLE001 — the in-memory backoff is the final guard
+            try:
+                await conn.rollback()
+            except Exception:  # noqa: BLE001 — recovery is best effort
+                logger.debug("[sky_tiles] rollback after failure sentinel failed", exc_info=True)
+            _failure_backoff[key] = _clock() + _FETCH_ERROR_BACKOFF.total_seconds()
+            logger.exception(
+                "[sky_tiles] could not persist failure sentinel for cell=%s; using memory backoff",
+                key,
+            )
+        else:
+            _failure_backoff.pop(key, None)
 
 
 async def _fetch_and_store(
@@ -277,57 +297,60 @@ async def _fetch_and_store(
     region_dec_deg: float,
     max_cache_bytes: int,
 ) -> None:
-    """Fetch a cell from hips2fits (DSS2 Color → DSS2 Red fallback) and persist.
+    """Render a DSS2 colour cell from HiPS tiles and persist it.
 
-    Write-then-insert ordering means a crash between the two leaves an
-    orphan file the startup sweep will clean up; it never leaves a
-    dangling metadata row pointing at missing bytes.
+    Atomic-replace-then-insert ordering means a crash between the two can
+    leave a complete orphan file for the startup sweep; it cannot expose a
+    partial final JPEG or leave metadata pointing at missing bytes.
     """
+    render_generation = image_cache.generation()
     tier = TIERS[key.tier]
-    wcs = cell_wcs_dict(region_ra_deg, region_dec_deg, tier, key.cell_i, key.cell_j)
-    color_url = build_hips2fits_wcs_url(HIPS_DSS2_COLOR, wcs)
-    red_url = build_hips2fits_wcs_url(HIPS_DSS2_RED, wcs)
+    wcs = cell_wcs(region_ra_deg, region_dec_deg, tier, key.cell_i, key.cell_j)
 
     async with _fetch_semaphore:
         try:
-            body = await fetch_hips_image(color_url)
-            source = "dss2_color"
-        except Exception as color_exc:  # noqa: BLE001 — fallback on any failure
-            logger.info(
-                "[sky_tiles] cell=%s color fetch failed (%s); trying DSS2 red",
+            rendered = await hips_tiles.render(wcs, tier.cell_width_px, tier.cell_height_px)
+        except Exception as exc:  # noqa: BLE001 — record + backoff
+            logger.warning("[sky_tiles] cell=%s render failed: %s", key, exc)
+            await _record_fetch_failure(
+                conn,
                 key,
-                color_exc,
+                file_path=_cell_path(key).name,
+                error=exc,
+                expected_generation=render_generation,
             )
-            try:
-                body = await fetch_hips_image(red_url)
-                source = "dss2_red"
-            except Exception as red_exc:  # noqa: BLE001 — record + backoff
-                logger.warning(
-                    "[sky_tiles] cell=%s both color and red fetches failed: %s / %s",
-                    key,
-                    color_exc,
-                    red_exc,
-                )
-                await _insert_cache_row(
-                    conn,
-                    key,
-                    file_path=str(_cell_path(key)),
-                    source="placeholder",
-                    bytes_size=0,
-                    fetch_error=f"color: {color_exc}; red: {red_exc}",
-                )
-                return
+            return
 
     path = _cell_path(key)
-    path.write_bytes(body)
-    await _insert_cache_row(
-        conn,
-        key,
-        file_path=str(path),
-        source=source,
-        bytes_size=len(body),
-    )
-    await _evict_lru(conn, max_cache_bytes)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        async with image_cache.lock:
+            if render_generation != image_cache.generation():
+                return
+            try:
+                temporary.write_bytes(rendered.jpeg)
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            await _insert_cache_row(
+                conn,
+                key,
+                file_path=path.name,
+                source="dss2_color",
+                bytes_size=len(rendered.jpeg),
+            )
+            await image_cache.evict_lru_locked(conn, max_cache_bytes)
+    except Exception as exc:  # noqa: BLE001 — persist failure and enforce backoff
+        logger.warning("[sky_tiles] cell=%s persistence failed: %s", key, exc)
+        await _record_fetch_failure(
+            conn,
+            key,
+            file_path=path.name,
+            error=exc,
+            expected_generation=render_generation,
+        )
+        return
+    _failure_backoff.pop(key, None)
 
 
 async def _background_wrapper(
@@ -380,8 +403,12 @@ async def get_cell(
     # Cache hit — serve and refresh LRU.
     if row is not None and row["fetch_error"] is None and row["source"] != "placeholder":
         try:
-            body = Path(row["file_path"]).read_bytes()
+            path = image_cache.resolve_path(str(row["file_path"]), "sky_tile")
+            if path is None:
+                raise FileNotFoundError
+            body = path.read_bytes()
             await _touch_last_access(conn, row["id"])
+            _failure_backoff.pop(key, None)
             return CellResult(body=body, content_type="image/jpeg", status="hit")
         except FileNotFoundError:
             logger.warning(
@@ -397,6 +424,9 @@ async def get_cell(
         if datetime.now(UTC) - fetched_at < _FETCH_ERROR_BACKOFF:
             return CellResult(body=b"", content_type="image/png", status="error")
         await _delete_cache_row(conn, row["id"])
+
+    if _failure_backoff_active(key):
+        return CellResult(body=b"", content_type="image/png", status="error")
 
     # Miss — schedule (or reuse) the background fetch.
     task = _in_flight.get(key)
@@ -427,12 +457,17 @@ async def get_cell(
             row = await _lookup_cache_row(conn, key)
             if row is not None and row["fetch_error"] is None and row["source"] != "placeholder":
                 try:
-                    body = Path(row["file_path"]).read_bytes()
+                    path = image_cache.resolve_path(str(row["file_path"]), "sky_tile")
+                    if path is None:
+                        raise FileNotFoundError
+                    body = path.read_bytes()
                     await _touch_last_access(conn, row["id"])
                     return CellResult(body=body, content_type="image/jpeg", status="hit")
                 except FileNotFoundError:
                     pass
             if row is not None and row["fetch_error"] is not None:
+                return CellResult(body=b"", content_type="image/png", status="error")
+            if _failure_backoff_active(key):
                 return CellResult(body=b"", content_type="image/png", status="error")
 
     return CellResult(body=_PLACEHOLDER_PNG, content_type="image/png", status="placeholder")
@@ -440,15 +475,26 @@ async def get_cell(
 
 async def clear_cache(conn: aiosqlite.Connection) -> int:
     """Wipe the metadata table and every file on disk. Returns files deleted."""
-    cursor = await conn.execute("SELECT file_path FROM sky_tile_cache")
-    rows = await cursor.fetchall()
-    deleted = 0
-    for row in rows:
-        Path(row["file_path"]).unlink(missing_ok=True)
-        deleted += 1
-    await conn.execute("DELETE FROM sky_tile_cache")
-    await conn.commit()
-    return deleted
+    async with image_cache.lock:
+        cursor = await conn.execute("SELECT file_path FROM sky_tile_cache")
+        rows = await cursor.fetchall()
+        deleted = 0
+        for row in rows:
+            path = image_cache.resolve_path(str(row["file_path"]), "sky_tile")
+            if path is None:
+                continue
+            existed = path.exists()
+            path.unlink(missing_ok=True)
+            deleted += int(existed)
+        await conn.execute("DELETE FROM sky_tile_cache")
+        await conn.commit()
+        _failure_backoff.clear()
+        image_cache.advance_generation()
+        return deleted
+
+
+def reset_failure_backoff() -> None:
+    _failure_backoff.clear()
 
 
 _REHYDRATE_FILENAME_RE = re.compile(
@@ -478,33 +524,57 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
 
     Returns the number of rows inserted.
     """
-    d = cell_dir(create=False)
-    if not d.is_dir():
-        return 0
+    async with image_cache.lock:
+        d = cell_dir(create=False)
+        if not d.is_dir():
+            return 0
 
-    cursor = await conn.execute("SELECT file_path FROM sky_tile_cache")
-    known = {str(Path(row["file_path"]).resolve()) for row in await cursor.fetchall()}
-
-    inserted = 0
-    for entry in d.iterdir():
-        if not entry.is_file() or entry.suffix != ".jpg":
-            continue
-        if str(entry.resolve()) in known:
-            continue
-        match = _REHYDRATE_FILENAME_RE.match(entry.name)
-        if match is None:
-            continue
-        hips = _SLUG_TO_HIPS.get(match.group("slug"))
-        if hips is None:
-            continue
-        try:
+        inserted = 0
+        changed = False
+        for entry in d.iterdir():
+            if not entry.is_file() or entry.suffix != ".jpg":
+                continue
+            if image_cache.resolve_path(entry.name, "sky_tile") is None:
+                continue
+            match = _REHYDRATE_FILENAME_RE.match(entry.name)
+            if match is None:
+                continue
+            hips = _SLUG_TO_HIPS.get(match.group("slug"))
+            if hips is None:
+                continue
             size_bytes = entry.stat().st_size
-        except OSError:
-            continue
-        if size_bytes < 100:
-            # Truncated / placeholder file — skip so we re-fetch fresh.
-            continue
-        try:
+            if size_bytes < 100:
+                continue
+            values = (
+                hips,
+                int(match.group("nside")),
+                int(match.group("ipix")),
+                match.group("tier"),
+                int(match.group("csize")),
+                int(match.group("w")),
+                int(match.group("h")),
+                int(match.group("i")),
+                int(match.group("j")),
+            )
+            cursor = await conn.execute(
+                """
+                SELECT id, file_path, bytes FROM sky_tile_cache
+                WHERE hips_survey = ? AND healpix_nside = ? AND healpix_ipix = ?
+                  AND tier = ? AND cell_size_deg_x100 = ?
+                  AND cell_width_px = ? AND cell_height_px = ?
+                  AND cell_i = ? AND cell_j = ?
+                """,
+                values,
+            )
+            existing = await cursor.fetchone()
+            if existing is not None:
+                if existing["file_path"] != entry.name or int(existing["bytes"]) != size_bytes:
+                    await conn.execute(
+                        "UPDATE sky_tile_cache SET file_path = ?, bytes = ? WHERE id = ?",
+                        (entry.name, size_bytes, existing["id"]),
+                    )
+                    changed = True
+                continue
             await conn.execute(
                 """
                 INSERT INTO sky_tile_cache (
@@ -513,32 +583,15 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
                     cell_i, cell_j, file_path, source, bytes
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dss2_color', ?)
                 """,
-                (
-                    hips,
-                    int(match.group("nside")),
-                    int(match.group("ipix")),
-                    match.group("tier"),
-                    int(match.group("csize")),
-                    int(match.group("w")),
-                    int(match.group("h")),
-                    int(match.group("i")),
-                    int(match.group("j")),
-                    str(entry),
-                    size_bytes,
-                ),
+                (*values, entry.name, size_bytes),
             )
             inserted += 1
-        except aiosqlite.IntegrityError:
-            # Race with a concurrent insert (shouldn't happen at
-            # startup, but belt-and-braces). Skip silently.
-            continue
-    if inserted:
-        await conn.commit()
-        logger.info(
-            "[sky_tiles] rehydrated %d on-disk file(s) into the cache index",
-            inserted,
-        )
-    return inserted
+            changed = True
+        if changed:
+            await conn.commit()
+        if inserted:
+            logger.info("[sky_tiles] rehydrated %d on-disk file(s) into the cache index", inserted)
+        return inserted
 
 
 async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
@@ -549,25 +602,36 @@ async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
     left is either corrupt, from an unrecognised hips survey, or has
     been removed from the cache table explicitly.
     """
-    d = cell_dir(create=False)
-    if not d.is_dir():
-        return 0
+    async with image_cache.lock:
+        d = cell_dir(create=False)
+        if not d.is_dir():
+            return 0
 
-    cursor = await conn.execute("SELECT file_path FROM sky_tile_cache")
-    known = {str(Path(row["file_path"]).resolve()) for row in await cursor.fetchall()}
+        cursor = await conn.execute("SELECT file_path FROM sky_tile_cache")
+        known = {
+            path.name
+            for row in await cursor.fetchall()
+            if (path := image_cache.resolve_path(str(row["file_path"]), "sky_tile")) is not None
+        }
 
-    removed = 0
-    for entry in d.iterdir():
-        if not entry.is_file() or entry.suffix != ".jpg":
-            continue
-        if not _CELL_FILENAME_RE.match(entry.name):
-            continue
-        if str(entry.resolve()) not in known:
-            entry.unlink(missing_ok=True)
-            removed += 1
-    if removed:
-        logger.info("[sky_tiles] startup sweep removed %d orphan file(s)", removed)
-    return removed
+        removed = 0
+        for entry in d.iterdir():
+            if not entry.is_file():
+                continue
+            if image_cache.resolve_path(entry.name, "sky_tile") is None:
+                continue
+            if entry.name.startswith(".") and entry.suffix == ".tmp":
+                entry.unlink(missing_ok=True)
+                removed += 1
+                continue
+            if entry.suffix != ".jpg" or not _CELL_FILENAME_RE.match(entry.name):
+                continue
+            if entry.name not in known:
+                entry.unlink(missing_ok=True)
+                removed += 1
+        if removed:
+            logger.info("[sky_tiles] startup sweep removed %d orphan file(s)", removed)
+        return removed
 
 
 async def cache_stats(conn: aiosqlite.Connection, *, max_bytes: int) -> dict[str, int]:

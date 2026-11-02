@@ -17,7 +17,6 @@ from nightcrate.services.sky_tiles import (
     HEALPIX_NSIDE,
     TIERS,
     cell_wcs,
-    cell_wcs_dict,
     compute_grid_layout,
     ipix_for_coord,
     tangent_for_ipix,
@@ -233,52 +232,6 @@ def test_diagonal_corner_shared_across_four_cells():
     for other in (se10, nw01, ne11):
         assert other[0] == pytest.approx(sw00[0], abs=1e-10)
         assert other[1] == pytest.approx(sw00[1], abs=1e-10)
-
-
-# ─────────────────────────────────────────────────────────────────────
-# hips2fits WCS-dict serialisation
-# ─────────────────────────────────────────────────────────────────────
-
-
-def test_cell_wcs_dict_has_required_keys():
-    """hips2fits requires NAXIS*, CTYPE*, CRVAL*, CRPIX*, CDELT* at minimum."""
-    tier = TIERS["narrow"]
-    d = cell_wcs_dict(150.0, 40.0, tier, 0, 0)
-    required = {
-        "NAXIS",
-        "NAXIS1",
-        "NAXIS2",
-        "CTYPE1",
-        "CTYPE2",
-        "CRVAL1",
-        "CRVAL2",
-        "CRPIX1",
-        "CRPIX2",
-        "CDELT1",
-        "CDELT2",
-    }
-    assert required.issubset(set(d.keys()))
-    assert d["NAXIS1"] == tier.cell_width_px
-    assert d["NAXIS2"] == tier.cell_height_px
-    assert d["CTYPE1"] == "RA---TAN"
-    assert d["CTYPE2"] == "DEC--TAN"
-    assert d["CRVAL1"] == pytest.approx(150.0)
-    assert d["CRVAL2"] == pytest.approx(40.0)
-
-
-def test_cell_wcs_dict_is_json_serialisable():
-    """hips2fits takes ``wcs=<JSON>`` — every value must round-trip through json."""
-    import json
-
-    tier = TIERS["narrow"]
-    d = cell_wcs_dict(150.0, 40.0, tier, +2, -1)
-    s = json.dumps(d)
-    parsed = json.loads(s)
-    # Values that matter for cell identity must survive the trip unchanged.
-    for key in ("NAXIS1", "NAXIS2", "CTYPE1", "CTYPE2"):
-        assert parsed[key] == d[key]
-    for key in ("CRVAL1", "CRVAL2", "CRPIX1", "CRPIX2", "CDELT1", "CDELT2"):
-        assert float(parsed[key]) == pytest.approx(float(d[key]))
 
 
 # ─────────────────────────────────────────────────────────────────────

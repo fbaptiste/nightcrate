@@ -26,8 +26,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nightcrate.catalog_loader._common import retry_with_backoff
+from nightcrate.catalog_loader._common import RetryEvent, retry_with_backoff
 from nightcrate.services import http_client
+from nightcrate.services.catalog_progress import ProgressCallback, ProgressUpdate
 
 logger = logging.getLogger("nightcrate.catalog_loader.wikidata")
 
@@ -217,6 +218,11 @@ def read_installed_version(catalogs_root: Path) -> dict:
         return {}
 
 
+def _emit(on_progress: ProgressCallback | None, progress: ProgressUpdate) -> None:
+    if on_progress is not None:
+        on_progress(progress)
+
+
 # ── Shape verification ──────────────────────────────────────────────────────
 
 
@@ -245,6 +251,7 @@ async def fetch_wikidata_external_refs(
     catalogs_root: Path,
     *,
     app_version: str,
+    on_progress: ProgressCallback | None = None,
 ) -> WikidataFetchResult:
     """Download the Wikidata SPARQL TSV atomically into *catalogs_root*/wikidata.
 
@@ -266,6 +273,39 @@ async def fetch_wikidata_external_refs(
     final_path = wikidata_dir / "dso_external_refs.tsv"
 
     async def _download() -> bytes:
+        def _http_event(event: http_client.GetEvent) -> None:
+            if event.kind == "attempt":
+                _emit(
+                    on_progress,
+                    ProgressUpdate("waiting", "Waiting for Wikidata results…"),
+                )
+            elif event.kind == "response" and event.status_code is not None:
+                if event.status_code < 400:
+                    _emit(
+                        on_progress,
+                        ProgressUpdate(
+                            "downloading",
+                            "Downloading Wikidata references…",
+                            bytes_total=event.content_length,
+                        ),
+                    )
+            elif event.kind == "bytes" and event.status_code is not None:
+                if event.status_code < 400:
+                    _emit(
+                        on_progress,
+                        ProgressUpdate(
+                            "downloading",
+                            "Downloading Wikidata references…",
+                            bytes_received=event.bytes_received,
+                            bytes_total=event.content_length,
+                        ),
+                    )
+            elif event.kind == "retry_delay":
+                _emit(
+                    on_progress,
+                    ProgressUpdate("retrying", "Wikidata request failed. Retrying…"),
+                )
+
         # Wikidata's SPARQL endpoint drives format via ``Accept`` content
         # negotiation; the alternate ``format=`` query param is ignored when
         # ``Accept`` is set, and using both together was observed to fall
@@ -280,6 +320,7 @@ async def fetch_wikidata_external_refs(
             label="wikidata:sparql",
             follow_redirects=True,
             timeout=_DOWNLOAD_TIMEOUT_S,
+            on_event=_http_event if on_progress is not None else None,
         )
         if response.status_code >= 400:
             raise RuntimeError(
@@ -295,17 +336,27 @@ async def fetch_wikidata_external_refs(
         return content
 
     try:
+
+        def _outer_retry(_event: RetryEvent) -> None:
+            _emit(
+                on_progress,
+                ProgressUpdate("retrying", "Wikidata request failed. Retrying…"),
+            )
+
         content = await retry_with_backoff(
             _download,
             label="fetch:wikidata",
             logger=logger,
+            on_retry=_outer_retry if on_progress is not None else None,
         )
+        _emit(on_progress, ProgressUpdate("checking", "Checking downloaded files…"))
         _verify_tsv_shape(tmp_path)
 
         # Invalidate the commit marker before renaming.
         version_json = wikidata_dir / "version.json"
         version_json.unlink(missing_ok=True)
 
+        _emit(on_progress, ProgressUpdate("saving", "Saving files to the local cache…"))
         tmp_path.replace(final_path)
 
         result = WikidataFetchResult(

@@ -46,9 +46,16 @@ KNOWN_OBJ_TYPES: frozenset[str] = frozenset(
 # clear failure at parse time, naming the absent column.
 REQUIRED_COLUMNS: tuple[str, ...] = ("Name", "Type", "RA", "Dec")
 
-# The Name column's prefix — e.g., "NGC1976" → ("NGC", "1976"). Trailing
-# letter suffixes (e.g., "NGC1976A") are part of the identifier.
-_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+# The Name column's prefix — e.g., "NGC1976" → ("NGC", "1976"). Sh2 is
+# the one supported prefix containing a digit. Trailing letter suffixes
+# (e.g., "NGC1976A") are part of the identifier.
+_NAME_PREFIX_RE = re.compile(r"^(Sh2|[A-Za-z]+)(.*)$")
+
+# A small number of upstream rows omit the comma between a PGC number and the
+# following catalog name (for example ``PGC 056771SDSS J...``). Require a
+# multi-character, uppercase catalog token followed by whitespace so ordinary
+# PGC suffixes remain untouched.
+_FUSED_PGC_RE = re.compile(r"(\bPGC\s+\d+)(?=[A-Z][A-Z0-9]{1,}\s)")
 
 # Map of OpenNGC Name-column prefixes → (catalog, zero-strip). Used to build
 # the primary designation for each row.
@@ -58,6 +65,7 @@ _NAME_CATALOG: dict[str, str] = {
     "M": "messier",
     "C": "caldwell",
     "B": "barnard",
+    "HCG": "hickson",
     "ESO": "eso",
     "PGC": "pgc",
     "UGC": "ugc",
@@ -104,6 +112,7 @@ class ParsedOpenNgcRow:
     ned_notes: str | None
     openngc_notes: str | None
     raw_other_id: str | None
+    other_identifiers: tuple[str, ...]
 
     # Designation builders
     raw_name: str  # original Name value ("NGC1976", "M040", etc.)
@@ -187,6 +196,14 @@ def _strip_leading_zeros(value: str | None) -> str | None:
     return stripped + suffix
 
 
+def split_identifiers(raw: str | None) -> tuple[str, ...]:
+    """Split OpenNGC's identifier list, repairing a missing post-PGC comma."""
+    if not raw:
+        return ()
+    repaired = _FUSED_PGC_RE.sub(r"\1,", raw)
+    return tuple(token.strip() for token in repaired.split(",") if token.strip())
+
+
 def _parse_name(raw_name: str) -> tuple[str | None, str | None]:
     """Split an OpenNGC ``Name`` value into ``(catalog, identifier)``.
 
@@ -208,6 +225,8 @@ def _parse_name(raw_name: str) -> tuple[str | None, str | None]:
     if catalog is None:
         return None, None
 
+    if prefix == "Sh2":
+        rest = rest.lstrip("- ")
     identifier = _strip_leading_zeros(rest) if rest else None
     return catalog, identifier
 
@@ -306,6 +325,7 @@ def parse_openngc(path: Path) -> Iterator[ParsedOpenNgcRow]:
                 # None and let the loader decide whether to keep the row.
                 ra_deg, dec_deg = None, None
 
+            raw_other_id = _maybe_str(row.get("Identifiers"))
             yield ParsedOpenNgcRow(
                 obj_type=obj_type,
                 raw_obj_type=raw_obj_type,
@@ -333,7 +353,8 @@ def parse_openngc(path: Path) -> Iterator[ParsedOpenNgcRow]:
                 common_name=_maybe_str(row.get("Common names")),
                 ned_notes=_maybe_str(row.get("NED notes")),
                 openngc_notes=_maybe_str(row.get("OpenNGC notes")),
-                raw_other_id=_maybe_str(row.get("Identifiers")),
+                raw_other_id=raw_other_id,
+                other_identifiers=split_identifiers(raw_other_id),
                 raw_name=(row.get("Name") or "").strip(),
                 name_catalog=name_catalog,
                 name_identifier=name_identifier,

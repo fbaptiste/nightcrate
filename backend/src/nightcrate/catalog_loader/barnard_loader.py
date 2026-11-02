@@ -1,9 +1,9 @@
 """Barnard dark-nebula catalog loader (VizieR VII/220).
 
-Every row creates a standalone DSO with ``obj_type = 'DrkN'``. Unlike
-Sharpless, Barnard does NOT crossref-merge onto existing DSOs — dark
-nebulae and emission regions at the same line of sight are physically
-distinct objects and should not be conflated.
+Rows normally create standalone ``DrkN`` objects. A row merges only when its
+full normalized Barnard identifier unambiguously matches a surviving OpenNGC
+object's parsed own name. Alternate names and coincident emission regions are
+not merge evidence.
 
 Constellation codes are derived from J2000 RA/Dec via astropy.
 """

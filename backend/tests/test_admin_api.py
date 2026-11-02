@@ -1,11 +1,14 @@
 """Tests for the admin API endpoints."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.api import admin
 from nightcrate.main import app
+from nightcrate.services import catalog_progress, thumbnails
 
 
 @pytest.fixture
@@ -65,6 +68,55 @@ async def test_health_includes_db_configured(client):
     assert "db_configured" in data
     assert data["status"] == "ok"
     assert "version" in data
+
+
+@pytest.mark.anyio
+async def test_active_catalog_update_guards_all_database_changes_before_side_effects(
+    client, tmp_path
+):
+    operation_id = catalog_progress.start("fetch_openngc", source="openngc")
+    message = "A catalog update is running. Wait for it to finish before changing databases."
+    try:
+        requests = (
+            ("/api/admin/database/create", {"path": str(tmp_path / "create"), "name": "Create"}),
+            ("/api/admin/database/add", {"path": str(tmp_path / "add"), "name": "Add"}),
+            ("/api/admin/database/activate", {"path": str(tmp_path / "activate")}),
+            ("/api/admin/database/setup", {"path": str(tmp_path / "setup"), "name": "Setup"}),
+        )
+        for endpoint, body in requests:
+            response = await client.post(endpoint, json=body)
+            assert response.status_code == 409
+            assert response.json() == {"detail": message}
+        assert not any(
+            (tmp_path / name).exists() for name in ("create", "add", "activate", "setup")
+        )
+    finally:
+        catalog_progress.finish(
+            operation_id,
+            outcome="success",
+            message="Finished",
+        )
+
+    # A retained finished snapshot is informational and no longer guards.
+    response = await client.post(
+        "/api/admin/database/add",
+        json={"path": str(tmp_path / "missing"), "name": "Missing"},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_failed_reconciliation_does_not_run_orphan_sweep(monkeypatch):
+    reconcile = AsyncMock(side_effect=OSError("unreadable cache directory"))
+    sweep = AsyncMock()
+    monkeypatch.setattr(thumbnails, "rehydrate_from_disk", reconcile)
+    monkeypatch.setattr(thumbnails, "sync_orphan_files", sweep)
+
+    result = await admin._rehydrate_caches_for_active_db()
+
+    assert result["thumbnails_rehydrated"] == 0
+    assert result["thumbnails_orphans_removed"] == 0
+    sweep.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -761,10 +813,10 @@ async def test_fetch_from_github_happy_path(client, tmp_path, monkeypatch):
 
     from nightcrate.catalog_loader import remote
 
-    async def fake_fetch():
+    async def fake_fetch(_on_progress=None):
         return remote.RemoteReleaseInfo(tag_name="v20260307", published_at=None, release_url="")
 
-    async def fake_download(release, catalogs_root):
+    async def fake_download(release, catalogs_root, _on_progress=None):
         # Simulate a real download by staging the mini fixtures under the
         # expected filenames.
         shutil.copy(mini_fixture / "mini_NGC.csv", openngc_dir / "NGC.csv")
@@ -796,7 +848,7 @@ async def test_fetch_from_github_network_failure_returns_502(client, tmp_path, m
     )
     assert setup_resp.status_code == 200
 
-    async def fake_fetch():
+    async def fake_fetch(_on_progress=None):
         raise RuntimeError("GitHub unreachable")
 
     monkeypatch.setattr("nightcrate.catalog_loader.remote.fetch_latest_release", fake_fetch)
@@ -818,10 +870,10 @@ async def test_fetch_routes_do_not_force(client, tmp_path, monkeypatch):
         )
     ).status_code == 200
 
-    async def fake_fetch():
+    async def fake_fetch(_on_progress=None):
         return RemoteReleaseInfo("v-test", "2026-01-01", "https://example.invalid")
 
-    async def fake_download(_release, _root):
+    async def fake_download(_release, _root, _on_progress=None):
         return None
 
     seen: list[bool] = []

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from nightcrate.db.session import get_db
 from nightcrate.main import app
+from nightcrate.services import hips_tiles
 from nightcrate.services.planner_visibility import default_cache
 
 
@@ -320,6 +324,153 @@ async def test_targets_multi_sort(client: TestClient, seed_db):
     assert sizes == sorted(sizes)
 
 
+async def test_targets_sort_designations_naturally_in_both_directions(client: TestClient, seed_db):
+    _ = seed_db
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await source.fetchone())["id"])
+        for index, designation in enumerate(
+            ("NGC 10", "NGC 2", "ESO 107-010", "ESO 107-2", "M 31", "Mel 1")
+        ):
+            await conn.execute(
+                """
+                INSERT INTO dso (
+                    primary_designation, obj_type, ra_deg, dec_deg, common_name,
+                    source_catalog_id, source_row_hash
+                ) VALUES (?, 'G', ?, 10, 'Phase F planner', ?, ?)
+                """,
+                (designation, 20 + index, source_id, f"phase-f-planner-{index}"),
+            )
+        await conn.commit()
+
+    common = {
+        "restrict_tonight": "false",
+        "q": "Phase F planner",
+        "limit": 100,
+    }
+    ascending = client.get(
+        "/api/planner/targets",
+        params={**common, "sort": "primary_designation:asc"},
+    )
+    descending = client.get(
+        "/api/planner/targets",
+        params={**common, "sort": "primary_designation:desc"},
+    )
+    assert ascending.status_code == descending.status_code == 200
+    expected = ["ESO 107-2", "ESO 107-010", "M 31", "Mel 1", "NGC 2", "NGC 10"]
+    assert [item["primary_designation"] for item in ascending.json()["items"]] == expected
+    assert [item["primary_designation"] for item in descending.json()["items"]] == list(
+        reversed(expected)
+    )
+
+
+async def test_tied_designations_use_ascending_id_across_pages_in_both_directions(
+    client: TestClient, seed_db
+):
+    _ = seed_db
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await source.fetchone())["id"])
+        tied_ids: list[int] = []
+        for index in range(3):
+            cursor = await conn.execute(
+                """
+                INSERT INTO dso (
+                    primary_designation, obj_type, ra_deg, dec_deg, common_name,
+                    source_catalog_id, source_row_hash
+                ) VALUES ('B 33', 'DrkN', ?, 10, 'Phase F tied designation', ?, ?)
+                """,
+                (20 + index, source_id, f"phase-f-tied-{index}"),
+            )
+            tied_ids.append(int(cursor.lastrowid))
+        await conn.commit()
+
+    for direction in ("asc", "desc"):
+        pages: list[int] = []
+        for offset in (0, 2):
+            response = client.get(
+                "/api/planner/targets",
+                params={
+                    "restrict_tonight": "false",
+                    "q": "Phase F tied designation",
+                    "sort": f"primary_designation:{direction}",
+                    "limit": 2,
+                    "offset": offset,
+                },
+            )
+            assert response.status_code == 200
+            pages.extend(item["dso_id"] for item in response.json()["items"])
+        assert pages == sorted(tied_ids)
+
+
+async def test_id_tiebreak_does_not_override_secondary_sort_precedence(client: TestClient, seed_db):
+    _ = seed_db
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await source.fetchone())["id"])
+        for index, (name, designation) in enumerate(
+            (("Group A", "NGC 2"), ("Group B", "NGC 1"), ("Group A", "NGC 10"))
+        ):
+            await conn.execute(
+                """
+                INSERT INTO dso (
+                    primary_designation, obj_type, ra_deg, dec_deg, common_name,
+                    source_catalog_id, source_row_hash
+                ) VALUES (?, 'G', ?, 10, ?, ?, ?)
+                """,
+                (designation, 20 + index, name, source_id, f"phase-f-secondary-{index}"),
+            )
+        await conn.commit()
+
+    response = client.get(
+        "/api/planner/targets",
+        params={
+            "restrict_tonight": "false",
+            "q": "Group",
+            "sort": "common_name:asc,primary_designation:desc",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [
+        (item["common_name"], item["primary_designation"]) for item in response.json()["items"]
+    ] == [("Group A", "NGC 10"), ("Group A", "NGC 2"), ("Group B", "NGC 1")]
+
+
+def test_plate_solve_typescript_comparator_keeps_id_ties_ascending():
+    frontend = Path(__file__).parents[2] / "frontend"
+    node = shutil.which("node")
+    assert node is not None
+    script = """
+        import { createServer } from 'vite';
+        const server = await createServer({ server: { middlewareMode: true } });
+        try {
+          const module = await server.ssrLoadModule(
+            '/src/components/plate-solve/PlateSolveDsoGrid.tsx'
+          );
+          const compare = module.comparePlateSolveDsoRows;
+          const low = { id: 10, primary_designation: 'B 33' };
+          const high = { id: 20, primary_designation: 'B 33' };
+          if (compare(low, high, 'primary_designation', 'asc') >= 0) process.exitCode = 1;
+          if (compare(low, high, 'primary_designation', 'desc') >= 0) process.exitCode = 1;
+          const before = { id: 30, primary_designation: 'NGC 2' };
+          const after = { id: 5, primary_designation: 'NGC 10' };
+          if (compare(before, after, 'primary_designation', 'asc') >= 0) process.exitCode = 1;
+          if (compare(before, after, 'primary_designation', 'desc') <= 0) process.exitCode = 1;
+        } finally {
+          await server.close();
+        }
+    """
+    result = subprocess.run(  # noqa: S603  # nosec B603 - fixed local Node probe
+        [node, "--input-type=module", "-e", script],
+        cwd=frontend,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 async def test_targets_sort_422_on_unknown_field(client: TestClient, seed_db):
     _ = seed_db
     response = client.get(
@@ -621,10 +772,35 @@ async def test_thumbnail_cache_stats_endpoint(client: TestClient):
     assert {"total_bytes", "row_count", "max_bytes"} <= data.keys()
 
 
-async def test_thumbnail_cache_clear_endpoint(client: TestClient):
+async def test_thumbnail_cache_clear_endpoint_covers_both_image_caches(
+    client: TestClient, tmp_path
+):
+    tile_dir = tmp_path / "sky_tiles"
+    tile_dir.mkdir()
+    tile = tile_dir / "tile.jpg"
+    tile.write_bytes(b"tile")
+    async with get_db() as conn:
+        await conn.execute(
+            """
+            INSERT INTO sky_tile_cache
+                (hips_survey, healpix_nside, healpix_ipix, tier,
+                 cell_size_deg_x100, cell_width_px, cell_height_px,
+                 cell_i, cell_j, file_path, source, bytes)
+            VALUES ('CDS/P/DSS2/color', 8, 1, 'narrow', 25, 512, 512,
+                    0, 0, 'tile.jpg', 'dss2_color', 4)
+            """
+        )
+        await conn.commit()
+
+    stats = client.get("/api/planner/thumbnails/cache/stats").json()
+    assert stats["row_count"] == 1
+    assert stats["total_bytes"] == 4
     response = client.post("/api/planner/thumbnails/cache/clear")
     assert response.status_code == 200
-    assert "deleted_files" in response.json()
+    assert response.json()["deleted_files"] == 1
+    assert not tile.exists()
+    async with get_db() as conn:
+        assert not await conn.execute_fetchall("SELECT id FROM sky_tile_cache")
 
 
 async def test_thumbnail_rig_framed_missing_fov_returns_400(client: TestClient, seed_db):
@@ -788,15 +964,10 @@ async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(
 ):
     # Mock out the upstream fetcher so we don't touch the network; 202
     # path fires immediately and the fetch runs in the background.
-    async def _fake_get(*args, **kwargs):
-        # Tiny valid JPEG body passes the fetcher's magic-byte check.
-        class R:
-            status_code = 200
-            content = b"\xff\xd8" + b"x" * 2048
+    async def _fake_render(*args, **kwargs):
+        return hips_tiles.RenderedImage(b"\xff\xd8" + b"x" * 2048, frozenset({"cds"}))
 
-        return R()
-
-    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    monkeypatch.setattr(hips_tiles, "render", _fake_render)
     async with get_db() as conn:
         cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
         m42 = (await cursor.fetchone())["id"]
@@ -823,10 +994,32 @@ async def test_sky_tile_cache_stats_endpoint(client: TestClient):
     assert {"total_bytes", "row_count", "max_bytes", "generation"} <= data.keys()
 
 
-async def test_sky_tile_cache_clear_endpoint(client: TestClient):
+async def test_sky_tile_cache_clear_endpoint_keeps_thumbnails(
+    client: TestClient, seed_db, tmp_path
+):
+    thumb_dir = tmp_path / "thumbnails"
+    thumb_dir.mkdir()
+    thumb = thumb_dir / "thumb.jpg"
+    thumb.write_bytes(b"thumb")
+    async with get_db() as conn:
+        row = (
+            await conn.execute_fetchall("SELECT id FROM dso WHERE primary_designation = 'M 42'")
+        )[0]
+        await conn.execute(
+            """
+            INSERT INTO thumbnail_cache
+                (dso_id, variant, width, height, file_path, source, bytes)
+            VALUES (?, 'list', 180, 180, 'thumb.jpg', 'dss2_color', 5)
+            """,
+            (row["id"],),
+        )
+        await conn.commit()
     response = client.post("/api/planner/sky-tile/cache/clear")
     assert response.status_code == 200
-    assert "deleted_files" in response.json()
+    assert response.json()["deleted_files"] == 0
+    assert thumb.is_file()
+    async with get_db() as conn:
+        assert await conn.execute_fetchall("SELECT id FROM thumbnail_cache")
 
 
 async def test_sky_tile_rejects_unsupported_hips(client: TestClient):
@@ -879,20 +1072,16 @@ async def test_sky_tile_rejects_unknown_tier(client: TestClient):
 async def test_sky_tile_miss_returns_placeholder(client: TestClient, monkeypatch):
     """A cold cache returns the 1×1 PNG placeholder with status 202."""
 
-    async def _fake_get(url, *args, **kwargs):
+    async def _fake_render(*args, **kwargs):
         # Never resolves (mimics a slow CDS); the client's wait_ms=0 means
         # we should see the placeholder path without waiting.
         import asyncio
 
         await asyncio.sleep(60)
 
-        class R:
-            status_code = 200
-            content = b"\xff\xd8" + b"x" * 2048
+        return hips_tiles.RenderedImage(b"\xff\xd8" + b"x" * 2048, frozenset({"cds"}))
 
-        return R()
-
-    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    monkeypatch.setattr(hips_tiles, "render", _fake_render)
     response = client.get(
         "/api/planner/sky-tile",
         params={
@@ -911,14 +1100,10 @@ async def test_sky_tile_hit_returns_jpeg(client: TestClient, monkeypatch):
     """A successful CDS response renders as a 200 with image/jpeg."""
     fake_body = b"\xff\xd8" + b"x" * 2048
 
-    async def _fake_get(url, *args, **kwargs):
-        class R:
-            status_code = 200
-            content = fake_body
+    async def _fake_render(*args, **kwargs):
+        return hips_tiles.RenderedImage(fake_body, frozenset({"cds"}))
 
-        return R()
-
-    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", _fake_get)
+    monkeypatch.setattr(hips_tiles, "render", _fake_render)
     # wait_ms=2000 lets the long-poll finish the fetch in one round trip.
     response = client.get(
         "/api/planner/sky-tile",

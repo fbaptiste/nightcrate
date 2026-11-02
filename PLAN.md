@@ -1,12 +1,300 @@
 # NightCrate — active plan
 
-**Version:** v0.43.0 — Native plate solver
+**Version:** v0.43.1 — Sky images from tiles, faster downloads, processed finals
 
-**Branch:** `v0.43.0/native-plate-solver`
+**Branch:** `v0.43.1/sky-tiles-and-downloads`
 
 **Status:** Complete — awaiting merge
 
+## v0.43.1 — Sky images from tiles, faster downloads, processed finals
+
+Fred started this version on 2026-11-01, after merging v0.43.0. Its scope is
+the roadmap's v0.43.1 items plus two responses to the CDS outage. CDS's
+Strasbourg services have been unreachable since about 2026-10-21, when the
+University of Strasbourg suspended its web services over a security flaw.
+
+- [x] Start from updated `main` on `v0.43.1/sky-tiles-and-downloads`.
+- **Order (Fred, 2026-11-01):** the CDS work first, because the outage is
+  current. Catalog thumbnails cannot be fetched, and the Sharpless and
+  Barnard downloads fail.
+
+### 1. VizieR mirror fix
+
+**Checked 2026-11-01** with full Sharpless and Barnard downloads:
+- Strasbourg times out.
+- Harvard (`vizier.cfa.harvard.edu`) and IDIA South Africa
+  (`vizier.idia.ac.za`) work over HTTPS and returned identical rows.
+- Tokyo and Beijing answer over plain HTTP only.
+- Pune and Moscow time out.
+- Canada and Cambridge UK are no longer on CDS's mirror list.
+
+**NightCrate's fallback fails.** Its three hosts are Strasbourg, Pune and
+`vizieridia.saao.ac.za`. The last is now an alias whose certificate fails
+HTTPS. Each dead host takes about 7 minutes to skip: 3 retries × 2 attempts ×
+the macOS connect limit of about 75 s.
+
+**Fix (Claude, a narrow fix):**
+- `catalog_loader/vizier.py`:
+  - hosts Strasbourg → Harvard → IDIA, HTTPS only;
+  - one pass over the mirrors, relying on `http_client.get`'s single retry
+    (drop `retry_with_backoff` here; the GitHub fetchers keep it);
+  - a 10 s connect timeout within the 180 s total;
+  - `version.json` records the URL that served the data;
+  - the error names every host tried.
+- `services/http_client.py`: an optional `connect_timeout`.
+- **Text and docs:**
+  - the Admin text in `CatalogsAdminSection.tsx`;
+  - `docs/dso-catalog-architecture.md`;
+  - a short VizieR/CDS entry in `docs/development-decisions.md`.
+- **Tests:**
+  - `test_vizier_fetch.py`: primary succeeds; primary cannot connect; short
+    body; all fail;
+  - `test_http_client.py`: `connect_timeout`.
+- **Status:** implemented and checked by Claude (2026-11-01), accepted
+  by Fred (2026-11-01). A small extra: a response that isn't a VizieR TSV, such
+  as an HTML error page served with HTTP 200, now moves on to the next
+  mirror instead of failing the fetch.
+  - **Checks:** ruff, format and bandit (no issues); 256 tests in
+    `tests/catalog_loader`, `test_http_client.py` and `test_admin_api.py`;
+    `npm run build`.
+  - **Live check** (2026-11-01): the real fetcher, with a private HOME and a
+    scratch catalogs folder, during the outage. It did not go through the
+    API, which needs a configured database; the endpoint's tests cover that
+    wrapper.
+    - **Sharpless:** Strasbourg was skipped after two 10 s connect timeouts,
+      and Harvard served it in 21 s. 313 rows parsed, all with J2000
+      positions.
+    - **Barnard:** Strasbourg was skipped. Harvard then returned HTTP 200,
+      sent nothing, and closed after 60 s. Three separate tries did the
+      same, though it had served Barnard in 0.5 s that morning. IDIA served
+      it, 82 s in all. 349 rows parsed, all with positions.
+    - `version.json` names the mirror that served each file.
+
+### 2. Sky images from tiles
+
+**Decision (Fred, 2026-11-01).** NightCrate assembles its catalog and
+planner sky images itself from the DSS2 colour HiPS tiles, instead of asking
+CDS's hips2fits service for finished images.
+- Tiles come from CDS first, and from ESA's copy when CDS is down.
+- hips2fits has no mirror outside Strasbourg. Its backup, alaskybis, is in
+  Strasbourg and failed with it.
+
+**Prototype (Claude, 2026-11-01).**
+- **Method:** 12 cached planner cells, four per tier, compared with the
+  cached hips2fits renders. They include one 3° from the north pole, RA
+  0/360 crossings, and the ±41.8° HEALPix base-cell boundary.
+- **Source:** ESA's copy (`cdn.skies.esac.esa.int/DSSColor`) names
+  `ivo://CDS/P/DSS2/color` as its source. Its release date is 2019-05-07,
+  and it is marked `hips_status = public mirror unclonable`.
+- **Geometry:**
+  - One in-tile pixel rule orients all 12 cells. It matches HiPS 1.0 figure
+    4 and the standard's note that JPEG rows run top-down.
+  - Position is within 0.02 px.
+  - The tile-order rule matches what hips2fits used: the coarsest order
+    whose pixels are no larger than the output pixels.
+- **Match (bilinear sampling):**
+  - correlation 0.88–0.99 with hips2fits;
+  - mean brightness within 0.6/255 in 8 cells, and 1–1.3 in 3;
+  - about +5 on the near-pole background, where an ESA cell beside cached
+    CDS cells shows as a faint lighter square.
+- **Per planner cell:**
+  - 10–13 tiles (0.6–1.9 MB), against one 56–93 KB hips2fits JPEG;
+  - about 0.5–0.9 s cold and about 0.2 s with the tiles cached, against
+    about 2.3 s from hips2fits, measured earlier;
+  - a tile cache saves about 40% of downloads across a 3×3 block.
+- **Not compared:** catalog thumbnails, because none were cached.
+- **Files:** the script, report and comparison images are in
+  `.superpowers/prototypes/2026-11-01-esa-sky-tiles/` (local, ignored).
+
+**Status:** implemented (Codex), reviewed and checked by Claude; accepted by
+Fred (2026-11-01). Spec and plan:
+[design](docs/superpowers/specs/2026-11-01-v0.43.1-design.md) §1,
+[plan](docs/superpowers/plans/2026-11-01-v0.43.1.md) Phase A.
+- `services/hips_tiles.py` replaces `services/hips_client.py` (hips2fits)
+  for both catalog thumbnails and planner cells. There is no red-survey
+  fallback.
+- At most 32 tiles per image; a source that times out is skipped for 10
+  minutes; tiles are kept in a 64 MB memory cache only; at most 4 renders at
+  once. Failed images retry after 10 minutes (was 1 hour).
+- **Checks (Claude, 2026-11-01):**
+  - live overlay against Gaia stars: median 0.21–0.62 px over 12 cells,
+    including both poles, ±41.8°, the RA wrap and a face corner;
+  - with CDS down: the first render waits about 5 s for the CDS probe, then
+    about 0.2 s per render from ESA;
+  - 45 renders at once in 7 s, with 178 MB of memory growth;
+  - the Planner and catalog pages render the new images.
+
+**When CDS returns (Fred asked for this reminder).** These checks do not
+block the spec, because the source order stays one constant.
+- Compare CDS's and ESA's tile download speeds, and settle the source order.
+- Compare CDS's current `hips_release_date` with ESA's copy, to explain the
+  brightness difference.
+- Confirm CDS's tile address.
+- Read CDS's HiPS usage rules, which were unreachable during the outage.
+
+### 3. Faster star download
+
+Fred's acceptance download of Siril's star file (1.14 GB) ran at about
+0.66 MB/s. Zenodo is its only host; no mirror was found. On 2026-10-30 Fred
+chose to download it in four parallel pieces, in v0.43.1 rather than in the
+v0.43.0 candidate.
+
+- **Measured on 2026-10-30** (range requests, data discarded):
+  - one connection: 0.77 MB/s, about 25 minutes for the file;
+  - four in parallel: 2.36 MB/s, about 8 minutes;
+  - eight in parallel: 4.33 MB/s, each still at 0.5–0.7 MB/s.
+
+  A single connection later reached 2.83 MB/s, so Zenodo's speed varies.
+- Four pieces rather than eight keep the load modest on a free service.
+- Keep resuming after an interruption, progress, cancel and the SHA-256
+  check. Fall back to one connection when the server doesn't return the
+  requested range.
+- **Also (Fred, 2026-10-30): an already-built range in a build request.**
+  Codex's review of the v0.43.0 acceptance fixes (record `77`, minor) found
+  that a request naming an already-built range makes it `current_range`.
+  `/status` then reports it as building at 100% until it publishes, which
+  can wait on an active solve. The Admin page never sends one, because it
+  leaves built ranges out.
+  - Fix: leave already-built ranges out of the build, but still publish a
+    range whose layers are ready and whose manifest entry is missing; give
+    `built` precedence in `/status`.
+  - Test it through the API: a request including a built range reports that
+    range as built while another range builds.
+
+**Status:** implemented (Codex), reviewed and checked by Claude; accepted by
+Fred (2026-11-01). Design §2, plan Phase B.
+- A request naming only built ranges is refused: "Those ranges are already
+  built." (HTTP 422).
+- A v0.43.0 partial download resumes as one stream; new downloads use four
+  pieces.
+- **Checks (Claude, 2026-11-01),** live against Zenodo with a private HOME:
+  - four pieces at 6–8 MB/s combined;
+  - cancel after 40 s stopped at once, keeping the pieces;
+  - resume continued from exactly the bytes kept (269.6 MB);
+  - completion joined the pieces, matched the SHA-256, unpacked and
+    installed, leaving staging empty: 292 s in all.
+- The independent review found that a second cancellation could release
+  the operation while its thread still ran, and that much of the spec's
+  crash and cancel test list was missing. Both were fixed; the same
+  cancellation defect was fixed in the sky-image renderer.
+
+### 4. Stellarity filter for processed finals
+
+**Decided by Fred on 2026-11-01** (proposed by Claude on 2026-10-30). The
+built-in solver still fails 10 corpus finals and a mosaic.
+- **Finding:** in the IC 1805 final, only about 40% of the brightest
+  detections are stars. Nebula knots and stars shrunk by star reduction
+  crowd them out. The NA Nebula final, which now solves, matched 72%.
+- **Decision:** a stellarity filter that rejects extended sources by shape
+  and width against the image's typical star. Measure it on the corpus and
+  the false-match trials, with no change to the acceptance thresholds.
+- **Why not in v0.43.0:** it changes the search design, and v0.43.0 was
+  ready. The failure screen points to the stacked image meanwhile.
+- **Open:** for the M106 JPEG and the mosaic, the detections barely line up
+  with ASTAP's unconfirmed solutions under any flip. That needs its own
+  check.
+
+**Status:** implemented (Codex), reviewed and checked by Claude; accepted by
+Fred (2026-11-01). Design §3, plan Phase C.
+- **Rule:** before choosing the brightest detections, drop any detection
+  more than 6 times wider than the median detection. Every solve profile
+  uses it. The thresholds are unchanged.
+- **Why 6:** the agreed rule takes the least restrictive limit that gains
+  solves repeatably with no losses. 4, 5 and 6 all qualified. Codex held
+  to the rule when Claude proposed 4, and Claude agreed.
+- **Corpus (149 images), shipped code:** `native` 132 → 134 and
+  `native-blind` 128 → 132; the IC 1805 final, and the NGC 6888, IC 1396 and
+  IC 443 crops. Nothing lost, no wrong solution, no negative solved.
+  - Every new solve was checked independently, against ASTAP or a Gaia
+    overlay.
+  - The real-sky trials never call extraction, so they were not rerun.
+- **Remaining limit (Codex review):** if real stars were more than 6 times
+  wider than most detections (for example, badly defocused stars among
+  compact artefacts), the cut would drop them. The corpus has no such case.
+- Still failing: 8 finals and the mosaic, including M106.
+
+### 5. Fetch progress on the Catalogs page (added during acceptance)
+
+**Requested by Fred on 2026-11-01** during his acceptance test. His Sharpless
+re-fetch spun for minutes while Strasbourg and Harvard failed and the South
+Africa mirror served it, with nothing saying it was working.
+- **Scope (Fred):** every fetch and reload button on the Catalogs page shows
+  a line saying what it is doing now: trying a source, moving to a mirror,
+  downloading, loading into the catalog.
+- **Design:** spec §7. The catalog load also has to leave the server's main
+  loop, which it blocks today, or the status could not be answered during
+  it.
+- **Status:** implemented (Codex), reviewed and checked by Claude, with a
+  fresh independent review; accepted by Fred (2026-11-01). Checked live: a
+  Sharpless re-fetch showed "Trying CDS Strasbourg… n s", "Strasbourg timed
+  out. Trying the Harvard mirror… n s" and "Sharpless loaded."; leaving the
+  page, a second tab and failed status polls all recover.
+
+### 6. Bugs found during this version (Fred, 2026-11-01)
+
+Fred: bugs found during a version are fixed in it when they can be. Spec
+§8 lists the fixes: local fetch dates; cached images surviving a moved
+app-data folder; one shared image-cache budget, with "Clear All" and the
+statistics covering both caches; no traceback from star-data status without
+a database; the solver's cancellation waits; and no database switch during
+a catalog action. **Status:** implemented, reviewed (fresh independent
+review) and checked; accepted by Fred (2026-11-01). A copy of a real app-data
+folder kept all 2,965 cached sky cells after moving. Also fixed: the
+attribution dialog's raw UTC timestamps and the Caches line's code text.
+
+### 7. Catalog table sorting (Fred, 2026-11-01, acceptance test)
+
+Header clicks alternate ascending and descending; designations sort by
+catalog then number (M 1, M 2 … M 10), and a single-catalog view shows and
+sorts by that catalog's own name (Fred chose this, 2026-11-01); Type,
+Constellation and Common name sort as displayed; the nine "OTHER"-prefixed
+names are fixed. Spec §9. Found while reviewing and fixed too: the Horsehead
+and the Cave Nebula were each two objects, and NGC 764 and NGC 6839 had lost
+their own names to other objects' alternate names. **Status:** implemented,
+reviewed and checked on a copy of Fred's database (14,008 → 14,006 objects,
+user links unchanged); his running dev server applied the same repairs to
+his real database (read-only check: integrity clean). Also fixed after
+three more reviews: upgrading a database from before v0.42.0 (no source
+keys) could give an object another's identity and links when two old rows
+shared a name or a row had moved between OpenNGC's main and addendum files;
+the moved-row gap predates this branch. Every key-based match now runs
+first, then unambiguous row hashes across both OpenNGC files, then names.
+Fred's database already has keys; a copy reloaded unchanged. Accepted
+by Fred (2026-11-01).
+
+### 8. Second acceptance round (Fred, 2026-11-01)
+
+Spec §10. The catalog table could not leave page 1, a regression from
+item 7 (fixed: the sort no longer re-reports itself on every redraw).
+With several catalogs selected, each object will show and sort by its name
+from those catalogs (Fred chose this), and the alternate names become pills
+next to Designation (Fred). VizieR mirror moves will name the failed
+mirror's own time; the counter beside them counts the new attempt. Found
+while reviewing and fixed too: two OpenNGC rows fuse a PGC number to the next
+name through a missing comma ("PGC 056771SDSS J…"); the parser splits them
+and a repair fixes existing databases. **Status:** implemented (paging by
+Claude, the rest by Codex), fresh review clean, and checked: a copy of
+Fred's database changed only those two names (objects and links
+unchanged); in a browser, paging in every view and both directions, the
+pills, and Enter opening the details; a live Sharpless reload read
+"Strasbourg timed out after 21 s", then "Harvard dropped the connection
+after 60 s", then loaded from South Africa. Accepted by Fred (2026-11-01).
+
+### Found in passing (kept, with reasons)
+
+- **The catalog load blocks the server while it runs.** `api/admin.py`
+  `_run_loader` runs the synchronous loader on the event loop, so no other
+  request is answered meanwhile. Measured on a copy of a real-size database
+  on 2026-11-01: 0.1–0.6 s for a fetch with nothing else changed, 3.1 s for
+  "Reload all". Moving it to a thread needs a database-contention policy
+  first (the database uses the rollback journal). Kept by design (spec §7).
+- **Harvard's VizieR mirror on 2026-11-01:** it returned HTTP 200 with an
+  empty body and closed after 60 s for Barnard, and later for Sharpless.
+  The one-pass fallback to IDIA handled both.
+
 ## v0.43.0 — Native plate solver
+
+Merged in [PR #21](https://github.com/fbaptiste/nightcrate/pull/21) on 2026-11-01.
 
 Fred started this version on 2026-10-28, after merging v0.42.0. Its scope is
 the native plate solver, moved here from the roadmap. The spec starts from the
@@ -1488,49 +1776,76 @@ Fred reordered the roadmap on 2026-10-24: galleries first, then distribution.
 Claude and Codex agreed the order below; Codex's first round was a blinded
 pre-pass, and the second round converged. On 2026-10-26 Fred placed a native
 plate solver after catalog preservation, ahead of the gallery; it is now
-v0.43.0, above. On 2026-10-30 he added a faster star download as v0.43.1.
+v0.43.0. On 2026-10-30 he added a faster star download as v0.43.1, now the
+active version above. On 2026-11-01 he placed more deep-sky catalogs and
+search links as the very next version, after v0.43.1 and ahead of the
+gallery (proposed number v0.44.0).
 Version numbers are otherwise assigned when each version starts.
 
-### Faster star download (v0.43.1)
+### Next version: more deep-sky catalogs and search links (Fred, 2026-11-01)
 
-Fred's acceptance download of Siril's star file (1.14 GB) ran at about
-0.66 MB/s. Zenodo is its only host; no mirror was found. On 2026-10-30 Fred
-chose to download it in four parallel pieces, in v0.43.1 rather than in the
-v0.43.0 candidate.
+**Why.** NightCrate loads only OpenNGC, Sharpless and Barnard in full. Other
+catalogs appear only as alternate names on those objects, so popular targets
+with no NGC, IC or Sharpless number are missing. For example, LBN 437 (the
+Gecko Nebula), LBN 777 (the Vulture Head) and Melotte 15 (the cluster in the
+Heart Nebula) return nothing (checked 2026-11-01).
 
-- **Measured on 2026-10-30** (range requests, data discarded):
-  - one connection: 0.77 MB/s, about 25 minutes for the file;
-  - four in parallel: 2.36 MB/s, about 8 minutes;
-  - eight in parallel: 4.33 MB/s, each still at 0.5–0.7 MB/s.
+**Catalogs to load in full (Fred):**
 
-  A single connection later reached 2.83 MB/s, so Zenodo's speed varies.
-- Four pieces rather than eight keep the load modest on a free service.
-- Keep resuming after an interruption, progress, cancel and the SHA-256
-  check. Fall back to one connection when the server doesn't return the
-  requested range.
-- **Also (Fred, 2026-10-30): an already-built range in a build request.**
-  Codex's review of the v0.43.0 acceptance fixes (record `77`, minor) found
-  that a request naming an already-built range makes it `current_range`.
-  `/status` then reports it as building at 100% until it publishes, which
-  can wait on an active solve. The Admin page never sends one, because it
-  leaves built ranges out.
-  - Fix: leave already-built ranges out of the build, but still publish a
-    range whose layers are ready and whose manifest entry is missing; give
-    `built` precedence in `/status`.
-  - Test it through the API: a request including a built range reports that
-    range as built while another range builds.
-- **Proposed by Claude (2026-10-30), for Fred to decide: processed finals.**
-  The built-in solver still fails 10 corpus finals and a mosaic.
-  - **Finding:** in the IC 1805 final, only about 40% of the brightest
-    detections are stars. Nebula knots and stars shrunk by star reduction
-    crowd them out. The NA Nebula final, which now solves, matched 72%.
-  - **Proposal:** a stellarity filter that rejects extended sources by
-    shape and width against the image's typical star. Measure it on the
-    corpus and the false-match trials, with no change to the acceptance
-    thresholds.
-  - **Open:** for the M106 JPEG and the mosaic, the detections barely line
-    up with ASTAP's unconfirmed solutions under any flip. That needs its own
-    check.
+Researched 2026-11-01 (background agent; VizieR tables downloaded from the
+Harvard and IDIA mirrors and counted against each catalogue's ReadMe):
+
+| Catalog | Source | Size | In NightCrate today | Notes |
+|---|---|---|---|---|
+| LBN (Lynds 1965) | VizieR VII/9 | 1,125 | 93 as alternate names | B1950 to 1′, J2000 computed by VizieR; size, brightness 1–6; 740 rows are parts of complexes |
+| Melotte (1915) | no catalogue table anywhere found | 245 | 7 | 233 are NGC/IC objects (Mel 15 is IC 1805); 6 new objects need positions; the only full list is Wikipedia (CC BY-SA) |
+| LDN (Lynds 1962) | VizieR VII/7A | 1,791 | none | area and opacity, no size; 233 rows name Barnard objects |
+| Abell planetary nebulae | inside the PN G catalogues | about 64–86 | none | NightCrate's `abell` name holds no data today |
+| ACO, Abell galaxy clusters | VizieR VII/110A | 5,250 (4,076 + 1,174 southern "S") | none | no size or total magnitude; display as "ACO 2151" so it can't clash with Abell nebulae |
+| APG, Arp (1966) | VizieR VII/192 | 338 entries, 592 member galaxies | none | an Arp number is a view of several galaxies (182 have two or more) |
+| HH, Herbig-Haro | VizieR V/104 (Reipurth 1999) | 454 | none | over 1,000 now known; the 2026 catalogue (1,193) is CC BY-NC-ND, so unusable |
+| PN G, planetary nebulae | VizieR V/163 (HASH) or V/84 (Acker 1992) | 3,973 Galactic (HASH) or 1,143 | none | OpenNGC's 129 PN G alternate names are dropped by NightCrate's name parser today |
+| MCG | VizieR VII/62A + VII/100 | 30,637 | 7,553 as alternates | about 23,000 new, mostly faint; sizes are in 0.1′ units |
+| SNR (Green 2024) | VizieR VII/297 | 310 | none | J2000; size, type; © D. A. Green, citation requested; large remnants span several NGC pieces |
+| WR, Wolf-Rayet stars | VizieR III/215 (van der Hucht 2001) | 226 | none | Crowther's current catalogue (718) has no licence or download; WR 2-1 and WR 21 collide in today's search keys |
+
+**Terms.** VizieR data is "free of usage in a scientific context" with the
+authors cited; commercial use depends on the origin; none of the ReadMes
+states a copyright. Each user downloading at runtime, as Sharpless and
+Barnard work today, is the safe model; shipping rows would need Fred's
+decision.
+
+**Each catalog is optional (Fred, 2026-11-01).** The user downloads only the
+catalogs they want, each on its own from the Catalogs page, and can remove
+one later. Constraints from today's rules (`docs/development-decisions.md`,
+"Projects, catalog, and sessions"):
+- A loaded source with a missing file currently defers the whole object step
+  rather than guessing. A catalog the user removed must be told apart from
+  one whose file went missing.
+- Removing a catalog removes its names and the objects only it provides.
+  Objects the user has linked (project targets, the wishlist) stay, inactive
+  with their names, as catalog preservation already does.
+- Objects that another catalog also provides (LBN 667 is IC 1848) keep that
+  catalog's entry.
+- Open for the spec: whether OpenNGC, Sharpless and Barnard also become
+  removable.
+
+**What it takes (to be researched for the spec):**
+- a source, its terms and a fetcher per catalog (most through VizieR's
+  mirrors), with J2000 positions;
+- a migration for the new catalog names (HH, ACO, PN G, SNR, WR) and object
+  types (Herbig-Haro object, galaxy cluster, Wolf-Rayet star), with matching
+  loader changes;
+- matching against objects NightCrate already has (many LBN, PN G and SNR
+  entries are NGC, IC or Sharpless objects), so nothing appears twice;
+- planner and catalog behaviour for tens of thousands of faint objects
+  (MCG, ACO): filtering, scoring and thumbnails;
+- credits in README and the attribution panel.
+
+**Search links.** The catalog and planner object panels already link to SIMBAD
+and Wikipedia (`DsoExternalRefs`, shared by both). Add Google search and Google
+Images links for the object, as Telescopius does. The query wording is decided
+in the spec.
 
 ### Gallery
 

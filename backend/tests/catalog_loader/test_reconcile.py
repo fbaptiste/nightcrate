@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import shutil
 import sqlite3
 import time
@@ -58,6 +59,115 @@ def _legacy(db: sqlite3.Connection) -> ObjectSet:
     return build_object_set(_sources(), LEGACY / "sharpless_crossref.csv")
 
 
+def _with_premerge_barnard_pair(current: ObjectSet) -> ObjectSet:
+    sources_without_addendum = _sources()
+    sources_without_addendum.pop("openngc_addendum")
+    standalone_set = build_object_set(sources_without_addendum, LEGACY / "sharpless_crossref.csv")
+    standalone = next(
+        obj
+        for obj in standalone_set.objects
+        if obj.source_id == "vizier_barnard" and obj.source_key == "33"
+    )
+    standalone = replace(
+        standalone,
+        designations=(),
+        file_order=max(obj.file_order for obj in current.objects) + 1,
+    )
+    return replace(
+        current,
+        objects=(*current.objects, standalone),
+        merges={
+            key: target for key, target in current.merges.items() if key != ("vizier_barnard", "33")
+        },
+    )
+
+
+def _ownership_sources(root: Path, *, reverse: bool = False) -> dict[str, CatalogSource]:
+    root.mkdir()
+    with (LEGACY / "NGC.csv").open(encoding="utf-8", newline="") as stream:
+        fieldnames = csv.DictReader(stream, delimiter=";").fieldnames
+    assert fieldnames is not None
+    rows = []
+    for name, alternate in (
+        ("NGC0755", "0764"),
+        ("IC0001", "0764"),
+        ("NGC0764", ""),
+        ("NGC6838", "6839"),
+        ("NGC6839", ""),
+    ):
+        row = dict.fromkeys(fieldnames, "")
+        row.update(
+            {
+                "Name": name,
+                "Type": "G",
+                "RA": "01:00:00",
+                "Dec": "+01:00:00",
+                "Const": "Psc",
+                "NGC": alternate,
+                "M": "071" if name == "NGC6838" else "",
+            }
+        )
+        rows.append(row)
+    if reverse:
+        rows.reverse()
+    for filename in ("NGC.csv", "addendum.csv"):
+        with (root / filename).open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames, delimiter=";")
+            writer.writeheader()
+            if filename == "NGC.csv":
+                writer.writerows(rows)
+    (root / "sharpless.tsv").write_text(
+        "_RAJ2000\t_DEJ2000\tSh2\tDiam\tClass\n"
+        "deg\tdeg\t--\tarcmin\t--\n"
+        "--------\t--------\t---\t------\t-----\n",
+        encoding="utf-8",
+    )
+    (root / "barnard.tsv").write_text(
+        "_RAJ2000\t_DEJ2000\tBarn\tDiam\tDurch\tNames\n"
+        "deg\tdeg\t--\tarcmin\t--\t--\n"
+        "--------\t--------\t---\t------\t--\t--\n",
+        encoding="utf-8",
+    )
+    return _sources(root)
+
+
+def _cross_source_sources(root: Path, source_ids: tuple[str, ...]) -> dict[str, CatalogSource]:
+    root.mkdir()
+    with (LEGACY / "NGC.csv").open(encoding="utf-8", newline="") as stream:
+        fieldnames = csv.DictReader(stream, delimiter=";").fieldnames
+    assert fieldnames is not None
+    row = dict.fromkeys(fieldnames, "")
+    row.update(
+        {
+            "Name": "NGC0777",
+            "Type": "G",
+            "RA": "02:00:00",
+            "Dec": "+02:00:00",
+            "Const": "Psc",
+        }
+    )
+    filenames = {"openngc": "NGC.csv", "openngc_addendum": "addendum.csv"}
+    for source_id, filename in filenames.items():
+        with (root / filename).open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames, delimiter=";")
+            writer.writeheader()
+            if source_id in source_ids:
+                writer.writerow(row)
+    (root / "sharpless.tsv").write_text(
+        "_RAJ2000\t_DEJ2000\tSh2\tDiam\tClass\n"
+        "deg\tdeg\t--\tarcmin\t--\n"
+        "--------\t--------\t---\t------\t-----\n",
+        encoding="utf-8",
+    )
+    (root / "barnard.tsv").write_text(
+        "_RAJ2000\t_DEJ2000\tBarn\tDiam\tDurch\tNames\n"
+        "deg\tdeg\t--\tarcmin\t--\t--\n"
+        "--------\t--------\t---\t------\t--\t--\n",
+        encoding="utf-8",
+    )
+    return _sources(root)
+
+
 def _snapshot(db: sqlite3.Connection, table: str) -> list[tuple]:
     return [tuple(row) for row in db.execute(f'SELECT * FROM "{table}" ORDER BY id')]  # nosec B608
 
@@ -65,13 +175,6 @@ def _snapshot(db: sqlite3.Connection, table: str) -> list[tuple]:
 def test_one_time_step_on_legacy_fixture(db: sqlite3.Connection):
     object_set = _legacy(db)
     before_ids = _snapshot(db, "dso")
-    before_designations = [
-        tuple(row)
-        for row in db.execute(
-            "SELECT dso_id, catalog, identifier, display_form, search_key, is_primary "
-            "FROM dso_designation ORDER BY dso_id, catalog, identifier"
-        )
-    ]
     db.execute("INSERT INTO favorite_target (dso_id) VALUES (5)")
     db.execute("INSERT INTO project (name) VALUES ('Legacy')")
     project_id = int(db.execute("SELECT id FROM project WHERE name='Legacy'").fetchone()[0])
@@ -99,33 +202,478 @@ def test_one_time_step_on_legacy_fixture(db: sqlite3.Connection):
 
     report = apply_object_set(db, object_set, ())
 
-    assert report.inserted == report.removed == report.merged == 0
+    assert report.inserted == report.merged == 0
+    assert report.removed == 1
     assert [row[0] for row in before_ids] == [row[0] for row in _snapshot(db, "dso")]
-    assert db.execute("SELECT COUNT(*) FROM dso WHERE source_key IS NULL").fetchone()[0] == 0
-    after_designations = [
-        tuple(row)
-        for row in db.execute(
-            "SELECT dso_id, catalog, identifier, display_form, search_key, is_primary "
-            "FROM dso_designation ORDER BY dso_id, catalog, identifier"
-        )
-    ]
-    assert after_designations == before_designations
+    assert db.execute("SELECT COUNT(*) FROM dso WHERE source_key IS NULL").fetchone()[0] == 1
+    assert tuple(db.execute("SELECT active, source_key FROM dso WHERE id=10").fetchone()) == (
+        0,
+        None,
+    )
+    assert (
+        db.execute(
+            "SELECT dso_id FROM dso_designation WHERE catalog='ic' AND identifier='9'"
+        ).fetchone()[0]
+        == 5
+    )
     assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == 5
     assert db.execute("SELECT dso_id FROM project_target").fetchone()[0] == 1
     assert db.execute("SELECT dso_id FROM project_dso").fetchone()[0] == 3
     assert db.execute("SELECT project_target_id FROM sub_frame").fetchone()[0] == target_id
 
 
-def test_alternate_name_beats_later_canonical(db: sqlite3.Connection):
+def test_openngc_barnard_own_name_merges_matching_catalog_row(db: sqlite3.Connection):
     object_set = _legacy(db)
     addendum = next(obj for obj in object_set.objects if obj.source_key == "B033")
-    barnard = next(
-        obj
-        for obj in object_set.objects
-        if obj.source_id == "vizier_barnard" and obj.source_key == "33"
-    )
     assert ("barnard", "33", True) in addendum.designations
-    assert not barnard.designations
+    assert not any(
+        obj.source_id == "vizier_barnard" and obj.source_key == "33" for obj in object_set.objects
+    )
+    target_index = object_set.objects.index(addendum)
+    assert object_set.merges[("vizier_barnard", "33")] == target_index
+
+
+def test_barnard_own_name_merge_fresh_database_keeps_openngc_primary(
+    db: sqlite3.Connection,
+):
+    current = build_object_set(_sources(), LEGACY / "sharpless_crossref.csv")
+
+    apply_object_set(db, current, ())
+
+    survivor = db.execute(
+        "SELECT id, primary_designation FROM dso WHERE source_key='B033'"
+    ).fetchone()
+    assert tuple(survivor) == (survivor["id"], "B 33")
+    assert (
+        db.execute(
+            "SELECT COUNT(*) FROM dso WHERE source_key='33' AND source_catalog_id="
+            "(SELECT id FROM dso_catalog_source WHERE source_id='vizier_barnard')"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        db.execute(
+            "SELECT dso_id FROM dso_designation WHERE catalog='barnard' AND identifier='33'"
+        ).fetchone()[0]
+        == survivor["id"]
+    )
+
+
+def test_existing_barnard_pair_merges_to_survivor_and_moves_user_links(
+    db: sqlite3.Connection,
+):
+    current = build_object_set(_sources(), LEGACY / "sharpless_crossref.csv")
+    apply_object_set(db, _with_premerge_barnard_pair(current), ())
+    survivor_id = int(db.execute("SELECT id FROM dso WHERE source_key='B033'").fetchone()[0])
+    old_id = int(
+        db.execute(
+            """
+            SELECT d.id FROM dso d JOIN dso_catalog_source s ON s.id=d.source_catalog_id
+            WHERE s.source_id='vizier_barnard' AND d.source_key='33'
+            """
+        ).fetchone()[0]
+    )
+    db.execute("INSERT INTO project (name) VALUES ('Horsehead')")
+    project_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+        (project_id, old_id),
+    )
+    db.execute("INSERT INTO wishlist_section (name) VALUES ('Dark nebulae')")
+    section_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO favorite_target (dso_id, section_id) VALUES (?, ?)",
+        (old_id, section_id),
+    )
+    db.execute(
+        "INSERT INTO location (name, latitude, longitude, timezone) VALUES ('Test', 0, 0, 'UTC')"
+    )
+    location_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO location_horizon (location_id, name, type, source) "
+        "VALUES (?, 'Test', 'custom', 'drawn')",
+        (location_id,),
+    )
+    horizon_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    config_id = int(db.execute("SELECT id FROM telescope_configuration LIMIT 1").fetchone()[0])
+    camera_id = int(db.execute("SELECT id FROM camera LIMIT 1").fetchone()[0])
+    db.execute(
+        "INSERT INTO rig (name, telescope_configuration_id, camera_id) VALUES ('Test', ?, ?)",
+        (config_id, camera_id),
+    )
+    rig_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        """
+        INSERT INTO target_plan (dso_id, location_id, horizon_id, rig_id)
+        VALUES (?, ?, ?, ?)
+        """,
+        (old_id, location_id, horizon_id, rig_id),
+    )
+    plan_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.commit()
+
+    report = apply_object_set(db, current, ())
+
+    assert report.merged == 1
+    assert db.execute("SELECT COUNT(*) FROM dso WHERE id=?", (old_id,)).fetchone()[0] == 0
+    assert db.execute("SELECT dso_id FROM project_target").fetchone()[0] == survivor_id
+    assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == survivor_id
+    assert db.execute("SELECT dso_id FROM target_plan WHERE id=?", (plan_id,)).fetchone()[0] == (
+        survivor_id
+    )
+    repeat = apply_object_set(db, current, ())
+    assert repeat.inserted == repeat.updated == repeat.removed == repeat.merged == 0
+
+
+def test_barnard_merge_retains_unknown_reference_inactive(db: sqlite3.Connection):
+    current = build_object_set(_sources(), LEGACY / "sharpless_crossref.csv")
+    apply_object_set(db, _with_premerge_barnard_pair(current), ())
+    old_id = int(
+        db.execute(
+            """
+            SELECT d.id FROM dso d JOIN dso_catalog_source s ON s.id=d.source_catalog_id
+            WHERE s.source_id='vizier_barnard' AND d.source_key='33'
+            """
+        ).fetchone()[0]
+    )
+    db.execute("CREATE TABLE zz_future_link (dso_id INTEGER REFERENCES dso(id))")
+    db.execute("INSERT INTO zz_future_link VALUES (?)", (old_id,))
+    db.commit()
+
+    report = apply_object_set(db, current, ())
+
+    assert tuple(
+        db.execute("SELECT active, source_key FROM dso WHERE id=?", (old_id,)).fetchone()
+    ) == (
+        0,
+        None,
+    )
+    assert report.kept_inactive_merge == 1
+
+
+def test_barnard_ambiguous_own_names_stay_separate(tmp_path: Path):
+    staged = tmp_path / "ambiguous"
+    shutil.copytree(LEGACY, staged)
+    b033 = next(
+        line
+        for line in (staged / "addendum.csv").read_text(encoding="utf-8").splitlines()
+        if line.startswith("B033;")
+    )
+    with (staged / "NGC.csv").open("a", encoding="utf-8") as stream:
+        stream.write(f"{b033}\n")
+
+    object_set = build_object_set(_sources(staged), staged / "sharpless_crossref.csv")
+
+    assert object_set.unresolved >= 1
+    assert ("vizier_barnard", "33") not in object_set.merges
+    assert any(
+        obj.source_id == "vizier_barnard" and obj.source_key == "33" for obj in object_set.objects
+    )
+
+
+def test_barnard_suffix_does_not_match_unsuffixed_own_name(tmp_path: Path):
+    staged = tmp_path / "suffix"
+    shutil.copytree(LEGACY, staged)
+    with (staged / "barnard.tsv").open("a", encoding="utf-8") as stream:
+        stream.write("85.25\t-2.45\t033A\t6\t\tSuffix\n")
+
+    object_set = build_object_set(_sources(staged), staged / "sharpless_crossref.csv")
+
+    assert ("vizier_barnard", "33") in object_set.merges
+    assert ("vizier_barnard", "33A") not in object_set.merges
+    assert any(
+        obj.source_id == "vizier_barnard" and obj.source_key == "33A" for obj in object_set.objects
+    )
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_openngc_own_names_beat_real_alternate_claims_in_any_order(tmp_path: Path, reverse: bool):
+    root = tmp_path / "ownership"
+    object_set = build_object_set(_ownership_sources(root, reverse=reverse), None)
+    owners = {
+        (catalog, identifier): obj.source_key
+        for obj in object_set.objects
+        for catalog, identifier, _primary in obj.designations
+    }
+    assert owners[("ngc", "764")] == "NGC0764"
+    assert owners[("ngc", "6839")] == "NGC6839"
+    ic_object = next(obj for obj in object_set.objects if obj.source_key == "IC0001")
+    assert ic_object.columns["primary_designation"] == "IC 1"
+    assert [
+        (catalog, identifier)
+        for catalog, identifier, is_primary in ic_object.designations
+        if is_primary
+    ] == [("ic", "1")]
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_legacy_hash_match_precedes_shared_primary_designation(
+    db: sqlite3.Connection, tmp_path: Path, reverse: bool
+):
+    root = tmp_path / "legacy-primary"
+    current = build_object_set(_ownership_sources(root, reverse=reverse), None)
+    apply_object_set(db, current, ())
+    ids = {
+        row["source_key"]: row["id"]
+        for row in db.execute(
+            "SELECT id, source_key FROM dso WHERE source_key IN ('IC0001', 'NGC0764')"
+        )
+    }
+    hashes = {
+        row["source_row_hash"]
+        for row in db.execute(
+            "SELECT source_row_hash FROM dso WHERE id IN (?, ?)",
+            (ids["IC0001"], ids["NGC0764"]),
+        )
+    }
+    assert len(hashes) == 2
+    db.execute(
+        "UPDATE dso SET source_key=NULL, primary_designation='NGC 764' WHERE id IN (?, ?)",
+        (ids["IC0001"], ids["NGC0764"]),
+    )
+    db.execute("UPDATE dso_catalog_source SET keys_assigned=0 WHERE source_id='openngc'")
+    db.execute("INSERT INTO favorite_target (dso_id) VALUES (?)", (ids["IC0001"],))
+    db.execute("INSERT INTO project (name) VALUES ('Legacy primary collision')")
+    project_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+        (project_id, ids["NGC0764"]),
+    )
+    db.commit()
+
+    report = apply_object_set(db, current, ())
+
+    assert report.inserted == report.removed == report.merged == 0
+    assert {
+        row["source_key"]: (row["id"], row["active"])
+        for row in db.execute(
+            "SELECT id, source_key, active FROM dso WHERE source_key IN ('IC0001', 'NGC0764')"
+        )
+    } == {
+        "IC0001": (ids["IC0001"], 1),
+        "NGC0764": (ids["NGC0764"], 1),
+    }
+    assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == ids["IC0001"]
+    assert db.execute("SELECT dso_id FROM project_target").fetchone()[0] == ids["NGC0764"]
+    repeat = apply_object_set(db, current, ())
+    assert repeat.inserted == repeat.updated == repeat.removed == repeat.merged == 0
+
+
+@pytest.mark.parametrize(
+    ("old_source", "new_source"),
+    (("openngc", "openngc_addendum"), ("openngc_addendum", "openngc")),
+)
+def test_legacy_hash_match_preserves_identity_across_openngc_sources(
+    db: sqlite3.Connection, tmp_path: Path, old_source: str, new_source: str
+):
+    old = build_object_set(
+        _cross_source_sources(tmp_path / "old", (old_source,)),
+        None,
+    )
+    current = build_object_set(
+        _cross_source_sources(tmp_path / "current", (new_source,)),
+        None,
+    )
+    assert (
+        old.objects[0].columns["source_row_hash"] == current.objects[0].columns["source_row_hash"]
+    )
+    apply_object_set(db, old, ())
+    dso_id = int(db.execute("SELECT id FROM dso WHERE source_key='NGC0777'").fetchone()[0])
+    db.execute("UPDATE dso SET source_key=NULL WHERE id=?", (dso_id,))
+    db.execute(
+        "UPDATE dso_catalog_source SET keys_assigned=0 WHERE source_id=?",
+        (old_source,),
+    )
+    db.execute("INSERT INTO favorite_target (dso_id) VALUES (?)", (dso_id,))
+    db.execute("INSERT INTO project (name) VALUES ('Cross-source legacy row')")
+    project_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+        (project_id, dso_id),
+    )
+    db.commit()
+
+    report = apply_object_set(db, current, ())
+
+    assert report.inserted == report.removed == report.merged == 0
+    moved = db.execute(
+        """
+        SELECT d.id, d.active, d.source_key, s.source_id
+        FROM dso d JOIN dso_catalog_source s ON s.id=d.source_catalog_id
+        WHERE d.id=?
+        """,
+        (dso_id,),
+    ).fetchone()
+    assert tuple(moved) == (dso_id, 1, "NGC0777", new_source)
+    assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == dso_id
+    assert db.execute("SELECT dso_id FROM project_target").fetchone()[0] == dso_id
+    repeat = apply_object_set(db, current, ())
+    assert repeat.inserted == repeat.updated == repeat.removed == repeat.merged == 0
+
+
+def test_legacy_cross_source_hash_collision_is_left_to_source_local_matching(
+    db: sqlite3.Connection, tmp_path: Path
+):
+    old = build_object_set(
+        _cross_source_sources(tmp_path / "old", ("openngc_addendum",)),
+        None,
+    )
+    current = build_object_set(
+        _cross_source_sources(tmp_path / "current", ("openngc", "openngc_addendum")),
+        None,
+    )
+    apply_object_set(db, old, ())
+    old_id = int(db.execute("SELECT id FROM dso WHERE source_key='NGC0777'").fetchone()[0])
+    db.execute("UPDATE dso SET source_key=NULL WHERE id=?", (old_id,))
+    db.execute("UPDATE dso_catalog_source SET keys_assigned=0 WHERE source_id='openngc_addendum'")
+    db.execute("INSERT INTO favorite_target (dso_id) VALUES (?)", (old_id,))
+    db.commit()
+
+    report = apply_object_set(db, current, ())
+
+    rows = db.execute(
+        """
+        SELECT d.id, s.source_id
+        FROM dso d JOIN dso_catalog_source s ON s.id=d.source_catalog_id
+        WHERE d.source_key='NGC0777' AND d.active=1
+        ORDER BY s.source_id
+        """
+    ).fetchall()
+    ids_by_source = {row["source_id"]: row["id"] for row in rows}
+    assert set(ids_by_source) == {"openngc", "openngc_addendum"}
+    assert ids_by_source["openngc_addendum"] == old_id
+    assert ids_by_source["openngc"] != old_id
+    assert report.inserted == 1
+    assert report.removed == report.merged == 0
+    assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == old_id
+    repeat = apply_object_set(db, current, ())
+    assert repeat.inserted == repeat.updated == repeat.removed == repeat.merged == 0
+
+
+@pytest.mark.parametrize(
+    ("keyed_source", "current_source"),
+    (("openngc", "openngc_addendum"), ("openngc_addendum", "openngc")),
+)
+def test_cross_source_keyed_identity_precedes_legacy_hash_match(
+    db: sqlite3.Connection, tmp_path: Path, keyed_source: str, current_source: str
+):
+    initial = build_object_set(
+        _cross_source_sources(tmp_path / "initial", ("openngc", "openngc_addendum")),
+        None,
+    )
+    current = build_object_set(
+        _cross_source_sources(tmp_path / "current", (current_source,)),
+        None,
+    )
+    apply_object_set(db, initial, ())
+    ids = {
+        row["source_id"]: row["id"]
+        for row in db.execute(
+            """
+            SELECT d.id, s.source_id
+            FROM dso d JOIN dso_catalog_source s ON s.id=d.source_catalog_id
+            WHERE d.source_key='NGC0777'
+            """
+        )
+    }
+    keyed_id = ids[keyed_source]
+    keyless_id = ids[current_source]
+    db.execute("UPDATE dso SET source_key=NULL WHERE id=?", (keyless_id,))
+    db.execute(
+        "UPDATE dso_catalog_source SET keys_assigned=? WHERE source_id=?",
+        (0, current_source),
+    )
+    db.execute("INSERT INTO favorite_target (dso_id) VALUES (?)", (keyed_id,))
+    db.execute("INSERT INTO project (name) VALUES ('Keyed identity precedence')")
+    project_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+        (project_id, keyed_id),
+    )
+    db.commit()
+
+    report = apply_object_set(db, current, ())
+
+    survivor = db.execute(
+        """
+        SELECT d.id, d.active, d.source_key, s.source_id
+        FROM dso d JOIN dso_catalog_source s ON s.id=d.source_catalog_id
+        WHERE d.id=?
+        """,
+        (keyed_id,),
+    ).fetchone()
+    assert tuple(survivor) == (keyed_id, 1, "NGC0777", current_source)
+    assert tuple(
+        db.execute("SELECT active, source_key FROM dso WHERE id=?", (keyless_id,)).fetchone()
+    ) == (
+        0,
+        None,
+    )
+    assert report.inserted == report.merged == 0
+    assert report.removed == 1
+    assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == keyed_id
+    assert db.execute("SELECT dso_id FROM project_target").fetchone()[0] == keyed_id
+    repeat = apply_object_set(db, current, ())
+    assert repeat.inserted == repeat.updated == repeat.removed == repeat.merged == 0
+
+
+def test_own_name_repair_preserves_object_ids_and_user_links(
+    db: sqlite3.Connection, tmp_path: Path
+):
+    root = tmp_path / "ownership"
+    current = build_object_set(_ownership_sources(root), None)
+    by_key = {obj.source_key: obj for obj in current.objects}
+
+    def move_claim(alternate_key: str, own_key: str, identifier: str) -> None:
+        alternate = by_key[alternate_key]
+        owner = by_key[own_key]
+        by_key[alternate_key] = replace(
+            alternate,
+            designations=(*alternate.designations, ("ngc", identifier, False)),
+        )
+        by_key[own_key] = replace(
+            owner,
+            designations=tuple(
+                designation
+                for designation in owner.designations
+                if designation[:2] != ("ngc", identifier)
+            ),
+        )
+
+    move_claim("NGC0755", "NGC0764", "764")
+    move_claim("NGC6838", "NGC6839", "6839")
+    old = replace(current, objects=tuple(by_key[obj.source_key] for obj in current.objects))
+    apply_object_set(db, old, ())
+    ids = {
+        row["source_key"]: row["id"]
+        for row in db.execute("SELECT id, source_key FROM dso WHERE source_key IS NOT NULL")
+    }
+    db.execute("INSERT INTO favorite_target (dso_id) VALUES (?)", (ids["NGC0755"],))
+    db.execute("INSERT INTO project (name) VALUES ('Ownership')")
+    project_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+        (project_id, ids["NGC0764"]),
+    )
+    db.commit()
+
+    report = apply_object_set(db, current, ())
+
+    assert report.merged == report.inserted == report.removed == 0
+    assert {
+        row["source_key"]: row["id"]
+        for row in db.execute("SELECT id, source_key FROM dso WHERE source_key IS NOT NULL")
+    } == ids
+    assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == ids["NGC0755"]
+    assert db.execute("SELECT dso_id FROM project_target").fetchone()[0] == ids["NGC0764"]
+    owners = {
+        row["identifier"]: row["dso_id"]
+        for row in db.execute("SELECT identifier, dso_id FROM dso_designation WHERE catalog='ngc'")
+    }
+    assert owners["764"] == ids["NGC0764"]
+    assert owners["6839"] == ids["NGC6839"]
+    repeat = apply_object_set(db, current, ())
+    assert repeat.inserted == repeat.updated == repeat.removed == repeat.merged == 0
 
 
 def test_removed_object_keeps_enrichment_and_records(db: sqlite3.Connection):
@@ -152,7 +700,7 @@ def test_removed_object_keeps_enrichment_and_records(db: sqlite3.Connection):
     ).fetchone()
     assert tuple(row) == (0, "Curated", 1, 1234.0, "50mgc")
     assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == 5
-    assert report.removed == 1
+    assert report.removed == 2
 
 
 def test_reappearing_object_reactivates_same_row(db: sqlite3.Connection):

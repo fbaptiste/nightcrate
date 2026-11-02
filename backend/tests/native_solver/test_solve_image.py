@@ -9,10 +9,12 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from PIL import Image
+from scipy.spatial import cKDTree
 
 from nightcrate.core import app_config
 from nightcrate.services import plate_solve
 from nightcrate.services.native_solver import solve_image as subject
+from nightcrate.services.native_solver.extract import ExtractionConfig, extract_array
 from nightcrate.services.native_solver.geometry import pixel_to_world, world_to_pixel
 from nightcrate.services.native_solver.models import (
     DetectedStars,
@@ -26,6 +28,7 @@ from nightcrate.services.star_catalog import index as catalog_index
 from nightcrate.services.star_catalog.index import BandSpec, write_band
 from nightcrate.services.star_catalog.ranges import FIELD_RANGES
 from tests.native_solver.synthetic import make_case
+from tests.native_solver.test_extract import _wide_blob_field
 from tests.star_catalog.conftest import SyntheticStar, write_siril_catalog
 
 
@@ -301,6 +304,37 @@ def test_solve_fits_end_to_end(tmp_path, monkeypatch):
         recovered, valid = world_to_pixel(solved, ra, dec)
         assert valid.all()
         assert np.linalg.norm(recovered[0] - [200.0, 300.0]) < 0.3
+    finally:
+        handles.close_all()
+
+
+def test_wide_bright_blobs_are_filtered_before_solve(tmp_path, monkeypatch):
+    case = _install_real_assets(tmp_path, monkeypatch, seed=812)
+    image, blob_centers = _wide_blob_field(case)
+    unfiltered = extract_array(image, config=ExtractionConfig(max_width_ratio=None))
+    brightest = np.argsort(-unfiltered.flux, kind="stable")[: len(blob_centers)]
+    blob_tree = cKDTree(blob_centers)
+    distances, _ = blob_tree.query(unfiltered.xy[brightest])
+    assert np.max(distances) < 2.0
+
+    path = tmp_path / "wide-blobs.fits"
+    hdu = fits.PrimaryHDU(image.astype(np.float32))
+    hdu.header["RA"] = case.truth.crval_ra
+    hdu.header["DEC"] = case.truth.crval_dec
+    hdu.header["XPIXSZ"] = 3.76
+    hdu.header["FOCALLEN"] = 206.265 * 3.76 / case.truth.scale_arcsec
+    hdu.writeto(path)
+    try:
+        result = subject.solve_image(
+            str(path),
+            0,
+            ra_hint=None,
+            dec_hint=None,
+            fov_hint=None,
+            cancel=threading.Event(),
+            reporter=NullSolveReporter(),
+        )
+        assert result.solved, result.error_message
     finally:
         handles.close_all()
 

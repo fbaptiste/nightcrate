@@ -16,7 +16,6 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +25,7 @@ from uuid import uuid4
 import numpy as np
 from astropy.io import fits as astro_fits
 
+from nightcrate.core.tasks import settle
 from nightcrate.services import (
     fits_io,
     pxiproject_io,
@@ -53,20 +53,6 @@ from nightcrate.services.plate_solve_models import (
 from nightcrate.services.star_catalog import handles
 
 logger = logging.getLogger("nightcrate")
-
-# Kept only for older direct service tests; API progress is operation-scoped.
-
-
-async def _finish_awaitable[T](awaitable: Awaitable[T]) -> tuple[T, bool]:
-    """Finish an already-started worker despite cancellation of its waiter."""
-    task = asyncio.ensure_future(awaitable)
-    cancelled = False
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancelled = True
-    return task.result(), cancelled
 
 
 def _resolve_path(path: str) -> tuple[Path | BinaryIO, str, int, tuple | None]:
@@ -780,21 +766,9 @@ async def run_solve(
             _astap_stop = operation.stop
             _astap_task = task
             try:
-                result = await asyncio.shield(task)
+                result = await settle(task, on_cancel=operation.cancel)
                 result.attempts = operation.attempts()
                 return result
-            except asyncio.CancelledError:
-                operation.cancel()
-                while True:
-                    try:
-                        await asyncio.shield(task)
-                    except asyncio.CancelledError:
-                        if not task.done():
-                            continue
-                    except Exception:
-                        logger.exception("[plate_solve] ASTAP task failed while cancelling")
-                    break
-                raise
             finally:
                 if task.done() and _astap_task is task:
                     _astap_task = None
@@ -821,27 +795,7 @@ async def run_solve(
         )
         operation.task = _native_task
         try:
-            result = await asyncio.shield(_native_task)
-            return result
-        except asyncio.CancelledError:
-            operation.cancel()
-            while True:
-                try:
-                    await asyncio.shield(_native_task)
-                except asyncio.CancelledError:
-                    if _native_task.done():
-                        try:
-                            _native_task.result()
-                        except Exception:
-                            logger.exception("[plate_solve] native worker failed while cancelling")
-                        break
-                    continue
-                except Exception:
-                    logger.exception("[plate_solve] native worker failed while cancelling")
-                    break
-                else:
-                    break
-            raise
+            return await settle(_native_task, on_cancel=operation.cancel)
         finally:
             if _native_task.done():
                 _native_task = None
@@ -869,7 +823,8 @@ async def shutdown() -> None:
             except ProcessLookupError:
                 pass
         try:
-            await asyncio.wait_for(asyncio.shield(astap_task), timeout=10.0)
+            waiter = asyncio.gather(astap_task, return_exceptions=True)
+            await asyncio.wait_for(asyncio.shield(waiter), timeout=10.0)
         except TimeoutError:
             logger.warning("[plate_solve] ASTAP task outlived shutdown timeout")
             return
@@ -893,7 +848,8 @@ async def shutdown() -> None:
         if _native_cancel is not None:
             _native_cancel.set()
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+            waiter = asyncio.gather(task, return_exceptions=True)
+            await asyncio.wait_for(asyncio.shield(waiter), timeout=10.0)
         except TimeoutError:
             logger.warning("[plate_solve] native worker outlived shutdown timeout")
             return
@@ -907,17 +863,16 @@ async def shutdown() -> None:
 async def _wait_for_process_exit(proc: asyncio.subprocess.Process) -> bool:
     """Wait through repeated cancellation until a subprocess has exited."""
     wait_task = asyncio.create_task(proc.wait())
+    waiter = asyncio.gather(wait_task, return_exceptions=True)
     cancelled = False
-    while True:
+    while not waiter.done():
         try:
-            await asyncio.shield(wait_task)
+            await asyncio.shield(waiter)
         except asyncio.CancelledError:
             cancelled = True
-            if not wait_task.done():
-                continue
-        if wait_task.done():
-            wait_task.result()
-            return cancelled
+    waiter.result()
+    wait_task.result()
+    return cancelled
 
 
 _ASTAP_NEAR_SECONDS = 60.0
@@ -1346,11 +1301,10 @@ async def _do_solve(
         from nightcrate.services.native_solver.models import NullSolveReporter
 
         reporter = NullSolveReporter()
-    preparation, prepare_cancelled = await _finish_awaitable(
-        asyncio.to_thread(_read_astap_source, image_path, hdu)
+    preparation = await settle(
+        asyncio.create_task(asyncio.to_thread(_read_astap_source, image_path, hdu)),
+        on_cancel=stop_event.set,
     )
-    if prepare_cancelled:
-        raise asyncio.CancelledError
     source, file_type, image_index, raw_bytes, cards = preparation
 
     def fresh_source() -> Path | BinaryIO:

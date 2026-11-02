@@ -4,8 +4,8 @@ cache (Target Planner Pass C).
 The sphere is partitioned into 768 HEALPix regions (``NSIDE=8``,
 ~7.3° per side, equal-area). Each region has a fixed tangent point —
 the region's HEALPix pixel centre. Within a region, a tile is a
-sub-region of the region's TAN plane whose pixels we render via
-hips2fits using a custom WCS header that shares the region's tangent.
+sub-region of the region's TAN plane whose pixels we render from HiPS
+tiles using a WCS that shares the region's tangent.
 
 This arrangement has two useful properties:
 
@@ -177,30 +177,6 @@ def cell_wcs(
     # ``to_header(relax=True)``; set it for completeness.
     w.array_shape = (n2, n1)
     return w
-
-
-def cell_wcs_dict(
-    region_ra_deg: float,
-    region_dec_deg: float,
-    tier: TierSpec,
-    cell_i: int,
-    cell_j: int,
-) -> dict[str, int | float | str]:
-    """WCS header dict suitable for hips2fits's ``wcs=<JSON>`` parameter.
-
-    Astropy's ``WCS.to_header()`` omits ``NAXIS*`` (those belong on the
-    HDU, not the WCS) — add them back explicitly so hips2fits knows the
-    output image dimensions.
-    """
-    w = cell_wcs(region_ra_deg, region_dec_deg, tier, cell_i, cell_j)
-    header = w.to_header()
-    out: dict[str, int | float | str] = {}
-    for key in header.keys():
-        out[key] = header[key]
-    out["NAXIS"] = 2
-    out["NAXIS1"] = tier.cell_width_px
-    out["NAXIS2"] = tier.cell_height_px
-    return out
 
 
 # ─── Grid layout ─────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import threading
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from nightcrate.api import star_catalog
 from nightcrate.core import app_config
 from nightcrate.db.session import get_db_path
-from nightcrate.services.star_catalog import fetch, index_build, ranges, store
+from nightcrate.services.star_catalog import fetch, index, index_build, ranges, store
 from nightcrate.services.star_catalog.store import AlreadyInstalled
 
 
@@ -18,6 +19,19 @@ def _client() -> TestClient:
     app = FastAPI()
     app.include_router(star_catalog.router)
     return TestClient(app)
+
+
+def _configure_database(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    database = workspace / "nightcrate.db"
+    database.touch()
+    monkeypatch.setattr(
+        star_catalog,
+        "load_config",
+        lambda: SimpleNamespace(active_db=str(workspace)),
+    )
+    return database
 
 
 def test_status_not_installed(tmp_path, monkeypatch):
@@ -37,6 +51,58 @@ def test_status_not_installed(tmp_path, monkeypatch):
         ("0.2-0.4", "Narrow fields", False),
     ]
     assert body["ranges"][0]["build_memory_bytes"] == 3_200_000_000
+
+
+def test_unconfigured_status_skips_database_quietly(tmp_path, monkeypatch, caplog):
+    legacy_db = tmp_path / "Default" / "nightcrate.db"
+    legacy_db.parent.mkdir()
+    legacy_db.write_bytes(b"legacy database")
+    monkeypatch.setattr(
+        star_catalog,
+        "load_config",
+        lambda: SimpleNamespace(active_db=None),
+    )
+
+    def database_must_not_open(*_args, **_kwargs):
+        raise AssertionError("unconfigured status opened the database")
+
+    monkeypatch.setattr(star_catalog.aiosqlite, "connect", database_must_not_open)
+    caplog.set_level("WARNING")
+    for _ in range(2):
+        response = _client().get("/api/admin/star-catalog/status")
+        assert response.status_code == 200
+        assert all(not item["rigs"] for item in response.json()["ranges"])
+    assert legacy_db.read_bytes() == b"legacy database"
+    assert "failed to load rig coverage" not in caplog.text
+
+
+def test_configured_missing_database_warns_once_without_traceback(tmp_path, monkeypatch, caplog):
+    workspace = tmp_path / "missing-workspace"
+    workspace.mkdir()
+    missing_db = workspace / "nightcrate.db"
+    monkeypatch.setattr(
+        star_catalog,
+        "load_config",
+        lambda: SimpleNamespace(active_db=str(workspace)),
+    )
+
+    def database_must_not_open(*_args, **_kwargs):
+        raise AssertionError("missing configured database was opened")
+
+    monkeypatch.setattr(star_catalog.aiosqlite, "connect", database_must_not_open)
+    caplog.set_level("WARNING")
+    response = _client().get("/api/admin/star-catalog/status")
+
+    assert response.status_code == 200
+    assert all(not item["rigs"] for item in response.json()["ranges"])
+    assert not missing_db.exists()
+    warnings = [
+        record
+        for record in caplog.records
+        if "configured database is missing" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].exc_info is None
 
 
 @pytest.mark.asyncio
@@ -159,6 +225,96 @@ def test_build_unknown_range_422():
     assert response.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_build_filters_built_range_while_solve_holds_publication(tmp_path, monkeypatch):
+    await fetch.shutdown()
+    fetch._operation = None
+    fetch._task = None
+    monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
+    standard, narrow = ranges.FIELD_RANGES
+    for name in standard.layers:
+        ranges.layer_path(name).parent.mkdir(parents=True, exist_ok=True)
+        ranges.layer_path(name).write_bytes(b"ready")
+    ranges.write_manifest({standard.id})
+
+    def layer_state(name):
+        return "ready" if ranges.layer_path(name).is_file() else "missing"
+
+    narrow_built = threading.Event()
+
+    def build(name, *, on_progress, **_kwargs):
+        output = store.staging_dir() / f"build-{name}" / f"{name}.ncidx"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"ready")
+        on_progress(1.0)
+        narrow_built.set()
+        return output
+
+    async def settings():
+        return SimpleNamespace(max_worker_cores=1)
+
+    async def no_rigs():
+        return []
+
+    monkeypatch.setattr(index, "layer_state", layer_state)
+    monkeypatch.setattr(index_build, "layer_state", layer_state)
+    monkeypatch.setattr(index_build, "build_layer", build)
+    monkeypatch.setattr(index_build, "get_settings", settings)
+    monkeypatch.setattr(index_build.shutil, "disk_usage", lambda _: SimpleNamespace(free=10**12))
+    monkeypatch.setattr(star_catalog, "_rig_coverage", no_rigs)
+
+    app = FastAPI()
+    app.include_router(star_catalog.router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        async with star_catalog.plate_solve.solve_slot():
+            response = await client.post(
+                "/api/admin/star-catalog/ranges/build",
+                json={"range_ids": [standard.id, narrow.id]},
+            )
+            assert response.status_code == 202
+            assert response.json()["ranges"] == [narrow.id]
+            while not narrow_built.is_set():
+                await asyncio.sleep(0)
+            status = (await client.get("/api/admin/star-catalog/status")).json()
+            assert [item["state"] for item in status["ranges"]] == ["built", "building"]
+
+        await fetch._task
+        response = await client.post(
+            "/api/admin/star-catalog/ranges/build", json={"range_ids": [standard.id]}
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Those ranges are already built."
+
+    fetch._operation = None
+    fetch._task = None
+
+
+@pytest.mark.asyncio
+async def test_status_reports_ready_current_range_as_built(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
+    standard = ranges.FIELD_RANGES[0]
+
+    async def no_rigs():
+        return []
+
+    operation = fetch.StarOperation(
+        kind="build",
+        phase="building",
+        ranges=[standard.id],
+        current_range=standard.id,
+    )
+    monkeypatch.setattr(star_catalog, "_rig_coverage", no_rigs)
+    monkeypatch.setattr(star_catalog, "built_ranges", lambda: {standard.id})
+    monkeypatch.setattr(fetch, "current_operation", lambda: operation)
+
+    status = await star_catalog.get_status()
+
+    assert status.ranges[0].state == "built"
+    assert status.ranges[0].progress is None
+
+
 def test_delete_range_409_while_solving(monkeypatch):
     @asynccontextmanager
     async def occupied():
@@ -183,6 +339,7 @@ def test_delete_all_reports_operation(tmp_path, monkeypatch):
 
 def test_rig_coverage(tmp_path, monkeypatch):
     monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
+    configured_db = _configure_database(tmp_path, monkeypatch)
 
     class Connection:
         async def execute_fetchall(self, query):
@@ -201,10 +358,11 @@ def test_rig_coverage(tmp_path, monkeypatch):
             ]
 
     @asynccontextmanager
-    async def database():
+    async def database(path):
+        assert path == configured_db
         yield Connection()
 
-    monkeypatch.setattr(star_catalog, "get_db", database)
+    monkeypatch.setattr(star_catalog.aiosqlite, "connect", database)
     ranges = _client().get("/api/admin/star-catalog/status").json()["ranges"]
     covered = [item["id"] for item in ranges if item["rigs"]]
     assert covered == ["0.4-10"]
@@ -213,6 +371,7 @@ def test_rig_coverage(tmp_path, monkeypatch):
 
 def test_rig_coverage_uses_solve_dialog_linear_field(tmp_path, monkeypatch):
     monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
+    configured_db = _configure_database(tmp_path, monkeypatch)
 
     class Connection:
         async def execute_fetchall(self, _query):
@@ -228,10 +387,11 @@ def test_rig_coverage_uses_solve_dialog_linear_field(tmp_path, monkeypatch):
             ]
 
     @asynccontextmanager
-    async def database():
+    async def database(path):
+        assert path == configured_db
         yield Connection()
 
-    monkeypatch.setattr(star_catalog, "get_db", database)
+    monkeypatch.setattr(star_catalog.aiosqlite, "connect", database)
     ranges = _client().get("/api/admin/star-catalog/status").json()["ranges"]
     covered = [item for item in ranges if item["rigs"]]
 
@@ -241,6 +401,7 @@ def test_rig_coverage_uses_solve_dialog_linear_field(tmp_path, monkeypatch):
 
 def test_rig_coverage_uses_two_choice_boundaries(tmp_path, monkeypatch):
     monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
+    configured_db = _configure_database(tmp_path, monkeypatch)
 
     class Connection:
         async def execute_fetchall(self, _query):
@@ -257,10 +418,11 @@ def test_rig_coverage_uses_two_choice_boundaries(tmp_path, monkeypatch):
             ]
 
     @asynccontextmanager
-    async def database():
+    async def database(path):
+        assert path == configured_db
         yield Connection()
 
-    monkeypatch.setattr(star_catalog, "get_db", database)
+    monkeypatch.setattr(star_catalog.aiosqlite, "connect", database)
     choices = _client().get("/api/admin/star-catalog/status").json()["ranges"]
 
     assert [rig["field_deg"] for rig in choices[0]["rigs"]] == [0.4, 2.0, 10.0]
@@ -300,6 +462,12 @@ def test_rig_coverage_lists_only_my_rigs(tmp_path, monkeypatch):
     import sqlite3
 
     monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(
+        star_catalog,
+        "load_config",
+        lambda: SimpleNamespace(active_db=str(tmp_path)),
+    )
+    monkeypatch.setattr(star_catalog, "workspace_db_path", lambda _workspace: get_db_path())
     conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     seeded = conn.execute(

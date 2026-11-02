@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useDsoCatalogStore } from "@/stores/dsoCatalogStore";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -24,6 +24,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import SearchIcon from "@mui/icons-material/Search";
+import { visuallyHidden } from "@mui/utils";
 import { Link as RouterLink } from "react-router-dom";
 import { fetchDsoFacets, fetchDsos, type DsoListItem } from "@/api/dsos";
 import { useDebounce } from "@/lib/useDebounce";
@@ -62,12 +63,31 @@ export default function DsoCatalogPage() {
     store.setPage(val.page);
     store.setPageSize(val.pageSize);
   };
-  const sortModel: GridSortModel = [{ field: store.sortField, sort: store.sortDir }];
+  // Keep the model's identity stable: the grid re-applies a new sortModel
+  // array as a sort change and jumps back to the first page.
+  const sortModel: GridSortModel = useMemo(
+    () => [{ field: store.sortField, sort: store.sortDir }],
+    [store.sortField, store.sortDir],
+  );
   const setSortModel = (m: GridSortModel) => {
-    if (m.length > 0) { store.setSortField(m[0].field); store.setSortDir((m[0].sort ?? "asc") as "asc" | "desc"); }
+    if (m.length > 0) {
+      store.setSort(m[0].field, (m[0].sort ?? "asc") as "asc" | "desc");
+    }
   };
   const [detailId, setDetailId] = [store.detailId, store.setDetailId];
+  const detailReturnFocusRef = useRef<HTMLElement | null>(null);
   const [attributionOpen, setAttributionOpen] = useState(false);
+
+  const closeDetail = () => {
+    const returnFocus = detailReturnFocusRef.current;
+    setDetailId(null);
+    if (returnFocus) {
+      window.requestAnimationFrame(() => {
+        returnFocus.focus();
+        detailReturnFocusRef.current = null;
+      });
+    }
+  };
 
   const sort = store.sortField;
   const sortDir = store.sortDir;
@@ -141,10 +161,98 @@ export default function DsoCatalogPage() {
       headerName: "Designation",
       width: 140,
       renderCell: (params) => (
-        <Typography variant="body2" fontWeight={600}>
-          {params.value}
-        </Typography>
+        <Box sx={{ alignItems: "center", display: "flex", height: "100%" }}>
+          <Typography variant="body2" fontWeight={600}>
+            {params.row.display_designation}
+          </Typography>
+        </Box>
       ),
+    },
+    {
+      field: "designations",
+      headerName: "Alt designations",
+      width: 360,
+      resizable: false,
+      sortable: false,
+      renderCell: (params) => {
+        const alternatives = params.row.designations
+          .map((designation) => designation.display_form)
+          .filter(
+            (designation, index, all) =>
+              designation !== params.row.display_designation &&
+              all.indexOf(designation) === index,
+          );
+        const visible = alternatives.slice(0, 2);
+        const hidden = alternatives.slice(2);
+        return (
+          <Box
+            sx={{
+              alignItems: "center",
+              display: "flex",
+              gap: 0.75,
+              height: "100%",
+              minWidth: 0,
+              overflow: "hidden",
+              width: "100%",
+            }}
+          >
+            {visible.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                —
+              </Typography>
+            ) : (
+              visible.map((designation) => (
+                <Chip
+                  key={designation}
+                  label={designation}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    bgcolor: "background.paper",
+                    borderColor: "divider",
+                    color: "text.primary",
+                    maxWidth: 140,
+                    minWidth: 0,
+                    "& .MuiChip-label": {
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    },
+                  }}
+                />
+              ))
+            )}
+            {hidden.length > 0 && (
+              <>
+                <Chip
+                  aria-hidden="true"
+                  label={`+${hidden.length}`}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    bgcolor: "background.paper",
+                    borderColor: "divider",
+                    color: "text.secondary",
+                    flexShrink: 0,
+                  }}
+                />
+                <Box
+                  component="span"
+                  sx={visuallyHidden}
+                >
+                  {hidden.length} more: {hidden.join(", ")}.
+                </Box>
+              </>
+            )}
+            <Box
+              component="span"
+              sx={visuallyHidden}
+            >
+              Press Enter for details.
+            </Box>
+          </Box>
+        );
+      },
     },
     {
       field: "obj_type",
@@ -210,19 +318,6 @@ export default function DsoCatalogPage() {
       flex: 1,
       minWidth: 180,
       valueFormatter: (value) => value ?? "—",
-    },
-    {
-      field: "designations",
-      headerName: "Alt designations",
-      width: 200,
-      sortable: false,
-      valueGetter: (_v, row) => {
-        const secondary = row.designations.filter((d) => !d.is_primary);
-        if (secondary.length === 0) return "—";
-        const head = secondary.slice(0, 2).map((d) => d.display_form).join(", ");
-        const extra = secondary.length - 2;
-        return extra > 0 ? `${head}, +${extra} more` : head;
-      },
     },
   ];
 
@@ -396,6 +491,7 @@ export default function DsoCatalogPage() {
             onPaginationModelChange={setPagination}
             sortModel={sortModel}
             onSortModelChange={setSortModel}
+            sortingOrder={["asc", "desc"]}
             pageSizeOptions={[25, 50, 100]}
             slots={{ loadingOverlay: GridLoadingOverlay }}
             slotProps={{
@@ -405,6 +501,16 @@ export default function DsoCatalogPage() {
               } as any,
             }}
             onRowClick={(params: GridRowParams<DsoListItem>) => setDetailId(params.row.id)}
+            onCellKeyDown={(params, event) => {
+              if (
+                event.key === "Enter" &&
+                event.target === event.currentTarget &&
+                event.currentTarget instanceof HTMLElement
+              ) {
+                detailReturnFocusRef.current = event.currentTarget;
+                setDetailId(params.row.id);
+              }
+            }}
             disableRowSelectionOnClick
             density="compact"
             sx={{
@@ -415,7 +521,7 @@ export default function DsoCatalogPage() {
         </Paper>
       )}
 
-      <DsoDetailPanel dsoId={detailId} onClose={() => setDetailId(null)} />
+      <DsoDetailPanel dsoId={detailId} onClose={closeDetail} />
       <DsoAttributionPanel open={attributionOpen} onClose={() => setAttributionOpen(false)} />
     </Box>
   );

@@ -11,32 +11,26 @@ from __future__ import annotations
 import pytest
 
 from nightcrate.db.session import get_db
-from nightcrate.services import thumbnails
+from nightcrate.services import hips_tiles, thumbnails
 
-# Minimum JPEG body (SOI magic + filler) — clears ``_MIN_BODY`` logic in
-# ``fetch_hips_image`` without needing real image bytes.
+# Synthetic rendered bytes; cache tests patch ``hips_tiles.render`` and do not
+# decode this payload.
 _FAKE_JPEG = b"\xff\xd8" + b"padding-content" * 200
-
-
-class FakeResponse:
-    def __init__(self, *, status_code: int = 200, body: bytes = b""):
-        self.status_code = status_code
-        self.content = body
 
 
 @pytest.fixture
 def fake_hips(monkeypatch):
-    """Drop-in replacement for the underlying HTTPS fetch."""
-    mapping: dict[str, object] = {}
+    """Drop-in renderer whose result or failure each test can control."""
+    state: dict[str, object] = {"calls": 0, "error": None}
 
-    async def fake_get(url, *args, **kwargs):
-        for prefix, handler in mapping.items():
-            if prefix in url:
-                return handler() if callable(handler) else handler
-        raise AssertionError(f"unexpected URL: {url}")
+    async def fake_render(*args, **kwargs):
+        state["calls"] = int(state["calls"]) + 1
+        if state["error"] is not None:
+            raise state["error"]  # type: ignore[misc]
+        return hips_tiles.RenderedImage(_FAKE_JPEG, frozenset({"cds"}))
 
-    monkeypatch.setattr("nightcrate.services.hips_client.http_client.get", fake_get)
-    return {"mapping": mapping}
+    monkeypatch.setattr(hips_tiles, "render", fake_render)
+    return state
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +42,7 @@ def _redirect_thumb_dir(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 async def _drain_in_flight():
     """Background fetches carry over across tests if we don't drain them."""
+    thumbnails._failure_backoff.clear()
     yield
     for key, task in list(thumbnails._in_flight.items()):
         task.cancel()
@@ -56,6 +51,7 @@ async def _drain_in_flight():
         except BaseException:  # noqa: BLE001 — cleanup
             pass
         thumbnails._in_flight.pop(key, None)
+    thumbnails._failure_backoff.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -96,9 +92,6 @@ async def _seed_dso_rows():
 
 
 async def test_miss_returns_placeholder_and_enqueues_fetch(fake_hips):
-    # URL-encoded HiPS name — hips2fits encodes the slashes as %2F.
-    fake_hips["mapping"]["DSS2%2Fcolor"] = FakeResponse(body=_FAKE_JPEG)
-
     async with get_db() as conn:
         result = await thumbnails.get_thumbnail(
             conn,
@@ -161,12 +154,8 @@ async def test_hit_serves_cached_bytes(fake_hips, tmp_path):
     assert result.body == _FAKE_JPEG
 
 
-async def test_color_failure_falls_back_to_red(fake_hips):
-    def _fail_color():
-        raise RuntimeError("color offline")
-
-    fake_hips["mapping"]["DSS2%2Fcolor"] = _fail_color
-    fake_hips["mapping"]["DSS2%2Fred"] = FakeResponse(body=_FAKE_JPEG)
+async def test_render_failure_has_no_red_fallback(fake_hips):
+    fake_hips["error"] = RuntimeError("all tile sources offline")
 
     async with get_db() as conn:
         await thumbnails.get_thumbnail(
@@ -186,15 +175,12 @@ async def test_color_failure_falls_back_to_red(fake_hips):
     async with get_db() as conn:
         cursor = await conn.execute("SELECT source FROM thumbnail_cache WHERE dso_id = 55")
         row = await cursor.fetchone()
-    assert row["source"] == "dss2_red"
+    assert row["source"] == "placeholder"
+    assert fake_hips["calls"] == 1
 
 
-async def test_double_failure_records_fetch_error_row(fake_hips):
-    def _fail():
-        raise RuntimeError("upstream dead")
-
-    fake_hips["mapping"]["DSS2%2Fcolor"] = _fail
-    fake_hips["mapping"]["DSS2%2Fred"] = _fail
+async def test_render_failure_records_fetch_error_row(fake_hips):
+    fake_hips["error"] = RuntimeError("upstream dead")
 
     async with get_db() as conn:
         await thumbnails.get_thumbnail(
@@ -219,6 +205,127 @@ async def test_double_failure_records_fetch_error_row(fake_hips):
     assert row["source"] == "placeholder"
     assert row["bytes"] == 0
     assert row["fetch_error"] is not None
+
+
+async def test_write_failure_records_backoff_and_suppresses_retries(fake_hips, monkeypatch):
+    key = thumbnails.make_key(42, "list", ra_deg=10.0, dec_deg=20.0)
+    final_path = thumbnails._thumb_path(key)
+    original = type(final_path).write_bytes
+
+    def fail_after_partial_write(path, data):
+        if path.name.startswith("."):
+            original(path, data[:20])
+            raise OSError("simulated interrupted write")
+        return original(path, data)
+
+    monkeypatch.setattr(type(final_path), "write_bytes", fail_after_partial_write)
+    async with get_db() as conn:
+        first = await thumbnails.get_thumbnail(
+            conn,
+            dso_id=42,
+            variant="list",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            maj_axis_arcmin=5.0,
+            max_cache_bytes=10 * 1024 * 1024,
+            conn_factory=get_db,
+            wait_timeout_s=5.0,
+        )
+    assert first.status == "error"
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT source, fetch_error FROM thumbnail_cache WHERE dso_id = 42"
+        )
+        row = await cursor.fetchone()
+        second = await thumbnails.get_thumbnail(
+            conn,
+            dso_id=42,
+            variant="list",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            maj_axis_arcmin=5.0,
+            max_cache_bytes=10 * 1024 * 1024,
+            conn_factory=get_db,
+            wait_timeout_s=5.0,
+        )
+    assert row["source"] == "placeholder"
+    assert "interrupted" in row["fetch_error"]
+    assert second.status == "error"
+    assert fake_hips["calls"] == 1
+    assert not final_path.exists()
+    assert not final_path.with_name(f".{final_path.name}.tmp").exists()
+
+
+async def test_insert_failures_use_in_memory_backoff(fake_hips, monkeypatch):
+    insert_sources = []
+
+    async def fail_insert(*args, **kwargs):
+        insert_sources.append(kwargs["source"])
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(thumbnails, "_insert_cache_row", fail_insert)
+    async with get_db() as conn:
+        first = await thumbnails.get_thumbnail(
+            conn,
+            dso_id=42,
+            variant="list",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            maj_axis_arcmin=5.0,
+            max_cache_bytes=10 * 1024 * 1024,
+            conn_factory=get_db,
+            wait_timeout_s=5.0,
+        )
+        second = await thumbnails.get_thumbnail(
+            conn,
+            dso_id=42,
+            variant="list",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            maj_axis_arcmin=5.0,
+            max_cache_bytes=10 * 1024 * 1024,
+            conn_factory=get_db,
+            wait_timeout_s=5.0,
+        )
+    assert first.status == second.status == "error"
+    assert insert_sources == ["dss2_color", "placeholder"]
+    assert fake_hips["calls"] == 1
+
+
+async def test_in_memory_backoff_expires_after_ten_minutes(fake_hips, monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(thumbnails, "_clock", lambda: now)
+
+    async def fail_insert(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(thumbnails, "_insert_cache_row", fail_insert)
+    async with get_db() as conn:
+        first = await thumbnails.get_thumbnail(
+            conn,
+            dso_id=42,
+            variant="list",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            maj_axis_arcmin=5.0,
+            max_cache_bytes=10 * 1024 * 1024,
+            conn_factory=get_db,
+            wait_timeout_s=5.0,
+        )
+        now += thumbnails._FETCH_ERROR_BACKOFF.total_seconds() + 1
+        retried = await thumbnails.get_thumbnail(
+            conn,
+            dso_id=42,
+            variant="list",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            maj_axis_arcmin=5.0,
+            max_cache_bytes=10 * 1024 * 1024,
+            conn_factory=get_db,
+            wait_timeout_s=5.0,
+        )
+    assert first.status == retried.status == "error"
+    assert fake_hips["calls"] == 2
 
 
 async def test_error_row_returns_error_during_backoff(fake_hips):
@@ -246,6 +353,7 @@ async def test_error_row_returns_error_during_backoff(fake_hips):
             conn_factory=get_db,
         )
     assert result.status == "error"
+    assert fake_hips["calls"] == 0
 
 
 async def test_lru_eviction_drops_oldest(tmp_path):
@@ -453,8 +561,6 @@ def test_make_key_encodes_ra_dec_x10000():
 
 
 async def test_rig_framed_cache_miss_enqueues_fetch(fake_hips):
-    fake_hips["mapping"]["DSS2%2Fcolor"] = FakeResponse(body=_FAKE_JPEG)
-
     async with get_db() as conn:
         result = await thumbnails.get_thumbnail(
             conn,
@@ -485,8 +591,6 @@ async def test_rig_framed_cache_miss_enqueues_fetch(fake_hips):
 
 
 async def test_rig_framed_two_distinct_rigs_get_separate_rows(fake_hips):
-    fake_hips["mapping"]["DSS2%2Fcolor"] = FakeResponse(body=_FAKE_JPEG)
-
     for fov_major, fov_minor in ((0.37, 0.28), (0.80, 0.60)):
         async with get_db() as conn:
             await thumbnails.get_thumbnail(
@@ -569,20 +673,60 @@ async def test_rehydrate_from_disk_rebuilds_thumbnail_index(tmp_path):
     assert tiny.exists()
 
 
+async def test_rehydrate_repairs_windows_path_without_changing_access_time(tmp_path):
+    thumb_dir = tmp_path / "thumbnails"
+    thumb_dir.mkdir(parents=True)
+    filename = "ra420000_dec-30000_list_180x180.jpg"
+    jpeg = thumb_dir / filename
+    jpeg.write_bytes(b"\xff\xd8" + b"x" * 2048)
+    accessed = "2025-01-02 03:04:05"
+
+    async with get_db() as conn:
+        await conn.execute(
+            "INSERT INTO thumbnail_cache (dso_id, variant, width, height, "
+            "file_path, source, bytes, last_access_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                42,
+                "list",
+                180,
+                180,
+                rf"C:\Old\NightCrate\thumbnails\{filename}",
+                "dss2_color",
+                1,
+                accessed,
+            ),
+        )
+        await conn.commit()
+        assert await thumbnails.rehydrate_from_disk(conn) == 0
+        assert await thumbnails.rehydrate_from_disk(conn) == 0
+        row = (
+            await conn.execute_fetchall(
+                "SELECT file_path, bytes, last_access_at FROM thumbnail_cache"
+            )
+        )[0]
+
+    assert row["file_path"] == filename
+    assert row["bytes"] == jpeg.stat().st_size
+    assert row["last_access_at"] == accessed
+
+
 async def test_sync_orphan_files_deletes_untracked(tmp_path):
     thumb_dir = tmp_path / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
-    # One tracked, one orphan, one non-matching filename (should be left alone).
+    # One tracked, two orphans, one interrupted-write temp, and one
+    # non-matching filename (should be left alone).
     tracked = thumb_dir / "ra10000_dec-440000_list_180x180.jpg"
     orphan = thumb_dir / "ra20000_dec-430000_detail_800x800.jpg"
     # Legacy (pre-v0.18.2) dso-keyed filename — also orphan-sweepable
     # so users migrating over don't accumulate cruft forever.
     legacy_orphan = thumb_dir / "3_list_180x180.jpg"
     other = thumb_dir / "README.txt"
+    temporary = thumb_dir / ".ra30000_dec-420000_list_180x180.jpg.tmp"
     tracked.write_bytes(b"x")
     orphan.write_bytes(b"x")
     legacy_orphan.write_bytes(b"x")
     other.write_bytes(b"x")
+    temporary.write_bytes(b"partial")
 
     async with get_db() as conn:
         await conn.execute(
@@ -594,10 +738,11 @@ async def test_sync_orphan_files_deletes_untracked(tmp_path):
 
         removed = await thumbnails.sync_orphan_files(conn)
 
-    assert removed == 2
+    assert removed == 3
     assert tracked.exists()
     assert not orphan.exists()
     assert not legacy_orphan.exists()
+    assert not temporary.exists()
     assert other.exists()  # non-thumbnail files untouched
 
 

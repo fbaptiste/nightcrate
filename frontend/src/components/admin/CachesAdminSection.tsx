@@ -125,9 +125,8 @@ export default function CachesAdminSection() {
               <Typography variant="caption" color="text.secondary">
                 {thumbnailRows} {thumbnailRows === 1 ? "image" : "images"}
                 {" · "}
-                {thumbnailMB} MB of {thumbnailMaxMB} MB · shared budget
-                covers ``APP_DIR/thumbnails`` (per-DSO) and
-                ``APP_DIR/sky_tiles`` (HEALPix-regional composite cells)
+                {thumbnailMB} MB of {thumbnailMaxMB} MB · one budget shared by
+                catalog thumbnails and planner sky images
               </Typography>
             </Box>
             <FormControl size="small" sx={{ minWidth: 120 }}>
@@ -149,7 +148,6 @@ export default function CachesAdminSection() {
               <Button
                 variant="outlined"
                 size="small"
-                disabled={thumbnailRows === 0}
                 onClick={async () => {
                   await clearThumbnailCache();
                   queryClient.invalidateQueries({

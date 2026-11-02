@@ -18,15 +18,20 @@ we keep the first and silently drop later claimants, logging at DEBUG.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from nightcrate.catalog_loader.barnard_loader import _normalise_barn_id
+from nightcrate.catalog_loader.crossref_parser import parse_other_id
 from nightcrate.catalog_loader.hash import file_sha256
 from nightcrate.catalog_loader.openngc_parser import (
     ParsedOpenNgcRow,
+    _parse_name,
     parse_openngc,
+    split_identifiers,
 )
 from nightcrate.catalog_loader.registry import CatalogSource, get_sources
 
@@ -72,6 +77,164 @@ _DISPLAY_PREFIX: dict[str, str] = {
     "dwb": "DWB",
 }
 
+# These addendum source keys were previously rendered with the synthetic
+# ``OTHER`` prefix.  Keeping the exact set makes the existing-database repair
+# targeted and prevents unrelated unrecognized names from forcing reloads.
+LEGACY_OTHER_NAMES: tuple[str, ...] = (
+    "HCG092",
+    "HCG079",
+    "H05",
+    "H13",
+    "H20",
+    "H21",
+    "MWSC3156",
+    "MWSC3171",
+    "MWSC3561",
+)
+
+
+def _openngc_own_name_rows(cur: sqlite3.Cursor) -> dict[tuple[str, str], list[int]]:
+    """Return active OpenNGC objects grouped by their parsed source name."""
+    grouped: dict[tuple[str, str], list[int]] = {}
+    rows = cur.execute(
+        """
+        SELECT d.id, d.source_key
+        FROM dso d
+        JOIN dso_catalog_source s ON s.id = d.source_catalog_id
+        WHERE d.active = 1
+          AND d.source_key IS NOT NULL
+          AND s.source_id IN ('openngc', 'openngc_addendum')
+        """
+    ).fetchall()
+    for dso_id, source_key in rows:
+        catalog, identifier = _parse_name(str(source_key))
+        if catalog is None or identifier is None:
+            continue
+        grouped.setdefault((catalog, identifier), []).append(int(dso_id))
+    return grouped
+
+
+def _designation_ownership_due(cur: sqlite3.Cursor) -> bool:
+    """Detect OpenNGC own-name ownership or primary-designation drift."""
+    own_names = _openngc_own_name_rows(cur)
+    owners = {
+        (str(catalog), str(identifier)): int(dso_id)
+        for catalog, identifier, dso_id in cur.execute(
+            "SELECT catalog, identifier, dso_id FROM dso_designation"
+        ).fetchall()
+    }
+    if any(
+        len(dso_ids) == 1 and owners.get(key) != dso_ids[0] for key, dso_ids in own_names.items()
+    ):
+        return True
+    return (
+        cur.execute(
+            """
+            SELECT 1
+            FROM dso d
+            JOIN dso_catalog_source s ON s.id = d.source_catalog_id
+            LEFT JOIN dso_designation dd ON dd.dso_id = d.id
+            WHERE d.active = 1
+              AND s.source_id IN ('openngc', 'openngc_addendum')
+            GROUP BY d.id
+            HAVING COUNT(dd.id) > 0
+               AND (
+                    SUM(CASE WHEN dd.is_primary = 1 THEN 1 ELSE 0 END) != 1
+                    OR MAX(CASE WHEN dd.is_primary = 1 THEN dd.display_form END)
+                       != d.primary_designation
+               )
+            LIMIT 1
+            """
+        ).fetchone()
+        is not None
+    )
+
+
+def _barnard_merges_due(cur: sqlite3.Cursor) -> bool:
+    """Detect a keyed Barnard row matching one unambiguous OpenNGC own name."""
+    openngc_names: dict[str, int] = {}
+    ambiguous: set[str] = set()
+    for (catalog, identifier), dso_ids in _openngc_own_name_rows(cur).items():
+        if catalog != "barnard":
+            continue
+        key = _normalise_barn_id(identifier).casefold()
+        if len(dso_ids) == 1 and key not in openngc_names:
+            openngc_names[key] = dso_ids[0]
+        else:
+            ambiguous.add(key)
+    for key in ambiguous:
+        openngc_names.pop(key, None)
+    if not openngc_names:
+        return False
+    barnard_keys = cur.execute(
+        """
+        SELECT d.source_key
+        FROM dso d
+        JOIN dso_catalog_source s ON s.id = d.source_catalog_id
+        WHERE d.active = 1
+          AND d.source_key IS NOT NULL
+          AND s.source_id = 'vizier_barnard'
+        """
+    ).fetchall()
+    return any(_normalise_barn_id(str(row[0])).casefold() in openngc_names for row in barnard_keys)
+
+
+def _fused_pgc_repair_due(cur: sqlite3.Cursor) -> bool:
+    """Detect legacy PGC designations created from an upstream missing comma."""
+    rows = cur.execute(
+        """
+        SELECT d.id, d.raw_other_id
+        FROM dso d
+        JOIN dso_catalog_source s ON s.id = d.source_catalog_id
+        WHERE d.active = 1
+          AND d.raw_other_id IS NOT NULL
+          AND s.source_id IN ('openngc', 'openngc_addendum')
+        """
+    ).fetchall()
+    candidates: list[tuple[int, tuple[str, ...]]] = []
+    for dso_id, raw_other_id in rows:
+        raw_other_id = str(raw_other_id)
+        original = tuple(token.strip() for token in str(raw_other_id).split(",") if token.strip())
+        repaired = split_identifiers(raw_other_id)
+        if repaired != original:
+            candidates.append((int(dso_id), repaired))
+
+    for dso_id, repaired in candidates:
+        existing = {
+            (str(catalog), str(identifier))
+            for catalog, identifier in cur.execute(
+                "SELECT catalog, identifier FROM dso_designation WHERE dso_id = ?",
+                (dso_id,),
+            ).fetchall()
+        }
+
+        expected = {
+            (ref.catalog, ref.identifier) for token in repaired for ref in parse_other_id(token)
+        }
+        legacy_malformed = any(
+            catalog == "pgc" and len(split_identifiers(f"PGC {identifier}")) > 1
+            for catalog, identifier in existing
+        )
+        if legacy_malformed:
+            return True
+        if expected <= existing:
+            continue
+
+        # A globally owned designation cannot be claimed by this object, so it
+        # must not keep retriggering reconciliation on every load.
+        missing_claimable = any(
+            key not in existing
+            and cur.execute(
+                "SELECT 1 FROM dso_designation WHERE catalog = ? AND identifier = ? LIMIT 1",
+                key,
+            ).fetchone()
+            is None
+            for key in expected
+        )
+        if missing_claimable:
+            return True
+    return False
+
 
 @dataclass
 class SourceResult:
@@ -99,6 +262,11 @@ class LoadSummary:
 
 def _build_display_form(catalog: str, identifier: str) -> str:
     """Human-friendly designation: ``M 42``, ``NGC 1976``, ``Sh2-281``."""
+    if catalog == "other":
+        unsupported = re.fullmatch(r"(H|MWSC)(\d+)", identifier)
+        if unsupported is not None:
+            prefix, digits = unsupported.groups()
+            return f"{prefix} {digits.lstrip('0') or '0'}"
     prefix = _DISPLAY_PREFIX.get(catalog, catalog.upper())
     if catalog == "sharpless2":
         return f"{prefix}-{identifier}"
@@ -299,6 +467,23 @@ def load_catalogs(
         for row in cur.fetchall()
     }
 
+    legacy_placeholders = ", ".join("?" for _ in LEGACY_OTHER_NAMES)
+    legacy_names_due = (
+        cur.execute(
+            f"""
+            SELECT 1
+            FROM dso d
+            JOIN dso_catalog_source s ON s.id = d.source_catalog_id
+            WHERE s.source_id = 'openngc_addendum'
+              AND d.source_key IN ({legacy_placeholders})
+              AND d.primary_designation = 'OTHER ' || d.source_key
+            LIMIT 1
+            """,  # noqa: S608  # nosec B608 - placeholders come from a fixed tuple
+            LEGACY_OTHER_NAMES,
+        ).fetchone()
+        is not None
+    )
+
     def current_hash(source: CatalogSource) -> str | None:
         if not source.file_path.exists():
             return None
@@ -327,6 +512,9 @@ def load_catalogs(
         missing_loaded.append(sharpless_crossref)
     object_deferred = bool(missing_loaded)
     missing_names = ", ".join(str(source.file_path) for source in missing_loaded)
+    designation_ownership_due = not object_deferred and _designation_ownership_due(cur)
+    barnard_merges_due = not object_deferred and _barnard_merges_due(cur)
+    fused_pgc_repair_due = not object_deferred and _fused_pgc_repair_due(cur)
 
     present_owner = any(hashes.get(source_id) is not None for source_id in OBJECT_SOURCE_IDS)
     object_changed = any(
@@ -355,7 +543,16 @@ def load_catalogs(
     run_objects = (
         not object_deferred
         and present_owner
-        and (force or object_changed or augment_changed or keys_due)
+        and (
+            force
+            or object_changed
+            or augment_changed
+            or keys_due
+            or legacy_names_due
+            or designation_ownership_due
+            or barnard_merges_due
+            or fused_pgc_repair_due
+        )
     )
 
     object_results: dict[str, SourceResult] = {}

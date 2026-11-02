@@ -2,7 +2,7 @@
 
 Serves DSS2 Color JPEG thumbnails for DSOs from an LRU disk cache under
 ``APP_DIR/thumbnails/``. Misses return a lightweight placeholder and
-enqueue a background fetch from CDS Aladin's ``hips2fits``; the frontend
+enqueue a background render from HiPS tiles; the frontend
 re-requests after a short delay and serves the cached image on the
 retry.
 
@@ -17,14 +17,15 @@ Three variants share the cache:
 simulator pulls from the DSO-agnostic ``sky_tile_cache`` now.)
 
 Failures record a ``fetch_error`` row so repeated client polls don't
-restart fetch storms against CDS. Errors expire after a 1-hour backoff.
+restart fetch storms upstream. Errors expire after a 10-minute backoff.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
+import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -32,13 +33,7 @@ from typing import Literal
 
 import aiosqlite
 
-from nightcrate.core import app_config
-from nightcrate.services.hips_client import (
-    HIPS_DSS2_COLOR,
-    HIPS_DSS2_RED,
-    build_hips2fits_url,
-    fetch_hips_image,
-)
+from nightcrate.services import hips_tiles, image_cache
 
 logger = logging.getLogger("nightcrate.thumbnails")
 
@@ -56,13 +51,11 @@ _PLACEHOLDER_PNG = bytes.fromhex(
     "44ae426082"
 )
 
-_FETCH_ERROR_BACKOFF = timedelta(hours=1)
+_FETCH_ERROR_BACKOFF = timedelta(minutes=10)
 
-# Cap how many concurrent background fetches run against CDS so a
-# first-time user listing 100 rows doesn't hammer the service. 8
-# matches the sky-tile cache's slot count + the browser's
-# per-origin connection limit — the backend stops being the
-# bottleneck below what the frontend already fires in parallel.
+# Cap how many cache-miss tasks can queue renders at once. The shared HiPS
+# service applies the tighter CPU and upstream-request limits across both
+# rendered-image caches.
 _MAX_CONCURRENT_FETCHES = 8
 _fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
 
@@ -124,6 +117,21 @@ class ThumbnailKey:
 # polls for the same thumbnail wait on the same task rather than
 # enqueuing duplicates.
 _in_flight: dict[ThumbnailKey, asyncio.Task] = {}
+_failure_backoff: dict[ThumbnailKey, float] = {}
+
+
+def _clock() -> float:
+    return time.monotonic()
+
+
+def _failure_backoff_active(key: ThumbnailKey) -> bool:
+    deadline = _failure_backoff.get(key)
+    if deadline is None:
+        return False
+    if deadline > _clock():
+        return True
+    _failure_backoff.pop(key, None)
+    return False
 
 
 # ── Variant sizing ───────────────────────────────────────────────────────────
@@ -146,7 +154,7 @@ def compute_angular_extent_deg(
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
 ) -> float:
-    """Angular extent (deg) to request from ``hips2fits`` for *variant*.
+    """Angular extent (deg) to render for *variant*.
 
     ``list`` and ``detail`` scale with the DSO's major axis;
     ``rig_framed`` matches the rig's major-axis FOV exactly. Small /
@@ -235,10 +243,7 @@ def make_key(
 
 def thumb_dir(*, create: bool = True) -> Path:
     """User-writable directory under APP_DIR. Created on first access."""
-    d = app_config.APP_DIR / "thumbnails"
-    if create:
-        d.mkdir(parents=True, exist_ok=True)
-    return d
+    return image_cache.cache_dir("thumbnail", create=create)
 
 
 def _thumb_path(key: ThumbnailKey) -> Path:
@@ -263,26 +268,13 @@ def _thumb_path(key: ThumbnailKey) -> Path:
 # ``fov_simulator`` is kept in the variant alternation so the orphan
 # sweep still recognises + deletes its leftover on-disk JPEGs from the
 # v0.17.0-era filename scheme; rehydrate never re-indexes them.
-_THUMB_FILENAME_RE = re.compile(
-    r"^ra(?P<ra>\d+)_dec(?P<dec>-?\d+)_"
-    r"(?P<variant>list|detail|rig_framed|fov_simulator)_"
-    r"(?P<width>\d+)x(?P<height>\d+)"
-    r"(?:_(?P<fmaj>-?\d+)_(?P<fmin>-?\d+))?"
-    r"\.jpg$"
-)
+_THUMB_FILENAME_RE = image_cache.THUMBNAIL_FILENAME_RE
 
 # Legacy pre-v0.18.2 filename pattern: ``{dso_id}_{variant}_{w}x{h}...``.
 # Kept only so the orphan sweep can recognise and delete files from
 # the old scheme — they're incompatible with the v0.18.2 RA/Dec
 # rehydrate path and just take up disk space.
-_LEGACY_THUMB_FILENAME_RE = re.compile(
-    r"^\d+_"
-    r"(?:list|detail|rig_framed|fov_simulator)_"
-    r"\d+x\d+"
-    r"(?:_-?\d+_-?\d+)?"
-    r"(?:_c-?\d+_-?\d+)?"
-    r"\.jpg$"
-)
+_LEGACY_THUMB_FILENAME_RE = image_cache.LEGACY_THUMBNAIL_FILENAME_RE
 
 
 # ── Cache lookup and insertion ───────────────────────────────────────────────
@@ -342,32 +334,9 @@ async def _delete_cache_row(conn: aiosqlite.Connection, row_id: int) -> None:
 
 
 async def _evict_lru(conn: aiosqlite.Connection, max_bytes: int) -> int:
-    """Evict least-recently-used rows until total size ≤ ``max_bytes``.
-
-    Deletes the file on disk before the metadata row so an orphan file
-    can't outlast its metadata. Returns the count of rows evicted.
-    """
-    cursor = await conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM thumbnail_cache")
-    total_row = await cursor.fetchone()
-    total = int(total_row[0]) if total_row else 0
-    if total <= max_bytes:
-        return 0
-
-    evicted = 0
-    while total > max_bytes:
-        cursor = await conn.execute(
-            "SELECT id, file_path, bytes FROM thumbnail_cache ORDER BY last_access_at ASC LIMIT 1"
-        )
-        oldest = await cursor.fetchone()
-        if oldest is None:
-            break
-        path = Path(oldest["file_path"])
-        path.unlink(missing_ok=True)
-        await conn.execute("DELETE FROM thumbnail_cache WHERE id = ?", (oldest["id"],))
-        total -= int(oldest["bytes"])
-        evicted += 1
-    await conn.commit()
-    return evicted
+    """Evict against the budget shared with sky cells."""
+    async with image_cache.lock:
+        return await image_cache.evict_lru_locked(conn, max_bytes)
 
 
 async def _insert_cache_row(
@@ -409,6 +378,45 @@ async def _insert_cache_row(
 # ── Background fetch ─────────────────────────────────────────────────────────
 
 
+async def _record_fetch_failure(
+    conn: aiosqlite.Connection,
+    key: ThumbnailKey,
+    *,
+    file_path: str,
+    error: Exception,
+    expected_generation: int | None = None,
+) -> None:
+    """Persist a failure sentinel, falling back to a process-local backoff."""
+    async with image_cache.lock:
+        if expected_generation is not None and expected_generation != image_cache.generation():
+            return
+        try:
+            await conn.rollback()
+        except Exception:  # noqa: BLE001 — recovery is best effort
+            logger.debug("[thumbnails] rollback before failure sentinel failed", exc_info=True)
+        try:
+            await _insert_cache_row(
+                conn,
+                key,
+                file_path=file_path,
+                source="placeholder",
+                bytes_size=0,
+                fetch_error=str(error),
+            )
+        except Exception:  # noqa: BLE001 — the in-memory backoff is the final guard
+            try:
+                await conn.rollback()
+            except Exception:  # noqa: BLE001 — recovery is best effort
+                logger.debug("[thumbnails] rollback after failure sentinel failed", exc_info=True)
+            _failure_backoff[key] = _clock() + _FETCH_ERROR_BACKOFF.total_seconds()
+            logger.exception(
+                "[thumbnails] could not persist failure sentinel for dso=%s; using memory backoff",
+                key.dso_id,
+            )
+        else:
+            _failure_backoff.pop(key, None)
+
+
 async def _fetch_and_store(
     conn: aiosqlite.Connection,
     key: ThumbnailKey,
@@ -418,70 +426,60 @@ async def _fetch_and_store(
     extent_deg: float,
     max_cache_bytes: int,
 ) -> None:
-    """Fetch DSS2 Color (with DSS2 red fallback) and persist the result.
+    """Render DSS2 colour from HiPS tiles and persist the result.
 
-    Writes the JPEG to disk before inserting the DB row so a crash
-    between the two steps leaves an orphan file — rerunning the fetch
-    overwrites it cleanly. A persistent-failure branch inserts a
-    ``fetch_error`` sentinel row so subsequent polls short-circuit.
+    Atomically replaces the JPEG before inserting the DB row. A crash
+    between those steps can leave a complete orphan file for the existing
+    startup sweep; it cannot expose a partial final JPEG. A persistent-failure
+    branch inserts a ``fetch_error`` sentinel row so subsequent polls
+    short-circuit.
     """
-    color_url = build_hips2fits_url(
-        HIPS_DSS2_COLOR,
-        ra_deg=ra_deg,
-        dec_deg=dec_deg,
-        width=key.width,
-        height=key.height,
-        fov_deg=extent_deg,
-    )
-    red_url = build_hips2fits_url(
-        HIPS_DSS2_RED,
-        ra_deg=ra_deg,
-        dec_deg=dec_deg,
-        width=key.width,
-        height=key.height,
-        fov_deg=extent_deg,
-    )
-
+    render_generation = image_cache.generation()
     async with _fetch_semaphore:
         try:
-            body = await fetch_hips_image(color_url)
-            source = "dss2_color"
-        except Exception as color_exc:  # noqa: BLE001 — fallback on any failure
-            logger.info(
-                "[thumbnails] dso=%s color fetch failed (%s); trying DSS2 red",
-                key.dso_id,
-                color_exc,
+            wcs = hips_tiles.thumbnail_wcs(ra_deg, dec_deg, extent_deg, key.width, key.height)
+            rendered = await hips_tiles.render(wcs, key.width, key.height)
+        except Exception as exc:  # noqa: BLE001 — record failure, backoff
+            logger.warning("[thumbnails] dso=%s render failed: %s", key.dso_id, exc)
+            await _record_fetch_failure(
+                conn,
+                key,
+                file_path=_thumb_path(key).name,
+                error=exc,
+                expected_generation=render_generation,
             )
-            try:
-                body = await fetch_hips_image(red_url)
-                source = "dss2_red"
-            except Exception as red_exc:  # noqa: BLE001 — record failure, backoff
-                logger.warning(
-                    "[thumbnails] dso=%s both color and red fetches failed: %s / %s",
-                    key.dso_id,
-                    color_exc,
-                    red_exc,
-                )
-                await _insert_cache_row(
-                    conn,
-                    key,
-                    file_path=str(_thumb_path(key)),
-                    source="placeholder",
-                    bytes_size=0,
-                    fetch_error=f"color: {color_exc}; red: {red_exc}",
-                )
-                return
+            return
 
     path = _thumb_path(key)
-    path.write_bytes(body)
-    await _insert_cache_row(
-        conn,
-        key,
-        file_path=str(path),
-        source=source,
-        bytes_size=len(body),
-    )
-    await _evict_lru(conn, max_cache_bytes)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        async with image_cache.lock:
+            if render_generation != image_cache.generation():
+                return
+            try:
+                temporary.write_bytes(rendered.jpeg)
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            await _insert_cache_row(
+                conn,
+                key,
+                file_path=path.name,
+                source="dss2_color",
+                bytes_size=len(rendered.jpeg),
+            )
+            await image_cache.evict_lru_locked(conn, max_cache_bytes)
+    except Exception as exc:  # noqa: BLE001 — persist failure and enforce backoff
+        logger.warning("[thumbnails] dso=%s persistence failed: %s", key.dso_id, exc)
+        await _record_fetch_failure(
+            conn,
+            key,
+            file_path=path.name,
+            error=exc,
+            expected_generation=render_generation,
+        )
+        return
+    _failure_backoff.pop(key, None)
 
 
 async def _background_wrapper(
@@ -573,8 +571,12 @@ async def get_thumbnail(
     if row is not None and row["fetch_error"] is None and row["source"] != "placeholder":
         # Cache hit. Serve bytes from disk, refresh LRU timestamp.
         try:
-            body = Path(row["file_path"]).read_bytes()
+            path = image_cache.resolve_path(str(row["file_path"]), "thumbnail")
+            if path is None:
+                raise FileNotFoundError
+            body = path.read_bytes()
             await _touch_last_access(conn, row["id"])
+            _failure_backoff.pop(key, None)
             logger.debug("[thumb] hit dso=%d variant=%s bytes=%d", dso_id, variant, len(body))
             return ThumbnailResult(body=body, content_type="image/jpeg", status="hit")
         except FileNotFoundError:
@@ -595,6 +597,9 @@ async def get_thumbnail(
             return ThumbnailResult(body=b"", content_type="image/png", status="error")
         # Backoff expired — drop the row and try again.
         await _delete_cache_row(conn, row["id"])
+
+    if _failure_backoff_active(key):
+        return ThumbnailResult(body=b"", content_type="image/png", status="error")
 
     # Miss: schedule the background fetch (dedup via in-flight map).
     task = _in_flight.get(key)
@@ -646,7 +651,10 @@ async def get_thumbnail(
             row = await _lookup_cache_row(conn, key)
             if row is not None and row["fetch_error"] is None and row["source"] != "placeholder":
                 try:
-                    body = Path(row["file_path"]).read_bytes()
+                    path = image_cache.resolve_path(str(row["file_path"]), "thumbnail")
+                    if path is None:
+                        raise FileNotFoundError
+                    body = path.read_bytes()
                     await _touch_last_access(conn, row["id"])
                     logger.debug(
                         "[thumb] long-poll hit dso=%d variant=%s bytes=%d",
@@ -663,21 +671,34 @@ async def get_thumbnail(
                     pass
             if row is not None and row["fetch_error"] is not None:
                 return ThumbnailResult(body=b"", content_type="image/png", status="error")
+            if _failure_backoff_active(key):
+                return ThumbnailResult(body=b"", content_type="image/png", status="error")
 
     return ThumbnailResult(body=_PLACEHOLDER_PNG, content_type="image/png", status="placeholder")
 
 
 async def clear_cache(conn: aiosqlite.Connection) -> int:
     """Wipe every cached thumbnail (metadata + files). Returns files deleted."""
-    cursor = await conn.execute("SELECT file_path FROM thumbnail_cache")
-    rows = await cursor.fetchall()
-    deleted = 0
-    for row in rows:
-        Path(row["file_path"]).unlink(missing_ok=True)
-        deleted += 1
-    await conn.execute("DELETE FROM thumbnail_cache")
-    await conn.commit()
-    return deleted
+    async with image_cache.lock:
+        cursor = await conn.execute("SELECT file_path FROM thumbnail_cache")
+        rows = await cursor.fetchall()
+        deleted = 0
+        for row in rows:
+            path = image_cache.resolve_path(str(row["file_path"]), "thumbnail")
+            if path is None:
+                continue
+            existed = path.exists()
+            path.unlink(missing_ok=True)
+            deleted += int(existed)
+        await conn.execute("DELETE FROM thumbnail_cache")
+        await conn.commit()
+        _failure_backoff.clear()
+        image_cache.advance_generation()
+        return deleted
+
+
+def reset_failure_backoff() -> None:
+    _failure_backoff.clear()
 
 
 async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
@@ -702,57 +723,61 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
 
     Returns the number of rows inserted.
     """
-    d = thumb_dir(create=False)
-    if not d.is_dir():
-        return 0
+    async with image_cache.lock:
+        d = thumb_dir(create=False)
+        if not d.is_dir():
+            return 0
 
-    # Build an in-memory ``(ra_x10000, dec_x10000) → dso_id`` map from
-    # the current DSO table. Faster than a per-file SQL query when
-    # many files need rehydrating.
-    cursor = await conn.execute(
-        "SELECT id, ra_deg, dec_deg FROM dso "
-        "WHERE active = 1 AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL"
-    )
-    coord_to_id: dict[tuple[int, int], int] = {}
-    for row in await cursor.fetchall():
-        coord = (round(row["ra_deg"] * 10000), round(row["dec_deg"] * 10000))
-        # First write wins — two DSOs at byte-identical coords are a
-        # catalog-cleanup problem, not ours to solve here.
-        coord_to_id.setdefault(coord, int(row["id"]))
+        cursor = await conn.execute(
+            "SELECT id, ra_deg, dec_deg FROM dso "
+            "WHERE active = 1 AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL"
+        )
+        coord_to_id: dict[tuple[int, int], int] = {}
+        for row in await cursor.fetchall():
+            coord = (round(row["ra_deg"] * 10000), round(row["dec_deg"] * 10000))
+            coord_to_id.setdefault(coord, int(row["id"]))
 
-    cursor = await conn.execute("SELECT file_path FROM thumbnail_cache")
-    known_files = {str(Path(row["file_path"]).resolve()) for row in await cursor.fetchall()}
-
-    inserted = 0
-    for entry in d.iterdir():
-        if not entry.is_file() or entry.suffix != ".jpg":
-            continue
-        if str(entry.resolve()) in known_files:
-            continue
-        match = _THUMB_FILENAME_RE.match(entry.name)
-        if match is None:
-            continue
-        variant = match.group("variant")
-        if variant == "fov_simulator":
-            continue
-        ra_x10000 = int(match.group("ra"))
-        dec_x10000 = int(match.group("dec"))
-        dso_id = coord_to_id.get((ra_x10000, dec_x10000))
-        if dso_id is None:
-            # No DSO at these coords in the current catalog. Orphan
-            # sweep will tidy up.
-            continue
-        try:
+        inserted = 0
+        changed = False
+        for entry in d.iterdir():
+            if not entry.is_file() or entry.suffix != ".jpg":
+                continue
+            if image_cache.resolve_path(entry.name, "thumbnail") is None:
+                continue
+            match = _THUMB_FILENAME_RE.match(entry.name)
+            if match is None or match.group("variant") == "fov_simulator":
+                continue
+            dso_id = coord_to_id.get((int(match.group("ra")), int(match.group("dec"))))
+            if dso_id is None:
+                continue
             size_bytes = entry.stat().st_size
-        except OSError:
-            continue
-        if size_bytes < 100:
-            continue
-        width = int(match.group("width"))
-        height = int(match.group("height"))
-        fmaj = match.group("fmaj")
-        fmin = match.group("fmin")
-        try:
+            if size_bytes < 100:
+                continue
+            variant = match.group("variant")
+            width = int(match.group("width"))
+            height = int(match.group("height"))
+            fmaj = int(match.group("fmaj")) if match.group("fmaj") is not None else None
+            fmin = int(match.group("fmin")) if match.group("fmin") is not None else None
+            cursor = await conn.execute(
+                """
+                SELECT id, file_path, bytes FROM thumbnail_cache
+                WHERE dso_id = ? AND variant = ? AND width = ? AND height = ?
+                  AND COALESCE(fov_major_deg_x1000, -1) = ?
+                  AND COALESCE(fov_minor_deg_x1000, -1) = ?
+                  AND center_ra_deg_x1000 IS NULL
+                  AND center_dec_deg_x1000 IS NULL
+                """,
+                (dso_id, variant, width, height, _coalesce_fov(fmaj), _coalesce_fov(fmin)),
+            )
+            existing = await cursor.fetchone()
+            if existing is not None:
+                if existing["file_path"] != entry.name or int(existing["bytes"]) != size_bytes:
+                    await conn.execute(
+                        "UPDATE thumbnail_cache SET file_path = ?, bytes = ? WHERE id = ?",
+                        (entry.name, size_bytes, existing["id"]),
+                    )
+                    changed = True
+                continue
             await conn.execute(
                 """
                 INSERT INTO thumbnail_cache (
@@ -761,27 +786,15 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
                     file_path, source, bytes
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'dss2_color', ?)
                 """,
-                (
-                    dso_id,
-                    variant,
-                    width,
-                    height,
-                    int(fmaj) if fmaj is not None else None,
-                    int(fmin) if fmin is not None else None,
-                    str(entry),
-                    size_bytes,
-                ),
+                (dso_id, variant, width, height, fmaj, fmin, entry.name, size_bytes),
             )
             inserted += 1
-        except aiosqlite.IntegrityError:
-            continue
-    if inserted:
-        await conn.commit()
-        logger.info(
-            "[thumb] rehydrated %d on-disk file(s) into the cache index",
-            inserted,
-        )
-    return inserted
+            changed = True
+        if changed:
+            await conn.commit()
+        if inserted:
+            logger.info("[thumb] rehydrated %d on-disk file(s) into the cache index", inserted)
+        return inserted
 
 
 async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
@@ -795,27 +808,40 @@ async def sync_orphan_files(conn: aiosqlite.Connection) -> int:
 
     Returns the count of files removed.
     """
-    d = thumb_dir(create=False)
-    if not d.is_dir():
-        return 0
+    async with image_cache.lock:
+        d = thumb_dir(create=False)
+        if not d.is_dir():
+            return 0
 
-    cursor = await conn.execute("SELECT file_path FROM thumbnail_cache")
-    known = {str(Path(row["file_path"]).resolve()) for row in await cursor.fetchall()}
+        cursor = await conn.execute("SELECT file_path FROM thumbnail_cache")
+        known = {
+            path.name
+            for row in await cursor.fetchall()
+            if (path := image_cache.resolve_path(str(row["file_path"]), "thumbnail")) is not None
+        }
 
-    removed = 0
-    for entry in d.iterdir():
-        if not entry.is_file() or entry.suffix != ".jpg":
-            continue
-        if not (
-            _THUMB_FILENAME_RE.match(entry.name) or _LEGACY_THUMB_FILENAME_RE.match(entry.name)
-        ):
-            continue
-        if str(entry.resolve()) not in known:
-            entry.unlink(missing_ok=True)
-            removed += 1
-    if removed:
-        logger.info("[thumbnails] startup sweep removed %d orphan file(s)", removed)
-    return removed
+        removed = 0
+        for entry in d.iterdir():
+            if not entry.is_file():
+                continue
+            if image_cache.resolve_path(entry.name, "thumbnail") is None:
+                continue
+            if entry.name.startswith(".") and entry.suffix == ".tmp":
+                entry.unlink(missing_ok=True)
+                removed += 1
+                continue
+            if entry.suffix != ".jpg":
+                continue
+            if not (
+                _THUMB_FILENAME_RE.match(entry.name) or _LEGACY_THUMB_FILENAME_RE.match(entry.name)
+            ):
+                continue
+            if entry.name not in known:
+                entry.unlink(missing_ok=True)
+                removed += 1
+        if removed:
+            logger.info("[thumbnails] startup sweep removed %d orphan file(s)", removed)
+        return removed
 
 
 async def cache_stats(conn: aiosqlite.Connection, *, max_bytes: int) -> dict[str, int]:

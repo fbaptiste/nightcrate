@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import pytest
 
+from nightcrate.catalog_loader.crossref_parser import parse_other_id
 from nightcrate.catalog_loader.openngc_parser import (
     KNOWN_OBJ_TYPES,
     ParsedOpenNgcRow,
+    _parse_name,
     parse_openngc,
     sexagesimal_dec_to_degrees,
     sexagesimal_ra_to_degrees,
@@ -157,9 +160,91 @@ def test_leading_zeros_stripped():
     assert rows["IC0011"].ngc_cross_ref == "281"
 
 
+@pytest.mark.parametrize(
+    ("raw_name", "expected"),
+    [
+        ("HCG092", ("hickson", "92")),
+        ("HCG079", ("hickson", "79")),
+        ("Sh2-155", ("sharpless2", "155")),
+        ("H05", (None, None)),
+        ("H13", (None, None)),
+        ("H20", (None, None)),
+        ("H21", (None, None)),
+        ("MWSC3156", (None, None)),
+        ("MWSC3171", (None, None)),
+        ("MWSC3561", (None, None)),
+        ("", (None, None)),
+        ("123", (None, None)),
+    ],
+)
+def test_parse_special_and_unsupported_addendum_names(raw_name, expected):
+    assert _parse_name(raw_name) == expected
+
+
 def test_row_hash_is_stable_across_parses():
     first = list(parse_openngc(FIXTURE_DIR / "mini_NGC.csv"))
     second = list(parse_openngc(FIXTURE_DIR / "mini_NGC.csv"))
     assert [r.row_hash for r in first] == [r.row_hash for r in second]
     # Different hashes for different rows:
     assert first[0].row_hash != first[1].row_hash
+
+
+def test_fused_pgc_identifiers_split_without_changing_raw_source(tmp_path: Path):
+    with (FIXTURE_DIR / "mini_NGC.csv").open(encoding="utf-8", newline="") as stream:
+        fieldnames = csv.DictReader(stream, delimiter=";").fieldnames
+    assert fieldnames is not None
+    path = tmp_path / "fused.csv"
+    cases = (
+        ("IC1166 NED01", "PGC 056771SDSS J160208.91+261945.5"),
+        ("IC1191 NED01", "PGC 057152SDSS J160628.98+181603.9"),
+        ("IC9999", "PGC 001234,SDSS J000000.00+000000.0"),
+        ("IC9998", "PGC 001234A"),
+    )
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames, delimiter=";")
+        writer.writeheader()
+        for name, identifiers in cases:
+            row = dict.fromkeys(fieldnames, "")
+            row.update(
+                {
+                    "Name": name,
+                    "Type": "G",
+                    "RA": "16:00:00",
+                    "Dec": "+20:00:00",
+                    "Identifiers": identifiers,
+                }
+            )
+            writer.writerow(row)
+
+    rows = _by_name(list(parse_openngc(path)))
+
+    for name, raw in cases:
+        assert rows[name].raw_other_id == raw
+    assert rows["IC1166 NED01"].other_identifiers == (
+        "PGC 056771",
+        "SDSS J160208.91+261945.5",
+    )
+    assert rows["IC1191 NED01"].other_identifiers == (
+        "PGC 057152",
+        "SDSS J160628.98+181603.9",
+    )
+    assert rows["IC9999"].other_identifiers == (
+        "PGC 001234",
+        "SDSS J000000.00+000000.0",
+    )
+    assert rows["IC9998"].other_identifiers == ("PGC 001234A",)
+    assert [
+        (ref.catalog, ref.identifier)
+        for token in rows["IC1166 NED01"].other_identifiers
+        for ref in parse_other_id(token)
+    ] == [("pgc", "56771")]
+    assert [
+        (ref.catalog, ref.identifier)
+        for token in rows["IC1191 NED01"].other_identifiers
+        for ref in parse_other_id(token)
+    ] == [("pgc", "57152")]
+    assert [
+        (ref.catalog, ref.identifier)
+        for token in rows["IC9998"].other_identifiers
+        for ref in parse_other_id(token)
+    ] == [("pgc", "1234A")]

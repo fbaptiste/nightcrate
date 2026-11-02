@@ -1,5 +1,6 @@
 """Admin API endpoints — database management, status, and app info."""
 
+import asyncio
 import importlib.resources
 import sqlite3
 import sys
@@ -18,8 +19,13 @@ from nightcrate.core.app_config import (
 from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import get_db_path, set_db_path
 from nightcrate.seed_loader import load_all
+from nightcrate.services import catalog_progress
 
 router = APIRouter(prefix="/api/admin", tags=["Administration"])
+
+_CATALOG_DATABASE_CONFLICT = (
+    "A catalog update is running. Wait for it to finish before changing databases."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +56,13 @@ def _clear_planner_visibility_cache() -> None:
     from nightcrate.services import planner_visibility
 
     planner_visibility.default_cache.clear()
+
+
+def _guard_catalog_database_change() -> None:
+    """Reject database mutations while an active catalog action owns its DB."""
+    snapshot = catalog_progress.snapshot()
+    if snapshot is not None and snapshot["outcome"] is None:
+        raise HTTPException(status_code=409, detail=_CATALOG_DATABASE_CONFLICT)
 
 
 def _db_size(workspace_path: str) -> int | None:
@@ -227,6 +240,7 @@ async def admin_status() -> dict:
 @router.post("/database/create")
 async def create_database(req: CreateDatabaseRequest) -> dict:
     """Create a new workspace folder with a database inside it."""
+    _guard_catalog_database_change()
     ws = Path(req.path)
     db_path = workspace_db_path(ws)
 
@@ -251,6 +265,7 @@ async def create_database(req: CreateDatabaseRequest) -> dict:
 @router.post("/database/add")
 async def add_existing_database(req: CreateDatabaseRequest) -> dict:
     """Register an existing workspace folder in the config."""
+    _guard_catalog_database_change()
     ws = Path(req.path)
     db_path = workspace_db_path(ws)
 
@@ -278,6 +293,7 @@ async def add_existing_database(req: CreateDatabaseRequest) -> dict:
 @router.post("/database/activate")
 async def activate_database(req: ActivateDatabaseRequest) -> dict:
     """Activate a known workspace, running migrations and seed loader first."""
+    _guard_catalog_database_change()
     config = load_config()
 
     if req.path not in config.databases:
@@ -317,6 +333,7 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
 
     Returns 409 if a database is already configured.
     """
+    _guard_catalog_database_change()
     config = load_config()
     if config.db_configured:
         raise HTTPException(
@@ -540,6 +557,138 @@ def _run_loader(force: bool):
         _clear_planner_visibility_cache()
 
 
+def _start_catalog_action(action: str, *, source: str | None = None) -> str:
+    try:
+        return catalog_progress.start(action, source=source)
+    except catalog_progress.CatalogOperationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _require_configured_database() -> None:
+    if not load_config().db_configured:
+        raise HTTPException(status_code=400, detail="No database is configured")
+
+
+_CATALOG_SOURCE_NAMES = {
+    "openngc": "OpenNGC",
+    "openngc_addendum": "OpenNGC addendum",
+    "vizier_sharpless": "Sharpless",
+    "vizier_barnard": "Barnard",
+    "github_50mgc": "50 MGC",
+    "wikidata_external_refs": "Wikidata",
+    "nightcrate_augment": "NightCrate object data",
+    "nightcrate_sharpless_crossref": "NightCrate Sharpless cross-references",
+    "nightcrate_barnard_crossref": "NightCrate Barnard cross-references",
+    "nightcrate_external_refs": "NightCrate external references",
+}
+
+
+def _catalog_source_name(source_id: str) -> str:
+    return _CATALOG_SOURCE_NAMES.get(source_id, source_id.replace("_", " ").title())
+
+
+def _catalog_result_detail(result) -> str:
+    source_name = _catalog_source_name(result.source_id)
+    if result.status == "missing":
+        return f"{source_name}: not downloaded yet"
+    if result.error:
+        return f"{source_name}: {result.error}"
+    return f"{source_name}: {result.status}"
+
+
+class _CatalogAction:
+    """Endpoint-owned reservation whose terminal state is always retained."""
+
+    def __init__(self, action: str, *, source: str | None = None, reload: bool = False) -> None:
+        self.operation_id = _start_catalog_action(action, source=source)
+        self.progress = catalog_progress.callback(self.operation_id)
+        self.outcome: catalog_progress.CatalogOutcome = "failed"
+        self.message = "Catalog reload failed." if reload else "Download failed. See details below."
+        self.detail: str | None = None
+        self.reload = reload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, _traceback) -> bool:
+        if exc is not None and self.detail is None:
+            self.detail = (
+                "Request cancelled." if isinstance(exc, asyncio.CancelledError) else str(exc)
+            )
+            if not self.detail:
+                self.detail = type(exc).__name__
+        catalog_progress.finish(
+            self.operation_id,
+            outcome=self.outcome,
+            message=self.message,
+            detail=self.detail,
+        )
+        return False
+
+    def loading(self) -> None:
+        self.progress(
+            catalog_progress.ProgressUpdate("loading", "Updating catalogs in the database…")
+        )
+        if not self.reload:
+            self.message = "Download saved; database update failed."
+
+    def complete(self, summary, target_ids: set[str], display_name: str) -> None:
+        results = [result for result in summary.results if result.source_id in target_ids]
+        failures = [result for result in results if result.status == "failed"]
+        warnings = [
+            result
+            for result in results
+            if (not self.reload and result.status == "missing")
+            or (result.status == "skipped" and result.error)
+        ]
+        unexpected = [
+            result
+            for result in results
+            if result.status not in {"loaded", "unchanged", "failed", "missing"}
+            and result not in warnings
+        ]
+        if failures:
+            self.outcome = "failed"
+            self.message = (
+                "Catalog reload failed."
+                if self.reload
+                else "Download saved; database update failed."
+            )
+            issues = [*failures, *warnings, *unexpected]
+            details = [_catalog_result_detail(result) for result in issues]
+            missing_results = target_ids - {result.source_id for result in results}
+            details.extend(
+                f"No loader result for {_catalog_source_name(source_id)}"
+                for source_id in sorted(missing_results)
+            )
+            self.detail = "; ".join(details)
+        elif warnings or unexpected or len(results) != len(target_ids):
+            self.outcome = "warning"
+            self.message = (
+                "Reload finished with warnings."
+                if self.reload
+                else "Update finished with warnings. See details below."
+            )
+            issues = [*warnings, *unexpected]
+            details = [_catalog_result_detail(result) for result in issues]
+            missing_results = target_ids - {result.source_id for result in results}
+            details.extend(
+                f"No loader result for {_catalog_source_name(source_id)}"
+                for source_id in sorted(missing_results)
+            )
+            self.detail = "; ".join(details)
+        else:
+            self.outcome = "success"
+            self.message = "Cached catalogs reloaded." if self.reload else f"{display_name} loaded."
+            self.detail = None
+
+
+@router.get("/catalogs/fetch-status")
+async def catalog_fetch_status() -> dict | None:
+    """Return process-local catalog progress without opening the database."""
+    return catalog_progress.snapshot()
+
+
 @router.post("/catalogs/reload")
 async def reload_catalogs(force: bool = Query(True)) -> dict:
     """Re-parse the local catalog cache without re-downloading.
@@ -548,8 +697,14 @@ async def reload_catalogs(force: bool = Query(True)) -> dict:
     (e.g., after a schema tweak). Does NOT reach out to GitHub; use
     ``POST /catalogs/fetch-from-github`` for that.
     """
-    summary = _run_loader(force=force)
-    return _summary_to_dict(summary)
+    _require_configured_database()
+    with _CatalogAction("reload_all", reload=True) as action:
+        action.progress(catalog_progress.ProgressUpdate("reloading", "Reloading cached catalogs…"))
+        summary = _run_loader(force=force)
+        action.complete(
+            summary, {result.source_id for result in summary.results}, "Cached catalogs"
+        )
+        return _summary_to_dict(summary)
 
 
 @router.get("/catalogs/remote-version")
@@ -587,24 +742,29 @@ async def fetch_catalogs_from_github() -> dict:
     from nightcrate.catalog_loader import remote
     from nightcrate.catalog_loader.registry import user_catalogs_root
 
-    config = load_config()
-    if not config.db_configured:
-        raise HTTPException(status_code=400, detail="No database is configured")
+    _require_configured_database()
+    with _CatalogAction("fetch_openngc", source="openngc") as action:
+        try:
+            release = await remote.fetch_latest_release(action.progress)
+            await remote.download_openngc(
+                release,
+                user_catalogs_root(),
+                action.progress,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface as 502 with a clear reason
+            action.detail = str(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to download catalog from GitHub: {exc}",
+            ) from exc
 
-    try:
-        release = await remote.fetch_latest_release()
-        await remote.download_openngc(release, user_catalogs_root())
-    except Exception as exc:  # noqa: BLE001 — surface as 502 with a clear reason
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to download catalog from GitHub: {exc}",
-        ) from exc
-
-    summary = _run_loader(force=False)
-    return {
-        "fetched_version": release.tag_name,
-        **_summary_to_dict(summary),
-    }
+        action.loading()
+        summary = _run_loader(force=False)
+        action.complete(summary, {"openngc", "openngc_addendum"}, "OpenNGC")
+        return {
+            "fetched_version": release.tag_name,
+            **_summary_to_dict(summary),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -693,26 +853,36 @@ async def vizier_fetch(source_id: str) -> dict:
     from nightcrate.catalog_loader.registry import user_catalogs_root
     from nightcrate.catalog_loader.vizier import fetch_vizier_catalog
 
-    config = load_config()
-    if not config.db_configured:
-        raise HTTPException(status_code=400, detail="No database is configured")
-
     spec = _build_vizier_spec(source_id)
-    try:
-        result = await fetch_vizier_catalog(spec, user_catalogs_root())
-    except Exception as exc:  # noqa: BLE001 — surface 502 with reason
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to download {spec.display_name} from VizieR: {exc}",
-        ) from exc
+    _require_configured_database()
+    with _CatalogAction("fetch_vizier", source=spec.source_id) as action:
+        try:
+            result = await fetch_vizier_catalog(
+                spec,
+                user_catalogs_root(),
+                action.progress,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface 502 with reason
+            from nightcrate.catalog_loader.vizier import NoVizierSource
 
-    summary = _run_loader(force=False)
-    return {
-        "source_id": spec.source_id,
-        "fetched_at": result.fetched_at,
-        "size_bytes": result.size_bytes,
-        **_summary_to_dict(summary),
-    }
+            action.detail = str(exc)
+            if isinstance(exc, NoVizierSource):
+                action.message = "No VizieR source returned usable data."
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to download {spec.display_name} from VizieR: {exc}",
+            ) from exc
+
+        action.loading()
+        summary = _run_loader(force=False)
+        display_name = "Sharpless" if source_id == "sharpless" else "Barnard"
+        action.complete(summary, {spec.source_id}, display_name)
+        return {
+            "source_id": spec.source_id,
+            "fetched_at": result.fetched_at,
+            "size_bytes": result.size_bytes,
+            **_summary_to_dict(summary),
+        }
 
 
 @router.post("/catalogs/nightcrate/reload")
@@ -721,8 +891,12 @@ async def reload_nightcrate_catalogs() -> dict:
     re-run the loader so edits to those files take effect without restarting
     the app.
     """
-    summary = _run_loader(force=True)
-    return _summary_to_dict(summary)
+    _require_configured_database()
+    with _CatalogAction("reload_nightcrate", source="nightcrate", reload=True) as action:
+        action.progress(catalog_progress.ProgressUpdate("reloading", "Reloading cached catalogs…"))
+        summary = _run_loader(force=True)
+        action.complete(summary, {result.source_id for result in summary.results}, "NightCrate")
+        return _summary_to_dict(summary)
 
 
 # ---------------------------------------------------------------------------
@@ -770,26 +944,27 @@ async def mgc50_fetch() -> dict:
     from nightcrate.catalog_loader.mgc50_fetch import fetch_50mgc_from_github
     from nightcrate.catalog_loader.registry import user_catalogs_root
 
-    config = load_config()
-    if not config.db_configured:
-        raise HTTPException(status_code=400, detail="No database is configured")
+    _require_configured_database()
+    with _CatalogAction("fetch_50mgc", source="github_50mgc") as action:
+        try:
+            result = await fetch_50mgc_from_github(user_catalogs_root(), action.progress)
+        except Exception as exc:  # noqa: BLE001 — surface 502 with reason
+            action.detail = str(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to download 50 MGC from GitHub: {exc}",
+            ) from exc
 
-    try:
-        result = await fetch_50mgc_from_github(user_catalogs_root())
-    except Exception as exc:  # noqa: BLE001 — surface 502 with reason
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to download 50 MGC from GitHub: {exc}",
-        ) from exc
-
-    summary = _run_loader(force=False)
-    return {
-        "source_id": "github_50mgc",
-        "fetched_at": result.fetched_at,
-        "size_bytes": result.size_bytes,
-        "sha256": result.sha256,
-        **_summary_to_dict(summary),
-    }
+        action.loading()
+        summary = _run_loader(force=False)
+        action.complete(summary, {"github_50mgc"}, "50 MGC")
+        return {
+            "source_id": "github_50mgc",
+            "fetched_at": result.fetched_at,
+            "size_bytes": result.size_bytes,
+            "sha256": result.sha256,
+            **_summary_to_dict(summary),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -840,27 +1015,32 @@ async def wikidata_fetch() -> dict:
     from nightcrate.catalog_loader.wikidata import fetch_wikidata_external_refs
     from nightcrate.main import APP_VERSION
 
-    config = load_config()
-    if not config.db_configured:
-        raise HTTPException(status_code=400, detail="No database is configured")
+    _require_configured_database()
+    with _CatalogAction("fetch_wikidata", source="wikidata_external_refs") as action:
+        try:
+            result = await fetch_wikidata_external_refs(
+                user_catalogs_root(),
+                app_version=APP_VERSION,
+                on_progress=action.progress,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface 502 with reason
+            action.detail = str(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch Wikidata SPARQL: {exc}",
+            ) from exc
 
-    try:
-        result = await fetch_wikidata_external_refs(user_catalogs_root(), app_version=APP_VERSION)
-    except Exception as exc:  # noqa: BLE001 — surface 502 with reason
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to fetch Wikidata SPARQL: {exc}",
-        ) from exc
-
-    summary = _run_loader(force=False)
-    return {
-        "source_id": "wikidata_external_refs",
-        "fetched_at": result.fetched_at,
-        "size_bytes": result.size_bytes,
-        "sha256": result.sha256,
-        "query_version": result.query_version,
-        **_summary_to_dict(summary),
-    }
+        action.loading()
+        summary = _run_loader(force=False)
+        action.complete(summary, {"wikidata_external_refs"}, "Wikidata references")
+        return {
+            "source_id": "wikidata_external_refs",
+            "fetched_at": result.fetched_at,
+            "size_bytes": result.size_bytes,
+            "sha256": result.sha256,
+            "query_version": result.query_version,
+            **_summary_to_dict(summary),
+        }
 
 
 # ---------------------------------------------------------------------------

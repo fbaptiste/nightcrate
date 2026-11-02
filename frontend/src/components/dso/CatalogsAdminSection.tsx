@@ -2,11 +2,12 @@
  * Admin → Catalogs section.
  *
  * Shows every registered DSO catalog source as a row with per-source
- * fetch controls. OpenNGC fetches from GitHub; VizieR sources (Sharpless,
- * Barnard / 50 MGC) fetch from vizier.cds.unistra.fr; NightCrate
- * sources are bundled in-repo and only expose a "Reload" action.
+ * fetch controls. OpenNGC and 50 MGC fetch from GitHub; VizieR sources
+ * (Sharpless, Barnard) fetch from vizier.cds.unistra.fr, falling back to
+ * the Harvard and South Africa mirrors; NightCrate sources are bundled
+ * in-repo and only expose a "Reload" action.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
@@ -21,6 +22,7 @@ import {
   fetch50mgcFromGitHub,
   fetch50mgcRemoteVersion,
   fetchCatalogSources,
+  fetchCatalogStatus,
   fetchCatalogsFromGitHub,
   fetchRemoteVersion,
   fetchVizierCatalog,
@@ -29,16 +31,16 @@ import {
   fetchWikidataRemoteVersion,
   reloadCatalogs,
   type CatalogSource,
+  type CatalogFetchStatus,
   type VizierSourceShortId,
 } from "@/api/dsos";
+import { formatLocalDate } from "@/lib/localDate";
 
 interface ActionButton {
   label: string;
   tooltip: string;
   variant: "contained" | "outlined";
   run: () => Promise<unknown>;
-  refreshRemoteVersion?: boolean;
-  refreshVizierId?: VizierSourceShortId;
 }
 
 interface SourceRowProps {
@@ -61,6 +63,8 @@ interface SourceRowProps {
   onDismissError: () => void;
   /** In-flight marker to disable the buttons while the action runs. */
   busy: boolean;
+  conflict: boolean;
+  progress: string | null;
   actions: ActionButton[];
   onAction: (button: ActionButton) => void;
 }
@@ -76,6 +80,8 @@ function SourceRow(props: SourceRowProps) {
     updateTooltip,
     actions,
     busy,
+    conflict,
+    progress,
     error,
     onDismissError,
     onAction,
@@ -124,15 +130,24 @@ function SourceRow(props: SourceRowProps) {
           {license && ` · ${license}`}
           {subtitle && ` · ${subtitle}`}
         </Typography>
+        {progress && (
+          <Typography variant="caption" color="text.secondary" display="block">
+            {progress}
+          </Typography>
+        )}
       </Box>
       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
         {actions.map((btn) => (
-          <Tooltip key={btn.label} title={btn.tooltip} placement="top">
+          <Tooltip
+            key={btn.label}
+            title={conflict && !busy ? "Another catalog update is running." : btn.tooltip}
+            placement="top"
+          >
             <span>
               <Button
                 size="small"
                 variant={btn.variant}
-                disabled={busy}
+                disabled={busy || conflict}
                 onClick={() => onAction(btn)}
               >
                 {busy ? (
@@ -161,10 +176,88 @@ function SourceRow(props: SourceRowProps) {
 type RowError = { [sourceId: string]: string | null };
 type RowBusy = { [sourceId: string]: boolean };
 
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function formatProgress(status: CatalogFetchStatus): string {
+  if (status.phase === "downloading" && status.bytes_received > 0) {
+    const bytes = status.bytes_total != null
+      ? `${(status.bytes_received / 1_000_000).toFixed(1)} of ${formatMegabytes(status.bytes_total)}`
+      : `${formatMegabytes(status.bytes_received)} received`;
+    return `${status.message} ${bytes}`;
+  }
+  if (
+    status.outcome == null &&
+    [
+      "checking_release",
+      "trying_source",
+      "moving_source",
+      "contacting",
+      "waiting",
+      "downloading",
+    ].includes(status.phase)
+  ) {
+    return `${status.message} ${Math.floor(status.phase_elapsed_s)} s`;
+  }
+  return status.message;
+}
+
+function formatFetchedAt(value: string | null | undefined): string | null {
+  const date = formatLocalDate(value);
+  return date ? `Fetched ${date}` : null;
+}
+
 export default function CatalogsAdminSection() {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<RowBusy>({});
   const [errors, setErrors] = useState<RowError>({});
+  const [visibleStatus, setVisibleStatus] = useState<CatalogFetchStatus | null>(null);
+  const ignoredOperationIds = useRef(new Set<string>());
+  const anyPending = Object.values(busy).some(Boolean);
+  const operationActive = visibleStatus?.outcome == null && visibleStatus != null;
+
+  const statusQuery = useQuery({
+    queryKey: ["catalog-fetch-status"],
+    queryFn: fetchCatalogStatus,
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: operationActive ? 1_000 : false,
+  });
+
+  useEffect(() => {
+    if (statusQuery.isError) return;
+    const incoming = statusQuery.data;
+    if (incoming === undefined) return;
+    if (incoming === null) {
+      if (!anyPending) setVisibleStatus(null);
+      return;
+    }
+    if (ignoredOperationIds.current.has(incoming.operation_id)) return;
+    setVisibleStatus(incoming);
+  }, [anyPending, statusQuery.data, statusQuery.isError]);
+
+  useEffect(() => {
+    if (!visibleStatus?.outcome) return;
+    const remainingMs = Math.max(0, 300 - visibleStatus.phase_elapsed_s) * 1_000;
+    const operationId = visibleStatus.operation_id;
+    const timeout = window.setTimeout(() => {
+      setVisibleStatus((current) =>
+        current?.operation_id === operationId ? null : current,
+      );
+    }, remainingMs);
+    return () => window.clearTimeout(timeout);
+  }, [visibleStatus]);
+
+  useEffect(() => {
+    if (!visibleStatus?.outcome || !visibleStatus.detail) return;
+    const sourceId =
+      visibleStatus.action === "reload_all"
+        ? "__all__"
+        : visibleStatus.source ?? "__all__";
+    setErrors((previous) => ({ ...previous, [sourceId]: visibleStatus.detail }));
+  }, [visibleStatus]);
 
   const sourcesQuery = useQuery({
     queryKey: ["catalog-sources"],
@@ -211,27 +304,34 @@ export default function CatalogsAdminSection() {
       queryClient.invalidateQueries({ queryKey: ["dso-facets"] }),
       queryClient.invalidateQueries({ queryKey: ["catalog-sources"] }),
       // Blanket-invalidate the remote-version prefix so every source's
-      // "Fetched <date>" label refreshes after any fetch. Per-source
-      // ``refreshRemoteVersion`` / ``refreshVizierId`` flags below are
-      // redundant with this, kept only for historical symmetry.
+      // "Fetched <date>" label refreshes after any fetch.
       queryClient.invalidateQueries({ queryKey: ["catalog-remote-version"] }),
     ]);
   };
 
   async function runAction(sourceId: string, button: ActionButton) {
+    if (visibleStatus && !visibleStatus.operation_id.startsWith("pending:")) {
+      ignoredOperationIds.current.add(visibleStatus.operation_id);
+    }
+    const isReloadAll = sourceId === "__all__";
+    setVisibleStatus({
+      operation_id: `pending:${sourceId}:${Date.now()}`,
+      action: isReloadAll ? "reload_all" : "pending",
+      source: isReloadAll ? null : sourceId,
+      phase: isReloadAll ? "reloading" : "starting",
+      message: isReloadAll ? "Reloading cached catalogs…" : "Starting catalog update…",
+      bytes_received: 0,
+      bytes_total: null,
+      phase_elapsed_s: 0,
+      outcome: null,
+      detail: null,
+    });
     setBusy((prev) => ({ ...prev, [sourceId]: true }));
     setErrors((prev) => ({ ...prev, [sourceId]: null }));
+    let succeeded = false;
     try {
       await button.run();
-      await invalidateAll();
-      if (button.refreshRemoteVersion) {
-        await queryClient.invalidateQueries({ queryKey: ["catalog-remote-version"] });
-      }
-      if (button.refreshVizierId) {
-        await queryClient.invalidateQueries({
-          queryKey: ["catalog-remote-version", button.refreshVizierId],
-        });
-      }
+      succeeded = true;
     } catch (err) {
       setErrors((prev) => ({
         ...prev,
@@ -239,8 +339,25 @@ export default function CatalogsAdminSection() {
       }));
     } finally {
       setBusy((prev) => ({ ...prev, [sourceId]: false }));
+      void statusQuery.refetch();
+    }
+
+    if (succeeded) {
+      void invalidateAll();
     }
   }
+
+  const matchesOperation = (sourceId: string) => {
+    if (!visibleStatus) return false;
+    if (sourceId === "__all__") return visibleStatus.action === "reload_all";
+    return visibleStatus.source === sourceId;
+  };
+  const isRowBusy = (sourceId: string) =>
+    (busy[sourceId] ?? false) || (operationActive && matchesOperation(sourceId));
+  const hasConflict = (sourceId: string) =>
+    (anyPending || operationActive) && !isRowBusy(sourceId);
+  const rowProgress = (sourceId: string) =>
+    visibleStatus && matchesOperation(sourceId) ? formatProgress(visibleStatus) : null;
 
   // Build row definitions in the same load order used by the backend loader.
   const openngcSrc = sourcesById.get("openngc");
@@ -260,7 +377,6 @@ export default function CatalogsAdminSection() {
         : "Re-download the current OpenNGC release from GitHub, overwriting the local cache, then parse it into the database.",
     variant: "contained",
     run: fetchCatalogsFromGitHub,
-    refreshRemoteVersion: true,
   };
 
   const buildVizierRow = (
@@ -276,22 +392,15 @@ export default function CatalogsAdminSection() {
       label: installed == null ? "Fetch from VizieR" : "Re-fetch from VizieR",
       tooltip: `${
         installed == null ? "Download" : "Re-download"
-      } ${catalogLabel} over the network from vizier.cds.unistra.fr (with India + South Africa mirrors as fallback), replacing the local cache, then parse it into the database.`,
+      } ${catalogLabel} over the network from vizier.cds.unistra.fr (with Harvard and South Africa mirrors as fallback), replacing the local cache, then parse it into the database.`,
       variant: "contained",
       run: () => fetchVizierCatalog(shortId),
-      refreshVizierId: shortId,
     };
     return (
       <SourceRow
         key={sourceId}
         displayName={displayName}
-        version={
-          installed
-            ? `Fetched ${installed.slice(0, 10)}`
-            : remote.isError
-            ? "VizieR unreachable"
-            : null
-        }
+        version={formatFetchedAt(installed) ?? (remote.isError ? "VizieR unreachable" : null)}
         rowCount={backendSrc?.row_count ?? null}
         license={backendSrc?.license ?? "CDS public"}
         subtitle={remote.data?.catalog_id}
@@ -303,7 +412,9 @@ export default function CatalogsAdminSection() {
         }
         error={errors[sourceId] ?? null}
         onDismissError={() => setErrors((prev) => ({ ...prev, [sourceId]: null }))}
-        busy={busy[sourceId] ?? false}
+        busy={isRowBusy(sourceId)}
+        conflict={hasConflict(sourceId)}
+        progress={rowProgress(sourceId)}
         actions={[fetchBtn]}
         onAction={(btn) => runAction(sourceId, btn)}
       />
@@ -322,22 +433,33 @@ export default function CatalogsAdminSection() {
           gap={2}
           sx={{ mb: 2 }}
         >
-          <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-            NightCrate does not ship deep-sky object data. Catalogs are fetched
-            on demand — OpenNGC from GitHub, Sharpless / Barnard / 50 MGC from
-            the VizieR service at CDS Strasbourg. NightCrate editorial
-            augmentation (common names, non-galaxy surface brightness, curated
-            distances) is bundled in-repo.
-          </Typography>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              NightCrate does not ship deep-sky object data. Catalogs are fetched
+              on demand — OpenNGC and 50 MGC from GitHub, Sharpless / Barnard from
+              the VizieR service at CDS Strasbourg or its Harvard and South Africa
+              mirrors. NightCrate editorial augmentation (common names, non-galaxy
+              surface brightness, curated distances) is bundled in-repo.
+            </Typography>
+            {rowProgress("__all__") && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                {rowProgress("__all__")}
+              </Typography>
+            )}
+          </Box>
           <Tooltip
-            title="Re-parse every catalog's cached local files into the database. Does NOT touch the network — useful after a schema change, or to restore rows if the database was wiped but the cached files under the app-data directory were kept. Covers OpenNGC, Sharpless, Barnard, 50 MGC, and the NightCrate augmentation in one pass."
+            title={
+              hasConflict("__all__")
+                ? "Another catalog update is running."
+                : "Re-parse every catalog's cached local files into the database. Does NOT touch the network — useful after a schema change, or to restore rows if the database was wiped but the cached files under the app-data directory were kept. Covers OpenNGC, Sharpless, Barnard, 50 MGC, and the NightCrate augmentation in one pass."
+            }
             placement="top"
           >
             <span>
               <Button
                 size="small"
                 variant="outlined"
-                disabled={busy["__all__"] ?? false}
+                disabled={isRowBusy("__all__") || hasConflict("__all__")}
                 onClick={() =>
                   runAction("__all__", {
                     label: "Reload all from local",
@@ -347,7 +469,7 @@ export default function CatalogsAdminSection() {
                   })
                 }
               >
-                {busy["__all__"] ? (
+                {isRowBusy("__all__") ? (
                   <CircularProgress size={16} color="inherit" />
                 ) : (
                   "Reload all from local cache"
@@ -356,6 +478,22 @@ export default function CatalogsAdminSection() {
             </span>
           </Tooltip>
         </Stack>
+        <Box
+          aria-live="polite"
+          sx={{
+            position: "absolute",
+            width: "1px",
+            height: "1px",
+            p: 0,
+            m: -1,
+            overflow: "hidden",
+            clip: "rect(0 0 0 0)",
+            whiteSpace: "nowrap",
+            border: 0,
+          }}
+        >
+          {visibleStatus?.message ?? ""}
+        </Box>
         {errors["__all__"] && (
           <Alert
             severity="warning"
@@ -389,7 +527,9 @@ export default function CatalogsAdminSection() {
           }
           error={errors["openngc"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, openngc: null }))}
-          busy={busy["openngc"] ?? false}
+          busy={isRowBusy("openngc")}
+          conflict={hasConflict("openngc")}
+          progress={rowProgress("openngc")}
           actions={[openngcAction]}
           onAction={(btn) => runAction("openngc", btn)}
         />
@@ -414,11 +554,8 @@ export default function CatalogsAdminSection() {
         <SourceRow
           displayName="50 Mpc Galaxy Catalog (Ohlson+ 2024)"
           version={
-            mgc50Remote.data?.installed_fetched_at
-              ? `Fetched ${mgc50Remote.data.installed_fetched_at.slice(0, 10)}`
-              : mgc50Remote.isError
-              ? "Status unknown"
-              : null
+            formatFetchedAt(mgc50Remote.data?.installed_fetched_at) ??
+            (mgc50Remote.isError ? "Status unknown" : null)
           }
           rowCount={sourcesById.get("github_50mgc")?.row_count ?? null}
           license={sourcesById.get("github_50mgc")?.license ?? "CDS public"}
@@ -427,7 +564,9 @@ export default function CatalogsAdminSection() {
           updateTooltip="50 MGC hasn't been fetched yet — click Fetch to download from GitHub."
           error={errors["github_50mgc"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, github_50mgc: null }))}
-          busy={busy["github_50mgc"] ?? false}
+          busy={isRowBusy("github_50mgc")}
+          conflict={hasConflict("github_50mgc")}
+          progress={rowProgress("github_50mgc")}
           actions={[
             {
               label:
@@ -451,11 +590,8 @@ export default function CatalogsAdminSection() {
         <SourceRow
           displayName="Wikidata (external references)"
           version={
-            wikidataRemote.data?.installed_fetched_at
-              ? `Fetched ${wikidataRemote.data.installed_fetched_at.slice(0, 10)}`
-              : wikidataRemote.isError
-              ? "Status unknown"
-              : null
+            formatFetchedAt(wikidataRemote.data?.installed_fetched_at) ??
+            (wikidataRemote.isError ? "Status unknown" : null)
           }
           rowCount={sourcesById.get("wikidata_external_refs")?.row_count ?? null}
           license={sourcesById.get("wikidata_external_refs")?.license ?? "CC0-1.0"}
@@ -473,7 +609,9 @@ export default function CatalogsAdminSection() {
           onDismissError={() =>
             setErrors((prev) => ({ ...prev, wikidata_external_refs: null }))
           }
-          busy={busy["wikidata_external_refs"] ?? false}
+          busy={isRowBusy("wikidata_external_refs")}
+          conflict={hasConflict("wikidata_external_refs")}
+          progress={rowProgress("wikidata_external_refs")}
           actions={[
             {
               label:
@@ -502,7 +640,9 @@ export default function CatalogsAdminSection() {
           subtitle="Bundled in-repo"
           error={errors["nightcrate"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, nightcrate: null }))}
-          busy={busy["nightcrate"] ?? false}
+          busy={isRowBusy("nightcrate")}
+          conflict={hasConflict("nightcrate")}
+          progress={rowProgress("nightcrate")}
           actions={[]}
           onAction={(btn) => runAction("nightcrate", btn)}
         />
@@ -521,7 +661,9 @@ export default function CatalogsAdminSection() {
           onDismissError={() =>
             setErrors((prev) => ({ ...prev, nightcrate_external_refs: null }))
           }
-          busy={busy["nightcrate_external_refs"] ?? false}
+          busy={isRowBusy("nightcrate_external_refs")}
+          conflict={hasConflict("nightcrate_external_refs")}
+          progress={rowProgress("nightcrate_external_refs")}
           actions={[]}
           onAction={(btn) => runAction("nightcrate_external_refs", btn)}
         />

@@ -15,6 +15,11 @@ and [PLAN.md](../PLAN.md) for active work.
 | [api/star_catalog.py](../backend/src/nightcrate/api/star_catalog.py) | Plate-solving star-data administration routes |
 | [services/plate_solve.py](../backend/src/nightcrate/services/plate_solve.py), [services/solve_operations.py](../backend/src/nightcrate/services/solve_operations.py) | Solver dispatch, the ASTAP step chain, and solve identity, cancellation and progress |
 | [services/image_preview.py](../backend/src/nightcrate/services/image_preview.py) | Cached JPEG previews of any supported image path |
+| [services/hips_tiles.py](../backend/src/nightcrate/services/hips_tiles.py) | DSS2 colour HiPS tile planning, source failover, in-memory tile caching and JPEG rendering |
+| [services/image_cache.py](../backend/src/nightcrate/services/image_cache.py) | Shared budget, lock, file identity and clearing for the thumbnail and sky-cell caches |
+| [services/catalog_progress.py](../backend/src/nightcrate/services/catalog_progress.py) | The single catalog fetch/reload operation and its progress for the Catalogs page |
+| [services/dso_sorting.py](../backend/src/nightcrate/services/dso_sorting.py), [services/dso_display.py](../backend/src/nightcrate/services/dso_display.py) | Natural designation order and the label maps used to sort catalog columns |
+| [core/tasks.py](../backend/src/nightcrate/core/tasks.py) | `settle`: wait for a worker through repeated cancellation before releasing ownership |
 | [components/plate-solve/](../frontend/src/components/plate-solve/) | The inline plate-solve panel, its hint model and solve hook, and the overlays |
 | [db/](../backend/src/nightcrate/db/) | Connections and ordered yoyo migrations (SQL; Python where SQL cannot express the change, e.g. 0064) |
 | [seed_loader/](../backend/src/nightcrate/seed_loader/), [catalog_loader/](../backend/src/nightcrate/catalog_loader/) | Equipment seeds and external DSO catalogs |

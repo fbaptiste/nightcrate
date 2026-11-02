@@ -144,7 +144,7 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
             </>
           )}
         </Box>
-        <IconButton onClick={onClose} size="small">
+        <IconButton aria-label="Close" onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
       </Box>

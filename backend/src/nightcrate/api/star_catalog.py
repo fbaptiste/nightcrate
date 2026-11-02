@@ -5,9 +5,10 @@ import shutil
 import sqlite3
 from pathlib import Path
 
+import aiosqlite
 from fastapi import APIRouter, HTTPException, status
 
-from nightcrate.db.session import get_db
+from nightcrate.core.app_config import load_config, workspace_db_path
 from nightcrate.services import plate_solve
 from nightcrate.services.star_catalog import fetch
 from nightcrate.services.star_catalog.ranges import (
@@ -50,6 +51,8 @@ def _translate_error(exc: Exception) -> HTTPException:
                 "to download or import again."
             ),
         )
+    if isinstance(exc, fetch.AlreadyBuilt):
+        return HTTPException(status_code=422, detail="Those ranges are already built.")
     if isinstance(exc, InsufficientSpace):
         return HTTPException(status_code=422, detail=str(exc))
     return HTTPException(status_code=422, detail=str(exc))
@@ -57,8 +60,16 @@ def _translate_error(exc: Exception) -> HTTPException:
 
 async def _rig_coverage() -> list[RigCoverage]:
     result: list[RigCoverage] = []
+    active_db = load_config().active_db
+    if active_db is None:
+        return result
+    db_path = workspace_db_path(Path(active_db))
+    if not db_path.is_file():
+        logger.warning("[star_catalog] configured database is missing: %s", db_path)
+        return result
     try:
-        async with get_db() as conn:
+        async with aiosqlite.connect(db_path) as conn:
+            conn.row_factory = aiosqlite.Row
             rows = await conn.execute_fetchall(
                 "SELECT * FROM rig_summary WHERE active = 1 AND is_mine = 1 "
                 "ORDER BY sort_order, name"
@@ -107,10 +118,10 @@ async def get_status() -> StarCatalogStatus:
             and operation.kind == "build"
             and item.id in operation.ranges
         )
-        if requested and item.id == operation.current_range:
-            state = "building"
-        elif item.id in ready:
+        if item.id in ready:
             state = "built"
+        elif requested and item.id == operation.current_range:
+            state = "building"
         elif requested:
             state = "waiting"
         elif item.id in manifest:
@@ -205,7 +216,7 @@ async def build_ranges(request: BuildRequest) -> fetch.StarOperation:
         raise HTTPException(status_code=422, detail=f"Unknown field range: {', '.join(unknown)}")
     try:
         return fetch.start_build(request.range_ids)
-    except (fetch.StarOperationBusy, InsufficientSpace) as exc:
+    except (fetch.StarOperationBusy, fetch.AlreadyBuilt, InsufficientSpace) as exc:
         raise _translate_error(exc) from exc
     except Exception as exc:
         logger.exception("[star_catalog] failed to start index build")

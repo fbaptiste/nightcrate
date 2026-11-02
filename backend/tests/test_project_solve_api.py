@@ -180,6 +180,46 @@ def _solve_payload(image_path: str, **values) -> dict:
     return {"image_path": image_path, "operation_id": str(uuid4()), **values}
 
 
+@contextlib.contextmanager
+def _capture_loop_reports():
+    loop = asyncio.get_running_loop()
+    reports: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: reports.append(context))
+    try:
+        yield reports
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+
+async def test_render_repeated_cancellation_wins_late_worker_failure(tmp_path, monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    def fail_late(*_args):
+        started.set()
+        assert release.wait(timeout=5)
+        raise OSError("late render failure")
+
+    monkeypatch.setattr(project_solve_api, "generate_rendered_images", fail_late)
+    with _capture_loop_reports() as loop_reports:
+        task = asyncio.create_task(
+            project_solve_api._render_to_staging("image.fits", tmp_path / "staging")
+        )
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=2)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        await asyncio.sleep(0)
+        assert loop_reports == []
+
+
 class TestCreateSolve:
     async def test_solve_requires_operation_id_and_rejects_mode(self, client: AsyncClient):
         pid = await _make_project(client, "Solve Contract")
@@ -727,6 +767,162 @@ class TestCreateSolve:
         assert replaced.json()["id"] == next_id
         assert (residue / "full.jpg").read_bytes() == b"new"
 
+    async def test_reused_generation_removal_failure_rolls_back(self, client: AsyncClient):
+        pid = await _make_project(client, "Replace Residue Failure")
+        with _mock_solve([], renderer=_renderer(b"old")):
+            first = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits")
+            )
+        old_id = first.json()["id"]
+        residue = project_solve_api._solve_dir(pid) / str(old_id + 1)
+        residue.mkdir(parents=True)
+        (residue / "full.jpg").write_bytes(b"residue")
+        original_rmtree = project_solve_api.shutil.rmtree
+        failed = False
+
+        def fail_residue_once(path, *args, **kwargs):
+            nonlocal failed
+            if Path(path) == residue and not failed:
+                failed = True
+                raise OSError("residue removal failed")
+            return original_rmtree(path, *args, **kwargs)
+
+        with (
+            _mock_solve([], renderer=_renderer(b"new")),
+            patch.object(project_solve_api.shutil, "rmtree", new=fail_residue_once),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/new.fits", replace=True),
+            )
+
+        assert response.status_code == 500
+        current = await client.get(f"/api/projects/{pid}/solve")
+        assert current.json()["id"] == old_id
+        assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"old"
+        assert {path.name for path in project_solve_api._solve_dir(pid).iterdir()} == {str(old_id)}
+
+    async def test_cancellation_during_rename_rolls_back_publication(self, client: AsyncClient):
+        pid = await _make_project(client, "Rename Cancel")
+        operation_id = uuid4()
+        rename_started = threading.Event()
+        release_rename = threading.Event()
+        original_rename = Path.rename
+
+        def blocked_rename(path, target):
+            rename_started.set()
+            assert release_rename.wait(timeout=5)
+            return original_rename(path, target)
+
+        with (
+            _mock_solve([], renderer=_renderer(b"new")),
+            patch.object(Path, "rename", blocked_rename),
+        ):
+            solve_task = asyncio.create_task(
+                client.post(
+                    f"/api/projects/{pid}/solve",
+                    json={
+                        "image_path": "/fake/new.fits",
+                        "operation_id": str(operation_id),
+                    },
+                )
+            )
+            assert await asyncio.wait_for(asyncio.to_thread(rename_started.wait, 1), timeout=2)
+            solve_task.cancel()
+            await asyncio.sleep(0)
+            solve_task.cancel()
+            await asyncio.sleep(0)
+
+            assert solve_operations.active_operation() is not None
+            assert not solve_task.done()
+            release_rename.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(solve_task, timeout=1)
+
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) FROM project_solve WHERE project_id = ?", (pid,)
+            )
+            assert (await cursor.fetchone())[0] == 0
+        assert not any(project_solve_api._solve_dir(pid).iterdir())
+
+    @pytest.mark.parametrize("commit_succeeds", [True, False])
+    async def test_cancellation_during_commit_preserves_only_committed_generation(
+        self, client: AsyncClient, commit_succeeds: bool
+    ):
+        pid = await _make_project(client, f"Commit Cancel {commit_succeeds}")
+        operation_id = uuid4()
+        commit_started = asyncio.Event()
+        release_commit = asyncio.Event()
+        original_commit = Connection.commit
+
+        async def blocked_commit(conn):
+            commit_started.set()
+            await release_commit.wait()
+            if not commit_succeeds:
+                raise OSError("commit failed")
+            await original_commit(conn)
+
+        with _capture_loop_reports() as loop_reports:
+            with (
+                _mock_solve([], renderer=_renderer(b"new")),
+                patch("aiosqlite.core.Connection.commit", new=blocked_commit),
+            ):
+                solve_task = asyncio.create_task(
+                    client.post(
+                        f"/api/projects/{pid}/solve",
+                        json={
+                            "image_path": "/fake/new.fits",
+                            "operation_id": str(operation_id),
+                        },
+                    )
+                )
+                await asyncio.wait_for(commit_started.wait(), timeout=1)
+                solve_task.cancel()
+                await asyncio.sleep(0)
+                solve_task.cancel()
+                await asyncio.sleep(0)
+
+                assert solve_operations.active_operation() is not None
+                assert not solve_task.done()
+                release_commit.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(solve_task, timeout=1)
+                await asyncio.sleep(0)
+                assert loop_reports == []
+
+        async with get_db() as conn:
+            cursor = await conn.execute("SELECT id FROM project_solve WHERE project_id = ?", (pid,))
+            row = await cursor.fetchone()
+        generations = list(project_solve_api._solve_dir(pid).glob("[0-9]*"))
+        if commit_succeeds:
+            assert row is not None
+            assert [path.name for path in generations] == [str(row["id"])]
+            assert (generations[0] / "full.jpg").read_bytes() == b"new"
+        else:
+            assert row is None
+            assert generations == []
+
+    async def test_post_commit_cleanup_failure_keeps_new_generation(self, client: AsyncClient):
+        pid = await _make_project(client, "Cleanup Failure")
+
+        def fail_cleanup(*_args):
+            raise OSError("cleanup failed")
+
+        with (
+            _mock_solve([], renderer=_renderer(b"new")),
+            patch.object(project_solve_api, "_cleanup_generations", new=fail_cleanup),
+        ):
+            response = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/new.fits")
+            )
+
+        assert response.status_code == 500
+        current = await client.get(f"/api/projects/{pid}/solve")
+        assert current.status_code == 200
+        generation = project_solve_api._solve_dir(pid) / str(current.json()["id"])
+        assert (generation / "full.jpg").read_bytes() == b"new"
+
     async def test_hdu_contract_primary_image_and_attempts(self, client: AsyncClient, tmp_path):
         pid = await _make_project(client, "Project HDU")
         invalid_hdu = await client.post(
@@ -847,7 +1043,7 @@ class TestCreateSolve:
 
         def blocked_cleanup(solve_dir, current_id):
             cleanup_started.set()
-            release_cleanup.wait(2)
+            assert release_cleanup.wait(timeout=5)
             original_cleanup(solve_dir, current_id)
 
         with (
@@ -863,9 +1059,11 @@ class TestCreateSolve:
                     },
                 )
             )
-            assert await asyncio.to_thread(cleanup_started.wait, 1)
+            assert await asyncio.wait_for(asyncio.to_thread(cleanup_started.wait, 1), timeout=2)
             next_staging = project_solve_api._solve_dir(pid) / ".staging-next-operation"
             next_staging.mkdir()
+            solve_task.cancel()
+            await asyncio.sleep(0)
             solve_task.cancel()
             await asyncio.sleep(0)
 
@@ -882,6 +1080,9 @@ class TestCreateSolve:
         assert not lock.locked()
         assert solve_operations.active_operation() is None
         assert not next_staging.exists()
+        current = await client.get(f"/api/projects/{pid}/solve")
+        assert current.status_code == 200
+        assert (await client.get(f"/api/projects/{pid}/solve/image/full")).content == b"new"
 
 
 class TestGetSolve:

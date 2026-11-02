@@ -2,6 +2,7 @@
 ASTAP binary resolution, hint extraction, header passthrough, and coordinate formatting."""
 
 import asyncio
+import contextlib
 import io
 import logging
 import math
@@ -47,6 +48,18 @@ def _cancel_active_solve() -> bool:
     operation = solve_operations.active_operation()
     assert operation is not None
     return solve_operations.cancel(operation.operation_id).cancelled
+
+
+@contextlib.contextmanager
+def _capture_loop_reports():
+    loop = asyncio.get_running_loop()
+    reports: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: reports.append(context))
+    try:
+        yield reports
+    finally:
+        loop.set_exception_handler(previous_handler)
 
 
 # ── resolve_astap_binary ────────────────────────────────────────────────
@@ -792,6 +805,70 @@ async def test_run_solve_astap_success(tmp_path):
     assert solve_operations.active_operation() is None
 
 
+async def test_run_solve_astap_worker_failure_is_propagated(tmp_path):
+    _reset_solve_state()
+    astap = tmp_path / "astap"
+    astap.write_text("#!/bin/sh")
+    astap.chmod(0o755)
+    with patch.object(plate_solve, "_do_solve", new=AsyncMock(side_effect=OSError("failed"))):
+        with pytest.raises(OSError, match="failed"):
+            await plate_solve.run_solve(
+                solver="astap",
+                astap_path=str(astap),
+                image_path="image.fits",
+                hdu=0,
+                ra_hint=None,
+                dec_hint=None,
+                fov_hint=None,
+                timeout=60,
+            )
+    assert solve_operations.active_operation() is None
+
+
+async def test_astap_repeated_cancellation_wins_late_worker_failure(tmp_path, monkeypatch):
+    _reset_solve_state()
+    astap = tmp_path / "astap"
+    astap.write_text("#!/bin/sh")
+    astap.chmod(0o755)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fail_late(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        raise OSError("late ASTAP failure")
+
+    monkeypatch.setattr(plate_solve, "_do_solve", fail_late)
+    with _capture_loop_reports() as loop_reports:
+        task = asyncio.create_task(
+            plate_solve.run_solve(
+                solver="astap",
+                astap_path=str(astap),
+                image_path="image.fits",
+                hdu=0,
+                ra_hint=None,
+                dec_hint=None,
+                fov_hint=None,
+                timeout=60,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task.cancel()
+        await asyncio.wait_for(asyncio.to_thread(plate_solve._astap_stop.wait, 1), timeout=2)
+        task.cancel()
+        await asyncio.sleep(0)
+
+        assert solve_operations.active_operation() is not None
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        await asyncio.sleep(0)
+        assert loop_reports == []
+
+    assert solve_operations.active_operation() is None
+
+
 def _sleeping_astap(tmp_path: Path) -> Path:
     astap = tmp_path / "astap"
     astap.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
@@ -834,6 +911,26 @@ async def test_astap_task_cancellation_waits_for_process_exit(tmp_path):
     assert proc.returncode is not None
     assert plate_solve._solve_process is None
     assert solve_operations.active_operation() is None
+
+
+async def test_wait_for_process_exit_reports_cancellation_after_exit():
+    wait_started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Process:
+        async def wait(self):
+            wait_started.set()
+            await release.wait()
+            return 0
+
+    task = asyncio.create_task(plate_solve._wait_for_process_exit(Process()))
+    await asyncio.wait_for(wait_started.wait(), timeout=1)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    release.set()
+    assert await asyncio.wait_for(task, timeout=1) is True
 
 
 async def test_cancel_solve_during_astap_preparation_prevents_process_start(tmp_path, monkeypatch):
@@ -925,6 +1022,63 @@ async def test_astap_source_read_runs_off_loop_and_cancel_starts_no_process(tmp_
     assert not result.solved
     assert result.failure_reason == "cancelled"
     assert solve_operations.active_operation() is None
+
+
+async def test_astap_source_preparation_repeated_cancellation_wins_late_failure(
+    tmp_path, monkeypatch
+):
+    started = threading.Event()
+    release = threading.Event()
+    stop = threading.Event()
+
+    def fail_late(*_args):
+        started.set()
+        assert release.wait(timeout=5)
+        raise OSError("late source failure")
+
+    monkeypatch.setattr(plate_solve, "_read_astap_source", fail_late)
+    with _capture_loop_reports() as loop_reports:
+        task = asyncio.create_task(
+            plate_solve._do_solve(
+                tmp_path / "astap",
+                "image.fits",
+                0,
+                None,
+                None,
+                None,
+                60,
+                stop=stop,
+            )
+        )
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=2)
+        task.cancel()
+        assert await asyncio.wait_for(asyncio.to_thread(stop.wait, 1), timeout=2)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        await asyncio.sleep(0)
+        assert loop_reports == []
+
+
+async def test_astap_source_preparation_worker_failure_is_propagated(tmp_path, monkeypatch):
+    def fail(*_args):
+        raise OSError("source failed")
+
+    monkeypatch.setattr(plate_solve, "_read_astap_source", fail)
+    with pytest.raises(OSError, match="source failed"):
+        await plate_solve._do_solve(
+            tmp_path / "astap",
+            "image.fits",
+            0,
+            None,
+            None,
+            None,
+            60,
+        )
 
 
 async def test_shutdown_during_astap_preparation_prevents_process_start(tmp_path, monkeypatch):
@@ -1267,6 +1421,51 @@ async def test_task_cancellation_waits_for_worker(monkeypatch):
     assert solve_operations.active_operation() is None
 
 
+async def test_native_worker_failure_is_propagated(monkeypatch):
+    _reset_solve_state()
+
+    def worker(*_args, **_kwargs):
+        raise OSError("native failed")
+
+    _patch_native_worker(monkeypatch, worker)
+    with pytest.raises(OSError, match="native failed"):
+        await _run_native()
+    assert solve_operations.active_operation() is None
+
+
+async def test_native_repeated_cancellation_wins_late_worker_failure(monkeypatch):
+    _reset_solve_state()
+    started = threading.Event()
+    cancel_seen = threading.Event()
+    release = threading.Event()
+
+    def worker(*_args, cancel, **_kwargs):
+        started.set()
+        assert cancel.wait(timeout=5)
+        cancel_seen.set()
+        assert release.wait(timeout=5)
+        raise OSError("late native failure")
+
+    _patch_native_worker(monkeypatch, worker)
+    with _capture_loop_reports() as loop_reports:
+        task = asyncio.create_task(_run_native())
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=2)
+        task.cancel()
+        assert await asyncio.wait_for(asyncio.to_thread(cancel_seen.wait, 1), timeout=2)
+        task.cancel()
+        await asyncio.sleep(0)
+
+        assert solve_operations.active_operation() is not None
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        await asyncio.sleep(0)
+        assert loop_reports == []
+
+    assert solve_operations.active_operation() is None
+
+
 async def test_double_cancellation_waits_for_worker(monkeypatch):
     _reset_solve_state()
     started = threading.Event()
@@ -1321,25 +1520,33 @@ async def test_shutdown_leaves_mappings_when_worker_outlives_timeout(monkeypatch
 
     def worker(*_args, **_kwargs):
         started.set()
-        release.wait(2)
+        assert release.wait(timeout=5)
         return PlateSolveResult(solved=False, solver="native")
 
     _patch_native_worker(monkeypatch, worker)
     close_all = MagicMock()
     monkeypatch.setattr(plate_solve.handles, "close_all", close_all)
 
-    async def immediate_timeout(_awaitable, timeout):
-        assert timeout == 10.0
-        raise TimeoutError
+    real_wait_for = asyncio.wait_for
 
-    monkeypatch.setattr(plate_solve.asyncio, "wait_for", immediate_timeout)
-    task = asyncio.create_task(_run_native())
-    assert await asyncio.to_thread(started.wait, 1)
-    await plate_solve.shutdown()
-    close_all.assert_not_called()
-    assert solve_operations.active_operation() is not None
-    release.set()
-    await task
+    async def short_timeout(awaitable, timeout):
+        assert timeout == 10.0
+        return await real_wait_for(awaitable, timeout=0.01)
+
+    monkeypatch.setattr(plate_solve.asyncio, "wait_for", short_timeout)
+    with _capture_loop_reports() as loop_reports:
+        task = asyncio.create_task(_run_native())
+        assert await real_wait_for(asyncio.to_thread(started.wait, 1), timeout=2)
+        await real_wait_for(plate_solve.shutdown(), timeout=1)
+        close_all.assert_not_called()
+        assert solve_operations.active_operation() is not None
+        assert not task.done()
+        assert loop_reports == []
+
+        release.set()
+        await real_wait_for(task, timeout=1)
+        await asyncio.sleep(0)
+        assert loop_reports == []
 
 
 async def test_no_gpu_during_solve(monkeypatch):
