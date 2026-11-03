@@ -1,4 +1,4 @@
--- NightCrate version: 0.43.1
+-- NightCrate version: 0.44.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1193,6 +1193,14 @@ CREATE INDEX idx_location_horizon_point_azimuth
 -- fall through to `'Other'` + preserve the original in `raw_obj_type`;
 -- unknown catalog prefixes are dropped from designations but kept on
 -- `dso.raw_other_id` for future re-parsing.
+--
+-- Migration 0066 rebuilds `dso` and `dso_designation` (PRAGMA
+-- legacy_alter_table = ON; every row copied with its id; indexes and the
+-- trigger recreated) to widen both CHECK vocabularies: object types 'HH',
+-- 'ClG', 'WR*' and catalogs 'hh', 'aco', 'png', 'wr'. This file keeps the
+-- chronological form: the migration 0016 columns appear below as ALTER
+-- TABLE statements, while the table 0066 rebuilds declares them inline,
+-- before `source_key`. Column order differs; the columns are the same.
 
 CREATE TABLE dso_catalog_source (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1218,7 +1226,7 @@ CREATE TABLE dso (
     obj_type                TEXT NOT NULL CHECK (obj_type IN (
         'G', 'GPair', 'GTrpl', 'GGroup',
         'HII', 'EmN', 'RfN', 'PN', 'OCl', 'GCl', 'Cl+N', 'SNR', 'DrkN', 'Neb',
-        '*Ass', 'Nova', '*', '**', 'Other'
+        '*Ass', 'Nova', '*', '**', 'Other', 'HH', 'ClG', 'WR*'
     )),
     raw_obj_type            TEXT,
 
@@ -1291,7 +1299,8 @@ CREATE TABLE dso_designation (
         'ngc', 'ic', 'messier', 'caldwell', 'ugc', 'pgc', 'mcg', 'eso',
         'arp', 'hickson', 'sharpless2', 'barnard', 'ldn', 'lbn', 'vdb',
         'cederblad', 'pk', 'rcw', 'gum', 'mrk', 'terzan', 'pal', 'mel',
-        'cr', 'stock', 'ruprecht', 'abell', 'dolidze', 'dwb'
+        'cr', 'stock', 'ruprecht', 'abell', 'dolidze', 'dwb',
+        'hh', 'aco', 'png', 'wr'
     )),
     identifier    TEXT NOT NULL,
     display_form  TEXT NOT NULL,
@@ -1478,7 +1487,60 @@ CREATE UNIQUE INDEX idx_dso_external_ref_langless_unique
 -- (Wikipedia's Stephan's Quintet article = 5 galaxies; Wikidata's
 -- Crab Nebula entity = NGC 1952 + Sh2-244; etc.). The loader duplicates
 -- the ref onto every matching DSO so users viewing any of them see the
--- chip.
+-- chip. Google search links are computed per request and never stored here.
+
+
+-- ── DSO groups, source entries and applied catalogs (migration 0066) ───────
+-- `dso_group` / `dso_group_member`: a catalog entry covering several objects
+-- ("part of"). `whole_dso_id` is the entry's own object when it has one
+-- (LBN 191, the whole Cygnus Loop) and NULL for a view of its members only
+-- (Arp 244). `dso_source_entry`: one row per contributing catalog entry,
+-- keyed by source, source key and logical catalog, so one HASH row can
+-- belong to both `png` and `abell_pn`. These three are catalog-derived and
+-- rebuilt in each object step. `dso_catalog_applied`: what this database
+-- last applied for each optional catalog ('on' or 'removed'; no row = off).
+-- The app-wide choice itself lives in `catalogs/choice.json`.
+
+CREATE TABLE dso_group (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    catalog       TEXT NOT NULL CHECK (catalog IN (
+        'ngc', 'ic', 'messier', 'caldwell', 'ugc', 'pgc', 'mcg', 'eso',
+        'arp', 'hickson', 'sharpless2', 'barnard', 'ldn', 'lbn', 'vdb',
+        'cederblad', 'pk', 'rcw', 'gum', 'mrk', 'terzan', 'pal', 'mel',
+        'cr', 'stock', 'ruprecht', 'abell', 'dolidze', 'dwb',
+        'hh', 'aco', 'png', 'wr'
+    )),
+    identifier    TEXT NOT NULL,
+    display_form  TEXT NOT NULL,
+    search_key    TEXT NOT NULL,
+    whole_dso_id  INTEGER REFERENCES dso(id) ON DELETE CASCADE,
+    UNIQUE (catalog, identifier)
+);
+
+CREATE TABLE dso_group_member (
+    group_id INTEGER NOT NULL REFERENCES dso_group(id) ON DELETE CASCADE,
+    dso_id   INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, dso_id)
+);
+
+CREATE INDEX idx_dso_group_search_key ON dso_group(search_key);
+CREATE INDEX idx_dso_group_member_dso ON dso_group_member(dso_id);
+
+CREATE TABLE dso_source_entry (
+    source_catalog_id INTEGER NOT NULL REFERENCES dso_catalog_source(id),
+    source_key        TEXT NOT NULL,
+    catalog_id        TEXT NOT NULL,
+    dso_id            INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    PRIMARY KEY (source_catalog_id, source_key, catalog_id)
+);
+
+CREATE INDEX idx_dso_source_entry_dso ON dso_source_entry(dso_id);
+
+CREATE TABLE dso_catalog_applied (
+    catalog_id TEXT PRIMARY KEY,
+    state      TEXT NOT NULL CHECK (state IN ('on', 'removed')),
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- ============================================================
 -- Projects (v0.35.0)

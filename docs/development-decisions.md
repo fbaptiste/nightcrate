@@ -147,21 +147,50 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   solve-tab stars). Main targets survive deletion of a solve; derived solve
   objects and its rendered image do not. Reuse `DsoAnnotationOverlay` in both
   analyzers; main objects are teal and others blue.
-- Catalog objects keep their row identity by `(source_catalog_id, source_key)`:
-  exact OpenNGC `Name`, or normalized Sharpless/Barnard number. Reconciliation
-  runs each matching pass across the complete object set; shared or former
-  designations never prove identity. The one-time legacy pass is guarded by
-  `dso_catalog_source.keys_assigned`, and loaded object sources with missing
-  files defer the whole object step rather than guessing.
-- Only explicit OpenNGC duplicate rows, Sharpless cross-references, and an
+- Catalog objects keep their row identity by `(source_catalog_id, source_key)`,
+  such as the exact OpenNGC `Name` or a normalized catalog number (each
+  source's key is in the [catalog architecture](dso-catalog-architecture.md)).
+  Reconciliation runs each matching pass across the complete object set;
+  shared or former designations never prove identity. When an object's owner
+  changes, its id follows its contributing entries (`dso_source_entry`), so
+  removing and re-adding a catalog keeps ids and links. The one-time legacy
+  pass is guarded by `dso_catalog_source.keys_assigned`. A loaded object source
+  of a catalog that is on, with a missing file or an unfinished download,
+  defers the whole object step rather than guessing; a removed catalog never
+  defers.
+- Only explicit OpenNGC duplicate rows, Sharpless cross-references, an
   unambiguous full Barnard identifier matching an OpenNGC object's parsed own
-  name merge catalog objects. Alternate names never prove a Barnard merge, and
-  an object's parsed own designation outranks another object's alternate claim.
-  Known user links move to the survivor. Other unclaimed rows become inactive
-  and retain their names, enrichment, and user relationships.
+  name, and rule R for the catalogs added in v0.44.0 merge catalog objects.
+  Rule R takes a reviewed override, then an own name already owned, then a
+  catalog column naming an owned designation; position alone never merges.
+  Alternate names never prove a Barnard merge, and an object's parsed own
+  designation outranks another object's alternate claim. A merged entry adds
+  names and provenance, never columns or notes. Known user links move to the
+  survivor. Other unclaimed rows become inactive and retain their names,
+  enrichment, and user relationships.
   Any new table with a foreign key to `dso` must be classified in
   `catalog_loader.user_links` as user-linked or catalog-derived; the fresh-DB
   foreign-key guard test must fail until that classification is made.
+- **Removing a catalog** is the only path that deletes catalog objects. It
+  needs positive evidence that removed catalogs alone provided the object:
+  every `dso_source_entry` row of the object belongs to one, or, for a row with
+  no entries, every catalog of its own source is removed. An empty set never
+  counts. Unlinked objects are deleted. Objects referenced by
+  `favorite_target`, `project_target` or an unclassified table stay inactive,
+  with their names.
+  - **A solve's in-frame list is not a link.** `project_dso` is computed when
+    the solve is made; counting it would keep thousands of inactive MCG
+    galaxies from galaxy-field solves after MCG is removed. Its rows go with
+    the object. Merges still move them.
+  - Existing solves are not recomputed when a catalog is added.
+- **Never infer a catalog choice.** The choice is app-wide
+  (`catalogs/choice.json`, beside the shared downloads); each database records
+  what it applied in `dso_catalog_applied`. A missing or corrupt choice file,
+  missing files or missing `version.json` entries keep what the database
+  applied, and nothing is removed. Upgraded databases keep Sharpless and
+  Barnard on with no choice file written. A database opened later applies a
+  recorded removal once, without asking again. Rules:
+  [optional catalogs](dso-catalog-architecture.md#optional-catalogs).
 - `MarkdownEditor` defaults to rendered Markdown, enters editing explicitly,
   and saves only changed text. Reuse it for descriptions and notes.
 - A project owns every `sub_frame`, `processed_image`, and `file_location` row.
@@ -268,28 +297,101 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 ## DSO catalog and references
 
 - Vendor only NightCrate editorial CSVs, not external catalogs. Download sources
-  on demand to `APP_DIR/catalogs/`. Use staging-directory atomic renames and
-  write `version.json` last so interrupted downloads remain visibly incomplete.
+  on demand to `APP_DIR/catalogs/`. The Melotte list is NightCrate's own
+  transcription of Melotte's 1915 catalogue: no downloadable Melotte table
+  exists, and Wikipedia's list is CC BY-SA.
+- **VizieR catalogs publish as one commit.** Stage every table of the catalog,
+  write its `vizier/publishing/{catalog_id}.json` marker, move the files into
+  place, then write `vizier/version.json` atomically and delete the marker.
+  The `version.json` write is the commit point. The loader consumes only
+  catalogs whose files match their `version.json` sha256 and have no marker,
+  so an interrupted publication stays unavailable instead of half-loaded.
+  Sharpless and Barnard alone also accept files from before v0.44.0 with no
+  entry. GitHub downloads still write `version.json` last.
+- **Screen before applying.** Run `catalog_loader.match_review` on every new
+  catalog's full download before its first application to any database, and
+  turn each confirmed error into a `dso_match_overrides.csv` row. Overrides
+  take precedence over matches a catalog or OpenNGC states and reserve their
+  designation: LBN 191 is the whole Cygnus Loop, never NGC 6960.
 - Distance precedence is curated, then 50 MGC, then redshift; augmenters fill
   only NULL distances. Object types and designation catalogs are closed CHECK
-  vocabularies: update migrations and loader maps together.
-- Render external-reference chips only for `wikipedia`, `simbad`, `ned`, in server
-  order. Store Wikidata QIDs without showing them as user-facing links. Verify
-  Wikidata property IDs against the provider rather than trusting old specs.
+  vocabularies: update migrations and loader maps together (0066 added `hh`,
+  `aco`, `png` and `wr`, and the types `HH`, `ClG` and `WR*`).
+- **One "Emission nebula" type choice** (Fred, 2026-11-03). OpenNGC types
+  nearly every emission nebula imagers target as `HII`, and uses `EmN` only
+  for 8 nebulae in the Large Magellanic Cloud. The type lists therefore merge
+  them: `dso_type_groups.FILTER_TYPE_MERGES` maps `HII` to `EmN` for the
+  facets, filters and planner counts (mirrored by `filterTypeCode` in
+  `dsoTypeNames.ts`), and a filter naming either code matches both, so saved
+  planner filters keep working. Stored types are unchanged; an `HII` object's
+  label reads "Emission nebula (HII region)".
+- Keep values that aren't an object's own V magnitude or visual size out of
+  `mag_v` and `maj_axis_arcmin`: the Wolf-Rayet narrow-band v, ACO's `m10` and
+  the LDN area go in the notes. The LDN equivalent diameter is used only for
+  the match size gate and never stored.
+- Render external-reference chips for `wikipedia`, `simbad`, `ned`, then
+  `google` and `google_images`, in server order. Store Wikidata QIDs without
+  showing them as user-facing links. Verify Wikidata property IDs against the
+  provider rather than trusting old specs.
+- **Google links are computed per request** (`api/dso.py:_search_refs`) and
+  never stored, so `dso_external_ref`'s provider CHECK is unchanged. The query
+  is the primary designation plus the first comma-separated common name.
+- **One search-key function.** Designation search keys come only from
+  `designations.normalize_designation`, used by the loaders
+  (`_build_search_key`) and every API search; don't add another normaliser.
+  - Structured names keep their signs: `PN G000.0+02.0` and `PN G000.0-02.0`,
+    or `MCG+02-05-050` and `MCG-02-05-050`, stay distinct, while padding
+    differences (`PN G0.0+2.0`, `MCG-02-05-50`) match.
+  - An unsigned MCG zone means `+`, the written convention. Only the repair of
+    identifiers stored before 0066 reads it as `-`
+    (`canonical_legacy_identifier`), because the old parser dropped the minus
+    of tight `MCG-…` tokens.
+  - Long names map to the stored prefix: "Melotte 25" finds `Mel 25`, and
+    likewise "Collinder", "Herbig-Haro" and "Wolf-Rayet".
+  - `designations.py` imports nothing from `nightcrate`; `_common` imports
+    `loader`, so a normal import from there would loop.
+- **Compute constellations in batches.** Collectors leave `constellation`
+  empty, and `reconcile.build_object_set` fills them all with one
+  `astronomy.constellations_for_coords` call. A per-row astropy call made the
+  object build take about 150 s with every catalog on, against 1.2 s batched
+  (measured 2026-11-02).
 - One article/entity may describe several objects; do not enforce cross-DSO
   uniqueness. A partial index on `(dso_id, provider) WHERE language IS NULL`
   supplies the deduplication SQLite's nullable UNIQUE constraint does not.
-- **VizieR mirrors.** Use HTTPS mirrors only. Mirror availability changes, so
+- **VizieR mirrors.** Six hosts, in order: Strasbourg, Harvard and IDIA
+  South Africa over HTTPS, then Tokyo, Beijing and India (Pune) over plain
+  HTTP. Fred accepted plain HTTP on 2026-11-03 as a fallback, knowing a
+  download could be altered in transit. Mirror availability changes, so
   recheck the list with real downloads before editing `VIZIER_HOSTS`.
   - **Checked 2026-11-01**, during the CDS outage that began about
-    2026-10-21:
-    - Harvard and IDIA South Africa work;
-    - Tokyo and Beijing serve plain HTTP only;
-    - Pune and Moscow time out;
-    - `vizieridia.saao.ac.za` fails HTTPS on its certificate.
-  - **Fail fast.** Make one pass over the hosts; each gets only the shared
-    HTTP client's single retry, with a 10 s connect limit. Stacked retries
-    on a dead host once cost about 7 minutes per host.
+    2026-10-21: Harvard and IDIA work; Tokyo and Beijing serve plain HTTP
+    only; Pune and Moscow time out; `vizieridia.saao.ac.za` fails HTTPS on
+    its certificate.
+  - **Checked 2026-11-03:** Strasbourg unreachable and Harvard HTTP 502.
+    Tokyo and Beijing serve every table NightCrate uses except HASH (V/163),
+    and their Sharpless table matches IDIA's byte for byte. Only Strasbourg
+    and Harvard carry V/163. Pune times out over both schemes; it uses HTTP,
+    which also reaches a host that redirects to HTTPS. `vizier.ast.cam.ac.uk`
+    and `vizier.hia.nrc.ca` no longer serve VizieR.
+  - **Check every mirror at once first** (Fred, 2026-11-03). Before a table,
+    if no check has run in the last hour (`MIRROR_DOWN_S`) or every host is
+    marked down, request one Sharpless row (`-out=Sh2,Diam`) from all six
+    hosts concurrently: one attempt each, 10 s limit. Hosts that don't
+    answer with a valid VizieR TSV are skipped until the hour is up. If none
+    answers, nothing is recorded, since the user's own connection is the
+    likely cause. A transport error or HTTP 5xx during a download also marks
+    that host down. VizieR's "Table or Catalog not found" reply (IDIA,
+    Tokyo and Beijing for HASH), a 4xx or a bad body only moves on to the
+    next host. This replaced the same day's "try failed mirrors last" rule.
+  - **Fail fast.** Make one pass over the available hosts; each gets only the
+    shared HTTP client's single retry, with a 10 s connect limit. Stacked
+    retries on a dead host once cost about 7 minutes per host.
+  - **Plain failure messages.** The Catalogs page names the catalog, the
+    failed part of a multi-table catalog, and each mirror's outcome grouped
+    by reason ("Strasbourg, Harvard and India are down and South Africa,
+    Tokyo and Beijing don't have this table"); the technical text goes to the
+    log. Measured live on 2026-11-03: the HASH failure took 15 s, against
+    about 45 s trying hosts one by one.
   - **Name the failed mirror's own time** when moving on ("Strasbourg timed
     out after 21 s. Trying the Harvard mirror…"), measured around the host's
     whole download; the progress counter restarts with each message, so it
@@ -304,13 +406,15 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   for 10 minutes, and keep validated compressed tiles in memory only. Do not
   add a disk tile cache. A render holds its permit until its worker thread
   exits, even after repeated cancellation (see the star-data operation rule).
-- **Catalog actions** (fetches and reloads on the Catalogs page) run one at a
-  time; a second returns 409, and database create/add/activate/setup are
-  refused while one runs. The page polls `GET /api/admin/catalogs/fetch-status`
-  for the step, seconds and bytes (`services/catalog_progress.py`); fetchers
-  report through `http_client.get`'s opt-in event callback. The catalog load
+- **Catalog actions** (fetches, reloads, and adding or removing an optional
+  catalog on the Catalogs page) run one at a time; a second returns 409, and
+  database create/add/activate/setup are refused while one runs. The page
+  polls `GET /api/admin/catalogs/fetch-status` for the step, seconds and bytes
+  (`services/catalog_progress.py`); fetchers report through
+  `http_client.get`'s opt-in event callback. The catalog load
   stays on the event loop by design (0.1–3.1 s measured on a real-size
-  database); moving it to a thread needs a database-contention policy first.
+  database; the object step took 4.5 s with every optional catalog on,
+  2026-11-02); moving it to a thread needs a database-contention policy first.
 - **Designation order** uses one natural key (`services/dso_sorting.py`,
   registered as a SQLite function and mirrored in
   `frontend/src/lib/designationSort.ts`): display prefix case-insensitively,
@@ -319,13 +423,22 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   object's name from those catalogs (`display_designation`), chosen by
   `catalog_rank` (Messier, NGC, IC, Caldwell, then other codes
   alphabetically), then its lowest number; rank only chooses the name and
-  never orders rows. With none selected, the primary name. Type and
-  Constellation sort by the labels shown (`services/dso_display.py`, kept in
-  step with the frontend maps by a parity test).
+  never orders rows. A group member with no name of its own in those
+  catalogs shows the group's name ("Arp 244"); the planner's catalog filter
+  chooses its displayed name the same way. With none selected, the primary
+  name. Type and Constellation sort by the labels shown
+  (`services/dso_display.py`, kept in step with the frontend maps by a parity
+  test).
 - The list response carries every designation of each row, in rank then
-  natural order; the table shows the other names as pills beside
-  Designation. Keep the table's `sortModel` identity stable (memoized):
-  MUI DataGrid treats a new array as a sort change and returns to page 1.
+  natural order, and the groups it belongs to (`part_of`); the table shows
+  "Part of" pills, then the other names, beside Designation. Keep the table's
+  `sortModel` identity stable (memoized): MUI DataGrid treats a new array as a
+  sort change and returns to page 1.
+- **Groups ("part of")** are catalog-derived (`dso_group`,
+  `dso_group_member`) and rebuilt in each object step. Searching a group's
+  name, or its whole's designation or common name, returns its members, and
+  catalog filters and facets count members. See the
+  [catalog architecture](dso-catalog-architecture.md#groups-part-of).
 - OpenNGC names whose catalog has no NightCrate code display their own prefix
   and number ("H 5", "MWSC 3561"), never a synthetic "OTHER"; HCG names map to
   `hickson`. A PGC number fused to the next name by a missing upstream comma
@@ -350,8 +463,29 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   persisted. Display wraps to `[-180,+180]` with virtual south-seam points.
 - Visibility samples all active DSOs every five minutes during astronomical
   darkness, then filters in memory. Cache by location/date/horizon and both
-  location/horizon update timestamps. Anytime/full-catalog mode must not inherit
-  Tonight's magnitude/size defaults. Empty and NULL sort values always go last.
+  location/horizon update timestamps. Empty and NULL sort values always go last.
+- **Filter counts are tonight's.** Once a planner response has loaded, the
+  type, catalog and constellation lists count from it, and a value with
+  nothing passing counts 0; the catalog-wide `/api/dso/facets` totals are
+  only a placeholder before the first response. `PillFilter` hides zero
+  counts but keeps a selected value, shown as "(0)". Until 2026-11-03 a
+  missing count fell back to the catalog total, so "Emission nebula (8)"
+  appeared although all 8 are in the Large Magellanic Cloud.
+- **Planner limits show what is applied.** The server never falls back to the
+  Settings magnitude and size limits: a missing `max_magnitude` or
+  `min_size_arcmin` means no limit, in both modes. Only the visibility-hours
+  minimum keeps its Tonight default.
+  - Tonight opens with both boxes ticked at the saved slider values (last
+    used, else Settings); Anytime opens with both unticked. Each mode keeps its
+    own ticks.
+  - A magnitude limit passes objects with no magnitude; a size limit drops
+    objects with no size. The captions under the ticked boxes say so.
+  - Picking or clearing a catalog never changes the limits.
+- **No unbounded id lists in planner queries.** With every catalog on, the
+  active objects exceed SQLite's variable limit (32,766 in the build tested),
+  and a query binding one `?` per object fails with "too many SQL variables".
+  Query by the same `active = 1` and coordinate conditions instead, or bind
+  only a bounded page of ids. `test_anytime_with_40000_objects` guards this.
 - Moon separation is closest approach during target visibility, not at transit.
   Before comparing a distance-bearing astropy Sun/Moon coordinate with an ICRS
   target, use `astronomy.direction_only`; frame-origin translation otherwise

@@ -364,6 +364,48 @@ def test_fused_pgc_repair_ignores_designation_owned_by_another_object(db, catalo
     assert next(row for row in summary.results if row.source_id == "openngc").status == "unchanged"
 
 
+def test_contested_png_does_not_repeat_repair(db, catalogs_root):
+    _append_openngc_rows(
+        catalogs_root / "openngc" / "NGC.csv",
+        (
+            {"Name": "NGC9901", "Identifiers": "PN G000.0+02.0"},
+            {"Name": "NGC9902", "Identifiers": "PN G000.0+02.0"},
+        ),
+    )
+
+    first = load_catalogs(db, catalogs_root)
+    second = load_catalogs(db, catalogs_root)
+
+    owner = db.execute(
+        """
+        SELECT d.source_key
+        FROM dso_designation dd JOIN dso d ON d.id = dd.dso_id
+        WHERE dd.catalog = 'png' AND dd.identifier = '000.0+02.0'
+        """
+    ).fetchone()
+    assert owner[0] == "NGC9901"
+    assert next(row for row in first.results if row.source_id == "openngc").status == "loaded"
+    assert next(row for row in second.results if row.source_id == "openngc").status == "unchanged"
+
+
+def test_structured_addendum_name_is_claimed_canonically(db, catalogs_root):
+    _append_openngc_rows(
+        catalogs_root / "openngc" / "addendum.csv",
+        ({"Name": "MCG-02-05-50"},),
+    )
+
+    load_catalogs(db, catalogs_root)
+
+    rows = db.execute(
+        """
+        SELECT identifier, display_form, search_key
+        FROM dso_designation
+        WHERE catalog = 'mcg' AND identifier = '-02-05-050'
+        """
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [("-02-05-050", "MCG -02-05-050", "mcg-02-05-050")]
+
+
 def test_own_name_ownership_repairs_on_unchanged_hash_and_is_idempotent(
     db, catalogs_root, monkeypatch
 ):

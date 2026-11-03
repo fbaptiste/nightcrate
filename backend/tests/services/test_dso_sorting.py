@@ -49,6 +49,22 @@ def test_designation_sort_key_handles_case_zero_padding_and_numeric_extremes():
     assert designation_sort_key(None) is None
 
 
+def test_designation_sort_key_caches_identical_results():
+    values = [None, "M 31", "NGC 0002", "Sh2-155", "ESO 107-010"]
+    expected = [designation_sort_key.__wrapped__(value) for value in values]
+    designation_sort_key.cache_clear()
+
+    first = [designation_sort_key(value) for value in values]
+    before = designation_sort_key.cache_info()
+    repeated = [designation_sort_key(value) for value in values]
+    after = designation_sort_key.cache_info()
+
+    assert first == expected
+    assert repeated == expected
+    assert after.hits - before.hits == len(values)
+    assert after.maxsize == 262_144
+
+
 def test_designation_sort_key_is_sqlite_safe():
     conn = sqlite3.connect(":memory:")
     conn.create_function("designation_key", 1, designation_sort_key, deterministic=True)

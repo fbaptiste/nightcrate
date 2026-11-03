@@ -154,6 +154,32 @@ def test_dark_interval_cases():
     assert 9 < normal.darkness_hours < 11
 
 
+def test_batched_constellations_match_scalar_at_edges(monkeypatch: pytest.MonkeyPatch):
+    # Includes both poles, the RA wrap, a point beside the Psc/Cet boundary,
+    # and the LBN row whose source declination is written as -00 degrees.
+    positions = (
+        (0.0, 90.0),
+        (0.0, -90.0),
+        (0.0, 0.0),
+        (360.0, 0.0),
+        (6.65, 0.0),
+        (83.3873, -0.6664),
+    )
+    monkeypatch.setattr(astronomy, "_CONSTELLATION_CACHE", {})
+    expected = [astronomy.constellation_for_coords(ra, dec) for ra, dec in positions]
+    astronomy._CONSTELLATION_CACHE.clear()
+
+    actual = astronomy.constellations_for_coords(
+        [ra for ra, _dec in positions],
+        [dec for _ra, dec in positions],
+    )
+
+    assert actual == expected
+    assert astronomy.constellations_for_coords([], []) == []
+    with pytest.raises(ValueError, match="same length"):
+        astronomy.constellations_for_coords([0.0], [])
+
+
 class TestHourlyAstro:
     """Test hourly astronomical data (moon altitude for each hour of the night)."""
 

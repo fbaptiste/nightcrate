@@ -2,10 +2,7 @@
  * Admin → Catalogs section.
  *
  * Shows every registered DSO catalog source as a row with per-source
- * fetch controls. OpenNGC and 50 MGC fetch from GitHub; VizieR sources
- * (Sharpless, Barnard) fetch from vizier.cds.unistra.fr, falling back to
- * the Harvard and South Africa mirrors; NightCrate sources are bundled
- * in-repo and only expose a "Reload" action.
+ * fetch controls, followed by the optional catalogs available to add.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,25 +11,33 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogContentText from "@mui/material/DialogContentText";
+import DialogTitle from "@mui/material/DialogTitle";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import {
+  addOptionalCatalog,
   fetch50mgcFromGitHub,
   fetch50mgcRemoteVersion,
   fetchCatalogSources,
   fetchCatalogStatus,
   fetchCatalogsFromGitHub,
+  fetchOptionalCatalogs,
+  fetchRemovalPreview,
   fetchRemoteVersion,
-  fetchVizierCatalog,
-  fetchVizierRemoteVersion,
   fetchWikidataExternalRefs,
   fetchWikidataRemoteVersion,
   reloadCatalogs,
+  removeOptionalCatalog,
   type CatalogSource,
   type CatalogFetchStatus,
-  type VizierSourceShortId,
+  type OptionalCatalogStatus,
+  type RemovalPreview,
 } from "@/api/dsos";
 import { formatLocalDate } from "@/lib/localDate";
 
@@ -50,6 +55,7 @@ interface SourceRowProps {
   license: string | null;
   /** Subtitle shown under the display name — e.g., the upstream host. */
   subtitle?: string;
+  credit?: string;
   /** When truthy, an inline "Update available" chip renders next to the
    *  display name so users notice without hunting for a bumped version
    *  string. Sources that don't have a remote-version semantic (e.g.,
@@ -76,6 +82,7 @@ function SourceRow(props: SourceRowProps) {
     rowCount,
     license,
     subtitle,
+    credit,
     updateAvailable,
     updateTooltip,
     actions,
@@ -91,6 +98,7 @@ function SourceRow(props: SourceRowProps) {
       sx={{
         display: "flex",
         flexDirection: { xs: "column", md: "row" },
+        flexWrap: "wrap",
         alignItems: { md: "center" },
         gap: 1.5,
         py: 1.5,
@@ -124,6 +132,11 @@ function SourceRow(props: SourceRowProps) {
             </Tooltip>
           )}
         </Stack>
+        {credit && (
+          <Typography variant="caption" color="text.secondary" display="block">
+            {credit}
+          </Typography>
+        )}
         <Typography variant="caption" color="text.secondary">
           {version ?? "Not loaded"}
           {rowCount != null && ` · ${rowCount.toLocaleString()} rows`}
@@ -166,7 +179,7 @@ function SourceRow(props: SourceRowProps) {
           onClose={onDismissError}
           sx={{ flexBasis: "100%" }}
         >
-          {error} — try again in a moment.
+          {withRetryLater(error)}
         </Alert>
       )}
     </Box>
@@ -176,8 +189,18 @@ function SourceRow(props: SourceRowProps) {
 type RowError = { [sourceId: string]: string | null };
 type RowBusy = { [sourceId: string]: boolean };
 
+interface RemovalDialogState {
+  catalog: OptionalCatalogStatus;
+  preview: RemovalPreview;
+}
+
 function formatMegabytes(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function withRetryLater(message: string): string {
+  const trimmed = message.trimEnd();
+  return `${trimmed}${trimmed.endsWith(".") ? "" : "."} Try again later.`;
 }
 
 function formatProgress(status: CatalogFetchStatus): string {
@@ -213,6 +236,7 @@ export default function CatalogsAdminSection() {
   const [busy, setBusy] = useState<RowBusy>({});
   const [errors, setErrors] = useState<RowError>({});
   const [visibleStatus, setVisibleStatus] = useState<CatalogFetchStatus | null>(null);
+  const [removalDialog, setRemovalDialog] = useState<RemovalDialogState | null>(null);
   const ignoredOperationIds = useRef(new Set<string>());
   const anyPending = Object.values(busy).some(Boolean);
   const operationActive = visibleStatus?.outcome == null && visibleStatus != null;
@@ -264,6 +288,11 @@ export default function CatalogsAdminSection() {
     queryFn: fetchCatalogSources,
   });
 
+  const optionalCatalogsQuery = useQuery({
+    queryKey: ["optional-catalogs"],
+    queryFn: fetchOptionalCatalogs,
+  });
+
   const openngcRemote = useQuery({
     queryKey: ["catalog-remote-version"],
     queryFn: fetchRemoteVersion,
@@ -271,18 +300,6 @@ export default function CatalogsAdminSection() {
     retry: false,
   });
 
-  const sharplessRemote = useQuery({
-    queryKey: ["catalog-remote-version", "sharpless"],
-    queryFn: () => fetchVizierRemoteVersion("sharpless"),
-    staleTime: Infinity,
-    retry: false,
-  });
-  const barnardRemote = useQuery({
-    queryKey: ["catalog-remote-version", "barnard"],
-    queryFn: () => fetchVizierRemoteVersion("barnard"),
-    staleTime: Infinity,
-    retry: false,
-  });
   const mgc50Remote = useQuery({
     queryKey: ["catalog-remote-version", "50mgc"],
     queryFn: fetch50mgcRemoteVersion,
@@ -303,6 +320,7 @@ export default function CatalogsAdminSection() {
       queryClient.invalidateQueries({ queryKey: ["dsos"] }),
       queryClient.invalidateQueries({ queryKey: ["dso-facets"] }),
       queryClient.invalidateQueries({ queryKey: ["catalog-sources"] }),
+      queryClient.invalidateQueries({ queryKey: ["optional-catalogs"] }),
       // Blanket-invalidate the remote-version prefix so every source's
       // "Fetched <date>" label refreshes after any fetch.
       queryClient.invalidateQueries({ queryKey: ["catalog-remote-version"] }),
@@ -328,10 +346,8 @@ export default function CatalogsAdminSection() {
     });
     setBusy((prev) => ({ ...prev, [sourceId]: true }));
     setErrors((prev) => ({ ...prev, [sourceId]: null }));
-    let succeeded = false;
     try {
       await button.run();
-      succeeded = true;
     } catch (err) {
       setErrors((prev) => ({
         ...prev,
@@ -340,10 +356,31 @@ export default function CatalogsAdminSection() {
     } finally {
       setBusy((prev) => ({ ...prev, [sourceId]: false }));
       void statusQuery.refetch();
-    }
-
-    if (succeeded) {
       void invalidateAll();
+    }
+  }
+
+  async function previewRemoval(catalog: OptionalCatalogStatus) {
+    const sourceId = catalog.catalog_id;
+    setBusy((previous) => ({ ...previous, [sourceId]: true }));
+    setErrors((previous) => ({ ...previous, [sourceId]: null }));
+    try {
+      const preview = await fetchRemovalPreview(sourceId);
+      if (preview.blocked_reason) {
+        setErrors((previous) => ({
+          ...previous,
+          [sourceId]: preview.blocked_reason,
+        }));
+        return;
+      }
+      setRemovalDialog({ catalog, preview });
+    } catch (error) {
+      setErrors((previous) => ({
+        ...previous,
+        [sourceId]: error instanceof Error ? error.message : "Operation failed",
+      }));
+    } finally {
+      setBusy((previous) => ({ ...previous, [sourceId]: false }));
     }
   }
 
@@ -379,46 +416,13 @@ export default function CatalogsAdminSection() {
     run: fetchCatalogsFromGitHub,
   };
 
-  const buildVizierRow = (
-    sourceId: string,
-    shortId: VizierSourceShortId,
-    remote: typeof sharplessRemote,
-    displayName: string,
-    catalogLabel: string,
-  ) => {
-    const backendSrc = sourcesById.get(sourceId);
-    const installed = remote.data?.installed_version;
-    const fetchBtn: ActionButton = {
-      label: installed == null ? "Fetch from VizieR" : "Re-fetch from VizieR",
-      tooltip: `${
-        installed == null ? "Download" : "Re-download"
-      } ${catalogLabel} over the network from vizier.cds.unistra.fr (with Harvard and South Africa mirrors as fallback), replacing the local cache, then parse it into the database.`,
-      variant: "contained",
-      run: () => fetchVizierCatalog(shortId),
-    };
-    return (
-      <SourceRow
-        key={sourceId}
-        displayName={displayName}
-        version={formatFetchedAt(installed) ?? (remote.isError ? "VizieR unreachable" : null)}
-        rowCount={backendSrc?.row_count ?? null}
-        license={backendSrc?.license ?? "CDS public"}
-        subtitle={remote.data?.catalog_id}
-        updateAvailable={remote.data?.has_update ?? false}
-        updateTooltip={
-          installed == null
-            ? `${catalogLabel} hasn't been fetched yet — click Fetch to download from VizieR.`
-            : undefined
-        }
-        error={errors[sourceId] ?? null}
-        onDismissError={() => setErrors((prev) => ({ ...prev, [sourceId]: null }))}
-        busy={isRowBusy(sourceId)}
-        conflict={hasConflict(sourceId)}
-        progress={rowProgress(sourceId)}
-        actions={[fetchBtn]}
-        onAction={(btn) => runAction(sourceId, btn)}
-      />
-    );
+  const optionalStatus = (catalog: OptionalCatalogStatus) => {
+    if (catalog.state !== "on") return "Not added";
+    if (!catalog.installed) return "Files missing — download again or remove";
+    const added = catalog.kind === "nightcrate"
+      ? "Ships with NightCrate"
+      : `Added ${formatLocalDate(catalog.version) ?? catalog.version ?? "unknown date"}`;
+    return `${added} · ${catalog.object_count.toLocaleString()} objects`;
   };
 
   return (
@@ -435,11 +439,10 @@ export default function CatalogsAdminSection() {
         >
           <Box sx={{ flex: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              NightCrate does not ship deep-sky object data. Catalogs are fetched
-              on demand — OpenNGC and 50 MGC from GitHub, Sharpless / Barnard from
-              the VizieR service at CDS Strasbourg or its Harvard and South Africa
-              mirrors. NightCrate editorial augmentation (common names, non-galaxy
-              surface brightness, curated distances) is bundled in-repo.
+              OpenNGC and 50 MGC are downloaded from GitHub. The optional catalogs
+              below come from VizieR (CDS Strasbourg, or its Harvard and South Africa
+              mirrors) when you add them. NightCrate&apos;s own lists, such as common
+              names, distances and reviewed matches, come with the app.
             </Typography>
             {rowProgress("__all__") && (
               <Typography variant="caption" color="text.secondary" display="block">
@@ -502,7 +505,7 @@ export default function CatalogsAdminSection() {
             }
             sx={{ mb: 2 }}
           >
-            {errors["__all__"]} — try again in a moment.
+            {withRetryLater(errors["__all__"])}
           </Alert>
         )}
 
@@ -533,22 +536,6 @@ export default function CatalogsAdminSection() {
           actions={[openngcAction]}
           onAction={(btn) => runAction("openngc", btn)}
         />
-
-        {/* VizieR sources. */}
-        {buildVizierRow(
-          "vizier_sharpless",
-          "sharpless",
-          sharplessRemote,
-          "Sharpless 2 (VizieR VII/20)",
-          "the Sharpless 2 HII-region catalog",
-        )}
-        {buildVizierRow(
-          "vizier_barnard",
-          "barnard",
-          barnardRemote,
-          "Barnard (VizieR VII/220A)",
-          "the Barnard dark-nebula catalog",
-        )}
 
         {/* 50 MGC — GitHub fetch (VizieR origin, GitHub mirror for reliability). */}
         <SourceRow
@@ -667,7 +654,116 @@ export default function CatalogsAdminSection() {
           actions={[]}
           onAction={(btn) => runAction("nightcrate_external_refs", btn)}
         />
+
+        <Box sx={{ mt: 1.5, pt: 2, borderTop: 1, borderColor: "divider" }}>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            fontWeight={500}
+            sx={{ mb: 1, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.7rem" }}
+          >
+            Optional catalogs
+          </Typography>
+          {optionalCatalogsQuery.isError && (
+            <Alert severity="warning" sx={{ mb: 1.5 }}>
+              Optional catalogs could not be loaded. Try again in a moment.
+            </Alert>
+          )}
+          {(optionalCatalogsQuery.data ?? []).map((catalog) => {
+            const sourceId = catalog.catalog_id;
+            const actions: ActionButton[] = catalog.state === "on"
+              ? [
+                  ...(catalog.kind === "vizier"
+                    ? [{
+                        label: "Download again",
+                        tooltip: `Download ${catalog.display_name} again and replace its local files.`,
+                        variant: "contained" as const,
+                        run: () => addOptionalCatalog(sourceId),
+                      }]
+                    : []),
+                  {
+                    label: "Remove",
+                    tooltip: `Remove ${catalog.display_name} from NightCrate.`,
+                    variant: "outlined" as const,
+                    run: async () => undefined,
+                  },
+                ]
+              : [{
+                  label: "Add",
+                  tooltip: catalog.kind === "vizier"
+                    ? `Download ${catalog.display_name} and add it to NightCrate.`
+                    : `Add the ${catalog.display_name} list that ships with NightCrate.`,
+                  variant: "contained" as const,
+                  run: () => addOptionalCatalog(sourceId),
+                }];
+            return (
+              <SourceRow
+                key={sourceId}
+                displayName={catalog.display_name}
+                credit={catalog.credit}
+                version={optionalStatus(catalog)}
+                rowCount={null}
+                license={null}
+                error={errors[sourceId] ?? null}
+                onDismissError={() =>
+                  setErrors((previous) => ({ ...previous, [sourceId]: null }))
+                }
+                busy={isRowBusy(sourceId)}
+                conflict={hasConflict(sourceId)}
+                progress={rowProgress(sourceId)}
+                actions={actions}
+                onAction={(button) => {
+                  if (button.label === "Remove") {
+                    void previewRemoval(catalog);
+                  } else {
+                    void runAction(sourceId, button);
+                  }
+                }}
+              />
+            );
+          })}
+        </Box>
       </Paper>
+      <Dialog
+        open={removalDialog !== null}
+        onClose={() => setRemovalDialog(null)}
+        aria-labelledby="remove-catalog-title"
+      >
+        <DialogTitle id="remove-catalog-title">
+          Remove {removalDialog?.catalog.display_name}?
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {removalDialog?.preview.objects_removed ?? 0} objects will be removed.
+            {(removalDialog?.preview.objects_kept ?? 0) > 0 && (
+              <>
+                {" "}
+                {removalDialog?.preview.objects_kept} objects you linked to a project
+                or the wishlist will stay, marked as no longer listed.
+              </>
+            )}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRemovalDialog(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (!removalDialog) return;
+              const catalogId = removalDialog.catalog.catalog_id;
+              setRemovalDialog(null);
+              void runAction(catalogId, {
+                label: "Remove",
+                tooltip: "",
+                variant: "contained",
+                run: () => removeOptionalCatalog(catalogId),
+              });
+            }}
+          >
+            Remove
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }

@@ -14,16 +14,27 @@ class DsoDesignation(BaseModel):
     is_primary: bool
 
 
+class DsoGroupRef(BaseModel):
+    display_form: str
+    whole_dso_id: int | None
+
+
+class DsoPartRef(BaseModel):
+    dso_id: int
+    display_designation: str
+
+
 class ExternalRef(BaseModel):
     """Link from a DSO to an external knowledge-base or reference entry.
 
     Wikidata + Wikipedia arrived in v0.20.0; SIMBAD + NED in v0.21.1.
+    Google providers are computed for detail responses and are never stored.
     Wikidata is language-agnostic and stays client-hidden (structured
     data, not a human-readable page). SIMBAD and NED are also
     language-agnostic reference databases.
     """
 
-    provider: Literal["wikidata", "wikipedia", "simbad", "ned"]
+    provider: Literal["wikidata", "wikipedia", "simbad", "ned", "google", "google_images"]
     language: str | None = None
     identifier: str
     url: str | None = None
@@ -60,6 +71,7 @@ class DsoListItem(BaseModel):
     common_name: str | None
     # Complete designation list, in catalog-rank then natural-name order.
     designations: list[DsoDesignation]
+    part_of: list[str]
 
 
 class DsoListResponse(BaseModel):
@@ -105,6 +117,8 @@ class DsoDetail(BaseModel):
     openngc_notes: str | None
     raw_other_id: str | None
     designations: list[DsoDesignation]
+    part_of: list[DsoGroupRef]
+    parts: list[DsoPartRef]
     external_refs: list[ExternalRef]
     source: CatalogSource
 

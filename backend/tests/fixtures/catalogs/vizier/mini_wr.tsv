@@ -1,0 +1,52 @@
+#
+#   VizieR Astronomical Server vizier.idia.ac.za
+#    Date: 2026-11-02T14:43:00 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-11-02T14:43:00	  Query execution date
+#INFO	request=https://vizier.idia.ac.za/viz-bin/asu-tsv?-source=III/215/table13&-out.max=unlimited&-out.all&-out.add=_RAJ,_DEJ	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+
+#RESOURCE=yCat_3215
+#Name: III/215
+#Title: 7th Catalog of Galactic Wolf-Rayet stars (van der Hucht, 2001)
+#INFO	ivoid=ivo://cds.vizier/iii/215	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/iii/215	    IVOID of underlying data collection
+#INFO	creator=van der Hucht K.A.	    First author or institution
+#INFO	cites=bibcode:2001NewAR..45..135V	    Article or Data origin sources
+#INFO	journal=NewA	    Journal name
+#INFO	original_date=2001	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/III/215	    Dataset landing page
+#INFO	publication_date=2003-07-22	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	III_215_table13:
+#Name: III/215/table13
+#Title: Locations of galactic WR stars
+#Column	_RAJ2000	(F11.7)	Right ascension (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.ra]
+#Column	_DEJ2000	(F11.7)	Declination (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.dec]
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	New	(A1)	[N*] non-blank indicates a new star, and * indicates a note in the file notes.txt	[ucd=meta.note]
+#Column	WR	(a5)	Running number from the VIth Catalogue (1)	[ucd=meta.id;meta.main]
+#Column	Name	(a14)	Star name (2)	[ucd=meta.id]
+#Column	GCVS	(a9)	Variable star name	[ucd=meta.id]
+#Column	OName	(a15)	Other name HD, Th, He3-, Wra, or AS (2)	[ucd=meta.id]
+#Column	LS	(a12)	LS, LSS, SPH and SS catalogue numbers	[ucd=meta.id]
+#Column	Aname	(a14)	Astrometric catalogue numbers (3)	[ucd=meta.id]
+#Column	RAJ2000	(A11)	Right Ascension J2000 (hours)	[ucd=pos.eq.ra;meta.main]
+#Column	DEJ2000	(A12)	Declination J2000 (degrees)	[ucd=pos.eq.dec;meta.main]
+#Column	r_Pos	(a5)	Position Reference	[ucd=meta.ref]
+#Column	GLON	(F6.2)	Galactic Longitude	[ucd=pos.galactic.lon]
+#Column	GLAT	(F6.2)	Galactic Latitude	[ucd=pos.galactic.lat]
+#Column	r_FC	(a9)	References for finding charts	[ucd=meta.ref]
+_RAJ2000	_DEJ2000	recno	New	WR	Name	GCVS	OName	LS	Aname	RAJ2000	DEJ2000	r_Pos	GLON	GLAT	r_FC
+deg	deg	 	 	 	 	 	 	 	 	"h:m:s"	"d:m:s"	 	deg	deg	
+-----------	-----------	--------	-	-----	--------------	---------	---------------	------------	--------------	-----------	------------	-----	------	------	---------
+122.3831667	-47.3366111	      12	 	 11  	gamma^2 Vel   	         	HD 68273       	LSS  980    	HIP 39953     	08 09 31.96	-47 20 11.80	Hip  	262.80	 -7.69	VI
+266.4145417	-29.0095056	     141	N	101a 	BSD 1         	         	               	            	              	17 45 39.49	-29 00 34.22	BS96 	359.94	 -0.05	BS95
+302.5591667	+36.1764167	     201	 	134  	              	V1769 Cyg	HD 191765      	LS II+36 23 	HIP 99377     	20 10 14.20	+36 10 35.10	Hip  	 73.45	  1.55	VI
+303.0272917	+38.3549444	     203	 	136  	              	V1770 Cyg	HD 192163      	LS II+38 11 	HIP 99546     	20 12 06.55	+38 21 17.80	Hip  	 75.48	  2.43	VI

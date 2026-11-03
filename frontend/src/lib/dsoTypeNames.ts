@@ -10,7 +10,8 @@ export const DSO_TYPE_DISPLAY: Record<string, string> = {
   GPair: "Galaxy pair",
   GTrpl: "Galaxy triplet",
   GGroup: "Galaxy group",
-  HII: "HII region",
+  ClG: "Galaxy cluster",
+  HII: "Emission nebula (HII region)",
   EmN: "Emission nebula",
   RfN: "Reflection nebula",
   PN: "Planetary nebula",
@@ -20,12 +21,21 @@ export const DSO_TYPE_DISPLAY: Record<string, string> = {
   SNR: "Supernova remnant",
   DrkN: "Dark nebula",
   Neb: "Nebula",
+  HH: "Herbig-Haro object",
   "*Ass": "Stellar association",
   Nova: "Nova",
   "*": "Star",
   "**": "Double star",
+  "WR*": "Wolf-Rayet star",
   Other: "Other",
 };
+
+// Mirrors FILTER_TYPE_MERGES in backend/services/dso_type_groups.py.
+const FILTER_TYPE_MERGES: Record<string, string> = { HII: "EmN" };
+
+export function filterTypeCode(code: string): string {
+  return FILTER_TYPE_MERGES[code] ?? code;
+}
 
 type TypeBucket = "galaxy" | "nebula" | "cluster" | "other";
 
@@ -34,6 +44,7 @@ const TYPE_BUCKET: Record<string, TypeBucket> = {
   GPair: "galaxy",
   GTrpl: "galaxy",
   GGroup: "galaxy",
+  ClG: "cluster",
   HII: "nebula",
   EmN: "nebula",
   RfN: "nebula",
@@ -41,6 +52,7 @@ const TYPE_BUCKET: Record<string, TypeBucket> = {
   SNR: "nebula",
   DrkN: "nebula",
   Neb: "nebula",
+  HH: "nebula",
   "Cl+N": "nebula",
   OCl: "cluster",
   GCl: "cluster",
@@ -48,6 +60,7 @@ const TYPE_BUCKET: Record<string, TypeBucket> = {
   Nova: "other",
   "*": "other",
   "**": "other",
+  "WR*": "other",
   Other: "other",
 };
 

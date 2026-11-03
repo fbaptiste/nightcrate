@@ -15,6 +15,19 @@ from yoyo import get_backend, read_migrations
 
 
 @pytest.fixture(autouse=True)
+def _reset_vizier_mirror_health():
+    """Keep process-local VizieR mirror health isolated between tests."""
+    from nightcrate.catalog_loader import vizier
+
+    vizier.reset_mirror_health()
+    vizier.record_fresh_probe_for_tests()
+    try:
+        yield
+    finally:
+        vizier.reset_mirror_health()
+
+
+@pytest.fixture(autouse=True)
 def _restore_nightcrate_logger():
     """Keep app logging configuration isolated between tests."""
     logger = logging.getLogger("nightcrate")

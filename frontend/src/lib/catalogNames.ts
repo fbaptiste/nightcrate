@@ -33,6 +33,10 @@ const CATALOG_DISPLAY_NAMES: Record<string, string> = {
   abell: "Abell",
   dolidze: "Dolidze",
   dwb: "DWB",
+  hh: "HH",
+  aco: "ACO",
+  png: "PN G",
+  wr: "WR",
 };
 
 export function displayCatalogName(code: string): string {

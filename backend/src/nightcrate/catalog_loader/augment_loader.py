@@ -23,6 +23,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from nightcrate.catalog_loader import registry
 from nightcrate.catalog_loader._common import (
     check_source_state,
     maybe_float,
@@ -31,6 +32,7 @@ from nightcrate.catalog_loader._common import (
 )
 from nightcrate.catalog_loader.hash import file_sha256
 from nightcrate.catalog_loader.loader import SourceResult
+from nightcrate.catalog_loader.openngc_parser import _parse_name
 from nightcrate.catalog_loader.registry import CatalogSource
 
 logger = logging.getLogger("nightcrate.catalog_loader.augment")
@@ -69,6 +71,27 @@ def _read_augment_csv(path: Path) -> list[dict[str, str]]:
         return []
     reader = csv.DictReader(raw_lines)
     return [{k: (v or "").strip() for k, v in row.items() if k is not None} for row in reader]
+
+
+def _optional_catalog_is_off(cur: sqlite3.Cursor, designation: str) -> bool:
+    """Return whether *designation* belongs only to optional catalogs that are off."""
+    designation_catalog, _identifier = _parse_name(designation)
+    if designation_catalog is None:
+        return False
+    owners = [
+        catalog
+        for catalog in registry.OPTIONAL_CATALOGS
+        if designation_catalog in catalog.designation_catalogs
+    ]
+    if not owners:
+        return False
+    placeholders = ", ".join("?" for _ in owners)
+    rows = cur.execute(
+        f"SELECT catalog_id, state FROM dso_catalog_applied "  # noqa: S608  # nosec B608
+        f"WHERE catalog_id IN ({placeholders})",
+        [catalog.catalog_id for catalog in owners],
+    ).fetchall()
+    return not any(str(row[1]) == "on" for row in rows)
 
 
 def load_augment(
@@ -130,6 +153,13 @@ def load_augment(
             resolved = _resolve_dso(cur, designation)
             if resolved is None:
                 unresolved += 1
+                if _optional_catalog_is_off(cur, designation):
+                    logger.debug(
+                        "[augment] designation %r belongs to an optional catalog that is off; "
+                        "skipping row",
+                        designation,
+                    )
+                    continue
                 logger.warning("[augment] designation %r not found; skipping row", designation)
                 continue
             dso_id, obj_type = resolved

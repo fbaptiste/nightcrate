@@ -39,6 +39,7 @@ import { catalogShortName } from "@/components/dso/NotListedTag";
 
 interface Props {
   dsoId: number | null;
+  onSelectDso: (dsoId: number) => void;
   onClose: () => void;
 }
 
@@ -75,7 +76,7 @@ function Field({ label, value }: { label: React.ReactNode; value: React.ReactNod
   );
 }
 
-export default function DsoDetailPanel({ dsoId, onClose }: Props) {
+export default function DsoDetailPanel({ dsoId, onSelectDso, onClose }: Props) {
   const [distanceHelpOpen, setDistanceHelpOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const { data, isLoading } = useQuery({
@@ -372,6 +373,52 @@ export default function DsoDetailPanel({ dsoId, onClose }: Props) {
                   />
                 ))}
               </Stack>
+              {(data.part_of.length > 0 || data.parts.length > 0) && (
+                <Box sx={{ mt: 1 }}>
+                  {data.part_of.length > 0 && (
+                    <Field
+                      label="Part of"
+                      value={
+                        <Stack direction="row" flexWrap="wrap" gap={1}>
+                          {data.part_of.map((group) => (
+                            <Chip
+                              key={`${group.display_form}-${group.whole_dso_id ?? "group"}`}
+                              label={group.display_form}
+                              size="small"
+                              variant="outlined"
+                              clickable={group.whole_dso_id != null}
+                              onClick={
+                                group.whole_dso_id != null
+                                  ? () => onSelectDso(group.whole_dso_id as number)
+                                  : undefined
+                              }
+                            />
+                          ))}
+                        </Stack>
+                      }
+                    />
+                  )}
+                  {data.parts.length > 0 && (
+                    <Field
+                      label="Includes"
+                      value={
+                        <Stack direction="row" flexWrap="wrap" gap={1}>
+                          {data.parts.map((part) => (
+                            <Chip
+                              key={part.dso_id}
+                              label={part.display_designation}
+                              size="small"
+                              variant="outlined"
+                              clickable
+                              onClick={() => onSelectDso(part.dso_id)}
+                            />
+                          ))}
+                        </Stack>
+                      }
+                    />
+                  )}
+                </Box>
+              )}
             </Box>
 
             <DsoExternalRefs refs={data.external_refs} />

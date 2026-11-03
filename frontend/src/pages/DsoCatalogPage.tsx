@@ -195,8 +195,12 @@ export default function DsoCatalogPage() {
               designation !== params.row.display_designation &&
               all.indexOf(designation) === index,
           );
-        const visible = alternatives.slice(0, 2);
-        const hidden = alternatives.slice(2);
+        const labels = [
+          ...params.row.part_of.map((name) => `Part of ${name}`),
+          ...alternatives,
+        ].filter((label, index, all) => all.indexOf(label) === index);
+        const visible = labels.slice(0, 2);
+        const hidden = labels.slice(2);
         return (
           <Box
             sx={{
@@ -214,10 +218,10 @@ export default function DsoCatalogPage() {
                 —
               </Typography>
             ) : (
-              visible.map((designation) => (
+              visible.map((label) => (
                 <Chip
-                  key={designation}
-                  label={designation}
+                  key={label}
+                  label={label}
                   size="small"
                   variant="outlined"
                   sx={{
@@ -270,7 +274,7 @@ export default function DsoCatalogPage() {
     {
       field: "obj_type",
       headerName: "Type",
-      width: 150,
+      width: 212,
       renderCell: (params) => (
         <Chip
           label={displayDsoType(params.value as string)}
@@ -534,7 +538,11 @@ export default function DsoCatalogPage() {
         </Paper>
       )}
 
-      <DsoDetailPanel dsoId={detailId} onClose={closeDetail} />
+      <DsoDetailPanel
+        dsoId={detailId}
+        onSelectDso={setDetailId}
+        onClose={closeDetail}
+      />
       <DsoAttributionPanel open={attributionOpen} onClose={() => setAttributionOpen(false)} />
     </Box>
   );

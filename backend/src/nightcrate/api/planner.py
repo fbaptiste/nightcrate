@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from nightcrate.api.dso import normalize_search_key
+from nightcrate.api.dso import dso_search_clause
 from nightcrate.api.planner_models import (
     AnnualHoursPoint as AnnualHoursPointOut,
 )
@@ -67,7 +67,8 @@ from nightcrate.core.config import get_settings, update_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import image_cache, sky_tile_cache, thumbnails
 from nightcrate.services.astronomy import tonight_date
-from nightcrate.services.dso_sorting import designation_sort_key
+from nightcrate.services.dso_sorting import catalog_rank, designation_sort_key
+from nightcrate.services.dso_type_groups import filter_type_code, raw_types_for_filter_codes
 from nightcrate.services.planner_annual_hours import (
     compute_annual_hours,
     compute_moon_year,
@@ -242,15 +243,15 @@ def _sort_items(
     last, regardless of the key's direction."""
     from functools import cmp_to_key
 
-    def make_cmp(field: str, direction: str):
+    def make_cmp(direction: str, sort_values: dict[int, object]):
         asc = direction == "asc"
 
         def cmp(
             a: tuple[PlannerTargetItem, DsoVisibility | None],
             b: tuple[PlannerTargetItem, DsoVisibility | None],
         ) -> int:
-            va = _sort_value(a[0], field)
-            vb = _sort_value(b[0], field)
+            va = sort_values[id(a)]
+            vb = sort_values[id(b)]
             if va is None and vb is None:
                 return 0
             if va is None:
@@ -267,7 +268,8 @@ def _sort_items(
 
     items.sort(key=lambda entry: entry[0].dso_id)
     for field, direction in reversed(sort_entries):
-        items.sort(key=make_cmp(field, direction))
+        sort_values = {id(entry): _sort_value(entry[0], field) for entry in items}
+        items.sort(key=make_cmp(direction, sort_values))
 
 
 # ── DB helpers ───────────────────────────────────────────────────────────────
@@ -443,17 +445,15 @@ async def _load_dso_metadata(conn, dso_ids: list[int]) -> dict[int, dict]:
     """Fetch UI-visible metadata for a filtered DSO set."""
     if not dso_ids:
         return {}
-    placeholders = ",".join("?" for _ in dso_ids)
     cursor = await conn.execute(
-        f"""
+        """
         SELECT id, primary_designation, common_name, obj_type,
                ra_deg, dec_deg, constellation,
                maj_axis_arcmin, min_axis_arcmin,
                mag_v, distance_pc
         FROM dso
-        WHERE id IN ({placeholders}) AND active = 1
-        """,  # noqa: S608  # nosec B608 — placeholders built from int list
-        dso_ids,
+        WHERE active = 1 AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL
+        """
     )
     rows = await cursor.fetchall()
     return {int(r["id"]): dict(r) for r in rows}
@@ -686,24 +686,18 @@ async def list_targets(
                 constellation_counts={},
             )
 
-    # Filter thresholds — query params override the user's saved
-    # defaults in Tonight mode. In Anytime mode we intentionally do
-    # NOT fall back to the imaging-focused saved defaults: the user
-    # is browsing the full catalog and expects parity with the DSO
-    # catalog page. A missing param in Anytime means "don't filter",
-    # not "apply planner_min_size_arcmin=5 quietly".
+    # Filter thresholds. Visibility hours retain their Tonight default,
+    # while missing magnitude and size params mean "don't filter" in
+    # both modes. The frontend sends the saved slider values only when
+    # their corresponding checkboxes are enabled.
     if restrict_tonight:
         min_hours_eff = (
             min_hours if min_hours is not None else settings.planner_min_visibility_hours
         )
-        max_mag_eff = max_magnitude if max_magnitude is not None else settings.planner_max_magnitude
-        min_size_eff = (
-            min_size_arcmin if min_size_arcmin is not None else settings.planner_min_size_arcmin
-        )
     else:
         min_hours_eff = min_hours if min_hours is not None else 0.0
-        max_mag_eff = max_magnitude if max_magnitude is not None else float("inf")
-        min_size_eff = min_size_arcmin if min_size_arcmin is not None else 0.0
+    max_mag_eff = max_magnitude if max_magnitude is not None else float("inf")
+    min_size_eff = min_size_arcmin if min_size_arcmin is not None else 0.0
 
     if snapshot is not None:
         visible_ids = [
@@ -719,21 +713,15 @@ async def list_targets(
         # catalog so a user's mental model carries across pages.
         search_match_ids: set[int] | None = None
         if q and q.strip():
-            search_key = normalize_search_key(q)
+            search_sql, search_params = dso_search_clause(q)
             cursor = await conn.execute(
-                """
+                f"""
                 SELECT DISTINCT d.id
                 FROM dso d
                 WHERE d.active = 1
-                  AND (
-                      d.id IN (
-                          SELECT dso_id FROM dso_designation
-                          WHERE search_key LIKE ?
-                      )
-                      OR LOWER(d.common_name) LIKE ?
-                  )
-                """,
-                (search_key + "%", f"%{q.lower()}%"),
+                  AND {search_sql}
+                """,  # noqa: S608  # nosec B608 - shared fixed SQL fragment
+                search_params,
             )
             search_match_ids = {int(r["id"]) for r in await cursor.fetchall()}
 
@@ -768,7 +756,9 @@ async def list_targets(
 
     raw_type_filter: set[str] | None = None
     if type:
-        raw_type_filter = {t.strip() for t in type.split(",") if t.strip()}
+        raw_type_filter = set(
+            raw_types_for_filter_codes(t.strip() for t in type.split(",") if t.strip())
+        )
     constellation_filter: set[str] | None = None
     if constellation:
         constellation_filter = {c.strip() for c in constellation.split(",") if c.strip()}
@@ -777,17 +767,44 @@ async def list_targets(
         catalog_filter = {c.strip() for c in catalog.split(",") if c.strip()}
 
     # Catalog filter + per-DSO catalog tallies need a DSO→{catalogs}
-    # lookup. Single query, all visible ids at once.
+    # lookup. Query the same active coordinate-bearing population directly;
+    # an id-list would exceed SQLite's variable limit with all catalogs on.
     dso_catalogs: dict[int, set[str]] = {dso_id: set() for dso_id in visible_ids}
+    catalog_display_candidates: dict[int, list[tuple[int, int, str, tuple, int, str]]] = {}
     if visible_ids:
         async with get_db() as conn:
-            placeholders = ",".join("?" * len(visible_ids))
             cursor = await conn.execute(
-                f"SELECT dso_id, catalog FROM dso_designation WHERE dso_id IN ({placeholders})",  # noqa: S608, E501  # nosec B608
-                visible_ids,
+                """
+                SELECT dd.dso_id, dd.catalog, dd.display_form, 0 AS source_order, dd.id
+                FROM dso_designation dd JOIN dso d ON d.id = dd.dso_id
+                WHERE d.active = 1 AND d.ra_deg IS NOT NULL AND d.dec_deg IS NOT NULL
+                UNION ALL
+                SELECT gm.dso_id, g.catalog, g.display_form, 1 AS source_order, g.id
+                FROM dso_group_member gm
+                JOIN dso_group g ON g.id = gm.group_id
+                JOIN dso d ON d.id = gm.dso_id
+                WHERE d.active = 1 AND d.ra_deg IS NOT NULL AND d.dec_deg IS NOT NULL
+                """
             )
             for r in await cursor.fetchall():
-                dso_catalogs[int(r["dso_id"])].add(r["catalog"])
+                dso_id = int(r["dso_id"])
+                if dso_id in dso_catalogs:
+                    dso_catalogs[dso_id].add(r["catalog"])
+                    if catalog_filter is not None and r["catalog"] in catalog_filter:
+                        catalog_display_candidates.setdefault(dso_id, []).append(
+                            (
+                                int(r["source_order"]),
+                                catalog_rank(str(r["catalog"])),
+                                str(r["catalog"]),
+                                designation_sort_key(str(r["display_form"])),
+                                int(r["id"]),
+                                str(r["display_form"]),
+                            )
+                        )
+
+    catalog_display = {
+        dso_id: min(candidates)[-1] for dso_id, candidates in catalog_display_candidates.items()
+    }
 
     items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
     # Faceted-search counts: per-chip-value tallies of DSOs that pass
@@ -814,18 +831,13 @@ async def list_targets(
             continue
 
         mag_v = meta["mag_v"]
-        if max_magnitude is not None:
-            if mag_v is None or float(mag_v) > max_mag_eff:
-                continue
-        elif mag_v is not None and float(mag_v) > max_mag_eff:
+        if mag_v is not None and float(mag_v) > max_mag_eff:
             continue
 
         maj_axis = meta["maj_axis_arcmin"]
         if min_size_arcmin is not None:
             if maj_axis is None or float(maj_axis) < min_size_eff:
                 continue
-        elif min_size_eff > 0 and (maj_axis is None or float(maj_axis) < min_size_eff):
-            continue
 
         coverage = (
             compute_coverage_pct(
@@ -863,7 +875,8 @@ async def list_targets(
         passes_catalog = catalog_filter is None or bool(row_catalogs & catalog_filter)
 
         if passes_const and passes_catalog:
-            raw_type_counts[raw] = raw_type_counts.get(raw, 0) + 1
+            code = filter_type_code(raw)
+            raw_type_counts[code] = raw_type_counts.get(code, 0) + 1
         if passes_raw and passes_catalog and row_constellation is not None:
             constellation_counts[row_constellation] = (
                 constellation_counts.get(row_constellation, 0) + 1
@@ -880,7 +893,7 @@ async def list_targets(
         vis = snapshot.per_dso.get(dso_id) if snapshot is not None else None
         item = PlannerTargetItem(
             dso_id=dso_id,
-            primary_designation=meta["primary_designation"],
+            primary_designation=catalog_display.get(dso_id, meta["primary_designation"]),
             common_name=meta["common_name"],
             obj_type=meta["obj_type"],
             ra_deg=meta["ra_deg"],

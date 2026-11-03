@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from nightcrate.catalog_loader import load_catalogs
+from nightcrate.catalog_loader import load_catalogs, registry
 from nightcrate.catalog_loader.augment_loader import load_augment
-from nightcrate.catalog_loader.registry import get_sources
+from nightcrate.catalog_loader.registry import CatalogSource, OptionalCatalog, get_sources
 
 MINI_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "catalogs"
 
@@ -152,3 +152,73 @@ def test_augment_reload_preserves_inactive_enrichment(db, catalogs_root):
         """
     ).fetchone()
     assert tuple(row) == (0, "Preserved inactive", 1, 999.0, "curated")
+
+
+def test_augment_lbn_row_is_debug_while_off_and_applies_while_on(
+    db, catalogs_root, tmp_path, monkeypatch, caplog
+):
+    load_catalogs(db, catalogs_root)
+    lbn = OptionalCatalog(
+        catalog_id="lbn",
+        display_name="LBN",
+        source_ids=("test_lbn",),
+        kind="nightcrate",
+        fetch_specs=(),
+        designation_catalogs=frozenset({"lbn"}),
+        legacy_default=False,
+        credit="test",
+    )
+    monkeypatch.setattr(registry, "OPTIONAL_CATALOGS", (*registry.OPTIONAL_CATALOGS, lbn))
+    augment_path = tmp_path / "lbn_augment.csv"
+    augment_path.write_text(
+        "designation,common_name_override,surface_brightness,distance_pc,notes\n"
+        "LBN 191,Cygnus Loop,,740,test\n",
+        encoding="utf-8",
+    )
+    source = CatalogSource(
+        "test_lbn_augment",
+        "nightcrate",
+        "Test LBN augment",
+        augment_path,
+        None,
+        None,
+        "MIT",
+        "test",
+        "augment",
+    )
+
+    caplog.clear()
+    with caplog.at_level("DEBUG", logger="nightcrate.catalog_loader.augment"):
+        off = load_augment(db, source, force=True)
+    assert off.status == "loaded"
+    assert not [record for record in caplog.records if record.levelname == "WARNING"]
+    assert any("optional catalog that is off" in record.getMessage() for record in caplog.records)
+
+    base_source_id = db.execute(
+        "SELECT id FROM dso_catalog_source WHERE source_id='openngc'"
+    ).fetchone()[0]
+    cursor = db.execute(
+        """
+        INSERT INTO dso (
+            primary_designation, obj_type, source_catalog_id, source_row_hash, source_key
+        ) VALUES ('LBN 191', 'Neb', ?, 'lbn-191', 'LBN191')
+        """,
+        (base_source_id,),
+    )
+    dso_id = int(cursor.lastrowid)
+    db.execute(
+        """
+        INSERT INTO dso_designation (
+            dso_id, catalog, identifier, display_form, search_key, is_primary
+        ) VALUES (?, 'lbn', '191', 'LBN 191', 'lbn191', 1)
+        """,
+        (dso_id,),
+    )
+    db.execute("INSERT INTO dso_catalog_applied (catalog_id, state) VALUES ('lbn', 'on')")
+    db.commit()
+
+    on = load_augment(db, source, force=True)
+
+    assert on.status == "loaded"
+    row = db.execute("SELECT common_name, distance_pc FROM dso WHERE id = ?", (dso_id,)).fetchone()
+    assert tuple(row) == ("Cygnus Loop", 740.0)

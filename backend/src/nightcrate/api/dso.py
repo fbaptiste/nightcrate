@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import re
 from typing import Literal
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -14,12 +14,15 @@ from nightcrate.api.dso_models import (
     DsoDesignation,
     DsoDetail,
     DsoFacetsResponse,
+    DsoGroupRef,
     DsoListItem,
     DsoListResponse,
+    DsoPartRef,
     ExternalRef,
     RawTypeFacet,
     TypeGroupFacet,
 )
+from nightcrate.catalog_loader.designations import normalize_designation
 from nightcrate.db.session import get_db
 from nightcrate.services.dso_display import (
     CONSTELLATION_NAMES,
@@ -27,7 +30,12 @@ from nightcrate.services.dso_display import (
     label_sort_expression,
 )
 from nightcrate.services.dso_sorting import catalog_rank, designation_sort_key
-from nightcrate.services.dso_type_groups import TYPE_GROUPS, raw_types_for_group
+from nightcrate.services.dso_type_groups import (
+    TYPE_GROUPS,
+    filter_type_code,
+    raw_types_for_filter_codes,
+    raw_types_for_group,
+)
 
 router = APIRouter(prefix="/api/dso", tags=["Deep-Sky Objects"])
 
@@ -47,40 +55,11 @@ SORT_COLUMNS: dict[str, str] = {
     "distance_pc": "distance_pc",
 }
 
-# Pattern-matches search keys a user might type into the "go to object"
-# box: strip whitespace + dashes, lowercase. Equivalent to the loader's
-# ``_build_search_key``.
-_SEARCH_STRIP_RE = re.compile(r"[\s\-_]+")
-
-# Stored search_keys use the short display-form prefix (``m42``, not
-# ``messier42``). When a user types out the long catalog name
-# (``messier42``, ``caldwell20``, ``sharpless2281``) we rewrite the
-# prefix to the short form before matching.
-_LONG_TO_SHORT_PREFIX: dict[str, str] = {
-    "messier": "m",
-    "caldwell": "c",
-    "sharpless2": "sh2",
-    "barnard": "b",
-    "ruprecht": "ru",
-    "dolidze": "do",
-    "hickson": "hcg",
-}
-
-
-def normalize_search_key(query: str) -> str:
-    normalized = _SEARCH_STRIP_RE.sub("", query).lower()
-    for long, short in _LONG_TO_SHORT_PREFIX.items():
-        if normalized.startswith(long):
-            return short + normalized[len(long) :]
-    return normalized
-
-
-# Display ordering for external refs (v0.21.1): wikipedia first (editorial,
+# Display ordering for stored external refs (v0.21.1): wikipedia first (editorial,
 # user-facing), then simbad (CDS full-sky reference), then ned (NASA/IPAC
 # extragalactic reference), then wikidata (structured-data link, hidden on
-# the client). Frontend filters wikidata out at render time but it stays in
-# the tuple for stable server-side sort. Update here when adding a new
-# provider — the frontend's PROVIDER_LABEL map and allowlist mirror this.
+# the client). Request-only search refs are appended after this ordered list
+# in ``_fetch_detail``. Frontend filters wikidata out at render time.
 _EXTERNAL_REF_PROVIDER_ORDER: tuple[str, ...] = (
     "wikipedia",
     "simbad",
@@ -95,6 +74,48 @@ def _external_ref_sort_key(provider: str) -> tuple[int, str]:
         return (_EXTERNAL_REF_PROVIDER_ORDER.index(provider), "")
     except ValueError:
         return (len(_EXTERNAL_REF_PROVIDER_ORDER), provider)
+
+
+def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
+    """Return the shared designation/common-name/group search fragment."""
+    search_key = normalize_designation(q)
+    common_name = f"%{q.lower()}%"
+    clause = f"""
+        (
+            {alias}.id IN (
+                SELECT dso_id FROM dso_designation WHERE search_key LIKE ?
+            )
+            OR LOWER({alias}.common_name) LIKE ?
+            OR EXISTS (
+                SELECT 1
+                FROM dso_group_member gm
+                JOIN dso_group g ON g.id = gm.group_id
+                LEFT JOIN dso whole ON whole.id = g.whole_dso_id
+                WHERE gm.dso_id = {alias}.id
+                  AND (
+                      g.search_key LIKE ?
+                      OR g.whole_dso_id IN (
+                          SELECT dso_id FROM dso_designation WHERE search_key LIKE ?
+                      )
+                      OR LOWER(whole.common_name) LIKE ?
+                  )
+            )
+        )
+    """  # noqa: S608  # nosec B608 - alias is an internal fixed query alias
+    return clause, [search_key + "%", common_name, search_key + "%", search_key + "%", common_name]
+
+
+def dso_catalog_clause(codes: list[str], *, alias: str = "d") -> tuple[str, list[str]]:
+    """Return catalog membership through owned designations or groups."""
+    placeholders = ",".join("?" * len(codes))
+    clause = (
+        f"({alias}.id IN (SELECT dso_id FROM dso_designation "  # nosec B608 - internal alias and placeholders
+        f"WHERE catalog IN ({placeholders})) OR "
+        f"{alias}.id IN (SELECT gm.dso_id FROM dso_group_member gm "
+        f"JOIN dso_group g ON g.id = gm.group_id "
+        f"WHERE g.catalog IN ({placeholders})))"
+    )
+    return clause, [*codes, *codes]
 
 
 async def _load_external_refs(conn, dso_id: int) -> list[ExternalRef]:
@@ -120,6 +141,25 @@ async def _load_external_refs(conn, dso_id: int) -> list[ExternalRef]:
     ]
     refs.sort(key=lambda r: (_external_ref_sort_key(r.provider), r.language or "", r.identifier))
     return refs
+
+
+def _search_refs(primary_designation: str, common_name: str | None) -> list[ExternalRef]:
+    """Return request-only Google links for a DSO's display name."""
+    first_common_name = common_name.split(",", maxsplit=1)[0].strip() if common_name else ""
+    query = " ".join(part for part in (primary_designation, first_common_name) if part)
+    encoded_query = quote_plus(query)
+    return [
+        ExternalRef(
+            provider="google",
+            identifier=query,
+            url=f"https://www.google.com/search?q={encoded_query}",
+        ),
+        ExternalRef(
+            provider="google_images",
+            identifier=query,
+            url=f"https://www.google.com/search?tbm=isch&q={encoded_query}",
+        ),
+    ]
 
 
 async def _load_designations(conn, dso_ids: list[int]) -> dict[int, list[DsoDesignation]]:
@@ -150,6 +190,33 @@ async def _load_designations(conn, dso_ids: list[int]) -> dict[int, list[DsoDesi
                 identifier=row["identifier"],
                 display_form=row["display_form"],
                 is_primary=bool(row["is_primary"]),
+            )
+        )
+    return grouped
+
+
+async def _load_group_refs(conn, dso_ids: list[int]) -> dict[int, list[DsoGroupRef]]:
+    """Fetch group memberships for the bounded list/detail result set."""
+    if not dso_ids:
+        return {}
+    await conn.create_function("designation_key", 1, designation_sort_key, deterministic=True)
+    placeholders = ",".join("?" * len(dso_ids))
+    cursor = await conn.execute(
+        f"""
+        SELECT gm.dso_id, g.display_form, g.whole_dso_id
+        FROM dso_group_member gm
+        JOIN dso_group g ON g.id = gm.group_id
+        WHERE gm.dso_id IN ({placeholders})
+        ORDER BY gm.dso_id, designation_key(g.display_form), g.id
+        """,  # noqa: S608  # nosec B608 - bounded validated integer ids
+        dso_ids,
+    )
+    grouped: dict[int, list[DsoGroupRef]] = {dso_id: [] for dso_id in dso_ids}
+    for row in await cursor.fetchall():
+        grouped[int(row["dso_id"])].append(
+            DsoGroupRef(
+                display_form=row["display_form"],
+                whole_dso_id=row["whole_dso_id"],
             )
         )
     return grouped
@@ -195,7 +262,7 @@ async def list_dsos(
     params: list = []
 
     if type:
-        type_values = [t.strip() for t in type.split(",") if t.strip()]
+        type_values = raw_types_for_filter_codes(t.strip() for t in type.split(",") if t.strip())
         if type_values:
             placeholders = ",".join("?" * len(type_values))
             where_clauses.append(f"d.obj_type IN ({placeholders})")
@@ -231,22 +298,14 @@ async def list_dsos(
     if catalog:
         catalog_codes = list(dict.fromkeys(c.strip() for c in catalog.split(",") if c.strip()))
         if catalog_codes:
-            placeholders = ",".join("?" * len(catalog_codes))
-            where_clauses.append(
-                f"d.id IN (SELECT dso_id FROM dso_designation WHERE catalog IN ({placeholders}))"  # noqa: S608, E501  # nosec B608
-            )
-            params.extend(catalog_codes)
+            catalog_sql, catalog_params = dso_catalog_clause(catalog_codes)
+            where_clauses.append(catalog_sql)
+            params.extend(catalog_params)
 
     if q:
-        search_key = normalize_search_key(q)
-        # Match either a designation search_key exactly/prefix or a
-        # case-insensitive substring of common_name.
-        where_clauses.append(
-            "(d.id IN (SELECT dso_id FROM dso_designation WHERE search_key LIKE ?) "
-            "OR LOWER(d.common_name) LIKE ?)"
-        )
-        params.append(search_key + "%")
-        params.append(f"%{q.lower()}%")
+        search_sql, search_params = dso_search_clause(q)
+        where_clauses.append(search_sql)
+        params.extend(search_params)
 
     where_sql = " AND ".join(where_clauses)
     async with get_db() as conn:
@@ -262,19 +321,27 @@ async def list_dsos(
         cte_params: list[str] = []
         if catalog_codes:
             catalog_placeholders = ",".join("?" * len(catalog_codes))
-            cte_params.extend(catalog_codes)
+            cte_params.extend([*catalog_codes, *catalog_codes])
             # The interpolated text contains only one ``?`` per parsed catalog
             # value; every value itself remains a bound parameter.
             designation_cte = (
-                "WITH ranked_designation AS (\n"  # nosec B608
-                "SELECT dd.dso_id, dd.display_form,\n"
-                "ROW_NUMBER() OVER (\n"
-                "PARTITION BY dd.dso_id\n"
-                "ORDER BY catalog_rank(dd.catalog), dd.catalog,\n"
-                "designation_key(dd.display_form), dd.id\n"
-                ") AS rn\n"
+                "WITH designation_candidate AS (\n"  # nosec B608
+                "SELECT dd.dso_id, dd.display_form, dd.catalog, dd.id, 0 AS source_order\n"
                 "FROM dso_designation dd\n"
                 "WHERE dd.catalog IN (" + catalog_placeholders + ")\n"
+                "UNION ALL\n"
+                "SELECT gm.dso_id, g.display_form, g.catalog, g.id, 1 AS source_order\n"
+                "FROM dso_group_member gm\n"
+                "JOIN dso_group g ON g.id = gm.group_id\n"
+                "WHERE g.catalog IN (" + catalog_placeholders + ")\n"
+                "), ranked_designation AS (\n"
+                "SELECT dc.dso_id, dc.display_form,\n"
+                "ROW_NUMBER() OVER (\n"
+                "PARTITION BY dc.dso_id\n"
+                "ORDER BY dc.source_order, catalog_rank(dc.catalog), dc.catalog,\n"
+                "designation_key(dc.display_form), dc.id\n"
+                ") AS rn\n"
+                "FROM designation_candidate dc\n"
                 ")\n"
             )
         else:
@@ -325,6 +392,7 @@ async def list_dsos(
 
         dso_ids = [row["id"] for row in rows]
         designations = await _load_designations(conn, dso_ids)
+        group_refs = await _load_group_refs(conn, dso_ids)
 
         items = [
             DsoListItem(
@@ -343,6 +411,7 @@ async def list_dsos(
                 distance_method=row["distance_method"],
                 common_name=row["common_name"],
                 designations=designations.get(row["id"], []),
+                part_of=[group.display_form for group in group_refs.get(row["id"], [])],
             )
             for row in rows
         ]
@@ -355,7 +424,7 @@ async def lookup_dso(
     q: str = Query(..., description="Designation to resolve (e.g., 'M42', 'NGC 1976')"),
 ) -> DsoDetail | None:
     """Return the DSO whose search_key exactly matches *q*, or null."""
-    search_key = normalize_search_key(q)
+    search_key = normalize_designation(q)
     async with get_db() as conn:
         cursor = await conn.execute(
             """
@@ -416,13 +485,9 @@ async def list_facets(
     elif has_distance is False:
         base_sql_parts.append("d.distance_pc IS NULL")
     if q and q.strip():
-        search_key = normalize_search_key(q)
-        base_sql_parts.append(
-            "(d.id IN (SELECT dso_id FROM dso_designation WHERE search_key LIKE ?) "
-            "OR LOWER(d.common_name) LIKE ?)"
-        )
-        base_params.append(search_key + "%")
-        base_params.append(f"%{q.lower()}%")
+        search_sql, search_params = dso_search_clause(q)
+        base_sql_parts.append(search_sql)
+        base_params.extend(search_params)
 
     # Per-dimension clause builders. Each returns ``("", [])`` when its
     # corresponding query param is absent, otherwise a ready-to-splice
@@ -430,7 +495,9 @@ async def list_facets(
     def _type_clause() -> tuple[str, list[str]]:
         codes: list[str] = []
         if type:
-            codes.extend(c.strip() for c in type.split(",") if c.strip())
+            codes.extend(
+                raw_types_for_filter_codes(c.strip() for c in type.split(",") if c.strip())
+            )
         if type_group:
             groups = {g.strip() for g in type_group.split(",") if g.strip()}
             codes.extend(raw for g in TYPE_GROUPS if g.name in groups for raw in g.raw_types)
@@ -445,12 +512,7 @@ async def list_facets(
         codes = [c.strip() for c in catalog.split(",") if c.strip()]
         if not codes:
             return "", []
-        placeholders = ",".join("?" for _ in codes)
-        # Placeholders are a fixed string of ``?`` marks; codes bind via params.
-        return (
-            f"d.id IN (SELECT dso_id FROM dso_designation WHERE catalog IN ({placeholders}))",  # noqa: S608, E501  # nosec B608
-            codes,
-        )
+        return dso_catalog_clause(codes)
 
     def _constellation_clause() -> tuple[str, list[str]]:
         if not constellation:
@@ -487,7 +549,11 @@ async def list_facets(
             "GROUP BY obj_type ORDER BY obj_type",
             raw_params,
         )
-        raw_counts: dict[str, int] = {r["obj_type"]: r["n"] for r in await cursor.fetchall()}
+        obj_type_counts = {row["obj_type"]: row["n"] for row in await cursor.fetchall()}
+        filter_type_counts: dict[str, int] = {}
+        for obj_type, count in obj_type_counts.items():
+            code = filter_type_code(obj_type)
+            filter_type_counts[code] = filter_type_counts.get(code, 0) + count
 
         # Constellations facet: excludes the constellation dimension so the
         # picker keeps showing every other constellation after a selection.
@@ -515,19 +581,25 @@ async def list_facets(
             (const_clause, const_params_fragment),
         )
         cursor = await conn.execute(
-            f"SELECT dd.catalog, COUNT(DISTINCT d.id) AS n "  # noqa: S608  # nosec B608 — whitelisted clauses
-            f"FROM dso d JOIN dso_designation dd ON dd.dso_id = d.id "
-            f"WHERE {cat_where} GROUP BY dd.catalog ORDER BY dd.catalog",
+            f"SELECT dc.catalog, COUNT(DISTINCT d.id) AS n "  # noqa: S608  # nosec B608 — whitelisted clauses
+            f"FROM dso d JOIN ("
+            f"SELECT dso_id, catalog FROM dso_designation "
+            f"UNION SELECT gm.dso_id, g.catalog FROM dso_group_member gm "
+            f"JOIN dso_group g ON g.id = gm.group_id"
+            f") dc ON dc.dso_id = d.id "
+            f"WHERE {cat_where} GROUP BY dc.catalog ORDER BY dc.catalog",
             cat_params,
         )
         catalogs = [CatalogFacet(code=r["catalog"], count=r["n"]) for r in await cursor.fetchall()]
 
-    raw_types = [RawTypeFacet(code=code, count=count) for code, count in sorted(raw_counts.items())]
+    raw_types = [
+        RawTypeFacet(code=code, count=count) for code, count in sorted(filter_type_counts.items())
+    ]
     type_groups = [
         TypeGroupFacet(
             name=group.name,
             display_order=group.display_order,
-            count=sum(raw_counts.get(raw, 0) for raw in group.raw_types),
+            count=sum(obj_type_counts.get(raw, 0) for raw in group.raw_types),
             raw_types=list(group.raw_types),
         )
         for group in TYPE_GROUPS
@@ -580,7 +652,27 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         raise HTTPException(status_code=404, detail=f"DSO not found: {dso_id}")
 
     designations = (await _load_designations(conn, [dso_id])).get(dso_id, [])
+    part_of = (await _load_group_refs(conn, [dso_id])).get(dso_id, [])
+    parts_cursor = await conn.execute(
+        """
+        SELECT member.id AS dso_id, member.primary_designation AS display_designation
+        FROM dso_group g
+        JOIN dso_group_member gm ON gm.group_id = g.id
+        JOIN dso member ON member.id = gm.dso_id
+        WHERE g.whole_dso_id = ?
+        ORDER BY designation_key(member.primary_designation), member.id
+        """,
+        (dso_id,),
+    )
+    parts = [
+        DsoPartRef(
+            dso_id=part["dso_id"],
+            display_designation=part["display_designation"],
+        )
+        for part in await parts_cursor.fetchall()
+    ]
     external_refs = await _load_external_refs(conn, dso_id)
+    external_refs.extend(_search_refs(row["primary_designation"], row["common_name"]))
 
     src_cursor = await conn.execute(
         "SELECT id, source_id, category, display_name, version, source_url, "
@@ -638,6 +730,8 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         openngc_notes=row["openngc_notes"],
         raw_other_id=row["raw_other_id"],
         designations=designations,
+        part_of=part_of,
+        parts=parts,
         external_refs=external_refs,
         source=source,
     )

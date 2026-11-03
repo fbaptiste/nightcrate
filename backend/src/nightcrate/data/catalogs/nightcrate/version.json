@@ -10,6 +10,18 @@
     },
     "barnard_crossref.csv": {
       "description": "Barnard crossref placeholder (intentionally empty — see file comment)."
+    },
+    "dso_parts.csv": {
+      "description": "Reviewed \"part of\" list: catalog entries that cover several objects, such as the Cygnus Loop and its Veil pieces."
+    },
+    "dso_match_overrides.csv": {
+      "description": "Reviewed match overrides that take precedence over matches a catalog or OpenNGC states."
+    },
+    "melotte.csv": {
+      "description": "NightCrate's Melotte list: Melotte 1915 transcribed and checked against OpenNGC, SIMBAD and Hunt & Reffert 2023; positions for clusters without NGC or IC numbers."
+    },
+    "arp_members.csv": {
+      "description": "Reviewed Arp member list: the galaxy at each member position of Webb's Arp index (VizieR VII/192), checked against SIMBAD, NED and OpenNGC."
     }
   },
   "license": "MIT"

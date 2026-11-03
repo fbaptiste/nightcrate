@@ -87,7 +87,7 @@ async def test_status_endpoint_answers_during_transfer_and_all_second_actions_co
 
     second_actions = [
         "/api/admin/catalogs/fetch-from-github",
-        "/api/admin/catalogs/vizier/sharpless/fetch",
+        "/api/admin/catalogs/optional/sharpless/add",
         "/api/admin/catalogs/50mgc/fetch",
         "/api/admin/catalogs/wikidata/fetch",
         "/api/admin/catalogs/reload",
@@ -113,7 +113,7 @@ async def test_refused_requests_do_not_reserve_slot(client, monkeypatch):
     assert response.status_code == 400
     assert catalog_progress.snapshot() is None
 
-    response = await client.post("/api/admin/catalogs/vizier/not-a-source/fetch")
+    response = await client.post("/api/admin/catalogs/optional/not-a-source/add")
     assert response.status_code == 404
     assert catalog_progress.snapshot() is None
 
@@ -187,15 +187,19 @@ async def test_every_action_completes_with_targeted_success(client, monkeypatch,
     async def openngc_download(_release, _root, _progress=None):
         return remote.DownloadReport("v-test", [], tmp_path / "version.json")
 
-    async def vizier_download(spec, _root, _progress=None):
-        return vizier.VizierFetchResult(
-            spec.source_id,
-            tmp_path / spec.output_filename,
-            "hash",
-            10,
-            "2026-11-01",
-            "https://example.test",
-        )
+    async def vizier_download(specs, _root, _progress=None, *, catalog_id=None):
+        assert catalog_id in {"sharpless", "barnard"}
+        return [
+            vizier.VizierFetchResult(
+                spec.source_id,
+                tmp_path / spec.output_filename,
+                "hash",
+                10,
+                "2026-11-01",
+                "https://example.test",
+            )
+            for spec in specs
+        ]
 
     async def mgc_download(_root, _progress=None):
         return mgc50_fetch.Mgc50FetchResult(tmp_path / "50.fits", "hash", 10, "2026-11-01")
@@ -205,14 +209,14 @@ async def test_every_action_completes_with_targeted_success(client, monkeypatch,
 
     monkeypatch.setattr(remote, "fetch_latest_release", latest)
     monkeypatch.setattr(remote, "download_openngc", openngc_download)
-    monkeypatch.setattr(vizier, "fetch_vizier_catalog", vizier_download)
+    monkeypatch.setattr(vizier, "fetch_vizier_tables", vizier_download)
     monkeypatch.setattr(mgc50_fetch, "fetch_50mgc_from_github", mgc_download)
     monkeypatch.setattr(wikidata, "fetch_wikidata_external_refs", wikidata_download)
 
     paths = [
         "/api/admin/catalogs/fetch-from-github",
-        "/api/admin/catalogs/vizier/sharpless/fetch",
-        "/api/admin/catalogs/vizier/barnard/fetch",
+        "/api/admin/catalogs/optional/sharpless/add",
+        "/api/admin/catalogs/optional/barnard/add",
         "/api/admin/catalogs/50mgc/fetch",
         "/api/admin/catalogs/wikidata/fetch",
         "/api/admin/catalogs/reload",
@@ -324,7 +328,7 @@ def test_catalog_result_details_use_display_names():
     } == {
         "openngc": "OpenNGC",
         "openngc_addendum": "OpenNGC addendum",
-        "vizier_sharpless": "Sharpless",
+        "vizier_sharpless": "Sharpless 2",
         "vizier_barnard": "Barnard",
         "github_50mgc": "50 MGC",
         "wikidata_external_refs": "Wikidata",

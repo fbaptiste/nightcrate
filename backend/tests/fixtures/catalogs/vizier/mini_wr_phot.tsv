@@ -1,0 +1,56 @@
+#
+#   VizieR Astronomical Server vizier.idia.ac.za
+#    Date: 2026-11-02T14:43:03 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-11-02T14:43:03	  Query execution date
+#INFO	request=https://vizier.idia.ac.za/viz-bin/asu-tsv?-source=III/215/table15&-out.max=unlimited&-out.all&-out.add=_RAJ,_DEJ	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+
+#RESOURCE=yCat_3215
+#Name: III/215
+#Title: 7th Catalog of Galactic Wolf-Rayet stars (van der Hucht, 2001)
+#INFO	ivoid=ivo://cds.vizier/iii/215	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/iii/215	    IVOID of underlying data collection
+#INFO	creator=van der Hucht K.A.	    First author or institution
+#INFO	cites=bibcode:2001NewAR..45..135V	    Article or Data origin sources
+#INFO	journal=NewA	    Journal name
+#INFO	original_date=2001	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/III/215	    Dataset landing page
+#INFO	publication_date=2003-07-22	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	III_215_table15:
+#Name: III/215/table15
+#Title: Parameters of galactic WR stars
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	WR	(a5)	Running number as in table13	[ucd=meta.id;meta.main]
+#Column	Name	(a17)	Other name of the star	[ucd=meta.id]
+#Column	SpType	(a16)	MK Spectral Classification (1)	[ucd=src.spType]
+#Column	r_SpType	(a14)	References of the Spectral Classification	[ucd=meta.ref]
+#Column	l_vmag	(A1)	Limit flag on vmag	[ucd=meta.code.error]
+#Column	vmag	(F5.2)	?Magnitude in Smith system (1968MNRAS.138..109S)	[ucd=phot.mag;em.opt.V]
+#Column	u_vmag	(A1)	[:)] Uncertainty flag	[ucd=meta.code.error]
+#Column	b-v	(F5.2)	?Color index in Smith sys. (1968MNRAS.138..109S)	[ucd=phot.color;em.opt.B;em.opt.V]
+#Column	u_b-v	(A1)	[:)] Uncertainty flag	[ucd=meta.code.error]
+#Column	r_vmag	(a5)	Reference of the photometry	[ucd=meta.ref]
+#Column	vinf	(I4)	? Terminal wind velocity (2)	[ucd=phys.veloc.expansion]
+#Column	vinf2	(I4)	? Upper range of vinf	[ucd=phys.veloc.expansion]
+#Column	r_vinf	(a9)	References for vinf	[ucd=meta.ref]
+#Column	l_Per	(A1)	[>~] Limit flag on Per	[ucd=meta.code.error]
+#Column	Per	(F9.4)	? Periodicity	[ucd=time.period]
+#Column	n_Per	(a31)	Notes on period: mean errors, Other periods, etc	[ucd=meta.note]
+#Column	Binary	(a19)	Notes about binarity (G1)	[ucd=meta.code]
+#Column	r_Per	(a51)	References for Periodicities, Binarity,etc	[ucd=meta.ref]
+recno	WR	Name	SpType	r_SpType	l_vmag	vmag	u_vmag	b-v	u_b-v	r_vmag	vinf	vinf2	r_vinf	l_Per	Per	n_Per	Binary	r_Per
+ 	 	 	 	 	 	mag	 	mag	 	 	km/s	km/s	 	 	d	 	 	
+--------	-----	-----------------	----------------	--------------	-	-----	-	-----	-	-----	----	----	---------	-	---------	-------------------------------	-------------------	---------------------------------------------------
+       1	  1  	HD 4004          	WN4             	SS96*         	 	10.51	 	 0.51	 	Ma84 	2100	    	HS92     	 	   6.1000	, 7.746, 11.68                 	SB1?               	La83,MS86,MMH98,MG99,Ni00
+      12	 11  	gamma^2 Vel      	WC8+O7.5III-V   	DS99          	 	 1.74	 	-0.32	 	VI   	1450	    	EW94     	 	  78.5300	                               	SB2, VB            	SSS97,DS99,NG99a,SSK99,TC99,DS00
+     141	101a 	BSD 1            	WC9             	BS95          	 	     	 	     	 	     	    	    	         	 	         	                               	                   	
+     201	134  	HD 191765        	WN6             	SS96*         	 	 8.23	 	 0.20	 	Ma84 	2050	    	CS96     	 	   1.2707	, 1.81, 2.25, 37.2, 614        	SB1?, no d.e.l     	MS86,CM89,RM89,MM93,McB94,MMH98,MM99,NG99a,t.w.
+     203	136  	HD 192163        	WN6(h)          	SS96*         	 	 7.65	 	 0.23	 	Ma84 	1750	    	CS96     	 	   4.5540	, 0.31, 0.45                   	SB1?, no d.e.l.    	KF80,AC85,As82,VA85,MS86,CM89,RM89,SS96,NG99a,t.w.

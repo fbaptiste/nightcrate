@@ -11,6 +11,7 @@ users and tests.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 GROUP_OTHER = "Other"
@@ -29,20 +30,22 @@ class TypeGroup:
 TYPE_GROUPS: tuple[TypeGroup, ...] = (
     TypeGroup("Galaxy", 1, ("G",)),
     TypeGroup("Galaxy Group", 2, ("GPair", "GTrpl", "GGroup")),
-    TypeGroup("Open Cluster", 3, ("OCl",)),
-    TypeGroup("Globular Cluster", 4, ("GCl",)),
+    TypeGroup("Galaxy Cluster", 3, ("ClG",)),
+    TypeGroup("Open Cluster", 4, ("OCl",)),
+    TypeGroup("Globular Cluster", 5, ("GCl",)),
     # Cl+N lives here because amateurs imaging the "cluster + nebulosity" target
     # are pointing at the nebulosity; the embedded cluster is incidental for
     # narrowband work.
-    TypeGroup("Emission Nebula", 5, ("HII", "EmN", "Cl+N")),
-    TypeGroup("Reflection Nebula", 6, ("RfN",)),
-    TypeGroup("Planetary Nebula", 7, ("PN",)),
-    TypeGroup("Dark Nebula", 8, ("DrkN",)),
-    TypeGroup("Supernova Remnant", 9, ("SNR",)),
-    TypeGroup("Other Nebula", 10, ("Neb",)),
-    TypeGroup("Stellar Association", 11, ("*Ass",)),
-    TypeGroup("Star / Multiple", 12, ("*", "**", "Nova")),
-    TypeGroup(GROUP_OTHER, 13, ("Other",)),
+    TypeGroup("Emission Nebula", 6, ("HII", "EmN", "Cl+N")),
+    TypeGroup("Reflection Nebula", 7, ("RfN",)),
+    TypeGroup("Planetary Nebula", 8, ("PN",)),
+    TypeGroup("Dark Nebula", 9, ("DrkN",)),
+    TypeGroup("Supernova Remnant", 10, ("SNR",)),
+    TypeGroup("Other Nebula", 11, ("Neb",)),
+    TypeGroup("Herbig-Haro Object", 12, ("HH",)),
+    TypeGroup("Stellar Association", 13, ("*Ass",)),
+    TypeGroup("Star / Multiple", 14, ("*", "**", "Nova", "WR*")),
+    TypeGroup(GROUP_OTHER, 15, ("Other",)),
 )
 
 
@@ -51,6 +54,30 @@ _RAW_TO_GROUP: dict[str, str] = {
 }
 
 _GROUP_TO_RAW: dict[str, tuple[str, ...]] = {group.name: group.raw_types for group in TYPE_GROUPS}
+
+# OpenNGC classifies nearly every emission nebula as HII, while EmN is rare.
+# Merge them into one filter choice without changing stored obj_type values.
+# Mirrored by filterTypeCode in frontend/src/lib/dsoTypeNames.ts.
+FILTER_TYPE_MERGES: dict[str, str] = {"HII": "EmN"}
+
+
+def filter_type_code(raw_type: str) -> str:
+    """Return the filter code that represents *raw_type*."""
+    return FILTER_TYPE_MERGES.get(raw_type, raw_type)
+
+
+def raw_types_for_filter_codes(codes: Iterable[str]) -> list[str]:
+    """Expand filter codes to stored raw types, preserving first-seen order."""
+    raw_types: list[str] = []
+    seen: set[str] = set()
+    for code in codes:
+        filter_code = filter_type_code(code)
+        candidates = (filter_code, *FILTER_TYPE_MERGES)
+        for raw_type in candidates:
+            if filter_type_code(raw_type) == filter_code and raw_type not in seen:
+                seen.add(raw_type)
+                raw_types.append(raw_type)
+    return raw_types
 
 
 def group_for_raw_type(raw_type: str) -> str:

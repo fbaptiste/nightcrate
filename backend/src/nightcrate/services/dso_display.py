@@ -7,7 +7,8 @@ DSO_TYPE_DISPLAY: dict[str, str] = {
     "GPair": "Galaxy pair",
     "GTrpl": "Galaxy triplet",
     "GGroup": "Galaxy group",
-    "HII": "HII region",
+    "ClG": "Galaxy cluster",
+    "HII": "Emission nebula (HII region)",
     "EmN": "Emission nebula",
     "RfN": "Reflection nebula",
     "PN": "Planetary nebula",
@@ -17,10 +18,12 @@ DSO_TYPE_DISPLAY: dict[str, str] = {
     "SNR": "Supernova remnant",
     "DrkN": "Dark nebula",
     "Neb": "Nebula",
+    "HH": "Herbig-Haro object",
     "*Ass": "Stellar association",
     "Nova": "Nova",
     "*": "Star",
     "**": "Double star",
+    "WR*": "Wolf-Rayet star",
     "Other": "Other",
 }
 

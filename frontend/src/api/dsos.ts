@@ -7,7 +7,23 @@ export interface DsoDesignation {
   is_primary: boolean;
 }
 
-export type ExternalRefProvider = "wikidata" | "wikipedia" | "simbad" | "ned";
+export interface DsoGroupRef {
+  display_form: string;
+  whole_dso_id: number | null;
+}
+
+export interface DsoPartRef {
+  dso_id: number;
+  display_designation: string;
+}
+
+export type ExternalRefProvider =
+  | "wikidata"
+  | "wikipedia"
+  | "simbad"
+  | "ned"
+  | "google"
+  | "google_images";
 
 export interface ExternalRef {
   provider: ExternalRefProvider;
@@ -35,6 +51,7 @@ export interface DsoListItem {
   distance_method: DistanceMethod | null;
   common_name: string | null;
   designations: DsoDesignation[];
+  part_of: string[];
 }
 
 export interface DsoListResponse {
@@ -57,7 +74,10 @@ export interface CatalogSource {
   row_count: number;
 }
 
-export interface DsoDetail extends Omit<DsoListItem, "designations" | "display_designation"> {
+export interface DsoDetail extends Omit<
+  DsoListItem,
+  "designations" | "display_designation" | "part_of"
+> {
   active: boolean;
   raw_obj_type: string | null;
   position_angle_deg: number | null;
@@ -80,6 +100,8 @@ export interface DsoDetail extends Omit<DsoListItem, "designations" | "display_d
   openngc_notes: string | null;
   raw_other_id: string | null;
   designations: DsoDesignation[];
+  part_of: DsoGroupRef[];
+  parts: DsoPartRef[];
   external_refs: ExternalRef[];
   source: CatalogSource;
 }
@@ -237,36 +259,48 @@ export const fetchCatalogsFromGitHub = () =>
     method: "POST",
   });
 
-// ── VizieR per-source endpoints (v0.15.0) ────────────────────────────────────
+// ── Optional object catalogs ─────────────────────────────────────────────────
 
-export type VizierSourceShortId = "sharpless" | "barnard";
-
-export interface VizierRemoteVersion {
-  source_id: string;
+export interface OptionalCatalogStatus {
   catalog_id: string;
   display_name: string;
-  latest_tag: string;
-  installed_version: string | null;
-  release_url: string;
-  has_update: boolean;
+  credit: string;
+  kind: "vizier" | "nightcrate";
+  state: "on" | "off" | "removed";
+  installed: boolean;
+  version: string | null;
+  object_count: number;
 }
 
-export interface VizierFetchResponse {
-  source_id: string;
-  fetched_at: string;
-  size_bytes: number;
-  total_dsos: number;
-  total_designations: number;
-  per_source: FetchFromGitHubResponse["per_source"];
+export interface RemovalPreview {
+  objects_removed: number;
+  objects_kept: number;
+  blocked_reason: string | null;
 }
 
-export const fetchVizierRemoteVersion = (shortId: VizierSourceShortId) =>
-  apiFetch<VizierRemoteVersion>(`/admin/catalogs/vizier/${shortId}/remote-version`);
+export interface RemoveOptionalCatalogResponse extends ReloadCatalogsResponse {
+  objects_removed: number;
+  objects_kept: number;
+}
 
-export const fetchVizierCatalog = (shortId: VizierSourceShortId) =>
-  apiFetch<VizierFetchResponse>(`/admin/catalogs/vizier/${shortId}/fetch`, {
+export const fetchOptionalCatalogs = () =>
+  apiFetch<OptionalCatalogStatus[]>("/admin/catalogs/optional");
+
+export const addOptionalCatalog = (catalogId: string) =>
+  apiFetch<ReloadCatalogsResponse>(`/admin/catalogs/optional/${catalogId}/add`, {
     method: "POST",
   });
+
+export const fetchRemovalPreview = (catalogId: string) =>
+  apiFetch<RemovalPreview>(
+    `/admin/catalogs/optional/${catalogId}/removal-preview`,
+  );
+
+export const removeOptionalCatalog = (catalogId: string) =>
+  apiFetch<RemoveOptionalCatalogResponse>(
+    `/admin/catalogs/optional/${catalogId}/remove`,
+    { method: "POST" },
+  );
 
 export const reloadNightcrateCatalogs = () =>
   apiFetch<ReloadCatalogsResponse>("/admin/catalogs/nightcrate/reload", {

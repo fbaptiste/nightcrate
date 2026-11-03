@@ -35,6 +35,7 @@ IC 1318,Butterfly Nebula,,1800,Gamma Cygni region (not to be confused with NGC 6
 NGC 6960,Western Veil Nebula,,740,Witch's Broom; Cygnus Loop west
 NGC 6992,Eastern Veil Nebula,,740,Network Nebula; Cygnus Loop east
 NGC 6995,,,740,Part of Eastern Veil complex
+LBN 191,Cygnus Loop,,740,Whole Cygnus Loop; its pieces are in dso_parts.csv
 # --- Planetary nebulae (curated distances + non-galaxy surface brightness) ---
 NGC 6720,Ring Nebula,20.5,800,M57 (Gaia DR2 central-star parallax)
 NGC 6853,Dumbbell Nebula,20.0,380,M27; Apple Core

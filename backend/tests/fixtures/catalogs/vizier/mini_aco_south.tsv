@@ -1,0 +1,7 @@
+# VizieR VII/110A table4 rows cut from the full ACO sample.
+_RAJ2000	_DEJ2000	recno	ACO	RAB1950	DEB1950	Field	Xcen	Ycen	Atype	BMtype	Count	u_Count	m1	u_m1	m3	u_m3	m10	u_m10	Prev	Xpos	Ypos	GLON	GLAT	z	u_z	Rich	Dclass	m10A	NF_1	Obs_1	NF_2	Obs_2	NF_3	Obs_3	_RA.icrs	_DE.icrs
+deg	deg	 	 	"h:m:s"	"d:m:s"	 	mm	mm	 	 	ct	 	mag	 	mag	 	mag	 	 	mm	mm	deg	deg	 	 	 	 	mag	 	 	 	 	 	 	"h:m:s"	"d:m:s"
+--------	--------	--------	----	-------	------	----	----	----	---	-------	---	-	----	-	----	-	----	-	-----	---	---	------	------	-------	-	-	-	----	-	-	-	-	-	-	----------	---------
+000.6390	-47.1549	       1	2713	00 00.0	-47 26	F292	 107	-131	I  	I-II   	 58	 	17.4	 	17.6	 	18.7	 	     	 57	 33	325.33	-67.79	       	 	1	6	17.3	1	O	 	 	 	 	00 02 33.4	-47 09 17
+000.8140	-35.9549	       5	2717	00 00.7	-36 14	F349	   4	 -62	R  	I-II   	 52	 	13.6	?	14.5	 	15.4	 	BO   	160	102	349.21	-76.48	 0.0498	 	1	3	15.6	1	C	 	 	 	 	00 03 15.3	-35 57 18
+322.9012	-43.3125	    1063	3775	21 28.4	-43 32	F287	   2	  80	RI 	II     	 76	 	13.5	*	16.1	 	17.5	 	     	162	244	357.46	-46.84	       	 	1	5	17.2	1	O	 	 	 	 	21 31 36.3	-43 18 45

@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.resources
+import logging
 import sqlite3
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from nightcrate.api.catalog_choice_models import OptionalCatalogStatus, RemovalPreview
 from nightcrate.core import app_config
 from nightcrate.core.app_config import (
     DatabaseEntry,
@@ -22,6 +24,7 @@ from nightcrate.seed_loader import load_all
 from nightcrate.services import catalog_progress
 
 router = APIRouter(prefix="/api/admin", tags=["Administration"])
+logger = logging.getLogger("nightcrate.api.admin")
 
 _CATALOG_DATABASE_CONFLICT = (
     "A catalog update is running. Wait for it to finish before changing databases."
@@ -572,8 +575,6 @@ def _require_configured_database() -> None:
 _CATALOG_SOURCE_NAMES = {
     "openngc": "OpenNGC",
     "openngc_addendum": "OpenNGC addendum",
-    "vizier_sharpless": "Sharpless",
-    "vizier_barnard": "Barnard",
     "github_50mgc": "50 MGC",
     "wikidata_external_refs": "Wikidata",
     "nightcrate_augment": "NightCrate object data",
@@ -584,6 +585,11 @@ _CATALOG_SOURCE_NAMES = {
 
 
 def _catalog_source_name(source_id: str) -> str:
+    from nightcrate.catalog_loader.registry import catalogs_for_source
+
+    catalogs = catalogs_for_source(source_id)
+    if catalogs:
+        return catalogs[0].display_name
     return _CATALOG_SOURCE_NAMES.get(source_id, source_id.replace("_", " ").title())
 
 
@@ -632,7 +638,15 @@ class _CatalogAction:
         if not self.reload:
             self.message = "Download saved; database update failed."
 
-    def complete(self, summary, target_ids: set[str], display_name: str) -> None:
+    def complete(
+        self,
+        summary,
+        target_ids: set[str],
+        display_name: str,
+        *,
+        success_message: str | None = None,
+        allow_skipped: bool = False,
+    ) -> None:
         results = [result for result in summary.results if result.source_id in target_ids]
         failures = [result for result in results if result.status == "failed"]
         warnings = [
@@ -641,11 +655,13 @@ class _CatalogAction:
             if (not self.reload and result.status == "missing")
             or (result.status == "skipped" and result.error)
         ]
+        expected_statuses = {"loaded", "unchanged", "failed", "missing"}
+        if allow_skipped:
+            expected_statuses.add("skipped")
         unexpected = [
             result
             for result in results
-            if result.status not in {"loaded", "unchanged", "failed", "missing"}
-            and result not in warnings
+            if result.status not in expected_statuses and result not in warnings
         ]
         if failures:
             self.outcome = "failed"
@@ -679,7 +695,11 @@ class _CatalogAction:
             self.detail = "; ".join(details)
         else:
             self.outcome = "success"
-            self.message = "Cached catalogs reloaded." if self.reload else f"{display_name} loaded."
+            self.message = (
+                "Cached catalogs reloaded."
+                if self.reload
+                else success_message or f"{display_name} loaded."
+            )
             self.detail = None
 
 
@@ -768,120 +788,241 @@ async def fetch_catalogs_from_github() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# VizieR per-source fetch endpoints (v0.15.0)
+# Optional object catalogs
 # ---------------------------------------------------------------------------
 
 
-_VIZIER_FETCH_SPECS: dict[str, dict] = {
-    "sharpless": {
-        "source_id": "vizier_sharpless",
-        "catalog_id": "VII/20/catalog",
-        "output_filename": "sharpless_VII_20.tsv",
-        "display_name": "Sharpless 2 (VII/20)",
-        "citation": "Sharpless 1959 ApJS 4, 257. Retrieved via VizieR.",
-        "column_filter": None,
-        # VizieR precession pseudo-columns are only emitted on explicit
-        # -out.add; without this, `-out.all` returns only the original
-        # epoch columns (RA1900/DE1900 for Sharpless, RA1875/DE1875 for
-        # Barnard) and every row ingests with ra_deg/dec_deg = NULL.
-        "additional_params": {"-out.add": "_RAJ2000,_DEJ2000"},
-    },
-    "barnard": {
-        "source_id": "vizier_barnard",
-        "catalog_id": "VII/220A/barnard",
-        "output_filename": "barnard_VII_220.tsv",
-        "display_name": "Barnard dark nebulae (VII/220A)",
-        "citation": "Barnard 1927 (VizieR VII/220A).",
-        "column_filter": None,
-        "additional_params": {"-out.add": "_RAJ2000,_DEJ2000"},
-    },
-    # 50 MGC moved to a dedicated GitHub fetch endpoint
-    # (POST /api/admin/catalogs/50mgc/fetch) — see fetch_50mgc_from_github
-    # below. The data origin is still VizieR J/AJ/167/31 but the fetch
-    # path is the author's GitHub mirror for reliability.
-}
+def _require_optional_catalog(catalog_id: str):
+    from nightcrate.catalog_loader.registry import optional_catalog
+
+    catalog = optional_catalog(catalog_id)
+    if catalog is None:
+        raise HTTPException(status_code=404, detail=f"Unknown optional catalog: {catalog_id}")
+    return catalog
 
 
-def _build_vizier_spec(short_id: str):
-    from nightcrate.catalog_loader.vizier import VizierFetchSpec
-
-    cfg = _VIZIER_FETCH_SPECS.get(short_id)
-    if cfg is None:
-        raise HTTPException(status_code=404, detail=f"Unknown VizieR source: {short_id}")
-    return VizierFetchSpec(
-        source_id=cfg["source_id"],
-        catalog_id=cfg["catalog_id"],
-        output_filename=cfg["output_filename"],
-        display_name=cfg["display_name"],
-        citation=cfg["citation"],
-        column_filter=cfg["column_filter"],
-        additional_params=cfg["additional_params"],
-    )
-
-
-@router.get("/catalogs/vizier/{source_id}/remote-version")
-async def vizier_remote_version(source_id: str) -> dict:
-    """Return the installed version for a VizieR source plus a pointer to
-    the upstream catalog. VizieR doesn't expose release tags the way GitHub
-    does, so ``latest_tag`` is always the fixed catalog ID — the ``fetch_date``
-    of the installed copy is what tells the user whether they might want to
-    re-fetch.
-    """
-    from nightcrate.catalog_loader.registry import user_catalogs_root
-    from nightcrate.catalog_loader.vizier import read_installed_version
-
-    spec = _build_vizier_spec(source_id)
-    installed_files = read_installed_version(user_catalogs_root())
-    entry = installed_files.get(spec.output_filename)
-
+def _catalog_applied_states(conn: sqlite3.Connection) -> dict[str, str]:
     return {
-        "source_id": spec.source_id,
-        "catalog_id": spec.catalog_id,
-        "display_name": spec.display_name,
-        "latest_tag": spec.catalog_id,
-        "installed_version": entry.get("fetch_date") if entry else None,
-        "release_url": f"https://vizier.cds.unistra.fr/viz-bin/VizieR?-source={spec.catalog_id}",
-        # "Update available" reduces to "has never been fetched" for VizieR —
-        # the frontend can still call ``fetch`` to re-pull the latest data.
-        "has_update": entry is None,
+        str(row[0]): str(row[1])
+        for row in conn.execute("SELECT catalog_id, state FROM dso_catalog_applied").fetchall()
     }
 
 
-@router.post("/catalogs/vizier/{source_id}/fetch")
-async def vizier_fetch(source_id: str) -> dict:
-    """Download a VizieR source TSV atomically and run the loader."""
-    from nightcrate.catalog_loader.registry import user_catalogs_root
-    from nightcrate.catalog_loader.vizier import fetch_vizier_catalog
+@router.get(
+    "/catalogs/optional",
+    response_model=list[OptionalCatalogStatus],
+)
+async def optional_catalogs() -> list[OptionalCatalogStatus]:
+    """List optional object catalogs in their stable registry order."""
+    from nightcrate.catalog_loader.catalog_choice import effective_state, read_choice
+    from nightcrate.catalog_loader.registry import (
+        OPTIONAL_CATALOGS,
+        optional_catalog_install,
+        user_catalogs_root,
+    )
 
-    spec = _build_vizier_spec(source_id)
-    _require_configured_database()
-    with _CatalogAction("fetch_vizier", source=spec.source_id) as action:
-        try:
-            result = await fetch_vizier_catalog(
-                spec,
-                user_catalogs_root(),
-                action.progress,
+    catalogs_root = user_catalogs_root()
+    choice = read_choice(catalogs_root)
+    with sqlite3.connect(str(get_db_path())) as conn:
+        applied = _catalog_applied_states(conn)
+        object_counts = {
+            str(row[0]): int(row[1])
+            for row in conn.execute(
+                """
+                SELECT e.catalog_id, COUNT(DISTINCT e.dso_id)
+                FROM dso_source_entry e
+                JOIN dso d ON d.id = e.dso_id
+                WHERE d.active = 1
+                GROUP BY e.catalog_id
+                """
+            ).fetchall()
+        }
+        statuses: list[OptionalCatalogStatus] = []
+        for catalog in OPTIONAL_CATALOGS:
+            installed, version = optional_catalog_install(catalog, catalogs_root)
+            statuses.append(
+                OptionalCatalogStatus(
+                    catalog_id=catalog.catalog_id,
+                    display_name=catalog.display_name,
+                    credit=catalog.credit,
+                    kind=catalog.kind,
+                    state=effective_state(choice, catalog, applied.get(catalog.catalog_id)),
+                    installed=installed,
+                    version=version,
+                    object_count=object_counts.get(catalog.catalog_id, 0),
+                )
             )
-        except Exception as exc:  # noqa: BLE001 — surface 502 with reason
-            from nightcrate.catalog_loader.vizier import NoVizierSource
+    return statuses
 
+
+def _preview_catalog_removal(catalog_id: str) -> RemovalPreview:
+    from nightcrate.catalog_loader.loader import prepare_removal_step
+    from nightcrate.catalog_loader.reconcile import apply_object_set
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+
+    with sqlite3.connect(str(get_db_path())) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        plan = prepare_removal_step(conn, user_catalogs_root(), catalog_id)
+        if plan.deferred_reason is not None or plan.preparation_error is not None:
+            return RemovalPreview(
+                objects_removed=0,
+                objects_kept=0,
+                blocked_reason=plan.deferred_reason or plan.preparation_error,
+            )
+        if not plan.run or plan.object_set is None:
+            return RemovalPreview(objects_removed=0, objects_kept=0, blocked_reason=None)
+        removed_catalogs = frozenset(
+            item for item, state in plan.effective.items() if state == "removed"
+        )
+        report = apply_object_set(
+            conn,
+            plan.object_set,
+            (),
+            removed_catalogs=removed_catalogs,
+            dry_run=True,
+        )
+        return RemovalPreview(
+            objects_removed=report.deleted,
+            objects_kept=report.kept_linked,
+            blocked_reason=None,
+        )
+
+
+@router.get(
+    "/catalogs/optional/{catalog_id}/removal-preview",
+    response_model=RemovalPreview,
+)
+async def optional_catalog_removal_preview(catalog_id: str) -> RemovalPreview:
+    _require_optional_catalog(catalog_id)
+    current = catalog_progress.snapshot()
+    if current is not None and current["outcome"] is None:
+        raise HTTPException(status_code=409, detail="Another catalog update is running.")
+    return _preview_catalog_removal(catalog_id)
+
+
+@router.post("/catalogs/optional/{catalog_id}/add")
+async def add_optional_catalog(catalog_id: str) -> dict:
+    """Download (when needed), select, and load one optional catalog."""
+    from nightcrate.catalog_loader.catalog_choice import read_choice, with_added, write_choice
+    from nightcrate.catalog_loader.registry import user_catalogs_root
+    from nightcrate.catalog_loader.vizier import NoVizierSource, fetch_vizier_tables
+
+    catalog = _require_optional_catalog(catalog_id)
+    _require_configured_database()
+    catalogs_root = user_catalogs_root()
+    with _CatalogAction("add_catalog", source=catalog_id) as action:
+        results = []
+        if catalog.kind == "vizier":
+            try:
+                results = await fetch_vizier_tables(
+                    catalog.fetch_specs,
+                    catalogs_root,
+                    action.progress,
+                    catalog_id=catalog_id,
+                )
+            except NoVizierSource as exc:
+                logger.warning("[catalogs] %s", exc)
+                if exc.part_count > 1 and exc.table_display_name is not None:
+                    summary = exc.summary[:1].upper() + exc.summary[1:]
+                    detail = (
+                        f"Couldn't download {catalog.display_name}: part {exc.part_index} "
+                        f"of {exc.part_count}, {exc.table_display_name}. {summary}."
+                    )
+                else:
+                    detail = f"Couldn't download {catalog.display_name}: {exc.summary}."
+                action.detail = detail
+                action.message = "Download failed: no mirror had a usable copy."
+                raise HTTPException(status_code=502, detail=detail) from exc
+            except Exception as exc:  # noqa: BLE001 — translate fetch/publication failures
+                action.detail = str(exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to download {catalog.display_name} from VizieR: {exc}",
+                ) from exc
+        try:
+            write_choice(catalogs_root, with_added(read_choice(catalogs_root), catalog_id))
+        except Exception as exc:  # noqa: BLE001 — router owns the 500 boundary
+            logger.exception("[catalogs] failed to save optional catalog choice")
             action.detail = str(exc)
-            if isinstance(exc, NoVizierSource):
-                action.message = "No VizieR source returned usable data."
             raise HTTPException(
-                status_code=502,
-                detail=f"Failed to download {spec.display_name} from VizieR: {exc}",
+                status_code=500, detail="Could not save the catalog choice."
             ) from exc
 
         action.loading()
         summary = _run_loader(force=False)
-        display_name = "Sharpless" if source_id == "sharpless" else "Barnard"
-        action.complete(summary, {spec.source_id}, display_name)
+        action.complete(summary, set(catalog.source_ids), catalog.display_name)
         return {
-            "source_id": spec.source_id,
-            "fetched_at": result.fetched_at,
-            "size_bytes": result.size_bytes,
+            "fetched_at": results[-1].fetched_at if results else None,
+            "size_bytes": sum(result.size_bytes for result in results),
             **_summary_to_dict(summary),
+        }
+
+
+@router.post("/catalogs/optional/{catalog_id}/remove")
+async def remove_optional_catalog(catalog_id: str) -> dict:
+    """Remove one optional catalog while preserving user-linked objects."""
+    from nightcrate.catalog_loader.catalog_choice import (
+        effective_state,
+        read_choice,
+        with_removed,
+        write_choice,
+    )
+    from nightcrate.catalog_loader.registry import (
+        OPTIONAL_CATALOGS,
+        user_catalogs_root,
+    )
+    from nightcrate.catalog_loader.vizier import remove_vizier_files
+
+    catalog = _require_optional_catalog(catalog_id)
+    _require_configured_database()
+    catalogs_root = user_catalogs_root()
+    with _CatalogAction("remove_catalog", source=catalog_id) as action:
+        preview = _preview_catalog_removal(catalog_id)
+        if preview.blocked_reason is not None:
+            action.detail = preview.blocked_reason
+            action.message = "Catalog removal is blocked."
+            raise HTTPException(status_code=409, detail=preview.blocked_reason)
+
+        choice = with_removed(read_choice(catalogs_root), catalog_id)
+        try:
+            write_choice(catalogs_root, choice)
+            if catalog.kind == "vizier":
+                with sqlite3.connect(str(get_db_path())) as conn:
+                    applied = _catalog_applied_states(conn)
+                shared_files: set[str] = set()
+                own_files = {spec.output_filename for spec in catalog.fetch_specs}
+                for other in OPTIONAL_CATALOGS:
+                    if other.catalog_id == catalog_id:
+                        continue
+                    if effective_state(choice, other, applied.get(other.catalog_id)) != "on":
+                        continue
+                    shared_files.update(
+                        own_files & {spec.output_filename for spec in other.fetch_specs}
+                    )
+                remove_vizier_files(
+                    catalog_id,
+                    own_files,
+                    catalogs_root,
+                    keep_files=shared_files,
+                )
+        except Exception as exc:  # noqa: BLE001 — router owns the 500 boundary
+            logger.exception("[catalogs] failed to remove optional catalog files")
+            action.detail = str(exc)
+            raise HTTPException(status_code=500, detail="Could not remove the catalog.") from exc
+
+        action.loading()
+        summary = _run_loader(force=False)
+        action.complete(
+            summary,
+            set(catalog.source_ids),
+            catalog.display_name,
+            success_message=f"{catalog.display_name} removed.",
+            allow_skipped=True,
+        )
+        return {
+            **_summary_to_dict(summary),
+            "objects_removed": summary.objects_removed,
+            "objects_kept": summary.objects_kept,
         }
 
 
