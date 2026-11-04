@@ -17,7 +17,7 @@ def _apply_through_0065(db_path: Path) -> None:
         migrations = read_migrations(str(MIGRATIONS_DIR))
         backend.apply_migrations(
             backend.to_apply(migrations).filter(
-                lambda migration: migration.id != "0066.more_catalogs"
+                lambda migration: migration.id <= "0065.project_solve_solver"
             )
         )
 

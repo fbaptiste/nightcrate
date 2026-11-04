@@ -1,8 +1,7 @@
 """NightCrate DSO augmentation CSV loader.
 
-Applies editorial overrides on top of the base OpenNGC + VizieR data:
+Applies editorial enrichment on top of the base OpenNGC + VizieR data:
 
-- ``common_name_override`` replaces ``dso.common_name`` unconditionally.
 - ``surface_brightness`` fills non-galaxy DSOs only (galaxy surface
   brightness uses OpenNGC's different methodology and is authoritative).
 - ``distance_pc`` fills ``dso.distance_pc`` with
@@ -119,16 +118,15 @@ def load_augment(
     try:
         conn.execute("BEGIN")
 
-        # Reset augmentation flags on reload so removing a row from the CSV
-        # also removes its flags. Curated distances are cleared too; the
-        # loader re-sets them from the fresh CSV below.
+        # Reset the surface-brightness flag on reload so removing a row from
+        # the CSV also removes its flag. Curated distances are cleared too;
+        # the loader re-sets them from the fresh CSV below.
         cur.execute(
             """
             UPDATE dso
-            SET common_name_augmented = 0,
-                surface_brightness_augmented = 0
+            SET surface_brightness_augmented = 0
             WHERE active = 1
-              AND (common_name_augmented = 1 OR surface_brightness_augmented = 1)
+              AND surface_brightness_augmented = 1
             """,
         )
         cur.execute(
@@ -164,17 +162,11 @@ def load_augment(
                 continue
             dso_id, obj_type = resolved
 
-            name_override = row.get("common_name_override") or None
             sb = maybe_float(row.get("surface_brightness"))
             distance_pc = maybe_float(row.get("distance_pc"))
 
             updates: list[str] = []
             params: list = []
-
-            if name_override:
-                updates.append("common_name = ?")
-                params.append(name_override)
-                updates.append("common_name_augmented = 1")
 
             if sb is not None:
                 if obj_type in GALAXY_TYPES:

@@ -42,6 +42,7 @@ import { displayDsoType, dsoTypeColor } from "@/lib/dsoTypeNames";
 import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import { ScoreChip } from "./ScoreChip";
 import ThumbnailCell from "./ThumbnailCell";
+import NameWithAlternates from "@/components/common/NameWithAlternates";
 
 interface Props {
   item: PlannerTargetItem;
@@ -223,7 +224,7 @@ export default function PlannerTargetCard({
               </Typography>
               {item.common_name && (
                 <Typography variant="body2" color="text.secondary">
-                  {item.common_name}
+                  <NameWithAlternates name={item.common_name} otherNames={item.other_names} />
                 </Typography>
               )}
               <Chip

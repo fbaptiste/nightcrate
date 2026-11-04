@@ -11,6 +11,7 @@ import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import { fetchDsos } from "@/api/dsos";
 import type { DsoListItem } from "@/api/dsos";
+import NameWithAlternates from "@/components/common/NameWithAlternates";
 
 interface Props {
   open: boolean;
@@ -61,7 +62,15 @@ export default function AddTargetDialog({ open, onClose, onSelect, excludeDsoIds
               <Box>
                 <Typography variant="body2">
                   {option.primary_designation}
-                  {option.common_name ? ` — ${option.common_name}` : ""}
+                  {option.common_name && (
+                    <>
+                      {" — "}
+                      <NameWithAlternates
+                        name={option.common_name}
+                        otherNames={option.other_names}
+                      />
+                    </>
+                  )}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {option.obj_type}

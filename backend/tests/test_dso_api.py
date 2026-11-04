@@ -90,6 +90,16 @@ async def _insert_sort_dso(
     return dso_id
 
 
+async def _set_other_names(dso_id: int, *names: str) -> None:
+    async with get_db() as conn:
+        await conn.execute("DELETE FROM dso_other_name WHERE dso_id = ?", (dso_id,))
+        await conn.executemany(
+            "INSERT INTO dso_other_name (dso_id, name, position) VALUES (?, ?, ?)",
+            ((dso_id, name, position) for position, name in enumerate(names, start=1)),
+        )
+        await conn.commit()
+
+
 @pytest.fixture
 async def dso_loaded_with_emission_types(dso_loaded):
     _ = dso_loaded
@@ -142,8 +152,8 @@ async def grouped_dsos(dso_loaded):
 
         arp_cursor = await conn.execute(
             """
-            INSERT INTO dso_group (catalog, identifier, display_form, search_key)
-            VALUES ('arp', '244', 'Arp 244', 'arp244')
+            INSERT INTO dso_group (catalog, identifier, display_form, search_key, common_name)
+            VALUES ('arp', '244', 'Arp 244', 'arp244', 'Antennae Galaxies')
             """
         )
         loop_cursor = await conn.execute(
@@ -184,6 +194,56 @@ async def test_list_returns_all_loaded_dsos(client, dso_loaded):
     assert body["limit"] == 100
     assert body["offset"] == 0
     assert len(body["items"]) == 11
+
+
+@pytest.mark.anyio
+async def test_lists_return_other_names(client, dso_loaded):
+    named_id = await _insert_sort_dso(
+        "M 76",
+        marker="list-other-names",
+        common_name="Little Dumbbell Nebula",
+    )
+    empty_id = await _insert_sort_dso("NGC 7001", marker="list-no-other-names")
+    await _set_other_names(named_id, "Cork Nebula", "Barbell Nebula")
+
+    response = await client.get("/api/dso", params={"limit": 500})
+    assert response.status_code == 200
+    by_id = {item["id"]: item for item in response.json()["items"]}
+    assert by_id[named_id]["other_names"] == ["Cork Nebula", "Barbell Nebula"]
+    assert by_id[empty_id]["other_names"] == []
+
+
+@pytest.mark.anyio
+async def test_detail_returns_other_names(client, dso_loaded):
+    dso_id = await _insert_sort_dso(
+        "M 76",
+        marker="detail-other-names",
+        common_name="Little Dumbbell Nebula",
+    )
+    await _set_other_names(dso_id, "Cork Nebula", "Barbell Nebula")
+
+    response = await client.get(f"/api/dso/{dso_id}")
+
+    assert response.status_code == 200
+    assert response.json()["other_names"] == ["Cork Nebula", "Barbell Nebula"]
+
+
+@pytest.mark.anyio
+async def test_part_of_shape_in_list_and_detail(client, grouped_dsos):
+    dso_id = grouped_dsos["ngc4038"]
+    expected = {
+        "display_form": "Arp 244",
+        "whole_dso_id": None,
+        "common_name": "Antennae Galaxies",
+    }
+
+    listed = await client.get("/api/dso", params={"q": "NGC 4038"})
+    detail = await client.get(f"/api/dso/{dso_id}")
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["part_of"] == [expected]
+    assert detail.status_code == 200
+    assert detail.json()["part_of"] == [expected]
 
 
 @pytest.mark.anyio
@@ -266,6 +326,45 @@ async def test_list_search_matches_common_name(client, dso_loaded):
     resp = await client.get("/api/dso?q=Orion Nebula")
     items = resp.json()["items"]
     assert any(i["primary_designation"] == "M 42" for i in items)
+
+
+@pytest.mark.anyio
+async def test_search_matches_other_name(client, dso_loaded):
+    dso_id = await _insert_sort_dso(
+        "M 76",
+        marker="other-name-search",
+        common_name="Little Dumbbell Nebula",
+        designations=(("messier", "76", "M 76", True),),
+    )
+    await _set_other_names(dso_id, "Cork Nebula", "Barbell Nebula")
+
+    response = await client.get("/api/dso", params={"q": "Cork"})
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [dso_id]
+
+
+@pytest.mark.anyio
+async def test_search_matches_group_name(client, grouped_dsos):
+    response = await client.get("/api/dso", params={"q": "Antennae"})
+
+    assert response.status_code == 200
+    assert {item["id"] for item in response.json()["items"]} == {
+        grouped_dsos["ngc4038"],
+        grouped_dsos["ngc4039"],
+    }
+
+
+@pytest.mark.anyio
+async def test_search_matches_group_whole_other_name(client, grouped_dsos):
+    await _set_other_names(grouped_dsos["loop"], "Cirrus Nebula")
+
+    response = await client.get("/api/dso", params={"q": "Cirrus"})
+
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()["items"]}
+    assert grouped_dsos["loop"] in ids
+    assert grouped_dsos["veil"] in ids
 
 
 @pytest.mark.anyio
@@ -1056,12 +1155,13 @@ async def test_lookup_endpoint_includes_external_refs(client, dso_loaded_with_wi
 
 
 @pytest.mark.anyio
-async def test_detail_google_links_use_primary_and_first_common_name(client, dso_loaded):
+async def test_google_link_uses_preferred_name(client, dso_loaded):
     dso_id = await _insert_sort_dso(
         "NGC 7000",
         marker="google-common-name",
-        common_name="North America Nebula, Caldwell 20",
+        common_name="North America Nebula",
     )
+    await _set_other_names(dso_id, "Caldwell 20")
 
     detail = (await client.get(f"/api/dso/{dso_id}")).json()
     refs = detail["external_refs"]
@@ -1124,7 +1224,13 @@ async def test_detail_returns_part_of_and_parts(client, grouped_dsos):
     member = (await client.get(f"/api/dso/{grouped_dsos['ngc4038']}")).json()
     whole = (await client.get(f"/api/dso/{grouped_dsos['loop']}")).json()
 
-    assert member["part_of"] == [{"display_form": "Arp 244", "whole_dso_id": None}]
+    assert member["part_of"] == [
+        {
+            "display_form": "Arp 244",
+            "whole_dso_id": None,
+            "common_name": "Antennae Galaxies",
+        }
+    ]
     assert member["parts"] == []
     assert whole["part_of"] == []
     assert whole["parts"] == [{"dso_id": grouped_dsos["veil"], "display_designation": "NGC 6960"}]
@@ -1148,7 +1254,17 @@ async def test_group_catalog_filter_displays_group_names_in_natural_order(client
         grouped_dsos["ngc4038"],
         grouped_dsos["ngc4039"],
     }
-    assert all(item["part_of"] == ["Arp 244"] for item in items[1:])
+    assert all(
+        item["part_of"]
+        == [
+            {
+                "display_form": "Arp 244",
+                "whole_dso_id": None,
+                "common_name": "Antennae Galaxies",
+            }
+        ]
+        for item in items[1:]
+    )
 
 
 @pytest.mark.anyio

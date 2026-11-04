@@ -71,6 +71,7 @@ class PlannerTargetItem(BaseModel):
     dso_id: int
     primary_designation: str
     common_name: str | None
+    other_names: list[str]
     obj_type: str
     ra_deg: float | None
     dec_deg: float | None

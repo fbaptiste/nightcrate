@@ -1,4 +1,4 @@
-# DSO catalog architecture (v0.44.0)
+# DSO catalog architecture (v0.45.0)
 
 ## Object identity and reloads
 
@@ -319,12 +319,42 @@ collapse, and a group left with no members isn't written. Both tables are
 catalog-derived and rebuilt in each step.
 
 In the API (`api/dso.py`, shared with the planner):
-- a search for a group's name, or for its whole's designation or common name,
+- a search for a group's designation or name, or for its whole's designation
+  or any of its names,
   returns the members;
 - catalog filters and facet counts include group members. A member with no
   name of its own in the selected catalogs displays the group's name;
 - the detail panels show "Part of" and "Includes" chips, and the catalog table
   shows "Part of" pills before the other names.
+
+## Common names
+
+`build_object_set` decides every object's names in one place, after every
+designation claim has settled (`catalog_loader/common_names.py`):
+
+1. **Catalog names:**
+   - the entry's own names (OpenNGC "Common names", Barnard "Names", the
+     Melotte list), split on commas;
+   - then the names of every entry merged into it (an OpenNGC duplicate,
+     the Barnard and Sharpless cross-references, rule R merges), ordered by
+     source precedence and then by row order;
+   - duplicates are dropped case-insensitively.
+2. **NightCrate's reviewed list**
+   (`data/catalogs/nightcrate/common_names.csv`, columns
+   `designation,target,name,action,rank,sources,verified,notes`):
+   - for a listed object, its `name` rows come first in rank order, then the
+     catalog names it doesn't repeat, less its `remove` rows;
+   - `target=group` rows name a group that has no object of its own and
+     resolve only against groups.
+3. The first name becomes `dso.common_name`, and the rest go to
+   `dso_other_name` in order. `common_name_augmented` is 1 exactly for
+   listed objects.
+
+The list is an editorial object input: when it changes, the object step
+reruns. It adds no `dso_source_entry` rows. Each `name` row cites at least
+two independent sources (see the development decisions); the validator
+rejects bad ranks, commas, single-source rows, and a name given to two
+targets. Rows for optional catalogs that are off are skipped at DEBUG.
 
 ## Match screen
 
@@ -370,13 +400,15 @@ cross-checks:
    Wolf-Rayet narrow-band v, ACO's tenth-brightest-member `m10`, the LDN area.
    Melotte's new clusters store twice Hunt & Reffert's half-member radius as
    their size, labelled in the list's notes.
-4. **Reviewed aliases and parts:** `assign` overrides without a loaded entry
-   add their names, then `dso_parts.csv` adds its groups.
+4. **Reviewed aliases, parts and names:** `assign` overrides without a
+   loaded entry add their designations, whatever the catalog (M 102 → NGC 5866
+   since v0.45.0); an OpenNGC duplicate row follows an `assign` override on
+   its own designation. Then `dso_parts.csv` adds its groups, and
+   `common_names.csv` sets names (see [Common names](#common-names)).
 5. **NightCrate editorial augmentation**
    (`data/catalogs/nightcrate/dso_augment.csv`, loaded by
    `catalog_loader/augment_loader.py`) refines fields on existing DSOs:
-   it replaces `common_name`, fills `surface_brightness` on non-galaxy
-   DSOs only, and sets `distance_pc` with `distance_method = 'curated'`.
+   it fills `surface_brightness` on non-galaxy DSOs only, and sets `distance_pc` with `distance_method = 'curated'`.
    Unresolved designations are logged at WARNING and skipped — the file
    enriches known objects, not creates new ones. A row whose designation
    belongs to an optional catalog that isn't on logs at DEBUG instead.

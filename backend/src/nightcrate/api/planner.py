@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from nightcrate.api.dso import dso_search_clause
+from nightcrate.api.dso import _load_other_names, dso_search_clause
 from nightcrate.api.planner_models import (
     AnnualHoursPoint as AnnualHoursPointOut,
 )
@@ -1000,6 +1000,7 @@ async def list_targets(
                     dso_id=candidate.dso_id,
                     primary_designation=candidate.primary_designation,
                     common_name=candidate.common_name,
+                    other_names=[],
                     obj_type=candidate.obj_type,
                     ra_deg=candidate.ra_deg,
                     dec_deg=candidate.dec_deg,
@@ -1072,6 +1073,7 @@ async def list_targets(
                 page_dso_ids,
             )
             fetched_designations = await designation_rows.fetchall()
+            other_names_by_dso = await _load_other_names(conn, page_dso_ids)
 
         wikipedia_by_dso: dict[int, tuple[str | None, str | None]] = {}
         for row in fetched_wiki:
@@ -1096,6 +1098,7 @@ async def list_targets(
                 item.wikipedia_url = url
                 item.wikipedia_label = label
             item.designations = designations_by_dso.get(item.dso_id, [])
+            item.other_names = other_names_by_dso.get(item.dso_id, [])
 
     return PlannerTargetsResponse(
         location=location_summary,

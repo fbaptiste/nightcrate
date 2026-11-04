@@ -60,6 +60,7 @@ class FavoriteDsoSummary(BaseModel):
     active: bool
     primary_designation: str
     common_name: str | None
+    other_names: list[str]
     obj_type: str
     constellation: str | None
     ra_deg: float | None
@@ -151,6 +152,7 @@ class PlanResponse(BaseModel):
     dso_id: int
     primary_designation: str
     common_name: str | None
+    other_names: list[str]
     location_id: int
     location_name: str
     horizon_id: int
@@ -182,6 +184,7 @@ class CalendarTargetRow(BaseModel):
     active: bool
     primary_designation: str
     common_name: str | None
+    other_names: list[str]
     plan_id: int
     date_ranges: list[DateRangeOut]
     notes: str | None

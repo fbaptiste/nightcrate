@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 import sqlite3
 from pathlib import Path
@@ -10,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from nightcrate.catalog_loader import load_catalogs, registry
+from nightcrate.catalog_loader.catalog_choice import CatalogChoice, write_choice
+from nightcrate.catalog_loader.hash import file_sha256
 from nightcrate.catalog_loader.loader import (
     LEGACY_OTHER_NAMES,
     SourceResult,
@@ -698,6 +701,47 @@ def test_missing_loaded_source_defers_object_step(db, catalogs_root):
     assert "barnard_VII_220.tsv" in (result.error or "")
 
 
+def test_missing_loaded_augment_does_not_defer_object_step(
+    db, catalogs_root, monkeypatch, tmp_path
+):
+    from nightcrate.catalog_loader import reconcile
+
+    isolated = tmp_path / "nightcrate"
+    package_data = Path(registry.__file__).parent.parent / "data" / "catalogs" / "nightcrate"
+    shutil.copytree(package_data, isolated)
+    monkeypatch.setattr(registry, "_nightcrate_dir", lambda: isolated)
+    load_catalogs(db, catalogs_root)
+
+    (isolated / "dso_augment.csv").unlink()
+    with (catalogs_root / "openngc" / "NGC.csv").open("a", encoding="utf-8") as stream:
+        stream.write("\n")
+
+    real_apply = reconcile.apply_object_set
+    calls = 0
+
+    def recording_apply(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(reconcile, "apply_object_set", recording_apply)
+    summary = load_catalogs(db, catalogs_root)
+
+    object_source_ids = {*reconcile.OBJECT_SOURCE_IDS, *reconcile.EDITORIAL_OBJECT_SOURCE_IDS}
+    assert calls == 1
+    assert all(
+        "object step deferred" not in (result.error or "")
+        for result in summary.results
+        if result.source_id in object_source_ids
+    )
+    assert (
+        next(
+            result for result in summary.results if result.source_id == "nightcrate_augment"
+        ).status
+        == "missing"
+    )
+
+
 def test_deferred_object_step_still_applies_wikidata_change(db, catalogs_root):
     vizier = catalogs_root / "vizier"
     wikidata = catalogs_root / "wikidata"
@@ -738,7 +782,7 @@ def test_deferred_object_step_still_applies_wikidata_change(db, catalogs_root):
     )
 
 
-def test_changed_augment_waits_for_deferred_object_step(db, catalogs_root):
+def test_changed_augment_runs_while_object_step_is_deferred(db, catalogs_root):
     vizier = catalogs_root / "vizier"
     wikidata = catalogs_root / "wikidata"
     vizier.mkdir()
@@ -777,7 +821,7 @@ def test_changed_augment_waits_for_deferred_object_step(db, catalogs_root):
         db.execute(
             "SELECT file_hash FROM dso_catalog_source WHERE source_id='nightcrate_augment'"
         ).fetchone()[0]
-        == "old-augment"
+        != "old-augment"
     )
     assert tuple(
         db.execute(
@@ -796,13 +840,13 @@ def test_changed_augment_waits_for_deferred_object_step(db, catalogs_root):
     resumed = load_catalogs(db, catalogs_root)
 
     assert next(result for result in resumed.results if result.source_id == "openngc").status == (
-        "loaded"
+        "unchanged"
     )
     assert (
         next(
             result for result in resumed.results if result.source_id == "nightcrate_augment"
         ).status
-        == "loaded"
+        == "unchanged"
     )
     assert (
         db.execute(
@@ -814,7 +858,7 @@ def test_changed_augment_waits_for_deferred_object_step(db, catalogs_root):
         db.execute(
             "SELECT common_name, common_name_augmented FROM dso WHERE primary_designation='M 42'"
         ).fetchone()
-    ) == ("Orion Nebula", 1)
+    ) == ("Sentinel", 1)
 
 
 def test_object_step_failure_does_not_escape_and_enrichment_continues(db, catalogs_root):
@@ -888,7 +932,7 @@ def test_invalidated_augment_does_not_run_object_step(db, catalogs_root, monkeyp
     )
 
 
-def test_augment_change_runs_object_step(db, catalogs_root, monkeypatch):
+def test_augment_change_does_not_run_object_step(db, catalogs_root, monkeypatch):
     from nightcrate.catalog_loader import reconcile
 
     load_catalogs(db, catalogs_root)
@@ -907,8 +951,12 @@ def test_augment_change_runs_object_step(db, catalogs_root, monkeypatch):
 
     monkeypatch.setattr(reconcile, "apply_object_set", recording_apply)
     summary = load_catalogs(db, catalogs_root)
-    assert calls == 1
-    assert next(row for row in summary.results if row.source_id == "openngc").status == "loaded"
+    assert calls == 0
+    assert next(row for row in summary.results if row.source_id == "openngc").status == "unchanged"
+    assert (
+        next(row for row in summary.results if row.source_id == "nightcrate_augment").status
+        == "loaded"
+    )
 
 
 def test_failed_enrichment_reruns_next_load(db, catalogs_root, monkeypatch):
@@ -962,7 +1010,7 @@ def test_raised_enrichment_reruns_next_load(db, catalogs_root, monkeypatch):
     )
 
 
-def test_exception_after_object_commit_defers_augment_until_retry(db, catalogs_root, monkeypatch):
+def test_exception_after_object_commit_does_not_defer_augment(db, catalogs_root, monkeypatch):
     from nightcrate.catalog_loader import reconcile
 
     real_apply = reconcile.apply_object_set
@@ -976,7 +1024,7 @@ def test_exception_after_object_commit_defers_augment_until_retry(db, catalogs_r
     assert next(row for row in first.results if row.source_id == "openngc").status == "failed"
     assert (
         next(row for row in first.results if row.source_id == "nightcrate_augment").status
-        == "skipped"
+        == "loaded"
     )
     monkeypatch.setattr(reconcile, "apply_object_set", real_apply)
 
@@ -985,7 +1033,7 @@ def test_exception_after_object_commit_defers_augment_until_retry(db, catalogs_r
     assert next(row for row in summary.results if row.source_id == "openngc").status == "unchanged"
     assert (
         next(row for row in summary.results if row.source_id == "nightcrate_augment").status
-        == "loaded"
+        == "unchanged"
     )
 
 
@@ -1064,6 +1112,84 @@ def test_nothing_changed_runs_only_redshift(db, catalogs_root, monkeypatch):
     monkeypatch.setattr(redshift_distance, "apply_redshift_distances", recording_redshift)
     load_catalogs(db, catalogs_root)
     assert redshift_calls == 1
+
+
+def test_changed_nightcrate_files_update_stored_licenses_once(
+    db, catalogs_root, monkeypatch, tmp_path
+):
+    from nightcrate.catalog_loader import reconcile
+
+    isolated = tmp_path / "nightcrate"
+    package_data = Path(registry.__file__).parent.parent / "data" / "catalogs" / "nightcrate"
+    shutil.copytree(package_data, isolated)
+    licensed_files = (
+        "arp_members.csv",
+        "common_names.csv",
+        "dso_augment.csv",
+        "dso_external_refs.csv",
+        "dso_match_overrides.csv",
+        "dso_parts.csv",
+        "melotte.csv",
+    )
+    gpl_header = "GPL-3.0-or-later (see LICENSE at the repository root)."
+    for filename in licensed_files:
+        path = isolated / filename
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(gpl_header, "MIT licensed.", 1),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(registry, "_nightcrate_dir", lambda: isolated)
+
+    vizier = catalogs_root / "vizier"
+    vizier.mkdir()
+    arp_path = vizier / "arp_VII_192.tsv"
+    shutil.copy(FIXTURES / "vizier" / "mini_arp.tsv", arp_path)
+    (vizier / "version.json").write_text(
+        json.dumps({"files": {arp_path.name: {"sha256": file_sha256(arp_path)}}}),
+        encoding="utf-8",
+    )
+    write_choice(
+        catalogs_root,
+        CatalogChoice(frozenset({"arp", "melotte"}), frozenset()),
+    )
+
+    load_catalogs(db, catalogs_root)
+    persisted_ids = {
+        "nightcrate_arp_members",
+        "nightcrate_common_names",
+        "nightcrate_augment",
+        "nightcrate_external_refs",
+        "nightcrate_match_overrides",
+        "nightcrate_melotte",
+        "nightcrate_parts",
+    }
+    db.execute("UPDATE dso_catalog_source SET license='MIT' WHERE source_id LIKE 'nightcrate_%'")
+    db.commit()
+
+    for filename in licensed_files:
+        path = isolated / filename
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("MIT licensed.", gpl_header, 1),
+            encoding="utf-8",
+        )
+
+    load_catalogs(db, catalogs_root)
+
+    stored = {
+        str(row["source_id"]): str(row["license"])
+        for row in db.execute(
+            "SELECT source_id, license FROM dso_catalog_source WHERE source_id LIKE 'nightcrate_%'"
+        )
+    }
+    assert stored == dict.fromkeys(persisted_ids, "GPL-3.0-or-later")
+    assert "nightcrate_sharpless_crossref" not in stored
+    assert "nightcrate_barnard_crossref" not in stored
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("object step repeated")
+
+    monkeypatch.setattr(reconcile, "apply_object_set", unexpected)
+    load_catalogs(db, catalogs_root)
 
 
 def test_all_merged_sharpless_missing_blocks(db, catalogs_root):

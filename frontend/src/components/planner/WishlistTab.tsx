@@ -73,6 +73,7 @@ import PlanSparkline from "./PlanSparkline";
 import ThumbnailCell from "./ThumbnailCell";
 import WishlistCalendarView from "./WishlistCalendarView";
 import NotListedTag from "@/components/dso/NotListedTag";
+import NameWithAlternates from "@/components/common/NameWithAlternates";
 
 type SubView = "list" | "calendar";
 
@@ -448,7 +449,10 @@ export default function WishlistTab() {
                         </Typography>
                         {activeItem.dso.common_name && (
                           <Typography variant="body2" color="text.secondary">
-                            {activeItem.dso.common_name}
+                            <NameWithAlternates
+                              name={activeItem.dso.common_name}
+                              otherNames={activeItem.dso.other_names}
+                            />
                           </Typography>
                         )}
                       </Stack>
@@ -744,7 +748,7 @@ function FavoriteCard({
             </Typography>
             {dso.common_name && (
               <Typography variant="body2" color="text.secondary">
-                {dso.common_name}
+                <NameWithAlternates name={dso.common_name} otherNames={dso.other_names} />
               </Typography>
             )}
             <Chip

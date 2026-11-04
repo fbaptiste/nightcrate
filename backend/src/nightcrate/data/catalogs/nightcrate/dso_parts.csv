@@ -1,4 +1,4 @@
-# NightCrate "part of" list. MIT licensed.
+# NightCrate "part of" list. GPL-3.0-or-later (see LICENSE at the repository root).
 # Each row makes part_designation a part of whole_designation. A row is used
 # only when both designations resolve to loaded objects.
 # Rows are reviewed against SIMBAD and the source catalogs.

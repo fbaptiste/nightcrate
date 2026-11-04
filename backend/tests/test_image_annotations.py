@@ -188,6 +188,7 @@ class TestProjectDsos:
                 "min_axis_arcmin": 5.0,
                 "position_angle_deg": 0.0,
                 "common_name": "Test",
+                "other_names": ["Test Nebula", "Example Nebula"],
                 "constellation": "Ori",
                 "distance_pc": None,
                 "distance_method": None,
@@ -201,6 +202,7 @@ class TestProjectDsos:
         assert r.pixel_y == pytest.approx(500, abs=1)
         assert r.ellipse_semi_major_px is not None
         assert r.ellipse_semi_major_px > 0
+        assert r.other_names == ["Test Nebula", "Example Nebula"]
 
     def test_dso_outside_fov_excluded(self):
         dsos = [

@@ -80,7 +80,12 @@ def _external_ref_sort_key(provider: str) -> tuple[int, str]:
 
 
 def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
-    """Return the shared designation/common-name/group search fragment."""
+    """Return the shared designation/name/group search fragment.
+
+    Parameter order is direct designations, preferred name, other name,
+    group designation, whole designation, whole preferred name, group name,
+    then whole other name.
+    """
     search_prefixes = designation_search_prefixes(q)
     designation_match = " OR ".join("search_key LIKE ?" for _prefix in search_prefixes)
     common_name = f"%{q.lower()}%"
@@ -90,6 +95,11 @@ def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
                 SELECT dso_id FROM dso_designation WHERE {designation_match}
             )
             OR LOWER({alias}.common_name) LIKE ?
+            OR EXISTS (
+                SELECT 1 FROM dso_other_name direct_name
+                WHERE direct_name.dso_id = {alias}.id
+                  AND LOWER(direct_name.name) LIKE ?
+            )
             OR EXISTS (
                 SELECT 1
                 FROM dso_group_member gm
@@ -102,6 +112,12 @@ def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
                           SELECT dso_id FROM dso_designation WHERE {designation_match}
                       )
                       OR LOWER(whole.common_name) LIKE ?
+                      OR LOWER(g.common_name) LIKE ?
+                      OR EXISTS (
+                          SELECT 1 FROM dso_other_name whole_name
+                          WHERE whole_name.dso_id = g.whole_dso_id
+                            AND LOWER(whole_name.name) LIKE ?
+                      )
                   )
             )
         )
@@ -110,8 +126,11 @@ def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
     return clause, [
         *prefix_params,
         common_name,
+        common_name,
         *prefix_params,
         *prefix_params,
+        common_name,
+        common_name,
         common_name,
     ]
 
@@ -156,8 +175,7 @@ async def _load_external_refs(conn, dso_id: int) -> list[ExternalRef]:
 
 def _search_refs(primary_designation: str, common_name: str | None) -> list[ExternalRef]:
     """Return request-only Google links for a DSO's display name."""
-    first_common_name = common_name.split(",", maxsplit=1)[0].strip() if common_name else ""
-    query = " ".join(part for part in (primary_designation, first_common_name) if part)
+    query = " ".join(part for part in (primary_designation, common_name) if part)
     encoded_query = quote_plus(query)
     return [
         ExternalRef(
@@ -206,6 +224,26 @@ async def _load_designations(conn, dso_ids: list[int]) -> dict[int, list[DsoDesi
     return grouped
 
 
+async def _load_other_names(conn, dso_ids: list[int]) -> dict[int, list[str]]:
+    """Fetch ordered alternate names for a bounded result set."""
+    if not dso_ids:
+        return {}
+    placeholders = ",".join("?" * len(dso_ids))
+    cursor = await conn.execute(
+        f"""
+        SELECT dso_id, name
+        FROM dso_other_name
+        WHERE dso_id IN ({placeholders})
+        ORDER BY dso_id, position
+        """,  # noqa: S608  # nosec B608 - bounded validated integer ids
+        dso_ids,
+    )
+    grouped: dict[int, list[str]] = {dso_id: [] for dso_id in dso_ids}
+    for row in await cursor.fetchall():
+        grouped[int(row["dso_id"])].append(str(row["name"]))
+    return grouped
+
+
 async def _load_group_refs(conn, dso_ids: list[int]) -> dict[int, list[DsoGroupRef]]:
     """Fetch group memberships for the bounded list/detail result set."""
     if not dso_ids:
@@ -214,7 +252,7 @@ async def _load_group_refs(conn, dso_ids: list[int]) -> dict[int, list[DsoGroupR
     placeholders = ",".join("?" * len(dso_ids))
     cursor = await conn.execute(
         f"""
-        SELECT gm.dso_id, g.display_form, g.whole_dso_id
+        SELECT gm.dso_id, g.display_form, g.whole_dso_id, g.common_name
         FROM dso_group_member gm
         JOIN dso_group g ON g.id = gm.group_id
         WHERE gm.dso_id IN ({placeholders})
@@ -228,6 +266,7 @@ async def _load_group_refs(conn, dso_ids: list[int]) -> dict[int, list[DsoGroupR
             DsoGroupRef(
                 display_form=row["display_form"],
                 whole_dso_id=row["whole_dso_id"],
+                common_name=row["common_name"],
             )
         )
     return grouped
@@ -403,6 +442,7 @@ async def list_dsos(
 
         dso_ids = [row["id"] for row in rows]
         designations = await _load_designations(conn, dso_ids)
+        other_names = await _load_other_names(conn, dso_ids)
         group_refs = await _load_group_refs(conn, dso_ids)
 
         items = [
@@ -421,8 +461,9 @@ async def list_dsos(
                 distance_pc=row["distance_pc"],
                 distance_method=row["distance_method"],
                 common_name=row["common_name"],
+                other_names=other_names.get(row["id"], []),
                 designations=designations.get(row["id"], []),
-                part_of=[group.display_form for group in group_refs.get(row["id"], [])],
+                part_of=group_refs.get(row["id"], []),
             )
             for row in rows
         ]
@@ -663,6 +704,7 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         raise HTTPException(status_code=404, detail=f"DSO not found: {dso_id}")
 
     designations = (await _load_designations(conn, [dso_id])).get(dso_id, [])
+    other_names = (await _load_other_names(conn, [dso_id])).get(dso_id, [])
     part_of = (await _load_group_refs(conn, [dso_id])).get(dso_id, [])
     parts_cursor = await conn.execute(
         """
@@ -735,6 +777,7 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         distance_pc=row["distance_pc"],
         distance_method=row["distance_method"],
         common_name=row["common_name"],
+        other_names=other_names,
         common_name_augmented=bool(row["common_name_augmented"]),
         surface_brightness_augmented=bool(row["surface_brightness_augmented"]),
         ned_notes=row["ned_notes"],

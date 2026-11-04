@@ -1,12 +1,136 @@
 # NightCrate — active plan
 
-**Version:** v0.44.0 — More deep-sky catalogs and search links
+**Version:** v0.45.0 — Common names for galaxies and nebulae
 
-**Branch:** `v0.44.0/more-catalogs-and-search-links`
+**Branch:** `v0.45.0/common-names`
 
 **Status:** Complete — awaiting merge
 
+## v0.45.0 — Common names for galaxies and nebulae
+
+Fred started this version on 2026-11-03, after merging v0.44.0. Its scope is
+the roadmap item he placed next on 2026-11-03, moved here below, plus one
+licence for everything in NightCrate.
+
+- [x] Start from updated `main` on `v0.45.0/common-names`.
+- [x] **One licence** (Fred, 2026-11-03: "let's just make everything in
+  nightcrate the same license"). NightCrate's own catalog data in
+  `backend/src/nightcrate/data/catalogs/nightcrate/` moves from MIT to
+  GPL-3.0-or-later, like the code since 2026-10-26.
+  - **Changes:** the CSV headers, `version.json`, the registry's source
+    licences, the Catalogs page, the tests and the docs; `LICENSE-MIT.txt`
+    is removed.
+  - **Kept:** `LICENSE-CC0.txt` and other notices that describe third-party
+    data (Wikidata, the xkcd colours).
+  - **Earlier releases:** v0.12.0–v0.44.0 keep their MIT data.
+  - **Authorship:** Fred is the only author of every commit to those
+    files.
+  - **Consequence for sources (verified 2026-11-03 on Creative Commons'
+    compatible-licences page):** CC BY-SA 4.0 is one-way compatible with
+    GPLv3, so material from Wikipedia (CC BY-SA 4.0) could be adapted with
+    attribution. Whether to use it is a spec question.
+  - **Done 2026-11-03, staged.** Codex implementation (records `01`–`04`):
+    it stopped once, correctly, over the cross-reference sources. Those turned
+    out to have no stored row, so there was nothing to update.
+  - **Checked by Claude:** 480 targeted tests, ruff, ruff format and bandit
+    (no medium or high findings), and `npm run build`. On a copy of Fred's
+    database, one load records GPL-3.0-or-later for all six NightCrate
+    sources (3.4 s, a one-time rebuild because the files changed), and a
+    second load does nothing (0.21 s). The Catalogs page shows the new
+    licence in a headless browser.
+- [x] Spec: [v0.45.0 design](docs/superpowers/specs/2026-11-03-v0.45.0-design.md).
+  Fred skipped the questions ("skip questions and proceed", 2026-11-03), so
+  its decisions are Claude's calls, listed at its end for his review.
+- [x] Implementation plan: [v0.45.0 plan](docs/superpowers/plans/2026-11-03-v0.45.0.md).
+  Codex's plan review converged after three rounds on 2026-11-03, with every
+  finding adopted. Fred added star clusters and a hover tooltip with the
+  other names on every result name. He approved the spec and plan on
+  2026-11-03 ("yes, approved, proceed").
+- [x] Implementation (Tasks 0–5). Codex works in a separate worktree,
+  because Fred's `make dev` applies migrations as soon as they appear in the
+  main checkout.
+  - [x] Task 1, migration 0067: checked on a copy of Fred's database. 20 comma
+    names were split exactly; ids, links, integrity and foreign keys were
+    unchanged.
+  - [x] Task 2, names in the object step: one rebuild on upgrade (about 5 s),
+    then no rebuild (0.25–0.37 s).
+  - [x] Task 0, the names list: 225 names for 188 objects and groups, plus
+    three removals.
+    - Each name has two independent sources: SIMBAD, NED, Wikidata or
+      Wikipedia, and agency and society pages. The pages were fetched and
+      checked for the name and the designation.
+    - Single-source names went to Fred, and Codex checked them
+      independently.
+    - Fred decided the Cone, Elephant's Trunk, Fly, Lobster Claw and
+      Spindle names and the three removals, and moved M 102 to NGC 5866.
+    - Details: [names review](docs/superpowers/plans/2026-11-03-v0.45.0-names-review.md).
+  - [x] Tasks 3 and 4, search, API, tooltips and panels: checked in a
+    headless browser on a copy of Fred's database. Search costs 6–8 ms more
+    in the catalog and nothing measurable in the planner, within the budget.
+  - [x] Fix round 1: M 102 → NGC 5866 (an OpenNGC duplicate row ignored the
+    override), and the name tooltip on the catalog table's designation cell.
+  - [x] Independent Codex review: no blockers. One major fixed in round 2 (a
+    missing augment file no longer blocks the object step). The 0067
+    rollback finding was declined as Claude's call, for Fred to confirm. See
+    the plan's Codex review section.
+- [x] **Verification:**
+  - the full backend suite: 3,576 passed, 4 skipped;
+  - after fix round 2, the catalog tests: 510 passed;
+  - ruff, ruff format and bandit (no medium or high findings), and
+    `npm run build`;
+  - on Fred's own database: 0067 applied by his dev server on 2026-11-04,
+    234 named objects, 87 other names, no commas, M 102 = NGC 5866,
+    integrity ok.
+- [ ] **Fred's acceptance test.** He asked to publish first ("please
+  continue and finalize this version so I can review tomorrow morning",
+  2026-11-04).
+  - [x] Task 5, docs: schema, development decisions, catalog architecture,
+    README and the code map.
+- **Still due from earlier versions:**
+  - the CDS checks under v0.43.1 ("When CDS returns");
+  - the live HASH (V/163) add and remove under v0.44.0.
+
+### Scope (Fred, 2026-11-03)
+
+**Why.** Many popular imaging targets have no common name, so they can't be
+found by name. Checked on a copy of Fred's database on 2026-11-03: NGC 891,
+NGC 3628 (Hamburger Galaxy), IC 342 (Hidden Galaxy), NGC 5907 (Splinter
+Galaxy), NGC 4656 (Hockey Stick), Sh2-129 (Flying Bat), Sh2-132 (Lion),
+LBN 437 (Gecko), LBN 777 (Vulture Head) and IC 1795 (Fish Head) have none.
+Only 20 of 370 HII regions and 49 of 10,521 galaxies carry a name; most of
+those galaxies are faint and never had one.
+
+**Sources.** No scraping of other sites: GPL covers NightCrate's code, not
+their data. A single name is a fact, but copying a site's list copies its
+compilation, sites such as Telescopius and AstroBin forbid scraping, and
+Wikipedia's lists are CC BY-SA, which would carry over to NightCrate's data
+files (the reason the Melotte list is NightCrate's own). *Revisit:* with
+the data under GPL-3.0-or-later, CC BY-SA 4.0 material can be adapted with
+attribution (see "One licence" above).
+- **Claude drafts the list** from its own knowledge, marking how sure it is
+  of each name.
+- **Every name is verified** against at least two independent sources
+  (SIMBAD's `NAME` identifiers, Wikidata, NASA, ESA or NOIRLab pages,
+  observatory pages), with the sources recorded. A name that can't be
+  confirmed stays out or goes to Fred. Claude's memory is fast but can put a
+  real name on the wrong object.
+- **Wikidata** (CC0) is a second source and catches objects the draft
+  misses. It is not imported blindly: on 2026-11-03 it gave Sh2-129 the name
+  "Squid Nebula", which belongs to Ou 4, a separate object inside it.
+
+**Several names per object.** Today each object holds one common name, but
+NGC 891 has two (Silver Sliver, Outer Limits). Every name should be
+searchable, with one shown first. This needs a schema change.
+
+**Open for the spec:** how names are shown and ranked; the file format and
+licence for the reviewed list (GPL-3.0-or-later, like the rest of
+NightCrate, from this version); whether Wikidata names are fetched at
+runtime or reviewed into the shipped list; which object types and how many
+names are in scope.
+
 ## v0.44.0 — More deep-sky catalogs and search links
+
+Merged in [PR #23](https://github.com/fbaptiste/nightcrate/pull/23) on 2026-11-03.
 
 Fred started this version on 2026-11-02, after merging v0.43.1. Its scope is
 the roadmap item he placed next on 2026-11-01, moved here unchanged below.
@@ -1975,45 +2099,11 @@ pre-pass, and the second round converged. On 2026-10-26 Fred placed a native
 plate solver after catalog preservation, ahead of the gallery; it is now
 v0.43.0. On 2026-10-30 he added a faster star download as v0.43.1. On 2026-11-01 he
 placed more deep-sky catalogs and search links as the very next version,
-ahead of the gallery; it is now v0.44.0, the active version above. On
+ahead of the gallery; it became v0.44.0. On
 2026-11-03 he placed common names for galaxies and nebulae as the version
-after it, also ahead of the gallery.
+after it, also ahead of the gallery; it is now v0.45.0, the active version
+above.
 Version numbers are otherwise assigned when each version starts.
-
-### Next version: common names for galaxies and nebulae (Fred, 2026-11-03)
-
-**Why.** Many popular imaging targets have no common name, so they can't be
-found by name. Checked on a copy of Fred's database on 2026-11-03: NGC 891,
-NGC 3628 (Hamburger Galaxy), IC 342 (Hidden Galaxy), NGC 5907 (Splinter
-Galaxy), NGC 4656 (Hockey Stick), Sh2-129 (Flying Bat), Sh2-132 (Lion),
-LBN 437 (Gecko), LBN 777 (Vulture Head) and IC 1795 (Fish Head) have none.
-Only 20 of 370 HII regions and 49 of 10,521 galaxies carry a name; most of
-those galaxies are faint and never had one.
-
-**Sources.** No scraping of other sites: GPL covers NightCrate's code, not
-their data. A single name is a fact, but copying a site's list copies its
-compilation, sites such as Telescopius and AstroBin forbid scraping, and
-Wikipedia's lists are CC BY-SA, which would carry over to NightCrate's data
-files (the reason the Melotte list is NightCrate's own).
-- **Claude drafts the list** from its own knowledge, marking how sure it is
-  of each name.
-- **Every name is verified** against at least two independent sources
-  (SIMBAD's `NAME` identifiers, Wikidata, NASA, ESA or NOIRLab pages,
-  observatory pages), with the sources recorded. A name that can't be
-  confirmed stays out or goes to Fred. Claude's memory is fast but can put a
-  real name on the wrong object.
-- **Wikidata** (CC0) is a second source and catches objects the draft
-  misses. It is not imported blindly: on 2026-11-03 it gave Sh2-129 the name
-  "Squid Nebula", which belongs to Ou 4, a separate object inside it.
-
-**Several names per object.** Today each object holds one common name, but
-NGC 891 has two (Silver Sliver, Outer Limits). Every name should be
-searchable, with one shown first. This needs a schema change.
-
-**Open for the spec:** how names are shown and ranked; the file format and
-licence for the reviewed list (NightCrate's editorial data is MIT); whether
-Wikidata names are fetched at runtime or reviewed into the shipped list;
-which object types and how many names are in scope.
 
 ### Gallery
 
@@ -2054,15 +2144,15 @@ first, then the slideshow.
 ### Messier checklist
 
 - 110 numbered slots from an explicit checklist mapping, separate from catalog
-  designations: today the catalog merges M102 into M101 (110 numbers on 109
-  objects), and one designation can belong to only one object.
+  designations; one designation can belong to only one object. Since v0.45.0
+  M 102 names NGC 5866, so the catalog has 110 numbers on 110 objects.
 - A slot is filled only by a project with that object among its main targets
   and a main image. The latest project wins, by latest session date: dated
   projects before undated ones, then creation time, then ID. The back of the
   card lists the other projects.
 - Empty slots distinguish "no project" from "a project without an image".
-- M102 needs Fred's decision; the recommendation is NGC 5866 with a note on the
-  ambiguity. The M101 slot is never filled twice through the shared designation.
+- M102 is NGC 5866 (Fred, 2026-11-03, a reviewed `assign` override in
+  v0.45.0); keep a note on the historical ambiguity in the checklist.
 
 ### Object search
 

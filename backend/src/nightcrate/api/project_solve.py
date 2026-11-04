@@ -161,6 +161,20 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     )
     link_rows = [row_to_dict(r) for r in await cursor.fetchall()]
 
+    cursor = await conn.execute(
+        """
+        SELECT don.dso_id, don.name
+        FROM dso_other_name don
+        JOIN project_dso pd ON pd.dso_id = don.dso_id
+        WHERE pd.solve_id = ?
+        ORDER BY don.dso_id, don.position
+        """,
+        (solve["id"],),
+    )
+    other_names: dict[int, list[str]] = {}
+    for row in await cursor.fetchall():
+        other_names.setdefault(int(row["dso_id"]), []).append(str(row["name"]))
+
     # is_main now derives from project_target (the persistent source of truth),
     # so toggling a chip from the Overview and from the Plate Solve tab share
     # one record AND main flags survive solve deletion.
@@ -188,6 +202,7 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
             active=active[a.id],
             primary_designation=a.primary_designation,
             common_name=a.common_name,
+            other_names=other_names.get(a.id, []),
             obj_type=a.obj_type,
             type_group=a.type_group,
             constellation=a.constellation,

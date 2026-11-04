@@ -10,6 +10,7 @@ CATALOG_DERIVED_TABLES: frozenset[str] = frozenset(
         "dso_external_ref",
         "dso_group",
         "dso_group_member",
+        "dso_other_name",
         "dso_source_entry",
         "thumbnail_cache",
     }

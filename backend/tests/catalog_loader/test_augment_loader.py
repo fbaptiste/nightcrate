@@ -33,16 +33,29 @@ def db(tmp_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def test_augment_overrides_common_name(db, catalogs_root):
+def test_augment_no_longer_touches_names(db, catalogs_root):
     load_catalogs(db, catalogs_root)
-    cur = db.cursor()
-    # Bundled augment CSV sets NGC 1976 common_name = "Orion Nebula".
-    cur.execute(
-        "SELECT common_name, common_name_augmented FROM dso WHERE primary_designation = 'M 42'"
+    db.execute(
+        """
+        UPDATE dso SET common_name='Sentinel', common_name_augmented=1
+        WHERE primary_designation='M 42'
+        """
     )
-    row = cur.fetchone()
-    assert row["common_name"] == "Orion Nebula"
-    assert row["common_name_augmented"] == 1
+    db.commit()
+    source = next(
+        source for source in get_sources(catalogs_root) if source.source_id == "nightcrate_augment"
+    )
+
+    result = load_augment(db, source, force=True)
+
+    row = db.execute(
+        """
+        SELECT common_name, common_name_augmented, distance_pc, distance_method
+        FROM dso WHERE primary_designation='M 42'
+        """
+    ).fetchone()
+    assert result.status == "loaded"
+    assert tuple(row) == ("Sentinel", 1, 412.0, "curated")
 
 
 def test_augment_unchanged_file_returns_stored_state(db, catalogs_root):
@@ -171,8 +184,7 @@ def test_augment_lbn_row_is_debug_while_off_and_applies_while_on(
     monkeypatch.setattr(registry, "OPTIONAL_CATALOGS", (*registry.OPTIONAL_CATALOGS, lbn))
     augment_path = tmp_path / "lbn_augment.csv"
     augment_path.write_text(
-        "designation,common_name_override,surface_brightness,distance_pc,notes\n"
-        "LBN 191,Cygnus Loop,,740,test\n",
+        "designation,surface_brightness,distance_pc,notes\nLBN 191,,740,test\n",
         encoding="utf-8",
     )
     source = CatalogSource(
@@ -221,4 +233,4 @@ def test_augment_lbn_row_is_debug_while_off_and_applies_while_on(
 
     assert on.status == "loaded"
     row = db.execute("SELECT common_name, distance_pc FROM dso WHERE id = ?", (dso_id,)).fetchone()
-    assert tuple(row) == ("Cygnus Loop", 740.0)
+    assert tuple(row) == (None, 740.0)

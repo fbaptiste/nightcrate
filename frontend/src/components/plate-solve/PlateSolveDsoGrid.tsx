@@ -12,6 +12,7 @@ import type { AnnotatedDso } from "@/api/plateSolve";
 import { compareDesignations } from "@/lib/designationSort";
 import { formatDistance } from "@/lib/distanceFormat";
 import { monoFontFamily } from "@/theme/theme";
+import NameWithAlternates from "@/components/common/NameWithAlternates";
 
 type SortKey = "primary_designation" | "common_name" | "type_group" | "maj_axis_arcmin" | "distance_pc";
 type SortDir = "asc" | "desc";
@@ -101,7 +102,11 @@ export function PlateSolveDsoGrid({ dsos, selectedId, onSelect }: Props) {
                 sx={{ cursor: "pointer" }}
               >
                 <TableCell sx={{ ...cellSx, fontFamily: monoFontFamily }}>{dso.primary_designation}</TableCell>
-                <TableCell sx={cellSx}>{dso.common_name ?? ""}</TableCell>
+                <TableCell sx={cellSx}>
+                  {dso.common_name && (
+                    <NameWithAlternates name={dso.common_name} otherNames={dso.other_names} />
+                  )}
+                </TableCell>
                 <TableCell sx={cellSx}>{dso.type_group}</TableCell>
                 <TableCell sx={{ ...cellSx, fontFamily: monoFontFamily }}>
                   {dso.maj_axis_arcmin != null ? dso.maj_axis_arcmin.toFixed(1) : ""}

@@ -27,6 +27,7 @@ from nightcrate.catalog_loader.reconcile import (
     NewGroup,
     NewObject,
     ObjectSet,
+    SourceEntry,
     apply_object_set,
     build_object_set,
 )
@@ -59,12 +60,16 @@ def _source(path: Path, source_id: str, parser: str) -> CatalogSource:
     )
 
 
-def _openngc_files(root: Path, rows: list[dict[str, str]]) -> dict[str, CatalogSource]:
+def _openngc_files(
+    root: Path,
+    rows: list[dict[str, str]],
+    addendum_rows: list[dict[str, str]] | None = None,
+) -> dict[str, CatalogSource]:
     root.mkdir(parents=True)
     with (FIXTURES / "mini_NGC.csv").open(encoding="utf-8", newline="") as handle:
         fieldnames = csv.DictReader(handle, delimiter=";").fieldnames
     assert fieldnames is not None
-    for filename, file_rows in (("NGC.csv", rows), ("addendum.csv", [])):
+    for filename, file_rows in (("NGC.csv", rows), ("addendum.csv", addendum_rows or [])):
         with (root / filename).open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
             writer.writeheader()
@@ -135,6 +140,149 @@ def test_override_reserves_designation_against_openngc_alternate(tmp_path: Path)
 
     ngc = next(obj for obj in built.objects if obj.source_key == "NGC6960")
     assert ("lbn", "191", False) not in ngc.designations
+
+
+def test_duplicate_assign_override_moves_only_its_designation(tmp_path: Path):
+    m101 = _openngc_row("NGC5457")
+    m101["M"] = "101"
+    duplicate = _openngc_row("M102")
+    duplicate.update({"Type": "Dup", "M": "101"})
+    sources = _openngc_files(
+        tmp_path / "openngc",
+        [m101, _openngc_row("NGC5866")],
+        [duplicate],
+    )
+    override = tmp_path / "overrides.csv"
+    override.write_text(
+        "designation,action,target_designation,notes\nM 102,assign,NGC 5866,test\n",
+        encoding="utf-8",
+    )
+    sources["nightcrate_match_overrides"] = _source(
+        override, "nightcrate_match_overrides", "overrides"
+    )
+
+    built = build_object_set(sources, None, frozenset())
+
+    m101_index = next(i for i, obj in enumerate(built.objects) if obj.source_key == "NGC5457")
+    ngc5866_index = next(i for i, obj in enumerate(built.objects) if obj.source_key == "NGC5866")
+    assert {designation[:2] for designation in built.objects[m101_index].designations} == {
+        ("ngc", "5457"),
+        ("messier", "101"),
+    }
+    assert ("messier", "102") in {
+        designation[:2] for designation in built.objects[ngc5866_index].designations
+    }
+    assert built.merges[("openngc_addendum", "M102")] == ngc5866_index
+    assert SourceEntry("openngc_addendum", "M102", "openngc", ngc5866_index) in built.entries
+
+
+def test_duplicate_without_override_keeps_stated_target(tmp_path: Path):
+    m101 = _openngc_row("NGC5457")
+    m101["M"] = "101"
+    duplicate = _openngc_row("M102")
+    duplicate.update({"Type": "Dup", "M": "101"})
+    sources = _openngc_files(
+        tmp_path / "openngc",
+        [m101, _openngc_row("NGC5866")],
+        [duplicate],
+    )
+
+    built = build_object_set(sources, None, frozenset())
+
+    m101_object = next(obj for obj in built.objects if obj.source_key == "NGC5457")
+    ngc5866_object = next(obj for obj in built.objects if obj.source_key == "NGC5866")
+    assert ("messier", "102", False) in m101_object.designations
+    assert all(designation[:2] != ("messier", "102") for designation in ngc5866_object.designations)
+
+
+def test_separate_override_keeps_duplicate_off_stated_target(tmp_path: Path):
+    m101 = _openngc_row("NGC5457")
+    m101["M"] = "101"
+    duplicate = _openngc_row("M102")
+    duplicate.update({"Type": "Dup", "M": "101"})
+    sources = _openngc_files(tmp_path / "openngc", [m101], [duplicate])
+    override = tmp_path / "overrides.csv"
+    override.write_text(
+        "designation,action,target_designation,notes\nM 102,separate,,test\n",
+        encoding="utf-8",
+    )
+    sources["nightcrate_match_overrides"] = _source(
+        override, "nightcrate_match_overrides", "overrides"
+    )
+
+    built = build_object_set(sources, None, frozenset())
+
+    assert all(
+        designation[:2] != ("messier", "102")
+        for obj in built.objects
+        for designation in obj.designations
+    )
+    assert ("openngc_addendum", "M102") not in built.merges
+    assert built.unresolved == 1
+
+
+def test_always_loaded_assign_override_adds_alias_without_source_row(tmp_path: Path):
+    sources = _openngc_files(tmp_path / "openngc", [_openngc_row("NGC5866")])
+    override = tmp_path / "overrides.csv"
+    override.write_text(
+        "designation,action,target_designation,notes\nM 102,assign,NGC 5866,test\n",
+        encoding="utf-8",
+    )
+    sources["nightcrate_match_overrides"] = _source(
+        override, "nightcrate_match_overrides", "overrides"
+    )
+
+    built = build_object_set(sources, None, frozenset())
+
+    assert ("messier", "102") in {designation[:2] for designation in built.objects[0].designations}
+
+
+def test_duplicate_assign_override_second_load_runs_no_object_step(
+    db: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    catalogs_root = tmp_path / "catalogs"
+    m101 = _openngc_row("NGC5457")
+    m101["M"] = "101"
+    duplicate = _openngc_row("M102")
+    duplicate.update({"Type": "Dup", "M": "101"})
+    _openngc_files(
+        catalogs_root / "openngc",
+        [m101, _openngc_row("NGC5866")],
+        [duplicate],
+    )
+    override = tmp_path / "overrides.csv"
+    override.write_text(
+        "designation,action,target_designation,notes\nM 102,assign,NGC 5866,test\n",
+        encoding="utf-8",
+    )
+    sources = [
+        replace(source, file_path=override)
+        if source.source_id == "nightcrate_match_overrides"
+        else source
+        for source in get_sources(catalogs_root)
+    ]
+    monkeypatch.setattr("nightcrate.catalog_loader.loader.get_sources", lambda _root: sources)
+
+    first = load_catalogs(db, catalogs_root)
+    owner = db.execute(
+        """
+        SELECT d.source_key
+        FROM dso_designation dd JOIN dso d ON d.id=dd.dso_id
+        WHERE dd.catalog='messier' AND dd.identifier='102'
+        """
+    ).fetchone()
+    assert owner is not None and owner[0] == "NGC5866"
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("unchanged object step repeated")
+
+    monkeypatch.setattr("nightcrate.catalog_loader.reconcile.apply_object_set", unexpected)
+    second = load_catalogs(db, catalogs_root)
+
+    assert next(row for row in first.results if row.source_id == "openngc").status == "loaded"
+    assert next(row for row in second.results if row.source_id == "openngc").status == "unchanged"
 
 
 def test_assign_with_target_catalog_off_creates_standalone_entry(

@@ -625,7 +625,9 @@ export default function CatalogsAdminSection() {
           displayName="NightCrate editorial augmentation"
           version={sourcesById.has("nightcrate_augment") ? "Loaded" : "Not loaded"}
           rowCount={sourcesById.get("nightcrate_augment")?.row_count ?? null}
-          license="MIT"
+          license={
+            sourcesById.get("nightcrate_augment")?.license ?? "GPL-3.0-or-later"
+          }
           subtitle="Bundled in-repo"
           error={errors["nightcrate"] ?? null}
           onDismissError={() => setErrors((prev) => ({ ...prev, nightcrate: null }))}
@@ -644,7 +646,9 @@ export default function CatalogsAdminSection() {
             sourcesById.has("nightcrate_external_refs") ? "Loaded" : "Not loaded"
           }
           rowCount={sourcesById.get("nightcrate_external_refs")?.row_count ?? null}
-          license="MIT"
+          license={
+            sourcesById.get("nightcrate_external_refs")?.license ?? "GPL-3.0-or-later"
+          }
           subtitle="Bundled in-repo — overrides Wikidata"
           error={errors["nightcrate_external_refs"] ?? null}
           onDismissError={() =>

@@ -200,7 +200,8 @@ publishing; do not rewrite history without an explicit decision.
 NightCrate is GPL-3.0-or-later (Fred, 2026-10-26). Earlier releases keep their
 original licences: v0.3.0a–v0.10.1 GPL-3.0, v0.12.0–v0.41.10 MIT.
 Every dependency must be compatible with GPL-3.0. NightCrate's own catalog data
-in `data/catalogs/nightcrate/` stays MIT. Review licenses before adding
+in `data/catalogs/nightcrate/` is GPL-3.0-or-later too (Fred, 2026-11-03; MIT
+through v0.44.0). Review licenses before adding
 dependencies; record additions and required credits in README's acknowledgments.
 Check data-source terms separately from library terms.
 

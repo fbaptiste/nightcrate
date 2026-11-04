@@ -323,6 +323,30 @@ class TestFavorites:
         assert item["plan_count"] == 0
         assert item["plans"] == []
 
+    async def test_lists_return_other_names(self, client, seed_dso_and_location):
+        ids = seed_dso_and_location
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO dso_other_name (dso_id, name, position) VALUES (?, ?, ?)",
+                (
+                    (ids["m42_id"], "Great Orion Nebula", 1),
+                    (ids["m42_id"], "Orion Nebula", 2),
+                ),
+            )
+            await conn.commit()
+        client.post("/api/planner/wishlist/favorites", json={"dso_id": ids["m42_id"]})
+        client.post("/api/planner/wishlist/favorites", json={"dso_id": ids["ngc7000_id"]})
+
+        response = client.get("/api/planner/wishlist/favorites/full")
+
+        assert response.status_code == 200
+        by_id = {item["dso"]["dso_id"]: item["dso"] for item in response.json()["items"]}
+        assert by_id[ids["m42_id"]]["other_names"] == [
+            "Great Orion Nebula",
+            "Orion Nebula",
+        ]
+        assert by_id[ids["ngc7000_id"]]["other_names"] == []
+
 
 # ── Plans CRUD ───────────────────────────────────────────────────────────────
 
