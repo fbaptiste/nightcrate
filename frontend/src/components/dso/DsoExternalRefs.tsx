@@ -24,6 +24,7 @@ interface DsoExternalRefsProps {
  *
  * Wikidata QIDs are stored but intentionally hidden — a QID page is a
  * structured-data view most users won't care about; filtered out below.
+ * Google links are computed by the backend for each detail request.
  * SIMBAD is inserted for every scored DSO (with designation fallback
  * when Wikidata has no P3083); NED only for extragalactic DSOs where
  * Wikidata has a P2528.
@@ -37,6 +38,8 @@ const VISIBLE_PROVIDERS: ReadonlySet<ExternalRefProvider> = new Set([
   "wikipedia",
   "simbad",
   "ned",
+  "google",
+  "google_images",
 ]);
 
 const PROVIDER_LABEL: Record<ExternalRefProvider, string> = {
@@ -44,7 +47,27 @@ const PROVIDER_LABEL: Record<ExternalRefProvider, string> = {
   simbad: "SIMBAD",
   ned: "NED",
   wikidata: "Wikidata",
+  google: "Google search",
+  google_images: "Google Images",
 };
+
+export function getSearchRefPresentation(
+  ref: ExternalRef,
+): { label: string; ariaLabel: string } | null {
+  if (ref.provider === "google") {
+    return {
+      label: PROVIDER_LABEL.google,
+      ariaLabel: `Search Google for ${ref.identifier} (opens in new tab)`,
+    };
+  }
+  if (ref.provider === "google_images") {
+    return {
+      label: PROVIDER_LABEL.google_images,
+      ariaLabel: `Search Google Images for ${ref.identifier} (opens in new tab)`,
+    };
+  }
+  return null;
+}
 
 export function DsoExternalRefs({ refs, title = "External references" }: DsoExternalRefsProps) {
   const visible = refs.filter((ref) => VISIBLE_PROVIDERS.has(ref.provider));
@@ -73,7 +96,11 @@ export function DsoExternalRefs({ refs, title = "External references" }: DsoExte
         {visible.map((ref) => {
           const prefix = PROVIDER_LABEL[ref.provider];
           const label = ref.label || ref.identifier;
-          const ariaLabel = `Open ${prefix} page: ${label} (opens in new tab)`;
+          const searchPresentation = getSearchRefPresentation(ref);
+          const linkText = searchPresentation?.label ?? `${prefix}: ${label}`;
+          const ariaLabel =
+            searchPresentation?.ariaLabel ??
+            `Open ${prefix} page: ${label} (opens in new tab)`;
           return (
             <li key={`${ref.provider}-${ref.language ?? ""}-${ref.identifier}`}>
               <Link
@@ -90,7 +117,7 @@ export function DsoExternalRefs({ refs, title = "External references" }: DsoExte
                   fontWeight: 500,
                 }}
               >
-                {prefix}: {label}
+                {linkText}
                 <OpenInNewIcon sx={{ fontSize: 14 }} />
               </Link>
             </li>

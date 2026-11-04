@@ -1,0 +1,60 @@
+#
+#   VizieR Astronomical Server vizier.cfa.harvard.edu
+#    Date: 2026-11-02T14:49:00 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-11-02T14:49:00	  Query execution date
+#INFO	request=https://vizier.cfa.harvard.edu/viz-bin/asu-tsv?-source=V/163/pnmain	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+
+#RESOURCE=yCat_5163
+#Name: V/163
+#Title: HASH. The Hong Kong/AAO/Strasbourg Ha PN DB (Parker+, 2016)
+#INFO	ivoid=ivo://cds.vizier/v/163	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/v/163	    IVOID of underlying data collection
+#INFO	creator=Parker Q.A.	    First author or institution
+#INFO	cites=bibcode:2016JPhCS.728c2008P	    Article or Data origin sources
+#INFO	journal=JPhC	    Journal name
+#INFO	original_date=2016	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/V/163	    Dataset landing page
+#INFO	publication_date=2026-08-31	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	V_163_pnmain:
+#Name: V/163/pnmain
+#Title: Main catalogue
+#Column	HASH	(I5)	[8/34326] Unique HASH identifier (idPNMain)	[ucd=meta.id;meta.main]
+#Column	PNG	(A11)	Name of PN, based on Galactic position (PNG) (1)	[ucd=meta.id]
+#Column	RAJ2000	(F9.5)	Right Ascension J2000 (RAdeg)	[ucd=pos.eq.ra;meta.main]
+#Column	DEJ2000	(F9.5)	Declination J2000 (DEdeg)	[ucd=pos.eq.dec;meta.main]
+#Column	GLON	(F9.5)	Galactic longitude (GLON)	[ucd=pos.galactic.lon]
+#Column	GLAT	(F9.5)	Galactic latitude (GLAT)	[ucd=pos.galactic.lat]
+#Column	Catalogue	(A20)	Catalogue name (Catalogue)	[ucd=meta.id;meta.table]
+#Column	Name	(A31)	Usual name of the PN (Name) (2)	[ucd=meta.id]
+#Column	SimbadID	(A34)	Simbad ID (SimbadID)	[ucd=meta.id]
+#Column	PNstat	(A4)	PN status (PNstat) (3)	[ucd=meta.code]
+#Column	Domain	(A6)	Domain: Galaxy, LMC, SMC (domain)	[ucd=meta.id.parent]
+#Column	MorphMainCl	(A1)	[ABEIRS] Morphological Main Class (morphMainClass) (4)	[ucd=src.morph.type;meta.main]
+#Column	MajDiam	(F7.1)	? Major Diameter (MajDiam)	[ucd=phys.angSize]
+#Column	MinDiam	(F7.1)	? Minor Diameter (MinDiam)	[ucd=phys.angSize]
+HASH	PNG	RAJ2000	DEJ2000	GLON	GLAT	Catalogue	Name	SimbadID	PNstat	Domain	MorphMainCl	MajDiam	MinDiam
+ 	 	deg	deg	deg	deg	 	 	 	 	 	 	arcsec	arcsec
+-----	-----------	---------	---------	---------	---------	--------------------	-------------------------------	----------------------------------	----	------	-	-------	-------
+    9	 000.1-01.9	268.34908	-29.82931	  0.10451	 -1.91213	 2001A&A...378..843K	                        JaSt 93	                    PN G000.1-01.9	   T	Galaxy	E	   14.0	
+   11	 000.1-01.1	267.60123	-29.42186	  0.12383	 -1.14515	 1992secg.book.....A	                         M 3-43	                         PN M 3-43	   T	Galaxy	E	    3.5	    2.7
+  104	 002.7-52.4	329.89667	-39.38556	  2.71149	-52.44003	 1992secg.book.....A	                     IC 5148/50	                           IC 5148	   T	Galaxy	R	  132.5	  127.8
+  232	 010.8+18.0	256.40814	-10.14294	 10.89883	 18.05548	 1992secg.book.....A	                          M 2-9	                          PN M 2-9	 Sy?	Galaxy	 	   37.0	   11.0
+  384	 036.1-57.1	337.41058	-20.83711	 36.16139	-57.11834	 1992secg.book.....A	                       NGC 7293	                          NGC 7293	   T	Galaxy	B	  970.0	  735.0
+  579	 089.8-00.6	318.53146	+47.77256	 89.83841	 -0.63904	 1992secg.book.....A	                        Sh 1-89	                           SH 1-89	   T	Galaxy	B	   68.0	   48.0
+  654	 128.0-04.0	022.58333	+58.44139	128.01602	 -4.04589	 1992secg.book.....A	                       Sh 2-188	                          SH 2-188	   T	Galaxy	A	  702.0	  610.0
+  662	 130.9-10.5	025.58312	+51.57532	130.93430	-10.50391	 1992secg.book.....A	                      NGC 650-1	                              M 76	   T	Galaxy	B	  168.0	  111.0
+  717	 189.1+19.8	111.39450	+29.49067	189.15631	 19.84309	 1992secg.book.....A	                    NGC 2371-72	                          NGC 2371	   T	Galaxy	B	  130.0	
+  739	 205.1+14.2	112.26128	+13.24688	205.13863	 14.24122	 1992secg.book.....A	                       Abell 21	                      CSI+13-07262	   T	Galaxy	E	  750.0	  515.0
+  936	 303.5+39.9	193.38663	-22.87294	303.56592	 39.99622	 1992secg.book.....A	                       Abell 35	                        BD-22 3467	iISM	Galaxy	 	  970.0	  725.0
+ 4794	 044.1-09.3	296.39546	+05.56606	 44.18590	 -9.38673	 1992secg.book.....A	                       Abell 64	                           Z 397-5	   G	Galaxy	 	   40.0	   34.0
+ 5095	 279.9-35.7	073.27209	-68.59970	279.90320	-35.79495	  MC_Sage_candidates	                               	                                  	   P	   LMC	 	       	
+32403	 091.0-06.3	325.56468	+44.46787	 91.08144	 -6.39279	      FrenchAmateurs	                        Sh2-123	                                  	   T	Galaxy	B	  904.0	  767.0

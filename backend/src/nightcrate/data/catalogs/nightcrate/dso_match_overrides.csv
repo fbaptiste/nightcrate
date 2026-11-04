@@ -1,0 +1,27 @@
+# NightCrate match overrides. MIT licensed.
+# These take precedence over a match a catalog or OpenNGC states.
+# action assign: the designation names target_designation. When no loaded
+#   entry owns the designation, the row adds it as another name on the target.
+# action separate: the entry stays its own object; target_designation is empty.
+designation,action,target_designation,notes
+LBN 191,separate,,Whole Cygnus Loop: LBN gives 210x160 arcmin centred 0.6 deg from SIMBAD's loop centre; LBN and OpenNGC name NGC 6960 (only the Western Veil)
+PN G065.0-27.3,separate,,Pease 1 (Ps 1): the planetary nebula inside M 15; OpenNGC lists its PN G name on M 15 but SIMBAD keeps them separate
+LBN 1,separate,,Match screen 2026-11-02: LBN gives 4 arcmin and Sh2-17 is 25 arcmin; a small part; not the same object
+LBN 3,separate,,Match screen 2026-11-02: LBN gives 2 arcmin and Sh2-20 is 10 arcmin; a small part; not the same object
+LBN 13,separate,,Match screen 2026-11-02: LBN gives 35 arcmin and Sh2-14 is 2 arcmin; a larger region; not the same object
+LBN 72,separate,,Match screen 2026-11-02: LBN gives 60 arcmin and NGC 6604 is 9.6 arcmin; the surrounding nebula of the cluster; not the same object
+LBN 73,separate,,Match screen 2026-11-02: LBN gives 20 arcmin and Sh2-55 is 5 arcmin; a larger region; not the same object
+LBN 135,separate,,Match screen 2026-11-02: LBN gives 40 arcmin and NGC 6823 is 6 arcmin; the surrounding nebula of the cluster; not the same object
+LBN 537,separate,,Match screen 2026-11-02: LBN gives 3 arcmin and Sh2-157 is 90 arcmin; a small part; not the same object
+LBN 784,separate,,Match screen 2026-11-02: LBN gives 2 arcmin and Sh2-228 is 8 arcmin; a small part; not the same object
+LBN 854,separate,,Match screen 2026-11-02: LBN gives 40 arcmin and NGC 2175 is 5.4 arcmin; the surrounding nebula (Monkey Head) of the cluster; not the same object
+LBN 977,separate,,Match screen 2026-11-02: LBN gives 240 arcmin and NGC 1980 is 9.3 arcmin; a much larger region in Orion; not the same object
+LBN 996,separate,,Match screen 2026-11-02: LBN gives 2 arcmin and NGC 2183 is 12 arcmin; a small part; not the same object
+LBN 1033,separate,,Match screen 2026-11-02: LBN gives 150 arcmin and IC 2177 is 20 arcmin; the whole Seagull Nebula; not the same object
+LBN 1067,separate,,Match screen 2026-11-02: LBN gives 50 arcmin and NGC 2467 is 4.2 arcmin; a larger region; not the same object
+LBN 1101,separate,,Match screen 2026-11-02: LBN gives 17 arcmin and Sh2-9 is 80 arcmin; a smaller part; not the same object
+Abell 37,assign,IC 972,SIMBAD: PN A66 37 is IC 972
+Abell 50,assign,NGC 6742,SIMBAD: PN A66 50 is NGC 6742
+Abell 75,assign,NGC 7076,SIMBAD: PN A66 75 is NGC 7076
+Abell 77,assign,Sh2-128,SIMBAD: PN A66 77 is Sh 2-128 (an HII region; not a planetary nebula)
+Abell 81,assign,IC 1454,SIMBAD: PN A66 81 is IC 1454

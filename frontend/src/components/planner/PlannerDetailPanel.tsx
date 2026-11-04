@@ -400,7 +400,8 @@ export default function PlannerDetailPanel({
               called". Primary designation is already the title, so
               only alternates are listed here (no redundant M 42 chip
               when "M 42" is the heading). */}
-          {dso && (dso.obj_type || dso.designations.length > 0) && (
+          {dso &&
+            (dso.obj_type || dso.designations.length > 0 || dso.part_of.length > 0) && (
             <Stack
               direction="row"
               flexWrap="wrap"
@@ -429,6 +430,44 @@ export default function PlannerDetailPanel({
                     variant="outlined"
                   />
                 ))}
+              {dso.part_of.map((group) => (
+                <Chip
+                  key={`${group.display_form}-${group.whole_dso_id ?? "group"}`}
+                  label={`Part of ${group.display_form}`}
+                  size="small"
+                  variant="outlined"
+                  clickable={group.whole_dso_id != null}
+                  onClick={
+                    group.whole_dso_id != null && onSelectDso
+                      ? () => onSelectDso(group.whole_dso_id as number)
+                      : undefined
+                  }
+                />
+              ))}
+            </Stack>
+          )}
+
+          {dso && dso.parts.length > 0 && (
+            <Stack
+              direction="row"
+              flexWrap="wrap"
+              gap={0.75}
+              alignItems="center"
+              sx={{ mt: 0.75 }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                Includes
+              </Typography>
+              {dso.parts.map((part) => (
+                <Chip
+                  key={part.dso_id}
+                  label={part.display_designation}
+                  size="small"
+                  variant="outlined"
+                  clickable={onSelectDso != null}
+                  onClick={onSelectDso ? () => onSelectDso(part.dso_id) : undefined}
+                />
+              ))}
             </Stack>
           )}
 

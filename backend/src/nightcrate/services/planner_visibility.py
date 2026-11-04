@@ -15,6 +15,7 @@ window.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -37,7 +38,7 @@ _astropy_iers.conf.auto_max_age = None
 
 import astropy.units as u  # noqa: E402
 import numpy as np  # noqa: E402
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body  # noqa: E402
+from astropy.coordinates import TETE, AltAz, EarthLocation, SkyCoord, get_body  # noqa: E402
 from astropy.time import Time, TimeDelta  # noqa: E402
 
 from nightcrate.services.astronomy import compute_illumination_pct, direction_only  # noqa: E402
@@ -387,34 +388,28 @@ def _compute_upper_transits(
 
     Two-step:
 
-    1. Find the transit *time* analytically: solve LST = RA at a
-       reference instant (local noon of ``night_date``) and advance by
-       the wrapped hour angle. The RA drift from J2000-to-epoch
-       precession is sub-arcsecond per year, i.e., a few seconds of
-       wall-clock drift over a 25-year epoch — well below the 1-minute
-       display resolution, so ICRS RA is fine here.
+    1. Transform all coordinates once to apparent TETE at local noon,
+       solve apparent LST = apparent RA, and advance by the wrapped hour
+       angle.  Catalog J2000 RA would put transits progressively early as
+       precession accumulates.
 
-    2. Evaluate altitude through astropy's AltAz transform at that
-       transit time, **in apparent coordinates**. Doing this keeps the
-       transit-altitude number consistent with the sampled ``alt_deg``
-       array used for hours-visible / endpoint-peak — both reflect
-       ICRS → precession → nutation → aberration → topocentric AltAz.
-       Using the raw formula ``90° − |lat − dec|`` on the catalog
-       (J2000) declination would disagree with the sampled path by up
-       to the precession shift (roughly 0.1° at dec ≈ +69° for a
-       26-year epoch), producing "max alt 55° / transit alt 54°" type
-       inconsistencies between the two columns.
+    2. Evaluate culmination altitude analytically as
+       ``90° − |geodetic latitude − apparent declination|``.  This is
+       consistent with the apparent-coordinate sampled path without an
+       N-element AltAz transform at N different transit times.
 
     Returned altitude can be negative (object transits below the
     horizon, i.e., never visible). Callers decide how to display that.
     """
-    ras_deg = np.asarray(coords.ra.deg)
     tzinfo = ZoneInfo(tz)
     # Reference point: local noon of the night's date (i.e., the day
     # whose evening begins the planning window). The transit we want
     # falls within the following 24 sidereal hours.
     noon_local = datetime(night_date.year, night_date.month, night_date.day, 12, 0, tzinfo=tzinfo)
     t_ref = Time(noon_local.astimezone(UTC))
+    apparent = coords.transform_to(TETE(obstime=t_ref, location=earth_loc))
+    ras_deg = np.asarray(apparent.ra.deg)
+    decs_deg = np.asarray(apparent.dec.deg)
     lst_deg = t_ref.sidereal_time("apparent", longitude=earth_loc.lon).hour * 15.0
     # Hour angle at the reference: HA = LST − RA, wrapped to [−180, 180].
     ha = (lst_deg - ras_deg + 180.0) % 360.0 - 180.0
@@ -427,14 +422,45 @@ def _compute_upper_transits(
         (noon_local + timedelta(hours=float(h))).astimezone(UTC) for h in hours_to_transit
     ]
 
-    # Evaluate altitude at each transit time *through the same frame
-    # stack the sampled altitudes use*. One vectorised transform: each
-    # coord is paired with its own obstime (both shape N), astropy
-    # broadcasts element-wise.
-    transit_times_astropy = Time(transit_times_dt)
-    altaz_frame = AltAz(obstime=transit_times_astropy, location=earth_loc)
-    alt_at_transit = np.asarray(coords.transform_to(altaz_frame).alt.deg)
+    # At upper culmination, apparent hour angle is zero.  Using apparent
+    # declination here is both more accurate than J2000 geometry and avoids
+    # constructing a separate AltAz frame for every target's transit time.
+    alt_at_transit = 90.0 - np.abs(float(earth_loc.lat.deg) - decs_deg)
     return transit_times_dt, alt_at_transit
+
+
+def _apparent_altaz(
+    coords: SkyCoord,
+    times: Time,
+    earth_loc: EarthLocation,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Evaluate apparent alt/az over an N-target by T-time grid."""
+    t_mid = times[len(times) // 2]
+    apparent = coords.transform_to(TETE(obstime=t_mid, location=earth_loc))
+    apparent_ra = np.radians(np.asarray(apparent.ra.deg))[:, None]
+    apparent_dec = np.radians(np.asarray(apparent.dec.deg))[:, None]
+    lst = np.radians(np.asarray(times.sidereal_time("apparent", longitude=earth_loc.lon).deg))[
+        None, :
+    ]
+    hour_angle = lst - apparent_ra
+    lat = math.radians(float(earth_loc.lat.deg))
+    sin_lat = math.sin(lat)
+    cos_lat = math.cos(lat)
+    sin_dec = np.sin(apparent_dec)
+    cos_dec = np.cos(apparent_dec)
+    cos_hour_angle = np.cos(hour_angle)
+    sin_alt = sin_lat * sin_dec + cos_lat * cos_dec * cos_hour_angle
+    alt_deg = np.degrees(np.arcsin(np.clip(sin_alt, -1.0, 1.0)))
+    az_deg = (
+        np.degrees(
+            np.arctan2(
+                -cos_dec * np.sin(hour_angle),
+                cos_lat * sin_dec - sin_lat * cos_dec * cos_hour_angle,
+            )
+        )
+        % 360.0
+    )
+    return alt_deg, az_deg
 
 
 def compute_visibility_snapshot(
@@ -464,16 +490,16 @@ def compute_visibility_snapshot(
         )
 
     times = _sample_grid(dark.start_utc, dark.end_utc)
-    altaz_frame = AltAz(obstime=times, location=earth_loc)
-
     ra = np.asarray([d.ra_deg for d in dsos])
     dec = np.asarray([d.dec_deg for d in dsos])
     coords = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
 
-    # Broadcast to (N_dsos, N_times).
-    altaz = coords[:, None].transform_to(altaz_frame[None, :])
-    alt_deg = np.asarray(altaz.alt.deg)
-    az_deg = np.asarray(altaz.az.deg)
+    # Transform once at the middle of the sample window, then evaluate the
+    # spherical alt/az equations over the full N×T grid.  Apparent positions
+    # drift by far less than the planner's precision over one night.
+    alt_deg, az_deg = _apparent_altaz(coords, times, earth_loc)
+
+    altaz_frame = AltAz(obstime=times, location=earth_loc)
 
     # Moon is a single (T,) path shared across DSOs.
     moon_coord = get_body("moon", times, earth_loc)
@@ -548,7 +574,7 @@ class VisibilityCache:
     """
 
     max_entries: int = 4
-    ttl_seconds: int = 900  # 15 minutes
+    ttl_seconds: int = 21_600  # 6 hours
     _entries: dict[tuple[Any, ...], tuple[datetime, VisibilitySnapshot]] = field(
         default_factory=dict
     )

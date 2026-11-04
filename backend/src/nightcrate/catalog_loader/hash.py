@@ -18,15 +18,47 @@ from typing import Any
 
 _CHUNK = 1 << 20  # 1 MiB
 _NULL_SENTINEL = "\x00NULL\x00"
+_FILE_SHA256_CACHE: dict[tuple[Path, int, int, int, int], str] = {}
 
 
 def file_sha256(path: Path) -> str:
     """Return the lowercase hex sha256 digest of the file at *path*."""
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        while chunk := fh.read(_CHUNK):
-            h.update(chunk)
-    return h.hexdigest()
+    resolved = path.resolve()
+    for attempt in range(3):
+        before = resolved.stat()
+        key = (
+            resolved,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            before.st_ino,
+        )
+        cached = _FILE_SHA256_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+        h = hashlib.sha256()
+        with resolved.open("rb") as fh:
+            while chunk := fh.read(_CHUNK):
+                h.update(chunk)
+        after = resolved.stat()
+        after_key = (
+            resolved,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_ino,
+        )
+        if after_key != key:
+            if attempt == 2:
+                return h.hexdigest()
+            continue
+        digest = h.hexdigest()
+        stale = [cached_key for cached_key in _FILE_SHA256_CACHE if cached_key[0] == resolved]
+        for cached_key in stale:
+            del _FILE_SHA256_CACHE[cached_key]
+        _FILE_SHA256_CACHE[key] = digest
+        return digest
 
 
 def _encode(value: Any) -> str:

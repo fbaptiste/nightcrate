@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from nightcrate.catalog_loader import reconcile as reconcile_module
 from nightcrate.catalog_loader.reconcile import (
+    OBJECT_COLLECTORS,
+    CollectedObject,
+    CollectorBatch,
     NewObject,
     ObjectSet,
     apply_object_set,
@@ -170,6 +174,197 @@ def _cross_source_sources(root: Path, source_ids: tuple[str, ...]) -> dict[str, 
 
 def _snapshot(db: sqlite3.Connection, table: str) -> list[tuple]:
     return [tuple(row) for row in db.execute(f'SELECT * FROM "{table}" ORDER BY id')]  # nosec B608
+
+
+def test_every_collector_object_gets_batched_constellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    collector_ids = tuple(OBJECT_COLLECTORS)
+    sources: dict[str, CatalogSource] = {}
+    collectors = {}
+    ra_deg = 83.3873
+    dec_deg = -0.6664
+
+    def make_collector(collector_id, source_id):
+        def collect_fixture(collector_sources, on_catalogs):
+            assert set(collector_sources) == {source_id}
+            assert collector_id in on_catalogs
+            return CollectorBatch(
+                (
+                    CollectedObject(
+                        source_id=source_id,
+                        source_key="1",
+                        catalog_id=collector_id,
+                        catalog=None,
+                        identifier=None,
+                        columns={
+                            "primary_designation": f"Fixture {collector_id}",
+                            "ra_deg": ra_deg,
+                            "dec_deg": dec_deg,
+                            "constellation": None,
+                            "source_row_hash": "fixture",
+                        },
+                    ),
+                ),
+                (),
+                {source_id: "fixture"},
+            )
+
+        return collect_fixture
+
+    for collector_id in collector_ids:
+        source_id = f"fixture_{collector_id}"
+        source_path = tmp_path / f"{collector_id}.txt"
+        source_path.write_text("fixture", encoding="utf-8")
+        sources[source_id] = CatalogSource(
+            source_id,
+            "fixture",
+            collector_id,
+            source_path,
+            None,
+            None,
+            "fixture",
+            "fixture",
+            collector_id,
+        )
+        collectors[collector_id] = make_collector(collector_id, source_id)
+
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.reconcile.OBJECT_COLLECTORS",
+        collectors,
+    )
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.reconcile.registry.optional_catalog",
+        lambda _catalog_id: None,
+    )
+    batch_calls: list[tuple[tuple[float, ...], tuple[float, ...]]] = []
+    original_batch = reconcile_module.constellations_for_coords
+
+    def track_batch(ra_values, dec_values):
+        batch_calls.append((tuple(ra_values), tuple(dec_values)))
+        return original_batch(ra_values, dec_values)
+
+    monkeypatch.setattr(reconcile_module, "constellations_for_coords", track_batch)
+
+    built = build_object_set(sources, None, frozenset(collector_ids))
+
+    assert len(built.objects) == len(collector_ids)
+    assert all(obj.columns["constellation"] == "Ori" for obj in built.objects)
+    assert all(obj.columns["source_row_hash"] == "fixture" for obj in built.objects)
+    assert batch_calls == [((ra_deg,) * len(collector_ids), (dec_deg,) * len(collector_ids))]
+
+
+def _build_mixed_coordinate_objects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> ObjectSet:
+    source_id = "fixture_coords"
+    source_path = tmp_path / "coords.txt"
+    source_path.write_text("fixture", encoding="utf-8")
+    source = CatalogSource(
+        source_id,
+        "fixture",
+        "Coordinates",
+        source_path,
+        None,
+        None,
+        "fixture",
+        "fixture",
+        "wr",
+    )
+
+    def collect_fixture(sources, on_catalogs):
+        assert set(sources) == {source_id}
+        return CollectorBatch(
+            tuple(
+                CollectedObject(
+                    source_id=source_id,
+                    source_key=key,
+                    catalog_id="wr",
+                    catalog=None,
+                    identifier=None,
+                    columns={
+                        "primary_designation": key,
+                        "ra_deg": ra_deg,
+                        "dec_deg": dec_deg,
+                        "constellation": None,
+                        "source_row_hash": key,
+                    },
+                )
+                for key, ra_deg, dec_deg in (
+                    ("valid", 83.3873, -0.6664),
+                    ("wrapped", 443.3873, -0.6664),
+                    ("nan", float("nan"), 0.0),
+                    ("bad-dec", 83.3873, 91.0),
+                )
+            ),
+            (),
+            {source_id: "fixture"},
+        )
+
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.reconcile.OBJECT_COLLECTORS",
+        {"wr": collect_fixture},
+    )
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.reconcile.registry.optional_catalog",
+        lambda _catalog_id: None,
+    )
+    return build_object_set({source_id: source}, None, frozenset({"wr"}))
+
+
+def test_invalid_coordinates_do_not_block_batched_constellations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls = []
+    original_batch = reconcile_module.constellations_for_coords
+
+    def track_batch(ra_values, dec_values):
+        calls.append((tuple(ra_values), tuple(dec_values)))
+        return original_batch(ra_values, dec_values)
+
+    monkeypatch.setattr(reconcile_module, "constellations_for_coords", track_batch)
+
+    built = _build_mixed_coordinate_objects(tmp_path, monkeypatch)
+    rows = {obj.source_key: obj for obj in built.objects}
+
+    assert rows["valid"].columns["constellation"] == "Ori"
+    assert rows["wrapped"].columns["constellation"] == "Ori"
+    assert rows["nan"].columns["constellation"] is None
+    assert rows["bad-dec"].columns["constellation"] is None
+    assert len(calls) == 1
+    assert calls[0][0] == pytest.approx((83.3873, 83.3873))
+    assert calls[0][1] == (-0.6664, -0.6664)
+
+
+def test_failed_constellation_batch_falls_back_to_scalar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    scalar_calls = []
+    original_scalar = reconcile_module.constellation_for_coords
+
+    def fail_batch(_ra_values, _dec_values):
+        raise ValueError("bad vector")
+
+    def track_scalar(ra_deg, dec_deg):
+        scalar_calls.append((ra_deg, dec_deg))
+        return original_scalar(ra_deg, dec_deg)
+
+    monkeypatch.setattr(reconcile_module, "constellations_for_coords", fail_batch)
+    monkeypatch.setattr(reconcile_module, "constellation_for_coords", track_scalar)
+
+    built = _build_mixed_coordinate_objects(tmp_path, monkeypatch)
+    rows = {obj.source_key: obj for obj in built.objects}
+
+    assert rows["valid"].columns["constellation"] == "Ori"
+    assert rows["wrapped"].columns["constellation"] == "Ori"
+    assert rows["nan"].columns["constellation"] is None
+    assert rows["bad-dec"].columns["constellation"] is None
+    assert [ra_deg for ra_deg, _dec_deg in scalar_calls] == pytest.approx((83.3873, 83.3873))
+    assert [dec_deg for _ra_deg, dec_deg in scalar_calls] == [-0.6664, -0.6664]
 
 
 def test_one_time_step_on_legacy_fixture(db: sqlite3.Connection):
@@ -835,7 +1030,10 @@ def test_merge_kept_inactive_when_unknown_table_references_it(db: sqlite3.Connec
         0,
         None,
     )
+    assert db.execute("SELECT COUNT(*) FROM dso_source_entry WHERE dso_id=1").fetchone()[0] == 0
     assert report.kept_inactive_merge == 1
+    apply_object_set(db, without_one, ())
+    assert db.execute("SELECT COUNT(*) FROM dso_source_entry WHERE dso_id=1").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("stage", ("designation", "object_update", "move_user_links"))

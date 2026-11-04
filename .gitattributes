@@ -1,0 +1,2 @@
+# VizieR TSV fixtures keep the service's blank cells, including trailing tabs.
+backend/tests/fixtures/catalogs/vizier/*.tsv -whitespace

@@ -17,6 +17,7 @@ import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from nightcrate.catalog_loader.designations import normalize_designation as normalize_designation
 from nightcrate.catalog_loader.loader import SourceResult
 from nightcrate.catalog_loader.registry import CatalogSource
 
@@ -42,32 +43,51 @@ def maybe_str(value: str | None) -> str | None:
     return value or None
 
 
-# ── Designation search-key normalisation (mirrors api/dso.py) ───────────────
-
-_SEARCH_STRIP_RE = re.compile(r"[\s\-_]+")
-
-# Long catalog names users may type get rewritten to the short display-form
-# prefix used by stored ``dso_designation.search_key`` values.
-_LONG_TO_SHORT_PREFIX: dict[str, str] = {
-    "messier": "m",
-    "caldwell": "c",
-    "sharpless2": "sh2",
-    "barnard": "b",
-    "hickson": "hcg",
+_GREEK_NAMES: dict[str, str] = {
+    "alpha": "α",
+    "beta": "β",
+    "gamma": "γ",
+    "delta": "δ",
+    "epsilon": "ε",
+    "zeta": "ζ",
+    "eta": "η",
+    "theta": "θ",
+    "iota": "ι",
+    "kappa": "κ",
+    "lambda": "λ",
+    "mu": "μ",
+    "nu": "ν",
+    "xi": "ξ",
+    "pi": "π",
+    "rho": "ρ",
+    "sigma": "σ",
+    "tau": "τ",
+    "upsilon": "υ",
+    "phi": "φ",
+    "chi": "χ",
+    "psi": "ψ",
+    "omega": "ω",
 }
+_GREEK_PATTERN = "|".join(_GREEK_NAMES)
+_GREEK_PLACEHOLDER_RE = re.compile(rf"\{{({_GREEK_PATTERN})\}}", re.IGNORECASE)
+# Bare Greek names in these catalogs are lowercase (for example ``gamma^2``).
+# Keeping this case-sensitive avoids corrupting T Tauri names such as ``HL Tau``.
+_BARE_GREEK_RE = re.compile(rf"\b({_GREEK_PATTERN})\b")
+_SUPERSCRIPT_RE = re.compile(r"\^(\d+)")
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
-def normalize_designation(query: str) -> str:
-    """Return the ``search_key``-compatible form of *query*.
-
-    e.g. ``"M 42"`` → ``"m42"``, ``"messier 42"`` → ``"m42"``,
-    ``"NGC 1976"`` → ``"ngc1976"``, ``"Sh2-281"`` → ``"sh2281"``.
-    """
-    normalized = _SEARCH_STRIP_RE.sub("", query).lower()
-    for long, short in _LONG_TO_SHORT_PREFIX.items():
-        if normalized.startswith(long):
-            return short + normalized[len(long) :]
-    return normalized
+def clean_tex_name(value: str | None) -> str | None:
+    """Render the small TeX-like name subset used by the WR and HH tables."""
+    cleaned = maybe_str(value)
+    if cleaned is None:
+        return None
+    cleaned = _GREEK_PLACEHOLDER_RE.sub(lambda match: _GREEK_NAMES[match.group(1).lower()], cleaned)
+    cleaned = _BARE_GREEK_RE.sub(lambda match: _GREEK_NAMES[match.group(1)], cleaned)
+    cleaned = _SUPERSCRIPT_RE.sub(
+        lambda match: match.group(1).translate(_SUPERSCRIPT_DIGITS), cleaned
+    )
+    return maybe_str(cleaned.replace("{", "").replace("}", ""))
 
 
 # ── dso_catalog_source upsert ───────────────────────────────────────────────

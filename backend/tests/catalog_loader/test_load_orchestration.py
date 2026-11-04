@@ -13,6 +13,7 @@ from nightcrate.catalog_loader import load_catalogs, registry
 from nightcrate.catalog_loader.loader import (
     LEGACY_OTHER_NAMES,
     SourceResult,
+    _designation_canon_due,
     _fused_pgc_repair_due,
 )
 
@@ -362,6 +363,74 @@ def test_fused_pgc_repair_ignores_designation_owned_by_another_object(db, catalo
     assert _fused_pgc_repair_due(db.cursor()) is False
     summary = load_catalogs(db, catalogs_root)
     assert next(row for row in summary.results if row.source_id == "openngc").status == "unchanged"
+
+
+def test_contested_png_does_not_repeat_repair(db, catalogs_root):
+    _append_openngc_rows(
+        catalogs_root / "openngc" / "NGC.csv",
+        (
+            {"Name": "NGC9901", "Identifiers": "PN G000.0+02.0"},
+            {"Name": "NGC9902", "Identifiers": "PN G000.0+02.0"},
+        ),
+    )
+
+    first = load_catalogs(db, catalogs_root)
+    second = load_catalogs(db, catalogs_root)
+
+    owner = db.execute(
+        """
+        SELECT d.source_key
+        FROM dso_designation dd JOIN dso d ON d.id = dd.dso_id
+        WHERE dd.catalog = 'png' AND dd.identifier = '000.0+02.0'
+        """
+    ).fetchone()
+    assert owner[0] == "NGC9901"
+    assert next(row for row in first.results if row.source_id == "openngc").status == "loaded"
+    assert next(row for row in second.results if row.source_id == "openngc").status == "unchanged"
+
+
+def test_separate_png_override_does_not_repeat_repair(db, catalogs_root, monkeypatch):
+    _append_openngc_rows(
+        catalogs_root / "openngc" / "NGC.csv",
+        ({"Name": "NGC7078", "M": "015", "Identifiers": "PN G065.0-27.3"},),
+    )
+
+    first = load_catalogs(db, catalogs_root)
+    override_source = next(
+        source
+        for source in registry.get_sources(catalogs_root)
+        if source.source_id == "nightcrate_match_overrides"
+    )
+
+    assert _designation_canon_due(db.cursor())
+    assert not _designation_canon_due(db.cursor(), override_source)
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("unchanged object step repeated")
+
+    monkeypatch.setattr("nightcrate.catalog_loader.reconcile.apply_object_set", unexpected)
+    second = load_catalogs(db, catalogs_root)
+
+    assert next(row for row in first.results if row.source_id == "openngc").status == "loaded"
+    assert next(row for row in second.results if row.source_id == "openngc").status == "unchanged"
+
+
+def test_structured_addendum_name_is_claimed_canonically(db, catalogs_root):
+    _append_openngc_rows(
+        catalogs_root / "openngc" / "addendum.csv",
+        ({"Name": "MCG-02-05-50"},),
+    )
+
+    load_catalogs(db, catalogs_root)
+
+    rows = db.execute(
+        """
+        SELECT identifier, display_form, search_key
+        FROM dso_designation
+        WHERE catalog = 'mcg' AND identifier = '-02-05-050'
+        """
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [("-02-05-050", "MCG -02-05-050", "mcg-02-05-050")]
 
 
 def test_own_name_ownership_repairs_on_unchanged_hash_and_is_idempotent(

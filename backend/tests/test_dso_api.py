@@ -90,6 +90,88 @@ async def _insert_sort_dso(
     return dso_id
 
 
+@pytest.fixture
+async def dso_loaded_with_emission_types(dso_loaded):
+    _ = dso_loaded
+    await _insert_sort_dso(
+        "TEST Emission Nebula",
+        marker="emission-nebula",
+        obj_type="EmN",
+    )
+
+
+@pytest.fixture
+async def grouped_dsos(dso_loaded):
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id='openngc'")
+        source_id = int((await source.fetchone())["id"])
+
+        async def add_dso(
+            primary: str,
+            marker: str,
+            catalog: str,
+            identifier: str,
+            *,
+            common_name: str | None = None,
+        ) -> int:
+            cursor = await conn.execute(
+                """
+                INSERT INTO dso (
+                    primary_designation, obj_type, common_name, source_catalog_id,
+                    source_row_hash, source_key
+                ) VALUES (?, 'G', ?, ?, ?, ?)
+                """,
+                (primary, common_name, source_id, marker, marker),
+            )
+            assert cursor.lastrowid is not None
+            dso_id = int(cursor.lastrowid)
+            await conn.execute(
+                """
+                INSERT INTO dso_designation (
+                    dso_id, catalog, identifier, display_form, search_key, is_primary
+                ) VALUES (?, ?, ?, ?, ?, 1)
+                """,
+                (dso_id, catalog, identifier, primary, primary.replace(" ", "").lower()),
+            )
+            return dso_id
+
+        ngc4038 = await add_dso("NGC 4038", "group-4038", "ngc", "4038")
+        ngc4039 = await add_dso("NGC 4039", "group-4039", "ngc", "4039")
+        loop = await add_dso("LBN 191", "group-loop", "lbn", "191", common_name="Cygnus Loop")
+        veil = await add_dso("NGC 6960", "group-veil", "ngc", "6960")
+
+        arp_cursor = await conn.execute(
+            """
+            INSERT INTO dso_group (catalog, identifier, display_form, search_key)
+            VALUES ('arp', '244', 'Arp 244', 'arp244')
+            """
+        )
+        loop_cursor = await conn.execute(
+            """
+            INSERT INTO dso_group (
+                catalog, identifier, display_form, search_key, whole_dso_id
+            ) VALUES ('lbn', '191', 'LBN 191', 'lbn191', ?)
+            """,
+            (loop,),
+        )
+        assert arp_cursor.lastrowid is not None and loop_cursor.lastrowid is not None
+        await conn.executemany(
+            "INSERT INTO dso_group_member (group_id, dso_id) VALUES (?, ?)",
+            (
+                (int(arp_cursor.lastrowid), ngc4038),
+                (int(arp_cursor.lastrowid), ngc4039),
+                (int(loop_cursor.lastrowid), veil),
+            ),
+        )
+        await conn.commit()
+    return {
+        "ngc4038": ngc4038,
+        "ngc4039": ngc4039,
+        "loop": loop,
+        "veil": veil,
+    }
+
+
 # ── List ──────────────────────────────────────────────────────────────────────
 
 
@@ -114,12 +196,17 @@ async def test_list_pagination(client, dso_loaded):
 
 
 @pytest.mark.anyio
-async def test_list_filter_by_single_type(client, dso_loaded):
-    resp = await client.get("/api/dso?type=HII")
-    assert resp.status_code == 200
-    items = resp.json()["items"]
-    assert len(items) == 2  # NGC1976 (Orion) + NGC0281 (Pacman)
-    assert all(i["obj_type"] == "HII" for i in items)
+async def test_list_filter_merges_emission_nebula_types(client, dso_loaded_with_emission_types):
+    results = {}
+    for code in ("EmN", "HII"):
+        resp = await client.get("/api/dso", params={"type": code})
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert {item["obj_type"] for item in items} == {"EmN", "HII"}
+        results[code] = {item["id"] for item in items}
+
+    assert results["EmN"] == results["HII"]
+    assert len(results["EmN"]) == 3
 
 
 @pytest.mark.anyio
@@ -179,6 +266,35 @@ async def test_list_search_matches_common_name(client, dso_loaded):
     resp = await client.get("/api/dso?q=Orion Nebula")
     items = resp.json()["items"]
     assert any(i["primary_designation"] == "M 42" for i in items)
+
+
+@pytest.mark.anyio
+async def test_list_search_pads_partial_mcg_and_png_designations(client, dso_loaded):
+    mcg_id = await _insert_sort_dso("MCG -01-02-003", marker="partial-mcg")
+    png_id = await _insert_sort_dso("PN G010.8-01.8", marker="partial-png", obj_type="PN")
+    async with get_db() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO dso_designation (
+                dso_id, catalog, identifier, display_form, search_key, is_primary
+            ) VALUES (?, ?, ?, ?, ?, 1)
+            """,
+            (
+                (mcg_id, "mcg", "-01-02-003", "MCG -01-02-003", "mcg-01-02-003"),
+                (png_id, "png", "010.8-01.8", "PN G010.8-01.8", "png010.8-01.8"),
+            ),
+        )
+        await conn.commit()
+
+    for query, expected_id in (
+        ("MCG-1-2", mcg_id),
+        ("MCG-1", mcg_id),
+        ("PN G 10.8", png_id),
+        ("PN G 10", png_id),
+    ):
+        response = await client.get("/api/dso", params={"q": query})
+        assert response.status_code == 200
+        assert expected_id in {item["id"] for item in response.json()["items"]}
 
 
 @pytest.mark.anyio
@@ -684,19 +800,39 @@ async def test_lookup_returns_null_on_miss(client, dso_loaded):
 
 
 @pytest.mark.anyio
-async def test_facets_returns_types_and_constellations_with_counts(client, dso_loaded):
+async def test_facets_returns_types_and_constellations_with_counts(
+    client, dso_loaded_with_emission_types
+):
     resp = await client.get("/api/dso/facets")
     assert resp.status_code == 200
     body = resp.json()
     raw_counts = {t["code"]: t["count"] for t in body["raw_types"]}
-    assert raw_counts["HII"] == 2  # NGC1976 + NGC0281
+    assert raw_counts["EmN"] == 3  # EmN test object + NGC1976 + NGC0281
+    assert "HII" not in raw_counts
     assert raw_counts["G"] == 2  # NGC0224 + NGC5457
     const_counts = {c["code"]: c["count"] for c in body["constellations"]}
     assert const_counts["Per"] == 2
     # Type groups aggregate raw codes. "Emission Nebula" covers HII+EmN+Cl+N.
     group_counts = {g["name"]: g["count"] for g in body["type_groups"]}
-    assert group_counts["Emission Nebula"] == 2
+    assert group_counts["Emission Nebula"] == 3
     assert group_counts["Galaxy"] == 2
+
+
+@pytest.mark.anyio
+async def test_facets_type_filter_merges_emission_nebula_types(
+    client, dso_loaded_with_emission_types
+):
+    constellation_counts = {}
+    for code in ("EmN", "HII"):
+        resp = await client.get("/api/dso/facets", params={"type": code})
+        assert resp.status_code == 200
+        constellation_counts[code] = {
+            item["code"]: item["count"] for item in resp.json()["constellations"]
+        }
+
+    assert constellation_counts["EmN"] == constellation_counts["HII"]
+    assert constellation_counts["EmN"]["Ori"] == 2
+    assert constellation_counts["EmN"]["Cas"] == 1
 
 
 @pytest.mark.anyio
@@ -871,14 +1007,18 @@ async def dso_loaded_with_wikidata(tmp_path):
 
 @pytest.mark.anyio
 async def test_detail_includes_external_refs_with_wikipedia_first(client, dso_loaded_with_wikidata):
-    """M42 (emission nebula, not extragalactic) gets three refs in the
-    order wikipedia → simbad → wikidata. NED is skipped by the
-    extragalactic filter (v0.21.1)."""
+    """Stored refs keep their order and request-only search links come last."""
     search = (await client.get("/api/dso?q=M42")).json()
     m42 = next(i for i in search["items"] if i["primary_designation"] == "M 42")
     detail = (await client.get(f"/api/dso/{m42['id']}")).json()
     refs = detail["external_refs"]
-    assert [r["provider"] for r in refs] == ["wikipedia", "simbad", "wikidata"]
+    assert [r["provider"] for r in refs] == [
+        "wikipedia",
+        "simbad",
+        "wikidata",
+        "google",
+        "google_images",
+    ]
 
     assert refs[0]["language"] == "en"
     assert refs[0]["identifier"] == "Orion_Nebula"
@@ -894,12 +1034,15 @@ async def test_detail_includes_external_refs_with_wikipedia_first(client, dso_lo
 
 
 @pytest.mark.anyio
-async def test_detail_returns_empty_external_refs_for_unmatched_dso(client, dso_loaded):
-    """When no Wikidata data is loaded, every DSO detail carries an empty array."""
+async def test_detail_has_only_search_links_for_unmatched_dso(client, dso_loaded):
+    """A DSO without stored refs still carries both request-only search links."""
     search = (await client.get("/api/dso?q=M42")).json()
     m42 = next(i for i in search["items"] if i["primary_designation"] == "M 42")
     detail = (await client.get(f"/api/dso/{m42['id']}")).json()
-    assert detail["external_refs"] == []
+    assert [ref["provider"] for ref in detail["external_refs"]] == [
+        "google",
+        "google_images",
+    ]
 
 
 @pytest.mark.anyio
@@ -909,7 +1052,41 @@ async def test_lookup_endpoint_includes_external_refs(client, dso_loaded_with_wi
     assert detail is not None
     assert "external_refs" in detail
     providers = [r["provider"] for r in detail["external_refs"]]
-    assert providers == ["wikipedia", "simbad", "wikidata"]
+    assert providers == ["wikipedia", "simbad", "wikidata", "google", "google_images"]
+
+
+@pytest.mark.anyio
+async def test_detail_google_links_use_primary_and_first_common_name(client, dso_loaded):
+    dso_id = await _insert_sort_dso(
+        "NGC 7000",
+        marker="google-common-name",
+        common_name="North America Nebula, Caldwell 20",
+    )
+
+    detail = (await client.get(f"/api/dso/{dso_id}")).json()
+    refs = detail["external_refs"]
+
+    assert [ref["provider"] for ref in refs] == ["google", "google_images"]
+    assert refs[0]["identifier"] == "NGC 7000 North America Nebula"
+    assert refs[0]["url"] == ("https://www.google.com/search?q=NGC+7000+North+America+Nebula")
+    assert refs[1]["identifier"] == "NGC 7000 North America Nebula"
+    assert refs[1]["url"] == (
+        "https://www.google.com/search?tbm=isch&q=NGC+7000+North+America+Nebula"
+    )
+
+
+@pytest.mark.anyio
+async def test_detail_google_links_without_common_name_use_designation(client, dso_loaded):
+    dso_id = await _insert_sort_dso("NGC 7001", marker="google-no-common-name")
+
+    detail = (await client.get(f"/api/dso/{dso_id}")).json()
+    refs = detail["external_refs"]
+
+    assert [ref["provider"] for ref in refs] == ["google", "google_images"]
+    assert refs[0]["identifier"] == "NGC 7001"
+    assert refs[0]["url"] == "https://www.google.com/search?q=NGC+7001"
+    assert refs[1]["identifier"] == "NGC 7001"
+    assert refs[1]["url"] == "https://www.google.com/search?tbm=isch&q=NGC+7001"
 
 
 @pytest.mark.anyio
@@ -918,3 +1095,77 @@ async def test_list_response_does_not_include_external_refs(client, dso_loaded_w
     response = (await client.get("/api/dso?q=M42")).json()
     item = response["items"][0]
     assert "external_refs" not in item
+
+
+@pytest.mark.anyio
+async def test_group_search_returns_all_members(client, grouped_dsos):
+    response = await client.get("/api/dso", params={"q": "Arp 244"})
+
+    assert response.status_code == 200
+    assert {item["id"] for item in response.json()["items"]} == {
+        grouped_dsos["ngc4038"],
+        grouped_dsos["ngc4039"],
+    }
+
+
+@pytest.mark.anyio
+async def test_whole_common_name_search_returns_whole_and_parts(client, grouped_dsos):
+    response = await client.get("/api/dso", params={"q": "Cygnus Loop"})
+
+    assert response.status_code == 200
+    assert {item["id"] for item in response.json()["items"]} == {
+        grouped_dsos["loop"],
+        grouped_dsos["veil"],
+    }
+
+
+@pytest.mark.anyio
+async def test_detail_returns_part_of_and_parts(client, grouped_dsos):
+    member = (await client.get(f"/api/dso/{grouped_dsos['ngc4038']}")).json()
+    whole = (await client.get(f"/api/dso/{grouped_dsos['loop']}")).json()
+
+    assert member["part_of"] == [{"display_form": "Arp 244", "whole_dso_id": None}]
+    assert member["parts"] == []
+    assert whole["part_of"] == []
+    assert whole["parts"] == [{"dso_id": grouped_dsos["veil"], "display_designation": "NGC 6960"}]
+
+
+@pytest.mark.anyio
+async def test_group_catalog_filter_displays_group_names_in_natural_order(client, grouped_dsos):
+    response = await client.get(
+        "/api/dso",
+        params={"catalog": "arp", "sort": "primary_designation", "limit": 500},
+    )
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["display_designation"] for item in items] == [
+        "Arp 26",
+        "Arp 244",
+        "Arp 244",
+    ]
+    assert {item["id"] for item in items[1:]} == {
+        grouped_dsos["ngc4038"],
+        grouped_dsos["ngc4039"],
+    }
+    assert all(item["part_of"] == ["Arp 244"] for item in items[1:])
+
+
+@pytest.mark.anyio
+async def test_group_search_combines_with_catalog_filter(client, grouped_dsos):
+    response = await client.get("/api/dso", params={"q": "Arp 244", "catalog": "arp"})
+
+    assert response.status_code == 200
+    assert {item["id"] for item in response.json()["items"]} == {
+        grouped_dsos["ngc4038"],
+        grouped_dsos["ngc4039"],
+    }
+
+
+@pytest.mark.anyio
+async def test_catalog_facets_include_group_members(client, grouped_dsos):
+    response = await client.get("/api/dso/facets")
+
+    assert response.status_code == 200
+    counts = {row["code"]: row["count"] for row in response.json()["catalogs"]}
+    assert counts["arp"] == 3

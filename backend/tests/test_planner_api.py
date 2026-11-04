@@ -4,22 +4,112 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from nightcrate.api.planner import _sort_items
+from nightcrate.api.planner_models import PlannerTargetItem
 from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services import hips_tiles
-from nightcrate.services.planner_visibility import default_cache
+from nightcrate.services.dso_sorting import designation_sort_key
+from nightcrate.services.planner_visibility import (
+    DarkWindow,
+    DsoVisibility,
+    VisibilitySnapshot,
+    default_cache,
+)
 
 
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+def _make_every_dso_visible(monkeypatch) -> None:
+    cached: VisibilitySnapshot | None = None
+
+    def get_or_compute(location, _horizon, night_date, dsos):
+        nonlocal cached
+        if cached is not None and set(cached.per_dso) == {dso.dso_id for dso in dsos}:
+            return cached
+        start = datetime(2026, 4, 20, 3, 0, tzinfo=UTC)
+        end = start + timedelta(hours=6)
+        per_dso = {
+            dso.dso_id: DsoVisibility(
+                dso_id=dso.dso_id,
+                hours_visible=6.0,
+                max_altitude_deg=60.0,
+                peak_time_utc=start + timedelta(hours=3),
+                azimuth_at_peak_deg=180.0,
+                min_moon_separation_deg=90.0,
+                rise_time_utc=start,
+                set_time_utc=end,
+                transit_time_utc=start + timedelta(hours=3),
+                altitude_at_transit_deg=60.0,
+            )
+            for dso in dsos
+        }
+        cached = VisibilitySnapshot(
+            location_id=location.id,
+            night_date=night_date,
+            dark_window=DarkWindow(start, end),
+            moon_phase_pct=0.0,
+            per_dso=per_dso,
+        )
+        return cached
+
+    monkeypatch.setattr(
+        "nightcrate.api.planner.default_cache",
+        SimpleNamespace(get_or_compute=get_or_compute),
+    )
+    monkeypatch.setattr("nightcrate.api.planner.score_targets", lambda *_args, **_kwargs: {})
+
+
+async def _old_id_list_order(catalog: str | None = None) -> list[int]:
+    async with get_db() as conn:
+        rows = await (
+            await conn.execute(
+                """
+                SELECT id
+                FROM dso
+                WHERE active = 1 AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL
+                """
+            )
+        ).fetchall()
+        dso_ids = [int(row["id"]) for row in rows]
+        placeholders = ",".join("?" for _ in dso_ids)
+        metadata_rows = await (
+            await conn.execute(
+                f"""
+                SELECT id, primary_designation
+                FROM dso
+                WHERE id IN ({placeholders})
+                """,  # noqa: S608  # nosec B608 - reproduces the replaced id-list query
+                dso_ids,
+            )
+        ).fetchall()
+        designation_rows = await (
+            await conn.execute(
+                f"""
+                SELECT dso_id, catalog
+                FROM dso_designation
+                WHERE dso_id IN ({placeholders})
+                """,  # noqa: S608  # nosec B608 - reproduces the replaced id-list query
+                dso_ids,
+            )
+        ).fetchall()
+
+    catalogs: dict[int, set[str]] = {dso_id: set() for dso_id in dso_ids}
+    for row in designation_rows:
+        catalogs[int(row["dso_id"])].add(str(row["catalog"]))
+    metadata = {int(row["id"]): str(row["primary_designation"]) for row in metadata_rows}
+    eligible = [dso_id for dso_id in dso_ids if catalog is None or catalog in catalogs[dso_id]]
+    return sorted(eligible, key=lambda dso_id: (designation_sort_key(metadata[dso_id]), dso_id))
 
 
 @pytest.fixture(autouse=True)
@@ -127,6 +217,102 @@ async def seed_db():
     return location_id
 
 
+@pytest.fixture
+async def seed_emission_types(seed_db):
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await source.fetchone())["id"])
+        await conn.execute(
+            """
+            INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg,
+                constellation, maj_axis_arcmin, min_axis_arcmin, mag_v,
+                source_catalog_id, source_row_hash)
+            VALUES ('TEST EmN', 'EmN', 315.0, 44.0, 'Cyg', 45.0, 35.0, 8.0, ?, 'emn1')
+            """,
+            (source_id,),
+        )
+        await conn.commit()
+    return seed_db
+
+
+@pytest.fixture
+async def seed_limit_edge_dsos(seed_db):
+    """Add unknown-magnitude and unknown-size rows for limit semantics tests."""
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await source.fetchone())["id"])
+        await conn.execute(
+            """
+            INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg,
+                constellation, maj_axis_arcmin, min_axis_arcmin,
+                source_catalog_id, source_row_hash)
+            VALUES ('NOMAG', 'G', 201.0, 30.0, 'CVn', 20.0, 10.0, ?, 'limit-nomag')
+            """,
+            (source_id,),
+        )
+        await conn.execute(
+            """
+            INSERT INTO dso (primary_designation, obj_type, ra_deg, dec_deg,
+                constellation, mag_v, source_catalog_id, source_row_hash)
+            VALUES ('NOSIZE', 'G', 202.0, 30.0, 'CVn', 8.0, ?, 'limit-nosize')
+            """,
+            (source_id,),
+        )
+        await conn.commit()
+    return seed_db
+
+
+@pytest.fixture
+async def seed_grouped_dsos(seed_db):
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id='test'")
+        source_id = int((await source.fetchone())["id"])
+        ids: dict[str, int] = {}
+        for index, (name, catalog, identifier) in enumerate(
+            (
+                ("NGC 4038", "ngc", "4038"),
+                ("NGC 4039", "ngc", "4039"),
+                ("Arp 1", "arp", "1"),
+            )
+        ):
+            cursor = await conn.execute(
+                """
+                INSERT INTO dso (
+                    primary_designation, obj_type, ra_deg, dec_deg, constellation,
+                    maj_axis_arcmin, source_catalog_id, source_row_hash, source_key
+                ) VALUES (?, 'G', ?, -18.0, 'Crv', 5.0, ?, ?, ?)
+                """,
+                (name, 180.0 + index, source_id, f"group-{index}", f"group-{index}"),
+            )
+            assert cursor.lastrowid is not None
+            dso_id = int(cursor.lastrowid)
+            ids[name] = dso_id
+            await conn.execute(
+                """
+                INSERT INTO dso_designation (
+                    dso_id, catalog, identifier, display_form, search_key, is_primary
+                ) VALUES (?, ?, ?, ?, ?, 1)
+                """,
+                (dso_id, catalog, identifier, name, name.replace(" ", "").lower()),
+            )
+        group = await conn.execute(
+            """
+            INSERT INTO dso_group (catalog, identifier, display_form, search_key)
+            VALUES ('arp', '244', 'Arp 244', 'arp244')
+            """
+        )
+        assert group.lastrowid is not None
+        await conn.executemany(
+            "INSERT INTO dso_group_member (group_id, dso_id) VALUES (?, ?)",
+            (
+                (int(group.lastrowid), ids["NGC 4038"]),
+                (int(group.lastrowid), ids["NGC 4039"]),
+            ),
+        )
+        await conn.commit()
+    return seed_db, ids
+
+
 async def test_targets_endpoint_returns_snapshot(client: TestClient, seed_db):
     location_id = seed_db
     # Date in April puts Orion low in the Phoenix evening; 2 hours minimum
@@ -203,6 +389,100 @@ async def test_now_status_suppressed_for_non_today_date(client: TestClient, seed
     assert all(item["now_status"] is None for item in other_items)
 
 
+async def test_now_status_computes_page_only_unless_used_for_sort(
+    client: TestClient, seed_db, monkeypatch
+):
+    _make_every_dso_visible(monkeypatch)
+    fixed_today = date(2026, 4, 19)
+    monkeypatch.setattr("nightcrate.api.planner._tonight_date", lambda _tz: fixed_today)
+    calls: list[list[int]] = []
+
+    def fake_now_status(_loc, _hor, coords, *, astro_dark_start_utc, astro_dark_end_utc):
+        ids = sorted(dso.dso_id for dso in coords)
+        calls.append(ids)
+        statuses = ("set", "up", "rising")
+        return {dso_id: statuses[index % len(statuses)] for index, dso_id in enumerate(ids)}
+
+    monkeypatch.setattr("nightcrate.api.planner.compute_now_status", fake_now_status)
+    common = {
+        "location_id": seed_db,
+        "date": fixed_today.isoformat(),
+        "min_hours": 0.0,
+    }
+
+    page_response = client.get(
+        "/api/planner/targets",
+        params={**common, "limit": 1, "sort": "primary_designation:asc"},
+    )
+    assert page_response.status_code == 200
+    assert len(calls[-1]) == 1
+    assert page_response.json()["items"][0]["now_status"] is not None
+
+    sorted_response = client.get(
+        "/api/planner/targets",
+        params={**common, "limit": 100, "sort": "now_status:asc"},
+    )
+    assert sorted_response.status_code == 200
+    assert len(calls[-1]) == sorted_response.json()["total"]
+    assert [item["now_status"] for item in sorted_response.json()["items"]] == [
+        "up",
+        "rising",
+        "set",
+    ]
+
+
+def test_key_sort_has_stable_ties_and_nulls_last_for_asc_and_desc():
+    def item(
+        dso_id: int,
+        designation: str,
+        common_name: str | None,
+        score: int | None,
+        status: str | None,
+    ):
+        return (
+            PlannerTargetItem.model_construct(
+                dso_id=dso_id,
+                primary_designation=designation,
+                common_name=common_name,
+                score_pct=score,
+                now_status=status,
+            ),
+            None,
+        )
+
+    rows = [
+        item(1, "NGC 10", "Alpha", 50, "set"),
+        item(2, "NGC 2", "alpha", 50, "up"),
+        item(3, "M 1", None, 50, "rising"),
+        item(4, "B 1", "Beta", None, None),
+        item(5, "NGC 2", "alpha", 60, "set"),
+    ]
+    _sort_items(
+        rows,
+        [("score_pct", "desc"), ("common_name", "asc"), ("primary_designation", "desc")],
+    )
+    assert [row[0].dso_id for row in rows] == [5, 1, 2, 3, 4]
+
+    _sort_items(rows, [("now_status", "asc"), ("score_pct", "desc")])
+    assert [row[0].dso_id for row in rows] == [2, 3, 5, 1, 4]
+
+
+def test_transit_datetime_sort_is_chronological_with_nulls_last():
+    early = datetime(2026, 4, 20, 3, 0, tzinfo=UTC)
+    late = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    rows = [
+        (SimpleNamespace(dso_id=3, transit_time_utc=None), None),
+        (SimpleNamespace(dso_id=2, transit_time_utc=late), None),
+        (SimpleNamespace(dso_id=1, transit_time_utc=early), None),
+    ]
+
+    _sort_items(rows, [("transit_time_utc", "asc")])
+    assert [row[0].dso_id for row in rows] == [1, 2, 3]
+
+    _sort_items(rows, [("transit_time_utc", "desc")])
+    assert [row[0].dso_id for row in rows] == [2, 1, 3]
+
+
 async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_db):
     location_id = seed_db
     response = client.get(
@@ -218,6 +498,69 @@ async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_d
     data = response.json()
     designations = {item["primary_designation"] for item in data["items"]}
     assert "FAINT-1" not in designations
+
+
+async def test_tonight_without_limit_params_filters_nothing(
+    client: TestClient, seed_limit_edge_dsos, monkeypatch
+):
+    _make_every_dso_visible(monkeypatch)
+    response = client.get(
+        "/api/planner/targets",
+        params={"location_id": seed_limit_edge_dsos, "date": "2026-04-19", "limit": 100},
+    )
+
+    assert response.status_code == 200
+    designations = {item["primary_designation"] for item in response.json()["items"]}
+    assert {"FAINT-1", "NOMAG", "NOSIZE"} <= designations
+
+
+async def test_magnitude_limit_passes_unknown_magnitude(
+    client: TestClient, seed_limit_edge_dsos, monkeypatch
+):
+    _make_every_dso_visible(monkeypatch)
+    response = client.get(
+        "/api/planner/targets",
+        params={
+            "location_id": seed_limit_edge_dsos,
+            "date": "2026-04-19",
+            "max_magnitude": 10.0,
+            "limit": 100,
+        },
+    )
+
+    assert response.status_code == 200
+    designations = {item["primary_designation"] for item in response.json()["items"]}
+    assert "NOMAG" in designations
+    assert "FAINT-1" not in designations
+
+
+async def test_size_limit_drops_unknown_size(client: TestClient, seed_limit_edge_dsos, monkeypatch):
+    _make_every_dso_visible(monkeypatch)
+    response = client.get(
+        "/api/planner/targets",
+        params={
+            "location_id": seed_limit_edge_dsos,
+            "date": "2026-04-19",
+            "min_size_arcmin": 5.0,
+            "limit": 100,
+        },
+    )
+
+    assert response.status_code == 200
+    designations = {item["primary_designation"] for item in response.json()["items"]}
+    assert "NOSIZE" not in designations
+
+
+async def test_anytime_unchanged(client: TestClient, seed_limit_edge_dsos):
+    _ = seed_limit_edge_dsos
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "limit": 100},
+    )
+
+    assert response.status_code == 200
+    designations = {item["primary_designation"] for item in response.json()["items"]}
+    assert {"FAINT-1", "NOMAG", "NOSIZE"} <= designations
 
 
 async def test_targets_response_includes_filter_aware_facet_counts(client: TestClient, seed_db):
@@ -237,6 +580,33 @@ async def test_targets_response_includes_filter_aware_facet_counts(client: TestC
     assert isinstance(body["constellation_counts"], dict)
     assert sum(body["raw_type_counts"].values()) > 0
     assert sum(body["catalog_counts"].values()) > 0
+
+
+async def test_targets_merge_emission_nebula_raw_types(client: TestClient, seed_emission_types):
+    _ = seed_emission_types
+    baseline = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "limit": 100},
+    )
+    assert baseline.status_code == 200
+    raw_counts = baseline.json()["raw_type_counts"]
+    assert raw_counts["EmN"] == 3
+    assert "HII" not in raw_counts
+
+    results = {}
+    for code in ("EmN", "HII"):
+        response = client.get(
+            "/api/planner/targets",
+            params={"restrict_tonight": "false", "type": code, "limit": 100},
+        )
+        assert response.status_code == 200
+        results[code] = {
+            (item["primary_designation"], item["obj_type"]) for item in response.json()["items"]
+        }
+        assert {obj_type for _, obj_type in results[code]} == {"EmN", "HII"}
+
+    assert results["EmN"] == results["HII"]
+    assert len(results["EmN"]) == 3
 
 
 async def test_targets_raw_type_count_excludes_own_dimension(client: TestClient, seed_db):
@@ -516,6 +886,121 @@ async def test_targets_anytime_mode_works_without_location(client: TestClient, s
     for item in body["items"]:
         assert item["hours_visible"] is None
         assert item["max_altitude_deg"] is None
+
+
+async def test_scaled_queries_match_old_id_list_order(client: TestClient, seed_db, monkeypatch):
+    location_id = seed_db
+    _make_every_dso_visible(monkeypatch)
+    expected = {
+        None: await _old_id_list_order(),
+        "messier": await _old_id_list_order("messier"),
+    }
+
+    for restrict_tonight in (False, True):
+        for catalog, expected_ids in expected.items():
+            params: dict[str, str | int | float | bool] = {
+                "restrict_tonight": restrict_tonight,
+                "sort": "primary_designation:asc",
+                "limit": 500,
+            }
+            if restrict_tonight:
+                params.update(
+                    {
+                        "location_id": location_id,
+                        "date": "2026-04-19",
+                        "min_hours": 0,
+                        "max_magnitude": 100,
+                        "min_size_arcmin": 0,
+                    }
+                )
+            if catalog is not None:
+                params["catalog"] = catalog
+
+            response = client.get("/api/planner/targets", params=params)
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["total"] == len(expected_ids)
+            assert [item["dso_id"] for item in body["items"]] == expected_ids
+
+
+async def test_anytime_with_40000_objects(client: TestClient, seed_db, monkeypatch):
+    location_id = seed_db
+    _make_every_dso_visible(monkeypatch)
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await source.fetchone())["id"])
+        await conn.executemany(
+            """
+            INSERT INTO dso (
+                primary_designation, obj_type, ra_deg, dec_deg, constellation,
+                maj_axis_arcmin, mag_v, source_catalog_id, source_key, source_row_hash
+            ) VALUES (?, 'Other', ?, ?, 'Ori', 10.0, 5.0, ?, ?, ?)
+            """,
+            (
+                (
+                    f"BULK {index:05d}",
+                    float(index % 360),
+                    float(index % 120 - 60),
+                    source_id,
+                    f"bulk-{index:05d}",
+                    f"bulk-hash-{index:05d}",
+                )
+                for index in range(40_000)
+            ),
+        )
+        await conn.execute(
+            """
+            INSERT INTO dso_designation (
+                dso_id, catalog, identifier, display_form, search_key, is_primary
+            )
+            SELECT id, 'wr', source_key, primary_designation,
+                   'bulk' || substr(source_key, 6), 1
+            FROM dso
+            WHERE source_key LIKE 'bulk-%'
+            """
+        )
+        await conn.commit()
+        expected_bulk_ids = [
+            int(row["id"])
+            for row in await (
+                await conn.execute(
+                    """
+                    SELECT id FROM dso
+                    WHERE source_key LIKE 'bulk-%'
+                    ORDER BY source_key
+                    LIMIT 25
+                    """
+                )
+            ).fetchall()
+        ]
+
+    for restrict_tonight in (False, True):
+        for catalog, expected_total in ((None, 40_003), ("wr", 40_000)):
+            params: dict[str, str | int | float | bool] = {
+                "restrict_tonight": restrict_tonight,
+                "sort": "primary_designation:asc",
+                "limit": 25,
+            }
+            if restrict_tonight:
+                params.update(
+                    {
+                        "location_id": location_id,
+                        "date": "2026-04-19",
+                        "min_hours": 0,
+                        "max_magnitude": 100,
+                        "min_size_arcmin": 0,
+                    }
+                )
+            if catalog is not None:
+                params["catalog"] = catalog
+
+            response = client.get("/api/planner/targets", params=params)
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["total"] == expected_total
+            assert [item["dso_id"] for item in body["items"]] == expected_bulk_ids
 
 
 async def test_targets_tonight_mode_requires_location(client: TestClient):
@@ -1175,3 +1660,73 @@ async def test_sky_tile_grid_requires_tier_or_fov(client: TestClient):
     )
     assert response.status_code == 400
     assert "tier" in response.json()["detail"]
+
+
+async def test_planner_group_search_returns_all_members(client: TestClient, seed_grouped_dsos):
+    _location_id, ids = seed_grouped_dsos
+
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "q": "Arp 244", "limit": 500},
+    )
+
+    assert response.status_code == 200
+    assert {item["dso_id"] for item in response.json()["items"]} == {
+        ids["NGC 4038"],
+        ids["NGC 4039"],
+    }
+
+
+async def test_planner_search_pads_partial_mcg_and_png_designations(
+    client: TestClient,
+    seed_db,
+):
+    async with get_db() as conn:
+        row = await (
+            await conn.execute("SELECT id FROM dso WHERE primary_designation='M 42'")
+        ).fetchone()
+        dso_id = int(row["id"])
+        await conn.executemany(
+            """
+            INSERT INTO dso_designation (
+                dso_id, catalog, identifier, display_form, search_key, is_primary
+            ) VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (
+                (dso_id, "mcg", "-01-02-003", "MCG -01-02-003", "mcg-01-02-003"),
+                (dso_id, "png", "010.8-01.8", "PN G010.8-01.8", "png010.8-01.8"),
+            ),
+        )
+        await conn.commit()
+
+    for query in ("MCG-1-2", "MCG-1", "PN G 10.8", "PN G 10"):
+        response = client.get(
+            "/api/planner/targets",
+            params={"restrict_tonight": "false", "q": query, "limit": 500},
+        )
+        assert response.status_code == 200
+        assert dso_id in {item["dso_id"] for item in response.json()["items"]}
+
+
+async def test_planner_group_catalog_filter_and_facets(client: TestClient, seed_grouped_dsos):
+    _location_id, ids = seed_grouped_dsos
+
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "catalog": "arp", "limit": 500},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 3
+    assert body["catalog_counts"]["arp"] == 3
+    assert {item["dso_id"] for item in body["items"]} == {
+        ids["NGC 4038"],
+        ids["NGC 4039"],
+        ids["Arp 1"],
+    }
+    assert [item["primary_designation"] for item in body["items"]] == [
+        "Arp 1",
+        "Arp 244",
+        "Arp 244",
+    ]

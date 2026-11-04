@@ -851,3 +851,34 @@ def constellation_for_coords(ra_deg: float, dec_deg: float) -> str:
     code: str = coord.get_constellation(short_name=True)
     _CONSTELLATION_CACHE[key] = code
     return code
+
+
+def constellations_for_coords(ra_deg: Sequence[float], dec_deg: Sequence[float]) -> list[str]:
+    """Return 3-letter IAU constellation codes for J2000 positions in one batch.
+
+    The scalar and vectorised lookup paths share the same rounded-coordinate
+    cache.  Only uncached positions are sent through astropy, in a single
+    ``SkyCoord.get_constellation`` call.
+    """
+    if len(ra_deg) != len(dec_deg):
+        raise ValueError("RA and declination sequences must have the same length")
+    if len(ra_deg) == 0:
+        return []
+
+    keys = [(round(ra, 6), round(dec, 6)) for ra, dec in zip(ra_deg, dec_deg, strict=True)]
+    missing: dict[tuple[float, float], tuple[float, float]] = {}
+    for key, ra, dec in zip(keys, ra_deg, dec_deg, strict=True):
+        if key not in _CONSTELLATION_CACHE:
+            missing.setdefault(key, (ra, dec))
+
+    if missing:
+        coords = tuple(missing.values())
+        sky_coords = SkyCoord(
+            ra=[ra for ra, _dec in coords] * u.deg,
+            dec=[dec for _ra, dec in coords] * u.deg,
+        )
+        codes = sky_coords.get_constellation(short_name=True)
+        for key, code in zip(missing, codes, strict=True):
+            _CONSTELLATION_CACHE[key] = str(code)
+
+    return [_CONSTELLATION_CACHE[key] for key in keys]

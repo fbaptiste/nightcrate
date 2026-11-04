@@ -26,6 +26,15 @@ forecasts and survey imagery are fetched from external services when needed.
   with progress, cancellation, and sorting to find frames worth inspecting.
 - **Planning:** date/location/horizon-aware visibility, rig framing, filter-aware
   target scores, sky tracks, annual visibility, wishlists and calendars.
+- **Deep-sky catalogs:** OpenNGC (Messier, NGC, IC and Caldwell) is always
+  loaded. Sharpless 2, Barnard, LBN, LDN, Melotte, Arp, ACO galaxy clusters,
+  MCG, Herbig-Haro objects, Wolf-Rayet stars, planetary nebulae and Abell
+  planetary nebulae (both from HASH) are optional: add or remove each in
+  Admin's Catalogs section. An entry that names an existing object becomes
+  another name for it, and searching for an entry that covers several
+  objects, such as Arp 244 or the Cygnus Loop, finds each of them. The catalog
+  and planner panels link to SIMBAD, Wikipedia, Google search and Google
+  Images.
 - **Image analysis:** FITS, XISF, PixInsight projects, PNG/JPEG/TIFF and archive
   entries; auto/manual stretch, histogram, pixel inspection, FITS header editing,
   aberration inspection, built-in plate solving (Gaia DR3 stars, offline after a
@@ -87,7 +96,9 @@ workspaces and downloads the DSO catalogs. For built-in plate solving, Admin can
 download the stars once (1.14 GB; about 2–3.5 GB on disk, depending on whether
 the optional narrow-field index is built). Catalog updates keep your wishlist, project targets and
 solved-field objects; an object a catalog no longer lists stays in your records,
-marked "Not listed".
+marked "Not listed". Removing an optional catalog deletes the objects only it
+provides, except those on your wishlist or a project's targets, which stay
+marked "Not listed". The catalog choice applies to every workspace.
 
 Other commands: `make backend`, `make frontend`, `make test`, `make test-fast`,
 `make lint`, `make format`. Use `make dev BROWSER=none` to suppress browser launch
@@ -198,8 +209,19 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 | [Siril Astrometry Catalogue extracted from Gaia DR3](https://doi.org/10.5281/zenodo.14692304) | CC BY 4.0 | Prepared by the Siril team. Downloaded at runtime from Zenodo into the user's app-data folder and not bundled. The Gaia data is also under ESA's CC BY-NC 3.0 IGO terms; NightCrate makes no claim that it may be used commercially. |
 | [ESA Gaia DR3](https://www.cosmos.esa.int/gaia) | CC BY-NC 3.0 IGO | This work has made use of data from the European Space Agency (ESA) mission Gaia (https://www.cosmos.esa.int/gaia), processed by the Gaia Data Processing and Analysis Consortium (DPAC, https://www.cosmos.esa.int/web/gaia/dpac/consortium). Funding for the DPAC has been provided by national institutions, in particular the institutions participating in the Gaia Multilateral Agreement. |
 | [OpenNGC](https://github.com/mattiaverga/OpenNGC) | CC-BY-SA-4.0 | Verga, Mattia. OpenNGC — Database of NGC and IC objects. Fetched at runtime from GitHub into the user's app-data folder (`APP_DIR/catalogs/openngc/`); no catalog data is bundled with the repo. OpenNGC aggregates data from NED, SIMBAD, HyperLEDA, and other public astronomical databases. |
-| Sharpless 2 (VizieR VII/20) | CDS public | Sharpless, S. 1959, ApJS 4, 257. HII regions, fetched at runtime from CDS VizieR. |
-| Barnard (VizieR VII/220A) | CDS public | Barnard, E. E. 1927, *Barnard's Catalogue of 349 Dark Objects in the Sky*. Fetched at runtime from CDS VizieR. |
+| [VizieR](https://vizier.cds.unistra.fr) | CDS public | This research has made use of the VizieR catalogue access tool, CDS, Strasbourg, France (DOI: 10.26093/cds/vizier). The catalogs below that name a VizieR table are optional. Each is downloaded at runtime at the user's request, from CDS Strasbourg or one of its mirrors (Harvard and IDIA South Africa over HTTPS; Tokyo, Beijing and India over plain HTTP as a fallback), into the user's app-data folder (`APP_DIR/catalogs/vizier/`); none is bundled. |
+| Sharpless 2 (VizieR VII/20) | CDS public | Sharpless, S. 1959, ApJS 4, 257. HII regions. |
+| Barnard (VizieR VII/220A) | CDS public | Barnard, E. E. 1927, *Barnard's Catalogue of 349 Dark Objects in the Sky*. |
+| LBN (VizieR VII/9) | CDS public | Lynds, B.T. 1965 — Catalogue of Bright Nebulae, Astrophysical Journal Supplement Series 12, 163 (VizieR VII/9). |
+| LDN (VizieR VII/7A) | CDS public | Lynds, B.T. 1962 — Catalogue of Dark Nebulae, Astrophysical Journal Supplement Series 7, 1 (VizieR VII/7A). |
+| ACO (VizieR VII/110A) | CDS public | Abell, G.O., Corwin, H.G. Jr. & Olowin, R.P. 1989 — A Catalogue of Rich Clusters of Galaxies, Astrophysical Journal Supplement Series 70, 1 (VizieR VII/110A). |
+| MCG (VizieR VII/62A, VII/100) | CDS public | Vorontsov-Velyaminov, B.A., Krasnogorskaya, A.A. & Arkhipova, V.P. 1962–1974 — Morphological Catalogue of Galaxies, volumes 1–5 (VizieR VII/62A, VII/100). |
+| Arp (VizieR VII/192) | CDS public | Arp, H. 1966 — Atlas of Peculiar Galaxies; Webb, D. 1996 — Arp's Peculiar Galaxies index (VizieR VII/192). |
+| Herbig-Haro objects (VizieR V/104) | CDS public | Reipurth, B.: 1999, A general catalogue of Herbig-Haro objects, 2. edition, http://casa.colorado.edu/hhcat (VizieR V/104). |
+| Wolf-Rayet stars (VizieR III/215) | CDS public | van der Hucht, K.A. 2001 — The Seventh Catalogue of Galactic Wolf-Rayet stars, New Astronomy Reviews 45, 135 (VizieR III/215). |
+| HASH PN database (VizieR V/163) | CDS public; HASH asks for this citation and acknowledgement | Parker, Q.A., Bojičić, I.S. & Frew, D.J. 2016 — HASH: the Hong Kong/AAO/Strasbourg Hα planetary nebula database, Journal of Physics: Conference Series 728, 032008. This research has made use of the HASH PN database at hashpn.space (VizieR V/163). One download serves both the planetary nebula and the Abell planetary nebula catalogs. The Abell catalog covers 85 of the 86 Abell numbers; Abell 85 (CTB 1) is a supernova remnant. |
+| Melotte | MIT (NightCrate's own list) | Melotte 1915, MmRAS 60, 175 (A Catalogue of Star Clusters shown on Franklin-Adams Chart Plates), transcribed and checked by NightCrate. Positions and sizes of clusters without an NGC or IC number: Hunt & Reffert 2023, A&A 673, A114, or SIMBAD. Ships with the app (`melotte.csv`). |
+| NightCrate editorial data | MIT | NightCrate's own reviewed lists ship with the app in `backend/src/nightcrate/data/catalogs/nightcrate/`: common names, distances and surface brightness, Sharpless cross-references, external-reference overrides, the Melotte list, reviewed Arp members, the "part of" list and match overrides. |
 | [50 MGC](https://github.com/davidohlson/50MGC) | CDS public | Ohlson, D. et al. 2024, AJ 167, 31 (J/AJ/167/31). Galaxy distance augmenter, fetched at runtime from the author's GitHub mirror. |
 | [Wikidata](https://www.wikidata.org/) | CC0-1.0 | External reference IDs (Wikipedia, SIMBAD) via SPARQL, fetched at runtime. |
 | [Open-Meteo](https://open-meteo.com/) | Attribution required — see [their license](https://open-meteo.com/en/license) | Weather, ECMWF and air-quality forecast data, queried at runtime. |

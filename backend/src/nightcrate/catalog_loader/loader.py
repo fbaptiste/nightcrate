@@ -20,12 +20,18 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+from nightcrate.catalog_loader import registry
 from nightcrate.catalog_loader.barnard_loader import _normalise_barn_id
 from nightcrate.catalog_loader.crossref_parser import parse_other_id
+from nightcrate.catalog_loader.designations import (
+    canonical_identifier,
+    canonical_legacy_identifier,
+    normalize_designation,
+)
 from nightcrate.catalog_loader.hash import file_sha256
 from nightcrate.catalog_loader.openngc_parser import (
     ParsedOpenNgcRow,
@@ -33,9 +39,12 @@ from nightcrate.catalog_loader.openngc_parser import (
     parse_openngc,
     split_identifiers,
 )
-from nightcrate.catalog_loader.registry import CatalogSource, get_sources
+from nightcrate.catalog_loader.registry import CatalogSource, catalogs_for_source, get_sources
 
 logger = logging.getLogger("nightcrate.catalog_loader")
+
+if TYPE_CHECKING:
+    from nightcrate.catalog_loader.reconcile import ObjectSet
 
 CatalogLoadStatus = Literal["loaded", "unchanged", "skipped", "missing", "failed"]
 
@@ -75,6 +84,10 @@ _DISPLAY_PREFIX: dict[str, str] = {
     "abell": "Abell",
     "dolidze": "Do",
     "dwb": "DWB",
+    "hh": "HH",
+    "aco": "ACO",
+    "png": "PN G",
+    "wr": "WR",
 }
 
 # These addendum source keys were previously rendered with the synthetic
@@ -110,6 +123,7 @@ def _openngc_own_name_rows(cur: sqlite3.Cursor) -> dict[tuple[str, str], list[in
         catalog, identifier = _parse_name(str(source_key))
         if catalog is None or identifier is None:
             continue
+        identifier = canonical_identifier(catalog, identifier)
         grouped.setdefault((catalog, identifier), []).append(int(dso_id))
     return grouped
 
@@ -209,7 +223,9 @@ def _fused_pgc_repair_due(cur: sqlite3.Cursor) -> bool:
         }
 
         expected = {
-            (ref.catalog, ref.identifier) for token in repaired for ref in parse_other_id(token)
+            (ref.catalog, ref.storage_identifier)
+            for token in repaired
+            for ref in parse_other_id(token)
         }
         legacy_malformed = any(
             catalog == "pgc" and len(split_identifiers(f"PGC {identifier}")) > 1
@@ -236,6 +252,103 @@ def _fused_pgc_repair_due(cur: sqlite3.Cursor) -> bool:
     return False
 
 
+def _designation_canon_due(
+    cur: sqlite3.Cursor,
+    override_source: CatalogSource | None = None,
+) -> bool:
+    """Detect stored structured identifiers and search keys needing repair."""
+    from nightcrate.catalog_loader.reconcile import read_match_overrides
+
+    overrides = read_match_overrides(override_source)
+    rows = cur.execute(
+        """
+        SELECT catalog, identifier, search_key
+        FROM dso_designation
+        WHERE catalog IN ('mcg', 'png', 'wr', 'ruprecht')
+        """
+    ).fetchall()
+    for catalog, identifier, search_key in rows:
+        catalog = str(catalog)
+        identifier = str(identifier)
+        canonical = canonical_legacy_identifier(catalog, identifier)
+        if identifier != canonical or str(search_key) != _build_search_key(catalog, canonical):
+            return True
+
+    openngc_rows = cur.execute(
+        """
+        SELECT d.id, d.raw_other_id
+        FROM dso d
+        JOIN dso_catalog_source s ON s.id = d.source_catalog_id
+        WHERE s.source_id IN ('openngc', 'openngc_addendum')
+          AND d.raw_other_id LIKE '%PN G%'
+        """
+    ).fetchall()
+    for dso_id, raw_other_id in openngc_rows:
+        expected = {
+            ref.storage_identifier
+            for ref in parse_other_id(str(raw_other_id))
+            if ref.catalog == "png"
+        }
+        if not expected:
+            continue
+        actual = {
+            str(row[0])
+            for row in cur.execute(
+                "SELECT identifier FROM dso_designation WHERE dso_id = ? AND catalog = 'png'",
+                (dso_id,),
+            ).fetchall()
+        }
+        missing_claimable = any(
+            identifier not in actual
+            and cur.execute(
+                "SELECT 1 FROM dso_designation WHERE catalog = 'png' AND identifier = ? LIMIT 1",
+                (identifier,),
+            ).fetchone()
+            is None
+            and not _png_override_resolves_elsewhere(cur, overrides, dso_id, identifier)
+            for identifier in expected
+        )
+        if missing_claimable:
+            return True
+    return False
+
+
+def _png_override_resolves_elsewhere(
+    cur: sqlite3.Cursor,
+    overrides,
+    dso_id: int,
+    identifier: str,
+) -> bool:
+    override = overrides.get(("png", identifier))
+    if override is None:
+        return False
+    if override.action == "separate":
+        return True
+    if override.target is None:
+        return False
+    owner = cur.execute(
+        "SELECT dso_id FROM dso_designation WHERE catalog = ? AND identifier = ? LIMIT 1",
+        override.target,
+    ).fetchone()
+    return owner is None or int(owner[0]) != int(dso_id)
+
+
+def _primary_designation_due(cur: sqlite3.Cursor) -> bool:
+    """Detect a stored primary label that differs from its primary designation row."""
+    return (
+        cur.execute(
+            """
+            SELECT 1
+            FROM dso d
+            JOIN dso_designation dd ON dd.dso_id = d.id AND dd.is_primary = 1
+            WHERE d.primary_designation != dd.display_form
+            LIMIT 1
+            """
+        ).fetchone()
+        is not None
+    )
+
+
 @dataclass
 class SourceResult:
     source_id: str
@@ -250,6 +363,8 @@ class SourceResult:
 @dataclass
 class LoadSummary:
     results: list[SourceResult] = field(default_factory=list)
+    objects_removed: int = 0
+    objects_kept: int = 0
 
     @property
     def total_dsos(self) -> int:
@@ -258,6 +373,21 @@ class LoadSummary:
     @property
     def total_designations(self) -> int:
         return sum(r.designation_count for r in self.results)
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectStepPlan:
+    by_id: dict[str, CatalogSource]
+    effective: dict[str, Literal["on", "off", "removed"]]
+    run: bool
+    deferred_reason: str | None
+    object_set: ObjectSet | None
+    preparation_error: str | None
+    all_by_id: dict[str, CatalogSource] = field(repr=False)
+    ordered: tuple[CatalogSource, ...] = field(repr=False)
+    stored: dict[str, dict[str, object]] = field(repr=False)
+    hashes: dict[str, str | None] = field(repr=False)
+    sharpless_crossref_path: Path | None = field(repr=False)
 
 
 def _build_display_form(catalog: str, identifier: str) -> str:
@@ -270,6 +400,8 @@ def _build_display_form(catalog: str, identifier: str) -> str:
     prefix = _DISPLAY_PREFIX.get(catalog, catalog.upper())
     if catalog == "sharpless2":
         return f"{prefix}-{identifier}"
+    if catalog == "png":
+        return f"{prefix}{identifier}"
     return f"{prefix} {identifier}"
 
 
@@ -281,8 +413,7 @@ def _build_search_key(catalog: str, identifier: str) -> str:
     type the short prefix (``M42``) rather than the long catalog name
     (``messier42``), so the display form is the better hit surface.
     """
-    display = _build_display_form(catalog, identifier)
-    return display.lower().replace(" ", "").replace("-", "").replace("_", "")
+    return normalize_designation(_build_display_form(catalog, identifier))
 
 
 def _pick_primary(designations: list[tuple[str, str]]) -> int:
@@ -317,6 +448,7 @@ def _build_canonical_designations(row: ParsedOpenNgcRow) -> list[tuple[str, str]
     def add(catalog: str | None, identifier: str | None) -> None:
         if catalog is None or not identifier:
             return
+        identifier = canonical_identifier(catalog, identifier)
         key = (catalog, identifier)
         if key in seen:
             return
@@ -354,7 +486,7 @@ def _dispatch_source(
         wikidata_loader,
     )
 
-    if source.parser in {"openngc", "sharpless", "barnard"}:
+    if source.parser in {"openngc", "sharpless", "barnard", "parts", "overrides"}:
         return SourceResult(source_id=source.source_id, status="skipped")
     if source.parser == "mgc50":
         return mgc50_augmenter.augment_from_mgc50(conn, source, force=force)
@@ -379,6 +511,316 @@ def _dispatch_source(
         return result
     logger.warning("[catalog_loader] unknown parser %r for %s", source.parser, source.source_id)
     return SourceResult(source_id=source.source_id, status="failed", error="unknown parser")
+
+
+def _prepare_object_step(
+    conn: sqlite3.Connection,
+    catalogs_root: Path,
+    *,
+    force: bool,
+    choice,
+) -> ObjectStepPlan:
+    """Resolve optional-catalog state and prepare one safe object reconciliation."""
+    from nightcrate.catalog_loader.catalog_choice import effective_state
+    from nightcrate.catalog_loader.reconcile import (
+        EDITORIAL_OBJECT_SOURCE_IDS,
+        OBJECT_SOURCE_IDS,
+        build_object_set,
+    )
+
+    sources = get_sources(catalogs_root)
+    all_by_id = {source.source_id: source for source in sources}
+    load_order = (
+        "openngc",
+        "openngc_addendum",
+        "vizier_sharpless",
+        "vizier_barnard",
+        "vizier_wr",
+        "vizier_wr_phot",
+        "vizier_hh",
+        "vizier_hash",
+        "vizier_lbn",
+        "vizier_ldn",
+        "nightcrate_melotte",
+        "vizier_aco_north",
+        "vizier_aco_south",
+        "vizier_aco_s",
+        "vizier_mcg",
+        "vizier_mcg_v5",
+        "vizier_arp",
+        "nightcrate_arp_members",
+        "nightcrate_sharpless_crossref",
+        "nightcrate_barnard_crossref",
+        "nightcrate_parts",
+        "nightcrate_match_overrides",
+        "nightcrate_augment",
+        "github_50mgc",
+        "wikidata_external_refs",
+        "nightcrate_external_refs",
+    )
+    ordered = tuple(all_by_id[source_id] for source_id in load_order if source_id in all_by_id)
+
+    cur = conn.cursor()
+    stored = {
+        str(row[0]): {
+            "file_hash": str(row[1]),
+            "row_count": int(row[2]),
+            "keys_assigned": bool(row[3]),
+        }
+        for row in cur.execute(
+            "SELECT source_id, file_hash, row_count, keys_assigned FROM dso_catalog_source"
+        ).fetchall()
+    }
+    applied = {
+        str(row[0]): str(row[1])
+        for row in cur.execute("SELECT catalog_id, state FROM dso_catalog_applied").fetchall()
+    }
+    effective = {
+        catalog.catalog_id: effective_state(choice, catalog, applied.get(catalog.catalog_id))
+        for catalog in registry.OPTIONAL_CATALOGS
+    }
+
+    def catalog_available(catalog_id: str) -> bool:
+        catalog = registry.optional_catalog(catalog_id)
+        if catalog is None:
+            return False
+        installed, _version = registry.optional_catalog_install(catalog, catalogs_root)
+        if not installed:
+            return False
+        if catalog_id == "sharpless":
+            crossref = all_by_id.get("nightcrate_sharpless_crossref")
+            return crossref is not None and crossref.file_path.exists()
+        return True
+
+    availability = {
+        catalog.catalog_id: catalog_available(catalog.catalog_id)
+        for catalog in registry.OPTIONAL_CATALOGS
+    }
+
+    def source_is_on(source_id: str) -> bool:
+        if source_id == "nightcrate_arp_members":
+            arp = registry.optional_catalog("arp")
+            return (
+                arp is not None and effective.get("arp") == "on" and availability.get("arp", False)
+            )
+        catalogs = catalogs_for_source(source_id)
+        return not catalogs or any(
+            effective[catalog.catalog_id] == "on" and availability[catalog.catalog_id]
+            for catalog in catalogs
+        )
+
+    by_id = {
+        source_id: source for source_id, source in all_by_id.items() if source_is_on(source_id)
+    }
+    sharpless_on = effective.get("sharpless") == "on"
+    sharpless_crossref = all_by_id.get("nightcrate_sharpless_crossref")
+    sharpless_crossref_path = (
+        sharpless_crossref.file_path if sharpless_on and sharpless_crossref is not None else None
+    )
+
+    def current_hash(source: CatalogSource) -> str | None:
+        if source.source_id not in by_id or not source.file_path.exists():
+            return None
+        if source.source_id == "vizier_sharpless":
+            crossref_hash = (
+                file_sha256(sharpless_crossref_path)
+                if sharpless_crossref_path is not None and sharpless_crossref_path.exists()
+                else "-"
+            )
+            return f"{file_sha256(source.file_path)}:{crossref_hash}"
+        return file_sha256(source.file_path)
+
+    hashes = {source.source_id: current_hash(source) for source in ordered}
+    object_input_ids = (*OBJECT_SOURCE_IDS, *EDITORIAL_OBJECT_SOURCE_IDS)
+    loaded_object_inputs = tuple(
+        source_id for source_id in (*object_input_ids, "nightcrate_augment") if source_id in by_id
+    )
+    missing_loaded = [
+        by_id[source_id]
+        for source_id in loaded_object_inputs
+        if source_id in stored and hashes.get(source_id) is None
+    ]
+    unavailable_applied = [
+        catalog
+        for catalog in registry.OPTIONAL_CATALOGS
+        if effective[catalog.catalog_id] == "on"
+        and not availability[catalog.catalog_id]
+        and (
+            applied.get(catalog.catalog_id) == "on"
+            or any(source_id in stored for source_id in catalog.source_ids)
+        )
+    ]
+    if (
+        sharpless_on
+        and "vizier_sharpless" in stored
+        and sharpless_crossref is not None
+        and not sharpless_crossref.file_path.exists()
+        and not str(stored["vizier_sharpless"]["file_hash"]).endswith(":-")
+    ):
+        missing_loaded.append(sharpless_crossref)
+    deferred_reason = None
+    if missing_loaded:
+        missing_names = ", ".join(str(source.file_path) for source in missing_loaded)
+        deferred_reason = f"object step deferred; missing file: {missing_names}"
+    if unavailable_applied:
+        missing_paths = [
+            catalogs_root / "vizier" / spec.output_filename
+            for catalog in unavailable_applied
+            for spec in catalog.fetch_specs
+            if not (catalogs_root / "vizier" / spec.output_filename).exists()
+        ]
+        if missing_paths:
+            deferred_reason = "object step deferred; missing file: " + ", ".join(
+                str(path) for path in missing_paths
+            )
+        elif deferred_reason is None:
+            unavailable_names = ", ".join(catalog.display_name for catalog in unavailable_applied)
+            deferred_reason = (
+                f"object step deferred; catalog publication incomplete: {unavailable_names}"
+            )
+
+    catalog_states: dict[str, str] = {}
+    selection_changed = False
+    for catalog_id, state in effective.items():
+        available = availability[catalog_id]
+        eligible = state in {"off", "removed"} or available
+        if eligible:
+            catalog_states[catalog_id] = state
+            if state != applied.get(catalog_id, "off"):
+                selection_changed = True
+
+    object_deferred = deferred_reason is not None
+    legacy_placeholders = ", ".join("?" for _ in LEGACY_OTHER_NAMES)
+    legacy_names_due = (
+        not object_deferred
+        and cur.execute(
+            f"""
+            SELECT 1
+            FROM dso d
+            JOIN dso_catalog_source s ON s.id = d.source_catalog_id
+            WHERE s.source_id = 'openngc_addendum'
+              AND d.source_key IN ({legacy_placeholders})
+              AND d.primary_designation = 'OTHER ' || d.source_key
+            LIMIT 1
+            """,  # noqa: S608  # nosec B608 - fixed placeholder count
+            LEGACY_OTHER_NAMES,
+        ).fetchone()
+        is not None
+    )
+    designation_ownership_due = not object_deferred and _designation_ownership_due(cur)
+    barnard_merges_due = not object_deferred and _barnard_merges_due(cur)
+    fused_pgc_repair_due = not object_deferred and _fused_pgc_repair_due(cur)
+    designation_canon_due = not object_deferred and _designation_canon_due(
+        cur,
+        all_by_id.get("nightcrate_match_overrides"),
+    )
+    primary_designation_due = not object_deferred and _primary_designation_due(cur)
+    present_owner = any(hashes.get(source_id) is not None for source_id in OBJECT_SOURCE_IDS)
+    removed_catalogs = frozenset(
+        catalog_id for catalog_id, state in effective.items() if state == "removed"
+    )
+    object_changed = any(
+        hashes.get(source_id) is not None
+        and (
+            source_id not in stored
+            or (
+                stored[source_id]["file_hash"] != ""
+                and stored[source_id]["file_hash"] != hashes[source_id]
+            )
+        )
+        for source_id in object_input_ids
+        if source_id in by_id
+    )
+    augment_changed = (
+        hashes.get("nightcrate_augment") is not None
+        and "nightcrate_augment" in stored
+        and stored["nightcrate_augment"]["file_hash"] != ""
+        and stored["nightcrate_augment"]["file_hash"] != hashes["nightcrate_augment"]
+    )
+    keys_due = any(
+        source_id in stored
+        and hashes.get(source_id) is not None
+        and not stored[source_id]["keys_assigned"]
+        for source_id in object_input_ids
+        if source_id in by_id
+    )
+    run = (
+        not object_deferred
+        and (present_owner or bool(removed_catalogs))
+        and (
+            force
+            or selection_changed
+            or object_changed
+            or augment_changed
+            or keys_due
+            or legacy_names_due
+            or designation_ownership_due
+            or barnard_merges_due
+            or fused_pgc_repair_due
+            or designation_canon_due
+            or primary_designation_due
+        )
+    )
+    object_set = None
+    preparation_error = None
+    if run:
+        on_catalogs = frozenset(
+            catalog_id for catalog_id, state in effective.items() if state == "on"
+        )
+        try:
+            object_set = replace(
+                build_object_set(by_id, sharpless_crossref_path, on_catalogs),
+                catalog_states=catalog_states,
+            )
+        except Exception as exc:  # noqa: BLE001 - load_catalogs reports source failures
+            preparation_error = str(exc)
+
+    return ObjectStepPlan(
+        by_id=by_id,
+        effective=effective,
+        run=run,
+        deferred_reason=deferred_reason,
+        object_set=object_set,
+        preparation_error=preparation_error,
+        all_by_id=all_by_id,
+        ordered=ordered,
+        stored=stored,
+        hashes=hashes,
+        sharpless_crossref_path=sharpless_crossref_path,
+    )
+
+
+def prepare_object_step(
+    conn: sqlite3.Connection,
+    catalogs_root: Path,
+    *,
+    force: bool,
+) -> ObjectStepPlan:
+    """Resolve the persisted optional-catalog choice for reconciliation."""
+    from nightcrate.catalog_loader.catalog_choice import read_choice
+
+    return _prepare_object_step(
+        conn,
+        catalogs_root,
+        force=force,
+        choice=read_choice(catalogs_root),
+    )
+
+
+def prepare_removal_step(
+    conn: sqlite3.Connection,
+    catalogs_root: Path,
+    catalog_id: str,
+) -> ObjectStepPlan:
+    """Prepare the exact reconciliation a catalog removal would perform."""
+    from nightcrate.catalog_loader.catalog_choice import read_choice, with_removed
+
+    return _prepare_object_step(
+        conn,
+        catalogs_root,
+        force=False,
+        choice=with_removed(read_choice(catalogs_root), catalog_id),
+    )
 
 
 def load_catalogs(
@@ -420,155 +862,51 @@ def load_catalogs(
     conn.execute("PRAGMA foreign_keys = ON")
 
     from nightcrate.catalog_loader.reconcile import (
+        EDITORIAL_OBJECT_SOURCE_IDS,
         OBJECT_SOURCE_IDS,
         apply_object_set,
-        build_object_set,
     )
 
-    sources = get_sources(catalogs_root)
-    # Sharpless reads its crossref CSV directly during load; find the path
-    # up front so we can pass it along.
-    sharpless_crossref_path: Path | None = next(
-        (s.file_path for s in sources if s.source_id == "nightcrate_sharpless_crossref"),
-        None,
-    )
+    object_input_ids = (*OBJECT_SOURCE_IDS, *EDITORIAL_OBJECT_SOURCE_IDS)
 
-    # Explicit load order overrides the registry's natural order so that
-    # augmenters run after the base catalogs they augment. Redshift-derived
-    # distances are applied at the very end as a post-load computation —
-    # they're not a fetched source, so they don't appear in the registry.
-    load_order = (
-        "openngc",
-        "openngc_addendum",
-        "vizier_sharpless",
-        "vizier_barnard",
-        "nightcrate_sharpless_crossref",
-        "nightcrate_barnard_crossref",
-        "nightcrate_augment",
-        "github_50mgc",
-        # Wikidata runs last among bulk sources so every DSO (including
-        # Sharpless/Barnard standalones) exists before designation-based
-        # matching. The editorial override CSV runs strictly after Wikidata
-        # so CSV rows always win.
-        "wikidata_external_refs",
-        "nightcrate_external_refs",
-    )
-    by_id = {s.source_id: s for s in sources}
-    ordered = [by_id[sid] for sid in load_order if sid in by_id]
-
-    cur = conn.cursor()
-    cur.execute("SELECT source_id, file_hash, row_count, keys_assigned FROM dso_catalog_source")
-    stored = {
-        str(row[0]): {
-            "file_hash": str(row[1]),
-            "row_count": int(row[2]),
-            "keys_assigned": bool(row[3]),
-        }
-        for row in cur.fetchall()
-    }
-
-    legacy_placeholders = ", ".join("?" for _ in LEGACY_OTHER_NAMES)
-    legacy_names_due = (
-        cur.execute(
-            f"""
-            SELECT 1
-            FROM dso d
-            JOIN dso_catalog_source s ON s.id = d.source_catalog_id
-            WHERE s.source_id = 'openngc_addendum'
-              AND d.source_key IN ({legacy_placeholders})
-              AND d.primary_designation = 'OTHER ' || d.source_key
-            LIMIT 1
-            """,  # noqa: S608  # nosec B608 - placeholders come from a fixed tuple
-            LEGACY_OTHER_NAMES,
-        ).fetchone()
-        is not None
-    )
-
-    def current_hash(source: CatalogSource) -> str | None:
-        if not source.file_path.exists():
-            return None
-        if source.source_id == "vizier_sharpless":
-            crossref_hash = (
-                file_sha256(sharpless_crossref_path)
-                if sharpless_crossref_path is not None and sharpless_crossref_path.exists()
-                else "-"
-            )
-            return f"{file_sha256(source.file_path)}:{crossref_hash}"
-        return file_sha256(source.file_path)
-
-    hashes = {source.source_id: current_hash(source) for source in ordered}
-    loaded_object_inputs = (*OBJECT_SOURCE_IDS, "nightcrate_augment")
-    missing_loaded = [
-        by_id[source_id]
-        for source_id in loaded_object_inputs
-        if source_id in stored and hashes.get(source_id) is None
-    ]
-    sharpless_crossref = by_id["nightcrate_sharpless_crossref"]
-    if (
-        "vizier_sharpless" in stored
-        and not sharpless_crossref.file_path.exists()
-        and not stored["vizier_sharpless"]["file_hash"].endswith(":-")
-    ):
-        missing_loaded.append(sharpless_crossref)
-    object_deferred = bool(missing_loaded)
-    missing_names = ", ".join(str(source.file_path) for source in missing_loaded)
-    designation_ownership_due = not object_deferred and _designation_ownership_due(cur)
-    barnard_merges_due = not object_deferred and _barnard_merges_due(cur)
-    fused_pgc_repair_due = not object_deferred and _fused_pgc_repair_due(cur)
-
-    present_owner = any(hashes.get(source_id) is not None for source_id in OBJECT_SOURCE_IDS)
-    object_changed = any(
-        hashes.get(source_id) is not None
-        and (
-            source_id not in stored
-            or (
-                stored[source_id]["file_hash"] != ""
-                and stored[source_id]["file_hash"] != hashes[source_id]
-            )
-        )
-        for source_id in OBJECT_SOURCE_IDS
-    )
-    augment_changed = (
-        hashes.get("nightcrate_augment") is not None
-        and "nightcrate_augment" in stored
-        and stored["nightcrate_augment"]["file_hash"] != ""
-        and stored["nightcrate_augment"]["file_hash"] != hashes["nightcrate_augment"]
-    )
-    keys_due = any(
-        source_id in stored
-        and hashes.get(source_id) is not None
-        and not stored[source_id]["keys_assigned"]
-        for source_id in OBJECT_SOURCE_IDS
-    )
-    run_objects = (
-        not object_deferred
-        and present_owner
-        and (
-            force
-            or object_changed
-            or augment_changed
-            or keys_due
-            or legacy_names_due
-            or designation_ownership_due
-            or barnard_merges_due
-            or fused_pgc_repair_due
-        )
-    )
+    plan = prepare_object_step(conn, catalogs_root, force=force)
+    by_id = plan.all_by_id
+    ordered = plan.ordered
+    stored = plan.stored
+    hashes = plan.hashes
+    sharpless_crossref_path = plan.sharpless_crossref_path
+    object_deferred = plan.deferred_reason is not None
 
     object_results: dict[str, SourceResult] = {}
     object_ran = False
     object_error: str | None = None
-    if run_objects:
+    objects_removed = 0
+    objects_kept = 0
+    if plan.run:
         try:
-            object_set = build_object_set(by_id, sharpless_crossref_path)
+            object_set = plan.object_set
+            if object_set is None:
+                raise RuntimeError(
+                    plan.preparation_error or "object step was due without a prepared object set"
+                )
             enrichment_ids = (
                 "github_50mgc",
                 "wikidata_external_refs",
                 "nightcrate_external_refs",
             )
-            report = apply_object_set(conn, object_set, enrichment_ids)
+            removed_catalogs = frozenset(
+                catalog_id for catalog_id, state in plan.effective.items() if state == "removed"
+            )
+            report = apply_object_set(
+                conn,
+                object_set,
+                enrichment_ids,
+                removed_catalogs=removed_catalogs,
+            )
+            objects_removed = report.deleted
+            objects_kept = report.kept_linked
             object_ran = True
-            for source_id in OBJECT_SOURCE_IDS:
+            for source_id in object_input_ids:
                 if hashes.get(source_id) is not None:
                     object_results[source_id] = SourceResult(
                         source_id,
@@ -580,10 +918,14 @@ def load_catalogs(
             object_error = str(exc)
             logger.exception("[catalog_loader] object reconciliation failed")
 
-    for source_id in OBJECT_SOURCE_IDS:
+    for source_id in object_input_ids:
         if source_id in object_results:
             continue
         source = by_id[source_id]
+        source_catalogs = catalogs_for_source(source_id)
+        source_effectively_on = not source_catalogs or any(
+            plan.effective[catalog.catalog_id] == "on" for catalog in source_catalogs
+        )
         if object_error is not None:
             object_results[source_id] = SourceResult(
                 source_id,
@@ -591,12 +933,22 @@ def load_catalogs(
                 dso_count=int(stored.get(source_id, {}).get("row_count", 0)),
                 error=object_error,
             )
-        elif object_deferred:
+        elif object_deferred and source_effectively_on:
             object_results[source_id] = SourceResult(
                 source_id,
                 "skipped",
                 dso_count=int(stored.get(source_id, {}).get("row_count", 0)),
-                error=f"object step deferred; missing file: {missing_names}",
+                error=plan.deferred_reason,
+            )
+        elif source_id not in plan.by_id:
+            object_results[source_id] = SourceResult(
+                source_id,
+                "missing" if source_effectively_on and not source.file_path.exists() else "skipped",
+                error=(
+                    f"file not found: {source.file_path}"
+                    if source_effectively_on and not source.file_path.exists()
+                    else None
+                ),
             )
         elif hashes.get(source_id) is None:
             object_results[source_id] = SourceResult(
@@ -690,7 +1042,7 @@ def load_catalogs(
     except sqlite3.Error:
         logger.exception("[catalog_loader] redshift backfill failed")
 
-    summary = LoadSummary()
+    summary = LoadSummary(objects_removed=objects_removed, objects_kept=objects_kept)
     for source in ordered:
         result = (
             object_results.get(source.source_id)

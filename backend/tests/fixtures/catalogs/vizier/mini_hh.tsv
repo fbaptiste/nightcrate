@@ -1,0 +1,46 @@
+#
+#   VizieR Astronomical Server vizier.idia.ac.za
+#    Date: 2026-11-02T14:42:51 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-11-02T14:42:51	  Query execution date
+#INFO	request=https://vizier.idia.ac.za/viz-bin/asu-tsv?-source=V/104/catalog&-out.max=unlimited&-out.all&-out.add=_RAJ,_DEJ	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+
+#RESOURCE=yCat_5104
+#Name: V/104
+#Title: General Catalogue of Herbig-Haro Objects (Reipurth+, 1999)
+#INFO	ivoid=ivo://cds.vizier/v/104	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/v/104	    IVOID of underlying data collection
+#INFO	creator=Reipurth B.	    First author or institution
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/V/104	    Dataset landing page
+#INFO	publication_date=2012-11-12	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Coosys	B1950:	eq_FK4 B1950
+#Table	V_104_catalog:
+#Name: V/104/catalog
+#Title: General Catalogue of Herbig-Haro Objects
+#Column	_RAJ2000	(F10.6)	Right ascension (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.ra]
+#Column	_DEJ2000	(F10.6)	Declination (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.dec]
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	HH	(I3)	[1,478] HH number	[ucd=meta.id;meta.main]
+#Column	Name	(a20)	Other designation	[ucd=meta.id]
+#Column	RA1950	(A10)	Right ascension (1950)	[ucd=pos.eq.ra;meta.main]
+#Column	DE1950	(A9)	Declination (1950)	[ucd=pos.eq.dec;meta.main]
+#Column	Source	(a16)	Suspected source	[ucd=meta.id.assoc]
+#Column	Region	(a14)	Region	[ucd=meta.note]
+#Column	Dist	(I4)	? Distance	[ucd=pos.distance]
+#Column	u_Dist	(A1)	[?] ?: distance unknown	[ucd=meta.code.error]
+#Column	_RA.icrs	(A10)	Right ascension (ICRS) (computed by VizieR, not part of the original data)	[ucd=pos.eq.ra]
+#Column	_DE.icrs	(A9)	Declination (ICRS) (computed by VizieR, not part of the original data)	[ucd=pos.eq.dec]
+_RAJ2000	_DEJ2000	recno	HH	Name	RA1950	DE1950	Source	Region	Dist	u_Dist	_RA.icrs	_DE.icrs
+deg	deg	 	 	 	"h:m:s"	"d:m:s"	 	 	pc	 	"h:m:s"	"d:m:s"
+----------	----------	--------	---	--------------------	----------	---------	----------------	--------------	----	-	----------	---------
+002.864707	+58.823830	       1	161	LkH{alpha} 198B/HH  	00 08 48.9	+58 32 45	LkH{alpha} 198-B	Cassiopeia    	 950	 	00 11 27.5	+58 49 26
+126.435367	-51.007404	     321	 46	                    	08 24 17.1	-50 50 34	HH 46/47 IRS    	Gum Nebula    	 450	 	08 25 44.5	-51 00 27
+126.459294	-50.998053	     322	 47	                    	08 24 22.8	-50 50 00	HH 46/47 IRS    	Gum Nebula    	 450	 	08 25 50.2	-50 59 53

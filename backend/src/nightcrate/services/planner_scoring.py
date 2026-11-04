@@ -397,6 +397,193 @@ def _make_dimension_row(
 # ── Public API ──────────────────────────────────────────────────────
 
 
+def score_values(
+    inputs: Sequence[ScoringInput],
+    snapshot: VisibilitySnapshot,
+    rig_fov_major_deg: float | None,
+    rig_fov_minor_deg: float | None,
+    filter_intent: Sequence[str],
+    settings: Settings,
+) -> dict[int, tuple[int | None, str | None]]:
+    """Return score and label for every input without building breakdowns.
+
+    The list endpoint uses this vectorized pass before sorting and pagination;
+    :func:`score_targets` remains the source of the full per-dimension details
+    for the bounded page.
+    """
+    if not inputs:
+        return {}
+
+    ts = snapshot.time_series
+    has_rig = rig_fov_major_deg is not None and rig_fov_minor_deg is not None
+    count = len(inputs)
+    row_indices = np.asarray(
+        [ts.dso_id_to_index.get(item.dso_id, -1) if ts is not None else -1 for item in inputs],
+        dtype=int,
+    )
+    have_rows = row_indices >= 0
+    safe_indices = np.maximum(row_indices, 0)
+
+    hours = np.asarray([item.hours_visible or 0.0 for item in inputs], dtype=float)
+    gated = hours < settings.scoring_gate_min_obs_hours
+
+    if ts is not None and ts.visible_mask.shape[0] > 0:
+        visible = ts.visible_mask[safe_indices]
+        altitudes = ts.altitude_deg[safe_indices]
+        moon_separations = ts.moon_separation_deg[safe_indices]
+        gated |= have_rows & ~visible.any(axis=1)
+    else:
+        visible = np.zeros((count, 0), dtype=bool)
+        altitudes = np.zeros((count, 0), dtype=float)
+        moon_separations = np.zeros((count, 0), dtype=float)
+
+    coverages = np.asarray(
+        [item.coverage_pct if item.coverage_pct is not None else np.nan for item in inputs],
+        dtype=float,
+    )
+    coverage_cap = settings.scoring_gate_max_coverage_pct
+    if coverage_cap is not None and has_rig:
+        gated |= np.isfinite(coverages) & (coverages > coverage_cap)
+
+    # This matches score_targets' construction invariant: a target that passes
+    # the hours gate has a corresponding visibility row and dark window.
+    gated |= ~have_rows
+
+    min_altitude = settings.scoring_observability_min_altitude_deg
+    usable = visible & (altitudes >= min_altitude)
+    usable_counts = usable.sum(axis=1)
+    sin_altitudes = np.sin(np.radians(altitudes))
+    airmass = 1.0 / np.maximum(sin_altitudes, 1e-6)
+    max_airmass = 1.0 / max(math.sin(math.radians(min_altitude)), 1e-6)
+    if max_airmass - 1.0 <= 0.0:
+        qualities = np.ones_like(airmass)
+    else:
+        qualities = np.clip(1.0 - (airmass - 1.0) / (max_airmass - 1.0), 0.0, 1.0)
+    observability = np.divide(
+        np.where(usable, qualities, 0.0).sum(axis=1),
+        usable_counts,
+        out=np.zeros(count, dtype=float),
+        where=usable_counts > 0,
+    )
+
+    dark_start = snapshot.dark_window.start_utc
+    dark_end = snapshot.dark_window.end_utc
+    dark_mid = snapshot.dark_mid_utc
+    meridian = np.zeros(count, dtype=float)
+    if dark_start is not None and dark_end is not None and dark_mid is not None:
+        half_dark = (dark_end - dark_start).total_seconds() / 7200.0
+        max_delta = half_dark + settings.scoring_meridian_buffer_hours
+        if half_dark > 0.0 and max_delta > 0.0:
+            deltas = np.asarray(
+                [
+                    abs((item.transit_time_utc - dark_mid).total_seconds() / 3600.0)
+                    if item.transit_time_utc is not None
+                    else np.inf
+                    for item in inputs
+                ]
+            )
+            meridian = np.maximum(0.0, 1.0 - deltas / max_delta)
+
+    moon = np.ones(count, dtype=float)
+    valid_filters = [line for line in filter_intent if line in FILTER_LINES]
+    if valid_filters and snapshot.moon_phase_pct > 0.0 and ts is not None:
+        limiting_filter = max(
+            valid_filters,
+            key=lambda line: _moon_sensitivity_and_min_sep(line, settings)[0],
+        )
+        sensitivity, min_sep = _moon_sensitivity_and_min_sep(limiting_filter, settings)
+        moon_up = visible & (ts.moon_altitude_deg[None, :] > 0.0)
+        moon_up_counts = moon_up.sum(axis=1)
+        obs_counts = visible.sum(axis=1)
+        moon_alt_factor = np.sqrt(np.clip(np.sin(np.radians(ts.moon_altitude_deg)), 0.0, 1.0))[
+            None, :
+        ]
+        base = sensitivity * (snapshot.moon_phase_pct / 100.0) * moon_alt_factor
+        proximity = np.minimum(1.0, moon_separations / max(min_sep, 1e-6))
+        impacts = (
+            base * settings.scoring_moon_sky_glow_weight
+            + base * (1.0 - proximity) * settings.scoring_moon_proximity_weight
+        )
+        mean_impact = np.divide(
+            np.where(moon_up, impacts, 0.0).sum(axis=1),
+            moon_up_counts,
+            out=np.zeros(count, dtype=float),
+            where=moon_up_counts > 0,
+        )
+        overlap = np.divide(
+            moon_up_counts,
+            obs_counts,
+            out=np.zeros(count, dtype=float),
+            where=obs_counts > 0,
+        )
+        cluster_factor = np.asarray(
+            [
+                settings.scoring_cluster_moon_modifier
+                if item.obj_type in CLUSTER_OBJ_TYPES
+                else 1.0
+                for item in inputs
+            ]
+        )
+        moon = np.clip(1.0 - mean_impact * overlap * cluster_factor, 0.0, 1.0)
+
+    dimension_scores = [observability, meridian, moon]
+    dimension_weights = [
+        settings.scoring_weight_observability,
+        settings.scoring_weight_meridian,
+        settings.scoring_weight_moon,
+    ]
+    frame_active = has_rig & np.isfinite(coverages)
+    if has_rig:
+        spread = max(settings.scoring_frame_fit_spread, 1e-6)
+        with np.errstate(under="ignore"):
+            frame_fit = np.exp(
+                -(((coverages - settings.scoring_frame_fit_ideal_coverage_pct) / spread) ** 2)
+            )
+    else:
+        frame_fit = np.ones(count, dtype=float)
+
+    log_sum = np.zeros(count, dtype=float)
+    total_weight = np.zeros(count, dtype=float)
+    zero_dimension = np.zeros(count, dtype=bool)
+    for scores, weight in zip(dimension_scores, dimension_weights, strict=True):
+        if weight <= 0.0:
+            continue
+        zero_dimension |= scores <= 0.0
+        log_sum += weight * np.log(np.maximum(scores, np.finfo(float).tiny))
+        total_weight += weight
+    frame_weight = settings.scoring_weight_frame_fit
+    if frame_weight > 0.0:
+        zero_dimension |= frame_active & (frame_fit <= 0.0)
+        log_sum += np.where(
+            frame_active,
+            frame_weight * np.log(np.maximum(frame_fit, np.finfo(float).tiny)),
+            0.0,
+        )
+        total_weight += np.where(frame_active, frame_weight, 0.0)
+
+    raw = np.divide(
+        log_sum,
+        total_weight,
+        out=np.zeros(count, dtype=float),
+        where=total_weight > 0.0,
+    )
+    raw = np.exp(raw)
+    raw[(total_weight <= 0.0) | zero_dimension] = 0.0
+    percentages = np.rint(raw * 100.0).astype(int)
+
+    return {
+        item.dso_id: (
+            (None, None)
+            if gated[index]
+            else (
+                int(percentages[index]),
+                _label_for_score(int(percentages[index]), settings),
+            )
+        )
+        for index, item in enumerate(inputs)
+    }
+
+
 def score_targets(
     inputs: Sequence[ScoringInput],
     snapshot: VisibilitySnapshot,

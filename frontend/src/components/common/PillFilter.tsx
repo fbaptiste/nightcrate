@@ -34,9 +34,9 @@ export default function PillFilter({
 }: PillFilterProps) {
   const sortedOptions = useMemo(() => {
     return [...options]
-      .filter((o) => (o.count ?? 1) > 0)
+      .filter((o) => (o.count ?? 1) > 0 || value.includes(o.code))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [options]);
+  }, [options, value]);
 
   const optionByCode = useMemo(() => {
     const map: Record<string, PillOption> = {};

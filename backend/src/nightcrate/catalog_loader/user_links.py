@@ -5,7 +5,14 @@ from __future__ import annotations
 import sqlite3
 
 CATALOG_DERIVED_TABLES: frozenset[str] = frozenset(
-    {"dso_designation", "dso_external_ref", "thumbnail_cache"}
+    {
+        "dso_designation",
+        "dso_external_ref",
+        "dso_group",
+        "dso_group_member",
+        "dso_source_entry",
+        "thumbnail_cache",
+    }
 )
 USER_LINK_TABLES: frozenset[str] = frozenset({"favorite_target", "project_target", "project_dso"})
 
@@ -27,11 +34,27 @@ def _foreign_keys_to(
     return tuple(found)
 
 
-def count_references(cur: sqlite3.Cursor, dso_id: int) -> int:
+def dso_reference_tables(cur: sqlite3.Cursor) -> tuple[tuple[str, str], ...]:
+    """Discover non-catalog tables with a direct foreign key to ``dso``."""
+    return tuple(
+        (table, column)
+        for table, column in _foreign_keys_to(cur, "dso")
+        if table not in CATALOG_DERIVED_TABLES
+    )
+
+
+def count_references(
+    cur: sqlite3.Cursor,
+    dso_id: int,
+    *,
+    exclude: frozenset[str] = frozenset(),
+    reference_tables: tuple[tuple[str, str], ...] | None = None,
+) -> int:
     """Count non-catalog rows with a direct foreign key to ``dso(id)``."""
     total = 0
-    for table, column in _foreign_keys_to(cur, "dso"):
-        if table in CATALOG_DERIVED_TABLES:
+    tables = reference_tables if reference_tables is not None else dso_reference_tables(cur)
+    for table, column in tables:
+        if table in exclude:
             continue
         cur.execute(
             f'SELECT COUNT(*) FROM "{table}" WHERE "{column}" = ?',  # nosec B608
@@ -39,6 +62,23 @@ def count_references(cur: sqlite3.Cursor, dso_id: int) -> int:
         )
         total += int(cur.fetchone()[0])
     return total
+
+
+def referenced_dso_ids(
+    cur: sqlite3.Cursor,
+    *,
+    exclude: frozenset[str] = frozenset(),
+    reference_tables: tuple[tuple[str, str], ...] | None = None,
+) -> set[int]:
+    """Return DSO ids referenced by non-catalog tables with one schema scan."""
+    referenced: set[int] = set()
+    tables = reference_tables if reference_tables is not None else dso_reference_tables(cur)
+    for table, column in tables:
+        if table in exclude:
+            continue
+        cur.execute(f'SELECT DISTINCT "{column}" FROM "{table}"')  # nosec B608
+        referenced.update(int(row[0]) for row in cur.fetchall() if row[0] is not None)
+    return referenced
 
 
 def _merge_ranges(cur: sqlite3.Cursor, survivor_plan_id: int, old_plan_id: int) -> None:

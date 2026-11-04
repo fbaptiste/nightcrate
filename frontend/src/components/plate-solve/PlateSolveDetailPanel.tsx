@@ -16,6 +16,7 @@ import type {
 import { fetchDso } from "@/api/dsos";
 import { formatDistance } from "@/lib/distanceFormat";
 import { SidebarSection } from "@/components/SidebarSection";
+import { getSearchRefPresentation } from "@/components/dso/DsoExternalRefs";
 import { useDsoCatalogStore } from "@/stores/dsoCatalogStore";
 import { monoFontFamily } from "@/theme/theme";
 
@@ -250,19 +251,27 @@ function DsoDetailSection({ dso }: { dso: AnnotatedDso }) {
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
               {refs
                 .filter((r) => r.provider !== "wikidata" && r.url)
-                .map((r) => (
-                  <Chip
-                    key={`${r.provider}-${r.url}`}
-                    label={r.provider}
-                    size="small"
-                    variant="outlined"
-                    component="a"
-                    href={r.url!}
-                    target="_blank"
-                    clickable
-                    sx={{ fontSize: "0.6rem", height: 20, textTransform: "capitalize" }}
-                  />
-                ))}
+                .map((r) => {
+                  const searchPresentation = getSearchRefPresentation(r);
+                  return (
+                    <Chip
+                      key={`${r.provider}-${r.url}`}
+                      label={searchPresentation?.label ?? r.provider}
+                      aria-label={searchPresentation?.ariaLabel}
+                      size="small"
+                      variant="outlined"
+                      component="a"
+                      href={r.url!}
+                      target="_blank"
+                      clickable
+                      sx={{
+                        fontSize: "0.6rem",
+                        height: 20,
+                        textTransform: searchPresentation ? "none" : "capitalize",
+                      }}
+                    />
+                  );
+                })}
             </Stack>
           </>
         )}

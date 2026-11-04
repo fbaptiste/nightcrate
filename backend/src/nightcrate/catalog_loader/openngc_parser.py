@@ -39,6 +39,9 @@ KNOWN_OBJ_TYPES: frozenset[str] = frozenset(
         "*",
         "**",
         "Other",
+        "HH",
+        "ClG",
+        "WR*",
     ]
 )
 

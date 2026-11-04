@@ -2,16 +2,30 @@
 
 from __future__ import annotations
 
+import csv
 import logging
+import math
 import sqlite3
 from collections import defaultdict, deque
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nightcrate.catalog_loader import registry
 from nightcrate.catalog_loader._common import maybe_float, maybe_str, normalize_designation
+from nightcrate.catalog_loader.aco_loader import collect_aco
+from nightcrate.catalog_loader.arp_loader import collect_arp
 from nightcrate.catalog_loader.barnard_loader import _normalise_barn_id, collect_barnard
 from nightcrate.catalog_loader.crossref_parser import parse_other_id
+from nightcrate.catalog_loader.designations import (
+    canonical_identifier,
+    canonical_legacy_identifier,
+)
 from nightcrate.catalog_loader.hash import file_sha256, row_sha256
+from nightcrate.catalog_loader.hash_loader import collect_hash
+from nightcrate.catalog_loader.hh_loader import collect_hh
+from nightcrate.catalog_loader.lbn_loader import collect_lbn
+from nightcrate.catalog_loader.ldn_loader import collect_ldn
 from nightcrate.catalog_loader.loader import (
     _build_canonical_designations,
     _build_display_form,
@@ -19,10 +33,22 @@ from nightcrate.catalog_loader.loader import (
     _pick_primary,
     collect_openngc,
 )
-from nightcrate.catalog_loader.registry import CatalogSource
+from nightcrate.catalog_loader.mcg_loader import collect_mcg
+from nightcrate.catalog_loader.melotte_loader import collect_melotte
+from nightcrate.catalog_loader.openngc_parser import _parse_name
+from nightcrate.catalog_loader.registry import CatalogSource, catalogs_for_source
 from nightcrate.catalog_loader.sharpless_loader import collect_sharpless
-from nightcrate.catalog_loader.user_links import count_references, move_user_links
-from nightcrate.services.astronomy import constellation_for_coords
+from nightcrate.catalog_loader.user_links import (
+    count_references,
+    dso_reference_tables,
+    move_user_links,
+    referenced_dso_ids,
+)
+from nightcrate.catalog_loader.wr_loader import collect_wr
+from nightcrate.services.astronomy import (
+    constellation_for_coords,
+    constellations_for_coords,
+)
 
 logger = logging.getLogger("nightcrate.catalog_loader.reconcile")
 
@@ -31,6 +57,25 @@ OBJECT_SOURCE_IDS: tuple[str, ...] = (
     "openngc_addendum",
     "vizier_sharpless",
     "vizier_barnard",
+    "vizier_wr",
+    "vizier_wr_phot",
+    "vizier_hh",
+    "vizier_hash",
+    "vizier_lbn",
+    "vizier_ldn",
+    "vizier_aco_north",
+    "vizier_aco_south",
+    "vizier_aco_s",
+    "vizier_mcg",
+    "vizier_mcg_v5",
+    "vizier_arp",
+)
+
+EDITORIAL_OBJECT_SOURCE_IDS: tuple[str, ...] = (
+    "nightcrate_melotte",
+    "nightcrate_arp_members",
+    "nightcrate_parts",
+    "nightcrate_match_overrides",
 )
 
 
@@ -41,6 +86,120 @@ class NewObject:
     columns: dict[str, object]
     designations: tuple[tuple[str, str, bool], ...]
     file_order: int
+    catalog_id: str = "openngc"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceEntry:
+    source_id: str
+    source_key: str
+    catalog_id: str
+    object_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class NewGroup:
+    catalog: str
+    identifier: str
+    whole_index: int | None
+    member_indexes: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StatedMatch:
+    catalog: str
+    identifier: str
+    target_index: int
+    entry_size_arcmin: float | None
+    target_size_arcmin: float | None
+    evidence: str
+
+
+@dataclass(frozen=True, slots=True)
+class CollectedObject:
+    """One row supplied by an optional-catalog collector to rule R."""
+
+    source_id: str
+    source_key: str
+    catalog_id: str
+    catalog: str | None
+    identifier: str | None
+    columns: dict[str, object]
+    also_catalog_ids: tuple[str, ...] = ()
+    extra_designations: tuple[tuple[str, str], ...] = ()
+    evidence: str | None = None
+    cross_identifications: tuple[tuple[str, str], ...] = ()
+    release_designations: tuple[tuple[str, str], ...] = ()
+    match_size_arcmin: float | None = None
+    match_size_ratio_max: float | None = None
+    require_match: bool = False
+
+    def __post_init__(self) -> None:
+        if self.require_match and self.release_designations:
+            raise ValueError(
+                f"collector row {self.source_id}/{self.source_key} cannot require a match "
+                "and release designations"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CollectedGroup:
+    """A group whose row keys are ``(source_id, source_key)`` pairs."""
+
+    catalog: str
+    identifier: str
+    whole_key: tuple[str, str] | None
+    member_keys: tuple[tuple[str, str], ...] = ()
+    member_designations: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CollectorBatch:
+    """Objects, groups, and effective hash returned by one collector."""
+
+    objects: tuple[CollectedObject, ...]
+    groups: tuple[CollectedGroup, ...]
+    source_hashes: dict[str, str]
+
+
+ObjectCollector = Callable[[Mapping[str, CatalogSource], frozenset[str]], CollectorBatch]
+
+COLLECTOR_ORDER: tuple[str, ...] = (
+    "melotte",
+    "wr",
+    "hh",
+    "png",
+    "abell_pn",
+    "lbn",
+    "ldn",
+    "aco",
+    "mcg",
+    "arp",
+)
+
+
+def _collector_registry(**collectors: ObjectCollector) -> dict[str, ObjectCollector]:
+    """Build the collector registry, rejecting catalogs without an order slot."""
+    unknown = collectors.keys() - set(COLLECTOR_ORDER)
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        raise RuntimeError(f"collectors missing from COLLECTOR_ORDER: {names}")
+    return collectors
+
+
+# Phase B registers each source collector here by its first logical catalog.
+# _collector_registry validates additions as soon as this module is imported.
+OBJECT_COLLECTORS: dict[str, ObjectCollector] = _collector_registry(
+    melotte=collect_melotte,
+    wr=collect_wr,
+    hh=collect_hh,
+    png=collect_hash,
+    lbn=collect_lbn,
+    ldn=collect_ldn,
+    aco=collect_aco,
+    mcg=collect_mcg,
+    arp=collect_arp,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +209,10 @@ class ObjectSet:
     hashes: dict[str, str]
     unresolved: int
     _sources: dict[str, CatalogSource] = field(default_factory=dict, repr=False, compare=False)
+    entries: tuple[SourceEntry, ...] = ()
+    catalog_states: dict[str, str] = field(default_factory=dict)
+    groups: tuple[NewGroup, ...] = ()
+    stated_matches: tuple[StatedMatch, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +223,11 @@ class ReconcileReport:
     reactivated: int = 0
     merged: int = 0
     removed: int = 0
+    kept_linked: int = 0
     kept_inactive_merge: int = 0
+    deleted: int = 0
+    transferred: int = 0
+    applied: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -70,15 +237,59 @@ class _Draft:
     columns: dict[str, object]
     designations: list[tuple[str, str, bool]]
     file_order: int
+    catalog_id: str
 
 
-def _constellation(ra_deg: float | None, dec_deg: float | None) -> str | None:
-    if ra_deg is None or dec_deg is None:
-        return None
-    try:
-        return constellation_for_coords(ra_deg, dec_deg)
-    except Exception:  # noqa: BLE001 - catalog coordinates remain usable without it
-        return None
+@dataclass(frozen=True, slots=True)
+class MatchOverride:
+    action: str
+    target: tuple[str, str] | None
+
+
+def _read_editorial_csv(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        lines = [line for line in handle if line.strip() and not line.lstrip().startswith("#")]
+    if not lines:
+        return []
+    return [
+        {key: (value or "").strip() for key, value in row.items() if key is not None}
+        for row in csv.DictReader(lines)
+    ]
+
+
+def _designation_key(value: str) -> tuple[str, str]:
+    catalog, identifier = _parse_name(value)
+    if catalog is None or identifier is None:
+        refs = parse_other_id(value)
+        if len(refs) != 1:
+            raise ValueError(f"unrecognized designation: {value!r}")
+        catalog = refs[0].catalog
+        identifier = refs[0].storage_identifier
+    return catalog, canonical_identifier(catalog, identifier)
+
+
+def read_match_overrides(source: CatalogSource | None) -> dict[tuple[str, str], MatchOverride]:
+    """Parse and validate the editorial match overrides from their registered source."""
+    overrides: dict[tuple[str, str], MatchOverride] = {}
+    if source is None or not source.file_path.exists():
+        return overrides
+    for row in _read_editorial_csv(source.file_path):
+        designation = row.get("designation", "")
+        action = row.get("action", "")
+        if not designation:
+            continue
+        if action not in {"assign", "separate"}:
+            raise ValueError(f"invalid match override action for {designation!r}: {action!r}")
+        target_text = row.get("target_designation", "")
+        if action == "assign" and not target_text:
+            raise ValueError(f"assign override for {designation!r} has no target")
+        if action == "separate" and target_text:
+            raise ValueError(f"separate override for {designation!r} has a target")
+        overrides[_designation_key(designation)] = MatchOverride(
+            action,
+            _designation_key(target_text) if target_text else None,
+        )
+    return overrides
 
 
 def _openngc_columns(row, primary: str) -> dict[str, object]:
@@ -115,27 +326,172 @@ def _openngc_columns(row, primary: str) -> dict[str, object]:
     }
 
 
-def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | None) -> ObjectSet:
+def build_object_set(
+    sources: dict[str, CatalogSource],
+    crossref_path: Path | None,
+    on_catalogs: frozenset[str] | None = None,
+) -> ObjectSet:
     """Collect all present object catalogs and resolve ownership in memory."""
+    if on_catalogs is None:
+        on_catalogs = frozenset({"sharpless", "barnard"})
     drafts: list[_Draft] = []
     designation_owner: dict[tuple[str, str], int] = {}
     search_owner: dict[str, int] = {}
     merges: dict[tuple[str, str], int] = {}
     hashes: dict[str, str] = {}
     unresolved = 0
+    groups: list[NewGroup] = []
+    stated_matches: list[StatedMatch] = []
     pending_dups: list[tuple[str, object]] = []
     openngc_rows: list[tuple[int, object, list[tuple[str, str]], int]] = []
     openngc_barnard_names: dict[str, list[int]] = defaultdict(list)
+    resolved_entries: list[SourceEntry] = []
+    resolved_entry_keys: set[tuple[str, str, str, int]] = set()
+    dropped_required_matches = 0
     file_order = 0
 
-    def claim(index: int, catalog: str, identifier: str, primary: bool) -> bool:
+    override_source = sources.get("nightcrate_match_overrides")
+    if override_source is not None and override_source.file_path.exists():
+        hashes[override_source.source_id] = file_sha256(override_source.file_path)
+    overrides = read_match_overrides(override_source)
+    reserved_designations = frozenset(overrides)
+
+    parts_source = sources.get("nightcrate_parts")
+    if parts_source is not None and parts_source.file_path.exists():
+        hashes[parts_source.source_id] = file_sha256(parts_source.file_path)
+
+    def record_entry(source_id: str, source_key: str, catalog_id: str, index: int) -> None:
+        """Record one logical catalog contribution at the point it resolves."""
+        key = (source_id, source_key, catalog_id, index)
+        if key not in resolved_entry_keys:
+            resolved_entry_keys.add(key)
+            resolved_entries.append(SourceEntry(*key))
+
+    def claim(
+        index: int,
+        catalog: str,
+        identifier: str,
+        primary: bool,
+        *,
+        reserved_ok: bool = False,
+    ) -> bool:
+        identifier = canonical_identifier(catalog, identifier)
         key = (catalog, identifier)
+        if key in reserved_designations and not reserved_ok:
+            return False
         if key in designation_owner:
             return False
         designation_owner[key] = index
         search_owner[_build_search_key(catalog, identifier)] = index
         drafts[index].designations.append((catalog, identifier, primary))
         return True
+
+    def release(catalog: str, identifier: str) -> None:
+        """Release one claim from every structure populated by ``claim``."""
+        identifier = canonical_identifier(catalog, identifier)
+        key = (catalog, identifier)
+        owner = designation_owner.pop(key, None)
+        if owner is None:
+            return
+        search_key = _build_search_key(catalog, identifier)
+        if search_owner.get(search_key) == owner:
+            search_owner.pop(search_key, None)
+        drafts[owner].designations = [
+            designation for designation in drafts[owner].designations if designation[:2] != key
+        ]
+
+    def optional_designation_is_on(catalog: str) -> bool:
+        return any(
+            optional.catalog_id in on_catalogs
+            for optional in registry.OPTIONAL_CATALOGS
+            if catalog in optional.designation_catalogs
+        )
+
+    def resolve_stated_match(
+        source_id: str,
+        source_key: str,
+        catalog_id: str,
+        catalog: str,
+        identifier: str,
+        make_standalone: Callable[[], int],
+        *,
+        cross_identifications: tuple[tuple[str, str], ...] = (),
+        entry_size_arcmin: float | None = None,
+        match_size_ratio_max: float | None = None,
+        row_evidence: str | None = None,
+        require_match: bool = False,
+    ) -> int | None:
+        """Apply rule R and return the owning draft index for one catalog row."""
+        identifier = canonical_identifier(catalog, identifier)
+        own_key = (catalog, identifier)
+        match_override = overrides.get(own_key)
+        target: int | None = None
+        evidence = row_evidence
+
+        if match_override is not None:
+            if match_override.action == "assign" and match_override.target is not None:
+                target = designation_owner.get(match_override.target)
+                if target is not None and evidence is None:
+                    evidence = "reviewed list"
+            if target is None:
+                if require_match:
+                    return None
+                index = make_standalone()
+                claim(index, catalog, identifier, True, reserved_ok=True)
+                return index
+        else:
+            target = designation_owner.get(own_key)
+            if target is not None and evidence is None:
+                owner = drafts[target]
+                if owner.source_id in {"openngc", "openngc_addendum"}:
+                    evidence = "OpenNGC alternate"
+                else:
+                    evidence = f"earlier catalog: {owner.catalog_id}"
+            if target is None:
+                for target_catalog, target_identifier in cross_identifications:
+                    target_identifier = canonical_identifier(target_catalog, target_identifier)
+                    candidate = designation_owner.get((target_catalog, target_identifier))
+                    if candidate is not None and match_size_ratio_max is not None:
+                        target_size = maybe_float(
+                            str(drafts[candidate].columns.get("maj_axis_arcmin") or "")
+                        )
+                        if (
+                            entry_size_arcmin is None
+                            or target_size is None
+                            or entry_size_arcmin <= 0
+                            or target_size <= 0
+                            or max(entry_size_arcmin, target_size)
+                            / min(entry_size_arcmin, target_size)
+                            > match_size_ratio_max
+                        ):
+                            candidate = None
+                    if candidate is not None:
+                        target = candidate
+                        if evidence is None:
+                            evidence = "catalog column"
+                        break
+            if target is None:
+                if require_match:
+                    return None
+                index = make_standalone()
+                claim(index, catalog, identifier, True)
+                return index
+
+        merges[(source_id, source_key)] = target
+        claim(target, catalog, identifier, False, reserved_ok=True)
+        stated_matches.append(
+            StatedMatch(
+                catalog=catalog,
+                identifier=identifier,
+                target_index=target,
+                entry_size_arcmin=entry_size_arcmin,
+                target_size_arcmin=maybe_float(
+                    str(drafts[target].columns.get("maj_axis_arcmin") or "")
+                ),
+                evidence=evidence or "",
+            )
+        )
+        return target
 
     def add_openngc(source_id: str) -> list[tuple[str, object]]:
         nonlocal file_order
@@ -163,8 +519,10 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
                     _openngc_columns(row, primary),
                     [],
                     file_order,
+                    "openngc",
                 )
             )
+            record_entry(source_id, row.raw_name, "openngc", index)
             file_order += 1
             openngc_rows.append((index, row, canonicals, primary_idx))
         return duplicates
@@ -178,13 +536,14 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
         if target is None:
             return False
         merges[(source_id, dup.raw_name)] = target
+        record_entry(source_id, dup.raw_name, "openngc", target)
         if dup.name_catalog and dup.name_identifier:
             claim(target, dup.name_catalog, dup.name_identifier, False)
         return True
 
     def dup_targets(dup: object) -> tuple[tuple[str, str], ...]:
         return tuple(
-            (catalog, str(identifier))
+            (catalog, canonical_identifier(catalog, str(identifier)))
             for catalog, identifier in (
                 ("ngc", dup.ngc_cross_ref),
                 ("ic", dup.ic_cross_ref),
@@ -200,9 +559,12 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
     # own names before considering dedicated cross-reference columns or the
     # Identifiers field so ownership is independent of source row order.
     for index, row, canonicals, primary_idx in openngc_rows:
-        own_name = (row.name_catalog, row.name_identifier)
         if row.name_catalog is None or row.name_identifier is None:
             continue
+        own_name = (
+            row.name_catalog,
+            canonical_identifier(row.name_catalog, row.name_identifier),
+        )
         own_primary = canonicals[primary_idx] == own_name
         claim(index, row.name_catalog, row.name_identifier, own_primary)
         if row.name_catalog == "barnard":
@@ -210,13 +572,18 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
             openngc_barnard_names[match_key].append(index)
 
     for index, row, canonicals, primary_idx in openngc_rows:
-        own_name = (row.name_catalog, row.name_identifier)
+        own_name = None
+        if row.name_catalog is not None and row.name_identifier is not None:
+            own_name = (
+                row.name_catalog,
+                canonical_identifier(row.name_catalog, row.name_identifier),
+            )
         for pos, (catalog, identifier) in enumerate(canonicals):
             if catalog != "other" and (catalog, identifier) != own_name:
                 claim(index, catalog, identifier, pos == primary_idx)
         for token in row.other_identifiers:
             for ref in parse_other_id(token):
-                claim(index, ref.catalog, ref.identifier, False)
+                claim(index, ref.catalog, ref.storage_identifier, False)
 
     pending_dups = [item for item in pending_dups if not resolve_dup(*item)]
     waiting: dict[tuple[str, str], list[int]] = defaultdict(list)
@@ -239,13 +606,17 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
         dup = pending_dups[position][1]
         if not dup.name_catalog or not dup.name_identifier:
             continue
-        for dependent in waiting.get((dup.name_catalog, dup.name_identifier), ()):
+        dependent_key = (
+            dup.name_catalog,
+            canonical_identifier(dup.name_catalog, dup.name_identifier),
+        )
+        for dependent in waiting.get(dependent_key, ()):
             if dependent not in resolved and dependent not in queued:
                 ready.append(dependent)
                 queued.add(dependent)
     unresolved += len(pending_dups) - len(resolved)
 
-    sharpless = sources.get("vizier_sharpless")
+    sharpless = sources.get("vizier_sharpless") if "sharpless" in on_catalogs else None
     if sharpless is not None and sharpless.file_path.exists():
         rows, crossrefs, effective_hash = collect_sharpless(sharpless, crossref_path)
         hashes[sharpless.source_id] = effective_hash
@@ -262,6 +633,7 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
                     unresolved += 1
             if target is not None:
                 merges[(sharpless.source_id, source_key)] = target
+                record_entry(sharpless.source_id, source_key, "sharpless", target)
                 claim(target, "sharpless2", source_key, False)
                 continue
             ra_deg = maybe_float(row.get("_RAJ2000"))
@@ -279,7 +651,7 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
                         "raw_obj_type": None,
                         "ra_deg": ra_deg,
                         "dec_deg": dec_deg,
-                        "constellation": _constellation(ra_deg, dec_deg),
+                        "constellation": None,
                         "maj_axis_arcmin": diameter,
                         "min_axis_arcmin": diameter,
                         "position_angle_deg": None,
@@ -292,12 +664,14 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
                     },
                     [],
                     file_order,
+                    "sharpless",
                 )
             )
+            record_entry(sharpless.source_id, source_key, "sharpless", index)
             file_order += 1
             claim(index, "sharpless2", source_key, True)
 
-    barnard = sources.get("vizier_barnard")
+    barnard = sources.get("vizier_barnard") if "barnard" in on_catalogs else None
     if barnard is not None and barnard.file_path.exists():
         rows, source_hash = collect_barnard(barnard)
         hashes[barnard.source_id] = source_hash
@@ -310,6 +684,7 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
             if len(own_name_targets) == 1:
                 target = own_name_targets[0]
                 merges[(barnard.source_id, source_key)] = target
+                record_entry(barnard.source_id, source_key, "barnard", target)
                 claim(target, "barnard", source_key, False)
                 continue
             if len(own_name_targets) > 1:
@@ -334,7 +709,7 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
                         "raw_obj_type": None,
                         "ra_deg": ra_deg,
                         "dec_deg": dec_deg,
-                        "constellation": _constellation(ra_deg, dec_deg),
+                        "constellation": None,
                         "maj_axis_arcmin": diameter,
                         "min_axis_arcmin": diameter,
                         "position_angle_deg": None,
@@ -347,10 +722,181 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
                     },
                     [],
                     file_order,
+                    "barnard",
                 )
             )
+            record_entry(barnard.source_id, source_key, "barnard", index)
             file_order += 1
             claim(index, "barnard", source_key, True)
+
+    # Phase-B collectors are registered by logical catalog id and run in an
+    # explicit ownership order, independent of registry/source insertion order.
+    unknown_collectors = OBJECT_COLLECTORS.keys() - set(COLLECTOR_ORDER)
+    if unknown_collectors:
+        names = ", ".join(sorted(unknown_collectors))
+        raise RuntimeError(f"collectors missing from COLLECTOR_ORDER: {names}")
+    processed_collector_sources: set[str] = set(hashes)
+    for collector_catalog_id in COLLECTOR_ORDER:
+        collector = OBJECT_COLLECTORS.get(collector_catalog_id)
+        if collector is None:
+            continue
+        optional = registry.optional_catalog(collector_catalog_id)
+        source_ids = (
+            optional.source_ids
+            if optional is not None
+            else tuple(
+                source.source_id
+                for source in sources.values()
+                if source.parser == collector_catalog_id
+            )
+        )
+        collector_sources = {
+            source_id: source
+            for source_id in source_ids
+            if (source := sources.get(source_id)) is not None
+            and source_id not in processed_collector_sources
+            and source.file_path.exists()
+        }
+        if not collector_sources:
+            continue
+        processed_collector_sources.update(collector_sources)
+        batch = collector(collector_sources, on_catalogs)
+        unexpected_hashes = batch.source_hashes.keys() - collector_sources.keys()
+        if unexpected_hashes:
+            names = ", ".join(sorted(unexpected_hashes))
+            raise ValueError(
+                f"collector {collector_catalog_id} returned hashes for unknown sources: {names}"
+            )
+        hashes.update(batch.source_hashes)
+        batch_indexes: dict[tuple[str, str], int] = {}
+        for row in batch.objects:
+            source = collector_sources.get(row.source_id)
+            if source is None:
+                raise ValueError(
+                    f"collector {collector_catalog_id} returned an object for unknown source "
+                    f"{row.source_id!r}"
+                )
+            if row.source_id not in batch.source_hashes:
+                raise ValueError(
+                    f"collector {collector_catalog_id} omitted the hash for object source "
+                    f"{row.source_id!r}"
+                )
+            active_catalog_ids = tuple(
+                dict.fromkeys(
+                    catalog_id
+                    for catalog_id in (row.catalog_id, *row.also_catalog_ids)
+                    if catalog_id in on_catalogs
+                )
+            )
+            if not active_catalog_ids:
+                continue
+            for release_catalog, release_identifier in row.release_designations:
+                release(release_catalog, release_identifier)
+
+            def make_standalone(row: CollectedObject = row) -> int:
+                nonlocal file_order
+                index = len(drafts)
+                drafts.append(
+                    _Draft(
+                        row.source_id,
+                        row.source_key,
+                        row.columns,
+                        [],
+                        file_order,
+                        active_catalog_ids[0],
+                    )
+                )
+                file_order += 1
+                return index
+
+            if (row.catalog is None) != (row.identifier is None):
+                raise ValueError(
+                    f"collector row {row.source_id}/{row.source_key} must provide "
+                    "both catalog and identifier, or neither"
+                )
+            if row.catalog is None or row.identifier is None:
+                index = make_standalone()
+            else:
+                index = resolve_stated_match(
+                    row.source_id,
+                    row.source_key,
+                    active_catalog_ids[0],
+                    row.catalog,
+                    row.identifier,
+                    make_standalone,
+                    cross_identifications=row.cross_identifications,
+                    entry_size_arcmin=(
+                        row.match_size_arcmin
+                        if row.match_size_arcmin is not None
+                        else (
+                            float(row.columns["maj_axis_arcmin"])
+                            if row.columns.get("maj_axis_arcmin") is not None
+                            else None
+                        )
+                    ),
+                    match_size_ratio_max=row.match_size_ratio_max,
+                    row_evidence=row.evidence,
+                    require_match=row.require_match,
+                )
+                if index is None:
+                    dropped_required_matches += 1
+                    logger.info(
+                        "[reconcile] dropped required match %s/%s with no owner",
+                        row.source_id,
+                        row.source_key,
+                    )
+                    continue
+            batch_indexes[(row.source_id, row.source_key)] = index
+            for catalog, identifier in row.extra_designations:
+                claim(index, catalog, identifier, False)
+            for catalog_id in active_catalog_ids:
+                record_entry(row.source_id, row.source_key, catalog_id, index)
+
+        for collected_group in batch.groups:
+            if (
+                collected_group.whole_key is not None
+                and collected_group.whole_key not in batch_indexes
+            ):
+                continue
+            whole_index = (
+                batch_indexes.get(collected_group.whole_key)
+                if collected_group.whole_key is not None
+                else None
+            )
+            member_indexes = [
+                batch_indexes[key] for key in collected_group.member_keys if key in batch_indexes
+            ]
+            for catalog, identifier in collected_group.member_designations:
+                owner = designation_owner.get((catalog, canonical_identifier(catalog, identifier)))
+                if owner is not None:
+                    member_indexes.append(owner)
+            deduplicated_members = tuple(dict.fromkeys(member_indexes))
+            if whole_index is not None:
+                deduplicated_members = tuple(
+                    member_index
+                    for member_index in deduplicated_members
+                    if member_index != whole_index
+                )
+            if deduplicated_members:
+                groups.append(
+                    NewGroup(
+                        collected_group.catalog,
+                        collected_group.identifier,
+                        whole_index,
+                        deduplicated_members,
+                    )
+                )
+
+    # Reviewed assign rows without their own loaded entry act as aliases, but
+    # only while the optional catalog that contributes that designation is on.
+    for designation, match_override in overrides.items():
+        if match_override.action != "assign" or match_override.target is None:
+            continue
+        if designation in designation_owner or not optional_designation_is_on(designation[0]):
+            continue
+        target = designation_owner.get(match_override.target)
+        if target is not None:
+            claim(target, *designation, False, reserved_ok=True)
 
     augment = sources.get("nightcrate_augment")
     if augment is not None and augment.file_path.exists():
@@ -378,6 +924,98 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
             for position, (catalog, identifier, _primary) in enumerate(draft.designations)
         ]
 
+    if parts_source is not None and parts_source.file_path.exists():
+        existing_group_keys = {
+            (group.catalog, canonical_identifier(group.catalog, group.identifier))
+            for group in groups
+        }
+        parts_group_owners: dict[tuple[str, str], int] = {}
+        members_by_whole: dict[int, list[int]] = defaultdict(list)
+        for row in _read_editorial_csv(parts_source.file_path):
+            whole_text = row.get("whole_designation", "")
+            part_text = row.get("part_designation", "")
+            if not whole_text or not part_text:
+                continue
+            whole_index = designation_owner.get(_designation_key(whole_text))
+            part_index = designation_owner.get(_designation_key(part_text))
+            if whole_index is None or part_index is None:
+                continue
+            primary = next(
+                (
+                    (catalog, identifier)
+                    for catalog, identifier, is_primary in drafts[whole_index].designations
+                    if is_primary
+                ),
+                None,
+            )
+            if primary is None:
+                continue
+            group_key = (primary[0], canonical_identifier(*primary))
+            previous_whole = parts_group_owners.get(group_key)
+            if group_key in existing_group_keys or (
+                previous_whole is not None and previous_whole != whole_index
+            ):
+                logger.warning(
+                    "[reconcile] skipping parts row %r -> %r; group %s %s already exists",
+                    whole_text,
+                    part_text,
+                    *primary,
+                )
+                continue
+            parts_group_owners[group_key] = whole_index
+            if part_index not in members_by_whole[whole_index]:
+                members_by_whole[whole_index].append(part_index)
+        for whole_index, member_indexes in members_by_whole.items():
+            primary = next(
+                (
+                    (catalog, identifier)
+                    for catalog, identifier, is_primary in drafts[whole_index].designations
+                    if is_primary
+                ),
+                None,
+            )
+            if primary is not None:
+                groups.append(NewGroup(*primary, whole_index, tuple(member_indexes)))
+
+    constellation_drafts: list[tuple[_Draft, float, float]] = []
+    for draft in drafts:
+        if (
+            draft.columns.get("constellation") is not None
+            or draft.columns.get("ra_deg") is None
+            or draft.columns.get("dec_deg") is None
+        ):
+            continue
+        try:
+            ra_deg = float(draft.columns["ra_deg"])
+            dec_deg = float(draft.columns["dec_deg"])
+        except TypeError, ValueError:
+            continue
+        if not math.isfinite(ra_deg) or not math.isfinite(dec_deg) or not -90 <= dec_deg <= 90:
+            continue
+        constellation_drafts.append((draft, ra_deg % 360.0, dec_deg))
+    if constellation_drafts:
+        try:
+            constellations = constellations_for_coords(
+                [ra_deg for _draft, ra_deg, _dec_deg in constellation_drafts],
+                [dec_deg for _draft, _ra_deg, dec_deg in constellation_drafts],
+            )
+        except Exception:  # noqa: BLE001 - catalog coordinates remain usable without it
+            logger.exception(
+                "[reconcile] batched constellation lookup failed for %d catalog objects; "
+                "retrying individually",
+                len(constellation_drafts),
+            )
+            for draft, ra_deg, dec_deg in constellation_drafts:
+                try:
+                    draft.columns["constellation"] = constellation_for_coords(ra_deg, dec_deg)
+                except Exception:  # noqa: BLE001 - isolate invalid catalog coordinates
+                    draft.columns["constellation"] = None
+        else:
+            for (draft, _ra_deg, _dec_deg), constellation in zip(
+                constellation_drafts, constellations, strict=True
+            ):
+                draft.columns["constellation"] = constellation
+
     objects = tuple(
         NewObject(
             draft.source_id,
@@ -385,10 +1023,25 @@ def build_object_set(sources: dict[str, CatalogSource], crossref_path: Path | No
             draft.columns,
             tuple(draft.designations),
             draft.file_order,
+            draft.catalog_id,
         )
         for draft in drafts
     )
-    return ObjectSet(objects, merges, hashes, unresolved, dict(sources))
+    if dropped_required_matches:
+        logger.info(
+            "[reconcile] dropped %d rows that require an existing match",
+            dropped_required_matches,
+        )
+    return ObjectSet(
+        objects,
+        merges,
+        hashes,
+        unresolved,
+        dict(sources),
+        tuple(resolved_entries),
+        groups=tuple(groups),
+        stated_matches=tuple(stated_matches),
+    )
 
 
 def _source_row_id(cur: sqlite3.Cursor, source: CatalogSource, source_hash: str) -> int:
@@ -430,13 +1083,53 @@ def _source_row_id(cur: sqlite3.Cursor, source: CatalogSource, source_hash: str)
 
 
 def apply_object_set(
-    conn: sqlite3.Connection, new: ObjectSet, enrichment_source_ids: tuple[str, ...]
+    conn: sqlite3.Connection,
+    new: ObjectSet,
+    enrichment_source_ids: tuple[str, ...],
+    *,
+    removed_catalogs: frozenset[str] = frozenset(),
+    dry_run: bool = False,
 ) -> ReconcileReport:
     """Apply a complete object set atomically while preserving user identity."""
     cur = conn.cursor()
     cur.row_factory = sqlite3.Row
-    inserted = updated = reactivated = merged = removed = kept = 0
-    source_counts = {source_id: 0 for source_id in OBJECT_SOURCE_IDS if source_id in new.hashes}
+    inserted = updated = reactivated = merged = removed = kept_linked = kept = deleted = (
+        transferred
+    ) = 0
+    current_entries: list[SourceEntry] = []
+    seen_entries: set[tuple[str, str, str, int]] = set()
+    entry_catalogs: dict[tuple[str, str], str] = {}
+
+    def add_entry(entry: SourceEntry) -> None:
+        key = (entry.source_id, entry.source_key, entry.catalog_id, entry.object_index)
+        if key not in seen_entries:
+            seen_entries.add(key)
+            current_entries.append(entry)
+
+    for entry in new.entries:
+        if not 0 <= entry.object_index < len(new.objects):
+            continue
+        entry_catalogs.setdefault((entry.source_id, entry.source_key), entry.catalog_id)
+        obj = new.objects[entry.object_index]
+        own_entry = (entry.source_id, entry.source_key) == (obj.source_id, obj.source_key)
+        merged_entry = new.merges.get((entry.source_id, entry.source_key)) == entry.object_index
+        if own_entry or merged_entry:
+            add_entry(entry)
+    for index, obj in enumerate(new.objects):
+        add_entry(SourceEntry(obj.source_id, obj.source_key, obj.catalog_id, index))
+    for (source_id, source_key), object_index in new.merges.items():
+        catalog_id = entry_catalogs.get((source_id, source_key), "openngc")
+        add_entry(SourceEntry(source_id, source_key, catalog_id, object_index))
+    object_source_ids = {obj.source_id for obj in new.objects} | {
+        entry.source_id for entry in current_entries
+    }
+    object_source_ids.update(
+        source_id for source_id in OBJECT_SOURCE_IDS if source_id in new.hashes
+    )
+    object_source_ids.update(
+        source_id for source_id in EDITORIAL_OBJECT_SOURCE_IDS if source_id in new.hashes
+    )
+    source_counts = {source_id: 0 for source_id in object_source_ids if source_id in new.hashes}
     for obj in new.objects:
         if obj.source_id in source_counts:
             source_counts[obj.source_id] += 1
@@ -452,11 +1145,27 @@ def apply_object_set(
         existing = [dict(row) for row in cur.fetchall()]
         cur.execute("SELECT * FROM dso_designation ORDER BY id")
         old_designations = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """
+            SELECT e.source_catalog_id, s.source_id, e.source_key,
+                   e.catalog_id, e.dso_id
+            FROM dso_source_entry e
+            JOIN dso_catalog_source s ON s.id = e.source_catalog_id
+            ORDER BY e.source_catalog_id, e.source_key, e.catalog_id
+            """
+        )
+        old_entries = [dict(row) for row in cur.fetchall()]
         cur.execute("SELECT source_id, file_hash, keys_assigned FROM dso_catalog_source")
         stored_state = {
             str(row[0]): {"file_hash": str(row[1]), "keys_assigned": bool(row[2])}
             for row in cur.fetchall()
         }
+        reference_tables = dso_reference_tables(cur)
+        referenced_for_removal = referenced_dso_ids(
+            cur,
+            exclude=frozenset({"project_dso"}),
+            reference_tables=reference_tables,
+        )
 
         existing_by_id: dict[int, dict[str, object]] = {}
         existing_by_source_key: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
@@ -485,7 +1194,7 @@ def apply_object_set(
             new_by_hash[obj.source_id][str(obj.columns["source_row_hash"])].append(index)
 
         source_db_ids: dict[str, int] = {}
-        for source_id in OBJECT_SOURCE_IDS:
+        for source_id in object_source_ids:
             if source_id not in new.hashes:
                 continue
             source = new._sources[source_id]
@@ -519,6 +1228,41 @@ def apply_object_set(
             if len(candidates) == 1:
                 pair(index, candidates[0])
 
+        entries_by_object: dict[int, list[SourceEntry]] = defaultdict(list)
+        for entry in current_entries:
+            entries_by_object[entry.object_index].append(entry)
+        old_ids_by_entry: dict[tuple[str, str], set[int]] = defaultdict(set)
+        for entry in old_entries:
+            old_ids_by_entry[(str(entry["source_id"]), str(entry["source_key"]))].add(
+                int(entry["dso_id"])
+            )
+        for index, obj in enumerate(new.objects):
+            if index in matched_new:
+                continue
+            contributing = {
+                (obj.source_id, obj.source_key),
+                *((entry.source_id, entry.source_key) for entry in entries_by_object[index]),
+            }
+            candidate_ids: set[int] = set()
+            for key in contributing:
+                candidate_ids.update(
+                    int(row["id"])
+                    for row in existing_by_source_key.get(key, ())
+                    if int(row["id"]) not in claimed_old
+                )
+                candidate_ids.update(
+                    old_id for old_id in old_ids_by_entry.get(key, ()) if old_id not in claimed_old
+                )
+            if len(candidate_ids) == 1:
+                pair(index, existing_by_id[candidate_ids.pop()])
+                transferred += 1
+            elif len(candidate_ids) > 1:
+                logger.warning(
+                    "[reconcile] contribution identity for %s/%s is ambiguous; inserting",
+                    obj.source_id,
+                    obj.source_key,
+                )
+
         openngc_source_ids = ("openngc", "openngc_addendum")
         combined_openngc_old_by_hash: dict[str, list[dict[str, object]]] = defaultdict(list)
         combined_openngc_new_by_hash: dict[str, list[int]] = defaultdict(list)
@@ -538,7 +1282,7 @@ def apply_object_set(
             if len(old_candidates) == 1 and len(new_candidates) == 1:
                 pair(new_candidates[0], old_candidates[0])
 
-        for source_id in OBJECT_SOURCE_IDS:
+        for source_id in object_source_ids:
             if not new_by_source.get(source_id):
                 continue
             state = stored_state.get(source_id)
@@ -637,7 +1381,38 @@ def apply_object_set(
                     ),
                 )
 
+        cur.execute("DELETE FROM dso_group")
+        for group in new.groups:
+            display_form = _build_display_form(group.catalog, group.identifier)
+            cur.execute(
+                """
+                INSERT INTO dso_group (
+                    catalog, identifier, display_form, search_key, whole_dso_id
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    group.catalog,
+                    canonical_identifier(group.catalog, group.identifier),
+                    display_form,
+                    normalize_designation(display_form),
+                    object_ids[group.whole_index] if group.whole_index is not None else None,
+                ),
+            )
+            if cur.lastrowid is None:
+                raise RuntimeError("dso_group INSERT returned no row id")
+            group_id = int(cur.lastrowid)
+            cur.executemany(
+                "INSERT INTO dso_group_member (group_id, dso_id) VALUES (?, ?)",
+                (
+                    (group_id, object_ids[member_index])
+                    for member_index in dict.fromkeys(group.member_indexes)
+                ),
+            )
+
         retained_unclaimed: set[int] = set()
+        entries_by_old: dict[int, list[dict[str, object]]] = defaultdict(list)
+        for entry in old_entries:
+            entries_by_old[int(entry["dso_id"])].append(entry)
         for old in existing:
             old_id = int(old["id"])
             if old_id in claimed_old:
@@ -653,13 +1428,14 @@ def apply_object_set(
                     str(old["primary_designation"]),
                 )
                 merged += 1
-                if count_references(cur, old_id) == 0:
+                if count_references(cur, old_id, reference_tables=reference_tables) == 0:
                     cur.execute("DELETE FROM dso WHERE id = ?", (old_id,))
                 else:
                     cur.execute(
                         "UPDATE dso SET active = 0, source_key = NULL WHERE id = ?",
                         (old_id,),
                     )
+                    old["source_key"] = None
                     retained_unclaimed.add(old_id)
                     kept += 1
                     logger.warning(
@@ -667,16 +1443,40 @@ def apply_object_set(
                         old_id,
                     )
                 continue
+            previous_entries = entries_by_old.get(old_id, [])
+            entry_catalogs = {str(entry["catalog_id"]) for entry in previous_entries}
+            source_catalogs = {
+                catalog.catalog_id for catalog in catalogs_for_source(str(old["source_id"]))
+            }
+            only_removed = bool(entry_catalogs) and entry_catalogs <= removed_catalogs
+            if not previous_entries:
+                only_removed = bool(source_catalogs) and source_catalogs <= removed_catalogs
+            if only_removed:
+                if old_id not in referenced_for_removal:
+                    cur.execute("DELETE FROM project_dso WHERE dso_id = ?", (old_id,))
+                    cur.execute("DELETE FROM dso WHERE id = ?", (old_id,))
+                    deleted += 1
+                    continue
+                retained_unclaimed.add(old_id)
+                if old["active"]:
+                    cur.execute("UPDATE dso SET active = 0 WHERE id = ?", (old_id,))
+                    removed += 1
+                    kept_linked += 1
+                continue
+
             retained_unclaimed.add(old_id)
             if old["active"]:
                 cur.execute("UPDATE dso SET active = 0 WHERE id = ?", (old_id,))
                 removed += 1
 
         for designation in old_designations:
-            key = (str(designation["catalog"]), str(designation["identifier"]))
+            catalog = str(designation["catalog"])
+            identifier = canonical_legacy_identifier(catalog, str(designation["identifier"]))
+            key = (catalog, identifier)
             old_id = int(designation["dso_id"])
             if old_id not in retained_unclaimed or key in owned_designations:
                 continue
+            display_form = _build_display_form(catalog, identifier)
             cur.execute(
                 """
                 INSERT INTO dso_designation
@@ -685,13 +1485,75 @@ def apply_object_set(
                 """,
                 (
                     old_id,
-                    designation["catalog"],
-                    designation["identifier"],
-                    designation["display_form"],
-                    designation["search_key"],
+                    catalog,
+                    identifier,
+                    display_form,
+                    _build_search_key(catalog, identifier),
                     designation["is_primary"],
                 ),
             )
+            old = existing_by_id[old_id]
+            if designation["is_primary"] and old["primary_designation"] != display_form:
+                cur.execute(
+                    "UPDATE dso SET primary_designation = ? WHERE id = ?",
+                    (display_form, old_id),
+                )
+                old["primary_designation"] = display_form
+            owned_designations.add(key)
+
+        cur.execute("DELETE FROM dso_source_entry")
+        for entry in current_entries:
+            source_db_id = source_db_ids.get(entry.source_id)
+            if source_db_id is None:
+                continue
+            cur.execute(
+                """
+                INSERT INTO dso_source_entry
+                    (source_catalog_id, source_key, catalog_id, dso_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    source_db_id,
+                    entry.source_key,
+                    entry.catalog_id,
+                    object_ids[entry.object_index],
+                ),
+            )
+        for old_id in retained_unclaimed:
+            old = existing_by_id[old_id]
+            if old["source_key"] is None:
+                continue
+            retained_entries = entries_by_old.get(old_id, [])
+            if retained_entries:
+                for entry in retained_entries:
+                    cur.execute(
+                        """
+                        INSERT OR IGNORE INTO dso_source_entry
+                            (source_catalog_id, source_key, catalog_id, dso_id)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            entry["source_catalog_id"],
+                            entry["source_key"],
+                            entry["catalog_id"],
+                            old_id,
+                        ),
+                    )
+                continue
+            for catalog in catalogs_for_source(str(old["source_id"])):
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO dso_source_entry
+                        (source_catalog_id, source_key, catalog_id, dso_id)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        old["source_catalog_id"],
+                        old["source_key"],
+                        catalog.catalog_id,
+                        old_id,
+                    ),
+                )
 
         for source_id, source_db_id in source_db_ids.items():
             cur.execute(
@@ -709,17 +1571,43 @@ def apply_object_set(
                 f"UPDATE dso_catalog_source SET file_hash = '' WHERE source_id IN ({placeholders})",  # noqa: S608  # nosec B608
                 invalidated,
             )
-        conn.commit()
+        applied: dict[str, str] = {}
+        catalog_states = {**new.catalog_states}
+        catalog_states.update({catalog_id: "removed" for catalog_id in removed_catalogs})
+        for catalog_id, state in catalog_states.items():
+            if state == "off":
+                cur.execute("DELETE FROM dso_catalog_applied WHERE catalog_id = ?", (catalog_id,))
+                applied[catalog_id] = "off"
+                continue
+            cur.execute(
+                """
+                INSERT INTO dso_catalog_applied (catalog_id, state)
+                VALUES (?, ?)
+                ON CONFLICT(catalog_id) DO UPDATE SET
+                    state = excluded.state,
+                    applied_at = datetime('now')
+                """,
+                (catalog_id, state),
+            )
+            applied[catalog_id] = state
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
     except Exception:
         conn.rollback()
         raise
 
     return ReconcileReport(
-        source_counts,
-        inserted,
-        updated,
-        reactivated,
-        merged,
-        removed,
-        kept,
+        source_counts=source_counts,
+        inserted=inserted,
+        updated=updated,
+        reactivated=reactivated,
+        merged=merged,
+        removed=removed,
+        kept_linked=kept_linked,
+        kept_inactive_merge=kept,
+        deleted=deleted,
+        transferred=transferred,
+        applied=applied,
     )

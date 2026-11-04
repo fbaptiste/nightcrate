@@ -7,7 +7,12 @@ from datetime import date
 import pytest
 
 from nightcrate.services.planner_sky_track import compute_sky_track
-from nightcrate.services.planner_visibility import PlannerHorizon, PlannerLocation
+from nightcrate.services.planner_visibility import (
+    DsoCoord,
+    PlannerHorizon,
+    PlannerLocation,
+    compute_visibility_snapshot,
+)
 
 PHOENIX = PlannerLocation(
     id=1,
@@ -34,6 +39,7 @@ def _artificial(flat_alt: float, horizon_id: int = 1) -> PlannerHorizon:
 FLAT_30 = _artificial(30.0)
 
 M42 = (1, 83.8221, -5.3911)
+M51 = (4, 202.4696, 47.1953)
 
 
 @pytest.fixture(scope="module")
@@ -126,3 +132,16 @@ def test_custom_horizon_flows_through_to_track():
     # Horizon altitude now varies per-sample (south ~40°, north ~10°).
     values = {round(v, 0) for v in t.horizon_altitude_at_object_az}
     assert len(values) > 1
+
+
+def test_track_transit_agrees_with_visibility_snapshot():
+    t = compute_sky_track(PHOENIX, FLAT_30, date(2026, 4, 19), M51)
+    snapshot = compute_visibility_snapshot(
+        PHOENIX,
+        FLAT_30,
+        date(2026, 4, 19),
+        [DsoCoord(dso_id=M51[0], ra_deg=M51[1], dec_deg=M51[2])],
+    )
+    assert t.transit_time_utc is not None
+    snapshot_transit = snapshot.per_dso[M51[0]].transit_time_utc
+    assert abs((t.transit_time_utc - snapshot_transit).total_seconds()) <= 2.0

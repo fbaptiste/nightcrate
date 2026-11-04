@@ -1391,3 +1391,9 @@ result goes to Fred before anything else.
   - **Tracked item:** that finding. **Fred (2026-10-30):** fix it in
     v0.43.1 rather than change the candidate during acceptance. Status:
     pending, owned by v0.43.1 (PLAN.md roadmap, "Faster star download").
+  - **Status (2026-11-02, v0.44.0 start sweep):** fixed in v0.43.1 (Task
+    B1, merged in PR #22). A build request skips ranges already built and
+    `/status` reports a ready range as built; covered by
+    `test_build_filters_built_range_while_solve_holds_publication`,
+    `test_status_reports_ready_current_range_as_built` and
+    `test_ready_but_unlisted_range_is_published_without_rebuild`. Closed.

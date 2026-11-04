@@ -1,12 +1,191 @@
 # NightCrate — active plan
 
-**Version:** v0.43.1 — Sky images from tiles, faster downloads, processed finals
+**Version:** v0.44.0 — More deep-sky catalogs and search links
 
-**Branch:** `v0.43.1/sky-tiles-and-downloads`
+**Branch:** `v0.44.0/more-catalogs-and-search-links`
 
 **Status:** Complete — awaiting merge
 
+## v0.44.0 — More deep-sky catalogs and search links
+
+Fred started this version on 2026-11-02, after merging v0.43.1. Its scope is
+the roadmap item he placed next on 2026-11-01, moved here unchanged below.
+The spec comes next, decided with Fred one question at a time.
+
+- [x] Start from updated `main` on `v0.44.0/more-catalogs-and-search-links`.
+- [x] Spec: [v0.44.0 design](docs/superpowers/specs/2026-11-02-v0.44.0-design.md),
+  written from Fred's decisions and approved by him on 2026-11-02.
+  One version, built in stages. Fred added a planner fix: Tonight's
+  magnitude and size limits show what is applied.
+- [x] Implementation plan: [v0.44.0 plan](docs/superpowers/plans/2026-11-02-v0.44.0.md).
+  Codex's plan review converged after five rounds on 2026-11-02, with every
+  finding adopted. Fred approved it on 2026-11-02 and removed the supernova
+  remnant catalog: Green's table can't tell visible remnants from radio-only
+  ones. LBN 191 now gives the whole Cygnus Loop.
+- [x] Implementation, reviews, rendered checks and Fred's acceptance test.
+  - [x] Phase A, the shared parts (A1–A10). Staged on 2026-11-02 after
+    Codex implementation, independent Codex reviews and Claude's review of
+    each handoff. Checked on copies of Fred's database: upgrade, loads,
+    Barnard removal and re-add, live downloads, and the Catalogs, catalog
+    and planner pages in a browser.
+  - [x] Phase B, the ten catalogs (B2–B10; B1 removed). Staged on 2026-11-02.
+    Each catalog had a match screen on its full download (20 reviewed
+    overrides in all), an independent Codex review, and an add, remove and
+    re-add on a copy of Fred's database, all live through the mirrors except
+    HASH (see "Still due"). Two contract additions (a size gate and
+    `require_match`) and a batched constellation lookup came out of review.
+  - [x] C2 performance measured (plan's Codex review section). With every
+    catalog on (49,289 objects), the planner pages run 2.5–3× today's
+    times, against the plan's 2× rule. Fred accepted them with the
+    candidate on 2026-11-03.
+  - [x] C3 docs: catalog architecture, development decisions, README data
+    sources, schema docs and the code map.
+  - [x] Acceptance follow-ups on mirrors (Fred, 2026-11-03): every
+    download started with Strasbourg, which has been down for weeks.
+    - All mirrors are now checked at once before a download, and those
+      that don't answer are skipped for an hour. Tokyo, Beijing and India
+      join over plain HTTP.
+    - A failed download says, in plain words, what each mirror did, and
+      names the failing part of a multi-table catalog; the message no
+      longer squeezes the row.
+    - Checked live on a copy of Fred's database: HASH fails in 15 s (about
+      45 s before) with the full explanation; LBN added from South Africa
+      in 4.8 s.
+  - [x] Acceptance fix (Fred, 2026-11-03): Plan a Night listed "Emission
+    nebula (8)" but showed nothing. A type, catalog or constellation with
+    nothing up tonight showed its catalog-wide total instead of 0 (since
+    April 2026). Now the counts are tonight's, and a zero-count value is
+    hidden unless selected. Checked in a browser on a copy of Fred's database.
+  - [x] Acceptance change (Fred, 2026-11-03): one "Emission nebula" type
+    choice covering OpenNGC's `HII` and `EmN`; `HII` objects read "Emission
+    nebula (HII region)", and the catalog table's Type column widens to fit.
+    Codex implementation, Claude's review; checked in a browser on a copy of
+    Fred's database (planner list, saved selection, cards, catalog filter).
+- [x] **Fred's acceptance test**, accepted on 2026-11-03 ("ok, I think this
+  is good, please finalize") after the list of open decisions below; the
+  planner timings, "Part of LBN 191" and the two calls stand as built. The
+  checklist (start `make dev`; on first start it migrates the database to
+  0066 and reloads the catalogs once):
+  - **Catalogs section of Admin:** add a few catalogs, e.g. LBN, Melotte
+    and Wolf-Rayet; remove one; add it back. Check the remove dialog's
+    counts.
+  - **Search:**
+    - "LBN 437", "LBN 777", "Melotte 20", "Mel 15", "Cygnus Loop", "WR 134",
+      "Arp 244";
+    - check the "Part of" pills and the details panels' "Part of" and
+      "Includes" chips.
+  - **Planner:**
+    - Plan a Night opens with the brightness and size boxes ticked, with
+      their captions;
+    - Full Catalog opens unticked;
+    - picking a catalog leaves the boxes alone.
+  - **Object panels:** the "Google search" and "Google Images" links.
+  - **Decisions:**
+    - the C2 planner timings (in the plan's Codex review section);
+    - "Part of LBN 191" versus showing "Cygnus Loop";
+    - the two calls in the Codex review section.
+- [x] **Published** as [PR #23](https://github.com/fbaptiste/nightcrate/pull/23)
+  on 2026-11-03 (tag `v0.44.0`).
+- [x] **PR review fixes** (Fred asked for all ten findings and any speed-ups,
+  2026-11-03). Codex implemented them, then Claude reviewed and measured them
+  on a copy of a real database (45,436 objects). A fresh independent Codex
+  review followed.
+  - **Catalogs:**
+    - Sharpless and Barnard no longer show "Files missing" on a fresh
+      install.
+    - MCG names are spelled one way ("MCG +07-02-016").
+    - The Catalogs page names all six mirrors.
+    - One unreadable Arp row no longer stops every catalog.
+    - Two endpoints check that a database is set up.
+    - Removal runs one dry run fewer (7.0 s to 5.3 s).
+    - "Part of" groups can't collide with catalog groups.
+    - File checksums are cached.
+    - Partial MCG and PN G searches ("MCG-1-2") match.
+  - **Startup:** a repair check fired on every start because of the Pease 1
+    override, rebuilding every object: 4.1 s instead of 0.27 s.
+  - **Planner:**
+    - Transit times used J2000 RA and came out 1–2 min early (7 min near the
+      pole). They now use apparent coordinates, in the snapshot and the sky
+      track.
+    - Tonight went from 1.43 s to 0.29 s, the first Tonight request from
+      3.9 s to 1.2 s, and Anytime from 0.39 s to 0.24 s.
+    - Review finding 7 (planner metadata) alone measured at 13 ms; the fix
+      reads coordinates and metadata once.
+- **Still due:**
+  - the CDS checks under v0.43.1 ("When CDS returns");
+  - a live HASH (V/163) add and remove: of the mirrors, only Strasbourg
+    and Harvard carry it. Strasbourg is unreachable, and Harvard's VizieR
+    returned HTTP 502 for every request on 2026-11-02 and 2026-11-03. The
+    code path is tested with fixtures and the full sample.
+
+### Scope (Fred, 2026-11-01)
+
+**Why.** NightCrate loads only OpenNGC, Sharpless and Barnard in full. Other
+catalogs appear only as alternate names on those objects, so popular targets
+with no NGC, IC or Sharpless number are missing. For example, LBN 437 (the
+Gecko Nebula), LBN 777 (the Vulture Head) and Melotte 15 (the cluster in the
+Heart Nebula) return nothing (checked 2026-11-01).
+
+**Catalogs to load in full (Fred):**
+
+Researched 2026-11-01 (background agent; VizieR tables downloaded from the
+Harvard and IDIA mirrors and counted against each catalogue's ReadMe):
+
+| Catalog | Source | Size | In NightCrate today | Notes |
+|---|---|---|---|---|
+| LBN (Lynds 1965) | VizieR VII/9 | 1,125 | 93 as alternate names | B1950 to 1′, J2000 computed by VizieR; size, brightness 1–6; 740 rows are parts of complexes |
+| Melotte (1915) | no catalogue table anywhere found | 245 | 7 | 233 are NGC/IC objects (Mel 15 is IC 1805); 6 new objects need positions; the only full list is Wikipedia (CC BY-SA) |
+| LDN (Lynds 1962) | VizieR VII/7A | 1,791 | none | area and opacity, no size; 233 rows name Barnard objects |
+| Abell planetary nebulae | inside the PN G catalogues | about 64–86 | none | NightCrate's `abell` name holds no data today |
+| ACO, Abell galaxy clusters | VizieR VII/110A | 5,250 (4,076 + 1,174 southern "S") | none | no size or total magnitude; display as "ACO 2151" so it can't clash with Abell nebulae |
+| APG, Arp (1966) | VizieR VII/192 | 338 entries, 592 member galaxies | none | an Arp number is a view of several galaxies (182 have two or more) |
+| HH, Herbig-Haro | VizieR V/104 (Reipurth 1999) | 454 | none | over 1,000 now known; the 2026 catalogue (1,193) is CC BY-NC-ND, so unusable |
+| PN G, planetary nebulae | VizieR V/163 (HASH) or V/84 (Acker 1992) | 3,973 Galactic (HASH) or 1,143 | none | OpenNGC's 129 PN G alternate names are dropped by NightCrate's name parser today |
+| MCG | VizieR VII/62A + VII/100 | 30,637 | 7,553 as alternates | about 23,000 new, mostly faint; sizes are in 0.1′ units |
+| ~~SNR (Green 2024)~~ | VizieR VII/297 | 310 | none | **Removed by Fred on 2026-11-02:** no optical-detection flag, so radio-only remnants would join tonight's list |
+| WR, Wolf-Rayet stars | VizieR III/215 (van der Hucht 2001) | 226 | none | Crowther's current catalogue (718) has no licence or download; WR 2-1 and WR 21 collide in today's search keys |
+
+**Terms.** VizieR data is "free of usage in a scientific context" with the
+authors cited; commercial use depends on the origin; none of the ReadMes
+states a copyright. Each user downloading at runtime, as Sharpless and
+Barnard work today, is the safe model; shipping rows would need Fred's
+decision.
+
+**Each catalog is optional (Fred, 2026-11-01).** The user downloads only the
+catalogs they want, each on its own from the Catalogs page, and can remove
+one later. Constraints from today's rules (`docs/development-decisions.md`,
+"Projects, catalog, and sessions"):
+- A loaded source with a missing file currently defers the whole object step
+  rather than guessing. A catalog the user removed must be told apart from
+  one whose file went missing.
+- Removing a catalog removes its names and the objects only it provides.
+  Objects the user has linked (project targets, the wishlist) stay, inactive
+  with their names, as catalog preservation already does.
+- Objects that another catalog also provides (LBN 667 is IC 1848) keep that
+  catalog's entry.
+- Open for the spec: whether OpenNGC, Sharpless and Barnard also become
+  removable.
+
+**What it takes (to be researched for the spec):**
+- a source, its terms and a fetcher per catalog (most through VizieR's
+  mirrors), with J2000 positions;
+- a migration for the new catalog names (HH, ACO, PN G, WR) and object
+  types (Herbig-Haro object, galaxy cluster, Wolf-Rayet star), with matching
+  loader changes;
+- matching against objects NightCrate already has (many LBN and PN G
+  entries are NGC, IC or Sharpless objects), so nothing appears twice;
+- planner and catalog behaviour for tens of thousands of faint objects
+  (MCG, ACO): filtering, scoring and thumbnails;
+- credits in README and the attribution panel.
+
+**Search links.** The catalog and planner object panels already link to SIMBAD
+and Wikipedia (`DsoExternalRefs`, shared by both). Add Google search and Google
+Images links for the object, as Telescopius does. The query wording is decided
+in the spec.
+
 ## v0.43.1 — Sky images from tiles, faster downloads, processed finals
+
+Merged in [PR #22](https://github.com/fbaptiste/nightcrate/pull/22) on 2026-11-02.
 
 Fred started this version on 2026-11-01, after merging v0.43.0. Its scope is
 the roadmap's v0.43.1 items plus two responses to the CDS outage. CDS's
@@ -1794,76 +1973,47 @@ Fred reordered the roadmap on 2026-10-24: galleries first, then distribution.
 Claude and Codex agreed the order below; Codex's first round was a blinded
 pre-pass, and the second round converged. On 2026-10-26 Fred placed a native
 plate solver after catalog preservation, ahead of the gallery; it is now
-v0.43.0. On 2026-10-30 he added a faster star download as v0.43.1, now the
-active version above. On 2026-11-01 he placed more deep-sky catalogs and
-search links as the very next version, after v0.43.1 and ahead of the
-gallery (proposed number v0.44.0).
+v0.43.0. On 2026-10-30 he added a faster star download as v0.43.1. On 2026-11-01 he
+placed more deep-sky catalogs and search links as the very next version,
+ahead of the gallery; it is now v0.44.0, the active version above. On
+2026-11-03 he placed common names for galaxies and nebulae as the version
+after it, also ahead of the gallery.
 Version numbers are otherwise assigned when each version starts.
 
-### Next version: more deep-sky catalogs and search links (Fred, 2026-11-01)
+### Next version: common names for galaxies and nebulae (Fred, 2026-11-03)
 
-**Why.** NightCrate loads only OpenNGC, Sharpless and Barnard in full. Other
-catalogs appear only as alternate names on those objects, so popular targets
-with no NGC, IC or Sharpless number are missing. For example, LBN 437 (the
-Gecko Nebula), LBN 777 (the Vulture Head) and Melotte 15 (the cluster in the
-Heart Nebula) return nothing (checked 2026-11-01).
+**Why.** Many popular imaging targets have no common name, so they can't be
+found by name. Checked on a copy of Fred's database on 2026-11-03: NGC 891,
+NGC 3628 (Hamburger Galaxy), IC 342 (Hidden Galaxy), NGC 5907 (Splinter
+Galaxy), NGC 4656 (Hockey Stick), Sh2-129 (Flying Bat), Sh2-132 (Lion),
+LBN 437 (Gecko), LBN 777 (Vulture Head) and IC 1795 (Fish Head) have none.
+Only 20 of 370 HII regions and 49 of 10,521 galaxies carry a name; most of
+those galaxies are faint and never had one.
 
-**Catalogs to load in full (Fred):**
+**Sources.** No scraping of other sites: GPL covers NightCrate's code, not
+their data. A single name is a fact, but copying a site's list copies its
+compilation, sites such as Telescopius and AstroBin forbid scraping, and
+Wikipedia's lists are CC BY-SA, which would carry over to NightCrate's data
+files (the reason the Melotte list is NightCrate's own).
+- **Claude drafts the list** from its own knowledge, marking how sure it is
+  of each name.
+- **Every name is verified** against at least two independent sources
+  (SIMBAD's `NAME` identifiers, Wikidata, NASA, ESA or NOIRLab pages,
+  observatory pages), with the sources recorded. A name that can't be
+  confirmed stays out or goes to Fred. Claude's memory is fast but can put a
+  real name on the wrong object.
+- **Wikidata** (CC0) is a second source and catches objects the draft
+  misses. It is not imported blindly: on 2026-11-03 it gave Sh2-129 the name
+  "Squid Nebula", which belongs to Ou 4, a separate object inside it.
 
-Researched 2026-11-01 (background agent; VizieR tables downloaded from the
-Harvard and IDIA mirrors and counted against each catalogue's ReadMe):
+**Several names per object.** Today each object holds one common name, but
+NGC 891 has two (Silver Sliver, Outer Limits). Every name should be
+searchable, with one shown first. This needs a schema change.
 
-| Catalog | Source | Size | In NightCrate today | Notes |
-|---|---|---|---|---|
-| LBN (Lynds 1965) | VizieR VII/9 | 1,125 | 93 as alternate names | B1950 to 1′, J2000 computed by VizieR; size, brightness 1–6; 740 rows are parts of complexes |
-| Melotte (1915) | no catalogue table anywhere found | 245 | 7 | 233 are NGC/IC objects (Mel 15 is IC 1805); 6 new objects need positions; the only full list is Wikipedia (CC BY-SA) |
-| LDN (Lynds 1962) | VizieR VII/7A | 1,791 | none | area and opacity, no size; 233 rows name Barnard objects |
-| Abell planetary nebulae | inside the PN G catalogues | about 64–86 | none | NightCrate's `abell` name holds no data today |
-| ACO, Abell galaxy clusters | VizieR VII/110A | 5,250 (4,076 + 1,174 southern "S") | none | no size or total magnitude; display as "ACO 2151" so it can't clash with Abell nebulae |
-| APG, Arp (1966) | VizieR VII/192 | 338 entries, 592 member galaxies | none | an Arp number is a view of several galaxies (182 have two or more) |
-| HH, Herbig-Haro | VizieR V/104 (Reipurth 1999) | 454 | none | over 1,000 now known; the 2026 catalogue (1,193) is CC BY-NC-ND, so unusable |
-| PN G, planetary nebulae | VizieR V/163 (HASH) or V/84 (Acker 1992) | 3,973 Galactic (HASH) or 1,143 | none | OpenNGC's 129 PN G alternate names are dropped by NightCrate's name parser today |
-| MCG | VizieR VII/62A + VII/100 | 30,637 | 7,553 as alternates | about 23,000 new, mostly faint; sizes are in 0.1′ units |
-| SNR (Green 2024) | VizieR VII/297 | 310 | none | J2000; size, type; © D. A. Green, citation requested; large remnants span several NGC pieces |
-| WR, Wolf-Rayet stars | VizieR III/215 (van der Hucht 2001) | 226 | none | Crowther's current catalogue (718) has no licence or download; WR 2-1 and WR 21 collide in today's search keys |
-
-**Terms.** VizieR data is "free of usage in a scientific context" with the
-authors cited; commercial use depends on the origin; none of the ReadMes
-states a copyright. Each user downloading at runtime, as Sharpless and
-Barnard work today, is the safe model; shipping rows would need Fred's
-decision.
-
-**Each catalog is optional (Fred, 2026-11-01).** The user downloads only the
-catalogs they want, each on its own from the Catalogs page, and can remove
-one later. Constraints from today's rules (`docs/development-decisions.md`,
-"Projects, catalog, and sessions"):
-- A loaded source with a missing file currently defers the whole object step
-  rather than guessing. A catalog the user removed must be told apart from
-  one whose file went missing.
-- Removing a catalog removes its names and the objects only it provides.
-  Objects the user has linked (project targets, the wishlist) stay, inactive
-  with their names, as catalog preservation already does.
-- Objects that another catalog also provides (LBN 667 is IC 1848) keep that
-  catalog's entry.
-- Open for the spec: whether OpenNGC, Sharpless and Barnard also become
-  removable.
-
-**What it takes (to be researched for the spec):**
-- a source, its terms and a fetcher per catalog (most through VizieR's
-  mirrors), with J2000 positions;
-- a migration for the new catalog names (HH, ACO, PN G, SNR, WR) and object
-  types (Herbig-Haro object, galaxy cluster, Wolf-Rayet star), with matching
-  loader changes;
-- matching against objects NightCrate already has (many LBN, PN G and SNR
-  entries are NGC, IC or Sharpless objects), so nothing appears twice;
-- planner and catalog behaviour for tens of thousands of faint objects
-  (MCG, ACO): filtering, scoring and thumbnails;
-- credits in README and the attribution panel.
-
-**Search links.** The catalog and planner object panels already link to SIMBAD
-and Wikipedia (`DsoExternalRefs`, shared by both). Add Google search and Google
-Images links for the object, as Telescopius does. The query wording is decided
-in the spec.
+**Open for the spec:** how names are shown and ranked; the file format and
+licence for the reviewed list (NightCrate's editorial data is MIT); whether
+Wikidata names are fetched at runtime or reviewed into the shipped list;
+which object types and how many names are in scope.
 
 ### Gallery
 

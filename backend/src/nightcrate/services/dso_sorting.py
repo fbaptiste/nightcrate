@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 _PREFIX_RE = re.compile(r"^([A-Za-z]+(?:2(?=[\s-]|\d))?)")
 _NUMBER_RE = re.compile(r"\d+")
@@ -23,6 +24,7 @@ def catalog_rank(catalog: str) -> int:
         return len(_CATALOG_PRIORITY)
 
 
+@lru_cache(maxsize=262_144)
 def designation_sort_key(value: str | None) -> str | None:
     """Return a SQLite-safe natural key for a displayed designation.
 

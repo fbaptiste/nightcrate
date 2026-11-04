@@ -1,0 +1,344 @@
+# NightCrate reviewed Arp member list. MIT licensed.
+# One row per member of Webb's Arp index (VizieR VII/192) whose name needs review.
+# arp, ra_j2000, dec_j2000, list_name and mtype are VII/192's Arp, RAJ2000,
+# DEJ2000, Name and MType strings; together they identify the row.
+# designation is the galaxy at that position, checked against SIMBAD, NED and
+# OpenNGC, or "new" when it has no name in NightCrate's catalogs.
+arp,ra_j2000,dec_j2000,list_name,mtype,designation,notes
+2,16 16 18.2,+47 02 47,UGC 10310,SB(s)m IV-V,MCG+08-30-002,SIMBAD 5″: Z 251-4 = MCG+08-30-002
+3,22 36 34.0,-02 54 19,MCG-01-57-016,SA(s)m,MCG-01-57-016,SIMBAD 17″: MCG-01-57-016
+4,01 48 25.6,-12 22 55,MCG-02-05-50 +A,IAB(rs)m,MCG-02-05-050,SIMBAD 1″: MCG-02-05-050; Webb '+A' marks a companion; the position is MCG-02-05-050 itself (APG 4)
+7,08 50 17.6,-16 34 35,MCG-03-23-009,SB(rs) bc:,MCG-03-23-009,SIMBAD 39″: MCG-03-23-009; Webb position offset 39″; name agrees; no other galaxy within 75″
+10,02 18 26.3,+05 39 14,UGC 01775,S?,MCG+01-06-062,SIMBAD 1″: UGC 1775 = MCG+01-06-062
+11,01 09 23.1,+14 20 12,UGC 00717,SBb,MCG+02-04-003,SIMBAD 26″: Z 436-5 = MCG+02-04-003; Webb position offset 26″; name agrees
+16,11 20 14.9,+12 59 21,MESSIER 66,SAB(s)b II,NGC 3627,SIMBAD 9″: M 66 = NGC 3627 (OpenNGC)
+17,07 44 32.7,+73 49 50,UGC 03972,SB,MCG+12-08-008b,SIMBAD 45″: MCG+12-08-008b; uncertain: both UGC 3972 rows lie 28–49″ from MCG+12-08-008a/b; paired by least total offset (this row 45″ from 008b)
+17,07 44 38.5,+73 48 50,UGC 03972,,MCG+12-08-008a,SIMBAD 28″: Z 330-49 = MCG+12-08-008a; uncertain: UGC 3972 = MCG+12-08-008a 28″; paired with the other UGC 3972 row by least total offset
+20,04 19 53.7,+02 05 43,UGC 03014,SB?,MCG+00-12-002,SIMBAD 7″: Z 393-4 = MCG+00-12-002
+21,11 04 58.5,+30 01 37,CGCG 155-056,Spiral,MCG+05-26-047,SIMBAD 2″: Z 155-56 = MCG+05-26-047
+22,11 59 29.5,-19 19 54,ESO 572-G036,IB(s)m,NGC 4027A,SIMBAD 6″: NGC 4027A (OpenNGC)
+24,10 54 36.4,+56 59 27,NGC 3445,SAB(s)m,NGC 3445,SIMBAD 7″: NGC 3445 (OpenNGC); name agrees
+24,10 54 45.4,+56 58 00,UGC 06021,IRR,MCG+10-16-024,SIMBAD 60″: MCG+10-16-024; uncertain: no galaxy at Webb position; UGC 6021 is NGC 3445 itself (119″); nearest is the Arp 24 companion MCG+10-16-024 = VV 14b 60″
+26,14 03 12.7,+54 21 02,MESSIER 101,SAB(rs)cd I,NGC 5457,SIMBAD 7″: M 101 = NGC 5457 (OpenNGC)
+30,17 22 42.9,+62 10 27,NGC 6365,Sdm,NGC 6365B,SIMBAD 5″: NGC 6365 = NGC 6365B (OpenNGC); OpenNGC NGC 6365 is a pair; Webb is 5″ from NGC 6365B = PGC 60171
+30,17 22 43.3,+62 09 57,NGC 6365A,SBcd:,NGC 6365A,SIMBAD 4″: NGC 6365A (OpenNGC)
+32,17 13 07.6,+59 19 23,UGC 10770A,I9P,PGC 59804,SIMBAD 5″: APG 32A = PGC 59804; SIMBAD's UGC 10770 is the system; this member is APG 32A = PGC 59804
+32,17 13 10.7,+59 19 58,UGC 10770B,,PGC 59864,SIMBAD 4″: APG 32B = PGC 59864; SIMBAD's UGC 10770 is the system; this member is APG 32B = PGC 59864
+33,13 37 24.1,+06 26 10,UGC 08613,SB,MCG+01-35-018,SIMBAD 3″: Z 45-51 = MCG+01-35-018
+33,13 37 24.6,+06 25 45,UGC 08613,E?,MCG+01-35-018,SIMBAD 28″: Z 45-51 = MCG+01-35-018; uncertain: only galaxy within 85″ is UGC 8613 28″ (same galaxy as the 06 26 10 row); VV 6b is part of UGC 8613 per NED; likely a duplicate entry
+35,00 22 21.4,-01 20 47,UGC 00212,SP,PGC 1431,SIMBAD 2″: LEDA 1431 = PGC 1431; Webb names both rows UGC 00212; this is the companion LEDA 1431 (UGC 212 is the other row)
+35,00 22 23.0,-01 18 13,UGC 00212,SB,UGC 212,SIMBAD 1″: UGC 212; UGC 212 = PGC 1434; SIMBAD lists both MCG+00-02-014 and MCG+00-02-015 for it (NED: parts of UGC 212) so UGC used
+36,13 34 14.9,+31 25 31,UGC 08548,SB?,MCG+05-32-038,SIMBAD 4″: Z 161-80 = MCG+05-32-038
+37,02 42 40.7,-00 00 47,MESSIER 77,(R)SAB(rs)ab,NGC 1068,SIMBAD 1″: M 77 = NGC 1068 (OpenNGC)
+39,03 29 42.0,-22 16 45,NGC 1347,SB(s)c: pec,PGC 12989,SIMBAD 3″: NGC 1347 = PGC 12989 (OpenNGC); SIMBAD's NGC 1347a (APG 39A) is at 0″; OpenNGC NGC 1347 is a pair and this galaxy is NGC 1347 NED01 = PGC 12989
+40,13 29 20.4,+37 24 31,IC 4271,Pair,IC 4271,"SIMBAD 23″: IC 4271 = PGC 47334 (OpenNGC); uncertain: Webb 'Pair' row is 8″ from the companion PGC 3096774 (IC 4271 NED02) and 23″ from the main galaxy; chose the main galaxy IC 4271 NED01 = PGC 47334 by name; review 2026-11-02: Webb's row is the whole system (Pair), so it maps to OpenNGC's pair entry, not one component"
+41,03 09 45.3,-20 34 44,NGC 1232A,SB(s)dm III,NGC 1232A,SIMBAD 246″: NGC 1232A (OpenNGC); same position as NGC 1232 in Webb; resolved by name: NGC 1232A = PGC 11834 = ESO 547-016 246″ E (OpenNGC NGC 1232A)
+43,10 24 15.4,+16 44 36,IC 0607,SB(r)bc,IC 607,SIMBAD 98″: IC 607 (OpenNGC); Webb position offset 98″; name agrees; only galaxy nearby
+44,10 25 32.7,-02 13 16,IC 0609,IBS9P,IC 609,SIMBAD 46″: IC 609 (OpenNGC); Webb position 11″ from the small companion VV 354b (no catalogue number); name; size and magnitude match IC 609 46″
+45,14 19 27.0,+51 55 15,UGC 09178,SB?,MCG+09-23-060,SIMBAD 37″: MCG+09-23-060; uncertain: only galaxy within 3′ is MCG+09-23-060 37″ (NED: a companion noted under UGC 9178); UGC 9178 itself is 5′ SE
+45,14 19 51.0,+51 54 16,UGC 09178,Double System,MCG+09-23-064b,SIMBAD 42″: MCG+09-23-064b; uncertain: 'Double System' row; nearest galaxy MCG+09-23-064b (APG 45B) 42″; UGC 9178 NED01 = PGC 200317 49″; UGC 9178 (APG 45A) 123″
+46,23 33 41.1,+30 02 35,UGC 12665,SBT7P,MCG+05-55-036,SIMBAD 35″: Z 497-38 = MCG+05-55-036; uncertain: Webb position is 2″ from SIMBAD's VV 314b (no catalogue number; NED puts it 20″ away as a UGC 12665 note); name; type and size match UGC 12665 35″
+47,14 47 12.5,+18 51 30,ARP 047,,PGC 52803,SIMBAD 28″: LEDA 52803 = PGC 52803; uncertain: anonymous row 3″ from the CGCG 105-026 row; taken as the pair companion PGC 52803 28″ E (NED Arp 47 = CGCG 105-026 + this galaxy)
+47,14 47 12.5,+18 51 33,CGCG 105-026,,MCG+03-38-014,SIMBAD 1″: Z 105-26 = MCG+03-38-014; CGCG 105-026 = MCG+03-38-014 (LEDA 2802352 sits at the same place)
+48,01 19 56.6,+12 20 44,CGCG 436-026,Pair,PGC 4789,SIMBAD 56″: APG 48 = PGC 4789; Webb position offset 56″; SIMBAD APG 48 = CGCG 436-026 = PGC 4789; only galaxy nearby
+50,23 57 58.0,-14 01 48,IC 1520,,IC 1520,SIMBAD 62″: IC 1520 (OpenNGC); Webb position offset 62″; name agrees
+51,00 06 16.8,-13 26 53,MGC-02-01-24,,MCG-02-01-024,SIMBAD 1″: MCG-02-01-024
+52,05 19 44.0,+03 43 01,CGCG 421-027,,PGC 17109,SIMBAD 69″: APG 52 = PGC 17109; Webb position offset 69″; SIMBAD APG 52 = CGCG 421-027 = PGC 17109; only galaxy nearby
+54,02 23 59.1,-04 41 48,PGC 9107,,PGC 9107,SIMBAD 2″: LEDA 9107 = PGC 9107
+54,02 24 01.8,-04 41 38,MCG-01-07-007,S? + PGC 9107,MCG-01-07-007,SIMBAD 13″: MCG-01-07-007
+55,09 15 55.6,+44 19 57,UGC 04881,Spiral,MCG+08-17-065,SIMBAD 1″: UGC 4881 = MCG+08-17-065; UGC 4881 = MCG+08-17-065 (KUG 0912+445A = PGC 26132 at the same place; NED UGC 4881 NED01); Grasshopper B 11″
+55,09 16 00.7,+44 21 08,UGC 04881,Spiral,PGC 82353,SIMBAD 1″: 2MASX J09160070+4421087 = PGC 82353; Webb's name covers several members; matched by position
+56,01 57 25.7,+17 13 03,UGC 01432,Sbc,MCG+03-06-004,SIMBAD 19″: UGC 1432 = MCG+03-06-004; Webb position 9″ from small LEDA 212878; name; size and magnitude match UGC 1432 19″
+57,13 16 40.1,+14 25 12,CGCG 101-019,,PGC 1457659,SIMBAD 113″: VV 298b = PGC 1457659; uncertain: CGCG 101-019 is the Arp 57 pair in NED and an alias of MCG+03-34-012 in SIMBAD; second member taken as Arp 57 NED02 = VV 298b = PGC 1457659 113″
+57,13 16 40.1,+14 26 12,MCG+03-34-012,,MCG+03-34-012,SIMBAD 110″: MCG+03-34-012; Webb positions for Arp 57 are ~110″ W of the pair; name agrees (NED Arp 57 NED01)
+58,08 31 58.1,+19 12 48,UGC 04457,SXT5P,MCG+03-22-017,SIMBAD 9″: Z 89-40 = MCG+03-22-017
+59,01 00 45.7,-09 11 08,NGC 0341A,SAB(r)bc II,NGC 341,SIMBAD 2″: NGC 341A = NGC 341 (OpenNGC); SIMBAD's NGC 341A carries NGC 341; OpenNGC NGC 341 = PGC 3620
+59,01 00 47.6,-09 11 15,NGC 0341B,,MCG-02-03-064,SIMBAD 0″: NGC 341B = MCG-02-03-064
+60,13 14 47.3,+26 05 09,ARP 060,Spiral,PGC 1762846,SIMBAD 75″: LEDA 1762846 = PGC 1762846; uncertain: no catalogued galaxy within 75″; NED's Arp 60 position is this galaxy 75″ N; SIMBAD's APG 60 label sits on Arp 196 NED01
+61,04 36 42.0,-02 17 13,UGC 03104,Sa,MCG+00-12-055,SIMBAD 29″: Z 393-47 = MCG+00-12-055; Webb position offset 29″; name agrees
+62,11 53 35.9,+43 27 18,UGC 06865,E(c),MCG+07-25-002b,SIMBAD 26″: MCG+07-25-002b; uncertain: same position as the other UGC 6865 row in Webb; E(c) companion = UGC 6865 NED01 = MCG+07-25-002b 26″
+62,11 53 35.9,+43 27 18,UGC 06865,SB,MCG+07-25-002,SIMBAD 49″: UGC 6865 = MCG+07-25-002; uncertain: same position as the other UGC 6865 row in Webb; SB main galaxy UGC 6865 = MCG+07-25-002 = PGC 37282 49″ (V matches)
+63,09 39 16.7,+32 18 38,NGC 2944,SB(s)c pec?,PGC 27533,SIMBAD 17″: NGC 2944 = PGC 27533 (OpenNGC); uncertain: SIMBAD's NGC 2944W (PGC 27534) is 1″ from Webb but NED gives PGC 27534 to NGC 2944 NED01 17″ E; type and size match the main galaxy = OpenNGC NGC 2944 NED01 = PGC 27533
+63,09 39 19.6,+32 18 21,NGC 2944,,PGC 1990710,SIMBAD 2″: LEDA 1990710 = PGC 1990710 (OpenNGC); OpenNGC NGC 2944 NED02 = PGC 1990710
+64,14 45 25.9,+19 27 53,UGC 09503,Triple,MCG+03-38-007,SIMBAD 7″: UGC 9503 = MCG+03-38-007
+65,00 21 51.7,+22 24 01,NGC 0091,SAB(S)c pec I,NGC 90,SIMBAD 5″: NGC 90 (OpenNGC); NGC 91 is a star; Webb's NGC 0091 row has NGC 90's position and description
+66,16 26 52.9,+51 33 20,UGC 10396,S4,MCG+09-27-040,SIMBAD 3″: Z 276-19 = MCG+09-27-040
+67,01 21 16.8,-00 32 42,UGC 00892,SB(r)ab,MCG+00-04-095,SIMBAD 3″: Z 385-79 = MCG+00-04-095
+70,01 23 26.8,+30 46 20,UGC 00934,,PGC 212740,SIMBAD 1″: APG 70A = PGC 212740; Webb names both rows UGC 00934; this is the companion APG 70A
+70,01 23 28.3,+30 47 05,UGC 00934,S?,MCG+05-04-042,SIMBAD 1″: Z 502-63 = MCG+05-04-042
+74,02 08 21.3,+41 28 46,UGC 01626,(R')SA:pec,MCG+07-05-018,SIMBAD 1″: Z 538-25 = MCG+07-05-018
+75,01 51 18.3,-04 03 21,NGC 0702,SAB(s)b: pec,PGC 6852,SIMBAD 12″: NGC 702 = PGC 6852 (OpenNGC); OpenNGC NGC 702 is a pair; Webb is nearest NED02 = PGC 6852 (13″; NED01 24″)
+76,12 36 49.8,+13 09 46,MESSIER 90,SAB(rs)ab,NGC 4569,SIMBAD 1″: M 90 = NGC 4569 (OpenNGC)
+77,02 46 09.9,-30 13 45,NGC 1097A,E5 pec,NGC 1097A,SIMBAD 4″: NGC 1097A (OpenNGC)
+79,14 10 07.0,+17 36 55,NGC 5490C,SB(s)bc,NGC 5490C,SIMBAD 2″: NGC 5490C (OpenNGC)
+85,13 29 52.3,+47 11 54,MESSIER 51A,SA(s)bc pec,NGC 5194,SIMBAD 12″: M 51 = NGC 5194 (OpenNGC)
+85,13 29 58.6,+47 16 04,MESSIER 51B,I0 pec,NGC 5195,SIMBAD 12″: NGC 5195 (OpenNGC); NGC 5195 = M 51b
+87,11 40 44.1,+22 25 40,NGC 3808,SAB(rs)c pec,NGC 3808A,SIMBAD 6″: NGC 3808 = NGC 3808A (OpenNGC); OpenNGC NGC 3808 is a pair; the main galaxy is OpenNGC NGC 3808A = PGC 36227
+87,11 40 44.3,+22 26 51,NGC 3808A,I0? pec,NGC 3808B,SIMBAD 5″: NGC 3808B (OpenNGC); NGC 3808B = PGC 36228 (OpenNGC NGC 3808B); Webb calls this companion NGC 3808A; OpenNGC NGC 3808A is the main galaxy 65″ S
+88,01 19 05.6,+12 28 45,VV 445,Spiral,PGC 4728,SIMBAD 22″: APG 88 = PGC 4728; APG 88 = VV 445 = PGC 4728; Webb position offset 22″
+95,14 34 54.9,+26 29 55,MCG+5-34-76,S,IC 4461,SIMBAD 141″: MCG+05-34-076 = IC 4461 (OpenNGC); Webb position offset 141″; name agrees; OpenNGC and NED call MCG+05-34-076 IC 4461 (SIMBAD puts IC 4461 on the next galaxy)
+95,14 35 01.9,+26 32 38,IC 4461,SB,IC 4462,SIMBAD 0″: IC 4461 = IC 4462 (OpenNGC); PGC 52119 is OpenNGC IC 4462 (OpenNGC IC 4461 is MCG+05-34-076 48″ SW); SIMBAD and NED-era names differ
+95,14 35 04.2,+26 32 27,IC 4462,E,MCG+05-34-078,SIMBAD 0″: IC 4462 = MCG+05-34-078; no OpenNGC entry for this galaxy; OpenNGC IC 4462 is the IC 4461 row's galaxy 33″ W
+96,07 03 00.7,+86 36 12,UGC 03528A,DBL SYS,MCG+14-04-010,SIMBAD 91″: Z 362-30 = MCG+14-04-010; Webb position offset 91″; name agrees (APG 96A)
+96,07 03 22.3,+86 33 28,UGC 03536A,DBL SYS,MCG+14-04-011,SIMBAD 0″: Z 362-31 = MCG+14-04-011
+97,12 05 45.3,+31 03 35,UGC 07085A,SA(r)0- pec,MCG+05-29-010,SIMBAD 7″: UGC 7085 A = MCG+05-29-010; UGC 7085A = MCG+05-29-010 = PGC 38325 (size 2.7′ matches); small UGC 12937 (APG 97B) 4″
+97,12 05 45.5,+31 04 45,UGC 07085A,SAB0- pec,UGC 7085B,SIMBAD 1″: UGC 7085 B = UGC 7085B; Webb names both rows UGC 07085A; this is SIMBAD's UGC 7085B = PGC 38327 (APG 97A)
+98,01 32 08.5,+32 06 13,UGC 01095,,MCG+05-04-066,SIMBAD 1″: MCG+05-04-066; Webb's name covers several members; matched by position
+98,01 32 16.8,+32 05 25,UGC 01095,S? C?,MCG+05-04-067,SIMBAD 62″: MCG+05-04-067; Webb position offset 62″; name agrees (SIMBAD UGC 1095 = MCG+05-04-067)
+100,00 28 38.1,-11 34 25,IC 0018,,IC 18,SIMBAD 66″: IC 18 (OpenNGC); Webb position offset 66″; name agrees
+101,16 04 24.3,+14 46 51,UGC 10164,E?,MCG+03-41-069,SIMBAD 57″: Z 108-94 = MCG+03-41-069; Webb position offset 57″; name agrees
+101,16 04 31.6,+14 49 08,UGC 10169,S0 pec,MCG+03-41-070,SIMBAD 2″: Z 108-97 = MCG+03-41-070
+102,17 19 14.4,+48 58 49,UGC 10814A,Sc irr,MCG+08-31-041,SIMBAD 1″: Z 252-40 = MCG+08-31-041; SIMBAD gives UGC 10814 to the B row's galaxy; this is CGCG 252-040
+102,17 19 21.2,+49 02 25,UGC 10814B,Sb,MCG+08-31-043,SIMBAD 2″: Z 252-41 = MCG+08-31-043; SIMBAD's UGC 10814 = MCG+08-31-043
+102,17 19 29.9,+49 03 01,MCG+08-31-042,I,MCG+08-31-042,SIMBAD 92″: MCG+08-31-042; Webb position offset ~92″; name agrees (UGC 10814 at the same distance is the UGC 10814B row)
+103,16 49 26.0,+45 27 30,UGC 10586,S0 pec,PGC 59062,SIMBAD 1″: 2MASX J16492608+4527285 = PGC 59062; Webb's name UGC 10586 is a galaxy 14′ E; these are its UGC-note companions (Zwicky's Triplet); NED UGC 10586 NOTES04
+103,16 49 28.3,+45 27 41,UGC 10586,SAB(rs)0+ pec,MCG+08-31-003,SIMBAD 1″: NAME Zwicky's Triplet = MCG+08-31-003; Webb's name UGC 10586 is a galaxy 14′ E; Zwicky's Triplet member MCG+08-31-003 = PGC 59061 (NED UGC 10586 NOTES03)
+103,16 49 33.1,+45 29 53,UGC 10586,Sa,MCG+08-31-003a,SIMBAD 2″: MCG+08-31-003a; Webb's name UGC 10586 is a galaxy 14′ E; Zwicky's Triplet member (NED UGC 10586 NOTES05)
+105,11 11 12.9,+28 42 42,UGC 06224,DBL SYS,MCG+05-27-011,SIMBAD 2″: NGC 3561A = MCG+05-27-011; NGC 3561A = MCG+05-27-011 = PGC 33992; SIMBAD and OpenNGC give UGC 6224 to NGC 3561 (the next row)
+106,12 15 36.5,+28 10 08,NGC 4211A,S0/a pec,NGC 4211A,SIMBAD 11″: NGC 4211B = NGC 4211A (OpenNGC); SIMBAD calls it NGC 4211B; PGC 39195 = OpenNGC NGC 4211A
+107,10 52 18.3,+30 04 03,UGC 05984,S?,MCG+05-26-024,SIMBAD 56″: Z 155-31 = MCG+05-26-024; uncertain: both UGC 5984 rows are offset ~55″ NE by the same vector; this row is UGC 5984 = MCG+05-26-024 56″ (S? 1.9′ matches); MCG+05-26-025 is 18″
+107,10 52 21.3,+30 05 03,UGC 05984,,MCG+05-26-025,SIMBAD 56″: MCG+05-26-025; uncertain: same ~55″ offset as the other UGC 5984 row; companion MCG+05-26-025
+108,03 03 05.5,-22 13 02,ESO 547-G002,S0:,MCG-04-08-017,SIMBAD 1″: MCG-04-08-017
+108,03 03 07.2,-22 12 24,ESO 547-G003,SC?,MCG-04-08-018,SIMBAD 4″: MCG-04-08-018
+109,15 47 50.7,+69 28 10,UGC 10053,,MCG+12-15-017,SIMBAD 2″: Z 338-19 = MCG+12-15-017
+109,15 48 07.7,+69 27 33,UGC 10053,,MCG+12-15-018,SIMBAD 1″: Z 338-20 = MCG+12-15-018; Webb's name covers several members; matched by position
+110,22 54 08.8,-15 14 14,MCG-03-58-011,S,PGC 69956,SIMBAD 2″: APG 110 = PGC 69956; APG 110 = PGC 69956 (NED calls it MCG-03-58-011 but SIMBAD's MCG-03-58-011 is 116″ away)
+111,14 01 40.7,+33 49 45,NGC 5421,SB?,PGC 49950,SIMBAD 18″: NGC 5421 = PGC 49950 (OpenNGC); OpenNGC NGC 5421 is a pair; this is NGC 5421 NED01 = PGC 49950 (SIMBAD's UGC 8941 N 5″ has no other ids)
+111,14 01 41.1,+33 49 33,MCG+06-31-046,SB,MCG+06-31-046,SIMBAD 56″: MCG+06-31-046; uncertain: Webb position 6″ from NGC 5421 (the other row); name and V17 match MCG+06-31-046 56″ S
+115,11 42 54.4,+26 17 21,UGC 06678B,S0+,MCG+05-28-022,SIMBAD 150″: Z 157-20 = MCG+05-28-022; uncertain: same position as UGC 06678C in Webb (2′ W of the group); assigned by name/type to UGC 6678 proper = MCG+05-28-022 = PGC 36392
+115,11 42 54.4,+26 17 21,UGC 06678C,cE,PGC 36379,SIMBAD 118″: LEDA 36379 = PGC 36379; uncertain: same position as UGC 06678B in Webb; compact companion overlapping MCG+05-28-021 = PGC 36379 (NED UGC 6678 NOTES02)
+115,11 43 02.9,+26 16 36,UGC 06678A,Sdm,MCG+05-28-021,SIMBAD 1″: MCG+05-28-021; Webb's name covers several members; matched by position
+116,12 43 39.6,+11 33 10,MESSIER 60,E2,NGC 4649,SIMBAD 5″: M 60 = NGC 4649 (OpenNGC)
+118,02 55 11.1,-00 10 37,NGC 1144,Im pec/Ring B,NGC 1144,SIMBAD 29″: NGC 1142 = NGC 1144 (OpenNGC); SIMBAD main id NGC 1142 (OpenNGC NGC 1142 is a duplicate of NGC 1144); NGC 1143 at 21″ is the other row
+119,01 19 24.1,+12 26 49,UGC 00849,Sdm:,MCG+02-04-021,SIMBAD 1″: Z 436-22 = MCG+02-04-021
+119,01 19 24.5,+12 27 43,UGC 00849,E?,MCG+02-04-022,SIMBAD 1″: Z 436-23 = MCG+02-04-022; Webb's name covers several members; matched by position
+121,00 59 23.3,-04 48 50,MCG-01-03-052,Disrupted,MCG-01-03-052,SIMBAD 82″: MCG-01-03-052; Webb position offset 82″; nearest galaxy is MCG-01-03-051 39″ (the next row); name gives MCG-01-03-052
+121,00 59 23.5,-04 48 15,MCG-01-03-051,Sa pec sp,MCG-01-03-051,SIMBAD 4″: MCG-01-03-051
+122,16 04 26.3,+17 44 37,NGC 6040B,SA0+ pec,MCG+03-41-073,SIMBAD 8″: NGC 6039 = MCG+03-41-073; SIMBAD's NGC 6039 = NGC 6040A = MCG+03-41-073 = PGC 56942; Webb calls it NGC 6040B; OpenNGC NGC 6039 is another galaxy 4′ SE
+122,16 04 26.8,+17 45 02,NGC 6040A,SAB(s)c,MCG+03-41-074,SIMBAD 1″: NGC 6040B = MCG+03-41-074; SIMBAD's NGC 6040B = NGC 6040 = UGC 10165 = MCG+03-41-074; Webb calls it NGC 6040A; OpenNGC has only the pair NGC 6040
+125,16 38 13.8,+41 55 51,UGC 10491,Ring B,PGC 58674,SIMBAD 1″: LEDA 58674 = PGC 58674; Webb names both rows UGC 10491; this is the companion LEDA 58674
+125,16 38 13.8,+41 56 19,UGC 10491,Ring A,MCG+07-34-127,SIMBAD 3″: UGC 10491 = MCG+07-34-127
+126,01 58 05.4,+03 06 05,UGC 01449,Pec?,MCG+00-06-009,SIMBAD 53″: Z 387-15 = MCG+00-06-009; uncertain: no galaxy within 50″; by elimination UGC 1449 = MCG+00-06-009 53″ (the other row is 7″ from MCG+00-06-010); Webb sizes suggest the opposite pairing
+126,01 58 05.6,+03 05 06,UGC 01449,SBm pec,MCG+00-06-010,SIMBAD 7″: MCG+00-06-010; uncertain: MCG+00-06-010 (VV 122a) 7″; UGC 1449 19″; Webb sizes suggest the opposite pairing
+127,00 39 00.1,-09 00 52,IC 1563,I 0,NGC 191A,SIMBAD 2″: NGC 191A (OpenNGC); IC 1563 is a duplicate entry in OpenNGC; this galaxy is NGC 191A
+128,01 17 24.4,+14 41 48,UGC 00827,DBL SYS,PGC 4645,SIMBAD 61″: APG 128 = PGC 4645; Webb position offset 61″; remaining pair member UGC 827 NED01 = SIMBAD APG 128 = PGC 4645 (the other row is NED02)
+128,01 17 29.3,+14 42 09,UGC 00827,,PGC 200189,SIMBAD 0″: LEDA 200189 = PGC 200189; Webb's name covers several members; matched by position
+129,09 39 24.4,+32 21 45,UGC 05146,SB(r)c: pec,MCG+06-21-071,SIMBAD 5″: Z 181-80 = MCG+06-21-071
+129,09 39 26.3,+32 21 54,UGC 05146,SAB0^0^: pec,MCG+06-21-072,SIMBAD 3″: MCG+06-21-072; Webb's name covers several members; matched by position
+130,00 02 37.7,+16 39 08,IC 5378,SBc,PGC 178,SIMBAD 2″: IC 5378N = PGC 178 (OpenNGC); IC 5378N = PGC 178 = OpenNGC IC 5378 NED02
+130,00 02 37.8,+16 38 37,IC 5378,E,PGC 177,SIMBAD 2″: IC 5378S = PGC 177 (OpenNGC); IC 5378S = PGC 177 = OpenNGC IC 5378 NED01
+131,02 47 19.8,-14 48 07,MCG-03-08-25,,MCG-03-08-025,SIMBAD 1″: MCG-03-08-025
+131,02 47 33.9,-14 46 30,MCG-03-08-26,,MCG-03-08-026,SIMBAD 178″: MCG-03-08-026; Webb position offset ~3′; name agrees (NED Arp 131 NED02); no other galaxy nearer
+132,11 19 21.1,-03 05 26,CGCG 011-053,Pair,PGC 34639,"SIMBAD 41″: Z 11-53 = PGC 34651; CGCG 011-053 = Arp 132W; NED gives it PGC 34651 (SIMBAD also lists PGC 34639 which NED uses for the pair); review 2026-11-02: Webb's only row for Arp 132 is the whole pair, so it maps to NED's pair designation PGC 34639, not the western component"
+134,12 29 46.4,+07 59 47,MESSIER 49,E2,NGC 4472,SIMBAD 15″: M 49 = NGC 4472 (OpenNGC)
+138,11 58 42.7,+25 02 11,NGC 4015,E,PGC 37702,SIMBAD 2″: NGC 4015 = PGC 37702 (OpenNGC); OpenNGC NGC 4015 NED01 = PGC 37702 (NGC 4015 is a pair)
+138,11 58 43.3,+25 02 40,NGC 4015,S?,PGC 37703,SIMBAD 6″: NGC 4015B = PGC 37703 (OpenNGC); NGC 4015B = OpenNGC NGC 4015 NED02 = PGC 37703
+139,13 07 24.1,+26 42 59,MCG+05-31-135,,MCG+05-31-135,SIMBAD 48″: MCG+05-31-135; uncertain: both rows lie 7–66″ from a 17″ pair; matched by orientation; brightness and least total offset
+139,13 07 27.7,+26 43 24,MCG+05-31-135,,PGC 1786426,SIMBAD 12″: LEDA 1786426 = PGC 1786426; uncertain: 7″ from MCG+05-31-135 and 12″ from this galaxy (Arp 139 NED01); pairing by orientation; brightness and least total offset
+141,07 14 20.9,+73 28 51,UGC 03730,Ring,PGC 20460,SIMBAD 2″: 2MASX J07142057+7328502 = PGC 20460; Webb's name covers several members; matched by position
+141,07 14 26.8,+73 28 53,UGC 03730,Ring,PGC 200231,SIMBAD 40″: 2MASX J07142032+7328242 = PGC 200231; uncertain: 27″ from PGC 20460 (the other row) and 40″ from this companion UGC 3730 NED02; assigned by elimination
+142,09 37 43.1,+02 46 15,UGC 05130,E+SYS,NGC 2936,SIMBAD 39″: NGC 2936 (OpenNGC); UGC 5130 = NGC 2936 (SIMBAD and NED); same galaxy as the NGC 2936 row; Webb position offset 39″
+145,02 23 08.0,+41 22 12,ARP 145,Ring B,PGC 9060,SIMBAD 3″: LEDA 9060 = PGC 9060; uncertain: SIMBAD and NED swap PGC 9060 and 9062 between the two Arp 145 galaxies; designation follows SIMBAD
+145,02 23 08.4,+41 22 20,UGC 01840,Pec Loop,PGC 9060,SIMBAD 12″: LEDA 9060 = PGC 9060; uncertain: 'UGC 01840' row sits on NED's UGC 1840 system position; nearest single galaxy 12″ (same as the first ARP 145 row); SIMBAD and NED swap PGC 9060/9062
+145,02 23 11.4,+41 22 05,ARP 145,Ring A,MCG+07-06-002,SIMBAD 0″: UGC 1840 = MCG+07-06-002; uncertain: SIMBAD UGC 1840 = MCG+07-06-002 = PGC 9062; NED gives this galaxy PGC 9060 and MCG+07-06-002 to the system
+146,00 06 44.0,-06 38 07,ARP 146,Ring A,PGC 509,SIMBAD 3″: LEDA 509 = PGC 509
+146,00 06 44.4,-06 38 10,VV 790,Pec,PGC 510,SIMBAD 7″: APG 146 = PGC 510; uncertain: VV 790 is the Arp 146 system; position between both galaxies (7″ and 9″); took the SIMBAD object carrying VV 790
+146,00 06 44.8,-06 38 14,ARP 146,Ring A,PGC 510,SIMBAD 1″: APG 146 = PGC 510; APG 146 = PGC 510 (SIMBAD also lists PGC 586 which NED uses for the Arp 146 system)
+147,03 11 18.3,+01 18 50,IC 0298,Ring A&B,IC 298A,SIMBAD 5″: IC 298A (OpenNGC); OpenNGC IC 298 is the pair; the galaxy at the position is IC 298A
+148,11 04 00.1,+40 50 49,MCG+07-23-019,Ring,MCG+07-23-019,SIMBAD 71″: APG 148 = MCG+07-23-019; Webb position offset 71″; SIMBAD APG 148 = MCG+07-23-019 = PGC 33423
+149,12 39 42.4,+16 35 32,IC 0803A,Dwarf E,PGC 215034,SIMBAD 95″: FIRST J123935.8+163516 = PGC 215034 (OpenNGC); uncertain: same position as IC 0803B in Webb; A (dwarf E) taken as the radio galaxy PGC 215034 = OpenNGC IC 803 NED01
+149,12 39 42.4,+16 35 32,IC 0803B,Im,PGC 42367,SIMBAD 72″: IC 803 = PGC 42367 (OpenNGC); uncertain: same position as IC 0803A in Webb (72–95″ E of both galaxies); B (Im) taken as the IRAS source PGC 42367 = OpenNGC IC 803 NED02
+150,23 19 29.9,+09 30 29,NGC 7609,Pec,PGC 71076,SIMBAD 2″: NGC 7609 = PGC 71076 (OpenNGC); OpenNGC NGC 7609 is a pair; this is NED01 = PGC 71076
+150,23 19 31.0,+09 30 10,NGC 7609A,Sc irr,PGC 71077,SIMBAD 2″: VV 20b = PGC 71077 (OpenNGC); VV 20b = HCG 95D = PGC 71077 = OpenNGC NGC 7609 NED02
+151,11 25 36.1,+54 22 57,MRK 0040,S0 pec,MCG+09-19-073,SIMBAD 0″: MCG+09-19-073
+152,12 30 49.4,+12 23 28,MESSIER 87,E+0-1 pec,NGC 4486,SIMBAD 0″: M 87 = NGC 4486 (OpenNGC)
+155,11 23 36.8,+53 49 31,ARP 155,,MCG+09-19-064,SIMBAD 29″: MCG+09-19-064; uncertain: only galaxy within 55″ besides NGC 3656 (62″); same galaxy as the other ARP 155 row
+155,11 23 38.1,+53 50 03,ARP 155,,MCG+09-19-064,SIMBAD 18″: MCG+09-19-064; uncertain: MCG+09-19-064 (APG 155B) 18″; NGC 3656 28″ is its own row
+156,10 42 38.0,+77 29 40,UGC 05814,Peclr,MCG+13-08-031,SIMBAD 1″: UGC 5814 = MCG+13-08-031
+157,01 24 35.2,+03 47 37,NGC 0520,"S pec, Pair",NGC 520,"SIMBAD 5″: NGC 520 = PGC 5193 (OpenNGC); OpenNGC NGC 520 is a pair; nearest component NED01 = PGC 5193; review 2026-11-02: Webb's row is the whole system (S pec, Pair), so it maps to OpenNGC's pair entry, not one component"
+158,01 25 19.6,+34 01 29,NGC 0523,Pec,NGC 523,SIMBAD 14″: NGC 523 (OpenNGC); name agrees
+159,12 51 45.4,+25 46 28,NGC 4747,SBcd? pec sp,NGC 4747,SIMBAD 3″: NGC 4747 (OpenNGC); name agrees
+161,11 42 12.3,+00 20 03,UGC 06665,Sb pec:,MCG+00-30-019,SIMBAD 1″: Z 12-61 = MCG+00-30-019
+163,12 45 17.0,+27 07 31,NGC 4670,SB(s)0/a pec:,NGC 4670,SIMBAD 2″: NGC 4670 (OpenNGC); name agrees
+166,01 57 32.6,+33 12 22,NGC 0751,E pec,NGC 751,SIMBAD 12″: NGC 751 (OpenNGC); equidistant (12″) from NGC 750 and NGC 751; resolved by name
+168,00 42 41.8,+40 51 52,MESSIER 32,cE2,NGC 221,SIMBAD 3″: M 32 = NGC 221 (OpenNGC)
+170,23 17 11.9,+18 42 03,NGC 7578A,S0^0 pec,NGC 7578A,SIMBAD 1″: NGC 7578A (OpenNGC)
+170,23 17 13.4,+18 42 28,NGC 7578B,E1,NGC 7578B,SIMBAD 2″: NGC 7578 = NGC 7578B (OpenNGC)
+171,14 40 37.1,+03 27 10,IC 1042,S0,IC 1042,SIMBAD 68″: IC 1042 (OpenNGC); Webb position offset 68″; name agrees
+173,14 51 26.2,+09 19 42,UGC 09561,Pec,MCG+02-38-020,SIMBAD 52″: MCG+02-38-020; uncertain: UGC 9561 is the other row (1″); by elimination the pair companion MCG+02-38-020 52″ (size matches)
+173,14 51 27.9,+09 19 19,UGC 09561,,MCG+02-38-019,SIMBAD 1″: Z 76-76 = MCG+02-38-019
+175,12 32 56.7,+11 23 23,IC 3481A,E pec,MCG+02-32-128,SIMBAD 2″: IC 3481A = MCG+02-32-128
+176,13 03 54.3,-11 30 22,NGC 4933A,S0 pec,NGC 4933A,SIMBAD 7″: NGC 4933W = NGC 4933A (OpenNGC); OpenNGC NGC 4933A (MCG-02-33-101 = PGC 45142) is 7″ from Webb; SIMBAD has only an unnumbered NGC 4933W here and puts the A identifiers on objects at the B position
+176,13 03 56.7,-11 29 53,NGC 4933B,E/S0 pec,NGC 4933B,SIMBAD 6″: NGC 4933B (OpenNGC); OpenNGC NGC 4933B (exact position); SIMBAD and OpenNGC swap the MCG/PGC numbers of A and B
+176,13 03 58.4,-11 30 05,NGC 4933C,Im: pec,NGC 4933C,SIMBAD 56″: NGC 4933C (OpenNGC); Webb position offset 56″; name agrees (OpenNGC NGC 4933C = PGC 45143)
+177,14 55 48.5,+24 35 55,MCG+04-35-016,S,MCG+04-35-016,SIMBAD 27″: MCG+04-35-016; same position as MCG+04-35-017 in Webb; resolved by name (NED Arp 177 NED01)
+177,14 55 48.5,+24 35 55,MCG+04-35-017,,MCG+04-35-017,SIMBAD 22″: MCG+04-35-017; same position as MCG+04-35-016 in Webb; resolved by name (NED Arp 177 NED02)
+179,03 01 40.9,-04 40 18,NPM1G -04.0134,,PGC 175747,SIMBAD 1″: LEDA 175747 = PGC 175747
+180,04 53 22.3,-04 48 08,MCG-01-13-034,S,MCG-01-13-034,SIMBAD 49″: MCG-01-13-034; Webb position offset 49″; name agrees
+182,23 27 58.8,+08 46 58,UGC 12608,SBb,MCG+01-59-081,SIMBAD 1″: NGC 7674A = MCG+01-59-081; NGC 7674A = MCG+01-59-081 = HCG 96C; Webb's name UGC 12608 is NGC 7674 itself (the other row)
+183,13 34 55.2,+31 23 33,UGC 08560,S3,MCG+05-32-039,SIMBAD 4″: Z 161-81 = MCG+05-32-039
+187,05 04 53.0,-10 14 52,MCG-02-13-040A,,MCG-02-13-040a,SIMBAD 1″: MCG-02-13-040a
+188,16 06 03.4,+55 25 18,UGC 10214,SBS5P,MCG+09-26-056,SIMBAD 14″: VV 29 = MCG+09-26-056
+190,02 50 19.9,+12 53 22,UGC 02320,Multiple Sys,MCG+02-08-015,SIMBAD 139″: UGC 2320 = MCG+02-08-015; Webb position offset ~2.3′; name gives UGC 2320 = MCG+02-08-015 (other pair member PGC 200206 123″)
+191,11 07 19.6,+18 25 47,UGC 06175,SAB0-pec,MCG+03-28-062,SIMBAD 1″: MCG+03-28-062; Webb's name covers several members; matched by position
+191,11 07 20.4,+18 25 52,UGC 06175,SAB(r)0+ pec,MCG+03-28-063,SIMBAD 12″: UGC 6175 = MCG+03-28-063
+192,10 36 59.6,+18 08 13,NGC 3303,P,PGC 31508,SIMBAD 8″: NGC 3303 = PGC 31508 (OpenNGC); OpenNGC NGC 3303 is a pair; Webb is 3″ from NED01 (PGC 93104) and 8″ from NED02 = PGC 31508 which SIMBAD calls NGC 3303 (size 3.1′ matches)
+194,11 57 52.5,+36 23 18,UGC 06945,S? Pair,MCG+06-26-062,SIMBAD 33″: Z 186-76 = MCG+06-26-062; Webb position offset 33″; name agrees (VV 126c/d are parts)
+195,08 53 50.2,+35 08 36,UGC 04653,SBS3 - Triple,MCG+06-20-012,SIMBAD 55″: UGC 4653 = MCG+06-20-012; Webb position offset 55″; name agrees
+196,13 14 35.4,+26 07 09,ARP 196,Ring with,new,SIMBAD 27″: 2MASX J13143626+2606449 (no catalogue number); uncertain: nearest galaxy 26″ is 2MASX J13143626+2606449 = NED Arp 196 NED02; it has no NGC/IC/MCG/UGC/ESO/PGC number
+196,13 14 37.5,+26 07 26,ARP 196,Sep nuc,PGC 46054,SIMBAD 2″: APG 60 = PGC 46054; SIMBAD labels this APG 60 but NED gives PGC 46054 to Arp 196 NED01
+198,10 59 45.4,+17 38 54,UGC 06073,DBL SYS,MCG+03-28-043,SIMBAD 8″: UGC 6073 = MCG+03-28-043; VV 267b (no catalogue number) 6″; UGC 6073 8″; resolved by name
+201,00 23 33.7,-00 29 22,UGC 00224,Disrupted,MCG+00-02-018,SIMBAD 78″: Z 383-6 = MCG+00-02-018; Webb position offset 78″; name agrees (UGC 224 = MCG+00-02-018); the other row is MCG+00-02-019
+201,00 23 37.7,-00 30 35,UGC 00224,,MCG+00-02-019,SIMBAD 0″: MCG+00-02-019; Webb's name covers several members; matched by position
+202,09 00 15.9,+35 43 12,NGC 2719A,Im pec:,NGC 2719A,SIMBAD 5″: NGC 2719A (OpenNGC)
+204,13 22 45.9,+84 29 58,UGC 08454,,MCG+14-06-024,SIMBAD 11″: Z 365-12 = MCG+14-06-024
+204,13 22 49.6,+84 30 24,UGC 08454,Double System,MCG+14-06-025,SIMBAD 63″: MCG+14-06-025; uncertain: 'Double System' row 20″ from UGC 8454 (the other row) and 9″ from NED's pair centre; second member MCG+14-06-025 = UGC 8454 NED02 63″
+206,10 52 17.0,+36 35 43,UGC 05983,Dwarf,MCG+06-24-027,SIMBAD 4″: MCG+06-24-027
+207,09 31 06.8,+76 27 56,UGC 05050,S?,MCG+13-07-030,SIMBAD 15″: Z 350-25 = MCG+13-07-030
+208,16 51 01.3,+47 13 25,MCG+08-31-011,S,MCG+08-31-011,SIMBAD 2″: MCG+08-31-011
+208,16 51 02.8,+47 13 15,MCG+08-31-010,,MCG+08-31-010,SIMBAD 2″: MCG+08-31-010
+209,16 05 12.6,+20 32 33,NGC 6052,Sc,PGC 57039,SIMBAD 4″: NGC 6052 = PGC 57039 (OpenNGC); OpenNGC NGC 6052 is a pair; Webb is nearest NED01 = PGC 57039 (SIMBAD's NGC 6052)
+211,12 37 19.3,+38 43 30,MCG+07-26-033,,MCG+07-26-033,SIMBAD 64″: UGCA 290 = MCG+07-26-033; uncertain: same position as MCG+07-26-034 in Webb; resolved by name and V17.0 (SIMBAD); NED swaps the two MCG numbers
+211,12 37 19.3,+38 43 30,MCG+07-26-034,,MCG+07-26-034,SIMBAD 83″: MCG+07-26-034; uncertain: same position as MCG+07-26-033 in Webb; resolved by name and V16.0 (SIMBAD); NED swaps the two MCG numbers
+218,15 53 32.5,+18 36 10,ARP 218 18.0,,PGC 1564508,SIMBAD 23″: LEDA 1564508 = PGC 1564508; uncertain: anonymous row sharing the CGCG 107-052 position; nearest galaxy = Arp 218 NED01
+218,15 53 32.5,+18 36 10,CGCG 107-052,SAB(s)bc,MCG+03-40-057,SIMBAD 64″: MCG+03-40-057; uncertain: same position as 'ARP 218 18.0' in Webb; resolved by name: SIMBAD gives CGCG 107-052 to MCG+03-40-057 (NED: the pair); same galaxy as the anonymous row at 15 53 36.9
+218,15 53 36.9,+18 36 35,ARP 218,,MCG+03-40-057,SIMBAD 5″: MCG+03-40-057
+219,03 39 51.9,-02 06 48,UGC 02812,SB pec,MCG+00-10-009,SIMBAD 21″: Z 391-24 = MCG+00-10-009; Webb position offset 21″; name agrees
+220,15 34 57.1,+23 30 16,IC 4553,S?,IC 4553,SIMBAD 5″: IC 1127 = IC 4553 (OpenNGC); IC 4553 = IC 1127 = Arp 220
+220,15 34 57.3,+23 30 05,IC 4554,S?,IC 4553,SIMBAD 7″: IC 1127 = IC 4553 (OpenNGC); Webb's IC 4554 row has Arp 220's position and description; IC 4554 itself (PGC 214390; OpenNGC IC 4554) is 2.2′ SE
+220,15 34 57.3,+23 30 11,IC 1127,,IC 4553,SIMBAD 1″: IC 1127 = IC 4553 (OpenNGC); IC 1127 = IC 4553 (OpenNGC IC 1127 is a duplicate)
+221,09 36 27.8,-11 19 43,MCG-02-25-006,,MCG-02-25-006,SIMBAD 8″: MCG-02-25-006
+227,01 19 45.5,+03 24 37,NGC 0470,SA(r)b pec II,NGC 470,SIMBAD 10″: NGC 470 (OpenNGC); name agrees
+233,10 32 32.0,+54 24 03,UGC 05720,Im pec,MCG+09-17-070,SIMBAD 1″: Z 266-55 = MCG+09-17-070
+236,01 07 47.6,-17 30 24,IC 1623A,S pec,IC 1623A,SIMBAD 15″: IC 1623A (OpenNGC); uncertain: Webb's IC 1623A position is 1″ from IC 1623B and 15″ from IC 1623A; the two are 15″ apart so resolved by name
+236,01 07 49.6,-17 30 18,IC 1623B,,IC 1623B,SIMBAD 30″: IC 1623B (OpenNGC); uncertain: Webb position 30″ E of IC 1623B; resolved by name
+237,09 27 43.5,+12 17 14,UGC 05044,SBd,MCG+02-24-013,SIMBAD 1″: UGC 5044 = MCG+02-24-013
+237,09 27 44.4,+12 17 17,UGC 05044,Im,MCG+02-24-014,SIMBAD 2″: MCG+02-24-014; Webb's name covers several members; matched by position
+238,13 15 29.4,+62 07 42,UGC 08335,Sc,MCG+10-19-057,SIMBAD 10″: Z 294-28 = MCG+10-19-057; Webb's name covers several members; matched by position
+238,13 15 35.2,+62 07 26,UGC 08335,Sc,MCG+10-19-056,SIMBAD 3″: MCG+10-19-056; Webb's name covers several members; matched by position
+241,14 37 50.8,+30 28 53,UGC 09425,S? (pair),MCG+05-34-083,SIMBAD 8″: NAME Segner's Wheel = MCG+05-34-083
+242,12 46 10.1,+30 44 00,NGC 4676A,S0 pec?,NGC 4676A,SIMBAD 5″: NGC 4676A (OpenNGC)
+242,12 46 11.2,+30 43 28,NGC 4676B,SB(s)0/a pec,NGC 4676B,SIMBAD 6″: NGC 4676B (OpenNGC)
+243,08 38 23.7,+25 45 16,NGC 2623,P: Trip Coll,NGC 2623,SIMBAD 4″: NGC 2623 (OpenNGC); single merger; Webb lists NGC 2623 three times
+243,08 38 24.1,+25 45 01,NGC 2623,,NGC 2623,SIMBAD 15″: NGC 2623 (OpenNGC); single merger; Webb lists NGC 2623 three times; no other galaxy within 2′
+243,08 38 24.3,+25 45 17,NGC 2623,,NGC 2623,SIMBAD 4″: NGC 2623 (OpenNGC)
+245,09 45 42.0,-14 19 35,NGC 2992,S0 pec sp,NGC 2992,SIMBAD 1″: NGC 2992 (OpenNGC); name agrees
+247,08 23 33.0,+21 20 36,UGC 04383,DBL SYS,IC 2338,SIMBAD 20″: IC 2338 (OpenNGC); UGC 4383 is the IC 2338/IC 2339 pair; SIMBAD gives UGC 4383 to IC 2338 (nearer; 20″); same galaxy as the IC 2338 row
+248,11 46 34.9,-03 51 19,MCG-01-30-32,SAB(rs)b? pec,MCG-01-30-032,SIMBAD 17″: Z 1144.0-0333 = MCG-01-30-032
+248,11 46 44.9,-03 50 34,MCG-01-30-33,SB(s)b: pec,MCG-01-30-033,SIMBAD 20″: MCG-01-30-033
+248,11 46 49.6,-03 49 01,MCG-01-30-34,SB(s)c pec,MCG-01-30-034,SIMBAD 21″: MCG-01-30-034; Webb position offset 21″; name agrees
+249,00 00 19.3,+22 59 26,UGC 12891,,MCG+04-01-007,SIMBAD 0″: UGC 12891 = MCG+04-01-007
+249,00 00 21.6,+22 59 42,UGC 12891,,PGC 1679585,SIMBAD 9″: VV 186a = PGC 1679585; Webb names both rows UGC 12891; this is the companion VV 186a
+250,07 35 59.7,+35 22 52,IRAS F07327+3529,,PGC 2063674,SIMBAD 10″: LEDA 2063674 = PGC 2063674; uncertain: NED gives IRAS F07327+3529 and Arp 250 to this galaxy 10″; SIMBAD gives both to PGC 21362 39″ W
+251,00 53 46.9,-13 51 40,VV 674,Triple,MCG-02-03-037,"SIMBAD 12″: LEDA 932236 = PGC 932236; uncertain: row is the whole triple VV 674 (MCG-02-03-037 = PGC 3163 is the triple in SIMBAD and NED); nearest single galaxy PGC 932236 12″; review 2026-11-02: Webb's row is the whole system (Triple), so it maps to the triple's own designation in SIMBAD and NED, not one component"
+252,09 44 58.4,-19 43 32,ESO 566-IG007,SB3P?,MCG-03-25-019a,SIMBAD 3″: MCG-03-25-019a
+252,09 44 59.6,-19 42 45,ESO 566-IG008,S,MCG-03-25-019b,SIMBAD 1″: MCG-03-25-019b
+253,09 43 24.3,-05 16 46,UGCA 173,,MCG-01-25-031,SIMBAD 27″: MCG-01-25-031; UGCA 173 = MCG-01-25-031 27″; SIMBAD's APG 253 12″ is the system
+253,09 43 30.3,-05 16 47,UGCA 174,,MCG-01-25-032,SIMBAD 42″: MCG-01-25-032; Webb position offset 42″; name agrees (UGCA 174)
+255,09 53 08.7,+07 52 50,UGC 05304,Pair,new,"SIMBAD 52″: UGC 5304 = MCG+01-25-030; uncertain: 'Pair' row 35″ from the companion PGC 200253 and 52″ from UGC 5304; chose UGC 5304 = MCG+01-25-030 by name; review 2026-11-02: Webb's row is the whole system (Pair), so it maps to a new object for the pair, not one component"
+256,00 18 50.0,-10 21 42,MCG-02-01-52,SB(S)c pec,MCG-02-01-052,SIMBAD 2″: MCG-02-01-052
+256,00 18 50.9,-10 22 37,MCG-02-01-51,SB(S)c pec,MCG-02-01-051,SIMBAD 1″: MCG-02-01-051
+256,00 18 51.4,-10 22 33,VV 352,,MCG-02-01-051,SIMBAD 8″: MCG-02-01-051; VV 352 is the Arp 256 pair (NED); SIMBAD attaches VV 352 to MCG-02-01-051 8″ (same galaxy as the MCG-02-01-51 row)
+257,08 51 37.9,-02 21 15,UGC 04638,SP,MCG+00-23-006,SIMBAD 0″: MCG+00-23-006; Webb's name covers several members; matched by position
+257,08 51 38.3,-02 21 59,UGC 04638,S pec,MCG+00-23-005,SIMBAD 6″: Z 5-18 = MCG+00-23-005
+258,02 39 04.6,+18 23 38,Hickson 18D,S?,PGC 10042,SIMBAD 1″: UGC 2140 C = PGC 10042; HCG 18D = SIMBAD 'UGC 2140 C'; PGC used because SIMBAD's UGC 2140 A/B/C letters clash with Webb's UGC 02140A (= HCG 18A)
+258,02 39 05.9,+18 23 18,Hickson 18C,S?,PGC 10043,SIMBAD 1″: UGC 2140 B = PGC 10043; HCG 18C = SIMBAD 'UGC 2140 B'; PGC used because SIMBAD's UGC 2140 A/B/C letters clash with Webb's UGC 02140A (= HCG 18A)
+258,02 39 06.2,+18 22 58,UGC 02140,IBS9P,PGC 10044,SIMBAD 0″: UGC 2140 A = PGC 10044; HCG 18B = SIMBAD 'UGC 2140 A' at 0″; PGC used because Webb's UGC 02140A is a different galaxy (HCG 18A); Z 462-37 8″ carries UGC 2140 and HCG 18 for the system
+258,02 39 09.3,+18 22 03,UGC 02140A,SB.0*/,MCG+03-07-038,SIMBAD 1″: MCG+03-07-038; HCG 18A = MCG+03-07-038 = PGC 10046; SIMBAD's 'UGC 2140 A' is a different member (HCG 18B)
+259,05 01 35.4,-04 15 24,NGC 1741,,PGC 16571,SIMBAD 1″: LEDA 16571 = PGC 16571; Webb names all four HCG 31 rows NGC 1741; this is HCG 31D (NED NGC 1741 NED02)
+259,05 01 35.4,-04 15 50,NGC 1741,,NGC 1741B,SIMBAD 3″: NGC 1741B (OpenNGC); Webb names all four HCG 31 rows NGC 1741; this is NGC 1741B = HCG 31B
+259,05 01 37.8,-04 15 28,NGC 1741,Pec Inter Sys,PGC 16573,SIMBAD 1″: LEDA 16573 = PGC 16573; HCG 31C = PGC 16573 (NED NGC 1741 NED03); B13.4 matches
+259,05 01 38.7,-04 15 34,NGC 1741,,HCG 31A,SIMBAD 6″: SDSS J050138.30-041533.9 = HCG 31A; uncertain: HCG 31A 6″ (NED NGC 1741A 1″); B15.6 matches; OpenNGC NGC 1741 = PGC 16574 lies 11″ away between HCG 31A and C so HCG used
+260,12 13 38.7,+16 07 19,UGC 07230,Sc,MCG+03-31-077,SIMBAD 18″: UGC 7230 = MCG+03-31-077; uncertain: Webb position is the pair centre (UGC 7230 18″ W; PGC 93116 18″ E); chose UGC 7230 = MCG+03-31-077 by name
+261,14 49 30.5,-10 10 23,MCG-02-38-016,IB(s)m pec,MCG-02-38-016,SIMBAD 11″: MCG-02-38-016
+261,14 49 32.7,-10 09 24,ARP 261,,MCG-02-38-017,SIMBAD 23″: MCG-02-38-017; only galaxy within 75″ besides MCG-02-38-016; same galaxy as the other ARP 261 rows
+261,14 49 32.7,-10 09 47,ARP 261,,MCG-02-38-017,SIMBAD 0″: MCG-02-38-017
+261,14 49 32.9,-10 09 51,ARP 261,IB(s)m pec,MCG-02-38-017,SIMBAD 5″: MCG-02-38-017; same galaxy as the ARP 261 row at 14 49 32.7 -10 09 47
+262,23 56 43.8,+16 48 27,MCG+03-01-003,S,MCG+03-01-003,SIMBAD 17″: MCG+03-01-003; MCG+03-01-003 = PGC 72978 (NED: part of UGC 12856); SIMBAD's UGC 12856 13″ is the system
+262,23 56 44.9,+16 48 45,UGC 12856,IB(s)m,MCG+03-01-004,SIMBAD 7″: MCG+03-01-004; MCG+03-01-004 = PGC 72977 = UGC 12856 in NED; SIMBAD's UGC 12856 15″ is the system
+266,12 59 01.7,+34 51 39,NGC 4861,SB(s)m:,NGC 4861,SIMBAD 9″: NGC 4861 (OpenNGC); name agrees
+267,10 36 42.6,+31 32 51,UGC 05764,IB(s)m: V,MCG+05-25-025,SIMBAD 7″: Z 154-31 = MCG+05-25-025
+268,08 19 06.0,+70 42 51,Holmberg II,Im IV-V,UGC 4305,SIMBAD 23″: UGC 4305 (OpenNGC); Holmberg II = UGC 4305 (OpenNGC addendum UGC 4305)
+272,16 05 30.5,+17 46 09,NGC 6054,(R')SAB(s)b,MCG+03-41-099,SIMBAD 3″: MCG+03-41-099; uncertain: galaxy at the position is MCG+03-41-099 = PGC 57073 (SIMBAD's NGC 6054 6″); OpenNGC and NED put NGC 6054 on IC 1183 109″ E; Arp 272 is usually NGC 6050/IC 1179 ~2′ W
+273,02 21 28.7,+39 22 31,UGC 01810,S(b),MCG+06-06-023,SIMBAD 1″: UGC 1810 = MCG+06-06-023
+273,02 21 32.4,+39 21 23,UGC 01813,SB,MCG+06-06-024,SIMBAD 2″: Z 523-29 = MCG+06-06-024
+274,14 35 05.8,+05 20 55,NGC 5679,Sb,NGC 5679B,SIMBAD 58″: NGC 5679 = NGC 5679B (OpenNGC); uncertain: Webb positions are garbled; SIMBAD NGC 5679 = NGC 5679B = PGC 52132 (OpenNGC NGC 5679B) 58″; resolved by name
+274,14 35 08.4,+05 21 35,NGC 5679A,Sb,NGC 5679A,SIMBAD 32″: NGC 5679A (OpenNGC); uncertain: Webb position is on NGC 5679B (6″); resolved by name to NGC 5679A 32″
+274,14 35 08.6,+05 21 27,NGC 5679C,,NGC 5679C,SIMBAD 37″: NGC 5679C (OpenNGC); uncertain: Webb position is on NGC 5679B (6″); resolved by name to NGC 5679C 37″
+275,09 25 54.9,-11 59 01,NGC 2881,S?,new,uncertain: nearest component is OpenNGC NGC 2881 NED01 36″ (NED position); it has no PGC and SIMBAD has no separate object for it
+275,09 25 54.9,-12 00 01,NGC 2881,,PGC 26747,SIMBAD 15″: NGC 2881 = PGC 26747 (OpenNGC); OpenNGC NGC 2881 is a pair; this is NED02 = PGC 26747 (17″ by NED position)
+278,22 19 26.2,+29 23 53,NGC 7253A,SB?,NGC 7253A,SIMBAD 21″: NGC 7253 = NGC 7253A (OpenNGC); SIMBAD's NGC 7253 = NGC 7253A = PGC 68572 (OpenNGC NGC 7253A); Webb position offset 21″
+278,22 19 29.0,+29 23 11,NGC 7253B,S?,NGC 7253B,SIMBAD 16″: NGC 7253B (OpenNGC)
+279,03 14 23.2,-02 48 13,NGC 1253A,IB(s)m pec IV,NGC 1253A,SIMBAD 10″: NGC 1253A (OpenNGC)
+280,11 37 50.3,+47 52 53,NGC 3769A,SBm pec III,NGC 3769A,SIMBAD 1″: NGC 3769A (OpenNGC)
+282,00 36 52.2,+23 59 04,IC 1559,SAB pec:,NGC 169A,SIMBAD 3″: NGC 169A (OpenNGC); IC 1559 is a duplicate entry in OpenNGC; this galaxy is NGC 169A
+287,09 02 41.8,+25 56 18,NGC 2735A,Im: pec,NGC 2735A,SIMBAD 1″: NGC 2735A (OpenNGC)
+288,13 34 55.5,+13 44 30,NGC 5222,Double System,NGC 5222,"SIMBAD 7″: NGC 5222a = PGC 47871 (OpenNGC); OpenNGC NGC 5222 is a pair; Webb is nearest NED01 = PGC 47871; review 2026-11-02: Webb's row is the whole system (Double System), so it maps to OpenNGC's pair entry, not one component"
+291,10 42 48.7,+13 27 34,UGC 05832,SB?,MCG+02-27-042,SIMBAD 4″: Z 65-89 = MCG+02-27-042
+295,23 41 47.9,-03 40 37,MCG-01-60-021,Sc,MCG-01-60-021,SIMBAD 36″: MCG-01-60-021; Webb position offset 36″; name agrees (APG 295A)
+295,23 42 04.1,-03 35 21,ARP 295,Sb pec,PGC 3083323,SIMBAD 30″: LEDA 3083323 = PGC 3083323; uncertain: 30″ from this galaxy with the same ~35″ northward offset as the other Arp 295 row; Arp 295B = MCG-01-60-022 is 106″ away
+296,11 28 49.3,+58 35 26,MCG+10-17-5,Multigalaxy,MCG+10-17-005,SIMBAD 29″: MCG+10-17-005; Webb position offset 29″; name agrees
+299,11 28 28.5,+58 34 33,MCG+10-17-2A,,IC 694,SIMBAD 13″: IC 694 (OpenNGC); uncertain: original IC 694 = MCG+10-17-002 = OpenNGC IC 694 13″; MCG+10-17-002a (VV 118d; NED: part of a galaxy) 25″
+299,11 28 33.4,+58 33 47,NGC 3690,IBm pec,NGC 3690A,SIMBAD 20″: NGC 3690B = NGC 3690A (OpenNGC); uncertain: Webb is 2″ from Arp 299 east (OpenNGC NGC 3690B) and 20″ from the west component; the components are 20″ apart so resolved by name: NGC 3690 = west = PGC 35326 = UGC 6471 = OpenNGC NGC 3690A
+299,11 28 37.4,+58 33 28,IC 0694,SBm? pec,NGC 3690B,SIMBAD 43″: NGC 3690NE = NGC 3690B (OpenNGC); uncertain: Webb's IC 694 is the Arp 299 east component (popular usage) = PGC 35321 = UGC 6472 = OpenNGC NGC 3690B 36″; original IC 694 is 108″ NW
+300,09 27 50.2,+68 24 47,UGC 05028,SB(s)dm pec,MCG+12-09-049,SIMBAD 11″: Mrk 111 = MCG+12-09-049
+300,09 28 02.5,+68 25 17,UGC 05029,Sc,MCG+12-09-050,SIMBAD 4″: Z 332-51 = MCG+12-09-050
+301,11 09 51.5,+24 15 44,UGC 06204,S,MCG+04-26-036,SIMBAD 2″: Z 125-35 = MCG+04-26-036; UGC 6204 = MCG+04-26-036 (APG 301A)
+301,11 09 54.3,+24 15 25,UGC 06207,SB?,MCG+04-26-037,SIMBAD 2″: Z 125-36 = MCG+04-26-037
+302,14 57 00.5,+24 36 20,UGC 09618,Sc,MCG+04-35-018,SIMBAD 5″: MCG+04-35-018; Webb's name covers several members; matched by position
+302,14 57 01.0,+24 37 01,UGC 09618,(Sb),MCG+04-35-019,SIMBAD 5″: MCG+04-35-019; Webb's name covers several members; matched by position
+306,01 32 29.1,+04 35 45,UGC 01102,S?,MCG+01-05-002,SIMBAD 3″: UGC 1102 = MCG+01-05-002
+306,01 32 29.7,+04 35 24,UGC 01102,condensation,MCG+01-05-002,SIMBAD 20″: UGC 1102 = MCG+01-05-002; Webb 'condensation' row; no other galaxy within 85″; same galaxy as the first UGC 01102 row
+306,01 32 41.8,+04 38 24,UGC 01105,Im,MCG+01-05-003,SIMBAD 29″: MCG+01-05-003; Webb position offset 29″; name agrees (APG 306B)
+310,17 27 24.9,+58 31 00,IC 1259,S?,PGC 60323,SIMBAD 2″: IC 1259 = PGC 60323 (OpenNGC); OpenNGC IC 1259 NED01 = PGC 60323 (IC 1259 is a pair)
+310,17 27 26.6,+58 30 57,IC 1259,S0 pec,PGC 60325,SIMBAD 3″: IC 1259E = PGC 60325 (OpenNGC); IC 1259E = OpenNGC IC 1259 NED02 = PGC 60325
+311,17 27 31.7,+58 28 33,KAZ 140,,IC 1260,SIMBAD 0″: IC 1260 (OpenNGC); KAZ 140 = IC 1260; same galaxy as the IC 1260 row
+312,16 49 48.4,+46 43 05,MCG+08-31-004,S,MCG+08-31-005,SIMBAD 1″: Z 252-4 = MCG+08-31-005; CGCG 252-004 = MCG+08-31-005 = APG 312 at 1″ (size matches); Webb's MCG+08-31-004 is a smaller galaxy 45″ SW (probable typo)
+312,16 49 50.2,+46 42 50,ARP 312,,MCG+08-31-006,SIMBAD 0″: MCG+08-31-006
+314,22 58 01.0,-03 46 08,MCG-01-58-009,(R')SA(s)bc:,MCG-01-58-009,SIMBAD 19″: MCG-01-58-009
+314,22 58 07.0,-03 47 23,MCG-01-58-010,SB(rs)cd: pec,MCG-01-58-010,SIMBAD 14″: MCG-01-58-010
+314,22 58 11.0,-03 48 55,MCG-01-58-011,(R')SB(s)dm p,MCG-01-58-011,SIMBAD 59″: MCG-01-58-011; Webb position offset 59″; name agrees
+317,11 18 55.2,+13 05 35,MESSIER 65,SAB(rs)a II,NGC 3623,SIMBAD 11″: M 65 = NGC 3623 (OpenNGC)
+319,22 35 56.7,+33 57 56,NGC 7318A,E2 pec,NGC 7318A,SIMBAD 0″: NGC 7318A (OpenNGC)
+319,22 35 58.4,+33 57 58,NGC 7318B,E2,NGC 7318B,SIMBAD 0″: NGC 7318B (OpenNGC)
+321,09 38 53.2,-04 51 34,MCG-01-25-009,Sbc,MCG-01-25-009,SIMBAD 7″: MCG-01-25-009
+321,09 38 53.5,-04 50 56,MCG-01-25-008,SB(rs)b pec,MCG-01-25-008,SIMBAD 1″: MCG-01-25-008
+321,09 38 55.0,-04 51 58,MCG-01-25-012,SB(s) 0- pec,MCG-01-25-012,SIMBAD 1″: MCG-01-25-012
+321,09 38 55.4,-04 51 28,MCG-01-25-011,SAB(s) a pec,MCG-01-25-011,SIMBAD 2″: MCG-01-25-011
+321,09 38 55.7,-04 50 14,MCG-01-25-010,SA(r) 0- pec,MCG-01-25-010,SIMBAD 1″: MCG-01-25-010
+322,11 32 32.7,+52 56 22,UGC 06527,SB0 pec,PGC 35609,SIMBAD 1″: LEDA 35609 = PGC 35609; Webb names all four HCG 56 rows UGC 06527; this is HCG 56E
+322,11 32 35.3,+52 56 50,UGC 06527,,PGC 35615,SIMBAD 0″: VV 150c = PGC 35615; Webb names all four HCG 56 rows UGC 06527; this is HCG 56D
+322,11 32 36.7,+52 56 51,UGC 06527,,PGC 35618,SIMBAD 1″: VV 150b = PGC 35618; Webb names all four HCG 56 rows UGC 06527; this is HCG 56C
+322,11 32 40.2,+52 57 01,UGC 06527,SB0,UGC 6527,SIMBAD 0″: Mrk 176 = UGC 6527; UGC 6527 = HCG 56B = Mrk 176 (no MCG in SIMBAD)
+323,23 54 10.0,+00 22 58,NGC 7783,S0^0: sp,PGC 72803,SIMBAD 1″: NGC 7783 = PGC 72803 (OpenNGC); OpenNGC NGC 7783 is a pair; this is NED01 = PGC 72803
+323,23 54 12.0,+00 22 38,NGC 7783B,S0,PGC 72808,SIMBAD 1″: NGC 7783B = PGC 72808 (OpenNGC); NGC 7783B = OpenNGC NGC 7783 NED02 = PGC 72808
+324,16 02 08.9,+15 53 17,UGC 10143C,Spiral,new,SIMBAD 4″: VV 159f (no catalogue number); VV 159f has no NGC/IC/MCG/UGC/ESO/PGC number
+324,16 02 10.1,+15 54 59,ARP 324,,PGC 4019984,SIMBAD 25″: LEDA 4019984 = PGC 4019984; uncertain: anonymous; 17″ from PGC 1496422 and 25″ from this galaxy which sits on NED's Arp 324 NED02 (VV 159d)
+324,16 02 12.8,+15 54 26,UGC 10143,E3,MCG+03-41-051,SIMBAD 1″: Z 108-70 = MCG+03-41-051; SIMBAD gives UGC 10143 to the UGC 10143A row's galaxy; this is CGCG 108-070
+324,16 02 13.3,+15 56 14,UGC 10143B,SAB(r)ab,MCG+03-41-052,SIMBAD 1″: Z 108-71 = MCG+03-41-052; Webb's name covers several members; matched by position
+324,16 02 15.1,+15 56 58,ARP 324,,PGC 1497312,SIMBAD 29″: LEDA 1497312 = PGC 1497312; uncertain: anonymous; nearest catalogued galaxy 29″ (small for Webb's 1.7′)
+324,16 02 17.0,+15 58 27,UGC 10143A,E+,MCG+03-41-054,SIMBAD 2″: Z 108-73 = MCG+03-41-054
+325,22 06 22.2,-21 04 21,ESO 601- G 018,,PGC 68034,SIMBAD 23″: 2MASX J22062085-2104074 = PGC 68034; all three ESO 601-18 rows share a ~26″ offset; magnitudes match (V18.1 / B18.1)
+325,22 06 23.2,-21 04 39,ESO 601- G 018,,PGC 68035,SIMBAD 28″: LEDA 68035 = PGC 68035; all three ESO 601-18 rows share a ~26″ offset; magnitudes match (V17.9 / B17.8)
+325,22 06 24.2,-21 04 45,ESO 601- G 018,,PGC 68036,SIMBAD 28″: 2MASX J22062243-2104324 = PGC 68036; all three ESO 601-18 rows share a ~26″ offset; magnitudes match (V16.1 / B16.0)
+326,13 37 18.6,+06 28 44,UGC 08610,Sa,MCG+01-35-016,SIMBAD 29″: Z 45-49 = MCG+01-35-016; Webb position offset 29″; name agrees
+327,05 21 47.7,+06 41 01,MCG+01-14-031,S0,PGC 17173,SIMBAD 1″: VV 169d = PGC 17173; Webb's name covers several members; matched by position
+327,05 21 48.9,+06 40 55,MCG+01-14-031,SBd,PGC 17175,SIMBAD 1″: VV 169b = PGC 17175; Webb's name covers several members; matched by position
+327,05 21 49.9,+06 40 36,MCG+01-14-031,SA0-,PGC 17176,SIMBAD 3″: VV 169c = PGC 17176; Webb's name covers several members; matched by position
+328,14 47 53.4,+19 04 37,UGC 09532,S0?,MCG+03-38-017,SIMBAD 0″: MCG+03-38-017; Webb's name covers several members; matched by position
+328,14 47 54.8,+19 03 37,UGC 09532,S0,MCG+03-38-021,SIMBAD 0″: UGC 9532 = MCG+03-38-021
+328,14 47 55.0,+19 02 51,UGC 09532,S0,MCG+03-38-019,SIMBAD 2″: MCG+03-38-019; Webb's name covers several members; matched by position
+328,14 47 55.2,+19 03 04,UGC 09532,Scd,MCG+03-38-018,SIMBAD 2″: MCG+03-38-018; Webb's name covers several members; matched by position
+328,14 47 55.8,+19 03 24,UGC 09532,SB0,MCG+03-38-020,SIMBAD 3″: MCG+03-38-020; Webb's name covers several members; matched by position
+328,14 47 56.1,+19 01 32,UGC 09532,S0?,PGC 52854,SIMBAD 67″: VV 165g = PGC 52854; uncertain: no galaxy within 65″; by elimination VV 165g = PGC 52854 67″ (the other HCG 72 members have their own rows)
+328,14 47 56.9,+19 02 41,UGC 09532,E2,MCG+03-38-022,SIMBAD 2″: MCG+03-38-022; Webb's name covers several members; matched by position
+329,11 32 05.5,+70 48 23,UGC 06514,E pec,HCG 55B,SIMBAD 1″: 2MASX J11320571+7048236 = HCG 55B; HCG 55B has no PGC/MCG/UGC number in SIMBAD
+329,11 32 05.7,+70 48 39,UGC 06514,SBa pec:,PGC 35573,SIMBAD 1″: LEDA 35573 = PGC 35573; HCG 55C = PGC 35573 (B17.4 matches)
+329,11 32 06.9,+70 48 55,UGC 06514,SA0 pec,PGC 35575,SIMBAD 1″: VV 172c = PGC 35575; Webb's name covers several members; matched by position
+329,11 32 06.9,+70 49 17,UGC 06514,S0pec,PGC 35574,SIMBAD 1″: LEDA 35574 = PGC 35574; Webb's name covers several members; matched by position
+329,11 32 07.6,+70 49 08,UGC 06514,s?,HCG 55E,SIMBAD 1″: [CCA99] UGC 6514e = HCG 55E; HCG 55E has no PGC/MCG/UGC number in SIMBAD
+330,16 49 07.9,+53 25 53,I Zw 167,6 galaxy chain,new,"SIMBAD 30″: MCG+09-27-096; uncertain: row is the whole 6-galaxy chain I Zw 167; nearest galaxy MCG+09-27-096 30″ (LEDA 59049 at the same place); APG 330 is on CGCG 276-045 53″; review 2026-11-02: Webb's row is the whole system (6 galaxy chain), so it maps to a new object for the chain, not one component"
+332,03 08 26.0,-23 02 17,MCG-4-8-29,S,MCG-04-08-029,SIMBAD 6″: MCG-04-08-029
+334,13 30 25.8,+31 37 13,UGC 08498,S3,MCG+05-32-033,SIMBAD 3″: Z 161-73 = MCG+05-32-033
+337,09 55 51.6,+69 40 46,MESSIER 82,I0,NGC 3034,SIMBAD 4″: M 82 = NGC 3034 (OpenNGC)
+338,10 10 59.5,-07 54 54,Arp 338,Pair,new,"SIMBAD 15″: LEDA 154807 = PGC 154807; uncertain: row is the pair (Webb position = NED's pair centre); nearest galaxy PGC 154807 15″; SIMBAD's APG 338 object 55″ has no catalogue number; review 2026-11-02: Webb's row is the whole system (Pair), so it maps to a new object for the pair, not one component"

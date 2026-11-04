@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from nightcrate.catalog_loader.designations import canonical_identifier
+
 # Mapping of OpenNGC's token prefixes → our dso_designation.catalog vocabulary.
 # Keys are case-sensitive; tokens are normalized before lookup. Order doesn't
 # matter here — prefix matching is done greedily by length at parse time.
@@ -28,6 +30,9 @@ PREFIX_MAP: dict[str, str] = {
     "LBN": "lbn",
     "LDN": "ldn",
     "MCG": "mcg",
+    "PN G": "png",
+    "HH": "hh",
+    "WR": "wr",
     "ESO": "eso",
     "Arp": "arp",
     "HCG": "hickson",
@@ -59,6 +64,7 @@ _SORTED_PREFIXES = sorted(PREFIX_MAP.keys(), key=len, reverse=True)
 class ParsedCrossRef:
     catalog: str
     identifier: str
+    storage_identifier: str
 
 
 _PURE_NUMERIC_RE = re.compile(r"^0*(\d+)([A-Za-z]*)$")
@@ -98,8 +104,8 @@ def _normalize_identifier(identifier: str) -> str:
     return digits + suffix
 
 
-def _match_prefix(token: str) -> tuple[str, str] | None:
-    """Return ``(catalog, identifier)`` for a token, or None if no prefix matches."""
+def _match_prefix(token: str) -> tuple[str, str, str] | None:
+    """Return parser-view and storage identifiers for a recognized token."""
     token = token.strip()
     if not token:
         return None
@@ -118,12 +124,26 @@ def _match_prefix(token: str) -> tuple[str, str] | None:
             if not rest or (not rest[0].isspace() and not rest[0].isdigit() and rest[0] != "-"):
                 continue
 
-        identifier = _strip_separator(rest)
+        catalog = PREFIX_MAP[prefix]
+        if catalog in {"mcg", "png", "wr"}:
+            storage_identifier = canonical_identifier(catalog, rest.strip())
+            identifier = storage_identifier
+            # MCG's zero zone is conventionally written without a sign; in a
+            # tight ``MCG-00-...`` token the first dash remains the separator
+            # in the parser's legacy view. Storage stays canonical and signed.
+            if catalog == "mcg" and identifier.startswith("-00-"):
+                identifier = identifier[1:]
+        else:
+            identifier = _strip_separator(rest)
+            storage_identifier = _normalize_identifier(identifier)
         if not identifier:
             continue
 
-        catalog = PREFIX_MAP[prefix]
-        return catalog, _normalize_identifier(identifier)
+        return (
+            catalog,
+            _normalize_identifier(identifier),
+            canonical_identifier(catalog, storage_identifier),
+        )
 
     return None
 
@@ -143,6 +163,12 @@ def parse_other_id(raw: str | None) -> list[ParsedCrossRef]:
         match = _match_prefix(token)
         if match is None:
             continue
-        catalog, identifier = match
-        results.append(ParsedCrossRef(catalog=catalog, identifier=identifier))
+        catalog, identifier, storage_identifier = match
+        results.append(
+            ParsedCrossRef(
+                catalog=catalog,
+                identifier=identifier,
+                storage_identifier=storage_identifier,
+            )
+        )
     return results

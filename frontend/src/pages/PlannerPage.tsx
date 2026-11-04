@@ -7,7 +7,7 @@
  * adds a rig-framed thumbnail on each card plus a coverage-range
  * filter ("Size in frame"). Row click opens ``PlannerDetailPanel``.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
@@ -63,6 +63,15 @@ import WishlistTab from "@/components/planner/WishlistTab";
 import { useFavoriteIds, useAddFavorite, useRemoveFavorite } from "@/api/wishlist";
 
 const DEFAULT_PAGE_SIZE = 100;
+
+
+function plannerFacetCount(
+  counts: Record<string, number> | undefined,
+  code: string,
+  fallbackCount: number,
+): number {
+  return counts === undefined ? fallbackCount : (counts[code] ?? 0);
+}
 
 
 function formatLocalTime(iso: string, tz: string): string {
@@ -132,12 +141,27 @@ export default function PlannerPage() {
   const minHours = storeMinHours ?? settings?.planner_min_visibility_hours ?? 2.0;
   const setMinHours = (v: number) => storeSetMinHours(v);
   const [minHoursDraft, setMinHoursDraft] = useState<number>(minHours);
+  const minHoursChanging = useRef(false);
   const maxMag = storeMaxMag ?? settings?.planner_max_magnitude ?? 12.0;
   const setMaxMag = (v: number) => storeSetMaxMag(v);
   const [maxMagDraft, setMaxMagDraft] = useState<number>(maxMag);
+  const maxMagChanging = useRef(false);
   const minSize = storeMinSize ?? settings?.planner_min_size_arcmin ?? 5.0;
   const setMinSize = (v: number) => storeSetMinSize(v);
   const [minSizeDraft, setMinSizeDraft] = useState<number>(minSize);
+  const minSizeChanging = useRef(false);
+
+  useEffect(() => {
+    if (!minHoursChanging.current) setMinHoursDraft(minHours);
+  }, [minHours]);
+
+  useEffect(() => {
+    if (!maxMagChanging.current) setMaxMagDraft(maxMag);
+  }, [maxMag]);
+
+  useEffect(() => {
+    if (!minSizeChanging.current) setMinSizeDraft(minSize);
+  }, [minSize]);
 
   const framesWellDefault: [number, number] = [
     settings?.planner_frames_well_min_pct ?? 15,
@@ -149,8 +173,21 @@ export default function PlannerPage() {
     useState<[number, number]>(coverageRange);
   const [filtersSubOpen, setFiltersSubOpen] = useState(true);
   const [hoursEnabled, setHoursEnabled] = useState(true);
-  const [magEnabled, setMagEnabled] = useState(false);
-  const [sizeEnabled, setSizeEnabled] = useState(false);
+  const limitMode = restrictTonight ? "tonight" : "anytime";
+  const [magEnabledByMode, setMagEnabledByMode] = useState({
+    tonight: true,
+    anytime: false,
+  });
+  const [sizeEnabledByMode, setSizeEnabledByMode] = useState({
+    tonight: true,
+    anytime: false,
+  });
+  const magEnabled = magEnabledByMode[limitMode];
+  const setMagEnabled = (enabled: boolean) =>
+    setMagEnabledByMode((current) => ({ ...current, [limitMode]: enabled }));
+  const sizeEnabled = sizeEnabledByMode[limitMode];
+  const setSizeEnabled = (enabled: boolean) =>
+    setSizeEnabledByMode((current) => ({ ...current, [limitMode]: enabled }));
   const [coverageEnabled, setCoverageEnabled] = useState(false);
   const [pagination, setPagination] = useState<{ page: number; pageSize: number }>({
     page: 0,
@@ -272,13 +309,9 @@ export default function PlannerPage() {
         filterIntent,
       },
     ],
-    // Imaging-focused filters (min_hours / max_magnitude /
-    // min_size_arcmin / frames_well) only make sense in "Tonight"
-    // mode — a user browsing the full catalog expects parity with
-    // the DSO catalog page, which has none of these. Sending the
-    // user's saved imaging defaults in Anytime would silently
-    // collapse e.g. Galaxy Groups (small + faint) to a near-empty
-    // list.
+    // Magnitude and size checkbox state is mode-local. Tonight starts
+    // with both saved slider values enabled; Anytime starts with both
+    // disabled but still allows the user to opt into either filter.
     queryFn: () =>
       fetchPlannerTargets({
         // Tonight mode gates the query on ``locationId != null``
@@ -683,7 +716,7 @@ export default function PlannerPage() {
               }}
               options={(facetsQuery.data?.catalogs ?? []).map((c) => ({
                 code: c.code,
-                count: data?.catalog_counts?.[c.code] ?? c.count,
+                count: plannerFacetCount(data?.catalog_counts, c.code, c.count),
               }))}
             />
           </Box>
@@ -696,7 +729,7 @@ export default function PlannerPage() {
               }}
               options={(facetsQuery.data?.raw_types ?? []).map((t) => ({
                 code: t.code,
-                count: data?.raw_type_counts?.[t.code] ?? t.count,
+                count: plannerFacetCount(data?.raw_type_counts, t.code, t.count),
               }))}
             />
           </Box>
@@ -709,7 +742,7 @@ export default function PlannerPage() {
               }}
               options={(facetsQuery.data?.constellations ?? []).map((c) => ({
                 code: c.code,
-                count: data?.constellation_counts?.[c.code] ?? c.count,
+                count: plannerFacetCount(data?.constellation_counts, c.code, c.count),
               }))}
             />
           </Box>
@@ -747,8 +780,12 @@ export default function PlannerPage() {
                 min={0}
                 max={12}
                 step={0.5}
-                onChange={(_, v) => setMinHoursDraft(v as number)}
+                onChange={(_, v) => {
+                  minHoursChanging.current = true;
+                  setMinHoursDraft(v as number);
+                }}
                 onChangeCommitted={(_, v) => {
+                  minHoursChanging.current = false;
                   setMinHours(v as number);
                   setPagination((p) => ({ ...p, page: 0 }));
                 }}
@@ -781,12 +818,21 @@ export default function PlannerPage() {
               max={0}
               step={0.5}
               scale={(v) => -v}
-              onChange={(_, v) => setMaxMagDraft(-(v as number))}
+              onChange={(_, v) => {
+                maxMagChanging.current = true;
+                setMaxMagDraft(-(v as number));
+              }}
               onChangeCommitted={(_, v) => {
+                maxMagChanging.current = false;
                 setMaxMag(-(v as number));
                 setPagination((p) => ({ ...p, page: 0 }));
               }}
             />
+            {magEnabled && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                Objects with no listed brightness are shown.
+              </Typography>
+            )}
           </Box>
           <Box sx={{ width: { xs: "100%", sm: 180 } }}>
             <Stack direction="row" alignItems="center">
@@ -813,12 +859,21 @@ export default function PlannerPage() {
               min={0}
               max={60}
               step={1}
-              onChange={(_, v) => setMinSizeDraft(v as number)}
+              onChange={(_, v) => {
+                minSizeChanging.current = true;
+                setMinSizeDraft(v as number);
+              }}
               onChangeCommitted={(_, v) => {
+                minSizeChanging.current = false;
                 setMinSize(v as number);
                 setPagination((p) => ({ ...p, page: 0 }));
               }}
             />
+            {sizeEnabled && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                Objects with no listed size are hidden.
+              </Typography>
+            )}
           </Box>
           {rigId != null && (
             <Box sx={{ width: { xs: "100%", sm: 200 } }}>

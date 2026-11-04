@@ -1,0 +1,11 @@
+# NightCrate "part of" list. MIT licensed.
+# Each row makes part_designation a part of whole_designation. A row is used
+# only when both designations resolve to loaded objects.
+# Rows are reviewed against SIMBAD and the source catalogs.
+whole_designation,part_designation,notes
+LBN 191,NGC 6960,Western Veil; a child of the Cygnus Loop in SIMBAD
+LBN 191,NGC 6992,Eastern Veil; a child of the Cygnus Loop in SIMBAD
+LBN 191,NGC 6995,Eastern Veil; a child of the Cygnus Loop in SIMBAD
+LBN 191,NGC 6974,Inside the loop; OpenNGC types it SNR (NGC identification uncertain)
+LBN 191,NGC 6979,Inside the loop; OpenNGC types it SNR
+LBN 191,IC 1340,Inside the loop; OpenNGC: bright knot in the Veil Nebula

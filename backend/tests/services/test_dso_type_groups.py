@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from nightcrate.services.dso_type_groups import (
     TYPE_GROUPS,
+    filter_type_code,
     group_for_raw_type,
+    raw_types_for_filter_codes,
     raw_types_for_group,
 )
 
@@ -58,6 +62,27 @@ def test_unknown_group_returns_empty_tuple():
 
 def test_unknown_raw_type_falls_to_other():
     assert group_for_raw_type("QuasarFuture") == "Other"
+
+
+@pytest.mark.parametrize(
+    ("raw_type", "expected"),
+    [("HII", "EmN"), ("EmN", "EmN"), ("G", "G")],
+)
+def test_filter_type_code(raw_type, expected):
+    assert filter_type_code(raw_type) == expected
+
+
+@pytest.mark.parametrize(
+    ("codes", "expected"),
+    [
+        (["EmN"], ["EmN", "HII"]),
+        (["HII"], ["EmN", "HII"]),
+        (["HII", "EmN", "G"], ["EmN", "HII", "G"]),
+        (["QuasarFuture"], ["QuasarFuture"]),
+    ],
+)
+def test_raw_types_for_filter_codes(codes, expected):
+    assert raw_types_for_filter_codes(codes) == expected
 
 
 def test_display_order_is_unique_and_monotonic():
