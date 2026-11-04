@@ -174,6 +174,44 @@ def test_read_common_names_validates(tmp_path: Path, rows, match: str):
         read_common_names(_source(path))
 
 
+@pytest.mark.parametrize(
+    "sources",
+    [
+        "SIMBAD:one; SIMBAD:two",
+        "Wikidata:Q1; Wikipedia:Example",
+        "Wikipedia:Example; https://en.wikipedia.org/wiki/Example",
+        "https://science.nasa.gov/example; https://apod.nasa.gov/example",
+        "https://esa.int/example; https://esahubble.org/example; https://esawebb.org/example",
+        "https://one.noirlab.edu/example; https://two.noirlab.edu/example",
+        "https://one.saao.ac.za/example; https://two.saao.ac.za/example",
+    ],
+)
+def test_read_common_names_requires_distinct_source_families(tmp_path: Path, sources: str):
+    path = tmp_path / "common_names.csv"
+    _write_rows(path, _row(sources=sources))
+
+    with pytest.raises(ValueError, match="needs two sources"):
+        read_common_names(_source(path))
+
+
+def test_read_common_names_accepts_distinct_source_families(tmp_path: Path):
+    path = tmp_path / "common_names.csv"
+    _write_rows(
+        path,
+        _row(sources="https://science.nasa.gov/example; https://esahubble.org/example"),
+    )
+
+    assert read_common_names(_source(path))[0].names == ("Orion Nebula",)
+
+
+def test_read_common_names_reports_physical_file_line(tmp_path: Path):
+    path = tmp_path / "common_names.csv"
+    _write_rows(path, _row(designation="not a designation"))
+
+    with pytest.raises(ValueError, match="common-names row 3"):
+        read_common_names(_source(path))
+
+
 def test_read_common_names_allows_moving_a_name(tmp_path: Path):
     path = tmp_path / "common_names.csv"
     _write_rows(
@@ -234,19 +272,27 @@ def test_unlisting_writes_flag_zero(db, catalogs_root, nightcrate_dir):
 
 
 def test_list_conflicting_designations_for_one_object(db, catalogs_root, nightcrate_dir, caplog):
+    _append_openngc(
+        catalogs_root / "openngc" / "NGC.csv",
+        Name="NGC1952",
+        Type="SNR",
+        M="001",
+        **{"Common names": "Catalog Wrong,Catalog Kept"},
+    )
     _write_rows(
         nightcrate_dir / "common_names.csv",
-        _row("M 42", "First Listed Name"),
-        _row("NGC 1976", "Second Listed Name"),
+        _row("M 1", "First Listed Name"),
+        _row("NGC 1952", "Second Listed Name"),
+        _row("NGC 1952", "Catalog Wrong", action="remove", rank="", sources=""),
     )
 
     with caplog.at_level("WARNING", logger="nightcrate.catalog_loader.reconcile"):
         load_catalogs(db, catalogs_root)
 
-    assert _names(db, "M 42") == (
+    assert _names(db, "M 1") == (
         "First Listed Name",
         1,
-        ("Orion Nebula", "Great Orion Nebula"),
+        ("Second Listed Name", "Catalog Kept"),
     )
     assert any("resolve to one object" in record.getMessage() for record in caplog.records)
 

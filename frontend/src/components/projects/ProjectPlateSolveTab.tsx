@@ -26,6 +26,7 @@ import {
   type ProjectSolve,
 } from "@/api/projectSolve";
 import { headerNumber } from "@/components/analyzer/analyzerHelpers";
+import NameWithAlternates from "@/components/common/NameWithAlternates";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import ImagePreview from "@/components/plate-solve/ImagePreview";
@@ -596,7 +597,9 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
                     }}
                   >
                     <Box>
-                      <Typography sx={{ fontWeight: 500, fontSize: 13 }}>{title}</Typography>
+                      <Typography sx={{ fontWeight: 500, fontSize: 13 }}>
+                        <NameWithAlternates name={title} otherNames={object.other_names} />
+                      </Typography>
                       <Typography color="text.secondary" sx={{ fontSize: 12 }}>
                         {subtitle}
                       </Typography>

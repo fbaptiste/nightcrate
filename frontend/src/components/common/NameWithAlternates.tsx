@@ -15,7 +15,7 @@ export default function NameWithAlternates({
   otherNames,
   children,
   title,
-  tabIndex = 0,
+  tabIndex = null,
 }: Props) {
   const content = children ?? name;
   const tooltipTitle = title ?? (otherNames.length > 0 ? `Also known as ${otherNames.join(", ")}` : null);

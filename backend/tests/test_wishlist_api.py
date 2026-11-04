@@ -347,6 +347,28 @@ class TestFavorites:
         ]
         assert by_id[ids["ngc7000_id"]]["other_names"] == []
 
+        plan_body = {
+            "dso_id": ids["m42_id"],
+            "location_id": ids["location_id"],
+            "horizon_id": ids["horizon_id"],
+            "rig_id": ids["rig_id"],
+            "date_ranges": [{"start_date": "2026-06-01", "end_date": "2026-06-30"}],
+        }
+        created = client.post("/api/planner/wishlist/plans", json=plan_body)
+        listed = client.get("/api/planner/wishlist/plans")
+        calendar = client.get(
+            "/api/planner/wishlist/calendar",
+            params={
+                "location_id": ids["location_id"],
+                "horizon_id": ids["horizon_id"],
+                "rig_id": ids["rig_id"],
+            },
+        )
+
+        assert "other_names" not in created.json()
+        assert "other_names" not in listed.json()["items"][0]
+        assert "other_names" not in calendar.json()["targets"][0]
+
 
 # ── Plans CRUD ───────────────────────────────────────────────────────────────
 

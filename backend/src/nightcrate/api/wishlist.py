@@ -24,7 +24,7 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query
 
-from nightcrate.api._common import integrity_guard
+from nightcrate.api._common import integrity_guard, load_other_names
 from nightcrate.api.wishlist_models import (
     AddFavoriteRequest,
     CalendarResponse,
@@ -56,13 +56,6 @@ from nightcrate.services.astronomy import tonight_date
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/planner/wishlist", tags=["wishlist"])
-
-
-def _group_other_names(rows) -> dict[int, list[str]]:
-    grouped: dict[int, list[str]] = {}
-    for row in rows:
-        grouped.setdefault(int(row["dso_id"]), []).append(str(row["name"]))
-    return grouped
 
 
 # ── Date range helpers ───────────────────────────────────────────────────────
@@ -217,15 +210,9 @@ async def list_favorites_full() -> FavoritesFullResponse:
         )
         fav_rows = await cursor.fetchall()
 
-        other_names_cursor = await conn.execute(
-            """
-            SELECT don.dso_id, don.name
-            FROM dso_other_name don
-            JOIN favorite_target ft ON ft.dso_id = don.dso_id
-            ORDER BY don.dso_id, don.position
-            """
+        favorite_other_names = await load_other_names(
+            conn, [int(row["dso_id"]) for row in fav_rows]
         )
-        favorite_other_names = _group_other_names(await other_names_cursor.fetchall())
 
         cursor = await conn.execute(
             """
@@ -395,18 +382,11 @@ async def _resolve_plan_response(conn, plan_row, ranges: list[DateRangeOut]) -> 
         (plan_row["dso_id"],),
     )
     dso_row = await dso_cursor.fetchone()
-    other_names_cursor = await conn.execute(
-        "SELECT name FROM dso_other_name WHERE dso_id = ? ORDER BY position",
-        (plan_row["dso_id"],),
-    )
-    other_names = [str(row["name"]) for row in await other_names_cursor.fetchall()]
-
     return PlanResponse(
         id=int(plan_row["id"]),
         dso_id=int(plan_row["dso_id"]),
         primary_designation=dso_row["primary_designation"] if dso_row else "",
         common_name=dso_row["common_name"] if dso_row else None,
-        other_names=other_names,
         location_id=int(plan_row["location_id"]),
         location_name=loc_row["name"] if loc_row else "(deleted)",
         horizon_id=int(plan_row["horizon_id"]),
@@ -679,21 +659,6 @@ async def list_plans(
         )
         rows = await cursor.fetchall()
 
-        other_names_cursor = await conn.execute(
-            f"""
-            SELECT don.dso_id, don.name
-            FROM dso_other_name don
-            WHERE EXISTS (
-                SELECT 1 FROM target_plan tp
-                WHERE tp.dso_id = don.dso_id
-                {("AND " + " AND ".join(conditions)) if conditions else ""}
-            )
-            ORDER BY don.dso_id, don.position
-            """,  # noqa: S608  # nosec B608 - conditions contain only fixed SQL fragments
-            params,
-        )
-        plan_other_names = _group_other_names(await other_names_cursor.fetchall())
-
         all_plan_ids = [int(r["id"]) for r in rows]
         ranges_by_plan = await _load_date_ranges(conn, all_plan_ids)
 
@@ -703,7 +668,6 @@ async def list_plans(
                 dso_id=int(r["dso_id"]),
                 primary_designation=r["primary_designation"],
                 common_name=r["common_name"],
-                other_names=plan_other_names.get(int(r["dso_id"]), []),
                 location_id=int(r["location_id"]),
                 location_name=r["location_name"],
                 horizon_id=int(r["horizon_id"]),
@@ -790,21 +754,6 @@ async def get_calendar_data(
         )
         plan_rows = await plan_cursor.fetchall()
 
-        other_names_cursor = await conn.execute(
-            """
-            SELECT don.dso_id, don.name
-            FROM dso_other_name don
-            WHERE EXISTS (
-                SELECT 1 FROM target_plan tp
-                WHERE tp.dso_id = don.dso_id
-                  AND tp.location_id = ? AND tp.horizon_id = ? AND tp.rig_id = ?
-            )
-            ORDER BY don.dso_id, don.position
-            """,
-            (location_id, horizon_id, rig_id),
-        )
-        calendar_other_names = _group_other_names(await other_names_cursor.fetchall())
-
         all_plan_ids = [int(r["plan_id"]) for r in plan_rows]
         ranges_by_plan = await _load_date_ranges(conn, all_plan_ids)
         sections = await _load_sections(conn)
@@ -841,7 +790,6 @@ async def get_calendar_data(
             active=bool(r["active"]),
             primary_designation=r["primary_designation"],
             common_name=r["common_name"],
-            other_names=calendar_other_names.get(int(r["dso_id"]), []),
             plan_id=int(r["plan_id"]),
             date_ranges=ranges_by_plan.get(int(r["plan_id"]), []),
             notes=r["notes"],

@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, HTTPException, Query
 
+from nightcrate.api._common import load_other_names
 from nightcrate.api.dso_models import (
     CatalogFacet,
     CatalogSource,
@@ -224,26 +225,6 @@ async def _load_designations(conn, dso_ids: list[int]) -> dict[int, list[DsoDesi
     return grouped
 
 
-async def _load_other_names(conn, dso_ids: list[int]) -> dict[int, list[str]]:
-    """Fetch ordered alternate names for a bounded result set."""
-    if not dso_ids:
-        return {}
-    placeholders = ",".join("?" * len(dso_ids))
-    cursor = await conn.execute(
-        f"""
-        SELECT dso_id, name
-        FROM dso_other_name
-        WHERE dso_id IN ({placeholders})
-        ORDER BY dso_id, position
-        """,  # noqa: S608  # nosec B608 - bounded validated integer ids
-        dso_ids,
-    )
-    grouped: dict[int, list[str]] = {dso_id: [] for dso_id in dso_ids}
-    for row in await cursor.fetchall():
-        grouped[int(row["dso_id"])].append(str(row["name"]))
-    return grouped
-
-
 async def _load_group_refs(conn, dso_ids: list[int]) -> dict[int, list[DsoGroupRef]]:
     """Fetch group memberships for the bounded list/detail result set."""
     if not dso_ids:
@@ -442,7 +423,7 @@ async def list_dsos(
 
         dso_ids = [row["id"] for row in rows]
         designations = await _load_designations(conn, dso_ids)
-        other_names = await _load_other_names(conn, dso_ids)
+        other_names = await load_other_names(conn, dso_ids)
         group_refs = await _load_group_refs(conn, dso_ids)
 
         items = [
@@ -704,7 +685,7 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
         raise HTTPException(status_code=404, detail=f"DSO not found: {dso_id}")
 
     designations = (await _load_designations(conn, [dso_id])).get(dso_id, [])
-    other_names = (await _load_other_names(conn, [dso_id])).get(dso_id, [])
+    other_names = (await load_other_names(conn, [dso_id])).get(dso_id, [])
     part_of = (await _load_group_refs(conn, [dso_id])).get(dso_id, [])
     parts_cursor = await conn.execute(
         """

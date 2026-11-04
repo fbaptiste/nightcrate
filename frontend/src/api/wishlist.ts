@@ -87,7 +87,6 @@ export interface PlanResponse {
   dso_id: number;
   primary_designation: string;
   common_name: string | null;
-  other_names: string[];
   location_id: number;
   location_name: string;
   horizon_id: number;
@@ -260,7 +259,6 @@ export interface CalendarTargetRow {
   active: boolean;
   primary_designation: string;
   common_name: string | null;
-  other_names: string[];
   plan_id: number;
   date_ranges: DateRangeOut[];
   notes: string | null;

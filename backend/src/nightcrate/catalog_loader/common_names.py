@@ -6,6 +6,7 @@ import csv
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import urlparse
 
 from nightcrate.catalog_loader.crossref_parser import parse_other_id
 from nightcrate.catalog_loader.openngc_parser import _parse_name
@@ -55,8 +56,51 @@ def _designation_is_parseable(designation: str) -> bool:
     return len(parse_other_id(designation)) == 1
 
 
+_COUNTRY_SECOND_LEVEL_DOMAINS = frozenset({"ac", "co", "com", "edu", "gov", "net", "org"})
+
+
+def _registrable_domain(hostname: str) -> str:
+    labels = hostname.lower().strip(".").split(".")
+    if len(labels) <= 2:
+        return ".".join(labels)
+    if len(labels[-1]) == 2 and labels[-2] in _COUNTRY_SECOND_LEVEL_DOMAINS:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _source_family(source: str) -> str | None:
+    source = source.strip()
+    if not source:
+        return None
+
+    parsed = urlparse(source)
+    if parsed.scheme.lower() in {"http", "https"} and parsed.hostname:
+        hostname = parsed.hostname.lower().strip(".")
+        if hostname == "wikipedia.org" or hostname.endswith(".wikipedia.org"):
+            return "wikimedia"
+        if hostname == "wikidata.org" or hostname.endswith(".wikidata.org"):
+            return "wikimedia"
+        if hostname == "nasa.gov" or hostname.endswith(".nasa.gov"):
+            return "nasa"
+        if hostname in {"esa.int", "esahubble.org", "esawebb.org"} or hostname.endswith(
+            (".esa.int", ".esahubble.org", ".esawebb.org")
+        ):
+            return "esa"
+        return f"domain:{_registrable_domain(hostname)}"
+
+    prefix, separator, _identifier = source.partition(":")
+    if separator:
+        family = prefix.strip().casefold()
+        if family in {"wikidata", "wikipedia"}:
+            return "wikimedia"
+        return f"prefix:{family}"
+    return f"source:{source.casefold()}"
+
+
 def _source_count(value: str) -> int:
-    return sum(bool(source.strip()) for source in value.split(";"))
+    return len(
+        {family for source in value.split(";") if (family := _source_family(source)) is not None}
+    )
 
 
 def read_common_names(source: CatalogSource | None) -> list[ListedNames]:
@@ -65,14 +109,21 @@ def read_common_names(source: CatalogSource | None) -> list[ListedNames]:
         return []
 
     with source.file_path.open("r", encoding="utf-8", newline="") as handle:
-        lines = [line for line in handle if line.strip() and not line.lstrip().startswith("#")]
+        kept_lines = [
+            (line_number, line)
+            for line_number, line in enumerate(handle, start=1)
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+    lines = [line for _line_number, line in kept_lines]
     if not lines:
         return []
 
     grouped: dict[tuple[str, str], _ListedRows] = {}
     designation_targets: dict[str, str] = {}
     assigned_names: dict[str, str] = {}
-    for line_number, row in enumerate(csv.DictReader(lines), start=2):
+    reader = csv.DictReader(lines)
+    for row in reader:
+        line_number = kept_lines[reader.line_num - 1][0]
         values = {key: (value or "").strip() for key, value in row.items() if key is not None}
         designation = values.get("designation", "")
         target = values.get("target", "")

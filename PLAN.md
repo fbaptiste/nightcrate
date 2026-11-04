@@ -55,7 +55,7 @@ licence for everything in NightCrate.
   - [x] Task 2, names in the object step: one rebuild on upgrade (about 5 s),
     then no rebuild (0.25–0.37 s).
   - [x] Task 0, the names list: 225 names for 188 objects and groups, plus
-    three removals.
+    three removals (247 for 203 after Fred added the single-source names).
     - Each name has two independent sources: SIMBAD, NED, Wikidata or
       Wikipedia, and agency and society pages. The pages were fetched and
       checked for the name and the designation.
@@ -84,6 +84,17 @@ licence for everything in NightCrate.
 - [ ] **Fred's acceptance test.** He asked to publish first ("please
   continue and finalize this version so I can review tomorrow morning",
   2026-11-04).
+- [x] **Published** as [PR #24](https://github.com/fbaptiste/nightcrate/pull/24)
+  on 2026-11-04 (tag `v0.45.0`).
+- [x] **PR review fixes** (Fred, 2026-11-04: fix all ten findings, keep the
+  0067 rollback as it is, and add the 22 single-source names on his word).
+  - The list now holds 247 names for 203 objects and groups.
+  - Codex fixed the eight code findings in a separate worktree (records
+    `30`–`31`).
+  - **Verified by Claude:** 782 targeted tests, ruff, ruff format and bandit
+    (no medium or high findings), and `npm run build`. The shipped list
+    passes the stricter source rule. Fred's dev server loaded the fixes on
+    his database: 246 named objects, 95 other names, integrity ok.
   - [x] Task 5, docs: schema, development decisions, catalog architecture,
     README and the code map.
 - **Still due from earlier versions:**

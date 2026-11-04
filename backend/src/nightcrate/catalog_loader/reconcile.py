@@ -1087,13 +1087,20 @@ def build_object_set(
         if previous is not None:
             logger.warning(
                 "[reconcile] common-name designations %r and %r resolve to one object; "
-                "keeping the first",
+                "merging their names",
                 previous.designation,
                 listed.designation,
             )
-            continue
-        listed_by_object[object_index] = listed
+            listed_by_object[object_index] = ListedNames(
+                previous.designation,
+                previous.target,
+                merge_names(previous.names, listed.names),
+                previous.removals | listed.removals,
+            )
+        else:
+            listed_by_object[object_index] = listed
 
+    final_names_by_object: list[tuple[str, ...]] = []
     for index, draft in enumerate(drafts):
         contributions = sorted(draft.merged_name_contributions, key=lambda item: item[:2])
         catalog_names = merge_names(
@@ -1112,7 +1119,7 @@ def build_object_set(
             )
             draft.columns["common_name_augmented"] = 1
         draft.columns["common_name"] = names[0] if names else None
-        draft.catalog_names = names
+        final_names_by_object.append(names)
 
     group_indexes = {
         (group.catalog, canonical_identifier(group.catalog, group.identifier)): index
@@ -1177,9 +1184,9 @@ def build_object_set(
             tuple(draft.designations),
             draft.file_order,
             draft.catalog_id,
-            draft.catalog_names[1:],
+            final_names_by_object[index][1:],
         )
-        for draft in drafts
+        for index, draft in enumerate(drafts)
     )
     if dropped_required_matches:
         logger.info(

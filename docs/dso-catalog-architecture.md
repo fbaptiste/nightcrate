@@ -353,8 +353,9 @@ designation claim has settled (`catalog_loader/common_names.py`):
 The list is an editorial object input: when it changes, the object step
 reruns. It adds no `dso_source_entry` rows. Each `name` row cites at least
 two independent sources (see the development decisions); the validator
-rejects bad ranks, commas, single-source rows, and a name given to two
-targets. Rows for optional catalogs that are off are skipped at DEBUG.
+rejects bad ranks, commas, rows with fewer than two independent source
+families (one per organisation; Wikidata and Wikipedia count once), and a
+name given to two targets. Rows for optional catalogs that are off are skipped at DEBUG.
 
 ## Match screen
 

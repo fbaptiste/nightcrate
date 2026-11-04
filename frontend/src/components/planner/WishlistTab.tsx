@@ -748,7 +748,11 @@ function FavoriteCard({
             </Typography>
             {dso.common_name && (
               <Typography variant="body2" color="text.secondary">
-                <NameWithAlternates name={dso.common_name} otherNames={dso.other_names} />
+                <NameWithAlternates
+                  name={dso.common_name}
+                  otherNames={dso.other_names}
+                  tabIndex={0}
+                />
               </Typography>
             )}
             <Chip

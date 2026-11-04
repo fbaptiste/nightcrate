@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
-from nightcrate.api._common import get_or_404, integrity_guard, row_to_dict
+from nightcrate.api._common import get_or_404, integrity_guard, load_other_names, row_to_dict
 from nightcrate.api.plate_solve import _failure_detail, query_dsos_in_cone
 from nightcrate.api.project_solve_models import (
     IdentifiedDso,
@@ -161,19 +161,7 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     )
     link_rows = [row_to_dict(r) for r in await cursor.fetchall()]
 
-    cursor = await conn.execute(
-        """
-        SELECT don.dso_id, don.name
-        FROM dso_other_name don
-        JOIN project_dso pd ON pd.dso_id = don.dso_id
-        WHERE pd.solve_id = ?
-        ORDER BY don.dso_id, don.position
-        """,
-        (solve["id"],),
-    )
-    other_names: dict[int, list[str]] = {}
-    for row in await cursor.fetchall():
-        other_names.setdefault(int(row["dso_id"]), []).append(str(row["name"]))
+    other_names = await load_other_names(conn, [int(row["dso_id"]) for row in link_rows])
 
     # is_main now derives from project_target (the persistent source of truth),
     # so toggling a chip from the Overview and from the Plate Solve tab share

@@ -34,7 +34,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from nightcrate.api.dso import _load_other_names, dso_search_clause
+from nightcrate.api._common import load_other_names
+from nightcrate.api.dso import dso_search_clause
 from nightcrate.api.planner_models import (
     AnnualHoursPoint as AnnualHoursPointOut,
 )
@@ -528,9 +529,9 @@ async def list_targets(
     q: str | None = Query(
         None,
         description=(
-            "Free-text search over designations + common names — same semantics "
-            "as the DSO catalog's ``q``. Matches a designation ``search_key`` "
-            "by prefix or a case-insensitive substring of ``common_name``."
+            "Free-text search over object designations and every object name, "
+            "plus group designations and names and the designation and every "
+            "name of a group's whole object."
         ),
     ),
     restrict_tonight: bool = Query(
@@ -1073,7 +1074,7 @@ async def list_targets(
                 page_dso_ids,
             )
             fetched_designations = await designation_rows.fetchall()
-            other_names_by_dso = await _load_other_names(conn, page_dso_ids)
+            other_names_by_dso = await load_other_names(conn, page_dso_ids)
 
         wikipedia_by_dso: dict[int, tuple[str | None, str | None]] = {}
         for row in fetched_wiki:
