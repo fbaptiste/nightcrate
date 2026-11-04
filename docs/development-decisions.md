@@ -367,9 +367,10 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
     `assign` moves it to the target; `separate`, or an `assign` whose target
     isn't loaded, drops it. A duplicate row has no data of its own, so it
     never becomes a standalone object.
-  - The catalog table's designation cell shows the names on hover only. It
-    has no tab stop of its own, so Enter keeps opening the row; keyboard
-    users reach the names through the Common name cell and the detail panel.
+  - The catalog table's designation and Common name cells show the names on
+    hover only. Names inside the grid, a button or an option have no tab
+    stop of their own, so Enter keeps opening the row; keyboard users reach
+    the other names through the detail panel.
   - Results show other names on hover (`NameWithAlternates`) wherever a
     result's name appears, and as a line in the detail panels. List
     endpoints load `other_names` for the returned page only.

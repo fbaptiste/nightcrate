@@ -81,9 +81,16 @@ licence for everything in NightCrate.
   - on Fred's own database: 0067 applied by his dev server on 2026-11-04,
     234 named objects, 87 other names, no commas, M 102 = NGC 5866,
     integrity ok.
-- [ ] **Fred's acceptance test.** He asked to publish first ("please
+- [x] **Fred's acceptance test.** He asked to publish first ("please
   continue and finalize this version so I can review tomorrow morning",
-  2026-11-04).
+  2026-11-04), then accepted it on 2026-11-04 ("accepted, please get PR
+  ready for me to merge it").
+- [x] **Checks before merge (Claude, 2026-11-04):**
+  - the full backend suite: 3,586 passed, 4 skipped;
+  - ruff, ruff format and bandit (no medium or high findings);
+  - the review record's tracked items have their status at merge;
+  - the development decision on keyboard access corrected (names in the
+    grid have no tab stop since the PR review fixes).
 - [x] **Published** as [PR #24](https://github.com/fbaptiste/nightcrate/pull/24)
   on 2026-11-04 (tag `v0.45.0`).
 - [x] **PR review fixes** (Fred, 2026-11-04: fix all ten findings, keep the
