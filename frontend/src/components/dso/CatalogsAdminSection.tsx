@@ -1,8 +1,8 @@
 /**
  * Admin → Catalogs section.
  *
- * Shows every registered DSO catalog source as a row with per-source
- * fetch controls, followed by the optional catalogs available to add.
+ * Shows actionable DSO catalog sources with per-source fetch controls,
+ * followed by the optional catalogs available to add.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -58,9 +58,8 @@ interface SourceRowProps {
   credit?: string;
   /** When truthy, an inline "Update available" chip renders next to the
    *  display name so users notice without hunting for a bumped version
-   *  string. Sources that don't have a remote-version semantic (e.g.,
-   *  in-repo bundled augment / external-refs CSV) simply never set
-   *  this. ``tooltip`` lets the caller explain WHY an update is offered
+   *  string. Sources that don't have a remote-version semantic simply never
+   *  set this. ``tooltip`` lets the caller explain WHY an update is offered
    *  (new data upstream, query_version bump, first-run download, …). */
   updateAvailable?: boolean;
   updateTooltip?: string;
@@ -617,48 +616,6 @@ export default function CatalogsAdminSection() {
             },
           ]}
           onAction={(btn) => runAction("wikidata_external_refs", btn)}
-        />
-
-        {/* NightCrate bundled — no separate reload button; covered by
-            the "Reload all from local cache" action at the top. */}
-        <SourceRow
-          displayName="NightCrate editorial augmentation"
-          version={sourcesById.has("nightcrate_augment") ? "Loaded" : "Not loaded"}
-          rowCount={sourcesById.get("nightcrate_augment")?.row_count ?? null}
-          license={
-            sourcesById.get("nightcrate_augment")?.license ?? "GPL-3.0-or-later"
-          }
-          subtitle="Bundled in-repo"
-          error={errors["nightcrate"] ?? null}
-          onDismissError={() => setErrors((prev) => ({ ...prev, nightcrate: null }))}
-          busy={isRowBusy("nightcrate")}
-          conflict={hasConflict("nightcrate")}
-          progress={rowProgress("nightcrate")}
-          actions={[]}
-          onAction={(btn) => runAction("nightcrate", btn)}
-        />
-
-        {/* NightCrate external-refs override CSV (v0.20.0) — editorial
-            overrides for Wikidata/Wikipedia matches. */}
-        <SourceRow
-          displayName="NightCrate external refs (editorial overrides)"
-          version={
-            sourcesById.has("nightcrate_external_refs") ? "Loaded" : "Not loaded"
-          }
-          rowCount={sourcesById.get("nightcrate_external_refs")?.row_count ?? null}
-          license={
-            sourcesById.get("nightcrate_external_refs")?.license ?? "GPL-3.0-or-later"
-          }
-          subtitle="Bundled in-repo — overrides Wikidata"
-          error={errors["nightcrate_external_refs"] ?? null}
-          onDismissError={() =>
-            setErrors((prev) => ({ ...prev, nightcrate_external_refs: null }))
-          }
-          busy={isRowBusy("nightcrate_external_refs")}
-          conflict={hasConflict("nightcrate_external_refs")}
-          progress={rowProgress("nightcrate_external_refs")}
-          actions={[]}
-          onAction={(btn) => runAction("nightcrate_external_refs", btn)}
         />
 
         <Box sx={{ mt: 1.5, pt: 2, borderTop: 1, borderColor: "divider" }}>

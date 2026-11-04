@@ -97,6 +97,15 @@ licence for everything in NightCrate.
     his database: 246 named objects, 95 other names, integrity ok.
   - [x] Task 5, docs: schema, development decisions, catalog architecture,
     README and the code map.
+- [x] **Two rows off the Catalogs page** (Fred, 2026-11-04: "yes, remove
+  both in this version"). "NightCrate editorial augmentation" and "NightCrate
+  external refs (editorial overrides)" had no actions, and the page intro
+  already says NightCrate's own lists come with the app. The sources still
+  load and are still listed by the API.
+  - Codex removed them (records `32`–`33`).
+  - **Verified by Claude:** `npm run build`, and the page on Fred's dev
+    server shows neither row; the other rows and "Reload all from local
+    cache" are unchanged, with no console errors.
 - **Still due from earlier versions:**
   - the CDS checks under v0.43.1 ("When CDS returns");
   - the live HASH (V/163) add and remove under v0.44.0.
