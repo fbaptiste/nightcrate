@@ -84,6 +84,33 @@ The spec comes next, decided with Fred one question at a time.
     - the C2 planner timings (in the plan's Codex review section);
     - "Part of LBN 191" versus showing "Cygnus Loop";
     - the two calls in the Codex review section.
+- [x] **Published** as [PR #23](https://github.com/fbaptiste/nightcrate/pull/23)
+  on 2026-11-03 (tag `v0.44.0`).
+- [x] **PR review fixes** (Fred asked for all ten findings and any speed-ups,
+  2026-11-03). Codex implemented them, then Claude reviewed and measured them
+  on a copy of a real database (45,436 objects). A fresh independent Codex
+  review followed.
+  - **Catalogs:**
+    - Sharpless and Barnard no longer show "Files missing" on a fresh
+      install.
+    - MCG names are spelled one way ("MCG +07-02-016").
+    - The Catalogs page names all six mirrors.
+    - One unreadable Arp row no longer stops every catalog.
+    - Two endpoints check that a database is set up.
+    - Removal runs one dry run fewer (7.0 s to 5.3 s).
+    - "Part of" groups can't collide with catalog groups.
+    - File checksums are cached.
+    - Partial MCG and PN G searches ("MCG-1-2") match.
+  - **Startup:** a repair check fired on every start because of the Pease 1
+    override, rebuilding every object: 4.1 s instead of 0.27 s.
+  - **Planner:**
+    - Transit times used J2000 RA and came out 1–2 min early (7 min near the
+      pole). They now use apparent coordinates, in the snapshot and the sky
+      track.
+    - Tonight went from 1.43 s to 0.29 s, the first Tonight request from
+      3.9 s to 1.2 s, and Anytime from 0.39 s to 0.24 s.
+    - Review finding 7 (planner metadata) alone measured at 13 ms; the fix
+      reads coordinates and metadata once.
 - **Still due:**
   - the CDS checks under v0.43.1 ("When CDS returns");
   - a live HASH (V/163) add and remove: of the mirrors, only Strasbourg

@@ -9,13 +9,16 @@ import astropy.units as u_astro
 import numpy as np
 import pytest
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 
 from nightcrate.services.planner_visibility import (
     DsoCoord,
     PlannerHorizon,
     PlannerLocation,
     VisibilityCache,
+    _apparent_altaz,
+    _compute_upper_transits,
+    _make_earth_location,
     compute_visibility_snapshot,
 )
 
@@ -218,6 +221,63 @@ def test_transit_altitude_matches_astropy_apparent_frame():
     assert vis.max_altitude_deg == vis.altitude_at_transit_deg
 
 
+def test_apparent_transits_match_dense_astropy_maxima():
+    dsos = [
+        DsoCoord(10, 145.0, PHOENIX.latitude_deg),
+        DsoCoord(11, 220.0, 85.0),
+        DsoCoord(12, 310.0, -45.0),
+    ]
+    coords = SkyCoord(
+        ra=np.asarray([dso.ra_deg for dso in dsos]) * u_astro.deg,
+        dec=np.asarray([dso.dec_deg for dso in dsos]) * u_astro.deg,
+        frame="icrs",
+    )
+    earth_loc = _make_earth_location(PHOENIX)
+    transits, altitudes = _compute_upper_transits(
+        earth_loc, date(2026, 4, 19), PHOENIX.timezone, coords
+    )
+
+    for coord, transit, altitude in zip(coords, transits, altitudes, strict=True):
+        offsets = TimeDelta(np.arange(-180.0, 181.0), format="sec")
+        dense_times = Time(transit) + offsets
+        dense_alt = np.asarray(
+            coord.transform_to(AltAz(obstime=dense_times, location=earth_loc)).alt.deg
+        )
+        peak_index = int(np.argmax(dense_alt))
+        dense_peak = dense_times[peak_index].to_datetime(timezone=transit.tzinfo)
+        assert abs((dense_peak - transit).total_seconds()) <= 2.0
+        assert float(altitude) == pytest.approx(float(dense_alt[peak_index]), abs=0.001)
+
+
+@pytest.mark.parametrize("latitude", [33.4484, -33.4484])
+def test_apparent_altaz_matches_astropy_grid(latitude):
+    location = replace(
+        PHOENIX,
+        latitude_deg=latitude,
+        timezone="UTC",
+        longitude_deg=18.0 if latitude < 0 else PHOENIX.longitude_deg,
+    )
+    earth_loc = _make_earth_location(location)
+    decs = np.linspace(-55.0, 75.0, 7) if latitude > 0 else np.linspace(-75.0, 55.0, 7)
+    coords = SkyCoord(
+        ra=np.linspace(5.0, 335.0, len(decs)) * u_astro.deg,
+        dec=decs * u_astro.deg,
+        frame="icrs",
+    )
+    start = Time("2026-04-20T01:00:00")
+    times = start + TimeDelta(np.linspace(0.0, 8 * 3600.0, 25), format="sec")
+    actual_alt, actual_az = _apparent_altaz(coords, times, earth_loc)
+    expected = coords[:, None].transform_to(AltAz(obstime=times[None, :], location=earth_loc))
+    expected_alt = np.asarray(expected.alt.deg)
+    expected_az = np.asarray(expected.az.deg)
+    below_85 = expected_alt < 85.0
+    alt_error_arcsec = np.abs(actual_alt - expected_alt) * 3600.0
+    az_error_deg = np.abs((actual_az - expected_az + 180.0) % 360.0 - 180.0)
+    az_error_scaled_arcsec = az_error_deg * np.cos(np.radians(expected_alt)) * 3600.0
+    assert np.max(alt_error_arcsec[below_85]) < 1.5
+    assert np.max(az_error_scaled_arcsec[below_85]) < 1.5
+
+
 def test_moon_separation_positive_when_visible():
     snap = _snapshot([M42])
     vis = snap.per_dso[M42.dso_id]
@@ -274,6 +334,10 @@ def test_cache_reuses_snapshot_for_same_key():
     snap_a = cache.get_or_compute(PHOENIX, FLAT_30, date(2026, 4, 19), [M42])
     snap_b = cache.get_or_compute(PHOENIX, FLAT_30, date(2026, 4, 19), [M42])
     assert snap_a is snap_b
+
+
+def test_cache_default_ttl_is_six_hours():
+    assert VisibilityCache().ttl_seconds == 21_600
 
 
 def test_cache_invalidates_on_horizon_change():

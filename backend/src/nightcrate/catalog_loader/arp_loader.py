@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import re
 from collections import defaultdict
 from collections.abc import Iterator, Mapping
@@ -18,6 +19,8 @@ from nightcrate.catalog_loader.vizier_tsv import parse_vizier_tsv
 
 if TYPE_CHECKING:
     from nightcrate.catalog_loader.reconcile import CollectorBatch
+
+logger = logging.getLogger("nightcrate.catalog_loader.arp")
 
 _MEMBER_FIELDS = ("Arp", "RAJ2000", "DEJ2000", "Name", "MType")
 _EDITORIAL_FIELDS = ("arp", "ra_j2000", "dec_j2000", "list_name", "mtype")
@@ -138,8 +141,15 @@ def collect_arp(
     identities_by_arp: dict[str, set[tuple[str, str] | tuple[str, str, str]]] = defaultdict(set)
     for row in parse_vizier_tsv(member_source.file_path):
         member_key = _key(row, _MEMBER_FIELDS)
-        if not member_key or member_key in seen_member_keys:
+        if not member_key:
             raise ValueError(f"duplicate Arp member key: {member_key}")
+        if member_key in seen_member_keys:
+            logger.warning(
+                "[catalog] duplicate Arp %s member %r; skipping row",
+                maybe_str(row.get("Arp")) or "?",
+                maybe_str(row.get("Name")) or "",
+            )
+            continue
         raw_arp = maybe_str(row.get("Arp"))
         if raw_arp is None:
             continue
@@ -148,7 +158,21 @@ def collect_arp(
         except ValueError:
             continue
         reviewed_value = reviewed.get(member_key)
-        designation = _designation(reviewed_value or (maybe_str(row.get("Name")) or ""))
+        is_new = reviewed_value == "new"
+        if reviewed_value is not None:
+            designation = _designation(reviewed_value)
+        else:
+            list_name = maybe_str(row.get("Name")) or ""
+            try:
+                designation = _designation(list_name)
+            except ValueError:
+                logger.warning(
+                    "[catalog] unreadable Arp %s member name %r; loading it as a new member",
+                    arp,
+                    list_name,
+                )
+                designation = None
+                is_new = True
         parsed.append(
             (
                 row,
@@ -156,7 +180,7 @@ def collect_arp(
                 arp,
                 designation,
                 reviewed_value is not None,
-                reviewed_value == "new",
+                is_new,
             )
         )
         seen_member_keys.add(member_key)

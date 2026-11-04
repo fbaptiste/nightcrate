@@ -21,6 +21,7 @@ from nightcrate.catalog_loader.catalog_choice import (
 )
 from nightcrate.catalog_loader.designations import canonical_identifier
 from nightcrate.catalog_loader.hash import file_sha256
+from nightcrate.catalog_loader.loader import _primary_designation_due
 from nightcrate.catalog_loader.mcg_loader import collect_mcg
 from nightcrate.catalog_loader.reconcile import build_object_set
 from nightcrate.catalog_loader.registry import CatalogSource
@@ -150,7 +151,7 @@ def test_collect_mcg_converts_sizes_magnitude_and_keeps_first_duplicate(
     assert set(batch.source_hashes) == set(MCG_FILES)
     assert "skipped 1 repeated identifiers" in caplog.text
     assert rows["+12-12-005"].columns["ra_deg"] == 184.3339
-    assert rows["+07-02-016"].columns["primary_designation"] == "MCG+07-02-016"
+    assert rows["+07-02-016"].columns["primary_designation"] == "MCG +07-02-016"
     assert rows["+07-02-016"].columns["maj_axis_arcmin"] == 160.0
     assert rows["+07-02-016"].columns["min_axis_arcmin"] == 45.0
     assert rows["+07-25-002"].columns["mag_b"] == 14.0
@@ -308,3 +309,106 @@ def test_mcg_load_remove_and_add_reactivates_same_object(db: sqlite3.Connection,
         dso_id,
         1,
     )
+
+
+def test_removed_mcg_project_target_repairs_legacy_primary_once(
+    db: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch,
+):
+    root = _catalogs_root(tmp_path, installed=True)
+    write_choice(root, with_added(None, "mcg"))
+    load_catalogs(db, root)
+    dso_id = int(
+        db.execute(
+            """
+            SELECT dso_id FROM dso_designation
+            WHERE catalog='mcg' AND identifier='+07-25-002' AND is_primary=1
+            """
+        ).fetchone()[0]
+    )
+    db.execute("INSERT INTO project (name) VALUES ('Legacy MCG primary')")
+    project_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.execute(
+        "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+        (project_id, dso_id),
+    )
+    db.execute(
+        "UPDATE dso SET primary_designation='MCG+07-25-002' WHERE id=?",
+        (dso_id,),
+    )
+    db.execute(
+        """
+        UPDATE dso_designation
+        SET display_form='MCG+07-25-002', search_key='mcg+07-25-002'
+        WHERE dso_id=? AND catalog='mcg' AND identifier='+07-25-002'
+        """,
+        (dso_id,),
+    )
+    db.commit()
+    write_choice(root, with_removed(read_choice(root), "mcg"))
+
+    load_catalogs(db, root)
+
+    object_step_called = False
+
+    def unexpected_object_step(*_args, **_kwargs):
+        nonlocal object_step_called
+        object_step_called = True
+        raise AssertionError("retained primary repair repeated")
+
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.reconcile.apply_object_set",
+        unexpected_object_step,
+    )
+    repeat = load_catalogs(db, root)
+
+    primary = db.execute(
+        """
+        SELECT d.primary_designation, dd.display_form
+        FROM dso d
+        JOIN dso_designation dd ON dd.dso_id=d.id AND dd.is_primary=1
+        WHERE d.id=?
+        """,
+        (dso_id,),
+    ).fetchone()
+    assert tuple(primary) == ("MCG +07-25-002", "MCG +07-25-002")
+    assert not object_step_called
+    assert next(result for result in repeat.results if result.source_id == "openngc").status == (
+        "unchanged"
+    )
+
+
+def test_mcg_primary_display_mismatch_triggers_one_repair(
+    db: sqlite3.Connection,
+    tmp_path: Path,
+):
+    root = _catalogs_root(tmp_path, installed=True)
+    write_choice(root, with_added(None, "mcg"))
+    load_catalogs(db, root)
+    primary = db.execute(
+        """
+        SELECT d.id, dd.display_form
+        FROM dso d
+        JOIN dso_designation dd ON dd.dso_id = d.id
+        WHERE dd.catalog = 'mcg' AND dd.is_primary = 1
+        ORDER BY d.id
+        LIMIT 1
+        """
+    ).fetchone()
+    dso_id = int(primary[0])
+    expected_display = str(primary[1])
+    db.execute(
+        "UPDATE dso SET primary_designation=? WHERE id=?",
+        (expected_display.replace("MCG ", "MCG"), dso_id),
+    )
+    db.commit()
+
+    assert _primary_designation_due(db.cursor())
+    load_catalogs(db, root)
+
+    assert (
+        db.execute("SELECT primary_designation FROM dso WHERE id=?", (dso_id,)).fetchone()[0]
+        == expected_display
+    )
+    assert not _primary_designation_due(db.cursor())

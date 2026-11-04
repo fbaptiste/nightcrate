@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from nightcrate.api.planner import _sort_items
+from nightcrate.api.planner_models import PlannerTargetItem
 from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services import hips_tiles
@@ -385,6 +387,100 @@ async def test_now_status_suppressed_for_non_today_date(client: TestClient, seed
     assert other_m42 is not None, "M 42 should still be visible the next night"
     assert other_m42["now_status"] is None
     assert all(item["now_status"] is None for item in other_items)
+
+
+async def test_now_status_computes_page_only_unless_used_for_sort(
+    client: TestClient, seed_db, monkeypatch
+):
+    _make_every_dso_visible(monkeypatch)
+    fixed_today = date(2026, 4, 19)
+    monkeypatch.setattr("nightcrate.api.planner._tonight_date", lambda _tz: fixed_today)
+    calls: list[list[int]] = []
+
+    def fake_now_status(_loc, _hor, coords, *, astro_dark_start_utc, astro_dark_end_utc):
+        ids = sorted(dso.dso_id for dso in coords)
+        calls.append(ids)
+        statuses = ("set", "up", "rising")
+        return {dso_id: statuses[index % len(statuses)] for index, dso_id in enumerate(ids)}
+
+    monkeypatch.setattr("nightcrate.api.planner.compute_now_status", fake_now_status)
+    common = {
+        "location_id": seed_db,
+        "date": fixed_today.isoformat(),
+        "min_hours": 0.0,
+    }
+
+    page_response = client.get(
+        "/api/planner/targets",
+        params={**common, "limit": 1, "sort": "primary_designation:asc"},
+    )
+    assert page_response.status_code == 200
+    assert len(calls[-1]) == 1
+    assert page_response.json()["items"][0]["now_status"] is not None
+
+    sorted_response = client.get(
+        "/api/planner/targets",
+        params={**common, "limit": 100, "sort": "now_status:asc"},
+    )
+    assert sorted_response.status_code == 200
+    assert len(calls[-1]) == sorted_response.json()["total"]
+    assert [item["now_status"] for item in sorted_response.json()["items"]] == [
+        "up",
+        "rising",
+        "set",
+    ]
+
+
+def test_key_sort_has_stable_ties_and_nulls_last_for_asc_and_desc():
+    def item(
+        dso_id: int,
+        designation: str,
+        common_name: str | None,
+        score: int | None,
+        status: str | None,
+    ):
+        return (
+            PlannerTargetItem.model_construct(
+                dso_id=dso_id,
+                primary_designation=designation,
+                common_name=common_name,
+                score_pct=score,
+                now_status=status,
+            ),
+            None,
+        )
+
+    rows = [
+        item(1, "NGC 10", "Alpha", 50, "set"),
+        item(2, "NGC 2", "alpha", 50, "up"),
+        item(3, "M 1", None, 50, "rising"),
+        item(4, "B 1", "Beta", None, None),
+        item(5, "NGC 2", "alpha", 60, "set"),
+    ]
+    _sort_items(
+        rows,
+        [("score_pct", "desc"), ("common_name", "asc"), ("primary_designation", "desc")],
+    )
+    assert [row[0].dso_id for row in rows] == [5, 1, 2, 3, 4]
+
+    _sort_items(rows, [("now_status", "asc"), ("score_pct", "desc")])
+    assert [row[0].dso_id for row in rows] == [2, 3, 5, 1, 4]
+
+
+def test_transit_datetime_sort_is_chronological_with_nulls_last():
+    early = datetime(2026, 4, 20, 3, 0, tzinfo=UTC)
+    late = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    rows = [
+        (SimpleNamespace(dso_id=3, transit_time_utc=None), None),
+        (SimpleNamespace(dso_id=2, transit_time_utc=late), None),
+        (SimpleNamespace(dso_id=1, transit_time_utc=early), None),
+    ]
+
+    _sort_items(rows, [("transit_time_utc", "asc")])
+    assert [row[0].dso_id for row in rows] == [1, 2, 3]
+
+    _sort_items(rows, [("transit_time_utc", "desc")])
+    assert [row[0].dso_id for row in rows] == [2, 1, 3]
 
 
 async def test_targets_endpoint_applies_max_magnitude(client: TestClient, seed_db):
@@ -1579,6 +1675,37 @@ async def test_planner_group_search_returns_all_members(client: TestClient, seed
         ids["NGC 4038"],
         ids["NGC 4039"],
     }
+
+
+async def test_planner_search_pads_partial_mcg_and_png_designations(
+    client: TestClient,
+    seed_db,
+):
+    async with get_db() as conn:
+        row = await (
+            await conn.execute("SELECT id FROM dso WHERE primary_designation='M 42'")
+        ).fetchone()
+        dso_id = int(row["id"])
+        await conn.executemany(
+            """
+            INSERT INTO dso_designation (
+                dso_id, catalog, identifier, display_form, search_key, is_primary
+            ) VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (
+                (dso_id, "mcg", "-01-02-003", "MCG -01-02-003", "mcg-01-02-003"),
+                (dso_id, "png", "010.8-01.8", "PN G010.8-01.8", "png010.8-01.8"),
+            ),
+        )
+        await conn.commit()
+
+    for query in ("MCG-1-2", "MCG-1", "PN G 10.8", "PN G 10"):
+        response = client.get(
+            "/api/planner/targets",
+            params={"restrict_tonight": "false", "q": query, "limit": 500},
+        )
+        assert response.status_code == 200
+        assert dso_id in {item["dso_id"] for item in response.json()["items"]}
 
 
 async def test_planner_group_catalog_filter_and_facets(client: TestClient, seed_grouped_dsos):

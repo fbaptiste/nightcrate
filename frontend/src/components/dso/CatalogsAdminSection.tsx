@@ -440,9 +440,11 @@ export default function CatalogsAdminSection() {
           <Box sx={{ flex: 1 }}>
             <Typography variant="body2" color="text.secondary">
               OpenNGC and 50 MGC are downloaded from GitHub. The optional catalogs
-              below come from VizieR (CDS Strasbourg, or its Harvard and South Africa
-              mirrors) when you add them. NightCrate&apos;s own lists, such as common
-              names, distances and reviewed matches, come with the app.
+              below come from VizieR when you add them: from CDS Strasbourg, or from
+              its mirrors at Harvard, South Africa, Tokyo, Beijing and India. The
+              Tokyo, Beijing and India mirrors use unencrypted connections.
+              NightCrate&apos;s own lists, such as common names, distances and reviewed
+              matches, come with the app.
             </Typography>
             {rowProgress("__all__") && (
               <Typography variant="caption" color="text.secondary" display="block">

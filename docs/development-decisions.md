@@ -348,6 +348,11 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
     of tight `MCG-…` tokens.
   - Long names map to the stored prefix: "Melotte 25" finds `Mel 25`, and
     likewise "Collinder", "Herbig-Haro" and "Wolf-Rayet".
+  - Partial MCG and PN G queries also try the zero-padded forms the typed
+    digits could mean (`designation_search_prefixes`, at most four
+    prefixes, built on `normalize_designation`): "MCG-1-2" finds
+    MCG -01-02-003 and "PN G 10.8" finds PN G010.8-01.8. Until 2026-11-03
+    such partial queries matched nothing.
   - `designations.py` imports nothing from `nightcrate`; `_common` imports
     `loader`, so a normal import from there would loop.
 - **Compute constellations in batches.** Collectors leave `constellation`
@@ -355,6 +360,31 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   `astronomy.constellations_for_coords` call. A per-row astropy call made the
   object build take about 150 s with every catalog on, against 1.2 s batched
   (measured 2026-11-02).
+- **Repair checks must settle.** Each `_…_due` check in `loader.py` forces
+  the whole object step, so one that stays true rebuilds every catalog
+  object on every start. From v0.44.0 until its PR review fixes,
+  `_designation_canon_due` did: OpenNGC lists Pease 1's PN G065.0-27.3 on
+  M 15, the reviewed `separate` override keeps it off, and with HASH not
+  loaded no object claims it. A start with nothing changed took 4.1 s
+  instead of 0.27 s (real database, 2026-11-03). The check now skips
+  identifiers a match override names.
+  - `_primary_designation_due` holds every stored primary name equal to
+    its primary designation's display form. MCG primaries were stored as
+    "MCG+07-02-016" until 2026-11-03; the first load after the fix renames
+    them (22,914 in a real database). A retained inactive object gets the
+    same name when its designations are rebuilt.
+  - After changing a collector or a check, confirm that a second
+    `load_catalogs(force=False)` runs no object step
+    (`test_separate_png_override_does_not_repeat_repair`).
+- **A bad downloaded row never stops the object step.** An Arp member name
+  the parser can't read loads as an anonymous "Arp N" member with a
+  warning, and a duplicate row is skipped. Errors in NightCrate's own lists
+  still raise; tests guard the shipped files. A `dso_parts.csv` whole whose
+  designation already names a collector group (`ldn`, `arp`) is skipped
+  with a warning, and the collector's group stays.
+- `hash.file_sha256` caches digests in process by resolved path, size,
+  mtime, ctime and inode. A file that changes during three reads in a row
+  returns its last digest uncached.
 - One article/entity may describe several objects; do not enforce cross-DSO
   uniqueness. A partial index on `(dso_id, provider) WHERE language IS NULL`
   supplies the deduplication SQLite's nullable UNIQUE constraint does not.
@@ -415,6 +445,19 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   stays on the event loop by design (0.1–3.1 s measured on a real-size
   database; the object step took 4.5 s with every optional catalog on,
   2026-11-02); moving it to a thread needs a database-contention policy first.
+  The app's connections use SQLite's rollback journal with a 5 s lock wait,
+  so a load in a thread could turn a waiting save into an error.
+- **Removing a catalog** first prepares the object step with the removal
+  (`prepare_removal_step`) and returns 409 if it is blocked, before the
+  choice file or any download changes; it runs no dry run. The separate
+  removal-preview endpoint keeps its dry run for the dialog's counts.
+  Measured 2026-11-03 with every catalog on: preview 3.1 s, removal
+  5.1–5.5 s (7.0 s with the earlier second dry run).
+- **Sharpless and Barnard on a fresh install** load whenever their files
+  appear (the legacy default), but `GET /catalogs/optional` reports them
+  `off` until they are chosen, applied or installed, so the page offers Add
+  rather than "Files missing". An applied or chosen catalog whose files are
+  gone still shows "Files missing".
 - **Designation order** uses one natural key (`services/dso_sorting.py`,
   registered as a SQLite function and mirrored in
   `frontend/src/lib/designationSort.ts`): display prefix case-insensitively,
@@ -463,7 +506,29 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   persisted. Display wraps to `[-180,+180]` with virtual south-seam points.
 - Visibility samples all active DSOs every five minutes during astronomical
   darkness, then filters in memory. Cache by location/date/horizon and both
-  location/horizon update timestamps. Empty and NULL sort values always go last.
+  location/horizon update timestamps, for 6 hours; catalog and database
+  changes clear the cache (`api/admin.py:_clear_planner_visibility_cache`).
+  Empty and NULL sort values always go last.
+- **Apparent coordinates, transformed once.** Transit times and altitudes,
+  and the five-minute altitude/azimuth grid, use each object's apparent
+  (TETE) position at one instant and the apparent sidereal time at each
+  sample, with the standard hour-angle formulas. The sky track's transit
+  uses the same apparent RA.
+  - Until 2026-11-03 the hour angle used the J2000 RA, so transits came out
+    56–131 s early (439 s at Dec +85°) and transit altitudes near the
+    zenith up to 0.37° low.
+  - Checked against a dense astropy AltAz search: transits within 1 s,
+    transit altitudes within 0.0002°, grid altitudes within 0.63″.
+  - With 45,436 objects, the first Tonight request went from 3.9 s to 1.2 s.
+- **Score every item, detail only the page.** The list scores every
+  filtered item with `score_values`, sorts and paginates, then runs
+  `score_targets` (breakdowns) and `compute_now_status` for the page only.
+  Now status covers every item only when it is a sort key. Candidates are
+  slotted dataclasses, and only page items become validated
+  `PlannerTargetItem`s: in Pydantic 2, `model_construct` measured slower
+  than validation. With 45,436 objects (2026-11-03), Tonight went from
+  1.43 s to 0.29 s and Anytime from 0.39 s to 0.24 s. See
+  [planner scoring](planner-scoring.md#4-combination--weighted-geometric-mean).
 - **Filter counts are tonight's.** Once a planner response has loaded, the
   type, catalog and constellation lists count from it, and a value with
   nothing passing counts 0; the catalog-wide `/api/dso/facets` totals are
@@ -486,6 +551,8 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   and a query binding one `?` per object fails with "too many SQL variables".
   Query by the same `active = 1` and coordinate conditions instead, or bind
   only a bounded page of ids. `test_anytime_with_40000_objects` guards this.
+  The list reads coordinates and metadata in one such query; chunked id
+  lists measured no faster (2026-11-03).
 - Moon separation is closest approach during target visibility, not at transit.
   Before comparing a distance-bearing astropy Sun/Moon coordinate with an ICRS
   target, use `astronomy.direction_only`; frame-origin translation otherwise

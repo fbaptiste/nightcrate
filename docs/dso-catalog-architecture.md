@@ -132,12 +132,13 @@ A database opened later applies the same choice once, including a removal.
 
 ## Removing a catalog
 
-`POST /api/admin/catalogs/optional/{catalog_id}/remove` first runs the removal
-as a dry run (`loader.prepare_removal_step`, then `apply_object_set(...,
-dry_run=True)`); `GET .../removal-preview` returns the same counts for the
-confirmation dialog. A deferred step blocks the removal with 409. Otherwise the
-removal is written to `choice.json`, the catalog's VizieR files that no catalog
-still on shares are deleted, and the loader runs.
+`GET .../removal-preview` runs the removal as a dry run
+(`loader.prepare_removal_step`, then `apply_object_set(..., dry_run=True)`)
+and returns the counts for the confirmation dialog.
+`POST /api/admin/catalogs/optional/{catalog_id}/remove` prepares the same step
+without the dry run: a deferred step or a preparation error blocks the removal
+with 409. Otherwise the removal is written to `choice.json`, the catalog's
+VizieR files that no catalog still on shares are deleted, and the loader runs.
 
 `apply_object_set` deletes an unclaimed object only with positive evidence that
 removed catalogs alone provided it:

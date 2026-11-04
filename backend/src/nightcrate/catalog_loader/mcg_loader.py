@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from nightcrate.catalog_loader._common import maybe_float, maybe_str
 from nightcrate.catalog_loader.designations import canonical_identifier
 from nightcrate.catalog_loader.hash import file_sha256, row_sha256
+from nightcrate.catalog_loader.loader import _build_display_form
 from nightcrate.catalog_loader.registry import CatalogSource
 from nightcrate.catalog_loader.vizier_tsv import parse_vizier_tsv
 
@@ -90,7 +91,7 @@ def _columns(
     if other_name_note is not None:
         notes.append(f"Also {other_name_note}")
     return {
-        "primary_designation": f"MCG{identifier}",
+        "primary_designation": _build_display_form("mcg", identifier),
         "obj_type": "G",
         "raw_obj_type": None,
         "ra_deg": ra_deg,

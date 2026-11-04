@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -79,6 +80,7 @@ from nightcrate.services.planner_scoring import (
     ScoringInput,
     TargetScore,
     score_targets,
+    score_values,
 )
 from nightcrate.services.planner_scoring_constants import FILTER_LINES
 from nightcrate.services.planner_sky_track import compute_sky_track
@@ -124,7 +126,7 @@ PLANNER_SORT_FIELDS: dict[str, str] = {
     "hours_visible": "number",
     "max_altitude_deg": "number",
     "altitude_at_transit_deg": "number",
-    "transit_time_utc": "string",  # ISO strings sort chronologically
+    "transit_time_utc": "datetime",
     "min_moon_separation_deg": "number",
     "coverage_pct": "number",
     "now_status": "now_status",
@@ -135,6 +137,33 @@ PLANNER_SORT_FIELDS: dict[str, str] = {
 }
 
 _NOW_STATUS_ORDER = {"up": 0, "rising": 1, "set": 2}
+
+
+@dataclass(slots=True)
+class _PlannerCandidate:
+    """Lightweight row used until pagination bounds validation work."""
+
+    dso_id: int
+    primary_designation: str
+    common_name: str | None
+    obj_type: str | None
+    ra_deg: float
+    dec_deg: float
+    constellation: str | None
+    maj_axis_arcmin: float | None
+    min_axis_arcmin: float | None
+    mag_v: float | None
+    distance_pc: float | None
+    hours_visible: float | None
+    max_altitude_deg: float | None
+    peak_time_utc: datetime | None
+    transit_time_utc: datetime | None
+    altitude_at_transit_deg: float | None
+    min_moon_separation_deg: float | None
+    coverage_pct: float | None
+    now_status: str | None = None
+    score_pct: int | None = None
+    quality_label: str | None = None
 
 
 def _score_breakdown_to_out(score: TargetScore) -> ScoreBreakdownOut:
@@ -210,7 +239,7 @@ def _parse_sort(sort: str | None) -> list[tuple[str, str]]:
     return out
 
 
-def _sort_value(item: PlannerTargetItem, field: str):
+def _sort_value(item: PlannerTargetItem | _PlannerCandidate, field: str):
     """Pull a raw sortable value off a ``PlannerTargetItem``. ``None``
     values pass through — null handling lives in the comparator so
     direction never inverts "null sorts last". Empty or whitespace-
@@ -234,42 +263,20 @@ def _sort_value(item: PlannerTargetItem, field: str):
 
 
 def _sort_items(
-    items: list[tuple[PlannerTargetItem, DsoVisibility | None]],
+    items: list[tuple[PlannerTargetItem | _PlannerCandidate, DsoVisibility | None]],
     sort_entries: list[tuple[str, str]],
 ) -> None:
-    """Stable multi-key sort in place. Applies the keys right-to-left
-    so the first entry is the primary key (Python's Timsort is stable,
-    so later passes preserve earlier tie-breaks). Nulls always sort
-    last, regardless of the key's direction."""
-    from functools import cmp_to_key
-
-    def make_cmp(direction: str, sort_values: dict[int, object]):
-        asc = direction == "asc"
-
-        def cmp(
-            a: tuple[PlannerTargetItem, DsoVisibility | None],
-            b: tuple[PlannerTargetItem, DsoVisibility | None],
-        ) -> int:
-            va = sort_values[id(a)]
-            vb = sort_values[id(b)]
-            if va is None and vb is None:
-                return 0
-            if va is None:
-                return 1  # nulls always last
-            if vb is None:
-                return -1
-            if va < vb:
-                return -1 if asc else 1
-            if va > vb:
-                return 1 if asc else -1
-            return 0
-
-        return cmp_to_key(cmp)
-
+    """Stable key-based multi-sort with nulls last in both directions."""
     items.sort(key=lambda entry: entry[0].dso_id)
     for field, direction in reversed(sort_entries):
         sort_values = {id(entry): _sort_value(entry[0], field) for entry in items}
-        items.sort(key=make_cmp(direction, sort_values))
+        populated = [entry for entry in items if sort_values[id(entry)] is not None]
+        nulls = [entry for entry in items if sort_values[id(entry)] is None]
+        populated.sort(
+            key=lambda entry: sort_values[id(entry)],
+            reverse=direction == "desc",
+        )
+        items[:] = populated + nulls
 
 
 # ── DB helpers ───────────────────────────────────────────────────────────────
@@ -419,16 +426,25 @@ async def _load_rig_fov(conn, rig_id: int) -> tuple[PlannerRigSummary, float, fl
     )
 
 
-async def _load_dso_coords(conn) -> list[DsoCoord]:
+async def _load_dsos(
+    conn, *, include_metadata: bool = True
+) -> tuple[list[DsoCoord], dict[int, dict]]:
+    columns = (
+        "id, primary_designation, common_name, obj_type, "
+        "ra_deg, dec_deg, constellation, maj_axis_arcmin, min_axis_arcmin, "
+        "mag_v, distance_pc"
+        if include_metadata
+        else "id, ra_deg, dec_deg, maj_axis_arcmin"
+    )
     cursor = await conn.execute(
-        """
-        SELECT id, ra_deg, dec_deg, maj_axis_arcmin
+        f"""
+        SELECT {columns}
         FROM dso
         WHERE active = 1 AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL
-        """
+        """,  # noqa: S608  # nosec B608 - columns are selected from fixed literals above
     )
     rows = await cursor.fetchall()
-    return [
+    coords = [
         DsoCoord(
             dso_id=int(r["id"]),
             ra_deg=float(r["ra_deg"]),
@@ -439,24 +455,8 @@ async def _load_dso_coords(conn) -> list[DsoCoord]:
         )
         for r in rows
     ]
-
-
-async def _load_dso_metadata(conn, dso_ids: list[int]) -> dict[int, dict]:
-    """Fetch UI-visible metadata for a filtered DSO set."""
-    if not dso_ids:
-        return {}
-    cursor = await conn.execute(
-        """
-        SELECT id, primary_designation, common_name, obj_type,
-               ra_deg, dec_deg, constellation,
-               maj_axis_arcmin, min_axis_arcmin,
-               mag_v, distance_pc
-        FROM dso
-        WHERE active = 1 AND ra_deg IS NOT NULL AND dec_deg IS NOT NULL
-        """
-    )
-    rows = await cursor.fetchall()
-    return {int(r["id"]): dict(r) for r in rows}
+    metadata = {int(r["id"]): dict(r) for r in rows} if include_metadata else {}
+    return coords, metadata
 
 
 # ── Tonight-date helper ──────────────────────────────────────────────────────
@@ -619,7 +619,7 @@ async def list_targets(
         # the requested night IS tonight — for any other date the current
         # instant says nothing about that night, so we suppress it below.
         is_requested_today = night_date == tonight
-        dsos = await _load_dso_coords(conn)
+        dsos, metadata = await _load_dsos(conn)
 
     # "Anytime" mode skips the visibility snapshot entirely — the
     # handler acts as a paginated catalog browser with the same
@@ -707,8 +707,6 @@ async def list_targets(
         # Anytime mode — every active DSO with coordinates is a candidate.
         visible_ids = [d.dso_id for d in dsos]
     async with get_db() as conn:
-        metadata = await _load_dso_metadata(conn, visible_ids)
-
         # Optional free-text search — same matching rules as the DSO
         # catalog so a user's mental model carries across pages.
         search_match_ids: set[int] | None = None
@@ -724,35 +722,6 @@ async def list_targets(
                 search_params,
             )
             search_match_ids = {int(r["id"]) for r in await cursor.fetchall()}
-
-    # Per-DSO "currently up / rising / set" status — Tonight mode only,
-    # and only when a location is present (location-less Anytime mode
-    # has no horizon to test against). Narrow the input set by the
-    # user's free-text search when present — otherwise the vectorised
-    # astropy call runs over every visible DSO (potentially thousands)
-    # even though the response's ``items`` list will be a handful
-    # after the filter loop below. The common big-win narrowing is
-    # the search box; faceted-filter narrowing happens in the loop.
-    now_status_by_dso: dict[int, str] = {}
-    if (
-        restrict_tonight
-        and is_requested_today
-        and location is not None
-        and horizon is not None
-        and snapshot is not None
-    ):
-        candidate_ids = set(visible_ids)
-        if search_match_ids is not None:
-            candidate_ids &= search_match_ids
-        visible_coords = [d for d in dsos if d.dso_id in candidate_ids]
-        now_status_by_dso = await asyncio.to_thread(
-            compute_now_status,
-            location,
-            horizon,
-            visible_coords,
-            astro_dark_start_utc=snapshot.dark_window.start_utc,
-            astro_dark_end_utc=snapshot.dark_window.end_utc,
-        )
 
     raw_type_filter: set[str] | None = None
     if type:
@@ -806,7 +775,7 @@ async def list_targets(
         dso_id: min(candidates)[-1] for dso_id, candidates in catalog_display_candidates.items()
     }
 
-    items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
+    items: list[tuple[_PlannerCandidate, DsoVisibility | None]] = []
     # Faceted-search counts: per-chip-value tallies of DSOs that pass
     # every filter EXCEPT the one the chip belongs to. Lets the
     # frontend render "Galaxy (234)" labels that reflect the user's
@@ -891,7 +860,7 @@ async def list_targets(
             continue
 
         vis = snapshot.per_dso.get(dso_id) if snapshot is not None else None
-        item = PlannerTargetItem(
+        item = _PlannerCandidate(
             dso_id=dso_id,
             primary_designation=catalog_display.get(dso_id, meta["primary_designation"]),
             common_name=meta["common_name"],
@@ -905,12 +874,12 @@ async def list_targets(
             distance_pc=meta["distance_pc"],
             hours_visible=vis.hours_visible if vis is not None else None,
             max_altitude_deg=vis.max_altitude_deg if vis is not None else None,
-            peak_time_utc=vis.peak_time_utc.isoformat() if vis is not None else None,
-            transit_time_utc=vis.transit_time_utc.isoformat() if vis is not None else None,
+            peak_time_utc=vis.peak_time_utc if vis is not None else None,
+            transit_time_utc=vis.transit_time_utc if vis is not None else None,
             altitude_at_transit_deg=(vis.altitude_at_transit_deg if vis is not None else None),
             min_moon_separation_deg=(vis.min_moon_separation_deg if vis is not None else None),
             coverage_pct=coverage,
-            now_status=now_status_by_dso.get(dso_id),
+            now_status=None,
         )
         items.append((item, vis))
 
@@ -929,22 +898,19 @@ async def list_targets(
             )
             for item, vis in items
         ]
-        scores = score_targets(
+        values = score_values(
             scoring_inputs,
             snapshot,
             rig_fov[0] if rig_fov is not None else None,
             rig_fov[1] if rig_fov is not None else None,
             parsed_filter_intent,
             settings,
-            location.timezone,
         )
         for item, _vis in items:
-            score = scores.get(item.dso_id)
-            if score is None:
+            value = values.get(item.dso_id)
+            if value is None:
                 continue
-            item.score_pct = score.score_pct
-            item.quality_label = score.quality_label
-            item.score_breakdown = _score_breakdown_to_out(score)
+            item.score_pct, item.quality_label = value
 
     # Multi-sort in memory with mode-appropriate fallback. Null values
     # always sort to the end regardless of per-key direction; that's
@@ -956,10 +922,116 @@ async def list_targets(
             if restrict_tonight
             else [("primary_designation", "asc")]
         )
+
+    can_compute_now = (
+        restrict_tonight
+        and is_requested_today
+        and location is not None
+        and horizon is not None
+        and snapshot is not None
+    )
+    sorts_by_now = any(field == "now_status" for field, _direction in sort_entries)
+    if can_compute_now and sorts_by_now:
+        item_ids = {item.dso_id for item, _vis in items}
+        now_status_by_dso = await asyncio.to_thread(
+            compute_now_status,
+            location,
+            horizon,
+            [dso for dso in dsos if dso.dso_id in item_ids],
+            astro_dark_start_utc=snapshot.dark_window.start_utc,
+            astro_dark_end_utc=snapshot.dark_window.end_utc,
+        )
+        for item, _vis in items:
+            item.now_status = now_status_by_dso.get(item.dso_id)
+
     _sort_items(items, sort_entries)
 
     total = len(items)
     page = items[offset : offset + limit]
+
+    if can_compute_now and not sorts_by_now:
+        page_ids = {item.dso_id for item, _vis in page}
+        now_status_by_dso = await asyncio.to_thread(
+            compute_now_status,
+            location,
+            horizon,
+            [dso for dso in dsos if dso.dso_id in page_ids],
+            astro_dark_start_utc=snapshot.dark_window.start_utc,
+            astro_dark_end_utc=snapshot.dark_window.end_utc,
+        )
+        for item, _vis in page:
+            item.now_status = now_status_by_dso.get(item.dso_id)
+
+    # Full score breakdowns and model validation are bounded by the page.
+    page_scores: dict[int, TargetScore] = {}
+    if restrict_tonight and snapshot is not None and location is not None and page:
+        page_inputs = [
+            ScoringInput(
+                dso_id=item.dso_id,
+                obj_type=item.obj_type,
+                coverage_pct=item.coverage_pct,
+                hours_visible=item.hours_visible,
+                peak_time_utc=vis.peak_time_utc if vis is not None else None,
+                transit_time_utc=vis.transit_time_utc if vis is not None else None,
+            )
+            for item, vis in page
+        ]
+        page_scores = score_targets(
+            page_inputs,
+            snapshot,
+            rig_fov[0] if rig_fov is not None else None,
+            rig_fov[1] if rig_fov is not None else None,
+            parsed_filter_intent,
+            settings,
+            location.timezone,
+        )
+        for item, _vis in page:
+            score = page_scores.get(item.dso_id)
+            if score is not None:
+                item.score_pct = score.score_pct
+                item.quality_label = score.quality_label
+
+    page_items: list[tuple[PlannerTargetItem, DsoVisibility | None]] = []
+    for candidate, vis in page:
+        score = page_scores.get(candidate.dso_id)
+        page_items.append(
+            (
+                PlannerTargetItem(
+                    dso_id=candidate.dso_id,
+                    primary_designation=candidate.primary_designation,
+                    common_name=candidate.common_name,
+                    obj_type=candidate.obj_type,
+                    ra_deg=candidate.ra_deg,
+                    dec_deg=candidate.dec_deg,
+                    constellation=candidate.constellation,
+                    maj_axis_arcmin=candidate.maj_axis_arcmin,
+                    min_axis_arcmin=candidate.min_axis_arcmin,
+                    mag_v=candidate.mag_v,
+                    distance_pc=candidate.distance_pc,
+                    hours_visible=candidate.hours_visible,
+                    max_altitude_deg=candidate.max_altitude_deg,
+                    peak_time_utc=(
+                        candidate.peak_time_utc.isoformat()
+                        if candidate.peak_time_utc is not None
+                        else None
+                    ),
+                    transit_time_utc=(
+                        candidate.transit_time_utc.isoformat()
+                        if candidate.transit_time_utc is not None
+                        else None
+                    ),
+                    altitude_at_transit_deg=candidate.altitude_at_transit_deg,
+                    min_moon_separation_deg=candidate.min_moon_separation_deg,
+                    coverage_pct=candidate.coverage_pct,
+                    now_status=candidate.now_status,
+                    score_pct=candidate.score_pct,
+                    quality_label=candidate.quality_label,
+                    score_breakdown=(_score_breakdown_to_out(score) if score is not None else None),
+                ),
+                vis,
+            )
+        )
+    page = page_items
 
     # Batch-load the Wikipedia ref (the one user-facing chip the card
     # renders) + the full designations list for the ≤``limit`` items on
@@ -1105,7 +1177,7 @@ async def score_single_target(
             (dso_id,),
         )
         metadata_row = await cursor.fetchone()
-        dsos = await _load_dso_coords(conn)
+        dsos, _metadata = await _load_dsos(conn, include_metadata=False)
 
     if metadata_row is None:
         raise HTTPException(status_code=404, detail=f"DSO {dso_id} not found")

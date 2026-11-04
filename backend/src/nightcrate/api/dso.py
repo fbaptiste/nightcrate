@@ -22,7 +22,10 @@ from nightcrate.api.dso_models import (
     RawTypeFacet,
     TypeGroupFacet,
 )
-from nightcrate.catalog_loader.designations import normalize_designation
+from nightcrate.catalog_loader.designations import (
+    designation_search_prefixes,
+    normalize_designation,
+)
 from nightcrate.db.session import get_db
 from nightcrate.services.dso_display import (
     CONSTELLATION_NAMES,
@@ -78,12 +81,13 @@ def _external_ref_sort_key(provider: str) -> tuple[int, str]:
 
 def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
     """Return the shared designation/common-name/group search fragment."""
-    search_key = normalize_designation(q)
+    search_prefixes = designation_search_prefixes(q)
+    designation_match = " OR ".join("search_key LIKE ?" for _prefix in search_prefixes)
     common_name = f"%{q.lower()}%"
     clause = f"""
         (
             {alias}.id IN (
-                SELECT dso_id FROM dso_designation WHERE search_key LIKE ?
+                SELECT dso_id FROM dso_designation WHERE {designation_match}
             )
             OR LOWER({alias}.common_name) LIKE ?
             OR EXISTS (
@@ -93,16 +97,23 @@ def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
                 LEFT JOIN dso whole ON whole.id = g.whole_dso_id
                 WHERE gm.dso_id = {alias}.id
                   AND (
-                      g.search_key LIKE ?
+                      ({designation_match.replace("search_key", "g.search_key")})
                       OR g.whole_dso_id IN (
-                          SELECT dso_id FROM dso_designation WHERE search_key LIKE ?
+                          SELECT dso_id FROM dso_designation WHERE {designation_match}
                       )
                       OR LOWER(whole.common_name) LIKE ?
                   )
             )
         )
     """  # noqa: S608  # nosec B608 - alias is an internal fixed query alias
-    return clause, [search_key + "%", common_name, search_key + "%", search_key + "%", common_name]
+    prefix_params = [prefix + "%" for prefix in search_prefixes]
+    return clause, [
+        *prefix_params,
+        common_name,
+        *prefix_params,
+        *prefix_params,
+        common_name,
+    ]
 
 
 def dso_catalog_clause(codes: list[str], *, alias: str = "d") -> tuple[str, list[str]]:

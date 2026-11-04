@@ -113,6 +113,60 @@ async def test_list_order_and_states_before_and_after_remove_and_add(
 
 
 @pytest.mark.anyio
+async def test_list_hides_only_unapplied_missing_legacy_defaults(client, monkeypatch):
+    monkeypatch.setattr(
+        "nightcrate.api.admin.load_config", lambda: SimpleNamespace(db_configured=True)
+    )
+
+    fresh = (await client.get("/api/admin/catalogs/optional")).json()
+    fresh_by_id = {item["catalog_id"]: item for item in fresh}
+    assert fresh_by_id["sharpless"]["state"] == "off"
+    assert fresh_by_id["barnard"]["state"] == "off"
+
+    with sqlite3.connect(get_db_path()) as conn:
+        conn.execute(
+            "INSERT INTO dso_catalog_applied (catalog_id, state) VALUES ('sharpless', 'on')"
+        )
+        conn.commit()
+    applied = (await client.get("/api/admin/catalogs/optional")).json()
+    applied_sharpless = next(item for item in applied if item["catalog_id"] == "sharpless")
+    assert applied_sharpless["state"] == "on"
+    assert applied_sharpless["installed"] is False
+
+    with sqlite3.connect(get_db_path()) as conn:
+        conn.execute("DELETE FROM dso_catalog_applied WHERE catalog_id='sharpless'")
+        conn.commit()
+    write_choice(
+        registry.user_catalogs_root(),
+        CatalogChoice(frozenset({"barnard"}), frozenset()),
+    )
+    chosen = (await client.get("/api/admin/catalogs/optional")).json()
+    chosen_barnard = next(item for item in chosen if item["catalog_id"] == "barnard")
+    assert chosen_barnard["state"] == "on"
+    assert chosen_barnard["installed"] is False
+
+
+@pytest.mark.anyio
+async def test_list_and_removal_preview_require_configured_database(
+    client,
+    tmp_path: Path,
+    monkeypatch,
+):
+    unconfigured_path = tmp_path / "must-not-be-created.db"
+    monkeypatch.setattr(
+        "nightcrate.api.admin.load_config", lambda: SimpleNamespace(db_configured=False)
+    )
+    monkeypatch.setattr("nightcrate.api.admin.get_db_path", lambda: unconfigured_path)
+
+    listing = await client.get("/api/admin/catalogs/optional")
+    preview = await client.get("/api/admin/catalogs/optional/barnard/removal-preview")
+
+    assert listing.status_code == 400
+    assert preview.status_code == 400
+    assert not unconfigured_path.exists()
+
+
+@pytest.mark.anyio
 async def test_list_counts_each_hash_catalog_by_its_own_active_entries(client, catalogs_root):
     hash_path = catalogs_root / "vizier" / "hash_V_163_pnmain.tsv"
     shutil.copy(FIXTURES / "vizier" / "mini_hash.tsv", hash_path)
@@ -286,6 +340,9 @@ async def test_download_failure_is_502_and_keeps_choice_and_files(
 
 @pytest.mark.anyio
 async def test_preview_and_remove_report_the_same_blocked_reason(client, catalogs_root):
+    choice_before = read_choice(catalogs_root)
+    barnard_path = catalogs_root / "vizier" / "barnard_VII_220.tsv"
+    file_before = barnard_path.read_bytes()
     (catalogs_root / "openngc" / "addendum.csv").unlink()
 
     preview = await client.get("/api/admin/catalogs/optional/barnard/removal-preview")
@@ -295,6 +352,28 @@ async def test_preview_and_remove_report_the_same_blocked_reason(client, catalog
     assert preview.json()["blocked_reason"] is not None
     assert removal.status_code == 409
     assert removal.json()["detail"] == preview.json()["blocked_reason"]
+    assert read_choice(catalogs_root) == choice_before
+    assert barnard_path.read_bytes() == file_before
+
+
+@pytest.mark.anyio
+async def test_remove_does_not_apply_a_dry_run(client, catalogs_root, monkeypatch):
+    from nightcrate.catalog_loader import reconcile
+
+    original = reconcile.apply_object_set
+    dry_run_values: list[bool] = []
+
+    def record_apply(*args, **kwargs):
+        dry_run_values.append(bool(kwargs.get("dry_run", False)))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(reconcile, "apply_object_set", record_apply)
+
+    response = await client.post("/api/admin/catalogs/optional/barnard/remove")
+
+    assert response.status_code == 200
+    assert dry_run_values
+    assert not any(dry_run_values)
 
 
 @pytest.mark.anyio

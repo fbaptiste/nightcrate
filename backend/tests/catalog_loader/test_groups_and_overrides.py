@@ -959,6 +959,55 @@ def test_groups_are_rebuilt_without_stale_rows(db: sqlite3.Connection, tmp_path:
     assert db.execute("SELECT COUNT(*) FROM dso_group").fetchone()[0] == 0
 
 
+def test_parts_group_collision_keeps_collector_group(
+    db: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    sources = _openngc_files(
+        tmp_path / "openngc",
+        [_openngc_row("NGC1"), _openngc_row("NGC2")],
+    )
+    ldn_path = tmp_path / "ldn.tsv"
+    ldn_path.write_text("fixture\n", encoding="utf-8")
+    sources["test_ldn"] = _source(ldn_path, "test_ldn", "ldn")
+    parts_path = tmp_path / "dso_parts.csv"
+    parts_path.write_text(
+        "whole_designation,part_designation,notes\nLDN 1,NGC 1,collision\n",
+        encoding="utf-8",
+    )
+    sources["nightcrate_parts"] = _source(parts_path, "nightcrate_parts", "parts")
+    monkeypatch.setattr(registry, "OPTIONAL_CATALOGS", (_optional("ldn", "test_ldn", "ldn"),))
+    monkeypatch.setitem(
+        OBJECT_COLLECTORS,
+        "ldn",
+        lambda sources, on_catalogs: CollectorBatch(
+            (CollectedObject("test_ldn", "1", "ldn", "ldn", "1", _columns("LDN 1")),),
+            (
+                CollectedGroup(
+                    "ldn",
+                    "1",
+                    ("test_ldn", "1"),
+                    member_designations=(("ngc", "2"),),
+                ),
+            ),
+            {"test_ldn": "ldn-hash"},
+        ),
+    )
+    caplog.set_level(logging.WARNING, logger="nightcrate.catalog_loader.reconcile")
+
+    built = build_object_set(sources, None, frozenset({"ldn"}))
+    apply_object_set(db, built, ())
+
+    assert len(built.groups) == 1
+    group = built.groups[0]
+    assert (group.catalog, group.identifier) == ("ldn", "1")
+    assert [built.objects[index].source_key for index in group.member_indexes] == ["NGC2"]
+    assert db.execute("SELECT COUNT(*) FROM dso_group").fetchone()[0] == 1
+    assert "skipping parts row 'LDN 1' -> 'NGC 1'" in caplog.text
+
+
 def test_parts_with_whole_catalog_off_are_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     sources = _openngc_files(tmp_path / "openngc", [_openngc_row("NGC6960")])
     editorial = Path(registry._nightcrate_dir())

@@ -269,6 +269,35 @@ async def test_list_search_matches_common_name(client, dso_loaded):
 
 
 @pytest.mark.anyio
+async def test_list_search_pads_partial_mcg_and_png_designations(client, dso_loaded):
+    mcg_id = await _insert_sort_dso("MCG -01-02-003", marker="partial-mcg")
+    png_id = await _insert_sort_dso("PN G010.8-01.8", marker="partial-png", obj_type="PN")
+    async with get_db() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO dso_designation (
+                dso_id, catalog, identifier, display_form, search_key, is_primary
+            ) VALUES (?, ?, ?, ?, ?, 1)
+            """,
+            (
+                (mcg_id, "mcg", "-01-02-003", "MCG -01-02-003", "mcg-01-02-003"),
+                (png_id, "png", "010.8-01.8", "PN G010.8-01.8", "png010.8-01.8"),
+            ),
+        )
+        await conn.commit()
+
+    for query, expected_id in (
+        ("MCG-1-2", mcg_id),
+        ("MCG-1", mcg_id),
+        ("PN G 10.8", png_id),
+        ("PN G 10", png_id),
+    ):
+        response = await client.get("/api/dso", params={"q": query})
+        assert response.status_code == 200
+        assert expected_id in {item["id"] for item in response.json()["items"]}
+
+
+@pytest.mark.anyio
 async def test_list_sort_by_mag_v_ascending(client, dso_loaded):
     resp = await client.get("/api/dso?sort=mag_v&sort_dir=asc&limit=500")
     items = [i for i in resp.json()["items"] if i["mag_v"] is not None]

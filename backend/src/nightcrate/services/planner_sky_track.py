@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import astropy.units as u
 import numpy as np
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
+from astropy.coordinates import TETE, AltAz, EarthLocation, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
 
 from nightcrate.services.astronomy import compute_illumination_pct, direction_only
@@ -256,7 +256,9 @@ def compute_sky_track(
         times.sidereal_time("apparent", longitude=location.longitude_deg * u.deg).hour
     )
     lst_deg = lst_hours * 15.0
-    ra_deg_val = float(coord.ra.deg)
+    track_mid = times[len(times) // 2]
+    apparent = coord.transform_to(TETE(obstime=track_mid, location=earth_loc))
+    ra_deg_val = float(apparent.ra.deg)
     ha = (lst_deg - ra_deg_val + 180.0) % 360.0 - 180.0
 
     transit_time_utc: datetime | None = None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import shutil
 import sqlite3
 from pathlib import Path
@@ -76,6 +77,14 @@ def _batch(root: Path):
         {source_id: sources[source_id] for source_id in ("vizier_arp", "nightcrate_arp_members")},
         frozenset({"arp"}),
     )
+
+
+def _refresh_arp_version(root: Path) -> None:
+    arp_path = root / "vizier" / ARP_FILENAME
+    version_path = root / "vizier" / "version.json"
+    version = json.loads(version_path.read_text(encoding="utf-8"))
+    version["files"][ARP_FILENAME]["sha256"] = file_sha256(arp_path)
+    version_path.write_text(json.dumps(version), encoding="utf-8")
 
 
 def _append_openngc(root: Path, *rows: tuple[str, str, str, str], obj_type: str = "G") -> None:
@@ -312,6 +321,69 @@ def test_arp_anonymous_member_is_created_and_found_through_group(tmp_path: Path)
     assert anonymous.columns["openngc_notes"] == "Listed as ARP 196"
     assert anonymous.columns["mag_v"] == 18.8
     assert len(group.member_indexes) == 2
+
+
+def test_unreadable_unreviewed_member_loads_as_anonymous_without_stopping_other_sources(
+    db: sqlite3.Connection,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    root = _catalogs_root(tmp_path, installed=True)
+    write_choice(root, with_added(None, "arp"))
+    arp_path = root / "vizier" / ARP_FILENAME
+    arp_path.write_text(
+        arp_path.read_text(encoding="utf-8").replace("NGC 4038", "UNREADABLE NAME", 1),
+        encoding="utf-8",
+    )
+    _refresh_arp_version(root)
+    caplog.set_level(logging.WARNING, logger="nightcrate.catalog_loader.arp")
+
+    built = build_object_set(_sources(root), None, frozenset({"arp"}))
+    summary = load_catalogs(db, root)
+
+    anonymous = next(
+        obj
+        for obj in built.objects
+        if obj.source_id == "vizier_arp"
+        and obj.columns["openngc_notes"] == "Listed as UNREADABLE NAME"
+    )
+    assert anonymous.columns["primary_designation"] == "Arp 244"
+    assert anonymous.designations == ()
+    assert any(obj.source_id == "openngc" for obj in built.objects)
+    assert {
+        result.source_id: result.status
+        for result in summary.results
+        if result.source_id in {"openngc", "openngc_addendum", "vizier_arp"}
+    } == {
+        "openngc": "loaded",
+        "openngc_addendum": "loaded",
+        "vizier_arp": "loaded",
+    }
+    assert "unreadable Arp 244 member name 'UNREADABLE NAME'" in caplog.text
+
+
+def test_duplicate_member_key_warns_and_skips_the_duplicate(
+    db: sqlite3.Connection,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    root = _catalogs_root(tmp_path, installed=True)
+    write_choice(root, with_added(None, "arp"))
+    arp_path = root / "vizier" / ARP_FILENAME
+    lines = arp_path.read_text(encoding="utf-8").splitlines()
+    duplicate = next(line for line in lines if "\t244\tNGC 4038\t" in line)
+    arp_path.write_text("\n".join((*lines, duplicate)) + "\n", encoding="utf-8")
+    _refresh_arp_version(root)
+    caplog.set_level(logging.WARNING, logger="nightcrate.catalog_loader.arp")
+
+    batch = _batch(root)
+    summary = load_catalogs(db, root)
+
+    assert len(batch.objects) == 23
+    assert next(
+        result for result in summary.results if result.source_id == "vizier_arp"
+    ).status == ("loaded")
+    assert "duplicate Arp 244 member 'NGC 4038'; skipping row" in caplog.text
 
 
 def test_collect_arp_full_sample_counts_when_available():

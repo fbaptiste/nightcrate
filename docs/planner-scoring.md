@@ -258,6 +258,15 @@ don't appear in the formula at all; the remaining dimensions'
 weights renormalize automatically because $\sum_{i} w_{i}$ in the
 denominator is computed over the active dimensions only.
 
+**Two implementations, one result.** The Plan-a-Night list scores
+every filtered target with `planner_scoring.score_values`, which
+evaluates the gates and the four dimensions with NumPy over the
+snapshot arrays, then sorts and paginates. `score_targets` builds the
+full breakdown (scores, weights and facts) for the page's targets
+only, and the page shows its numbers. The two must agree exactly:
+change both together, and keep `tests/services/test_scoring_vectorized.py`
+passing.
+
 ---
 
 ## 5. Quality chip labels

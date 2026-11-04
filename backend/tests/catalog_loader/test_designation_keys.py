@@ -12,6 +12,7 @@ from pathlib import Path
 from nightcrate.catalog_loader import load_catalogs
 from nightcrate.catalog_loader.designations import (
     canonical_identifier,
+    designation_search_prefixes,
     normalize_designation,
 )
 from nightcrate.catalog_loader.loader import _designation_canon_due
@@ -59,6 +60,18 @@ def test_existing_designation_keys_are_unchanged():
     assert normalize_designation("B 33") == "b33"
     assert normalize_designation("ruprecht 147") == "ru147"
     assert normalize_designation("dolidze 25") == "do25"
+
+
+def test_partial_structured_designations_include_padded_search_prefixes():
+    assert designation_search_prefixes("MCG-1-2") == [
+        "mcg-1-2",
+        "mcg-01-2",
+        "mcg-01-02",
+    ]
+    assert designation_search_prefixes("MCG-1") == ["mcg-1", "mcg-01"]
+    assert designation_search_prefixes("PN G 10.8") == ["png10.8", "png010.8"]
+    assert designation_search_prefixes("PN G 10") == ["png10", "png010"]
+    assert designation_search_prefixes("NGC 70") == ["ngc70"]
 
 
 def test_canonical_identifiers():

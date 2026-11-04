@@ -821,6 +821,7 @@ async def optional_catalogs() -> list[OptionalCatalogStatus]:
         user_catalogs_root,
     )
 
+    _require_configured_database()
     catalogs_root = user_catalogs_root()
     choice = read_choice(catalogs_root)
     with sqlite3.connect(str(get_db_path())) as conn:
@@ -840,13 +841,25 @@ async def optional_catalogs() -> list[OptionalCatalogStatus]:
         statuses: list[OptionalCatalogStatus] = []
         for catalog in OPTIONAL_CATALOGS:
             installed, version = optional_catalog_install(catalog, catalogs_root)
+            state = effective_state(choice, catalog, applied.get(catalog.catalog_id))
+            explicitly_chosen = choice is not None and catalog.catalog_id in choice.chosen
+            explicitly_removed = choice is not None and catalog.catalog_id in choice.removed
+            if (
+                state == "on"
+                and catalog.legacy_default
+                and not explicitly_chosen
+                and not explicitly_removed
+                and catalog.catalog_id not in applied
+                and not installed
+            ):
+                state = "off"
             statuses.append(
                 OptionalCatalogStatus(
                     catalog_id=catalog.catalog_id,
                     display_name=catalog.display_name,
                     credit=catalog.credit,
                     kind=catalog.kind,
-                    state=effective_state(choice, catalog, applied.get(catalog.catalog_id)),
+                    state=state,
                     installed=installed,
                     version=version,
                     object_count=object_counts.get(catalog.catalog_id, 0),
@@ -894,6 +907,7 @@ def _preview_catalog_removal(catalog_id: str) -> RemovalPreview:
 )
 async def optional_catalog_removal_preview(catalog_id: str) -> RemovalPreview:
     _require_optional_catalog(catalog_id)
+    _require_configured_database()
     current = catalog_progress.snapshot()
     if current is not None and current["outcome"] is None:
         raise HTTPException(status_code=409, detail="Another catalog update is running.")
@@ -977,11 +991,16 @@ async def remove_optional_catalog(catalog_id: str) -> dict:
     _require_configured_database()
     catalogs_root = user_catalogs_root()
     with _CatalogAction("remove_catalog", source=catalog_id) as action:
-        preview = _preview_catalog_removal(catalog_id)
-        if preview.blocked_reason is not None:
-            action.detail = preview.blocked_reason
+        from nightcrate.catalog_loader.loader import prepare_removal_step
+
+        with sqlite3.connect(str(get_db_path())) as conn:
+            conn.execute("PRAGMA foreign_keys = ON")
+            plan = prepare_removal_step(conn, catalogs_root, catalog_id)
+        blocked_reason = plan.deferred_reason or plan.preparation_error
+        if blocked_reason is not None:
+            action.detail = blocked_reason
             action.message = "Catalog removal is blocked."
-            raise HTTPException(status_code=409, detail=preview.blocked_reason)
+            raise HTTPException(status_code=409, detail=blocked_reason)
 
         choice = with_removed(read_choice(catalogs_root), catalog_id)
         try:

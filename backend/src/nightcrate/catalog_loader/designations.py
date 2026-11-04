@@ -25,6 +25,11 @@ _PN_QUERY_RE = re.compile(r"^\s*(?:PN\s*G|PNG)\s*(.+?)\s*$", re.IGNORECASE)
 _MCG_QUERY_RE = re.compile(r"^\s*MCG\s*(.+?)\s*$", re.IGNORECASE)
 
 
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values and len(values) < 4:
+        values.append(value)
+
+
 def canonical_identifier(catalog: str, identifier: str) -> str:
     """Return the storage form for a structured catalog identifier."""
     value = identifier.strip()
@@ -71,3 +76,59 @@ def normalize_designation(query: str) -> str:
         if normalized.startswith(long):
             return short + normalized[len(long) :]
     return normalized
+
+
+def designation_search_prefixes(query: str) -> list[str]:
+    """Return search prefixes, including padded forms for partial structured names."""
+    prefixes = [normalize_designation(query)]
+
+    mcg_match = _MCG_QUERY_RE.fullmatch(query)
+    if mcg_match is not None:
+        value = mcg_match.group(1).replace(" ", "")
+        partial = re.fullmatch(r"([+-]?)(\d{1,2})(?:-(\d{0,2}))?(?:-(\d{0,3}))?", value)
+        if partial is not None:
+            sign, first, second, third = partial.groups()
+            sign = sign or "+"
+            if third is None and second is None:
+                for width in range(len(first), 3):
+                    _append_unique(prefixes, f"mcg{sign}{first.zfill(width)}")
+            elif third is None:
+                first = first.zfill(2)
+                if second:
+                    for width in range(len(second), 3):
+                        _append_unique(prefixes, f"mcg{sign}{first}-{second.zfill(width)}")
+                else:
+                    _append_unique(prefixes, f"mcg{sign}{first}-")
+            elif not third:
+                _append_unique(prefixes, f"mcg{sign}{first.zfill(2)}-{second.zfill(2)}-")
+        return prefixes
+
+    pn_match = _PN_QUERY_RE.fullmatch(query)
+    if pn_match is None:
+        return prefixes
+    value = pn_match.group(1).replace(" ", "")
+    partial = re.fullmatch(r"(\d{1,3})(\.\d*)?([+-])?(\d{0,2})?(\.\d*)?", value)
+    if partial is None:
+        return prefixes
+    longitude, longitude_fraction, sign, latitude, latitude_fraction = partial.groups()
+    if longitude_fraction is None and sign is None:
+        for width in range(len(longitude) + 1, 4):
+            _append_unique(prefixes, f"png{longitude.zfill(width)}")
+        return prefixes
+
+    longitude_prefix = longitude.zfill(3) + (longitude_fraction or "")
+    if sign is None:
+        _append_unique(prefixes, f"png{longitude_prefix}")
+        return prefixes
+    if latitude_fraction is not None:
+        latitude_prefix = (latitude or "").zfill(2) + latitude_fraction
+        _append_unique(prefixes, f"png{longitude_prefix}{sign}{latitude_prefix}")
+    elif latitude:
+        for width in range(len(latitude), 3):
+            _append_unique(
+                prefixes,
+                f"png{longitude_prefix}{sign}{latitude.zfill(width)}",
+            )
+    else:
+        _append_unique(prefixes, f"png{longitude_prefix}{sign}")
+    return prefixes

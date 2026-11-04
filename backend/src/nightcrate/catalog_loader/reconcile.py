@@ -241,7 +241,7 @@ class _Draft:
 
 
 @dataclass(frozen=True, slots=True)
-class _MatchOverride:
+class MatchOverride:
     action: str
     target: tuple[str, str] | None
 
@@ -266,6 +266,30 @@ def _designation_key(value: str) -> tuple[str, str]:
         catalog = refs[0].catalog
         identifier = refs[0].storage_identifier
     return catalog, canonical_identifier(catalog, identifier)
+
+
+def read_match_overrides(source: CatalogSource | None) -> dict[tuple[str, str], MatchOverride]:
+    """Parse and validate the editorial match overrides from their registered source."""
+    overrides: dict[tuple[str, str], MatchOverride] = {}
+    if source is None or not source.file_path.exists():
+        return overrides
+    for row in _read_editorial_csv(source.file_path):
+        designation = row.get("designation", "")
+        action = row.get("action", "")
+        if not designation:
+            continue
+        if action not in {"assign", "separate"}:
+            raise ValueError(f"invalid match override action for {designation!r}: {action!r}")
+        target_text = row.get("target_designation", "")
+        if action == "assign" and not target_text:
+            raise ValueError(f"assign override for {designation!r} has no target")
+        if action == "separate" and target_text:
+            raise ValueError(f"separate override for {designation!r} has a target")
+        overrides[_designation_key(designation)] = MatchOverride(
+            action,
+            _designation_key(target_text) if target_text else None,
+        )
+    return overrides
 
 
 def _openngc_columns(row, primary: str) -> dict[str, object]:
@@ -326,26 +350,10 @@ def build_object_set(
     dropped_required_matches = 0
     file_order = 0
 
-    overrides: dict[tuple[str, str], _MatchOverride] = {}
     override_source = sources.get("nightcrate_match_overrides")
     if override_source is not None and override_source.file_path.exists():
         hashes[override_source.source_id] = file_sha256(override_source.file_path)
-        for row in _read_editorial_csv(override_source.file_path):
-            designation = row.get("designation", "")
-            action = row.get("action", "")
-            if not designation:
-                continue
-            if action not in {"assign", "separate"}:
-                raise ValueError(f"invalid match override action for {designation!r}: {action!r}")
-            target_text = row.get("target_designation", "")
-            if action == "assign" and not target_text:
-                raise ValueError(f"assign override for {designation!r} has no target")
-            if action == "separate" and target_text:
-                raise ValueError(f"separate override for {designation!r} has a target")
-            overrides[_designation_key(designation)] = _MatchOverride(
-                action,
-                _designation_key(target_text) if target_text else None,
-            )
+    overrides = read_match_overrides(override_source)
     reserved_designations = frozenset(overrides)
 
     parts_source = sources.get("nightcrate_parts")
@@ -917,6 +925,11 @@ def build_object_set(
         ]
 
     if parts_source is not None and parts_source.file_path.exists():
+        existing_group_keys = {
+            (group.catalog, canonical_identifier(group.catalog, group.identifier))
+            for group in groups
+        }
+        parts_group_owners: dict[tuple[str, str], int] = {}
         members_by_whole: dict[int, list[int]] = defaultdict(list)
         for row in _read_editorial_csv(parts_source.file_path):
             whole_text = row.get("whole_designation", "")
@@ -927,6 +940,29 @@ def build_object_set(
             part_index = designation_owner.get(_designation_key(part_text))
             if whole_index is None or part_index is None:
                 continue
+            primary = next(
+                (
+                    (catalog, identifier)
+                    for catalog, identifier, is_primary in drafts[whole_index].designations
+                    if is_primary
+                ),
+                None,
+            )
+            if primary is None:
+                continue
+            group_key = (primary[0], canonical_identifier(*primary))
+            previous_whole = parts_group_owners.get(group_key)
+            if group_key in existing_group_keys or (
+                previous_whole is not None and previous_whole != whole_index
+            ):
+                logger.warning(
+                    "[reconcile] skipping parts row %r -> %r; group %s %s already exists",
+                    whole_text,
+                    part_text,
+                    *primary,
+                )
+                continue
+            parts_group_owners[group_key] = whole_index
             if part_index not in members_by_whole[whole_index]:
                 members_by_whole[whole_index].append(part_index)
         for whole_index, member_indexes in members_by_whole.items():
@@ -1440,6 +1476,7 @@ def apply_object_set(
             old_id = int(designation["dso_id"])
             if old_id not in retained_unclaimed or key in owned_designations:
                 continue
+            display_form = _build_display_form(catalog, identifier)
             cur.execute(
                 """
                 INSERT INTO dso_designation
@@ -1450,11 +1487,18 @@ def apply_object_set(
                     old_id,
                     catalog,
                     identifier,
-                    _build_display_form(catalog, identifier),
+                    display_form,
                     _build_search_key(catalog, identifier),
                     designation["is_primary"],
                 ),
             )
+            old = existing_by_id[old_id]
+            if designation["is_primary"] and old["primary_designation"] != display_form:
+                cur.execute(
+                    "UPDATE dso SET primary_designation = ? WHERE id = ?",
+                    (display_form, old_id),
+                )
+                old["primary_designation"] = display_form
             owned_designations.add(key)
 
         cur.execute("DELETE FROM dso_source_entry")

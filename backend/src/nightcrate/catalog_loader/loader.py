@@ -252,8 +252,14 @@ def _fused_pgc_repair_due(cur: sqlite3.Cursor) -> bool:
     return False
 
 
-def _designation_canon_due(cur: sqlite3.Cursor) -> bool:
+def _designation_canon_due(
+    cur: sqlite3.Cursor,
+    override_source: CatalogSource | None = None,
+) -> bool:
     """Detect stored structured identifiers and search keys needing repair."""
+    from nightcrate.catalog_loader.reconcile import read_match_overrides
+
+    overrides = read_match_overrides(override_source)
     rows = cur.execute(
         """
         SELECT catalog, identifier, search_key
@@ -299,11 +305,48 @@ def _designation_canon_due(cur: sqlite3.Cursor) -> bool:
                 (identifier,),
             ).fetchone()
             is None
+            and not _png_override_resolves_elsewhere(cur, overrides, dso_id, identifier)
             for identifier in expected
         )
         if missing_claimable:
             return True
     return False
+
+
+def _png_override_resolves_elsewhere(
+    cur: sqlite3.Cursor,
+    overrides,
+    dso_id: int,
+    identifier: str,
+) -> bool:
+    override = overrides.get(("png", identifier))
+    if override is None:
+        return False
+    if override.action == "separate":
+        return True
+    if override.target is None:
+        return False
+    owner = cur.execute(
+        "SELECT dso_id FROM dso_designation WHERE catalog = ? AND identifier = ? LIMIT 1",
+        override.target,
+    ).fetchone()
+    return owner is None or int(owner[0]) != int(dso_id)
+
+
+def _primary_designation_due(cur: sqlite3.Cursor) -> bool:
+    """Detect a stored primary label that differs from its primary designation row."""
+    return (
+        cur.execute(
+            """
+            SELECT 1
+            FROM dso d
+            JOIN dso_designation dd ON dd.dso_id = d.id AND dd.is_primary = 1
+            WHERE d.primary_designation != dd.display_form
+            LIMIT 1
+            """
+        ).fetchone()
+        is not None
+    )
 
 
 @dataclass
@@ -667,7 +710,11 @@ def _prepare_object_step(
     designation_ownership_due = not object_deferred and _designation_ownership_due(cur)
     barnard_merges_due = not object_deferred and _barnard_merges_due(cur)
     fused_pgc_repair_due = not object_deferred and _fused_pgc_repair_due(cur)
-    designation_canon_due = not object_deferred and _designation_canon_due(cur)
+    designation_canon_due = not object_deferred and _designation_canon_due(
+        cur,
+        all_by_id.get("nightcrate_match_overrides"),
+    )
+    primary_designation_due = not object_deferred and _primary_designation_due(cur)
     present_owner = any(hashes.get(source_id) is not None for source_id in OBJECT_SOURCE_IDS)
     removed_catalogs = frozenset(
         catalog_id for catalog_id, state in effective.items() if state == "removed"
@@ -711,6 +758,7 @@ def _prepare_object_step(
             or barnard_merges_due
             or fused_pgc_repair_due
             or designation_canon_due
+            or primary_designation_due
         )
     )
     object_set = None
