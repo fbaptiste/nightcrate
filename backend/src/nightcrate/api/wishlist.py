@@ -24,7 +24,7 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query
 
-from nightcrate.api._common import integrity_guard
+from nightcrate.api._common import integrity_guard, load_other_names
 from nightcrate.api.wishlist_models import (
     AddFavoriteRequest,
     CalendarResponse,
@@ -210,6 +210,10 @@ async def list_favorites_full() -> FavoritesFullResponse:
         )
         fav_rows = await cursor.fetchall()
 
+        favorite_other_names = await load_other_names(
+            conn, [int(row["dso_id"]) for row in fav_rows]
+        )
+
         cursor = await conn.execute(
             """
             SELECT tp.id, tp.dso_id, tp.location_id, tp.horizon_id,
@@ -270,6 +274,7 @@ async def list_favorites_full() -> FavoritesFullResponse:
                     active=bool(r["active"]),
                     primary_designation=r["primary_designation"],
                     common_name=r["common_name"],
+                    other_names=favorite_other_names.get(dso_id, []),
                     obj_type=r["obj_type"],
                     constellation=r["constellation"],
                     ra_deg=r["ra_deg"],
@@ -377,7 +382,6 @@ async def _resolve_plan_response(conn, plan_row, ranges: list[DateRangeOut]) -> 
         (plan_row["dso_id"],),
     )
     dso_row = await dso_cursor.fetchone()
-
     return PlanResponse(
         id=int(plan_row["id"]),
         dso_id=int(plan_row["dso_id"]),

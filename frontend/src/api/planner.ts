@@ -65,6 +65,7 @@ export interface PlannerTargetItem {
   dso_id: number;
   primary_designation: string;
   common_name: string | null;
+  other_names: string[];
   obj_type: string;
   ra_deg: number | null;
   dec_deg: number | null;

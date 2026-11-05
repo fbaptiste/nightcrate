@@ -6,6 +6,7 @@ export interface IdentifiedDso {
   active: boolean;
   primary_designation: string;
   common_name: string | null;
+  other_names: string[];
   obj_type: string;
   type_group: string;
   constellation: string | null;

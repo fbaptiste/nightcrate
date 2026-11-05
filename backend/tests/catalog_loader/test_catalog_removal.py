@@ -92,7 +92,7 @@ def _apply_through_0065(db_path: Path) -> None:
         migrations = read_migrations(str(MIGRATIONS_DIR))
         backend.apply_migrations(
             backend.to_apply(migrations).filter(
-                lambda migration: migration.id != "0066.more_catalogs"
+                lambda migration: migration.id <= "0065.project_solve_solver"
             )
         )
 
@@ -289,6 +289,27 @@ def test_removed_catalog_deletes_unlinked_objects(db, catalogs_root):
     )
 
 
+def test_other_names_do_not_retain_objects(db, catalogs_root):
+    load_catalogs(db, catalogs_root)
+    row = db.execute(
+        """
+        SELECT d.id
+        FROM dso d
+        JOIN dso_catalog_source s ON s.id=d.source_catalog_id
+        JOIN dso_other_name n ON n.dso_id=d.id
+        WHERE s.source_id='vizier_barnard'
+        LIMIT 1
+        """
+    ).fetchone()
+    assert row is not None
+    dso_id = int(row[0])
+    _choice(catalogs_root, removed="barnard")
+
+    load_catalogs(db, catalogs_root)
+
+    assert db.execute("SELECT COUNT(*) FROM dso WHERE id=?", (dso_id,)).fetchone()[0] == 0
+
+
 def test_removed_catalog_keeps_linked_objects_inactive_with_names(db, catalogs_root):
     load_catalogs(db, catalogs_root)
     dso_id = _catalog_object_ids(db, "vizier_barnard")[0]
@@ -299,6 +320,14 @@ def test_removed_catalog_keeps_linked_objects_inactive_with_names(db, catalogs_r
             (dso_id,),
         )
     ]
+    original_other_names = [
+        tuple(row)
+        for row in db.execute(
+            "SELECT name,position FROM dso_other_name WHERE dso_id=? ORDER BY position",
+            (dso_id,),
+        )
+    ]
+    assert original_other_names
     db.execute("INSERT INTO favorite_target (dso_id) VALUES (?)", (dso_id,))
     db.commit()
     _choice(catalogs_root, removed="barnard")
@@ -313,6 +342,13 @@ def test_removed_catalog_keeps_linked_objects_inactive_with_names(db, catalogs_r
             (dso_id,),
         )
     ] == original_names
+    assert [
+        tuple(row)
+        for row in db.execute(
+            "SELECT name,position FROM dso_other_name WHERE dso_id=? ORDER BY position",
+            (dso_id,),
+        )
+    ] == original_other_names
 
 
 def test_retained_inactive_designations_repair_once(db, catalogs_root):

@@ -333,9 +333,50 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   `google` and `google_images`, in server order. Store Wikidata QIDs without
   showing them as user-facing links. Verify Wikidata property IDs against the
   provider rather than trusting old specs.
+- **Common names** (v0.45.0).
+  - `dso.common_name` is the preferred name only and never holds a comma;
+    the object's other names are in `dso_other_name`, in order.
+  - **Every catalog name is kept:** the entry's names and those of every
+    entry merged into it, in collector order. NightCrate's reviewed list
+    (`common_names.csv`) adds names and orders them, its rank 1 being
+    preferred, and removes a wrong name only through a `remove` row with
+    evidence.
+  - `common_name_augmented` is 1 exactly for listed objects. The augment
+    file no longer touches names, and it is not an object input.
+  - Group rows (`target=group`) name groups with no object of their own and
+    never fall back to a member: with Arp off, "Arp 244" is one galaxy's
+    designation, which must not take "Antennae Galaxies".
+  - `dso_other_name` is catalog-derived (`user_links.CATALOG_DERIVED_TABLES`).
+    Any new table referencing `dso` must be classified there, or an alias
+    would protect an object from removal like a project link.
+  - **Each name needs two independent sources:**
+    - SIMBAD;
+    - NED;
+    - Wikidata or Wikipedia (counted as one);
+    - agency, observatory or university pages, astronomical societies,
+      published papers and magazines.
+    - One organisation counts once, and Fred's decision is recorded as
+      `Fred:<date>`. Forums, image-sharing sites and vendors don't count.
+    - Names are checked one at a time, as facts; nothing is copied from
+      another site's list. Rejected and single-source names are recorded in
+      the [names review](superpowers/plans/2026-11-03-v0.45.0-names-review.md).
+  - **M 102 is NGC 5866** (Fred, 2026-11-03), through a reviewed `assign`
+    override. OpenNGC follows Méchain's 1783 note that M 102 repeated
+    M 101.
+  - An override on an OpenNGC duplicate row decides where the duplicate goes:
+    `assign` moves it to the target; `separate`, or an `assign` whose target
+    isn't loaded, drops it. A duplicate row has no data of its own, so it
+    never becomes a standalone object.
+  - The catalog table's designation and Common name cells show the names on
+    hover only. Names inside the grid, a button or an option have no tab
+    stop of their own, so Enter keeps opening the row; keyboard users reach
+    the other names through the detail panel.
+  - Results show other names on hover (`NameWithAlternates`) wherever a
+    result's name appears, and as a line in the detail panels. List
+    endpoints load `other_names` for the returned page only.
 - **Google links are computed per request** (`api/dso.py:_search_refs`) and
   never stored, so `dso_external_ref`'s provider CHECK is unchanged. The query
-  is the primary designation plus the first comma-separated common name.
+  is the primary designation plus the preferred common name.
 - **One search-key function.** Designation search keys come only from
   `designations.normalize_designation`, used by the loaders
   (`_build_search_key`) and every API search; don't add another normaliser.

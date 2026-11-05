@@ -390,9 +390,16 @@ export default function PlannerDetailPanel({
           </Stack>
 
           {dso?.common_name && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-              {dso.common_name}
-            </Typography>
+            <>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                {dso.common_name}
+              </Typography>
+              {dso.other_names.length > 0 && (
+                <Typography variant="body2" color="text.secondary">
+                  Also known as {dso.other_names.join(", ")}
+                </Typography>
+              )}
+            </>
           )}
 
           {/* Type pill + alternate catalog designations — one line
@@ -433,7 +440,9 @@ export default function PlannerDetailPanel({
               {dso.part_of.map((group) => (
                 <Chip
                   key={`${group.display_form}-${group.whole_dso_id ?? "group"}`}
-                  label={`Part of ${group.display_form}`}
+                  label={`Part of ${group.display_form}${
+                    group.common_name ? ` · ${group.common_name}` : ""
+                  }`}
                   size="small"
                   variant="outlined"
                   clickable={group.whole_dso_id != null}

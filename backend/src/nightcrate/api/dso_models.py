@@ -17,6 +17,7 @@ class DsoDesignation(BaseModel):
 class DsoGroupRef(BaseModel):
     display_form: str
     whole_dso_id: int | None
+    common_name: str | None
 
 
 class DsoPartRef(BaseModel):
@@ -69,9 +70,10 @@ class DsoListItem(BaseModel):
     distance_pc: float | None
     distance_method: str | None
     common_name: str | None
+    other_names: list[str]
     # Complete designation list, in catalog-rank then natural-name order.
     designations: list[DsoDesignation]
-    part_of: list[str]
+    part_of: list[DsoGroupRef]
 
 
 class DsoListResponse(BaseModel):
@@ -111,6 +113,7 @@ class DsoDetail(BaseModel):
     distance_pc: float | None
     distance_method: str | None
     common_name: str | None
+    other_names: list[str]
     common_name_augmented: bool
     surface_brightness_augmented: bool
     ned_notes: str | None

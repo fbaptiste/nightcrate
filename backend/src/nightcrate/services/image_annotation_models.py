@@ -1,6 +1,6 @@
 """Pydantic models for the image annotation service."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WcsParams(BaseModel):
@@ -22,6 +22,7 @@ class AnnotatedDso(BaseModel):
     obj_type: str
     type_group: str
     common_name: str | None = None
+    other_names: list[str] = Field(default_factory=list)
     constellation: str | None = None
     ra_deg: float
     dec_deg: float

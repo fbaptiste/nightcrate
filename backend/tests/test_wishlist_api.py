@@ -323,6 +323,52 @@ class TestFavorites:
         assert item["plan_count"] == 0
         assert item["plans"] == []
 
+    async def test_lists_return_other_names(self, client, seed_dso_and_location):
+        ids = seed_dso_and_location
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO dso_other_name (dso_id, name, position) VALUES (?, ?, ?)",
+                (
+                    (ids["m42_id"], "Great Orion Nebula", 1),
+                    (ids["m42_id"], "Orion Nebula", 2),
+                ),
+            )
+            await conn.commit()
+        client.post("/api/planner/wishlist/favorites", json={"dso_id": ids["m42_id"]})
+        client.post("/api/planner/wishlist/favorites", json={"dso_id": ids["ngc7000_id"]})
+
+        response = client.get("/api/planner/wishlist/favorites/full")
+
+        assert response.status_code == 200
+        by_id = {item["dso"]["dso_id"]: item["dso"] for item in response.json()["items"]}
+        assert by_id[ids["m42_id"]]["other_names"] == [
+            "Great Orion Nebula",
+            "Orion Nebula",
+        ]
+        assert by_id[ids["ngc7000_id"]]["other_names"] == []
+
+        plan_body = {
+            "dso_id": ids["m42_id"],
+            "location_id": ids["location_id"],
+            "horizon_id": ids["horizon_id"],
+            "rig_id": ids["rig_id"],
+            "date_ranges": [{"start_date": "2026-06-01", "end_date": "2026-06-30"}],
+        }
+        created = client.post("/api/planner/wishlist/plans", json=plan_body)
+        listed = client.get("/api/planner/wishlist/plans")
+        calendar = client.get(
+            "/api/planner/wishlist/calendar",
+            params={
+                "location_id": ids["location_id"],
+                "horizon_id": ids["horizon_id"],
+                "rig_id": ids["rig_id"],
+            },
+        )
+
+        assert "other_names" not in created.json()
+        assert "other_names" not in listed.json()["items"][0]
+        assert "other_names" not in calendar.json()["targets"][0]
+
 
 # ── Plans CRUD ───────────────────────────────────────────────────────────────
 

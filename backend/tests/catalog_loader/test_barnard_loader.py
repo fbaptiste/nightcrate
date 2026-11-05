@@ -81,16 +81,20 @@ def test_barnard_common_name_from_names_column(db, catalogs_root):
     cur = db.cursor()
     cur.execute(
         """
-        SELECT common_name FROM dso d
+        SELECT d.id, d.common_name FROM dso d
         JOIN dso_designation dd ON dd.dso_id = d.id
         WHERE dd.catalog = 'barnard' AND dd.identifier = '33'
         """,
     )
     row = cur.fetchone()
     assert row is not None
-    # B33 has Names="Horsehead" in the fixture; augment CSV may override it,
-    # but the underlying common_name should exist.
-    assert row["common_name"]
+    assert row["common_name"] == "Horsehead Nebula"
+    assert (
+        db.execute(
+            "SELECT name FROM dso_other_name WHERE dso_id=? ORDER BY position", (row["id"],)
+        ).fetchone()[0]
+        == "Barnard Horsehead"
+    )
 
 
 def test_barnard_no_crossref_merge_even_if_emission_region_coincides(db, catalogs_root):

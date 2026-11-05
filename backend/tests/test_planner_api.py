@@ -297,8 +297,8 @@ async def seed_grouped_dsos(seed_db):
             )
         group = await conn.execute(
             """
-            INSERT INTO dso_group (catalog, identifier, display_form, search_key)
-            VALUES ('arp', '244', 'Arp 244', 'arp244')
+            INSERT INTO dso_group (catalog, identifier, display_form, search_key, common_name)
+            VALUES ('arp', '244', 'Arp 244', 'arp244', 'Antennae Galaxies')
             """
         )
         assert group.lastrowid is not None
@@ -311,6 +311,90 @@ async def seed_grouped_dsos(seed_db):
         )
         await conn.commit()
     return seed_db, ids
+
+
+@pytest.fixture
+async def seed_other_names(seed_db):
+    async with get_db() as conn:
+        source = await conn.execute("SELECT id FROM dso_catalog_source WHERE source_id = 'test'")
+        source_id = int((await source.fetchone())["id"])
+        cursor = await conn.execute(
+            """
+            INSERT INTO dso (
+                primary_designation, common_name, obj_type, ra_deg, dec_deg,
+                constellation, maj_axis_arcmin, min_axis_arcmin, mag_v,
+                source_catalog_id, source_row_hash
+            ) VALUES (
+                'M 76', 'Little Dumbbell Nebula', 'PN', 25.58, 51.58,
+                'Per', 2.7, 1.8, 10.1, ?, 'other-names'
+            )
+            """,
+            (source_id,),
+        )
+        m76_id = int(cursor.lastrowid)
+        await conn.execute(
+            """
+            INSERT INTO dso_designation (
+                dso_id, catalog, identifier, display_form, search_key, is_primary
+            ) VALUES (?, 'messier', '76', 'M 76', 'm76', 1)
+            """,
+            (m76_id,),
+        )
+        await conn.executemany(
+            "INSERT INTO dso_other_name (dso_id, name, position) VALUES (?, ?, ?)",
+            ((m76_id, "Cork Nebula", 1), (m76_id, "Barbell Nebula", 2)),
+        )
+        await conn.commit()
+    return seed_db, m76_id
+
+
+async def test_lists_return_other_names(client: TestClient, seed_other_names):
+    location_id, m76_id = seed_other_names
+    requests = (
+        {"restrict_tonight": "false", "limit": 100},
+        {
+            "location_id": location_id,
+            "date": "2026-11-15",
+            "restrict_tonight": "true",
+            "min_hours": 0,
+            "limit": 100,
+        },
+    )
+
+    for params in requests:
+        response = client.get("/api/planner/targets", params=params)
+        assert response.status_code == 200
+        by_id = {item["dso_id"]: item for item in response.json()["items"]}
+        assert by_id[m76_id]["other_names"] == ["Cork Nebula", "Barbell Nebula"]
+        m42 = next(item for item in by_id.values() if item["primary_designation"] == "M 42")
+        assert m42["other_names"] == []
+
+
+async def test_search_matches_other_name(client: TestClient, seed_other_names):
+    _location_id, m76_id = seed_other_names
+
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "q": "Cork"},
+    )
+
+    assert response.status_code == 200
+    assert [item["dso_id"] for item in response.json()["items"]] == [m76_id]
+
+
+async def test_search_matches_group_name(client: TestClient, seed_grouped_dsos):
+    _location_id, ids = seed_grouped_dsos
+
+    response = client.get(
+        "/api/planner/targets",
+        params={"restrict_tonight": "false", "q": "Antennae"},
+    )
+
+    assert response.status_code == 200
+    assert {item["dso_id"] for item in response.json()["items"]} == {
+        ids["NGC 4038"],
+        ids["NGC 4039"],
+    }
 
 
 async def test_targets_endpoint_returns_snapshot(client: TestClient, seed_db):

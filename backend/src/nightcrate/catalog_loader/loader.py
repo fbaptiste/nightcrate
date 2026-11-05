@@ -486,7 +486,14 @@ def _dispatch_source(
         wikidata_loader,
     )
 
-    if source.parser in {"openngc", "sharpless", "barnard", "parts", "overrides"}:
+    if source.parser in {
+        "openngc",
+        "sharpless",
+        "barnard",
+        "parts",
+        "overrides",
+        "common_names",
+    }:
         return SourceResult(source_id=source.source_id, status="skipped")
     if source.parser == "mgc50":
         return mgc50_augmenter.augment_from_mgc50(conn, source, force=force)
@@ -553,6 +560,7 @@ def _prepare_object_step(
         "nightcrate_barnard_crossref",
         "nightcrate_parts",
         "nightcrate_match_overrides",
+        "nightcrate_common_names",
         "nightcrate_augment",
         "github_50mgc",
         "wikidata_external_refs",
@@ -632,9 +640,7 @@ def _prepare_object_step(
 
     hashes = {source.source_id: current_hash(source) for source in ordered}
     object_input_ids = (*OBJECT_SOURCE_IDS, *EDITORIAL_OBJECT_SOURCE_IDS)
-    loaded_object_inputs = tuple(
-        source_id for source_id in (*object_input_ids, "nightcrate_augment") if source_id in by_id
-    )
+    loaded_object_inputs = tuple(source_id for source_id in object_input_ids if source_id in by_id)
     missing_loaded = [
         by_id[source_id]
         for source_id in loaded_object_inputs
@@ -731,12 +737,6 @@ def _prepare_object_step(
         for source_id in object_input_ids
         if source_id in by_id
     )
-    augment_changed = (
-        hashes.get("nightcrate_augment") is not None
-        and "nightcrate_augment" in stored
-        and stored["nightcrate_augment"]["file_hash"] != ""
-        and stored["nightcrate_augment"]["file_hash"] != hashes["nightcrate_augment"]
-    )
     keys_due = any(
         source_id in stored
         and hashes.get(source_id) is not None
@@ -751,7 +751,6 @@ def _prepare_object_step(
             force
             or selection_changed
             or object_changed
-            or augment_changed
             or keys_due
             or legacy_names_due
             or designation_ownership_due
@@ -977,15 +976,6 @@ def load_catalogs(
             if source_hash is None:
                 continue
             previous = stored.get(source_id)
-            if source_id == "nightcrate_augment" and object_step_blocked:
-                # A genuinely changed augment file is an object input: consuming it
-                # before reconciliation can leave removed overrides behind. A blank
-                # stored hash is only persisted invalidation, so that remains safe to
-                # run while the object step is blocked.
-                if previous is None or (
-                    previous["file_hash"] != "" and previous["file_hash"] != source_hash
-                ):
-                    continue
             if (
                 previous is None
                 or previous["file_hash"] == ""

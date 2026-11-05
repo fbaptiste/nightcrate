@@ -1,9 +1,9 @@
 {
   "category": "nightcrate",
-  "version": "0.15.0",
+  "version": "0.45.0",
   "files": {
     "dso_augment.csv": {
-      "description": "NightCrate editorial DSO augmentation: common-name overrides, non-galaxy surface brightness, curated distances."
+      "description": "NightCrate editorial DSO augmentation: non-galaxy surface brightness and curated distances."
     },
     "sharpless_crossref.csv": {
       "description": "Maps Sharpless 2 identifiers to existing DSOs from other catalogs (NGC/IC/Messier) to avoid duplicate entries for the same region."
@@ -22,7 +22,10 @@
     },
     "arp_members.csv": {
       "description": "Reviewed Arp member list: the galaxy at each member position of Webb's Arp index (VizieR VII/192), checked against SIMBAD, NED and OpenNGC."
+    },
+    "common_names.csv": {
+      "description": "Reviewed common names: each name confirmed for its object by two independent sources, plus removals of wrong catalog names."
     }
   },
-  "license": "MIT"
+  "license": "GPL-3.0-or-later"
 }

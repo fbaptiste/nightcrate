@@ -206,12 +206,30 @@ function DsoDetailSection({ dso }: { dso: AnnotatedDso }) {
           {dso.primary_designation}
         </Typography>
         {dso.common_name && (
-          <Typography sx={{ fontSize: "0.65rem", color: "text.secondary", mb: 0.75 }}>
-            {dso.common_name}
-          </Typography>
+          <>
+            <Typography
+              sx={{
+                fontSize: "0.65rem",
+                color: "text.secondary",
+                mb: dso.other_names.length > 0 ? 0 : 0.75,
+              }}
+            >
+              {dso.common_name}
+            </Typography>
+            {dso.other_names.length > 0 && (
+              <Typography sx={{ fontSize: "0.65rem", color: "text.secondary", mb: 0.75 }}>
+                Also known as {dso.other_names.join(", ")}
+              </Typography>
+            )}
+          </>
         )}
 
-        <Chip label={dso.type_group} size="small" variant="outlined" sx={{ mb: 1, fontSize: "0.6rem", height: 20 }} />
+        <Chip
+          label={dso.type_group}
+          size="small"
+          variant="outlined"
+          sx={{ mb: 1, fontSize: "0.6rem", height: 20 }}
+        />
 
         <Box sx={gridSx}>
           {dso.constellation && <GridRow label="Constellation" value={dso.constellation} />}

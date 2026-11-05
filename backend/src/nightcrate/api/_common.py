@@ -9,6 +9,7 @@ import aiosqlite
 from fastapi import HTTPException
 
 _SEED_KEYS: tuple[str, ...] = ("source", "seed_key", "seed_hash")
+_ID_QUERY_BATCH_SIZE = 500
 
 
 def row_to_dict(
@@ -42,6 +43,27 @@ def strip_seed(d: dict) -> dict:
     for k in _SEED_KEYS:
         d.pop(k, None)
     return d
+
+
+async def load_other_names(conn: Any, dso_ids: list[int]) -> dict[int, list[str]]:
+    """Fetch ordered alternate names using bounded batches of DSO IDs."""
+    unique_ids = list(dict.fromkeys(dso_ids))
+    grouped: dict[int, list[str]] = {dso_id: [] for dso_id in unique_ids}
+    for start in range(0, len(unique_ids), _ID_QUERY_BATCH_SIZE):
+        batch = unique_ids[start : start + _ID_QUERY_BATCH_SIZE]
+        placeholders = ",".join("?" * len(batch))
+        cursor = await conn.execute(
+            f"""
+            SELECT dso_id, name
+            FROM dso_other_name
+            WHERE dso_id IN ({placeholders})
+            ORDER BY dso_id, position
+            """,  # noqa: S608  # nosec B608 - fixed-size batches of integer IDs
+            batch,
+        )
+        for row in await cursor.fetchall():
+            grouped[int(row["dso_id"])].append(str(row["name"]))
+    return grouped
 
 
 async def get_or_404(conn: Any, table: str, row_id: int, label: str = "Item") -> dict:

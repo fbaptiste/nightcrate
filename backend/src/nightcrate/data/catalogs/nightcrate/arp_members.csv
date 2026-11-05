@@ -1,4 +1,4 @@
-# NightCrate reviewed Arp member list. MIT licensed.
+# NightCrate reviewed Arp member list. GPL-3.0-or-later (see LICENSE at the repository root).
 # One row per member of Webb's Arp index (VizieR VII/192) whose name needs review.
 # arp, ra_j2000, dec_j2000, list_name and mtype are VII/192's Arp, RAJ2000,
 # DEJ2000, Name and MType strings; together they identify the row.

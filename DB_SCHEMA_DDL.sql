@@ -1,4 +1,4 @@
--- NightCrate version: 0.44.0
+-- NightCrate version: 0.45.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1514,6 +1514,7 @@ CREATE TABLE dso_group (
     display_form  TEXT NOT NULL,
     search_key    TEXT NOT NULL,
     whole_dso_id  INTEGER REFERENCES dso(id) ON DELETE CASCADE,
+    common_name   TEXT,  -- migration 0067: a named group with no object of its own
     UNIQUE (catalog, identifier)
 );
 
@@ -1535,6 +1536,19 @@ CREATE TABLE dso_source_entry (
 );
 
 CREATE INDEX idx_dso_source_entry_dso ON dso_source_entry(dso_id);
+
+-- `dso_other_name` (migration 0067): an object's names after its preferred
+-- `dso.common_name`, in display order. Catalog-derived; rewritten for the
+-- objects each object step writes, kept for inactive objects retained for a
+-- user link. The unique index on (dso_id, name) also serves lookups by dso_id.
+CREATE TABLE dso_other_name (
+    id       INTEGER PRIMARY KEY,
+    dso_id   INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
+    name     TEXT NOT NULL CHECK (length(trim(name)) > 0 AND instr(name, ',') = 0),
+    position INTEGER NOT NULL CHECK (position >= 1),
+    UNIQUE (dso_id, name COLLATE NOCASE),
+    UNIQUE (dso_id, position)
+);
 
 CREATE TABLE dso_catalog_applied (
     catalog_id TEXT PRIMARY KEY,

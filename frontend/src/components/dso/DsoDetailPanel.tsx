@@ -128,14 +128,21 @@ export default function DsoDetailPanel({ dsoId, onSelectDso, onClose }: Props) {
                 )}
               </Stack>
               {data.common_name && (
-                <Stack direction="row" alignItems="center" gap={0.75} sx={{ mt: 0.5 }}>
-                  <Typography variant="subtitle1" color="text.secondary">
-                    {data.common_name}
-                  </Typography>
-                  {data.common_name_augmented && (
-                    <AugmentedBadge tooltip="Refined by NightCrate editorial data" />
+                <>
+                  <Stack direction="row" alignItems="center" gap={0.75} sx={{ mt: 0.5 }}>
+                    <Typography variant="subtitle1" color="text.secondary">
+                      {data.common_name}
+                    </Typography>
+                    {data.common_name_augmented && (
+                      <AugmentedBadge tooltip="Refined by NightCrate editorial data" />
+                    )}
+                  </Stack>
+                  {data.other_names.length > 0 && (
+                    <Typography variant="body2" color="text.secondary">
+                      Also known as {data.other_names.join(", ")}
+                    </Typography>
                   )}
-                </Stack>
+                </>
               )}
               {!data.active && (
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -383,7 +390,9 @@ export default function DsoDetailPanel({ dsoId, onSelectDso, onClose }: Props) {
                           {data.part_of.map((group) => (
                             <Chip
                               key={`${group.display_form}-${group.whole_dso_id ?? "group"}`}
-                              label={group.display_form}
+                              label={`${group.display_form}${
+                                group.common_name ? ` · ${group.common_name}` : ""
+                              }`}
                               size="small"
                               variant="outlined"
                               clickable={group.whole_dso_id != null}

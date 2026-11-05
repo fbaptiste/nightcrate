@@ -244,6 +244,12 @@ class TestCreateSolve:
 
     async def test_stores_all_objects_and_flags_main(self, client: AsyncClient):
         big, small = await _seed_two_dsos()
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO dso_other_name (dso_id, name, position) VALUES (?, ?, ?)",
+                ((big, "Pinwheel Galaxy", 1), (big, "Messier 101", 2)),
+            )
+            await conn.commit()
         pid = await _make_project(client, "Solve Create")
         dsos = [
             _dso_dict(big, "M 101", 210.0, 54.0, 28.0),
@@ -265,6 +271,9 @@ class TestCreateSolve:
         # Overlay data present.
         assert data["wcs"]["naxis1"] == 4000
         assert all("pixel_x" in o for o in data["objects"])
+        by_id = {o["dso_id"]: o for o in data["objects"]}
+        assert by_id[big]["other_names"] == ["Pinwheel Galaxy", "Messier 101"]
+        assert by_id[small]["other_names"] == []
 
     async def test_conflict_when_solve_exists(self, client: AsyncClient):
         big, small = await _seed_two_dsos()

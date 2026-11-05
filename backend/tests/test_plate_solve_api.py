@@ -9,6 +9,8 @@ import pytest
 from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.api.plate_solve import query_dsos_in_cone
+from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services import solve_operations
 from nightcrate.services.plate_solve_models import (
@@ -36,6 +38,42 @@ def reset_solve_operations():
     solve_operations._reset_for_tests()
     yield
     solve_operations._reset_for_tests()
+
+
+@pytest.mark.anyio
+async def test_cone_objects_return_other_names():
+    async with get_db() as conn:
+        await conn.execute(
+            """
+            INSERT INTO dso_catalog_source
+                (source_id, category, display_name, file_path, file_hash, row_count)
+            VALUES ('names-test', 'openngc', 'Names Test', '/dev/null', 'names', 1)
+            """
+        )
+        source = await conn.execute(
+            "SELECT id FROM dso_catalog_source WHERE source_id = 'names-test'"
+        )
+        source_id = int((await source.fetchone())["id"])
+        cursor = await conn.execute(
+            """
+            INSERT INTO dso (
+                primary_designation, common_name, obj_type, ra_deg, dec_deg,
+                source_catalog_id, source_row_hash
+            ) VALUES ('M 76', 'Little Dumbbell Nebula', 'PN', 25.58, 51.58, ?, 'names')
+            """,
+            (source_id,),
+        )
+        dso_id = int(cursor.lastrowid)
+        await conn.executemany(
+            "INSERT INTO dso_other_name (dso_id, name, position) VALUES (?, ?, ?)",
+            ((dso_id, "Cork Nebula", 1), (dso_id, "Barbell Nebula", 2)),
+        )
+        await conn.commit()
+
+    rows = await query_dsos_in_cone(25.58, 51.58, 1.0)
+
+    assert len(rows) == 1
+    assert rows[0]["other_names"] == ["Cork Nebula", "Barbell Nebula"]
 
 
 class TestValidatePath:

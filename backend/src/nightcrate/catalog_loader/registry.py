@@ -90,6 +90,7 @@ ARP_CITATION = (
 
 WIKIDATA_SOURCE_URL = "https://query.wikidata.org/sparql"
 WIKIDATA_LICENSE = "CC0-1.0"
+NIGHTCRATE_LICENSE = "GPL-3.0-or-later"
 WIKIDATA_CITATION = (
     "Wikidata contributors. Wikidata: the free knowledge base. "
     "Retrieved via the Wikidata Query Service (query.wikidata.org). "
@@ -117,7 +118,7 @@ class CatalogSource:
     attribution: str
     # Parser strategy identifier — dispatches to the right loader in
     # loader.py. One of: 'openngc', 'sharpless', 'barnard', 'mgc50',
-    # 'augment', 'sharpless_crossref', 'barnard_crossref',
+    # 'augment', 'common_names', 'sharpless_crossref', 'barnard_crossref',
     # 'wikidata_external_refs', 'external_refs'.
     parser: str
 
@@ -851,7 +852,7 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "melotte.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=MELOTTE_CITATION,
             parser="melotte",
         ),
@@ -862,9 +863,9 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "arp_members.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=(
-                "NightCrate reviewed Arp member identities. MIT licensed. "
+                "NightCrate reviewed Arp member identities. GPL-3.0-or-later. "
                 "Distributed as part of NightCrate."
             ),
             parser="arp_members",
@@ -876,9 +877,9 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "dso_parts.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=(
-                "NightCrate editorial DSO part relationships. MIT licensed. "
+                "NightCrate editorial DSO part relationships. GPL-3.0-or-later. "
                 "Distributed as part of NightCrate."
             ),
             parser="parts",
@@ -890,12 +891,26 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "dso_match_overrides.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=(
-                "NightCrate editorial DSO match overrides. MIT licensed. "
+                "NightCrate editorial DSO match overrides. GPL-3.0-or-later. "
                 "Distributed as part of NightCrate."
             ),
             parser="overrides",
+        ),
+        CatalogSource(
+            source_id="nightcrate_common_names",
+            category="nightcrate",
+            display_name="NightCrate reviewed common names",
+            file_path=nightcrate_dir / "common_names.csv",
+            version=None,
+            source_url=None,
+            license=NIGHTCRATE_LICENSE,
+            attribution=(
+                "NightCrate reviewed DSO common names. GPL-3.0-or-later. "
+                "Distributed as part of NightCrate."
+            ),
+            parser="common_names",
         ),
         CatalogSource(
             source_id="nightcrate_augment",
@@ -904,9 +919,9 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "dso_augment.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=(
-                "NightCrate editorial augmentation data. MIT licensed. "
+                "NightCrate editorial augmentation data. GPL-3.0-or-later. "
                 "Distributed as part of NightCrate."
             ),
             parser="augment",
@@ -918,10 +933,10 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "sharpless_crossref.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=(
                 "NightCrate editorial crossref between Sharpless 2 and NGC/IC/Messier "
-                "designations. MIT licensed."
+                "designations. GPL-3.0-or-later."
             ),
             # Side-input consumed by the Sharpless loader itself; no DSOs
             # are created by this source directly.
@@ -934,7 +949,7 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "barnard_crossref.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=(
                 "NightCrate editorial crossref for Barnard dark nebulae. Empty in "
                 "v0.15.0 — dark nebulae and emission regions at the same line of "
@@ -949,10 +964,10 @@ def _nightcrate_sources() -> list[CatalogSource]:
             file_path=nightcrate_dir / "dso_external_refs.csv",
             version=None,
             source_url=None,
-            license="MIT",
+            license=NIGHTCRATE_LICENSE,
             attribution=(
                 "NightCrate editorial overrides for DSO external references "
-                "(Wikipedia/Wikidata). MIT licensed."
+                "(Wikipedia/Wikidata). GPL-3.0-or-later."
             ),
             parser="external_refs",
         ),

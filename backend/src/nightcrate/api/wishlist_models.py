@@ -60,6 +60,7 @@ class FavoriteDsoSummary(BaseModel):
     active: bool
     primary_designation: str
     common_name: str | None
+    other_names: list[str]
     obj_type: str
     constellation: str | None
     ra_deg: float | None

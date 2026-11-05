@@ -21,6 +21,7 @@ export interface FavoriteDsoSummary {
   active: boolean;
   primary_designation: string;
   common_name: string | null;
+  other_names: string[];
   obj_type: string;
   constellation: string | null;
   ra_deg: number | null;

@@ -54,6 +54,7 @@ class IdentifiedDso(BaseModel):
     active: bool
     primary_designation: str
     common_name: str | None = None
+    other_names: list[str]
     obj_type: str
     type_group: str
     constellation: str | None = None

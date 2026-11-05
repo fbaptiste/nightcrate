@@ -1,4 +1,4 @@
-# NightCrate external reference overrides. MIT licensed.
+# NightCrate external reference overrides. GPL-3.0-or-later (see LICENSE at the repository root).
 #
 # Precedence: this file runs AFTER the Wikidata loader. Rows here overwrite
 # Wikidata-sourced rows with matching (dso_designation, provider, language).

@@ -10,6 +10,7 @@ export interface DsoDesignation {
 export interface DsoGroupRef {
   display_form: string;
   whole_dso_id: number | null;
+  common_name: string | null;
 }
 
 export interface DsoPartRef {
@@ -50,8 +51,9 @@ export interface DsoListItem {
   distance_pc: number | null;
   distance_method: DistanceMethod | null;
   common_name: string | null;
+  other_names: string[];
   designations: DsoDesignation[];
-  part_of: string[];
+  part_of: DsoGroupRef[];
 }
 
 export interface DsoListResponse {

@@ -29,6 +29,7 @@ import { fetchDsoFacets, fetchDsos, type DsoListItem } from "@/api/dsos";
 import { useDebounce } from "@/lib/useDebounce";
 import GridLoadingOverlay from "@/components/common/GridLoadingOverlay";
 import PaginationActions from "@/components/common/PaginationActions";
+import NameWithAlternates from "@/components/common/NameWithAlternates";
 import CatalogFilter from "@/components/dso/CatalogFilter";
 import ConstellationFilter from "@/components/dso/ConstellationFilter";
 import DsoAttributionPanel from "@/components/dso/DsoAttributionPanel";
@@ -173,13 +174,32 @@ export default function DsoCatalogPage() {
       field: "primary_designation",
       headerName: "Designation",
       width: 140,
-      renderCell: (params) => (
-        <Box sx={{ alignItems: "center", display: "flex", height: "100%" }}>
-          <Typography variant="body2" fontWeight={600}>
-            {params.row.display_designation}
-          </Typography>
-        </Box>
-      ),
+      renderCell: (params) => {
+        const nameTooltip = params.row.common_name
+          ? [
+              params.row.common_name,
+              params.row.other_names.length > 0
+                ? `also known as ${params.row.other_names.join(", ")}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" — ")
+          : undefined;
+        return (
+          <Box sx={{ alignItems: "center", display: "flex", height: "100%" }}>
+            <NameWithAlternates
+              name={params.row.display_designation}
+              otherNames={params.row.other_names}
+              title={nameTooltip}
+              tabIndex={null}
+            >
+              <Typography component="span" variant="body2" fontWeight={600}>
+                {params.row.display_designation}
+              </Typography>
+            </NameWithAlternates>
+          </Box>
+        );
+      },
     },
     {
       field: "designations",
@@ -196,7 +216,10 @@ export default function DsoCatalogPage() {
               all.indexOf(designation) === index,
           );
         const labels = [
-          ...params.row.part_of.map((name) => `Part of ${name}`),
+          ...params.row.part_of.map(
+            (group) =>
+              `Part of ${group.display_form}${group.common_name ? ` · ${group.common_name}` : ""}`,
+          ),
           ...alternatives,
         ].filter((label, index, all) => all.indexOf(label) === index);
         const visible = labels.slice(0, 2);
@@ -334,7 +357,15 @@ export default function DsoCatalogPage() {
       headerName: "Common name",
       flex: 1,
       minWidth: 180,
-      valueFormatter: (value) => value ?? "—",
+      renderCell: (params) =>
+        params.row.common_name ? (
+          <NameWithAlternates
+            name={params.row.common_name}
+            otherNames={params.row.other_names}
+          />
+        ) : (
+          "—"
+        ),
     },
   ];
 

@@ -1,4 +1,4 @@
-# NightCrate match overrides. MIT licensed.
+# NightCrate match overrides. GPL-3.0-or-later (see LICENSE at the repository root).
 # These take precedence over a match a catalog or OpenNGC states.
 # action assign: the designation names target_designation. When no loaded
 #   entry owns the designation, the row adds it as another name on the target.
@@ -25,3 +25,4 @@ Abell 50,assign,NGC 6742,SIMBAD: PN A66 50 is NGC 6742
 Abell 75,assign,NGC 7076,SIMBAD: PN A66 75 is NGC 7076
 Abell 77,assign,Sh2-128,SIMBAD: PN A66 77 is Sh 2-128 (an HII region; not a planetary nebula)
 Abell 81,assign,IC 1454,SIMBAD: PN A66 81 is IC 1454
+M 102,assign,NGC 5866,Fred 2026-11-03: M 102 is NGC 5866 (the Spindle Galaxy), as Telescopius and most imaging references have it; OpenNGC follows Mechain's 1783 note that M 102 repeated M 101

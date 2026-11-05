@@ -1,0 +1,256 @@
+# NightCrate reviewed common names. GPL-3.0-or-later (see LICENSE at the repository root).
+# One row per name; rank 1 is the preferred name. Each name row cites at least two
+# independent sources: SIMBAD (main identifier), NED (resolved name), Wikidata (QID) or
+# Wikipedia (title), counted as one source together, and agency or observatory pages (URL).
+# Names are checked one by one as facts; nothing is copied from another site's list.
+designation,target,name,action,rank,sources,verified,notes
+M 1,object,Crab Nebula,name,1,SIMBAD:M 1; NED:MESSIER 001; Wikidata:Q10934,2026-11-03,SNR
+M 6,object,Butterfly Cluster,name,1,SIMBAD:NGC 6405; Wikidata:Q11225,2026-11-03,
+M 7,object,Ptolemy Cluster,name,1,Wikidata:Q11234; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-7/,2026-11-03,
+M 8,object,Lagoon Nebula,name,1,SIMBAD:M 8; Wikidata:Q11243,2026-11-03,
+M 11,object,Wild Duck Cluster,name,1,SIMBAD:NGC 6705; Wikidata:Q11294,2026-11-03,OpenNGC lists the French name first
+M 13,object,Great Hercules Cluster,name,1,Wikipedia:Messier 13; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-13/,2026-11-03,
+M 13,object,Hercules Globular Cluster,name,2,SIMBAD:M 13; Wikidata:Q11312,2026-11-03,
+M 16,object,Eagle Nebula,name,1,SIMBAD:M 16; Wikidata:Q11349,2026-11-03,check which object holds the nebula (IC 4703 vs NGC 6611)
+M 16,object,Star Queen Nebula,name,2,SIMBAD:M 16; Wikipedia:Eagle Nebula,2026-11-03,check which object holds the nebula (IC 4703 vs NGC 6611)
+M 17,object,Omega Nebula,name,1,SIMBAD:NGC 6618; Wikidata:Q11357,2026-11-03,
+M 17,object,Swan Nebula,name,2,SIMBAD:NGC 6618; Wikidata:Q11357,2026-11-03,
+M 17,object,Horseshoe Nebula,name,3,Wikidata:Q11357; https://www.chandra.si.edu/photo/2003/m17/,2026-11-03,
+M 20,object,Trifid Nebula,name,1,SIMBAD:M 20; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-20/,2026-11-03,
+M 24,object,Small Sagittarius Star Cloud,name,1,SIMBAD:M 24; Wikidata:Q13618,2026-11-03,
+M 27,object,Dumbbell Nebula,name,1,SIMBAD:M 27; Wikidata:Q13628,2026-11-03,
+M 27,object,Apple Core Nebula,name,2,Wikidata:Q13628; https://noirlab.edu/public/images/noao-m27metcalf/,2026-11-03,
+M 31,object,Andromeda Galaxy,name,1,SIMBAD:M 31; NED:Messier 031; Wikidata:Q2469,2026-11-03,
+M 33,object,Triangulum Galaxy,name,1,SIMBAD:M 33; NED:Messier 033; Wikidata:Q13724,2026-11-03,
+M 35,object,Shoe-Buckle Cluster,name,1,Wikipedia:Messier 35; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-35/,2026-11-03,
+M 38,object,Starfish Cluster,name,1,Wikipedia:Messier 38; https://www.nasa.gov/centers-and-facilities/goddard/with-its-single-eye-nasas-dart-returns-first-images-from-space/,2026-11-03,
+M 41,object,Little Beehive Cluster,name,1,Wikipedia:Messier 41; https://apod.nasa.gov/apod/ap250225.html,2026-11-03,
+M 42,object,Orion Nebula,name,1,SIMBAD:M 42; Wikidata:Q13903,2026-11-03,
+M 42,object,Great Orion Nebula,name,2,SIMBAD:M 42; Wikidata:Q13903,2026-11-03,
+M 43,object,De Mairan's Nebula,name,1,Wikidata:Q13906; https://esahubble.org/images/potw1109a/,2026-11-03,
+M 44,object,Beehive Cluster,name,1,SIMBAD:NGC 2632; Wikidata:Q13760,2026-11-03,
+M 44,object,Praesepe,name,2,SIMBAD:NGC 2632; Wikidata:Q13760,2026-11-03,
+M 45,object,Pleiades,name,1,SIMBAD:Cl Melotte 22; NED:MESSIER 045; Wikidata:Q13423,2026-11-03,
+M 45,object,Seven Sisters,name,2,SIMBAD:Cl Melotte 22; Wikidata:Q13423,2026-11-03,
+M 51,object,Whirlpool Galaxy,name,1,SIMBAD:M 51; NED:Messier 051; Wikidata:Q13957,2026-11-03,
+M 57,object,Ring Nebula,name,1,SIMBAD:M 57; Wikidata:Q13969,2026-11-03,
+M 63,object,Sunflower Galaxy,name,1,SIMBAD:M 63; NED:Messier 063; Wikidata:Q13981,2026-11-03,
+M 64,object,Black Eye Galaxy,name,1,SIMBAD:M 64; NED:Messier 064; Wikidata:Q13983,2026-11-03,
+M 64,object,Evil Eye Galaxy,name,2,SIMBAD:M 64; NED:Messier 064; Wikipedia:Black Eye Galaxy,2026-11-03,
+M 64,object,Sleeping Beauty Galaxy,name,3,Wikipedia:Black Eye Galaxy; https://apod.nasa.gov/apod/ap040211.html,2026-11-03,
+M 67,object,King Cobra Cluster,name,1,Wikipedia:Messier 67; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-67/,2026-11-03,
+M 74,object,Phantom Galaxy,name,1,NED:Messier 074; Wikipedia:Messier 74,2026-11-03,
+M 76,object,Little Dumbbell Nebula,name,1,SIMBAD:M 76; Wikidata:Q14015,2026-11-03,
+M 76,object,Cork Nebula,name,2,SIMBAD:M 76; Wikidata:Q14015,2026-11-03,
+M 76,object,Barbell Nebula,name,3,SIMBAD:M 76; Wikidata:Q14015,2026-11-03,
+M 77,object,Cetus A,name,1,Wikidata:Q14017; https://noirlab.edu/public/images/noao-m77/,2026-11-03,
+M 77,object,Squid Galaxy,name,2,Wikipedia:Messier 77; https://science.nasa.gov/missions/hubble/hubble-spots-a-squid-in-the-whale/,2026-11-03,
+M 81,object,Bode's Galaxy,name,1,SIMBAD:M 81; Wikidata:Q81102410,2026-11-03,
+M 82,object,Cigar Galaxy,name,1,SIMBAD:M 82; NED:Messier 082; Wikidata:Q14026,2026-11-03,
+M 83,object,Southern Pinwheel Galaxy,name,1,SIMBAD:M 83; Wikidata:Q14030,2026-11-03,
+M 83,object,Thousand-Ruby Galaxy,name,2,https://www.eso.org/public/news/eso0825/; https://apod.nasa.gov/apod/ap190629.html; https://www.astronomy.com/science/the-thousand-ruby-galaxy/,2026-11-03,
+M 87,object,Virgo A,name,1,SIMBAD:M 87; NED:Messier 087; Wikidata:Q14041,2026-11-03,
+M 97,object,Owl Nebula,name,1,SIMBAD:M 97; Wikidata:Q14359,2026-11-03,
+M 99,object,Coma Pinwheel Galaxy,name,1,SIMBAD:M 99; Wikipedia:Messier 99,2026-11-03,
+M 99,object,St. Catherine's Wheel,name,2,Wikipedia:Messier 99; https://en.wikipedia.org/wiki/Messier_99; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+M 101,object,Pinwheel Galaxy,name,1,SIMBAD:M 101; NED:Messier 101; Wikidata:Q14371,2026-11-03,
+M 104,object,Sombrero Galaxy,name,1,SIMBAD:M 104; NED:Messier 104; Wikidata:Q91461627,2026-11-03,
+NGC 40,object,Bow-Tie Nebula,name,1,Wikidata:Q43933; https://chandra.harvard.edu/photo/2005/n40/,2026-11-03,
+NGC 55,object,String of Pearls Galaxy,name,1,Wikidata:Q50650; https://apod.nasa.gov/apod/ap260126.html,2026-11-03,
+NGC 104,object,47 Tucanae,name,1,SIMBAD:NGC 104; Wikidata:Q14276,2026-11-03,
+NGC 246,object,Skull Nebula,name,1,Wikidata:Q536591; https://noirlab.edu/public/images/gemini0603a/,2026-11-03,
+NGC 253,object,Sculptor Galaxy,name,1,NED:NGC 0253; Wikidata:Q487221,2026-11-03,
+NGC 253,object,Silver Coin Galaxy,name,2,SIMBAD:NGC 253; NED:NGC 0253; Wikipedia:Sculptor Galaxy,2026-11-03,
+NGC 253,object,Silver Dollar Galaxy,name,3,Wikipedia:Sculptor Galaxy; https://apod.nasa.gov/apod/ap161103.html,2026-11-03,
+NGC 281,object,Pacman Nebula,name,1,Wikidata:Q641074; https://apod.nasa.gov/apod/ap050823.html,2026-11-03,
+NGC 457,object,Owl Cluster,name,1,SIMBAD:NGC 457; Wikidata:Q730450,2026-11-03,
+NGC 457,object,ET Cluster,name,2,SIMBAD:NGC 457; Wikidata:Q730450,2026-11-03,
+NGC 457,object,Dragonfly Cluster,name,3,Wikipedia:NGC 457; https://noirlab.edu/public/education/constellations/cassiopeia/,2026-11-03,
+NGC 869,object,h Persei,name,1,SIMBAD:NGC 869; Wikipedia:NGC 869,2026-11-03,catalog has chi Persei on NGC 869 (swapped)
+NGC 884,object,Chi Persei,name,1,SIMBAD:NGC 884; https://www.eso.org/public/images/b02/,2026-11-03,catalog has h Persei on NGC 884 (swapped)
+NGC 891,object,Silver Sliver Galaxy,name,1,Wikidata:Q490345; https://noirlab.edu/public/images/iotw2023a/,2026-11-03,
+NGC 891,object,Outer Limits Galaxy,name,2,Wikidata:Q490345; https://en.wikipedia.org/wiki/NGC_891; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 1275,object,Perseus A,name,1,SIMBAD:NGC 1275; NED:NGC 1275; Wikidata:Q497687,2026-11-03,
+NGC 1316,object,Fornax A,name,1,SIMBAD:NGC 1316; NED:NGC 1316; Wikipedia:NGC 1316,2026-11-03,
+NGC 1365,object,Great Barred Spiral Galaxy,name,1,Wikidata:Q494054; https://noirlab.edu/public/images/iotw2127a/,2026-11-03,
+NGC 1435,object,Merope Nebula,name,1,SIMBAD:NGC 1435; Wikipedia:NGC 1435,2026-11-03,
+NGC 1435,object,Tempel's Nebula,name,2,Wikipedia:NGC 1435; https://www.kopernik.org/images/archive/n1435.htm; https://en.wikipedia.org/wiki/NGC_1435,2026-11-03,
+NGC 1499,object,California Nebula,name,1,SIMBAD:NGC 1499; NED:NGC 1499; Wikidata:Q494019,2026-11-03,
+NGC 1501,object,Oyster Nebula,name,1,Wikipedia:NGC 1501; https://www.esa.int/ESA_Multimedia/Images/2016/09/Hubble_views_a_cosmic_oyster_and_pearl_in_NGC_1501,2026-11-03,
+NGC 1514,object,Crystal Ball Nebula,name,1,Wikipedia:NGC 1514; https://noirlab.edu/public/images/noirlab2613a/,2026-11-03,
+NGC 1535,object,Cleopatra's Eye,name,1,Wikidata:Q677302; https://science.nasa.gov/missions/hubble/hubble-spies-eye-in-the-sky/,2026-11-03,
+NGC 1555,object,Hind's Variable Nebula,name,1,SIMBAD:NGC 1555; https://apod.nasa.gov/apod/ap071213.html,2026-11-03,
+NGC 1566,object,Spanish Dancer Galaxy,name,1,Wikipedia:NGC 1566; https://science.nasa.gov/image-article/apod-2022-january-14-ngc-1566-the-spanish-dancer-spiral-galaxy/,2026-11-03,
+NGC 1788,object,Cosmic Bat Nebula,name,1,Wikipedia:NGC 1788; https://www.eso.org/public/images/eso1009a/,2026-11-03,
+NGC 1977,object,Running Man Nebula,name,1,SIMBAD:NGC 1977; https://noirlab.edu/public/images/noao-n1977spokes/,2026-11-03,
+NGC 2024,object,Flame Nebula,name,1,SIMBAD:NAME Flame Nebula; Wikidata:Q490342,2026-11-03,
+NGC 2070,object,Tarantula Nebula,name,1,SIMBAD:NGC 2070; Wikipedia:NGC 2070,2026-11-03,
+NGC 2070,object,30 Doradus,name,2,NED:30 Dor; https://noirlab.edu/public/images/noao-02355/,2026-11-03,
+NGC 2169,object,37 Cluster,name,1,Wikipedia:NGC 2169; https://apod.nasa.gov/apod/ap051118.html,2026-11-03,
+NGC 2174,object,Monkey Head Nebula,name,1,SIMBAD:NGC 2174; Wikidata:Q696249,2026-11-03,
+NGC 2237,object,Rosette Nebula,name,1,SIMBAD:NAME Rosette Nebula; Wikidata:Q108041,2026-11-03,
+NGC 2261,object,Hubble's Variable Nebula,name,1,NED:NGC 2261; Wikidata:Q338392,2026-11-03,
+NGC 2359,object,Thor's Helmet,name,1,Wikidata:Q832978; https://apod.nasa.gov/apod/ap200612.html,2026-11-03,
+NGC 2362,object,Tau Canis Majoris Cluster,name,1,Wikipedia:NGC 2362; https://www.eso.org/public/images/potw1911a/,2026-11-03,
+NGC 2392,object,Eskimo Nebula,name,1,SIMBAD:NGC 2392; Wikidata:Q215543,2026-11-03,
+NGC 2392,object,Clown-face Nebula,name,2,Wikidata:Q215543; https://www.chandra.si.edu/photo/2013/ngc2392/animations.html,2026-11-03,
+NGC 2419,object,Intergalactic Wanderer,name,1,Wikidata:Q744991; https://apod.nasa.gov/apod/ap150604.html,2026-11-03,
+NGC 2467,object,Skull and Crossbones Nebula,name,1,Wikipedia:NGC 2467; https://www.eso.org/public/news/eso1834/,2026-11-03,
+NGC 2516,object,Southern Beehive Cluster,name,1,Wikipedia:NGC 2516; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-caldwell-catalog/caldwell-96/,2026-11-03,
+NGC 2683,object,UFO Galaxy,name,1,Wikidata:Q494007; https://esahubble.org/images/potw1213a/,2026-11-03,
+NGC 2685,object,Helix Galaxy,name,1,SIMBAD:NGC 2685; NED:NGC 2685; Wikipedia:NGC 2685,2026-11-03,
+NGC 2736,object,Pencil Nebula,name,1,SIMBAD:NGC 2736; Wikidata:Q840805,2026-11-03,
+NGC 3132,object,Eight-Burst Nebula,name,1,SIMBAD:NGC 3132; Wikidata:Q725489,2026-11-03,
+NGC 3132,object,Southern Ring Nebula,name,2,Wikidata:Q725489; https://esawebb.org/images/southernring3/; https://science.nasa.gov/asset/webb/southern-ring-nebula-nircam-compass-image/,2026-11-03,
+NGC 3242,object,Ghost of Jupiter,name,1,SIMBAD:NGC 3242; NED:NGC 3242; Wikipedia:NGC 3242,2026-11-03,
+NGC 3324,object,Gabriela Mistral Nebula,name,1,Wikipedia:NGC 3324; https://www.eso.org/public/news/eso1207/,2026-11-03,
+NGC 3372,object,Carina Nebula,name,1,SIMBAD:NGC 3372; Wikidata:Q50042,2026-11-03,
+NGC 3372,object,Eta Carinae Nebula,name,2,SIMBAD:NGC 3372; Wikipedia:Carina Nebula,2026-11-03,
+NGC 3372,object,Great Nebula in Carina,name,3,Wikidata:Q50042; https://apod.nasa.gov/apod/ap990719.html,2026-11-03,
+NGC 3532,object,Wishing Well Cluster,name,1,Wikipedia:NGC 3532; https://www.eso.org/public/news/eso1439/,2026-11-03,
+NGC 3576,object,Statue of Liberty Nebula,name,1,Wikipedia:NGC 3576; https://apod.nasa.gov/apod/ap160928.html,2026-11-03,
+NGC 3628,object,Hamburger Galaxy,name,1,Wikidata:Q490605; https://apod.nasa.gov/apod/ap140508.html,2026-11-03,
+NGC 3628,object,Sarah's Galaxy,name,2,Wikipedia:NGC 3628; https://noirlab.edu/public/images/noirlab2330d/,2026-11-03,
+NGC 4490,object,Cocoon Galaxy,name,1,SIMBAD:NGC 4490; NED:Cocoon Galaxy; Wikidata:Q1111974,2026-11-03,
+NGC 4565,object,Needle Galaxy,name,1,Wikidata:Q622690; https://www.spitzer.caltech.edu/image/ssc2023-02-a-needle-galaxy-on-its-edge,2026-11-03,
+NGC 4631,object,Whale Galaxy,name,1,SIMBAD:NGC 4631; NED:NGC 4631; Wikidata:Q506384,2026-11-03,
+NGC 4755,object,Jewel Box,name,1,SIMBAD:NGC 4755; Wikidata:Q725477,2026-11-03,catalog lists Herschel's Jewel Box first
+NGC 4755,object,Kappa Crucis Cluster,name,2,SIMBAD:NGC 4755; Wikidata:Q725477,2026-11-03,catalog lists Herschel's Jewel Box first
+NGC 5128,object,Centaurus A,name,1,SIMBAD:NAME Centaurus A; NED:NGC 5128; Wikidata:Q487255,2026-11-03,
+NGC 5139,object,Omega Centauri,name,1,SIMBAD:NGC 5139; NED:omega Cen; Wikidata:Q14275,2026-11-03,
+NGC 5907,object,Splinter Galaxy,name,1,Wikipedia:NGC 5907; https://www.spitzer.caltech.edu/image/sig05-002-splendid-splinter,2026-11-03,
+NGC 5907,object,Knife Edge Galaxy,name,2,Wikipedia:NGC 5907; https://esahubble.org/images/potw2025a/,2026-11-03,
+NGC 6188,object,Rim Nebula,name,1,SIMBAD:NGC 6188; https://www.eso.org/public/unitedkingdom/news/eso1510/,2026-11-03,
+NGC 6188,object,Fighting Dragons of Ara,name,2,https://noirlab.edu/public/images/iotw2528b/; https://en.wikipedia.org/wiki/NGC_6188,2026-11-03,
+NGC 6210,object,Turtle Nebula,name,1,Wikipedia:NGC 6210; https://apod.nasa.gov/apod/ap981028.html,2026-11-03,
+NGC 6231,object,Northern Jewel Box,name,1,Wikipedia:NGC 6231; https://noirlab.edu/public/images/noao-zetascoblock/,2026-11-03,
+NGC 6302,object,Bug Nebula,name,1,SIMBAD:NGC 6302; Wikipedia:NGC 6302,2026-11-03,
+NGC 6302,object,Butterfly Nebula,name,2,Wikipedia:NGC 6302; https://science.nasa.gov/asset/hubble/ngc-6302-the-butterfly-nebula/,2026-11-03,"Fred 2026-11-03: here, not on IC 1318"
+NGC 6334,object,Cat's Paw Nebula,name,1,SIMBAD:NGC 6334; Wikipedia:NGC 6334,2026-11-03,
+NGC 6357,object,War and Peace Nebula,name,1,SIMBAD:NGC 6357; Wikipedia:NGC 6357,2026-11-03,
+NGC 6357,object,Lobster Nebula,name,2,Wikidata:Q840800; https://apod.nasa.gov/apod/ap221101.html,2026-11-03,"Fred 2026-11-03: here, not on M 17"
+NGC 6369,object,Little Ghost Nebula,name,1,SIMBAD:NGC 6369; Wikidata:Q913140,2026-11-03,
+NGC 6503,object,Lost-in-Space Galaxy,name,1,Wikipedia:NGC 6503; https://esahubble.org/news/heic1513/,2026-11-03,
+NGC 6537,object,Red Spider Nebula,name,1,SIMBAD:NGC 6537; Wikidata:Q80941707,2026-11-03,
+NGC 6543,object,Cat's Eye Nebula,name,1,SIMBAD:NGC 6543; Wikidata:Q15829,2026-11-03,
+NGC 6751,object,Glowing Eye Nebula,name,1,Wikipedia:NGC 6751; https://apod.nasa.gov/apod/ap130313.html,2026-11-03,
+NGC 6818,object,Little Gem Nebula,name,1,SIMBAD:NGC 6818; Wikipedia:NGC 6818,2026-11-03,
+NGC 6822,object,Barnard's Galaxy,name,1,SIMBAD:NGC 6822; NED:NGC 6822; Wikidata:Q622789,2026-11-03,
+NGC 6826,object,Blinking Planetary,name,1,SIMBAD:NGC 6826; Wikipedia:NGC 6826,2026-11-03,
+NGC 6872,object,Condor Galaxy,name,1,Wikidata:Q1148212; https://apod.nasa.gov/apod/ap230623.html,2026-11-03,
+NGC 6888,object,Crescent Nebula,name,1,SIMBAD:HD 192163; Wikidata:Q202993,2026-11-03,
+NGC 6905,object,Blue Flash Nebula,name,1,SIMBAD:NGC 6905; Wikidata:Q179178,2026-11-03,
+NGC 6946,object,Fireworks Galaxy,name,1,NED:NGC 6946; Wikidata:Q671210,2026-11-03,
+NGC 6960,object,Western Veil Nebula,name,1,Wikipedia:Veil Nebula; https://apod.nasa.gov/apod/ap180906.html,2026-11-03,
+NGC 6960,object,Witch's Broom Nebula,name,2,Wikipedia:Veil Nebula; https://apod.nasa.gov/apod/ap080819.html,2026-11-03,
+NGC 6992,object,Eastern Veil Nebula,name,1,Wikidata:Q1148964; https://science.nasa.gov/image-detail/c33-1/,2026-11-03,
+NGC 6992,object,Network Nebula,name,2,https://en.wikipedia.org/wiki/Veil_Nebula; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 7000,object,North America Nebula,name,1,SIMBAD:NGC 7000; Wikidata:Q265515,2026-11-03,
+NGC 7009,object,Saturn Nebula,name,1,SIMBAD:NGC 7009; NED:NGC 7009; Wikidata:Q15831,2026-11-03,
+NGC 7023,object,Iris Nebula,name,1,SIMBAD:NGC 7023; Wikidata:Q649379,2026-11-03,
+NGC 7252,object,Atoms for Peace Galaxy,name,1,SIMBAD:NGC 7252; NED:NGC 7252; Wikipedia:NGC 7252,2026-11-03,
+NGC 7293,object,Helix Nebula,name,1,SIMBAD:NGC 7293; Wikidata:Q97017154,2026-11-03,
+NGC 7380,object,Wizard Nebula,name,1,Wikipedia:NGC 7380; https://apod.nasa.gov/apod/ap111102.html,2026-11-03,
+NGC 7635,object,Bubble Nebula,name,1,SIMBAD:NGC 7635; Wikidata:Q725471,2026-11-03,
+NGC 7662,object,Blue Snowball Nebula,name,1,Wikipedia:NGC 7662; https://apod.nasa.gov/apod/ap961121.html,2026-11-03,
+NGC 7789,object,Caroline's Rose Cluster,name,1,Wikipedia:NGC 7789; https://apod.nasa.gov/apod/ap131026.html,2026-11-03,
+NGC 7789,object,White Rose Cluster,name,2,Wikipedia:NGC 7789; https://en.wikipedia.org/wiki/NGC_7789; https://www.astronomy.com/observing/deep-sky-dreams-ngc-7789/,2026-11-03,
+NGC 7814,object,Little Sombrero Galaxy,name,1,Wikipedia:NGC 7814; https://apod.nasa.gov/apod/ap131025.html,2026-11-03,
+IC 342,object,Hidden Galaxy,name,1,Wikipedia:IC 342; https://apod.nasa.gov/apod/ap190116.html,2026-11-03,
+IC 349,object,Barnard's Merope Nebula,name,1,SIMBAD:IC 349; Wikipedia:IC 349,2026-11-03,
+IC 405,object,Flaming Star Nebula,name,1,SIMBAD:IC 405; Wikidata:Q841306,2026-11-03,
+IC 410,object,Tadpoles Nebula,name,1,Wikipedia:IC 410; https://apod.nasa.gov/apod/ap180124.html,2026-11-03,
+IC 417,object,Spider Nebula,name,1,Wikipedia:IC 417; https://www.spitzer.caltech.edu/image/sig16-008-the-spider-nebula,2026-11-03,
+IC 418,object,Spirograph Nebula,name,1,Wikidata:Q872204; https://apod.nasa.gov/apod/ap100411.html,2026-11-03,
+IC 443,object,Jellyfish Nebula,name,1,SIMBAD:IC 443; Wikidata:Q2355688,2026-11-03,
+IC 1318,object,Gamma Cygni Nebula,name,1,Wikidata:Q932017; https://science.nasa.gov/image-article/apod-2022-june-18-the-gamma-cygni-nebula/,2026-11-03,
+IC 1795,object,Fish Head Nebula,name,1,Wikipedia:Fish Head Nebula; https://apod.nasa.gov/apod/ap190731.html,2026-11-03,
+IC 1805,object,Heart Nebula,name,1,SIMBAD:NAME Heart Nebula; Wikidata:Q33586,2026-11-03,
+IC 1848,object,Soul Nebula,name,1,Wikidata:Q1196507; https://apod.nasa.gov/apod/ap160228.html,2026-11-03,
+IC 2118,object,Witch Head Nebula,name,1,SIMBAD:NGC 1909; Wikidata:Q1079743,2026-11-03,
+IC 2177,object,Seagull Nebula,name,1,Wikipedia:IC 2177; https://www.eso.org/public/images/eso1237c/,2026-11-03,
+IC 2220,object,Toby Jug Nebula,name,1,SIMBAD:IC 2220; Wikidata:Q3691968,2026-11-03,
+IC 2391,object,Omicron Velorum Cluster,name,1,Wikipedia:IC 2391; https://noirlab.edu/public/education/constellations/vela/,2026-11-03,
+IC 2574,object,Coddington's Nebula,name,1,SIMBAD:IC 2574; NED:IC 2574; Wikidata:Q1653311,2026-11-03,
+IC 2602,object,Southern Pleiades,name,1,Wikidata:Q50050; https://noirlab.edu/public/education/constellations/carina/,2026-11-03,
+IC 2602,object,Theta Carinae Cluster,name,2,SIMBAD:IC 2602; Wikidata:Q50050,2026-11-03,
+IC 2944,object,Running Chicken Nebula,name,1,Wikidata:Q79642350; https://www.eso.org/public/images/eso1135a/,2026-11-03,
+IC 2944,object,Lambda Centauri Nebula,name,2,Wikidata:Q79642350; https://www.eso.org/public/news/eso1135/,2026-11-03,
+IC 4406,object,Retina Nebula,name,1,Wikipedia:IC 4406; https://science.nasa.gov/asset/hubble/the-retina-nebula-dying-star-ic-4406/,2026-11-03,
+IC 4592,object,Blue Horsehead Nebula,name,1,Wikidata:Q2554542; https://apod.nasa.gov/apod/ap210705.html,2026-11-03,
+IC 4628,object,Prawn Nebula,name,1,Wikidata:Q3146566; https://apod.nasa.gov/apod/ap120907.html,2026-11-03,
+IC 5070,object,Pelican Nebula,name,1,SIMBAD:IC 5070; Wikidata:Q527158,2026-11-03,
+IC 5146,object,Cocoon Nebula,name,1,SIMBAD:IC 5146; Wikidata:Q261879,2026-11-03,
+IC 5148,object,Spare Tyre Nebula,name,1,Wikipedia:IC 5148; https://noirlab.edu/public/images/iotw2344a/,2026-11-03,
+Sh2-101,object,Tulip Nebula,name,1,Wikidata:Q2475848; https://apod.nasa.gov/apod/ap190921.html,2026-11-03,
+Sh2-129,object,Flying Bat Nebula,name,1,Wikidata:Q16605469; https://apod.nasa.gov/apod/ap150911.html,2026-11-03,Squid Nebula (Ou 4) is a separate object inside it
+Sh2-132,object,Lion Nebula,name,1,Wikipedia:Sh 2-132; https://apod.nasa.gov/apod/ap240610.html,2026-11-03,
+Sh2-136,object,Ghost Nebula,name,1,Wikidata:Q9335937; https://science.nasa.gov/image-article/apod-2020-october-26-reflections-of-the-ghost-nebula/,2026-11-03,
+Sh2-155,object,Cave Nebula,name,1,Wikidata:Q859146; https://apod.nasa.gov/apod/ap170323.html,2026-11-03,
+Sh2-240,object,Spaghetti Nebula,name,1,Wikidata:Q1968201; https://science.nasa.gov/image-article/apod-2026-january-7-simeis-147-the-spaghetti-nebula-supernova-remnant/,2026-11-03,
+Sh2-240,object,Simeis 147,name,2,Wikidata:Q1968201; https://apod.nasa.gov/apod/ap160425.html,2026-11-03,
+Sh2-261,object,Lower's Nebula,name,1,SIMBAD:NAME Lower's Nebula; Wikidata:Q3958820,2026-11-03,
+Sh2-274,object,Medusa Nebula,name,1,SIMBAD:PN A66 21; Wikidata:Q1148673,2026-11-03,also Abell 21
+Sh2-276,object,Barnard's Loop,name,1,SIMBAD:NAME Barnard's Loop; Wikidata:Q808444,2026-11-03,
+Sh2-308,object,Dolphin Head Nebula,name,1,Wikidata:Q30086636; https://apod.nasa.gov/apod/ap240607.html,2026-11-03,
+LDN 1235,object,Shark Nebula,name,1,Wikidata:Q89211500; https://apod.nasa.gov/apod/ap250318.html,2026-11-03,
+LDN 1622,object,Boogeyman Nebula,name,1,Wikidata:Q79182222; https://apod.nasa.gov/apod/ap230125.html,2026-11-03,
+B 33,object,Horsehead Nebula,name,1,SIMBAD:NAME Horsehead Nebula; Wikidata:Q14271,2026-11-03,
+B 72,object,Snake Nebula,name,1,Wikidata:Q1195975; https://apod.nasa.gov/apod/ap020409.html,2026-11-03,
+B 150,object,Seahorse Nebula,name,1,Wikidata:Q48726419; https://apod.nasa.gov/apod/ap181025.html,2026-11-03,
+Mel 20,object,Alpha Persei Cluster,name,1,SIMBAD:Cl Melotte 20; Wikidata:Q1072618,2026-11-03,
+Mel 25,object,Hyades,name,1,SIMBAD:Cl Melotte 25; Wikidata:Q13511,2026-11-03,
+Mel 111,object,Coma Star Cluster,name,1,SIMBAD:Cl Melotte 111; Wikidata:Q84275359,2026-11-03,
+Cr 399,object,Brocchi's Cluster,name,1,SIMBAD:Cl Collinder 399; Wikidata:Q9290,2026-11-03,
+Cr 399,object,Coathanger,name,2,SIMBAD:Cl Collinder 399; Wikipedia:Brocchi's Cluster,2026-11-03,
+Arp 188,object,Tadpole Galaxy,name,1,SIMBAD:VV 29; Wikidata:Q115482,2026-11-03,
+Arp 104,group,Keenan's System,name,1,SIMBAD:NAME Keenan's System; NED:Arp 104,2026-11-03,
+Arp 148,object,Mayall's Object,name,1,SIMBAD:APG 148; NED:Arp 148; Wikidata:Q115523,2026-11-03,
+Arp 242,group,Mice Galaxies,name,1,SIMBAD:NGC 4676; Wikidata:Q211449,2026-11-03,
+Arp 244,group,Antennae Galaxies,name,1,SIMBAD:NAME Antennae; NED:Arp 244; Wikidata:Q725595,2026-11-03,
+Arp 317,group,Leo Triplet,name,1,SIMBAD:NAME Leo Triplet; NED:ARP 317,2026-11-03,
+Arp 319,group,Stephan's Quintet,name,1,NED:ARP 319; Wikipedia:NGC 7317,2026-11-03,
+NGC 2264,object,Cone Nebula,name,1,SIMBAD:NAME Cone Nebula (at NGC 2264's position); Wikidata:Q226134; Fred:2026-11-03,2026-11-03,Fred: NGC 2264 is the Cone Nebula
+NGC 2264,object,Christmas Tree Cluster,name,2,SIMBAD:NGC 2264; Wikipedia:NGC 2264,2026-11-03,
+NGC 2264,object,Snowflake Cluster,name,3,Wikipedia:NGC 2264; https://www.spitzer.caltech.edu/image/sig05-028-stellar-snowflake-cluster,2026-11-03,
+IC 1396,object,Elephant's Trunk Nebula,name,1,"SIMBAD:NAME Elephant Trunk Nebula (IC 1396A, inside IC 1396); Wikidata:Q1050934; Fred:2026-11-03",2026-11-03,Fred: IC 1396 is the Elephant's Trunk; the trunk itself is IC 1396A
+NGC 1931,object,Fly Nebula,name,1,Wikipedia:NGC 1931; Fred:2026-11-03,2026-11-03,Fred: NGC 1931 is the Fly Nebula
+LBN 191,object,Cygnus Loop,name,1,SIMBAD:NAME Cyg Loop; Fred:2026-11-03,2026-11-03,NightCrate's parts list makes LBN 191 the whole loop
+LBN 191,object,Veil Nebula,name,2,SIMBAD:LBN 191; Fred:2026-11-03,2026-11-03,NightCrate's parts list makes LBN 191 the whole loop
+IC 434,object,Flame Nebula,remove,,OpenNGC NGC.csv row IC0434; SIMBAD:NAME Flame Nebula (NGC 2024),2026-11-03,wrong object: the Flame Nebula is NGC 2024 (Fred 2026-11-03)
+IC 434,object,Orion B,remove,,OpenNGC NGC.csv row IC0434; SIMBAD:NAME Ori B (NGC 2024),2026-11-03,wrong object: Orion B is at NGC 2024 (Fred 2026-11-03)
+NGC 4990,object,Cocoon Galaxy,remove,,OpenNGC NGC.csv row NGC4990; SIMBAD/Wikidata: Cocoon Galaxy is NGC 4490,2026-11-03,likely a typo for NGC 4490 (Fred 2026-11-03)
+M 15,object,Great Pegasus Cluster,name,1,Wikipedia:Messier 15; https://lake-afton-presenter-notes.readthedocs.io/en/latest/star-clusters/globular/m15/; https://en.wikipedia.org/wiki/Messier_15,2026-11-03,
+M 36,object,Pinwheel Cluster,name,1,Wikipedia:Messier 36; https://en.wikipedia.org/wiki/Messier_36; https://www.astronomy.com/observing/observe-springs-best-messier-objects/,2026-11-03,
+M 37,object,Salt and Pepper Cluster,name,1,Wikipedia:Messier 37; https://en.wikipedia.org/wiki/Messier_37; https://www.astronomy.com/astronomy-for-beginners/spend-some-time-observing-in-auriga/,2026-11-03,
+M 94,object,Cat's Eye Galaxy,name,1,Wikipedia:Messier 94; https://martzobservatory.org/dso/detail/M94; https://en.wikipedia.org/wiki/Messier_94,2026-11-03,
+M 94,object,Croc's Eye Galaxy,name,2,Wikipedia:Messier 94; https://en.wikipedia.org/wiki/Messier_94; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+M 108,object,Surfboard Galaxy,name,1,Wikidata:Q4751; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-108/,2026-11-03,
+NGC 2442,object,Meathook Galaxy,name,1,https://esahubble.org/images/heic1108b/; https://www.hq.eso.org/public/images/ngc2442/,2026-11-03,
+NGC 3918,object,Blue Planetary,name,1,Wikidata:Q923749; https://assa.saao.ac.za/sections/deep-sky/assa-top-100/,2026-11-03,
+NGC 4656,object,Hockey Stick Galaxy,name,1,https://noirlab.edu/public/images/noao-ngc4656/; https://science.nasa.gov/missions/hubble/hubbles-hockey-stick-galaxy/,2026-11-03,
+NGC 4656,object,Crowbar Galaxy,name,2,https://www.rasc.ca/sites/default/files/RASC_FNGC_checklist_1.pdf; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 5866,object,Spindle Galaxy,name,1,Wikipedia:Messier 102; https://doi.org/10.1088/0004-637X/706/1/693; Fred:2026-11-03,2026-11-03,also used for NGC 3115 (Caldwell 53); Telescopius gives it to M 102 = NGC 5866 (Fred 2026-11-03)
+IC 63,object,Ghost of Cassiopeia,name,1,https://esahubble.org/news/heic1818/; https://science.nasa.gov/asset/hubble/ic-63-ghost-nebula/,2026-11-03,
+Sh2-106,object,Celestial Snow Angel,name,1,Wikidata:Q1332681; https://science.nasa.gov/asset/hubble/celestial-snow-angel-star-forming-region-sharpless-2-106/,2026-11-03,
+Sh2-264,object,Angelfish Nebula,name,1,Wikipedia:Sh 2-264; https://www.rasc.ca/sites/default/files/World%20Asterisms%20Project%20Handbook%20V%202025.14.pdf,2026-11-03,
+Sh2-264,object,Lambda Orionis Ring,name,2,Wikipedia:Sh 2-264; https://en.wikipedia.org/wiki/Sh_2-264; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+LBN 777,object,Baby Eagle Nebula,name,1,https://noirlab.edu/public/images/noao-lbn777/; https://www.rasc.ca/sites/default/files/World%20Asterisms%20Project%20Handbook%20V%202025.14.pdf,2026-11-03,
+LBN 777,object,Vulture Head Nebula,name,2,https://www.rasc.ca/sites/default/files/World%20Asterisms%20Project%20Handbook%20V%202025.14.pdf; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+B 86,object,Ink Spot Nebula,name,1,https://en.wikipedia.org/wiki/NGC_6520; https://www.astroleague.org/wp-content/uploads/2025/03/Reflector-MAR-2025-spreads.pdf,2026-11-03,
+Sh2-157,object,Lobster Claw Nebula,name,1,"SIMBAD:SH 2-157 (= SH 1-109, LBN 537); Fred:2026-11-03",2026-11-03,"Fred's spot check: Sh 1-109, the same nebula"
+M 22,object,Great Sagittarius Cluster,name,1,Wikipedia:Messier 22; https://en.wikipedia.org/wiki/Messier_22; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+M 109,object,Vacuum Cleaner Galaxy,name,1,Wikipedia:Messier 109; https://en.wikipedia.org/wiki/Messier_109; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 247,object,Needle's Eye Galaxy,name,1,https://science.nasa.gov/image-detail/c62-1/; https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-caldwell-catalog/caldwell-62/; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 1333,object,Embryo Nebula,name,1,Wikipedia:NGC 1333; https://en.wikipedia.org/wiki/NGC_1333; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 1491,object,Fossil Footprint Nebula,name,1,Wikidata:Q1043693; https://en.wikipedia.org/wiki/NGC_1491; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 1579,object,Northern Trifid Nebula,name,1,Wikipedia:NGC 1579; https://en.wikipedia.org/wiki/NGC_1579; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 3766,object,Pearl Cluster,name,1,https://cesar.esa.int/upload/202011/esasky_student_guide_onlinesse2_editable2.pdf; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 4244,object,Silver Needle Galaxy,name,1,https://science.nasa.gov/image-detail/a-silver-needle-in-the-sky/; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 5189,object,Spiral Planetary Nebula,name,1,Wikipedia:NGC 5189; https://en.wikipedia.org/wiki/NGC_5189; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 6572,object,Emerald Nebula,name,1,Wikidata:Q1146530; https://en.wikipedia.org/wiki/NGC_6572; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+NGC 6995,object,Bat Nebula,name,1,https://apod.nasa.gov/apod/ap191125.html; https://science.nasa.gov/image-article/apod-2021-october-27-ngc-6995-the-bat-nebula/; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+IC 4604,object,Rho Ophiuchi Nebula,name,1,https://www.phys.ttu.edu/~ozprof/i4604c.htm; Fred:2026-11-04,2026-11-04,"Texas Tech page cited by Codex, not fetched (self-signed certificate); added on Fred's decision (2026-11-04)"
+IC 4665,object,Summer Beehive Cluster,name,1,Wikipedia:IC 4665; https://en.wikipedia.org/wiki/IC_4665; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+IC 4756,object,Graff's Cluster,name,1,Wikipedia:IC 4756; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)
+LBN 437,object,Gecko Nebula,name,1,https://www.rasc.ca/sites/default/files/World%20Asterisms%20Project%20List%20V%202025.6.pdf; Fred:2026-11-04,2026-11-04,one independent source; added on Fred's decision (2026-11-04)

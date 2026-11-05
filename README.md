@@ -32,9 +32,11 @@ forecasts and survey imagery are fetched from external services when needed.
   planetary nebulae (both from HASH) are optional: add or remove each in
   Admin's Catalogs section. An entry that names an existing object becomes
   another name for it, and searching for an entry that covers several
-  objects, such as Arp 244 or the Cygnus Loop, finds each of them. The catalog
-  and planner panels link to SIMBAD, Wikipedia, Google search and Google
-  Images.
+  objects, such as Arp 244 or the Cygnus Loop, finds each of them. Objects
+  carry their common names, from the catalogs and from NightCrate's own
+  reviewed list: every name is searchable, one is shown, and hovering a
+  result's name shows the others. The catalog and planner panels link to
+  SIMBAD, Wikipedia, Google search and Google Images.
 - **Image analysis:** FITS, XISF, PixInsight projects, PNG/JPEG/TIFF and archive
   entries; auto/manual stretch, histogram, pixel inspection, FITS header editing,
   aberration inspection, built-in plate solving (Gaia DR3 stars, offline after a
@@ -137,9 +139,9 @@ WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE. See the license for details.
 
 Earlier releases keep the licence they were released under: v0.3.0a–v0.10.1
-GPL-3.0, v0.12.0–v0.41.10 MIT. NightCrate's
-own catalog data in `backend/src/nightcrate/data/catalogs/nightcrate/` remains
-MIT-licensed ([LICENSE-MIT.txt](backend/src/nightcrate/data/catalogs/nightcrate/LICENSE-MIT.txt)).
+GPL-3.0, v0.12.0–v0.41.10 MIT. NightCrate's own catalog data in
+`backend/src/nightcrate/data/catalogs/nightcrate/` has the same licence as the
+code from v0.45.0; through v0.44.0 it was MIT.
 Dependency and data-source acknowledgments follow.
 
 ## Open Source Acknowledgments
@@ -220,8 +222,8 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 | Herbig-Haro objects (VizieR V/104) | CDS public | Reipurth, B.: 1999, A general catalogue of Herbig-Haro objects, 2. edition, http://casa.colorado.edu/hhcat (VizieR V/104). |
 | Wolf-Rayet stars (VizieR III/215) | CDS public | van der Hucht, K.A. 2001 — The Seventh Catalogue of Galactic Wolf-Rayet stars, New Astronomy Reviews 45, 135 (VizieR III/215). |
 | HASH PN database (VizieR V/163) | CDS public; HASH asks for this citation and acknowledgement | Parker, Q.A., Bojičić, I.S. & Frew, D.J. 2016 — HASH: the Hong Kong/AAO/Strasbourg Hα planetary nebula database, Journal of Physics: Conference Series 728, 032008. This research has made use of the HASH PN database at hashpn.space (VizieR V/163). One download serves both the planetary nebula and the Abell planetary nebula catalogs. The Abell catalog covers 85 of the 86 Abell numbers; Abell 85 (CTB 1) is a supernova remnant. |
-| Melotte | MIT (NightCrate's own list) | Melotte 1915, MmRAS 60, 175 (A Catalogue of Star Clusters shown on Franklin-Adams Chart Plates), transcribed and checked by NightCrate. Positions and sizes of clusters without an NGC or IC number: Hunt & Reffert 2023, A&A 673, A114, or SIMBAD. Ships with the app (`melotte.csv`). |
-| NightCrate editorial data | MIT | NightCrate's own reviewed lists ship with the app in `backend/src/nightcrate/data/catalogs/nightcrate/`: common names, distances and surface brightness, Sharpless cross-references, external-reference overrides, the Melotte list, reviewed Arp members, the "part of" list and match overrides. |
+| Melotte | GPL-3.0-or-later (NightCrate's own list) | Melotte 1915, MmRAS 60, 175 (A Catalogue of Star Clusters shown on Franklin-Adams Chart Plates), transcribed and checked by NightCrate. Positions and sizes of clusters without an NGC or IC number: Hunt & Reffert 2023, A&A 673, A114, or SIMBAD. Ships with the app (`melotte.csv`). |
+| NightCrate editorial data | GPL-3.0-or-later | NightCrate's own reviewed lists ship with the app in `backend/src/nightcrate/data/catalogs/nightcrate/`: common names (each checked against two independent sources, among them SIMBAD, NED, Wikidata or Wikipedia, and NASA, ESA, ESO, NOIRLab and RASC publications), distances and surface brightness, Sharpless cross-references, external-reference overrides, the Melotte list, reviewed Arp members, the "part of" list and match overrides. |
 | [50 MGC](https://github.com/davidohlson/50MGC) | CDS public | Ohlson, D. et al. 2024, AJ 167, 31 (J/AJ/167/31). Galaxy distance augmenter, fetched at runtime from the author's GitHub mirror. |
 | [Wikidata](https://www.wikidata.org/) | CC0-1.0 | External reference IDs (Wikipedia, SIMBAD) via SPARQL, fetched at runtime. |
 | [Open-Meteo](https://open-meteo.com/) | Attribution required — see [their license](https://open-meteo.com/en/license) | Weather, ECMWF and air-quality forecast data, queried at runtime. |

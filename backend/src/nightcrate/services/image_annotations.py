@@ -161,7 +161,7 @@ def project_dsos(
     *dsos* is a list of dicts from the DB query with keys: id,
     primary_designation, obj_type, type_group, ra_deg, dec_deg,
     maj_axis_arcmin, min_axis_arcmin, position_angle_deg,
-    common_name, constellation, distance_pc, distance_method, b_mag.
+    common_name, other_names, constellation, distance_pc, distance_method, b_mag.
 
     Returns only DSOs whose projected center falls within the image
     (with margin for extended objects).
@@ -220,6 +220,7 @@ def project_dsos(
                 obj_type=dso["obj_type"],
                 type_group=dso["type_group"],
                 common_name=dso.get("common_name"),
+                other_names=dso.get("other_names", []),
                 constellation=dso.get("constellation"),
                 ra_deg=dso["ra_deg"],
                 dec_deg=dso["dec_deg"],

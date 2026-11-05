@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from nightcrate.api._common import row_to_dict
+from nightcrate.api._common import load_other_names, row_to_dict
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import solve_operations
@@ -355,10 +355,12 @@ async def query_dsos_in_cone(
             (dec_min, dec_max, *ra_params),
         )
         rows = await cursor.fetchall()
+        other_names = await load_other_names(conn, [int(row["id"]) for row in rows])
 
     results: list[dict] = []
     for row in rows:
         d = row_to_dict(row)
+        d["other_names"] = other_names.get(int(row["id"]), [])
         d["type_group"] = group_for_raw_type(d.get("obj_type", ""))
         results.append(d)
     return results

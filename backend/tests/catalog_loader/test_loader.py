@@ -8,13 +8,14 @@ synchronous connection to run its own transactions.
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from nightcrate.catalog_loader import load_catalogs
+from nightcrate.catalog_loader import load_catalogs, registry
 from nightcrate.catalog_loader.registry import get_sources
 
 MINI_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "catalogs" / "openngc"
@@ -81,12 +82,12 @@ def test_end_to_end_load_mini_fixture(db: sqlite3.Connection, catalogs_root: Pat
     counts = _counts(db)
     # mini_NGC: 11 rows - 1 NonEx - 1 Dup = 9 canonical. mini_addendum: 3 - 1 Dup = 2.
     assert counts["dso"] == 9 + 2
-    # Sources that actually run a loader register six catalog_source rows:
-    # OpenNGC, addendum, augment, external refs, parts, and match overrides.
+    # Sources that participate in loading register seven catalog_source rows:
+    # OpenNGC, addendum, common names, augment, external refs, parts, and match overrides.
     # The crossref stubs register no row (they're
     # side-inputs / placeholders), and VizieR + wikidata sources stay
     # "missing" in tests.
-    assert counts["dso_catalog_source"] == 6
+    assert counts["dso_catalog_source"] == 7
     assert counts["dso_designation"] >= counts["dso"]
 
 
@@ -122,9 +123,29 @@ def test_dup_row_merges_into_canonical(db: sqlite3.Connection, catalogs_root: Pa
     assert ("ic", "11") in tuples
 
 
-def test_addendum_m102_dup_folds_via_messier(db: sqlite3.Connection, catalogs_root: Path):
+def test_addendum_m102_dup_folds_via_messier_without_override(
+    db: sqlite3.Connection,
+    catalogs_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     # Addendum row M102 is marked Dup with M=101 — it should fold into M101
-    # (which comes from NGC5457 in mini_NGC.csv).
+    # (which comes from NGC5457 in mini_NGC.csv) when no reviewed override
+    # redirects it.
+    package_data = Path(registry.__file__).parent.parent / "data" / "catalogs" / "nightcrate"
+    isolated = tmp_path / "nightcrate"
+    shutil.copytree(package_data, isolated)
+    override_path = isolated / "dso_match_overrides.csv"
+    override_path.write_text(
+        "".join(
+            line
+            for line in override_path.read_text(encoding="utf-8").splitlines(keepends=True)
+            if not line.startswith("M 102,")
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(registry, "_nightcrate_dir", lambda: isolated)
+
     load_catalogs(db, catalogs_root)
     # Ensure no separate dso was created for the Dup row.
     cur = db.cursor()
@@ -227,3 +248,27 @@ def test_registry_exposes_expected_sources(catalogs_root: Path):
         if src.source_id.startswith("openngc"):
             assert src.parser == "openngc"
             assert src.category == "openngc"
+        if src.category == "nightcrate":
+            assert src.license == "GPL-3.0-or-later"
+
+
+def test_nightcrate_catalog_files_use_project_license():
+    data_dir = Path(registry.__file__).parent.parent / "data" / "catalogs" / "nightcrate"
+    licensed_files = {
+        "arp_members.csv",
+        "dso_augment.csv",
+        "dso_external_refs.csv",
+        "dso_match_overrides.csv",
+        "dso_parts.csv",
+        "melotte.csv",
+    }
+    expected = "GPL-3.0-or-later (see LICENSE at the repository root)."
+
+    for csv_path in sorted(data_dir.glob("*.csv")):
+        lines = csv_path.read_text(encoding="utf-8").splitlines()
+        assert all("MIT licensed." not in line for line in lines), csv_path.name
+        if csv_path.name in licensed_files:
+            assert lines[0].endswith(expected), csv_path.name
+
+    version = json.loads((data_dir / "version.json").read_text(encoding="utf-8"))
+    assert version["license"] == "GPL-3.0-or-later"

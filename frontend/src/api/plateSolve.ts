@@ -193,6 +193,7 @@ export interface AnnotatedDso {
   obj_type: string;
   type_group: string;
   common_name: string | null;
+  other_names: string[];
   constellation: string | null;
   ra_deg: number;
   dec_deg: number;
