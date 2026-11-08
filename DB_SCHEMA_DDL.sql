@@ -1,4 +1,4 @@
--- NightCrate version: 0.45.0
+-- NightCrate version: 0.46.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1607,6 +1607,10 @@ BEGIN
     UPDATE project_image SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
+-- Since v0.46.0 every frame is 4:3 in pixels and may extend onto a black mat
+-- within the image's 4:3 fit box, so the crop fractions can be negative or
+-- exceed 1 (validated by the API, not by CHECKs). Migration 0068 deleted
+-- every earlier row.
 CREATE TABLE project_thumbnail (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id      INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,

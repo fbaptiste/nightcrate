@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, Response
 from nightcrate.api._common import get_or_404, integrity_guard, load_other_names, row_to_dict
 from nightcrate.api.plate_solve import _failure_detail, query_dsos_in_cone
 from nightcrate.api.project_solve_models import (
+    FocalLengthEstimate,
     IdentifiedDso,
     ProjectSolveRequest,
     ProjectSolveResponse,
@@ -36,6 +37,7 @@ from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import run_solve, validate_astap_path
 from nightcrate.services.plate_solve_models import AstapLaunchError, ImageReadError
 from nightcrate.services.project_images import VARIANT_SIZES, generate_rendered_images
+from nightcrate.services.rig_calculators import estimate_focal_length_mm
 
 logger = logging.getLogger("nightcrate")
 
@@ -146,6 +148,57 @@ def _wcs_from_solve(row: dict) -> WcsParams:
     )
 
 
+async def _load_focal_length_estimates(
+    conn, project_id: int, pixel_scale_arcsec: float | None
+) -> list[FocalLengthEstimate]:
+    if (
+        pixel_scale_arcsec is None
+        or not math.isfinite(pixel_scale_arcsec)
+        or pixel_scale_arcsec <= 0
+    ):
+        return []
+
+    cursor = await conn.execute(
+        """
+        SELECT
+            rs.id AS rig_id,
+            rs.name AS rig_name,
+            rs.camera_name,
+            rs.pixel_size_um,
+            rs.effective_focal_length_mm AS rig_focal_length_mm
+        FROM (
+            SELECT rig_id
+            FROM project_rig
+            WHERE project_id = ?
+            UNION
+            SELECT rig_id
+            FROM project_session
+            WHERE project_id = ? AND rig_id IS NOT NULL
+        ) project_rigs
+        JOIN rig r ON r.id = project_rigs.rig_id
+        JOIN rig_summary rs ON rs.id = r.id
+        ORDER BY r.sort_order, r.name COLLATE NOCASE, r.id
+        """,
+        (project_id, project_id),
+    )
+    estimates: list[FocalLengthEstimate] = []
+    for row in await cursor.fetchall():
+        estimated = estimate_focal_length_mm(row["pixel_size_um"], pixel_scale_arcsec)
+        if estimated is None:
+            continue
+        estimates.append(
+            FocalLengthEstimate(
+                rig_id=row["rig_id"],
+                rig_name=row["rig_name"],
+                camera_name=row["camera_name"],
+                pixel_size_um=row["pixel_size_um"],
+                rig_focal_length_mm=row["rig_focal_length_mm"],
+                estimated_focal_length_mm=estimated,
+            )
+        )
+    return estimates
+
+
 async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | None:
     cursor = await conn.execute("SELECT * FROM project_solve WHERE project_id = ?", (project_id,))
     solve = await cursor.fetchone()
@@ -211,6 +264,9 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     ]
     # Mains first, then largest objects.
     objects.sort(key=lambda o: (not o.is_main, -(o.maj_axis_arcmin or 0.0)))
+    focal_length_estimates = await _load_focal_length_estimates(
+        conn, project_id, solve["pixel_scale_arcsec"]
+    )
 
     return ProjectSolveResponse(
         id=solve["id"],
@@ -242,6 +298,7 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
         scale_stage=solve["scale_stage"],
         wcs=wcs,
         objects=objects,
+        focal_length_estimates=focal_length_estimates,
     )
 
 

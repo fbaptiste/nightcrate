@@ -118,6 +118,7 @@ export default function ProjectSessionsTab({ projectId }: Props) {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
   };
 
   const deleteMut = useMutation({

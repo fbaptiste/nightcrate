@@ -29,6 +29,7 @@ FilterLine = Literal["Ha", "SII", "OIII", "L", "R", "G", "B"]
 
 class Settings(BaseModel):
     theme: Literal["light", "dark", "browser"] = "browser"
+    gallery_view: Literal["list", "small", "medium", "large"] = "medium"
     gpu_acceleration: bool = True
     max_worker_cores: int | None = None  # None → cpu_count - 1
     last_browse_path: str | None = None

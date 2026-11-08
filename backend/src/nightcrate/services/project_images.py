@@ -137,10 +137,101 @@ def generate_rendered_images(file_path: str, output_dir: Path) -> None:
 
 
 CROP_SIZES: dict[str, tuple[int, int]] = {
-    "small": (180, 180),
-    "medium": (400, 400),
-    "large": (280, 210),
+    "small": (480, 360),
+    "medium": (800, 600),
+    "large": (1200, 900),
 }
+
+
+class CropFrameError(ValueError):
+    """The requested thumbnail frame is invalid for its source image."""
+
+
+def crop_path(project_folder: Path, size: str, row_id: int) -> Path:
+    """Return the generation-specific crop path inside a project folder."""
+    return project_folder / f"thumb_crop_{size}_{row_id}.jpg"
+
+
+def fit_box(width: int, height: int) -> tuple[float, float, float, float]:
+    """Return the smallest centred 4:3 fractional box containing an image."""
+    aspect = width / height
+    if aspect >= 4 / 3:
+        box_height = 0.75 * aspect
+        return 0, (1 - box_height) / 2, 1, box_height
+    box_width = 4 / (3 * aspect)
+    return (1 - box_width) / 2, 0, box_width, 1
+
+
+def check_crop_frame(
+    width: int,
+    height: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> None:
+    """Validate a fractional 4:3 crop frame against the image's fit box."""
+    tolerance = 0.01
+    aspect_error = abs((w * width) / (h * height) / (4 / 3) - 1)
+    if aspect_error > tolerance:
+        raise CropFrameError("The frame must be 4:3.")
+
+    fit_x, fit_y, fit_w, fit_h = fit_box(width, height)
+    if (
+        x < fit_x - tolerance * fit_w
+        or x + w > fit_x + fit_w + tolerance * fit_w
+        or y < fit_y - tolerance * fit_h
+        or y + h > fit_y + fit_h + tolerance * fit_h
+    ):
+        raise CropFrameError("The frame must stay within the picture and its mat.")
+
+    if w * width < 1 or h * height < 1:
+        raise CropFrameError("The frame is too small.")
+
+
+def render_crop(
+    img: PILImage.Image,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    target: tuple[int, int],
+) -> PILImage.Image:
+    """Render a fractional frame onto a black target-sized canvas."""
+    if img.mode == "RGBA":
+        img = img.convert("RGB")
+
+    width, height = img.size
+    target_width, target_height = target
+    left = x * width
+    top = y * height
+    right = (x + w) * width
+    bottom = (y + h) * height
+    scale_x = target_width / (right - left)
+    scale_y = target_height / (bottom - top)
+
+    intersection_left = max(0, left)
+    intersection_top = max(0, top)
+    intersection_right = min(width, right)
+    intersection_bottom = min(height, bottom)
+
+    paste_left = round((intersection_left - left) * scale_x)
+    paste_right = round((intersection_right - left) * scale_x)
+    paste_top = round((intersection_top - top) * scale_y)
+    paste_bottom = round((intersection_bottom - top) * scale_y)
+    paste_left = max(0, min(paste_left, target_width - 1))
+    paste_right = max(paste_left + 1, min(paste_right, target_width))
+    paste_top = max(0, min(paste_top, target_height - 1))
+    paste_bottom = max(paste_top + 1, min(paste_bottom, target_height))
+
+    piece = img.resize(
+        (paste_right - paste_left, paste_bottom - paste_top),
+        PILImage.LANCZOS,
+        box=(intersection_left, intersection_top, intersection_right, intersection_bottom),
+    )
+    canvas = PILImage.new(img.mode, target, 0)
+    canvas.paste(piece, (paste_left, paste_top))
+    return canvas
 
 
 def generate_cropped_thumbnail(
@@ -154,10 +245,10 @@ def generate_cropped_thumbnail(
 ) -> None:
     """Generate a cropped thumbnail from *file_path* and write to *output_path*.
 
-    Crop coordinates are fractions 0–1 relative to the source image.
+    Crop coordinates are fractions relative to the source image and may extend onto its mat.
     Serialised via the module-level render lock.
     """
-    target = CROP_SIZES.get(size, (180, 180))
+    target = CROP_SIZES[size]
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _RENDER_LOCK:
@@ -165,26 +256,14 @@ def generate_cropped_thumbnail(
 
         if ft == "standard":
             pil_img: PILImage.Image = raw  # type: ignore[assignment]
-            if pil_img.mode == "RGBA":
-                pil_img = pil_img.convert("RGB")
         else:
             data: np.ndarray = raw  # type: ignore[assignment]
             max_dim = max(data.shape[-2], data.shape[-1])
             render_size = min(max_dim, max(target) * 4)
             pil_img = _render_scientific(data, render_size)
 
-        w, h = pil_img.size
-        left = int(crop_x * w)
-        upper = int(crop_y * h)
-        right = int((crop_x + crop_w) * w)
-        lower = int((crop_y + crop_h) * h)
-        left = max(0, min(left, w - 1))
-        upper = max(0, min(upper, h - 1))
-        right = max(left + 1, min(right, w))
-        lower = max(upper + 1, min(lower, h))
-
-        cropped = pil_img.crop((left, upper, right, lower))
-        cropped = cropped.resize(target, PILImage.LANCZOS)
+        check_crop_frame(*pil_img.size, crop_x, crop_y, crop_w, crop_h)
+        cropped = render_crop(pil_img, crop_x, crop_y, crop_w, crop_h, target)
         _save_jpeg(cropped, output_path)
 
     logger.info("[project-images] cropped %s → %s", file_path, output_path)

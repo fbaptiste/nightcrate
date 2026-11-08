@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from nightcrate.services.gallery import ImagingRun
 from nightcrate.services.line_names import LINE_NAMES
 
 __all__ = [
@@ -125,3 +126,5 @@ class IntegrationSummary(BaseModel):
     total_actual_minutes: float
     first_session_date: str | None
     last_session_date: str | None
+    imaging_runs: list[ImagingRun]
+    night_count: int

@@ -271,6 +271,170 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   concurrency (3), and fetch lazily. Ingest is single-flight (409 if busy), with
   per-run process pools and database writes in the main process.
 
+## Gallery and project images
+
+Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
+2026-11-07 amendment.
+- **Terminology (Fred):** a project is *plate solved* when it has a
+  `project_solve` row: a plate-solved image from its Plate Solve tab.
+- **Imaging dates** come only from `project_session.session_date`, manual and
+  derived alike. A value counts only when its first ten characters match
+  `YYYY-MM-DD` and parse (`services/gallery.py:valid_session_date`).
+  - Edit, creation and file dates never stand in.
+  - Dates show as runs of consecutive months ("Jan–Feb 2025, Jan 2026"),
+    or as exact dates when every night is in one month. Runs are built by
+    `imaging_runs`, which the integration summary reuses.
+- **Integration** on cards is the project page's total. Each session counts
+  once, and manual and derived rows that overlap still count twice. No
+  gallery filter or sort uses integration until that overlap is resolved.
+- **The gallery endpoint** loads every project, retired included, in a few
+  batched queries. It filters, counts facets and sorts in the pure
+  `build_gallery`, without paging.
+  - Facets exclude their own filter and count a project once per option.
+  - Targets on inactive (removed-catalog) objects still match.
+  - Rigs are one list: rigs declared on the project, plus rigs its sessions
+    name.
+- **Search:**
+  - project names match anywhere;
+  - main targets match through the shared `dso_search_clause`, with
+    designations matching from the start, so "M1" also finds M 10–M 19;
+  - "Also search plate-solved projects" adds the stored `project_dso` rows.
+    These are the 500 largest objects at solve time, from the catalogs
+    present then, so later catalogs need a new solve.
+- **Images (Fred, 2026-11-07):** each view shows the user's framing for its
+  size, otherwise the whole main image.
+  - **Sizes and views:**
+    - small: the Gallery list, Gallery small and Projects Compact;
+    - medium: Gallery medium and Projects List;
+    - large: Gallery large and Projects Pictures
+      (`lib/galleryRendition.ts:cropSizeForView`).
+  - **Every image box is 4:3** with `object-fit: contain` on black (only
+    when there is an image). A framing file is exactly 4:3, so it fills its
+    box.
+  - **An unframed image** uses `thumb_sm/md/lg`, picked from the measured
+    tile width and the pixel density (`pickRendition`). Renditions bound the
+    long side, so `srcset` widths would be false for portraits.
+  - **The full-size viewer** shows the image the view's framing was made
+    from (`viewerImageId`), otherwise the main image.
+  - **Images load as they come near the viewport,** on both pages
+    (`components/common/NearViewportImage.tsx`, 400 px margin).
+    - Its wrapper must stay a plain block box. As a grid, the image's
+      `height: 100%` stopped resolving, and portraits overflowed their
+      boxes.
+- **Browser caching:**
+  - project images are served `no-store`, because `FileResponse` sends no
+    304s;
+  - URLs carry `ws` (a token renewed by every `set_db_path`) and, for
+    thumbnails, `v`. They exist only so an open page notices a change; the
+    server ignores both.
+  - Caching forever was considered during plan review and dropped: it
+    needed version checks, workspace lifetimes and per-request workspace
+    pinning.
+- **Crops (framings):**
+  - **Shape:**
+    - every frame is 4:3 in real pixels, stored as fractions of the source
+      image's width and height;
+    - a frame may extend onto the mat, so a fraction can be negative or
+      above 1.
+  - **Limits:**
+    - the frame stays inside the *fit box*, the smallest 4:3 box holding
+      the whole image, centred (`services/project_images.py:fit_box`);
+    - it must include part of the picture;
+    - the server checks shape and fit box against the loaded image within
+      1%, because the editor measures the aspect from `thumb_lg`.
+  - **Output:**
+    - `render_crop` maps the frame as sent and never recomputes its height;
+    - it pastes the image's overlap with the frame onto a black canvas of
+      the output size, never one the size of the frame;
+    - output sizes are 480×360, 800×600 and 1200×900.
+  - **Saving:**
+    - each save creates a new row and file,
+      `thumb_crop_{size}_{row_id}.jpg`;
+    - temporary files are generated first. Rows are then replaced and files
+      renamed in one transaction, which rechecks the main image; any
+      failure changes nothing, and cleanup covers allocating temporary
+      files;
+    - after commit, the save deletes every `thumb_crop_*.jpg` in the
+      project folder that no current row owns, never `.tmp` files.
+  - **`remove_image` and `set_main_image`** take the write lock (`BEGIN
+    IMMEDIATE`) before reading. A crop saved in between could otherwise
+    survive its image's deletion as a follow-the-main crop (Codex
+    reproduced this).
+    - Removing an image deletes the crops that name it.
+    - A new main image deletes the follow-the-main crops.
+  - **A crop counts only when its file exists.** The gallery omits it, and
+    `/thumbnail` serves the main rendition. There is no old-name fallback.
+  - **Migration 0068** deleted every crop made before v0.46.0. They
+    couldn't be trusted: the old editor kept each shape in image
+    proportions, not pixels, so most were squashed. It uses DELETE, not a table rebuild, so crop ids, and so
+    thumbnail versions, never repeat.
+- **The thumbnail editor** (`ThumbnailCropEditor.tsx`,
+  `lib/thumbnailFrame.ts`):
+  - **The canvas:** the fit box, drawn black with the image inside it. The
+    frame is a square in canvas units (u, v, s).
+  - **Input:** pointer events with capture and `touch-action: none`. The
+    frame must never remount mid-drag. Arrow keys move it, and + and −
+    resize it.
+  - **State:** one reducer for frames, unsaved sizes and the error. Each
+    input event is one transition, and no-ops return the same state.
+  - **Updaters stay pure.** A ref mutated inside an updater lost the
+    restored frame under StrictMode's double call.
+  - **No `FormControl` around the image `Select`.** In development its
+    context changes every render, and `InputBase` re-ran an update after
+    each one. Fast key repeat then hit React's nested-update limit.
+  - **Saving:** only changed sizes are sent. The dialog stays open until
+    the save succeeds, and shows the server's message if it fails.
+- **View pickers** (`components/common/ViewToggle.tsx`), used by the Gallery
+  and Projects pages: joined icon buttons, the selected one filled with the
+  primary colour, each with a tooltip and an accessible name. Clicking the
+  selected button again does nothing. The Projects page's views are
+  Compact, List and Pictures.
+- **Plate-solve focal length:**
+  - **Formula:** 206.265 × pixel size (µm) ÷ solved scale (″/px)
+    (`rig_calculators.py:estimate_focal_length_mm`).
+  - **Which rigs:** one estimate per rig on the project, declared or named
+    by a session, retired and not-mine included, in the gallery's order.
+    It is built in the solve response.
+  - **Freshness:** rig, session and project edits invalidate
+    `project-solve`.
+  - **Label:** an estimate. It assumes the image's pixels are the
+    camera's; binning, drizzling or resizing changes it.
+- **The page** is persistent, and keeps its own scroll position.
+  - It records `scrollTop` while visible. A hidden page reads 0, so it must
+    never save on hide.
+  - Turned cards survive a refetch; the viewer closes when the page hides.
+  - No window-level key listeners: the viewer handles ← and → in its own
+    `onKeyDown`.
+  - The viewer's arrows are pinned to the window, so repeated clicks need no
+    pointer movement.
+- **Line fitting** (`components/gallery/LineFitList.tsx`) shows as many items
+  as fit in two lines, then a "+N" pill: first items for targets, latest
+  runs ("+N earlier") for dates.
+  - The ", " separator must sit outside each item's no-wrap span. Inside
+    it, the list can't wrap: it measures as one line, is never shortened
+    and overflows, clipped.
+  - A line counts as the larger of the text's line height and 19 px,
+    because the 18 px pill makes small-text lines taller.
+- **Missing renditions** show "No preview" everywhere: gallery tiles, the
+  project page's main image and its thumbnail strip. A 204 never leaves a
+  spinner running.
+- **The scratch workspace script** copies the source database with SQLite's
+  backup API from a read-only connection. A live database's WAL is
+  included, and the source is never written.
+  - It gives about a third of the projects framings, made with the real
+    renderer.
+  - The source must already be at the current schema. A copy at 0067 lost
+    its framings to 0068 on the first server start.
+- **The nav order:** a route missing from a saved `nav_order` is inserted
+  after its nearest default predecessor (`AppShell.tsx:normalizeNavOrder`),
+  so new pages don't land at the bottom.
+- **The project page:**
+  - the status chip beside the title is the status choice;
+  - a "Plate solved" pill (filled teal, or a dashed grey outline) opens the
+    Plate Solve tab;
+  - `MarkdownEditor` puts its edit toggle right after its label, as in
+    "Main targets +".
+
 ## Frame quality
 
 - Analyze requested catalog subsets in **client-driven batches of 60**. Pending

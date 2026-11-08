@@ -8,6 +8,9 @@ from typing import Any
 import aiosqlite
 from fastapi import HTTPException
 
+from nightcrate.api.dso_models import DsoDesignation
+from nightcrate.services.dso_sorting import catalog_rank, designation_sort_key
+
 _SEED_KEYS: tuple[str, ...] = ("source", "seed_key", "seed_hash")
 _ID_QUERY_BATCH_SIZE = 500
 
@@ -63,6 +66,40 @@ async def load_other_names(conn: Any, dso_ids: list[int]) -> dict[int, list[str]
         )
         for row in await cursor.fetchall():
             grouped[int(row["dso_id"])].append(str(row["name"]))
+    return grouped
+
+
+async def load_designations(conn: Any, dso_ids: list[int]) -> dict[int, list[DsoDesignation]]:
+    """Fetch complete designation lists in canonical order using bounded batches."""
+    unique_ids = list(dict.fromkeys(dso_ids))
+    grouped: dict[int, list[DsoDesignation]] = {dso_id: [] for dso_id in unique_ids}
+    if not unique_ids:
+        return grouped
+
+    await conn.create_function("designation_key", 1, designation_sort_key, deterministic=True)
+    await conn.create_function("catalog_rank", 1, catalog_rank, deterministic=True)
+    for start in range(0, len(unique_ids), _ID_QUERY_BATCH_SIZE):
+        batch = unique_ids[start : start + _ID_QUERY_BATCH_SIZE]
+        placeholders = ",".join("?" * len(batch))
+        cursor = await conn.execute(
+            f"""
+            SELECT id, dso_id, catalog, identifier, display_form, is_primary
+            FROM dso_designation
+            WHERE dso_id IN ({placeholders})
+            ORDER BY dso_id, catalog_rank(catalog), catalog,
+                     designation_key(display_form), id
+            """,  # noqa: S608  # nosec B608 - fixed-size batches of integer IDs
+            batch,
+        )
+        for row in await cursor.fetchall():
+            grouped[int(row["dso_id"])].append(
+                DsoDesignation(
+                    catalog=row["catalog"],
+                    identifier=row["identifier"],
+                    display_form=row["display_form"],
+                    is_primary=bool(row["is_primary"]),
+                )
+            )
     return grouped
 
 

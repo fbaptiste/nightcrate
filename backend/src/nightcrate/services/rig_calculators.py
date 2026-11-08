@@ -61,6 +61,22 @@ def compute_image_scale(pixel_size_um: float, focal_length_mm: float) -> float:
     return (pixel_size_um / focal_length_mm) * _RAD_TO_ARCSEC
 
 
+def estimate_focal_length_mm(
+    pixel_size_um: float | None, pixel_scale_arcsec: float | None
+) -> float | None:
+    """Estimate focal length from a camera's pixel size and a solved image scale."""
+    if (
+        pixel_size_um is None
+        or pixel_scale_arcsec is None
+        or not math.isfinite(pixel_size_um)
+        or not math.isfinite(pixel_scale_arcsec)
+        or pixel_size_um <= 0
+        or pixel_scale_arcsec <= 0
+    ):
+        return None
+    return _RAD_TO_ARCSEC * pixel_size_um / pixel_scale_arcsec
+
+
 def compute_image_scale_binned(base_scale: float) -> dict[int, float]:
     """Compute image scale for binning factors 1 through 4."""
     return {b: base_scale * b for b in range(1, 5)}

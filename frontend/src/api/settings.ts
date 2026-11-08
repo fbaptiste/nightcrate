@@ -5,6 +5,7 @@ import type { SortEntry } from "@/lib/plannerSortFields";
 export type Theme = "light" | "dark" | "browser";
 export type WeatherUnits = "metric" | "imperial";
 export type PlannerTab = "tonight" | "anytime" | "wishlist";
+export type GalleryView = "list" | "small" | "medium" | "large";
 
 export interface BrowserFavorite {
   name: string;
@@ -25,6 +26,7 @@ export interface Settings {
   weather_units: WeatherUnits;
   calculators_clock_order: string[];
   nav_order: string[];
+  gallery_view: GalleryView;
   planner_min_visibility_hours: number;
   planner_max_magnitude: number;
   planner_min_size_arcmin: number;

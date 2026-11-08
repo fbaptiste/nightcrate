@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import math
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+ProjectStatus = Literal["active", "paused", "complete", "abandoned"]
 
 # ── Requests ────────────────────────────────────────────────────────────────
 
@@ -11,7 +16,7 @@ class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
     notes: str | None = None
-    status: str = "active"
+    status: ProjectStatus = "active"
 
 
 class AddImagesRequest(BaseModel):
@@ -19,11 +24,29 @@ class AddImagesRequest(BaseModel):
 
 
 class ThumbnailCropDef(BaseModel):
-    source_image_id: int | None = None
-    crop_x: float = Field(default=0, ge=0, le=1)
-    crop_y: float = Field(default=0, ge=0, le=1)
-    crop_w: float = Field(default=1, gt=0, le=1)
-    crop_h: float = Field(default=1, gt=0, le=1)
+    source_image_id: int | None = Field(default=None, gt=0)
+    crop_x: float = Field(allow_inf_nan=False)
+    crop_y: float = Field(allow_inf_nan=False)
+    crop_w: float = Field(gt=0, allow_inf_nan=False)
+    crop_h: float = Field(gt=0, allow_inf_nan=False)
+
+    @field_validator("crop_x", "crop_y", "crop_w", "crop_h", mode="before")
+    @classmethod
+    def make_nonfinite_input_json_safe(cls, value):
+        if isinstance(value, float) and not math.isfinite(value):
+            return "non-finite"
+        return value
+
+    @model_validator(mode="after")
+    def frame_overlaps_picture(self) -> ThumbnailCropDef:
+        if not (
+            self.crop_x < 1
+            and self.crop_x + self.crop_w > 0
+            and self.crop_y < 1
+            and self.crop_y + self.crop_h > 0
+        ):
+            raise ValueError("The frame must include part of the picture.")
+        return self
 
 
 class ProjectUpdate(BaseModel):
@@ -34,7 +57,7 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     notes: str | None = None
-    status: str | None = None
+    status: ProjectStatus | None = None
     location_id: int | None = None
 
 
@@ -96,6 +119,8 @@ class ProjectResponse(BaseModel):
     rigs: list[ProjectRigRef]
     images: list[ProjectImageResponse]
     thumbnail_crops: list[ThumbnailCropResponse]
+    solved_at: str | None
+    workspace_key: str
     created_at: str
     updated_at: str
 
@@ -108,5 +133,7 @@ class ProjectListItem(BaseModel):
     active: bool
     image_count: int
     main_image_path: str | None
+    thumbnail_version: str
+    workspace_key: str
     created_at: str
     updated_at: str

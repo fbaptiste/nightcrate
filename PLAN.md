@@ -1,12 +1,249 @@
 # NightCrate — active plan
 
-**Version:** v0.45.0 — Common names for galaxies and nebulae
+**Version:** v0.46.0 — Gallery
 
-**Branch:** `v0.45.0/common-names`
+**Branch:** `v0.46.0/gallery`
 
 **Status:** Complete — awaiting merge
 
+## v0.46.0 — Gallery
+
+Fred started this version on 2026-11-04, after merging v0.45.0. Its scope is
+the roadmap's next item, the gallery, moved here unchanged below. The spec
+comes next, decided with Fred one question at a time; the first is whether
+to ship it in two parts.
+
+- [x] Start from updated `main` on `v0.46.0/gallery`.
+- [x] Spec: [v0.46.0 design](docs/superpowers/specs/2026-11-04-v0.46.0-design.md).
+  Fred skipped the questions ("skip questions and proceed", 2026-11-04), so
+  its decisions are Claude's calls, listed at its end for his review. A
+  mockup (`.superpowers/mockups/v0.46.0/gallery.html`, local) shows the page
+  in both themes.
+- [x] Implementation plan: [v0.46.0 plan](docs/superpowers/plans/2026-11-04-v0.46.0.md).
+  Codex's plan review converged after five rounds on 2026-11-04.
+  - Most of its findings were in the Projects page image fix, which grew:
+    - browsers stop caching project images;
+    - a crop save changes everything or nothing;
+    - a crop is deleted with the image it depends on.
+  - Two disagreements are for Fred: the rig filter (v0.46.0-D1) and the
+    Complete label (D2).
+- [x] Fred's approval of the spec, mockup and plan (2026-11-04): "yes",
+  with changes.
+  - every project gets a card ("No main image" when it has none);
+  - clicking the back of a card turns it back;
+  - an expand button opens each image full size;
+  - no Complete label;
+  - a status choice on the project page. Nothing could set status, so all
+    of his projects were Active.
+  - On the rig filter he kept Claude's single list (D1).
+- [x] Implementation (Tasks 1–6, Codex in a separate worktree,
+  `.superpowers/wt-v0.46.0`). Started on 2026-11-04 (Fred: "ok, go ahead and
+  start building"). Claude reviewed each handoff (records `14`–`25`) and
+  re-ran its checks outside the sandbox.
+  - Task 1 (project images): accepted first time; 148 tests.
+  - Task 2 (gallery backend): one fix round. The workspace script copies
+    with SQLite's backup API, and the synthetic library gained plate
+    solves and 3–10 sessions per project. 205 and then 86 tests.
+  - Tasks 3–5 (gallery page, cards, viewer): one fix round:
+    - the scroll position was lost on return;
+    - the code was reformatted from very long lines;
+    - title-case view buttons and a single "Sort by";
+    - new nav routes are now placed after their default neighbour, so
+      Gallery sits after Projects in a saved order.
+  - Task 6 (project page): accepted; 181 tests.
+  - The code is staged in the main checkout. Fred's dev server loaded it:
+    his three projects appear in the gallery, and his old crop files are
+    still served.
+- [x] Claude's checks and docs (Task 7). Next: Fred's first look on his own
+  dev server, then candidate preparation (version bump, full backend suite,
+  sync-docs) for his acceptance test.
+  - [x] **Speed:** `GET /api/gallery` median 16–23 ms on a scratch copy of
+    Fred's database with 503 projects (3,272 sessions, 153 plate-solved
+    projects). The cases: no filters, three filters, designation, name,
+    group and no-match searches, and "M1" and "NGC" with plate-solved
+    projects. The budget is 200 ms.
+  - [x] **Rendered checks** on private servers (8001 and 5174), in both
+    themes, against the mockups:
+    - views, turning cards by mouse and keyboard, the hidden face out of
+      the accessibility tree, reduced motion;
+    - the viewer's fixed arrows (the same pixels across six steps), its
+      counter and focus return;
+    - rendition choice at 1× and 2×, the solved-image search markers, "To
+      is before From", the empty state, 1024 px width;
+    - scroll and turned cards on return, nav placement;
+    - the project page's status chip, plate-solved pill, and Description
+      and Notes headings.
+  - [x] Fresh independent Codex review (records `26`–`27`): no blocker or
+    major finding. All four minor findings were fixed (records `28`–`31`):
+    crop source id 0; the expand-ref cleanup; a failed status change now
+    says why; line fitting re-measures on a size change.
+  - [x] **Found by Claude's rendered check after the review, and fixed:**
+    - target and date lists never wrapped, so the "+N" pill never
+      appeared; the separator sat inside the no-wrap span;
+    - the project page's main image and its thumbnail strip spun forever
+      when a rendition was missing. They now say "No preview".
+  - [x] Re-checked in the browser:
+    - 8 targets show four names and "+4" in medium, all eight in large;
+    - the project page shows "No preview" with no spinners;
+    - the main checkout's staged code is identical to the reviewed
+      worktree.
+  - [x] Docs: a Gallery section in development decisions, README
+    features, and the code map.
+  - Fred's later review changes are in the spec's "Decisions for review"
+    list:
+    - the solved-image search ("Also search plate-solved projects");
+    - imaging dates by month;
+    - the viewer's arrows;
+    - the project page's pill, description heading and status chip.
+- [ ] **Fred's first look (2026-11-07): additions.** Planned in the spec's
+  2026-11-07 amendment and the plan's Task 8. Fred approved the plan the
+  same day.
+  - Fred approved the framing and picker mockup (`framing.html`, local) the
+    same day: "mock looks good".
+  - Codex's plan review, round 1 (records `33`–`34`): four major and two
+    minor findings, all real, all adopted:
+    - a race that could turn a new crop into a follow-the-main crop;
+    - a missing crop file making the tile and the viewer disagree;
+    - the focal length's rig list, now computed on the server;
+    - page weight on the Projects page;
+    - temporary-file cleanup;
+    - the picker's null selection.
+  - Round 2 converged with four minor refinements; Fred then said "yes,
+    build it all".
+  - **Implementation** (records `38`–`64`): Codex built each phase in the
+    worktree; Claude reviewed it and re-ran its checks outside the sandbox.
+    - **8a, backend:** accepted first time; 213 tests.
+    - **8d, editor:** two fix rounds:
+      - a blank image picker;
+      - a saved frame not restored after a reload (an impure state
+        updater);
+      - a development-only update-depth error under fast key repeat,
+        traced to MUI `FormControl`.
+      - Checked by mouse, keyboard, emulated touch and touch cancel, with
+        save, reopen and failed-save retry.
+    - **8b, migration and gallery data:** accepted. 0068 on a copy of
+      Fred's database removed its 6 old crops and kept everything else;
+      integrity and foreign keys are clean.
+    - **8c, pickers, Projects page, gallery:** one fix round. Unframed
+      portraits overflowed their 4:3 boxes. Near-viewport loading checked:
+      22 of 457 cards on first load. `/api/gallery` takes 20–25 ms.
+    - **8e, focal length and tooltip:** accepted.
+      - On a copy of Fred's data, one rig's estimate matched its focal
+        length within 0.2%.
+      - Another came out at almost exactly twice the rig's value, the
+        pattern a 2× drizzle gives.
+  - Independent Codex review of Task 8 (`61`–`62`): no blocker. Two major
+    and one minor finding were sent back as fixes (`63`–`64`):
+    - "Whole picture" during a slow load;
+    - estimates not refreshed after a project's rigs change;
+    - estimates not refreshed after a rig reorder.
+  - [x] **Brought into the main checkout** on Fred's "yes" (2026-11-07):
+    40 code files, identical to the reviewed worktree, now staged.
+    - His dev server applied 0068: 6 old crops removed; 3 projects,
+      6 images and 30 sessions unchanged.
+    - The live solve response includes the new estimates.
+    - Old crop files stay on disk until each project's next successful
+      thumbnail save sweeps them.
+  - [ ] **The iPad/Safari acceptance check:** dragging the frame (WebKit isn't
+    available to Playwright here), and the long-press tooltip.
+  - [ ] **Framed thumbnails.**
+    - The gallery uses each project's custom thumbnails, one framing per
+      size. Fred: "that was the whole reason for defining the customizable
+      thumbnails."
+    - All three sizes become 4:3, shared by the Projects page, whose square
+      boxes become 4:3.
+    - A frame may extend onto a black mat, so a portrait image can fill a
+      4:3 tile with black at its sides.
+    - Existing crops are cleared.
+  - [ ] **Bug found while planning, fixed by the above:** the editor
+    enforces each size's shape in the image's proportions, not its pixels,
+    so saved crops are squashed. Seen on Fred's data: an 800×403 image's
+    "square" crop is a 2:1 area squeezed into 180×180.
+  - [ ] **View pickers:** icon buttons on both pages, with the selected one
+    filled. The Projects page's "Gallery" view becomes "Pictures".
+  - [ ] **Plate-solve focal length:** calculated from the solved pixel scale
+    and each project rig's camera pixel size, beside the rig's own focal
+    length.
+  - [ ] **A tooltip on the "+" beside Main targets:** add targets here, or
+    plate solve and choose from the objects found.
+- [x] **Candidate preparation** (Fred: "please finalize", 2026-11-07, before
+  his acceptance test, so this is Prepare: no commit).
+  - Version 0.46.0 in `VERSION`, `backend/pyproject.toml` and `uv.lock`, and
+    in the headers of `DB_SCHEMA.md`, `DB_SCHEMA_DDL.sql` and
+    `LLM_DB_SPECS.md`.
+  - **Checks (Claude, main checkout):**
+    - full backend suite: 3,691 passed, 4 skipped, 29 warnings (38.7 min);
+    - ruff check and format: clean (364 files);
+    - bandit: 0 issues at any severity;
+    - `npm run build`: passes;
+    - 126 local doc links: none broken; `git diff --check`: clean.
+  - **Coverage of the changed backend modules,** from their tests:
+    - `api/gallery.py` and `api/project_models.py`: 100%;
+    - `services/gallery.py`: 99%;
+    - `rig_calculators.py`: 94%;
+    - `api/project_solve.py`: 91%;
+    - `api/projects.py` and `services/project_images.py`: 89%.
+  - **Reviews:**
+    - **Task 8:** an independent Codex review, with all three findings
+      fixed.
+    - **Claude's docs:** a batched Codex review (`65`–`66`). Two major and
+      three minor findings, all fixed:
+      - stale pre-amendment text, now marked superseded;
+      - personal hardware mentions removed;
+      - the cleanup trigger and distortion claims made precise;
+      - the helper's name.
+  - **Fred accepted the candidate** on 2026-11-07 ("finalize please"), which
+    authorized publication.
+    - He didn't report the iPad/Safari drag check, so it stays open in the
+      PR.
+- **Found in passing (kept, with reasons):** every endpoint reads the
+  global database path, so a workspace switch during a request can mix two
+  workspaces in one response (v0.46.0-R1). A wrong image can't be cached
+  now, and fixing the race is a cross-cutting change. Raise it with
+  Distribution's design.
+- **Still due from earlier versions:**
+  - the CDS checks under v0.43.1 ("When CDS returns");
+  - the live HASH (V/163) add and remove under v0.44.0.
+
+### Scope (Fred, 2026-10-24)
+
+One page of finished images, possibly shipped in two parts: list and grid views
+first, then the slideshow.
+
+- **Cards.** One card per project, showing its main image. Several targets
+  appear as labels on one card. Projects without targets still appear; retired
+  projects are hidden by default.
+- **Views.** A list of small thumbnails beside the project details; grids of
+  small, medium and large thumbnails; a slideshow. Clicking an image in the grid
+  or the slideshow flips it to a back with basic project details.
+- **Filters.** Name or designation, catalog (through any designation), object
+  type group, constellation, status, rig and imaging dates.
+  - "Imaged between" means at least one session date falls in the range.
+    Projects without session dates show when no date filter is set, with an
+    "include unknown dates" option alongside one. No other date substitutes for
+    a missing session date.
+  - The default sort is latest session, with unknown dates last. `updated_at`
+    is never an imaging date.
+  - Integration filters and sorts wait until the manual/derived session overlap
+    (see Later) is resolved; until then, totals can count the same subs twice.
+- **Data.** One batched endpoint selects and sorts on the server; the views
+  present the result.
+- **Images.** The main image's aspect-preserving renditions (180/400/800 px);
+  the slideshow uses the full image and preloads its neighbours. Whether to use
+  the project's custom crops instead is decided in the spec. Fix cache busting
+  first: thumbnail URLs are versioned by `project.updated_at`, which does not
+  change when the main image or crops change.
+- **Flip cards.** A labelled control that also responds to Enter and Space. The
+  hidden face is out of the focus order, reduced motion swaps without rotating,
+  and "Open project" is a separate control.
+- **Slideshow.** Starts paused. Previous, next, play and pause, with ←, →, Space
+  and Esc. Pauses on hover or focus, on a flipped card, and when hidden. Key
+  handlers act only in the visible view, because persistent routes stay mounted.
+- Test with a synthetic library of several hundred projects.
+
 ## v0.45.0 — Common names for galaxies and nebulae
+
+Merged in [PR #24](https://github.com/fbaptiste/nightcrate/pull/24) on 2026-11-04.
 
 Fred started this version on 2026-11-03, after merging v0.44.0. Its scope is
 the roadmap item he placed next on 2026-11-03, moved here below, plus one
@@ -2128,45 +2365,34 @@ v0.43.0. On 2026-10-30 he added a faster star download as v0.43.1. On 2026-11-01
 placed more deep-sky catalogs and search links as the very next version,
 ahead of the gallery; it became v0.44.0. On
 2026-11-03 he placed common names for galaxies and nebulae as the version
-after it, also ahead of the gallery; it is now v0.45.0, the active version
-above.
+after it, also ahead of the gallery; it became v0.45.0. The gallery is now
+v0.46.0, the active version above. On 2026-11-07 Fred placed rigs that
+don't change underneath their records as the very next version after the
+gallery.
 Version numbers are otherwise assigned when each version starts.
 
-### Gallery
+### Rigs in use don't change underneath their records (next, Fred, 2026-11-07)
 
-One page of finished images, possibly shipped in two parts: list and grid views
-first, then the slideshow.
+Projects, sessions, frames and source folders point at a rig, and a rig
+points at its equipment. Swapping a rig's camera therefore changes every
+project that lists it, along with pixel scale, field of view, star sizes in
+arcseconds and the plate-solve focal length. Fred: "it should not."
 
-- **Cards.** One card per project, showing its main image. Several targets
-  appear as labels on one card. Projects without targets still appear; retired
-  projects are hidden by default.
-- **Views.** A list of small thumbnails beside the project details; grids of
-  small, medium and large thumbnails; a slideshow. Clicking an image in the grid
-  or the slideshow flips it to a back with basic project details.
-- **Filters.** Name or designation, catalog (through any designation), object
-  type group, constellation, status, rig and imaging dates.
-  - "Imaged between" means at least one session date falls in the range.
-    Projects without session dates show when no date filter is set, with an
-    "include unknown dates" option alongside one. No other date substitutes for
-    a missing session date.
-  - The default sort is latest session, with unknown dates last. `updated_at`
-    is never an imaging date.
-  - Integration filters and sorts wait until the manual/derived session overlap
-    (see Later) is resolved; until then, totals can count the same subs twice.
-- **Data.** One batched endpoint selects and sorts on the server; the views
-  present the result.
-- **Images.** The main image's aspect-preserving renditions (180/400/800 px);
-  the slideshow uses the full image and preloads its neighbours. Whether to use
-  the project's custom crops instead is decided in the spec. Fix cache busting
-  first: thumbnail URLs are versioned by `project.updated_at`, which does not
-  change when the main image or crops change.
-- **Flip cards.** A labelled control that also responds to Enter and Space. The
-  hidden face is out of the focus order, reduced motion swaps without rotating,
-  and "Open project" is a separate control.
-- **Slideshow.** Starts paused. Previous, next, play and pause, with ←, →, Space
-  and Esc. Pauses on hover or focus, on a flipped card, and when hidden. Key
-  handlers act only in the visible view, because persistent routes stay mounted.
-- Test with a synthetic library of several hundred projects.
+- **Fred's choice (2026-11-07):**
+  - changing the equipment on a rig that is in use asks whether to **save
+    it as a new rig**, so older records keep the old one, or **correct it
+    everywhere**, for a mistake, after showing what it affects;
+  - name and notes edits stay free;
+  - the project page opens each rig's details in a panel.
+- **Rejected:** copying rig values into each project.
+  - The copy covers only projects, not sessions or frames.
+  - It repeats equipment details, so corrected specs never reach them.
+  - Rig versions were also offered; they are the most work.
+- **For the spec:**
+  - what counts as "in use";
+  - what "correct it everywhere" lists;
+  - names for a saved-as-new rig, which must be unique;
+  - whether edits to an equipment record's own specs need the same choice.
 
 ### Messier checklist
 

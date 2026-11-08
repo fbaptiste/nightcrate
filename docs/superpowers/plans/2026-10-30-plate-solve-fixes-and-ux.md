@@ -738,3 +738,12 @@ The checks cover:
   - 2026-10-30 — decided and implemented.
   - 2026-11-01 — Fred accepted the candidate as feature complete; he raised
     no extension problem. Shipped in v0.43.0.
+  - 2026-11-04 — v0.46.0 start sweep: no new evidence. Fred's active
+    database has six project images and one FITS, whose picture is in
+    the first HDU; the others are PNG, JPEG, XISF and PixInsight virtual
+    paths. The 422 is covered by `test_project_solve_api.py`. Four
+    releases have completed since the entry was created, so it goes to
+    Fred to close as inconclusive or keep with an owner.
+  - 2026-11-04 — **Closed as inconclusive** (Fred: "yes, close it as
+    inconclusive"). No project file has put its picture outside the
+    first HDU; the 422 path stays covered by its test.

@@ -1,5 +1,6 @@
 """Async SQLite connection factory."""
 
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,6 +12,7 @@ from nightcrate.core.app_config import get_active_db_path, get_default_db_path
 
 # Runtime-mutable path — set during startup or hot-swapped by admin API
 _db_path: Path | None = None
+_workspace_key: str | None = None
 
 
 def get_db_path() -> Path:
@@ -25,8 +27,17 @@ def get_db_path() -> Path:
 
 def set_db_path(path: Path) -> None:
     """Set the active database path at runtime."""
-    global _db_path
+    global _db_path, _workspace_key
     _db_path = path
+    _workspace_key = secrets.token_hex(6)
+
+
+def workspace_key() -> str:
+    """Return the per-activation token used to distinguish image URLs."""
+    global _workspace_key
+    if _workspace_key is None:
+        _workspace_key = secrets.token_hex(6)
+    return _workspace_key
 
 
 def _ensure_app_dir() -> None:

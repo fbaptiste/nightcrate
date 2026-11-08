@@ -34,6 +34,7 @@ from nightcrate.api.project_session_models import (
     SessionUpdate,
 )
 from nightcrate.db.session import get_db
+from nightcrate.services.gallery import imaging_runs, valid_session_date
 from nightcrate.services.ingest_sessions import project_geo_timezone
 from nightcrate.services.session_derivation import derive_sessions
 from nightcrate.services.session_derivation_models import DerivationSummary
@@ -272,13 +273,14 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
     exposure_sec: dict[tuple[str, float], float] = defaultdict(float)
     exposure_subs: dict[tuple[str, float], int] = defaultdict(int)
     total_sec = 0.0
-    dates: list[str] = []
+    dates = []
 
     for s in sessions:
         secs = s["exposure_seconds"] * s["num_subs"]
         total_sec += secs  # wall-clock total counts each session once
-        if s["session_date"]:
-            dates.append(s["session_date"][:10])
+        session_date = valid_session_date(s["session_date"])
+        if session_date is not None:
+            dates.append(session_date)
         if s["filter_id"] is not None:
             labels = passband_lines.get(s["filter_id"], [])
             shot_with = s["filter_name"]
@@ -295,7 +297,7 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
         # Derived rows split one night into several rows (per exposure/gain), so
         # counting rows would overstate nights — count the distinct dates, with
         # each undated row standing alone.
-        night = s["session_date"][:10] if s["session_date"] else f"row:{s['id']}"
+        night = session_date.isoformat() if session_date is not None else f"row:{s['id']}"
         for label in labels:
             actual_sec[label] += secs
             nights[label].add(night)
@@ -326,8 +328,10 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
         lines=lines,
         exposures=exposures,
         total_actual_minutes=total_sec / 60.0,
-        first_session_date=min(dates) if dates else None,
-        last_session_date=max(dates) if dates else None,
+        first_session_date=min(dates).isoformat() if dates else None,
+        last_session_date=max(dates).isoformat() if dates else None,
+        imaging_runs=imaging_runs(dates),
+        night_count=len(set(dates)),
     )
 
 

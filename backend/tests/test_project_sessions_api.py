@@ -328,6 +328,41 @@ class TestSessionsCRUD:
 
 
 class TestIntegration:
+    async def test_integration_imaging_runs(self, client: AsyncClient):
+        pid = await _make_project(client)
+        dates = [
+            "2025-01-06",
+            "2025-01-08",
+            "2025-01-12",
+            "2025-02-03",
+            "2025-02-04",
+            "2025-02-10",
+            "2025-02-22",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-18",
+        ]
+        for session_date in dates:
+            response = await client.post(
+                f"/api/projects/{pid}/sessions",
+                json={
+                    "line_name": "Ha",
+                    "exposure_seconds": 300,
+                    "num_subs": 1,
+                    "session_date": session_date,
+                },
+            )
+            assert response.status_code == 201
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        assert summary["imaging_runs"] == [
+            {"start": "2025-01", "end": "2025-02"},
+            {"start": "2026-01", "end": "2026-01"},
+        ]
+        assert summary["night_count"] == 10
+        assert summary["first_session_date"] == "2025-01-06"
+        assert summary["last_session_date"] == "2026-01-18"
+
     async def test_generic_lines_sum(self, client: AsyncClient):
         pid = await _make_project(client)
         # 300 * 20 = 6000s = 100 min of Ha across two batches.

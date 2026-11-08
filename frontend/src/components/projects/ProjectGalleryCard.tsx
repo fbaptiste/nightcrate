@@ -8,6 +8,7 @@ import CollectionsIcon from "@mui/icons-material/Collections";
 import { useNavigate } from "react-router-dom";
 import type { ProjectListItem } from "@/api/projects";
 import { projectThumbnailUrl, PROJECT_STATUS_COLORS } from "@/api/projects";
+import NearViewportImage from "@/components/common/NearViewportImage";
 
 interface Props {
   project: ProjectListItem;
@@ -15,6 +16,12 @@ interface Props {
 
 export default function ProjectGalleryCard({ project }: Props) {
   const navigate = useNavigate();
+  const src = projectThumbnailUrl(
+    project.id,
+    "large",
+    project.thumbnail_version,
+    project.workspace_key,
+  );
 
   return (
     <Card variant="outlined" sx={{ opacity: project.active ? 1 : 0.5 }}>
@@ -24,26 +31,35 @@ export default function ProjectGalleryCard({ project }: Props) {
             position: "relative",
             width: "100%",
             aspectRatio: "4 / 3",
-            bgcolor: "action.hover",
+            bgcolor: project.main_image_path ? "common.black" : "action.hover",
             overflow: "hidden",
           }}
         >
           {project.main_image_path ? (
-            <Box
-              component="img"
-              src={projectThumbnailUrl(project.id, "large", project.updated_at)}
+            <NearViewportImage
+              src={src}
               alt=""
               sx={{
                 position: "absolute",
                 inset: 0,
                 width: "100%",
                 height: "100%",
-                objectFit: "cover",
+                objectFit: "contain",
                 display: "block",
               }}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
+              fallback={
+                <CollectionsIcon
+                  sx={{
+                    position: "absolute",
+                    top: "50%",
+                    left: "50%",
+                    transform: "translate(-50%, -50%)",
+                    color: "common.white",
+                    fontSize: 40,
+                    opacity: 0.45,
+                  }}
+                />
+              }
             />
           ) : (
             <CollectionsIcon
@@ -52,8 +68,9 @@ export default function ProjectGalleryCard({ project }: Props) {
                 top: "50%",
                 left: "50%",
                 transform: "translate(-50%, -50%)",
+                color: "text.secondary",
                 fontSize: 40,
-                opacity: 0.3,
+                opacity: 0.6,
               }}
             />
           )}

@@ -19,6 +19,8 @@ and [PLAN.md](../PLAN.md) for active work.
 | [services/image_cache.py](../backend/src/nightcrate/services/image_cache.py) | Shared budget, lock, file identity and clearing for the thumbnail and sky-cell caches |
 | [services/catalog_progress.py](../backend/src/nightcrate/services/catalog_progress.py) | The single catalog fetch/reload operation and its progress for the Catalogs page |
 | [services/dso_sorting.py](../backend/src/nightcrate/services/dso_sorting.py), [services/dso_display.py](../backend/src/nightcrate/services/dso_display.py) | Natural designation order and the label maps used to sort catalog columns |
+| [services/gallery.py](../backend/src/nightcrate/services/gallery.py), [api/gallery.py](../backend/src/nightcrate/api/gallery.py) | The gallery: pure filtering, facets, sorting and imaging runs; batched loading and `GET /api/gallery` |
+| [backend/scripts/make_gallery_workspace.py](../backend/scripts/make_gallery_workspace.py) | Builds a scratch workspace with hundreds of synthetic projects for rendered and speed checks (development only) |
 | [core/tasks.py](../backend/src/nightcrate/core/tasks.py) | `settle`: wait for a worker through repeated cancellation before releasing ownership |
 | [components/plate-solve/](../frontend/src/components/plate-solve/) | The inline plate-solve panel, its hint model and solve hook, and the overlays |
 | [db/](../backend/src/nightcrate/db/) | Connections and ordered yoyo migrations (SQL; Python where SQL cannot express the change, e.g. 0064) |
@@ -33,6 +35,9 @@ and [PLAN.md](../PLAN.md) for active work.
 | [backend/tests/](../backend/tests/) | Backend regression and integration tests |
 | [frontend/src/pages/](../frontend/src/pages/), [components/](../frontend/src/components/) | Routed screens and reusable views |
 | [components/admin/StarCatalogAdminSection.tsx](../frontend/src/components/admin/StarCatalogAdminSection.tsx) | Plate-solving star download and field-range controls |
+| [components/gallery/](../frontend/src/components/gallery/), [pages/GalleryPage.tsx](../frontend/src/pages/GalleryPage.tsx), [lib/galleryRendition.ts](../frontend/src/lib/galleryRendition.ts) | The gallery page: filters, grids and list, turning cards, the full-size viewer, and framing or rendition choice and date formatting |
+| [components/projects/ThumbnailCropEditor.tsx](../frontend/src/components/projects/ThumbnailCropEditor.tsx), [lib/thumbnailFrame.ts](../frontend/src/lib/thumbnailFrame.ts) | The thumbnail framing editor and its pure 4:3 fit-box geometry |
+| [components/common/ViewToggle.tsx](../frontend/src/components/common/ViewToggle.tsx), [components/common/NearViewportImage.tsx](../frontend/src/components/common/NearViewportImage.tsx) | The icon view picker shared by Gallery and Projects, and project images loaded as they near the viewport |
 | [api/](../frontend/src/api/), [stores/](../frontend/src/stores/), [lib/](../frontend/src/lib/), [theme/](../frontend/src/theme/) | Typed clients, state, helpers, theme |
 
 ## Maintained references

@@ -35,12 +35,14 @@ import WbSunnyIcon from "@mui/icons-material/WbSunny";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import CollectionsIcon from "@mui/icons-material/Collections";
+import ViewQuiltIcon from "@mui/icons-material/ViewQuilt";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ImageAnalyzerPage } from "@/pages/ImageAnalyzerPage";
 import PlannerPage from "@/pages/PlannerPage";
 import Phd2AnalyzerPage from "@/pages/Phd2AnalyzerPage";
 import DsoCatalogPage from "@/pages/DsoCatalogPage";
 import WeatherPage from "@/pages/WeatherPage";
+import GalleryPage from "@/pages/GalleryPage";
 import {
   DndContext,
   KeyboardSensor,
@@ -85,6 +87,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/planner", label: "Planner", icon: <StarsIcon /> },
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
   { to: "/projects", label: "Projects", icon: <CollectionsIcon /> },
+  { to: "/gallery", label: "Gallery", icon: <ViewQuiltIcon /> },
   { to: "/image-analyzer", label: "Image Analyzer", icon: <ImageSearchIcon /> },
   { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
   { to: "/catalog/dso", label: "DSO Catalog", icon: <AutoAwesomeIcon /> },
@@ -99,10 +102,14 @@ const REORDERABLE_ITEMS: NavItem[] = [
 
 const ALL_NAV_ITEMS: NavItem[] = [HOME_ITEM, ...REORDERABLE_ITEMS];
 
-/** Drop unknown routes, then append any reorderable route that was
- *  missing from the saved list. Mirrors ``normalizeClockOrder`` in
- *  ClocksCalc so adding a new nav item in a future version always
- *  surfaces at the end of whatever order the user had saved. */
+/** Drop unknown routes, then insert missing routes beside their nearest
+ * default predecessor without disturbing the relative order the user saved.
+ *
+ * | saved order                         | relevant normalized result       |
+ * | /projects, /gallery, /image-analyzer | unchanged                       |
+ * | /projects, /image-analyzer (no gallery) | /projects, /gallery, /image-analyzer |
+ * | /api-docs (no preceding routes)     | /tonight first                   |
+ */
 function normalizeNavOrder(raw: readonly unknown[] | undefined): string[] {
   const known = new Set<string>(REORDERABLE_ITEMS.map((i) => i.to));
   const seen = new Set<string>();
@@ -115,8 +122,24 @@ function normalizeNavOrder(raw: readonly unknown[] | undefined): string[] {
       }
     }
   }
-  for (const item of REORDERABLE_ITEMS) {
-    if (!seen.has(item.to)) out.push(item.to);
+  for (let index = 0; index < REORDERABLE_ITEMS.length; index += 1) {
+    const route = REORDERABLE_ITEMS[index].to;
+    if (seen.has(route)) continue;
+
+    let predecessor: string | null = null;
+    for (let previous = index - 1; previous >= 0; previous -= 1) {
+      const candidate = REORDERABLE_ITEMS[previous].to;
+      if (seen.has(candidate)) {
+        predecessor = candidate;
+        break;
+      }
+    }
+    if (predecessor == null) {
+      out.unshift(route);
+    } else {
+      out.splice(out.indexOf(predecessor) + 1, 0, route);
+    }
+    seen.add(route);
   }
   return out;
 }
@@ -460,6 +483,7 @@ const PERSISTENT_ROUTES: Record<string, React.ComponentType> = {
   "/phd2-analyzer": Phd2AnalyzerPage,
   "/catalog/dso": DsoCatalogPage,
   "/weather": WeatherPage,
+  "/gallery": GalleryPage,
 };
 
 const persistentPaths = Object.keys(PERSISTENT_ROUTES);
