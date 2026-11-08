@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import type { ImagingRun } from "./gallery";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,8 @@ export interface IntegrationSummary {
   total_actual_minutes: number;
   first_session_date: string | null;
   last_session_date: string | null;
+  imaging_runs: ImagingRun[];
+  night_count: number;
 }
 
 export interface DerivationSummary {

@@ -3,7 +3,6 @@ import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
 import EditIcon from "@mui/icons-material/Edit";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import ReactMarkdown from "react-markdown";
@@ -58,8 +57,8 @@ export default function MarkdownEditor({
         sx={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
-          minHeight: 32,
+          gap: 0.5,
+          minHeight: 30,
           mb: 0.5,
         }}
       >
@@ -103,12 +102,19 @@ export default function MarkdownEditor({
           onClick={toEdit}
           sx={{
             minHeight,
-            p: 2,
-            borderRadius: 1,
+            mx: -1,
+            px: 1,
+            py: 0.5,
+            borderRadius: "6px",
             cursor: "pointer",
-            "&:hover": { bgcolor: "action.hover" },
+            "&:hover": {
+              bgcolor: (theme) =>
+                theme.palette.mode === "dark"
+                  ? "rgba(255, 255, 255, 0.05)"
+                  : "rgba(0, 0, 0, 0.04)",
+            },
             // Basic markdown typography — tight but readable, MUI-themed.
-            "& p": { my: 1, lineHeight: 1.6 },
+            "& p": { mt: 0, mb: 1, lineHeight: 1.6 },
             "& h1": { mt: 2, mb: 1, fontSize: "1.5rem", fontWeight: 600 },
             "& h2": { mt: 2, mb: 1, fontSize: "1.25rem", fontWeight: 600 },
             "& h3": { mt: 1.5, mb: 0.5, fontSize: "1.1rem", fontWeight: 600 },
@@ -150,20 +156,32 @@ export default function MarkdownEditor({
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
         </Box>
       ) : (
-        <Typography
-          variant="body2"
-          color="text.secondary"
+        <Box
+          component="button"
+          type="button"
           onClick={toEdit}
           sx={{
+            display: "block",
+            width: "100%",
+            textAlign: "left",
+            px: 1.5,
+            py: 1.25,
+            border: "1px dashed",
+            borderColor: (theme) =>
+              theme.palette.mode === "dark" ? "#4a4d54" : "#c4c1bb",
+            borderRadius: "6px",
+            bgcolor: "transparent",
+            color: "text.secondary",
             cursor: "pointer",
-            minHeight,
-            p: 2,
-            borderRadius: 1,
-            "&:hover": { bgcolor: "action.hover" },
+            font: "inherit",
+            "&:hover": {
+              borderColor: "text.secondary",
+              color: "text.primary",
+            },
           }}
         >
           {placeholder}
-        </Typography>
+        </Box>
       )}
     </Box>
   );

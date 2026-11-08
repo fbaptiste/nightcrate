@@ -7,12 +7,11 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, HTTPException, Query
 
-from nightcrate.api._common import load_other_names
+from nightcrate.api._common import load_designations, load_other_names
 from nightcrate.api.dso_models import (
     CatalogFacet,
     CatalogSource,
     ConstellationFacet,
-    DsoDesignation,
     DsoDetail,
     DsoFacetsResponse,
     DsoGroupRef,
@@ -190,39 +189,6 @@ def _search_refs(primary_designation: str, common_name: str | None) -> list[Exte
             url=f"https://www.google.com/search?tbm=isch&q={encoded_query}",
         ),
     ]
-
-
-async def _load_designations(conn, dso_ids: list[int]) -> dict[int, list[DsoDesignation]]:
-    """Fetch every designation for the given DSOs in canonical display order."""
-    if not dso_ids:
-        return {}
-
-    await conn.create_function("designation_key", 1, designation_sort_key, deterministic=True)
-    await conn.create_function("catalog_rank", 1, catalog_rank, deterministic=True)
-    id_placeholders = ",".join("?" * len(dso_ids))
-    # Placeholders are generated from the page's validated integer IDs.
-    sql = f"""
-        SELECT id, dso_id, catalog, identifier, display_form, is_primary
-        FROM dso_designation
-        WHERE dso_id IN ({id_placeholders})
-        ORDER BY dso_id, catalog_rank(catalog), catalog,
-                 designation_key(display_form), id
-    """  # noqa: S608  # nosec B608
-
-    cursor = await conn.execute(sql, dso_ids)
-    rows = await cursor.fetchall()
-
-    grouped: dict[int, list[DsoDesignation]] = {dso_id: [] for dso_id in dso_ids}
-    for row in rows:
-        grouped[row["dso_id"]].append(
-            DsoDesignation(
-                catalog=row["catalog"],
-                identifier=row["identifier"],
-                display_form=row["display_form"],
-                is_primary=bool(row["is_primary"]),
-            )
-        )
-    return grouped
 
 
 async def _load_group_refs(conn, dso_ids: list[int]) -> dict[int, list[DsoGroupRef]]:
@@ -422,7 +388,7 @@ async def list_dsos(
         rows = await cursor.fetchall()
 
         dso_ids = [row["id"] for row in rows]
-        designations = await _load_designations(conn, dso_ids)
+        designations = await load_designations(conn, dso_ids)
         other_names = await load_other_names(conn, dso_ids)
         group_refs = await _load_group_refs(conn, dso_ids)
 
@@ -684,7 +650,7 @@ async def _fetch_detail(conn, dso_id: int) -> DsoDetail:
     if row is None:
         raise HTTPException(status_code=404, detail=f"DSO not found: {dso_id}")
 
-    designations = (await _load_designations(conn, [dso_id])).get(dso_id, [])
+    designations = (await load_designations(conn, [dso_id])).get(dso_id, [])
     other_names = (await load_other_names(conn, [dso_id])).get(dso_id, [])
     part_of = (await _load_group_refs(conn, [dso_id])).get(dso_id, [])
     parts_cursor = await conn.execute(

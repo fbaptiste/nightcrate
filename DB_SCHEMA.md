@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.45.0
+**NightCrate version:** 0.46.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -865,7 +865,7 @@ In addition, the migration creates calibration-matching and integration **views*
 
 | Table | Purpose |
 |-------|---------|
-| `project_thumbnail` (migration 0032) | Per-project, per-size crop definitions for thumbnail generation. `project_id` FK CASCADE, `size` CHECK ('small', 'medium', 'large'), `source_image_id` FK to project_image (ON DELETE SET NULL), crop rectangle as fractions 0-1 (`crop_x`, `crop_y`, `crop_w`, `crop_h`), UNIQUE (project_id, size). Cropped thumbnails stored on disk at `{project_dir}/thumb_crop_{size}.jpg`. |
+| `project_thumbnail` (migration 0032) | Per-project, per-size crop definitions for thumbnail generation. `project_id` FK CASCADE, `size` CHECK ('small', 'medium', 'large'), `source_image_id` FK to project_image (ON DELETE SET NULL), 4:3 frame as fractions of the source image (`crop_x`, `crop_y`, `crop_w`, `crop_h`); since v0.46.0 they may be negative or exceed 1, because a frame may extend onto a black mat within the image's 4:3 fit box. UNIQUE (project_id, size). Files at `{project_dir}/thumb_crop_{size}_{id}.jpg` (480×360, 800×600, 1200×900). Migration 0068 deleted every earlier row, because most were distorted. |
 
 ### v0.37.0 — Project Plate Solve + DSO Links (2 tables)
 
@@ -959,3 +959,9 @@ rows. Nullable terms in a match view must use `IS`.
 | `dso_group_member` | Members of a `dso_group`. `group_id` FK CASCADE, `dso_id` FK → `dso` CASCADE, PRIMARY KEY `(group_id, dso_id)`. Index on `dso_id`. Catalog-derived. |
 | `dso_source_entry` | Provenance: one row per contributing catalog entry. `source_catalog_id` FK → `dso_catalog_source`, `source_key`, `catalog_id` (the logical optional catalog, e.g. `png`, `abell_pn`, `barnard`, or `openngc`), `dso_id` FK → `dso` CASCADE; PRIMARY KEY `(source_catalog_id, source_key, catalog_id)`, so one HASH row can belong to both `png` and `abell_pn`. A merged entry points at the object it merged into. Index on `dso_id`. Catalog-derived; catalog removal reads it as evidence and identity matching follows it through remove and re-add. |
 | `dso_catalog_applied` | Per-database record of what each optional catalog's last object step applied. `catalog_id` TEXT PRIMARY KEY, `state` CHECK ∈ `{'on','removed'}` (no row means off), `applied_at` default `datetime('now')`. The app-wide choice lives outside the database in `catalogs/choice.json`; this table keeps a lost or corrupt choice file from removing or re-enabling anything. No FK to `dso`. |
+
+### v0.46.0 — Thumbnail framings cleared (migration 0068)
+
+| Migration | Change |
+|-----------|--------|
+| `0068.clear_thumbnail_crops` | `DELETE FROM project_thumbnail`. Earlier framings couldn't be trusted under the new 4:3 contract: the old editor kept each shape in image proportions, not pixels, so most were distorted, and small and medium were square. The table and its AUTOINCREMENT sequence are kept, so new crop ids never repeat old ones. No schema change. Leftover `thumb_crop_*` files are no longer served, and the project's next successful thumbnail save deletes them. |

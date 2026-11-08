@@ -31,6 +31,7 @@ from nightcrate.services.plate_solve_models import (
     PlateSolveResult,
     SolveAttempt,
 )
+from tests.catalog_helpers import _seed_rig
 
 _SCALE = 3.0 / 3600.0  # 3 arcsec/px in degrees
 
@@ -174,6 +175,34 @@ def _mock_solve(
 async def _make_project(client: AsyncClient, name: str) -> int:
     r = await client.post("/api/projects", json={"name": name})
     return r.json()["id"]
+
+
+async def _make_solve_rig(
+    name: str,
+    *,
+    sort_order: int,
+    active: bool = True,
+    is_mine: bool = True,
+) -> int:
+    rig_id = await _seed_rig(name)
+    async with get_db() as conn:
+        await conn.execute(
+            "UPDATE rig SET sort_order = ?, active = ?, is_mine = ? WHERE id = ?",
+            (sort_order, active, is_mine, rig_id),
+        )
+        await conn.commit()
+    return rig_id
+
+
+async def _add_project_session(project_id: int, rig_id: int) -> None:
+    async with get_db() as conn:
+        await conn.execute(
+            "INSERT INTO project_session"
+            " (project_id, rig_id, line_name, exposure_seconds, num_subs)"
+            " VALUES (?, ?, 'Lum', 60, 1)",
+            (project_id, rig_id),
+        )
+        await conn.commit()
 
 
 def _solve_payload(image_path: str, **values) -> dict:
@@ -1121,6 +1150,81 @@ class TestGetSolve:
         resp = await client.get(f"/api/projects/{pid}/solve")
         assert resp.status_code == 200
         assert resp.json()["objects"][0]["active"] is False
+
+    async def test_focal_length_estimates_use_declared_and_session_rigs(self, client: AsyncClient):
+        pid = await _make_project(client, "Solve Focal Length")
+        both = await _make_solve_rig("Alpha Both", sort_order=10)
+        session_only = await _make_solve_rig("Beta Session", sort_order=10, is_mine=False)
+        declared_only = await _make_solve_rig("Zulu Retired", sort_order=20, active=False)
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+                ((pid, both), (pid, declared_only)),
+            )
+            await conn.commit()
+        await _add_project_session(pid, both)
+
+        solve_result = {**_SOLVE, "pixel_scale_arcsec": 0.775}
+        with _mock_solve([], result_kwargs=solve_result):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
+            )
+        assert created.status_code == 200
+        initial = created.json()
+        assert [item["rig_id"] for item in initial["focal_length_estimates"]] == [
+            both,
+            declared_only,
+        ]
+        assert initial["focal_length_estimates"][0] == {
+            "rig_id": both,
+            "rig_name": "Alpha Both",
+            "camera_name": "Camera for Alpha Both",
+            "pixel_size_um": 3.76,
+            "rig_focal_length_mm": 600.0,
+            "estimated_focal_length_mm": pytest.approx(1000.72, abs=0.01),
+        }
+
+        # A session change must affect the next read of the stored solve. The
+        # rig is not owned by the user, and the solve itself is not replaced.
+        await _add_project_session(pid, session_only)
+        refreshed = await client.get(f"/api/projects/{pid}/solve")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["id"] == initial["id"]
+        assert [item["rig_id"] for item in refreshed.json()["focal_length_estimates"]] == [
+            both,
+            session_only,
+            declared_only,
+        ]
+        assert (
+            sum(item["rig_id"] == both for item in refreshed.json()["focal_length_estimates"]) == 1
+        )
+
+    async def test_focal_length_estimates_empty_without_rigs(self, client: AsyncClient):
+        pid = await _make_project(client, "Solve Without Rigs")
+        with _mock_solve([], result_kwargs={**_SOLVE, "pixel_scale_arcsec": 0.775}):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
+            )
+
+        assert created.status_code == 200
+        assert created.json()["focal_length_estimates"] == []
+
+    async def test_focal_length_estimates_empty_without_pixel_scale(self, client: AsyncClient):
+        pid = await _make_project(client, "Solve Without Pixel Scale")
+        rig_id = await _make_solve_rig("No Scale Rig", sort_order=1)
+        async with get_db() as conn:
+            await conn.execute(
+                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+                (pid, rig_id),
+            )
+            await conn.commit()
+        with _mock_solve([], result_kwargs={**_SOLVE, "pixel_scale_arcsec": None}):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
+            )
+
+        assert created.status_code == 200
+        assert created.json()["focal_length_estimates"] == []
 
 
 class TestSetMain:

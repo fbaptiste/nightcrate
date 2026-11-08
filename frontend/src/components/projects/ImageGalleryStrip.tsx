@@ -31,6 +31,7 @@ const THUMB_SIZE = 80;
 
 interface SortableThumbProps {
   projectId: number;
+  workspaceKey: string;
   image: ProjectImage;
   isViewed: boolean;
   isMain: boolean;
@@ -41,6 +42,7 @@ interface SortableThumbProps {
 
 function SortableThumb({
   projectId,
+  workspaceKey,
   image,
   isViewed,
   isMain,
@@ -49,6 +51,7 @@ function SortableThumb({
   onRemove,
 }: SortableThumbProps) {
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: image.id });
 
@@ -77,7 +80,7 @@ function SortableThumb({
         "&:hover .thumb-actions": { opacity: 1 },
       }}
     >
-      {!loaded && (
+      {!loaded && !failed && (
         <Box
           sx={{
             position: "absolute",
@@ -90,19 +93,42 @@ function SortableThumb({
           <CircularProgress size={20} />
         </Box>
       )}
+      {failed && (
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            px: 1,
+            color: "#8e8c88",
+            fontSize: "11px",
+            lineHeight: 1.2,
+            textAlign: "center",
+            whiteSpace: "normal",
+          }}
+        >
+          No preview
+        </Box>
+      )}
       <Box
         component="img"
-        src={renderedImageUrl(projectId, image.id, "thumb_sm")}
+        src={renderedImageUrl(projectId, image.id, "thumb_sm", workspaceKey)}
         alt=""
-        onLoad={() => setLoaded(true)}
+        onLoad={() => {
+          setFailed(false);
+          setLoaded(true);
+        }}
         sx={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
           display: loaded ? "block" : "none",
         }}
-        onError={(e) => {
-          (e.target as HTMLImageElement).style.display = "none";
+        onError={() => {
+          setLoaded(false);
+          setFailed(true);
         }}
       />
       {isMain && (
@@ -172,6 +198,7 @@ function SortableThumb({
 
 interface Props {
   projectId: number;
+  workspaceKey: string;
   images: ProjectImage[];
   viewedImageId: number | null;
   mainImageId: number | null;
@@ -185,6 +212,7 @@ interface Props {
 
 export default function ImageGalleryStrip({
   projectId,
+  workspaceKey,
   images,
   viewedImageId,
   mainImageId,
@@ -236,6 +264,7 @@ export default function ImageGalleryStrip({
               <SortableThumb
                 key={img.id}
                 projectId={projectId}
+                workspaceKey={workspaceKey}
                 image={img}
                 isViewed={img.id === viewedImageId}
                 isMain={img.id === mainImageId}

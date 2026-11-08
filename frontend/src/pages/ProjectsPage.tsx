@@ -3,20 +3,18 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import FormControl from "@mui/material/FormControl";
-import IconButton from "@mui/material/IconButton";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
-import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Switch from "@mui/material/Switch";
 import AddIcon from "@mui/icons-material/Add";
 import GridViewIcon from "@mui/icons-material/GridView";
 import ViewListIcon from "@mui/icons-material/ViewList";
-import ViewCompactIcon from "@mui/icons-material/ViewCompact";
+import ViewHeadlineIcon from "@mui/icons-material/ViewHeadline";
 import {
   fetchProjects,
   createProject,
@@ -25,14 +23,21 @@ import {
 import ProjectCard from "@/components/projects/ProjectCard";
 import ProjectGalleryCard from "@/components/projects/ProjectGalleryCard";
 import ProjectFormDialog from "@/components/projects/ProjectFormDialog";
+import ViewToggle, { type ViewToggleOption } from "@/components/common/ViewToggle";
 
-type ViewMode = "compact" | "list" | "gallery";
+type ViewMode = "compact" | "list" | "pictures";
+
+const VIEW_OPTIONS: ViewToggleOption<ViewMode>[] = [
+  { value: "compact", label: "Compact", icon: <ViewHeadlineIcon /> },
+  { value: "list", label: "List", icon: <ViewListIcon /> },
+  { value: "pictures", label: "Pictures", icon: <GridViewIcon /> },
+];
 
 export default function ProjectsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("updated_at");
-  const [viewMode, setViewMode] = useState<ViewMode>("gallery");
+  const [viewMode, setViewMode] = useState<ViewMode>("pictures");
   const [showRetired, setShowRetired] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
@@ -106,35 +111,12 @@ export default function ProjectsPage() {
           label={<Typography variant="caption">Show retired</Typography>}
           sx={{ mr: 0 }}
         />
-        <Box sx={{ display: "flex", border: 1, borderColor: "divider", borderRadius: 1 }}>
-          <Tooltip title="Gallery">
-            <IconButton
-              size="small"
-              onClick={() => setViewMode("gallery")}
-              color={viewMode === "gallery" ? "primary" : "default"}
-            >
-              <GridViewIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="List">
-            <IconButton
-              size="small"
-              onClick={() => setViewMode("list")}
-              color={viewMode === "list" ? "primary" : "default"}
-            >
-              <ViewListIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Compact">
-            <IconButton
-              size="small"
-              onClick={() => setViewMode("compact")}
-              color={viewMode === "compact" ? "primary" : "default"}
-            >
-              <ViewCompactIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        </Box>
+        <ViewToggle
+          options={VIEW_OPTIONS}
+          value={viewMode}
+          onChange={setViewMode}
+          ariaLabel="Projects view"
+        />
         <Button
           variant="contained"
           startIcon={<AddIcon />}
@@ -165,15 +147,15 @@ export default function ProjectsPage() {
         sx={{
           display: "grid",
           gridTemplateColumns: {
-            gallery: "repeat(auto-fill, minmax(220px, 1fr))",
+            pictures: "repeat(auto-fill, minmax(220px, 1fr))",
             list: "repeat(auto-fill, minmax(320px, 1fr))",
             compact: "repeat(auto-fill, minmax(280px, 1fr))",
           }[viewMode],
-          gap: viewMode === "gallery" ? 2 : 1,
+          gap: viewMode === "pictures" ? 2 : 1,
         }}
       >
         {filtered.map((p) =>
-          viewMode === "gallery" ? (
+          viewMode === "pictures" ? (
             <ProjectGalleryCard key={p.id} project={p} />
           ) : (
             <ProjectCard

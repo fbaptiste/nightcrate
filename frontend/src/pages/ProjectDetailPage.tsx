@@ -33,9 +33,9 @@ import {
   setMainImage,
   saveThumbnailCrops,
   renderedImageUrl,
-  PROJECT_STATUS_COLORS,
   type Project,
   type ProjectUpdate,
+  type CropSize,
   type ThumbnailCropDef,
 } from "@/api/projects";
 import ImageGalleryStrip from "@/components/projects/ImageGalleryStrip";
@@ -44,6 +44,8 @@ import ProjectCatalogTab from "@/components/projects/ProjectCatalogTab";
 import ProjectPlateSolveTab from "@/components/projects/ProjectPlateSolveTab";
 import ProjectSessionsTab from "@/components/projects/ProjectSessionsTab";
 import ProjectMetadataSection from "@/components/projects/ProjectMetadataSection";
+import ProjectStatusChip from "@/components/projects/ProjectStatusChip";
+import PlateSolvedPill from "@/components/projects/PlateSolvedPill";
 import IntegrationBars from "@/components/projects/IntegrationBars";
 import AddTargetDialog from "@/components/projects/AddTargetDialog";
 import MarkdownEditor from "@/components/common/MarkdownEditor";
@@ -55,6 +57,7 @@ import {
   removeProjectTarget,
 } from "@/api/projectTargets";
 import NotListedTag from "@/components/dso/NotListedTag";
+import { formatImagingRuns } from "@/lib/galleryRendition";
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
@@ -171,7 +174,15 @@ export default function ProjectDetailPage() {
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     queryClient.invalidateQueries({ queryKey: ["projects"] });
+    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
   }, [queryClient, projectId]);
+
+  const openPlateSolve = useCallback(() => {
+    setTab(3);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", "plate-solve");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Apply a server response directly to the cache (no extra round-trip),
   // and refresh the list view that shows thumbnails/counts.
@@ -179,6 +190,7 @@ export default function ProjectDetailPage() {
     (p: Project) => {
       queryClient.setQueryData(["project", projectId], p);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
     },
     [queryClient, projectId],
   );
@@ -192,6 +204,7 @@ export default function ProjectDetailPage() {
 
   const [viewedImageId, setViewedImageId] = useState<number | null>(null);
   const [mainImgLoaded, setMainImgLoaded] = useState(false);
+  const [mainImgFailed, setMainImgFailed] = useState(false);
   const viewedImage = useMemo(() => {
     if (!images.length) return null;
     if (viewedImageId) {
@@ -201,10 +214,14 @@ export default function ProjectDetailPage() {
     return images.find((i) => i.id === effectiveMainId) ?? images[0] ?? null;
   }, [images, viewedImageId, effectiveMainId]);
 
-  const prevViewedRef = useRef<number | null>(null);
-  if (viewedImage?.id !== prevViewedRef.current) {
-    prevViewedRef.current = viewedImage?.id ?? null;
+  const viewedImageIdentity = viewedImage
+    ? `${project?.workspace_key ?? ""}:${viewedImage.id}`
+    : null;
+  const prevViewedRef = useRef<string | null>(null);
+  if (viewedImageIdentity !== prevViewedRef.current) {
+    prevViewedRef.current = viewedImageIdentity;
     if (mainImgLoaded) setMainImgLoaded(false);
+    if (mainImgFailed) setMainImgFailed(false);
   }
 
   // ── Mutations ──────────────────────────────────────────────────────────
@@ -260,13 +277,12 @@ export default function ProjectDetailPage() {
   });
 
   const cropMut = useMutation({
-    mutationFn: (crops: Record<string, ThumbnailCropDef>) =>
+    mutationFn: (crops: Partial<Record<CropSize, ThumbnailCropDef>>) =>
       saveThumbnailCrops(projectId, crops),
     onSuccess: (p) => {
       applyProject(p);
       setSnack("Thumbnails updated");
     },
-    onError: (err) => setSnack(String(err)),
   });
 
   const deleteMut = useMutation({
@@ -316,19 +332,13 @@ export default function ProjectDetailPage() {
   const displayDesc = project.description ?? "";
   const displayNotes = project.notes ?? "";
 
-  const formatDate = (iso: string) =>
-    // Anchor at midday to avoid a timezone day-shift when parsing a bare date.
-    new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  const dateRange =
-    integration?.first_session_date && integration?.last_session_date
-      ? integration.first_session_date === integration.last_session_date
-        ? formatDate(integration.first_session_date)
-        : `${formatDate(integration.first_session_date)} – ${formatDate(integration.last_session_date)}`
-      : null;
+  const imagingRunLabels = integration
+    ? formatImagingRuns({
+        imaging_runs: integration.imaging_runs,
+        first_date: integration.first_session_date,
+        last_date: integration.last_session_date,
+      } as Parameters<typeof formatImagingRuns>[0])
+    : [];
 
   return (
     <Box sx={{ p: 3, height: "100%", overflow: "auto" }}>
@@ -369,11 +379,10 @@ export default function ProjectDetailPage() {
           </Typography>
         )}
 
-        <Chip
-          label={project.status}
-          size="small"
-          color={PROJECT_STATUS_COLORS[project.status] ?? "default"}
-          sx={{ ml: "100px" }}
+        <ProjectStatusChip
+          project={project}
+          onUpdated={applyProject}
+          onError={setSnack}
         />
 
         {project.active ? (
@@ -418,7 +427,9 @@ export default function ProjectDetailPage() {
 
       {tab === 1 && <ProjectSessionsTab projectId={projectId} />}
       {tab === 2 && <ProjectCatalogTab projectId={projectId} />}
-      {tab === 3 && <ProjectPlateSolveTab projectId={projectId} />}
+      {tab === 3 && (
+        <ProjectPlateSolveTab projectId={projectId} onMainsChange={invalidate} />
+      )}
       {tab === 4 && (
         <Box sx={{ maxWidth: 820 }}>
           <MarkdownEditor
@@ -427,7 +438,12 @@ export default function ProjectDetailPage() {
               const v = next.trim();
               if (v !== (project.notes ?? "")) metaMut.mutate({ notes: v });
             }}
-            placeholder="Click to add notes..."
+            label={
+              <Typography variant="subtitle2" color="text.secondary">
+                Notes
+              </Typography>
+            }
+            placeholder="Add notes"
           />
         </Box>
       )}
@@ -457,13 +473,32 @@ export default function ProjectDetailPage() {
             >
               {viewedImage ? (
                 <>
-                  {(!mainImgLoaded || addMut.isPending) && <CircularProgress size={32} />}
+                  {((!mainImgLoaded && !mainImgFailed) || addMut.isPending) && (
+                    <CircularProgress size={32} />
+                  )}
                   <Box
                     component="img"
-                    key={viewedImage.id}
-                    src={renderedImageUrl(projectId, viewedImage.id, "thumb_lg")}
+                    key={renderedImageUrl(
+                      projectId,
+                      viewedImage.id,
+                      "thumb_lg",
+                      project.workspace_key,
+                    )}
+                    src={renderedImageUrl(
+                      projectId,
+                      viewedImage.id,
+                      "thumb_lg",
+                      project.workspace_key,
+                    )}
                     alt={project.name}
-                    onLoad={() => setMainImgLoaded(true)}
+                    onLoad={() => {
+                      setMainImgFailed(false);
+                      setMainImgLoaded(true);
+                    }}
+                    onError={() => {
+                      setMainImgLoaded(false);
+                      setMainImgFailed(true);
+                    }}
                     sx={{
                       maxWidth: "100%",
                       maxHeight: "100%",
@@ -471,6 +506,11 @@ export default function ProjectDetailPage() {
                       display: mainImgLoaded && !addMut.isPending ? "block" : "none",
                     }}
                   />
+                  {mainImgFailed && !addMut.isPending && (
+                    <Typography sx={{ color: "#8e8c88", fontSize: "13px" }}>
+                      No preview
+                    </Typography>
+                  )}
                   {mainImgLoaded && !addMut.isPending && (
                     <Tooltip title="Open in a larger window">
                       <IconButton
@@ -478,7 +518,12 @@ export default function ProjectDetailPage() {
                         aria-label="Open image in a larger window"
                         onClick={() =>
                           openImageWindow(
-                            renderedImageUrl(projectId, viewedImage.id, "full"),
+                            renderedImageUrl(
+                              projectId,
+                              viewedImage.id,
+                              "full",
+                              project.workspace_key,
+                            ),
                             project.name,
                           )
                         }
@@ -521,13 +566,18 @@ export default function ProjectDetailPage() {
                   <Typography variant="subtitle2" color="text.secondary">
                     Main targets
                   </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() => setAddTargetOpen(true)}
-                    aria-label="Add target"
+                  <Tooltip
+                    describeChild
+                    title="Add a target from the catalog here, or plate solve an image on the Plate Solve tab and choose targets from the objects it finds."
                   >
-                    <AddIcon fontSize="small" />
-                  </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => setAddTargetOpen(true)}
+                      aria-label="Add target"
+                    >
+                      <AddIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </Box>
                 {mainTargets.length > 0 ? (
                   <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
@@ -541,12 +591,7 @@ export default function ProjectDetailPage() {
                           </Box>
                         }
                         size="small"
-                        onClick={solveDsoIds.has(t.dso_id) ? () => {
-                          setTab(3);
-                          const next = new URLSearchParams(searchParams);
-                          next.set("tab", "plate-solve");
-                          setSearchParams(next, { replace: true });
-                        } : undefined}
+                        onClick={solveDsoIds.has(t.dso_id) ? openPlateSolve : undefined}
                         onDelete={() => removeTargetMut.mutate(t.dso_id)}
                       />
                     ))}
@@ -558,17 +603,28 @@ export default function ProjectDetailPage() {
                 )}
               </Box>
 
-              {dateRange && (
+              {imagingRunLabels.length > 0 && integration && (
                 <Box sx={{ mb: 3 }}>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
                     Imaging dates
                   </Typography>
-                  <Typography variant="body2">{dateRange}</Typography>
+                  <Typography variant="body2">
+                    {imagingRunLabels.join(", ")}
+                    <Box component="span" sx={{ color: "text.secondary" }}>
+                      {`, ${integration.night_count} ${
+                        integration.night_count === 1 ? "night" : "nights"
+                      }`}
+                    </Box>
+                  </Typography>
                 </Box>
               )}
 
               <Box sx={{ mb: 2 }}>
                 <ProjectMetadataSection project={project} onUpdated={applyProject} />
+              </Box>
+
+              <Box sx={{ mb: 3 }}>
+                <PlateSolvedPill solvedAt={project.solved_at} onOpen={openPlateSolve} />
               </Box>
 
               <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>
@@ -578,7 +634,12 @@ export default function ProjectDetailPage() {
                     const v = next.trim();
                     if (v !== (project.description ?? "")) metaMut.mutate({ description: v });
                   }}
-                  placeholder="Add description…"
+                  label={
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Description
+                    </Typography>
+                  }
+                  placeholder="Add a description"
                   minHeight={40}
                 />
               </Box>
@@ -588,6 +649,7 @@ export default function ProjectDetailPage() {
           {/* Thumbnails — full width below, given room to grow horizontally */}
           <ImageGalleryStrip
             projectId={projectId}
+            workspaceKey={project.workspace_key}
             images={images}
             viewedImageId={viewedImage?.id ?? null}
             mainImageId={effectiveMainId}
@@ -642,10 +704,11 @@ export default function ProjectDetailPage() {
         open={cropEditorOpen}
         onClose={() => setCropEditorOpen(false)}
         projectId={projectId}
+        workspaceKey={project.workspace_key}
         images={images}
         mainImageId={effectiveMainId}
         existingCrops={project.thumbnail_crops}
-        onApply={(crops) => cropMut.mutate(crops)}
+        onApply={(crops) => cropMut.mutateAsync(crops)}
       />
 
       <AddTargetDialog

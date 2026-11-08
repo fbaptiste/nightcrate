@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -22,14 +23,17 @@ from nightcrate.api.project_models import (
     ProjectRigsSet,
     ProjectUpdate,
     ReorderImagesRequest,
+    ThumbnailCropDef,
     ThumbnailCropResponse,
     ThumbnailCropsRequest,
 )
 from nightcrate.core.app_config import get_projects_root
-from nightcrate.db.session import get_db
+from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services import archive_io, pxiproject_io
 from nightcrate.services.project_images import (
     VARIANT_SIZES,
+    CropFrameError,
+    crop_path,
     generate_cropped_thumbnail,
     generate_rendered_images,
 )
@@ -112,8 +116,19 @@ async def _fetch_project_with_images(conn, project_id: int) -> ProjectResponse:
     crop_rows = await cursor.fetchall()
     crops = [ThumbnailCropResponse(**row_to_dict(r)) for r in crop_rows]
 
+    cursor = await conn.execute(
+        "SELECT solved_at FROM project_solve WHERE project_id = ?", (project_id,)
+    )
+    solve_row = await cursor.fetchone()
+
     return ProjectResponse(
-        **proj, location_name=location_name, rigs=rigs, images=images, thumbnail_crops=crops
+        **proj,
+        location_name=location_name,
+        rigs=rigs,
+        images=images,
+        thumbnail_crops=crops,
+        solved_at=solve_row["solved_at"] if solve_row is not None else None,
+        workspace_key=workspace_key(),
     )
 
 
@@ -136,49 +151,40 @@ async def _auto_promote_main(conn, project_id: int) -> None:
         )
 
 
-async def _generate_crop_file(conn, project_id: int, size_name: str, crop_def) -> None:
-    """(Re)generate the cropped thumbnail file for one size. Resolves a NULL
-    source image to the project's current main image."""
-    source_id = crop_def.source_image_id
-    if source_id is None:
-        cursor = await conn.execute(
-            "SELECT id FROM project_image WHERE project_id = ? AND is_main = 1 LIMIT 1",
-            (project_id,),
-        )
-        main_row = await cursor.fetchone()
-        if main_row:
-            source_id = main_row["id"]
-
-    if source_id is None:
-        return
-
-    cursor = await conn.execute(
-        "SELECT file_path FROM project_image WHERE id = ? AND project_id = ?",
-        (source_id, project_id),
+async def _generate_crop_file(source_path: str, size_name: str, crop_def, out_path: Path) -> None:
+    """Generate one crop off the event loop, propagating failures to the caller."""
+    await asyncio.to_thread(
+        generate_cropped_thumbnail,
+        source_path,
+        crop_def.crop_x,
+        crop_def.crop_y,
+        crop_def.crop_w,
+        crop_def.crop_h,
+        out_path,
+        size_name,
     )
-    src_row = await cursor.fetchone()
-    if not src_row:
-        return
 
-    out_path = _permanent_dir(project_id) / f"thumb_crop_{size_name}.jpg"
-    try:
-        await asyncio.to_thread(
-            generate_cropped_thumbnail,
-            src_row["file_path"],
-            crop_def.crop_x,
-            crop_def.crop_y,
-            crop_def.crop_w,
-            crop_def.crop_h,
-            out_path,
-            size_name,
-        )
-    except Exception:
-        logger.warning(
-            "Cropped thumbnail generation failed for project %d size %s",
-            project_id,
-            size_name,
-            exc_info=True,
-        )
+
+def _delete_crop_files(project_id: int, crops: list[tuple[int, str]]) -> None:
+    """Best-effort cleanup after the corresponding database change commits."""
+    project_folder = _permanent_dir(project_id)
+    for row_id, size in crops:
+        current = crop_path(project_folder, size, row_id)
+        legacy = project_folder / f"thumb_crop_{size}.jpg"
+        for path in (current, legacy):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Couldn't remove obsolete project crop %s", path, exc_info=True)
+
+
+def _delete_paths(paths: list[Path]) -> None:
+    """Best-effort removal that preserves the error which triggered cleanup."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Couldn't remove temporary project crop %s", path, exc_info=True)
 
 
 # ── enumerate helper ───────────────────────────────────────────────────────
@@ -243,7 +249,14 @@ async def list_projects(
     sql = f"""
         SELECT p.*,
                COUNT(pi.id) AS image_count,
-               MAX(CASE WHEN pi.is_main = 1 THEN pi.file_path END) AS main_image_path
+               MAX(CASE WHEN pi.is_main = 1 THEN pi.file_path END) AS main_image_path,
+               MAX(CASE WHEN pi.is_main = 1 THEN pi.id END) AS _main_image_id,
+               (SELECT pt.id FROM project_thumbnail pt
+                WHERE pt.project_id = p.id AND pt.size = 'small') AS _crop_small_id,
+               (SELECT pt.id FROM project_thumbnail pt
+                WHERE pt.project_id = p.id AND pt.size = 'medium') AS _crop_medium_id,
+               (SELECT pt.id FROM project_thumbnail pt
+                WHERE pt.project_id = p.id AND pt.size = 'large') AS _crop_large_id
         FROM project p
         LEFT JOIN project_image pi ON pi.project_id = p.id
         {where}
@@ -259,6 +272,17 @@ async def list_projects(
     for r in rows:
         d = row_to_dict(r)
         bool_fields(d, "active")
+        main_id = d.pop("_main_image_id")
+        small_id = d.pop("_crop_small_id")
+        medium_id = d.pop("_crop_medium_id")
+        large_id = d.pop("_crop_large_id")
+        d["thumbnail_version"] = (
+            f"{main_id if main_id is not None else '-'}"
+            f".s{small_id if small_id is not None else '-'}"
+            f".m{medium_id if medium_id is not None else '-'}"
+            f".l{large_id if large_id is not None else '-'}"
+        )
+        d["workspace_key"] = workspace_key()
         items.append(ProjectListItem(**d))
     return items
 
@@ -449,20 +473,31 @@ async def add_images(
 @router.delete("/{project_id}/images/{image_id}", status_code=204)
 async def remove_image(project_id: int, image_id: int) -> None:
     async with get_db() as conn:
+        await conn.execute("BEGIN IMMEDIATE")
         cursor = await conn.execute(
-            "SELECT id FROM project_image WHERE id = ? AND project_id = ?",
+            "SELECT id, is_main FROM project_image WHERE id = ? AND project_id = ?",
             (image_id, project_id),
         )
-        if await cursor.fetchone() is None:
+        image_row = await cursor.fetchone()
+        if image_row is None:
             raise HTTPException(status_code=404, detail=f"Image not found: {image_id}")
 
-        # Capture which cropped thumbnails this image sourced (their files
-        # become stale once it's gone; the FK nulls source_image_id).
+        # Delete named crops before the image so ON DELETE SET NULL cannot turn
+        # them into follow-main crops. If the main changes, its follow-main
+        # crops are invalid too because their fractions belong to this picture.
         cursor = await conn.execute(
-            "SELECT size FROM project_thumbnail WHERE project_id = ? AND source_image_id = ?",
-            (project_id, image_id),
+            "SELECT id, size FROM project_thumbnail"
+            " WHERE project_id = ? AND (source_image_id = ?"
+            " OR (? = 1 AND source_image_id IS NULL))",
+            (project_id, image_id, image_row["is_main"]),
         )
-        stale_sizes = [r["size"] for r in await cursor.fetchall()]
+        stale_crops = [(r["id"], r["size"]) for r in await cursor.fetchall()]
+        if stale_crops:
+            placeholders = ",".join("?" * len(stale_crops))
+            await conn.execute(
+                f"DELETE FROM project_thumbnail WHERE id IN ({placeholders})",  # nosec B608
+                [row_id for row_id, _ in stale_crops],
+            )
 
         await conn.execute(
             "DELETE FROM project_image WHERE id = ? AND project_id = ?",
@@ -475,8 +510,7 @@ async def remove_image(project_id: int, image_id: int) -> None:
     img_dir = _image_dir(perm, image_id)
     if img_dir.is_dir():
         shutil.rmtree(img_dir, ignore_errors=True)
-    for size in stale_sizes:
-        (perm / f"thumb_crop_{size}.jpg").unlink(missing_ok=True)
+    _delete_crop_files(project_id, stale_crops)
 
 
 @router.put("/{project_id}/images/order")
@@ -495,12 +529,32 @@ async def reorder_images(project_id: int, body: ReorderImagesRequest) -> Project
 @router.post("/{project_id}/images/{image_id}/main")
 async def set_main_image(project_id: int, image_id: int) -> ProjectResponse:
     async with get_db() as conn:
+        await conn.execute("BEGIN IMMEDIATE")
         cursor = await conn.execute(
             "SELECT id FROM project_image WHERE id = ? AND project_id = ?",
             (image_id, project_id),
         )
         if await cursor.fetchone() is None:
             raise HTTPException(status_code=404, detail=f"Image not found: {image_id}")
+
+        cursor = await conn.execute(
+            "SELECT id FROM project_image WHERE project_id = ? AND is_main = 1",
+            (project_id,),
+        )
+        current_main = await cursor.fetchone()
+        main_changes = current_main is None or current_main["id"] != image_id
+        stale_crops: list[tuple[int, str]] = []
+        if main_changes:
+            cursor = await conn.execute(
+                "SELECT id, size FROM project_thumbnail"
+                " WHERE project_id = ? AND source_image_id IS NULL",
+                (project_id,),
+            )
+            stale_crops = [(r["id"], r["size"]) for r in await cursor.fetchall()]
+            await conn.execute(
+                "DELETE FROM project_thumbnail WHERE project_id = ? AND source_image_id IS NULL",
+                (project_id,),
+            )
 
         await conn.execute(
             "UPDATE project_image SET is_main = 0 WHERE project_id = ?",
@@ -511,7 +565,10 @@ async def set_main_image(project_id: int, image_id: int) -> ProjectResponse:
             (image_id,),
         )
         await conn.commit()
-        return await _fetch_project_with_images(conn, project_id)
+        project = await _fetch_project_with_images(conn, project_id)
+
+    _delete_crop_files(project_id, stale_crops)
+    return project
 
 
 @router.patch("/{project_id}/images/{image_id}")
@@ -542,36 +599,164 @@ async def update_image_notes(
 
 @router.put("/{project_id}/thumbnails")
 async def save_thumbnail_crops(project_id: int, body: ThumbnailCropsRequest) -> ProjectResponse:
-    """Save thumbnail crop definitions and regenerate the cropped files."""
+    """Generate and publish a complete set of requested crop generations."""
+    requested = [
+        (size_name, crop_def)
+        for size_name, crop_def in body.crops.items()
+        if size_name in _VALID_THUMB_SIZES
+    ]
+
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
 
-        for size_name, crop_def in body.crops.items():
-            if size_name not in _VALID_THUMB_SIZES:
-                continue
-            await conn.execute(
-                """INSERT INTO project_thumbnail
-                   (project_id, size, source_image_id, crop_x, crop_y, crop_w, crop_h)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT (project_id, size) DO UPDATE SET
-                       source_image_id = excluded.source_image_id,
-                       crop_x = excluded.crop_x,
-                       crop_y = excluded.crop_y,
-                       crop_w = excluded.crop_w,
-                       crop_h = excluded.crop_h""",
-                (
-                    project_id,
-                    size_name,
-                    crop_def.source_image_id,
-                    crop_def.crop_x,
-                    crop_def.crop_y,
-                    crop_def.crop_w,
-                    crop_def.crop_h,
-                ),
-            )
-            await _generate_crop_file(conn, project_id, size_name, crop_def)
+        if not requested:
+            return await _fetch_project_with_images(conn, project_id)
 
-        await conn.commit()
+        cursor = await conn.execute(
+            "SELECT id FROM project_image WHERE project_id = ? AND is_main = 1",
+            (project_id,),
+        )
+        main_row = await cursor.fetchone()
+        if main_row is None:
+            raise HTTPException(status_code=422, detail="This project has no main image to crop.")
+        initial_main_id = main_row["id"]
+
+        resolved: list[tuple[str, ThumbnailCropDef, str]] = []
+        for size_name, crop_def in requested:
+            source_id = (
+                initial_main_id if crop_def.source_image_id is None else crop_def.source_image_id
+            )
+            cursor = await conn.execute(
+                "SELECT file_path FROM project_image WHERE id = ? AND project_id = ?",
+                (source_id, project_id),
+            )
+            source_row = await cursor.fetchone()
+            if source_row is None:
+                raise HTTPException(
+                    status_code=422, detail=f"Image {source_id} isn't in this project."
+                )
+            resolved.append((size_name, crop_def, source_row["file_path"]))
+
+        permanent_dir = _permanent_dir(project_id)
+        permanent_dir.mkdir(parents=True, exist_ok=True)
+        temporary: dict[str, Path] = {}
+        try:
+            for size_name, crop_def, source_path in resolved:
+                with tempfile.NamedTemporaryFile(
+                    prefix=f".thumb_crop_{size_name}_",
+                    suffix=".tmp",
+                    dir=permanent_dir,
+                    delete=False,
+                ) as temp_file:
+                    temp_path = Path(temp_file.name)
+                    temporary[size_name] = temp_path
+                try:
+                    await _generate_crop_file(source_path, size_name, crop_def, temp_path)
+                except CropFrameError as exc:
+                    source_name = Path(source_path).name
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"The {size_name} frame doesn't fit {source_name}: {exc}",
+                    ) from exc
+                except Exception as exc:
+                    source_name = Path(source_path).name
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Couldn't make the {size_name} thumbnail from {source_name}: {exc}"
+                        ),
+                    ) from exc
+        except HTTPException:
+            _delete_paths(list(temporary.values()))
+            raise
+        except Exception as exc:
+            _delete_paths(list(temporary.values()))
+            logger.exception("Couldn't stage thumbnails for project %d", project_id)
+            raise HTTPException(
+                status_code=500, detail=f"Couldn't save the thumbnails: {exc}"
+            ) from exc
+
+        new_files: list[Path] = []
+        orphan_files: list[Path] = []
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+
+            if any(crop_def.source_image_id is None for _, crop_def, _ in resolved):
+                cursor = await conn.execute(
+                    "SELECT id FROM project_image WHERE project_id = ? AND is_main = 1",
+                    (project_id,),
+                )
+                current_main = await cursor.fetchone()
+                if current_main is None or current_main["id"] != initial_main_id:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="The main image changed while saving. Try again.",
+                    )
+
+            for size_name, crop_def, _ in resolved:
+                cursor = await conn.execute(
+                    "SELECT id FROM project_thumbnail WHERE project_id = ? AND size = ?",
+                    (project_id, size_name),
+                )
+                old_row = await cursor.fetchone()
+                if old_row is not None:
+                    await conn.execute(
+                        "DELETE FROM project_thumbnail WHERE id = ?", (old_row["id"],)
+                    )
+
+                cursor = await conn.execute(
+                    """INSERT INTO project_thumbnail
+                       (project_id, size, source_image_id, crop_x, crop_y, crop_w, crop_h)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        project_id,
+                        size_name,
+                        crop_def.source_image_id,
+                        crop_def.crop_x,
+                        crop_def.crop_y,
+                        crop_def.crop_w,
+                        crop_def.crop_h,
+                    ),
+                )
+                row_id = cursor.lastrowid
+                if row_id is None:
+                    raise RuntimeError("No thumbnail generation id was returned")
+                new_path = crop_path(permanent_dir, size_name, row_id)
+                temporary[size_name].rename(new_path)
+                new_files.append(new_path)
+
+            cursor = await conn.execute(
+                "SELECT id, size FROM project_thumbnail WHERE project_id = ?", (project_id,)
+            )
+            owned_files = {
+                crop_path(permanent_dir, row["size"], row["id"]).name
+                for row in await cursor.fetchall()
+            }
+            orphan_files = [
+                path
+                for path in permanent_dir.glob("thumb_crop_*.jpg")
+                if path.name not in owned_files
+            ]
+            await conn.commit()
+        except HTTPException:
+            try:
+                await conn.rollback()
+            except Exception:
+                logger.exception("Couldn't roll back rejected project crop save")
+            _delete_paths([*temporary.values(), *new_files])
+            raise
+        except Exception as exc:
+            try:
+                await conn.rollback()
+            except Exception:
+                logger.exception("Couldn't roll back failed project crop save")
+            _delete_paths([*temporary.values(), *new_files])
+            logger.exception("Couldn't save thumbnails for project %d", project_id)
+            raise HTTPException(
+                status_code=500, detail=f"Couldn't save the thumbnails: {exc}"
+            ) from exc
+
+        _delete_paths(orphan_files)
         return await _fetch_project_with_images(conn, project_id)
 
 
@@ -588,12 +773,12 @@ async def get_rendered_image(project_id: int, image_id: int, variant: str) -> Re
 
     path = _find_rendered(project_id, image_id, variant)
     if path is None:
-        return Response(status_code=204)
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     return FileResponse(
         path,
         media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -608,15 +793,21 @@ async def get_thumbnail(
     if size not in _VALID_THUMB_SIZES:
         size = "small"
 
-    cropped = _permanent_dir(project_id) / f"thumb_crop_{size}.jpg"
-    if cropped.is_file():
-        return FileResponse(
-            cropped,
-            media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
-
     async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT id FROM project_thumbnail WHERE project_id = ? AND size = ?",
+            (project_id, size),
+        )
+        crop_row = await cursor.fetchone()
+        if crop_row is not None:
+            cropped = crop_path(_permanent_dir(project_id), size, crop_row["id"])
+            if cropped.is_file():
+                return FileResponse(
+                    cropped,
+                    media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"},
+                )
+
         cursor = await conn.execute(
             "SELECT id FROM project_image WHERE project_id = ? AND is_main = 1",
             (project_id,),
@@ -624,15 +815,15 @@ async def get_thumbnail(
         row = await cursor.fetchone()
 
     if row is None:
-        return Response(status_code=204)
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     fallback_variant = _THUMB_FALLBACK.get(size, "thumb_sm")
     path = _find_rendered(project_id, row["id"], fallback_variant)
     if path is None:
-        return Response(status_code=204)
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     return FileResponse(
         path,
         media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": "no-store"},
     )

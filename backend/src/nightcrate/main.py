@@ -25,6 +25,7 @@ from nightcrate.api import (
     dso,
     equipment,
     files,
+    gallery,
     horizons,
     images,
     imaging_rules,
@@ -437,6 +438,7 @@ app.include_router(planner.router)
 app.include_router(phd2.router)
 app.include_router(plate_solve.router)
 app.include_router(projects.router)
+app.include_router(gallery.router)
 app.include_router(ingest.router)
 app.include_router(project_sessions.router)
 app.include_router(project_solve.router)

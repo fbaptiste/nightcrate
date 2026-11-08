@@ -41,6 +41,14 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).pop()?.split("::").pop() ?? path;
 }
 
+function formatFocalLength(value: number): string {
+  return Math.round(value).toLocaleString();
+}
+
+function formatPixelSize(value: number): string {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function toResult(solve: ProjectSolve): PlateSolveResult {
   return {
     solved: true,
@@ -487,6 +495,28 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
                 ? `${solve.pixel_scale_arcsec.toFixed(2)}″/px`
                 : "—"}
             </dd>
+            {solve.focal_length_estimates.length > 0 && (
+              <>
+                <dt>Estimated focal length</dt>
+                <dd>
+                  {solve.focal_length_estimates.map((estimate) => (
+                    <Box key={estimate.rig_id}>
+                      {"≈"} {formatFocalLength(estimate.estimated_focal_length_mm)} mm with the{" "}
+                      {estimate.camera_name}&apos;s {formatPixelSize(estimate.pixel_size_um)} µm
+                      pixels · {estimate.rig_name}: {formatFocalLength(estimate.rig_focal_length_mm)}
+                      {" mm"}
+                    </Box>
+                  ))}
+                  <Typography
+                    component="div"
+                    sx={{ color: "text.secondary", fontSize: 12, lineHeight: 1.4 }}
+                  >
+                    Assumes the image&apos;s pixels are the camera&apos;s own. Binning, drizzling or
+                    resizing changes this estimate.
+                  </Typography>
+                </dd>
+              </>
+            )}
             <dt>Rotation</dt>
             <dd>{solve.rotation_deg != null ? `${solve.rotation_deg.toFixed(1)}°` : "—"}</dd>
             <dt>Field</dt>

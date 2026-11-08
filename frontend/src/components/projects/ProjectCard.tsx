@@ -7,10 +7,11 @@ import CollectionsIcon from "@mui/icons-material/Collections";
 import { useNavigate } from "react-router-dom";
 import type { ProjectListItem } from "@/api/projects";
 import { projectThumbnailUrl, PROJECT_STATUS_COLORS } from "@/api/projects";
+import NearViewportImage from "@/components/common/NearViewportImage";
 
 const SIZES = {
-  compact: { thumb: 56, thumbSize: "small" as const, icon: 24 },
-  expanded: { thumb: 120, thumbSize: "medium" as const, icon: 36 },
+  compact: { width: 76, height: 57, thumbSize: "small" as const, icon: 24 },
+  expanded: { width: 160, height: 120, thumbSize: "medium" as const, icon: 36 },
 };
 
 interface Props {
@@ -21,6 +22,12 @@ interface Props {
 export default function ProjectCard({ project, variant = "compact" }: Props) {
   const navigate = useNavigate();
   const s = SIZES[variant];
+  const src = projectThumbnailUrl(
+    project.id,
+    s.thumbSize,
+    project.thumbnail_version,
+    project.workspace_key,
+  );
 
   return (
     <Card variant="outlined" sx={{ opacity: project.active ? 1 : 0.5 }}>
@@ -30,34 +37,46 @@ export default function ProjectCard({ project, variant = "compact" }: Props) {
       >
         <Box
           sx={{
-            width: s.thumb,
-            height: s.thumb,
+            width: s.width,
+            height: s.height,
             flexShrink: 0,
             borderRadius: 1,
             overflow: "hidden",
-            bgcolor: "action.hover",
+            bgcolor: project.main_image_path ? "common.black" : "action.hover",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
           {project.main_image_path ? (
-            <Box
-              component="img"
-              src={projectThumbnailUrl(project.id, s.thumbSize, project.updated_at)}
+            <NearViewportImage
+              src={src}
               alt=""
               sx={{
                 width: "100%",
                 height: "100%",
-                objectFit: "cover",
+                objectFit: "contain",
                 display: "block",
               }}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
+              fallback={
+                <Box
+                  sx={{
+                    display: "grid",
+                    placeItems: "center",
+                    width: "100%",
+                    height: "100%",
+                  }}
+                >
+                  <CollectionsIcon
+                    sx={{ color: "common.white", fontSize: s.icon, opacity: 0.45 }}
+                  />
+                </Box>
+              }
             />
           ) : (
-            <CollectionsIcon sx={{ fontSize: s.icon, opacity: 0.3 }} />
+            <CollectionsIcon
+              sx={{ color: "text.secondary", fontSize: s.icon, opacity: 0.6 }}
+            />
           )}
         </Box>
 

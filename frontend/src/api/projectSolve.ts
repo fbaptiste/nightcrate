@@ -24,6 +24,15 @@ export interface IdentifiedDso {
   ellipse_angle_deg: number | null;
 }
 
+export interface FocalLengthEstimate {
+  rig_id: number;
+  rig_name: string;
+  camera_name: string;
+  pixel_size_um: number;
+  rig_focal_length_mm: number;
+  estimated_focal_length_mm: number;
+}
+
 export interface ProjectSolve {
   id: number;
   project_id: number;
@@ -51,6 +60,7 @@ export interface ProjectSolve {
   attempts: SolveAttempt[];
   wcs: WcsParams;
   objects: IdentifiedDso[];
+  focal_length_estimates: FocalLengthEstimate[];
 }
 
 export interface CreateSolveRequest {

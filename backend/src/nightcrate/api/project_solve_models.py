@@ -72,6 +72,15 @@ class IdentifiedDso(BaseModel):
     ellipse_angle_deg: float | None = None
 
 
+class FocalLengthEstimate(BaseModel):
+    rig_id: int
+    rig_name: str
+    camera_name: str
+    pixel_size_um: float
+    rig_focal_length_mm: float
+    estimated_focal_length_mm: float
+
+
 class ProjectSolveResponse(BaseModel):
     id: int
     project_id: int
@@ -99,3 +108,4 @@ class ProjectSolveResponse(BaseModel):
     attempts: list[SolveAttempt] = Field(default_factory=list)
     wcs: WcsParams
     objects: list[IdentifiedDso]
+    focal_length_estimates: list[FocalLengthEstimate] = Field(default_factory=list)

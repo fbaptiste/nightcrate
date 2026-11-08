@@ -65,8 +65,10 @@ export default function RigsPage() {
     severity: "success" | "error";
   }>({ open: false, message: "", severity: "success" });
 
-  const invalidate = () =>
+  const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["rigs"] });
+    queryClient.invalidateQueries({ queryKey: ["project-solve"] });
+  };
 
   const showSnack = (message: string, severity: "success" | "error") =>
     setSnack({ open: true, message, severity });
@@ -386,7 +388,7 @@ export default function RigsPage() {
           setDialogOpen(false);
           setEditingRig(null);
         }}
-        onSaved={() => queryClient.invalidateQueries({ queryKey: ["rigs"] })}
+        onSaved={invalidate}
       />
 
       {/* Snackbar */}

@@ -2,6 +2,9 @@ import { apiFetch } from "./client";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
+export type ProjectStatus = "active" | "paused" | "complete" | "abandoned";
+export type CropSize = "small" | "medium" | "large";
+
 export interface ProjectImage {
   id: number;
   project_id: number;
@@ -14,7 +17,7 @@ export interface ProjectImage {
 }
 
 export interface ThumbnailCrop {
-  size: string;
+  size: CropSize;
   source_image_id: number | null;
   crop_x: number;
   crop_y: number;
@@ -23,11 +26,11 @@ export interface ThumbnailCrop {
 }
 
 export interface ThumbnailCropDef {
-  source_image_id?: number | null;
-  crop_x?: number;
-  crop_y?: number;
-  crop_w?: number;
-  crop_h?: number;
+  source_image_id: number | null;
+  crop_x: number;
+  crop_y: number;
+  crop_w: number;
+  crop_h: number;
 }
 
 export interface ProjectRigRef {
@@ -40,13 +43,15 @@ export interface Project {
   name: string;
   description: string | null;
   notes: string | null;
-  status: string;
+  status: ProjectStatus;
   active: boolean;
   location_id: number | null;
   location_name: string | null;
   rigs: ProjectRigRef[];
   images: ProjectImage[];
   thumbnail_crops: ThumbnailCrop[];
+  solved_at: string | null;
+  workspace_key: string;
   created_at: string;
   updated_at: string;
 }
@@ -55,10 +60,12 @@ export interface ProjectListItem {
   id: number;
   name: string;
   description: string | null;
-  status: string;
+  status: ProjectStatus;
   active: boolean;
   image_count: number;
   main_image_path: string | null;
+  thumbnail_version: string;
+  workspace_key: string;
   created_at: string;
   updated_at: string;
 }
@@ -67,14 +74,14 @@ export interface ProjectCreate {
   name: string;
   description?: string | null;
   notes?: string | null;
-  status?: string;
+  status?: ProjectStatus;
 }
 
 export interface ProjectUpdate {
   name?: string;
   description?: string;
   notes?: string;
-  status?: string;
+  status?: ProjectStatus;
   location_id?: number | null;
 }
 
@@ -199,7 +206,7 @@ export async function updateImageNotes(
 
 export async function saveThumbnailCrops(
   projectId: number,
-  crops: Record<string, ThumbnailCropDef>,
+  crops: Partial<Record<CropSize, ThumbnailCropDef>>,
 ): Promise<Project> {
   return apiFetch<Project>(`/projects/${projectId}/thumbnails`, {
     method: "PUT",
@@ -210,22 +217,25 @@ export async function saveThumbnailCrops(
 
 export function projectThumbnailUrl(
   projectId: number,
-  size?: "small" | "medium" | "large",
-  updatedAt?: string,
+  size: CropSize,
+  version: string,
+  workspaceKey: string,
 ): string {
   const sp = new URLSearchParams();
-  if (size && size !== "small") sp.set("size", size);
-  if (updatedAt) sp.set("_v", updatedAt);
-  const qs = sp.toString();
-  return `/api/projects/${projectId}/thumbnail${qs ? `?${qs}` : ""}`;
+  sp.set("size", size);
+  sp.set("v", version);
+  sp.set("ws", workspaceKey);
+  return `/api/projects/${projectId}/thumbnail?${sp.toString()}`;
 }
 
 export function renderedImageUrl(
   projectId: number,
   imageId: number,
   variant: "full" | "thumb_lg" | "thumb_md" | "thumb_sm",
+  workspaceKey: string,
 ): string {
-  return `/api/projects/${projectId}/images/${imageId}/rendered/${variant}`;
+  const sp = new URLSearchParams({ ws: workspaceKey });
+  return `/api/projects/${projectId}/images/${imageId}/rendered/${variant}?${sp.toString()}`;
 }
 
 export const PROJECT_STATUS_COLORS: Record<

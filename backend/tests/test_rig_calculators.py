@@ -35,6 +35,43 @@ def test_image_scale_binned():
     assert binned[4] == pytest.approx(1.584, abs=0.001)
 
 
+@pytest.mark.parametrize(
+    ("pixel_size_um", "pixel_scale_arcsec", "expected"),
+    [
+        (3.76, 0.775, 1000.72),
+        (4.63, 1.91, 500.00),
+    ],
+)
+def test_estimate_focal_length(pixel_size_um, pixel_scale_arcsec, expected):
+    from nightcrate.services.rig_calculators import estimate_focal_length_mm
+
+    result = estimate_focal_length_mm(pixel_size_um, pixel_scale_arcsec)
+    assert result == pytest.approx(expected, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    ("pixel_size_um", "pixel_scale_arcsec"),
+    [
+        (3.76, 0.0),
+        (0.0, 1.0),
+        (-3.76, 1.0),
+        (3.76, -1.0),
+        (float("nan"), 1.0),
+        (3.76, float("nan")),
+        (float("inf"), 1.0),
+        (3.76, float("inf")),
+        (None, 1.0),
+        (3.76, None),
+    ],
+)
+def test_estimate_focal_length_rejects_nonpositive_or_nonfinite_values(
+    pixel_size_um, pixel_scale_arcsec
+):
+    from nightcrate.services.rig_calculators import estimate_focal_length_mm
+
+    assert estimate_focal_length_mm(pixel_size_um, pixel_scale_arcsec) is None
+
+
 # -- Field of View -------------------------------------------------------------
 
 

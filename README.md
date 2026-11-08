@@ -17,7 +17,22 @@ forecasts and survey imagery are fetched from external services when needed.
   records within a project. A project can start with a finished image and manual
   sessions; importing raw captures is optional. Plate solving a project image
   identifies the catalog objects in it, and you choose one or more as main
-  targets.
+  targets. Each project has a status (Active, Paused, Complete, Abandoned)
+  that you set from its title, and a "Plate solved" pill that opens its
+  Plate Solve tab.
+  - The plate-solve result estimates the focal length from the solved scale
+    and the pixel size of each rig's camera, beside the rig's own value.
+  - **Thumbnails:** frame each picture as you want it shown, separately for
+    small, medium and large views. Every frame is 4:3 and may extend onto a
+    black mat, so a tall image can have black at its sides.
+- **Gallery:** every project's picture, as you framed it or whole, in a list
+  or small, medium or large grids.
+  - Filter by name or object (optionally including everything in each
+    plate-solved image), catalog, object type, constellation, status, rig
+    and imaging dates. Sort by latest or first imaging date, or by name.
+  - Click an image to turn its card over: imaging months and nights, total
+    integration, rigs and status. Expand any image to full size and step
+    through the results with the arrow keys.
 - **Sessions and integration:** enter capture batches manually or derive them
   from cataloged lights. View totals by filter and observing night, and sub
   counts by filter and exposure length. Duoband equipment-filter sessions count
