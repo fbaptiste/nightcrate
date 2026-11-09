@@ -30,6 +30,7 @@ __all__ = [
 
 class SessionCreate(BaseModel):
     rig_id: int | None = None
+    rig_setup_id: int | None = None
     filter_id: int | None = None
     line_name: str | None = None
     exposure_seconds: float = Field(gt=0)
@@ -54,6 +55,7 @@ class SessionUpdate(BaseModel):
     required — clearing them is rejected by the endpoint)."""
 
     rig_id: int | None = None
+    rig_setup_id: int | None = None
     filter_id: int | None = None
     line_name: str | None = None
     exposure_seconds: float | None = Field(default=None, gt=0)
@@ -69,6 +71,8 @@ class SessionResponse(BaseModel):
     project_id: int
     rig_id: int | None
     rig_name: str | None
+    rig_setup_id: int | None
+    setup_until_at: str | None
     filter_id: int | None
     filter_name: str | None
     line_name: str | None
@@ -83,6 +87,10 @@ class SessionResponse(BaseModel):
     integration_minutes: float
     created_at: str
     updated_at: str
+
+
+class SessionSetupUpdate(BaseModel):
+    rig_setup_id: int | None = None
 
 
 # ── Integration summary ─────────────────────────────────────────────────────

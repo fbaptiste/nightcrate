@@ -67,6 +67,15 @@ class ProjectRigsSet(BaseModel):
     rig_ids: list[int]
 
 
+class ProjectSoftwareEntryIn(BaseModel):
+    software_id: int
+    software_version_id: int | None = None
+
+
+class ProjectSoftwareSet(BaseModel):
+    entries: list[ProjectSoftwareEntryIn]
+
+
 class ImageNotesUpdate(BaseModel):
     notes: str | None = None
 
@@ -105,6 +114,18 @@ class ThumbnailCropResponse(BaseModel):
 class ProjectRigRef(BaseModel):
     id: int
     name: str
+    active: bool
+
+
+class ProjectSoftwareRef(BaseModel):
+    id: int
+    software_id: int
+    name: str
+    category: str
+    manufacturer_name: str | None
+    software_version_id: int | None
+    version: str | None
+    active: bool
 
 
 class ProjectResponse(BaseModel):
@@ -117,6 +138,7 @@ class ProjectResponse(BaseModel):
     location_id: int | None
     location_name: str | None
     rigs: list[ProjectRigRef]
+    software: list[ProjectSoftwareRef]
     images: list[ProjectImageResponse]
     thumbnail_crops: list[ThumbnailCropResponse]
     solved_at: str | None

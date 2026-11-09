@@ -16,6 +16,18 @@ export function getActivity(): string | null {
   return _activity;
 }
 
+export class ApiError extends Error {
+  status: number;
+  detail: unknown;
+
+  constructor(message: string, status: number, detail: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fetch wrapper
 // ---------------------------------------------------------------------------
@@ -41,7 +53,19 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new Error(text || `HTTP ${res.status}`);
+    let detail: unknown = text;
+    if (text) {
+      try {
+        const parsed: unknown = JSON.parse(text);
+        detail =
+          typeof parsed === "object" && parsed !== null && "detail" in parsed
+            ? (parsed as { detail: unknown }).detail
+            : parsed;
+      } catch {
+        // Keep non-JSON response text as the detail.
+      }
+    }
+    throw new ApiError(text || `HTTP ${res.status}`, res.status, detail);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

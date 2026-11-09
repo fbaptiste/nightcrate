@@ -50,6 +50,22 @@ class RigUpdate(BaseModel):
     is_default: bool | None = None
     notes: str | None = None
     filter_slots: list[RigFilterSlotIn] | None = None
+    apply_mode: Literal["existing", "from_now_on"] | None = None
+
+
+class RigPartsIn(BaseModel):
+    telescope_configuration_id: int
+    camera_id: int
+    filter_wheel_id: int | None = None
+    single_filter_id: int | None = None
+    mount_id: int | None = None
+    focuser_id: int | None = None
+    oag_id: int | None = None
+    guide_scope_id: int | None = None
+    guide_camera_id: int | None = None
+    computer_id: int | None = None
+    software_ids: list[int] = []
+    filter_slots: list[RigFilterSlotIn] = []
 
 
 # ── Response Models ──────────────────────────────────────────────────────────
@@ -67,6 +83,40 @@ class RigSoftwareOut(BaseModel):
     id: int
     name: str
     category: str
+
+
+class RigPartsOut(BaseModel):
+    telescope_configuration_id: int
+    telescope_name: str
+    telescope_config_name: str
+    camera_id: int
+    camera_name: str
+    filter_wheel_id: int | None
+    filter_wheel_name: str | None
+    single_filter_id: int | None
+    single_filter_name: str | None
+    mount_id: int | None
+    mount_name: str | None
+    focuser_id: int | None
+    focuser_name: str | None
+    oag_id: int | None
+    oag_name: str | None
+    guide_scope_id: int | None
+    guide_scope_name: str | None
+    guide_camera_id: int | None
+    guide_camera_name: str | None
+    computer_id: int | None
+    computer_name: str | None
+    filter_slots: list[RigFilterSlotOut]
+    software: list[RigSoftwareOut]
+
+
+class RigSetupOut(BaseModel):
+    id: int
+    until_at: str
+    parts: RigPartsOut
+    project_count: int
+    night_count: int
 
 
 class RigWarning(BaseModel):

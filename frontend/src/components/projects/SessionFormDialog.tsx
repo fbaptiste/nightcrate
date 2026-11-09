@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -10,9 +11,11 @@ import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { LINE_NAMES, lineLabel } from "@/lib/lineNames";
-import type { Rig } from "@/api/rigs";
+import { fetchRigSetups, type Rig } from "@/api/rigs";
 import type { Filter } from "@/api/equipment";
+import type { ProjectRigSetups } from "@/api/projects";
 import type { ProjectSession, SessionCreate } from "@/api/projectSessions";
+import { setupLabel } from "./setupLabel";
 
 interface FilterOpt {
   key: string;
@@ -29,11 +32,10 @@ interface Props {
   session?: ProjectSession | null;
   rigs: Rig[];
   filters: Filter[];
-  // Filter IDs loaded in the project's rigs — surfaced first in the picker.
-  rigFilterIds?: Set<number>;
   // The project's associated rigs — used to default the Rig field when
   // adding a new session.
   projectRigs?: Rig[];
+  projectRigSetups: ProjectRigSetups[];
   onSubmit: (body: SessionCreate) => Promise<unknown>;
 }
 
@@ -43,12 +45,57 @@ export default function SessionFormDialog({
   session,
   rigs,
   filters,
-  rigFilterIds,
   projectRigs,
+  projectRigSetups,
   onSubmit,
 }: Props) {
+  const [rig, setRig] = useState<Rig | null>(() => {
+    if (session?.rig_id != null) {
+      return rigs.find((candidate) => candidate.id === session.rig_id) ?? null;
+    }
+    if (!session && projectRigs && projectRigs.length > 0) {
+      return projectRigs.find((candidate) => candidate.is_default) ?? projectRigs[0];
+    }
+    return null;
+  });
+  const [rigSetupId, setRigSetupId] = useState<number | null>(session?.rig_setup_id ?? null);
+  const selectedRigSetups = projectRigSetups.find((history) => history.rig_id === rig?.id);
+  const selectedSetup = selectedRigSetups?.setups.find(
+    (setup) => setup.rig_setup_id === rigSetupId,
+  );
+  const { data: rigSetupHistory = [] } = useQuery({
+    queryKey: ["rig-setups", rig?.id],
+    queryFn: () => fetchRigSetups(rig!.id),
+    enabled: rig != null,
+  });
+  const effectiveFilterIds = useMemo(() => {
+    const ids = new Set<number>();
+    if (selectedSetup) {
+      for (const slot of selectedSetup.parts.filter_slots) ids.add(slot.filter_id);
+      if (selectedSetup.parts.single_filter_id != null) ids.add(selectedSetup.parts.single_filter_id);
+    } else if (
+      selectedRigSetups?.changed_groups.includes("filters") &&
+      selectedRigSetups.change
+    ) {
+      for (const slot of selectedRigSetups.change.filter_slots) ids.add(slot.filter_id);
+      if (selectedRigSetups.change.single_filter_id != null) {
+        ids.add(selectedRigSetups.change.single_filter_id);
+      }
+    } else if (rigSetupId != null) {
+      const rawSetup = rigSetupHistory.find((setup) => setup.id === rigSetupId);
+      if (rawSetup) {
+        for (const slot of rawSetup.parts.filter_slots) ids.add(slot.filter_id);
+        if (rawSetup.parts.single_filter_id != null) ids.add(rawSetup.parts.single_filter_id);
+      }
+    } else if (rig) {
+      for (const slot of rig.filter_slots) ids.add(slot.filter_id);
+      if (rig.single_filter_id != null) ids.add(rig.single_filter_id);
+    }
+    return ids;
+  }, [rig, rigSetupHistory, rigSetupId, selectedRigSetups, selectedSetup]);
+
   const filterOptions = useMemo<FilterOpt[]>(() => {
-    const inRig = (id: number) => rigFilterIds?.has(id) ?? false;
+    const inRig = (id: number) => effectiveFilterIds.has(id);
     const mkFilter = (f: Filter, group: string): FilterOpt => ({
       key: `filter:${f.id}`,
       label: `${f.manufacturer.name} ${f.model_name}`,
@@ -83,7 +130,7 @@ export default function SessionFormDialog({
       .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
 
     return [...myRig, ...bands, ...others];
-  }, [filters, rigFilterIds]);
+  }, [filters, effectiveFilterIds]);
 
   const initialFilter = useMemo<FilterOpt | null>(() => {
     if (!session) return null;
@@ -106,17 +153,6 @@ export default function SessionFormDialog({
     session?.binning != null ? String(session.binning) : session ? "" : "1",
   );
   const [date, setDate] = useState(session?.session_date?.slice(0, 10) ?? "");
-  const [rig, setRig] = useState<Rig | null>(() => {
-    if (session?.rig_id != null) {
-      return rigs.find((r) => r.id === session.rig_id) ?? null;
-    }
-    // Adding a new session: default to the project's rig — the user's
-    // explicit default first, else the only/first associated rig.
-    if (!session && projectRigs && projectRigs.length > 0) {
-      return projectRigs.find((r) => r.is_default) ?? projectRigs[0];
-    }
-    return null;
-  });
   const [notes, setNotes] = useState(session?.notes ?? "");
   const [saving, setSaving] = useState(false);
 
@@ -138,6 +174,7 @@ export default function SessionFormDialog({
         binning: binning === "" ? null : Number(binning),
         session_date: date || null,
         rig_id: rig?.id ?? null,
+        rig_setup_id: rig?.id == null ? null : rigSetupId,
         notes: notes.trim() || null,
       });
       onClose();
@@ -158,8 +195,10 @@ export default function SessionFormDialog({
             groupBy={(o) => o.group}
             getOptionLabel={(o) => o.label}
             isOptionEqualToValue={(o, v) => o.key === v.key}
-            renderOption={(props, option) => (
-              <li {...props} key={option.key}>
+            renderOption={(props, option) => {
+              const { key, ...optionProps } = props;
+              return (
+              <li key={key} {...optionProps}>
                 <Box>
                   <Typography variant="body2">{option.label}</Typography>
                   <Typography variant="caption" color="text.secondary">
@@ -167,7 +206,8 @@ export default function SessionFormDialog({
                   </Typography>
                 </Box>
               </li>
-            )}
+              );
+            }}
             renderInput={(params) => (
               <TextField
                 {...params}
@@ -235,8 +275,11 @@ export default function SessionFormDialog({
           <Autocomplete
             options={rigs}
             value={rig}
-            onChange={(_e, v) => setRig(v)}
-            getOptionLabel={(r) => r.name}
+            onChange={(_e, value) => {
+              setRig(value);
+              setRigSetupId(null);
+            }}
+            getOptionLabel={(option) => `${option.name}${option.active ? "" : " (retired)"}`}
             isOptionEqualToValue={(o, v) => o.id === v.id}
             renderInput={(params) => (
               <TextField
@@ -246,6 +289,42 @@ export default function SessionFormDialog({
               />
             )}
           />
+
+          {(selectedRigSetups?.setup_options.length ?? 0) > 1 && (
+            <TextField
+              select
+              label="Setup"
+              value={rigSetupId ?? ""}
+              onChange={(event) =>
+                setRigSetupId(event.target.value === "" ? null : Number(event.target.value))
+              }
+              InputLabelProps={{ shrink: true }}
+              SelectProps={{
+                displayEmpty: true,
+                renderValue: (value) => {
+                  const setupId = value === "" ? null : Number(value);
+                  return setupLabel(
+                    selectedRigSetups?.setup_options.find(
+                      (option) => option.rig_setup_id === setupId,
+                    )?.until_at,
+                  );
+                },
+              }}
+            >
+              {selectedRigSetups?.setup_options.map((setup) => (
+                <MenuItem key={setup.rig_setup_id ?? "now"} value={setup.rig_setup_id ?? ""}>
+                  <Box>
+                    <Typography variant="body2">
+                      {setupLabel(setup.until_at)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {setup.camera_name}, {setup.image_scale_arcsec_per_pixel.toFixed(2)}″/px
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
 
           <TextField
             label="Notes"

@@ -62,6 +62,8 @@ export interface CatalogFrame {
   image_height: number | null;
   file_size_bytes: number | null;
   date_obs_utc: string | null;
+  /** Noon-to-noon civil date in the project's geographic timezone. */
+  observing_night: string | null;
   accepted: boolean | null;
   /** Rig tagged on this frame's source folder. null = "not stated". */
   rig_name: string | null;
@@ -92,17 +94,20 @@ export type QualityStatus = "ok" | "no_stars" | "unreadable";
 
 /** Server-side sort orders for the catalog list (backend allow-list). */
 export const CATALOG_SORTS = [
-  { value: "path", label: "File path" },
-  { value: "date", label: "Date captured" },
-  { value: "hfr_arcsec_desc", label: "HFR (arcsec) — worst first" },
-  { value: "hfr_arcsec_asc", label: "HFR (arcsec) — best first" },
-  { value: "hfr_desc", label: "HFR (px) — worst first" },
-  { value: "hfr_asc", label: "HFR (px) — best first" },
-  { value: "stars_asc", label: "Fewest stars first" },
-  { value: "background_desc", label: "Brightest sky first" },
+  "path",
+  "date",
+  "date_desc",
+  "hfr_arcsec_desc",
+  "hfr_arcsec_asc",
+  "hfr_desc",
+  "hfr_asc",
+  "stars_asc",
+  "stars_desc",
+  "background_desc",
+  "background_asc",
 ] as const;
 
-export type CatalogSort = (typeof CATALOG_SORTS)[number]["value"];
+export type CatalogSort = (typeof CATALOG_SORTS)[number];
 
 export interface QualityPending {
   frame_ids: number[];

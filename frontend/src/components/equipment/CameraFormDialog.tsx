@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -15,6 +16,7 @@ import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import SensorPicker from "@/components/equipment/shared/SensorPicker";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import InterfaceMultiSelect from "@/components/equipment/shared/InterfaceMultiSelect";
+import EquipmentUsageNote from "@/components/equipment/shared/EquipmentUsageNote";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import {
   createCamera,
@@ -97,6 +99,7 @@ export default function CameraFormDialog({
   onClose,
   onSaved,
 }: CameraFormDialogProps) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
@@ -159,6 +162,7 @@ export default function CameraFormDialog({
       setSnackMessage(isEdit ? "Camera updated." : "Camera added.");
       setSnackSeverity("info");
       setSnackOpen(true);
+      if (camera) void queryClient.invalidateQueries({ queryKey: ["equipment-usage", "camera", camera.id] });
       onSaved();
       onClose();
     } catch (err) {
@@ -179,6 +183,7 @@ export default function CameraFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <EquipmentUsageNote kind="camera" itemId={camera?.id} />
             <MineCheckbox value={isMine} onChange={setIsMine} />
 
             {/* Row 1: Model name + Manufacturer */}

@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.46.0
+**NightCrate version:** 0.47.0
 
 ## Overview
 
@@ -138,6 +138,11 @@ CREATE TABLE rig_filter_slot (rig_id FK CASCADE, slot_number INT CHECK (>=1),
 
 CREATE TABLE rig_software (rig_id FK CASCADE, software_id FK, PRIMARY KEY (rig_id, software_id));
 
+-- v0.47.0 (migration 0069), all user data: rig_setup (+ _filter_slot, _software) holds a
+-- rig's earlier setups; sub_frame_rig_setup and project_session.rig_setup_id stamp records
+-- with them; project_rig_change (+ _filter_slot, _software) holds a project's own changes;
+-- software_version and project_software hold program versions and each project's software.
+
 -- rig_summary: convenience view joining equipment names + guide-camera sensor for list rendering.
 -- Rebuilt in: 0010 (telescope_id), 0013 (sensor_adc_bit_depth), 0024 (mount_drive_type +
 -- mount_worm_period_seconds), 0026 (sort_order).
@@ -147,10 +152,10 @@ CREATE TABLE rig_software (rig_id FK CASCADE, software_id FK, PRIMARY KEY (rig_i
 
 ## Populated Lookup Tables
 
-### manufacturer.csv (66 rows)
+### manufacturer.csv (67 rows)
 Header: `seed_key,name,notes,website`
 
-Seed_keys: `manufacturer.zwo`, `manufacturer.celestron`, `manufacturer.optolong`, `manufacturer.sony`, `manufacturer.smartsens`, `manufacturer.panasonic`, `manufacturer.onsemi`, `manufacturer.pegasus_astro`, `manufacturer.qhy`, `manufacturer.skywatcher`, `manufacturer.ioptron`, `manufacturer.askar`, `manufacturer.sharpstar`, `manufacturer.antlia`, `manufacturer.chroma`, `manufacturer.baader`, `manufacturer.william_optics`, `manufacturer.starizona`, `manufacturer.primalucelab`, `manufacturer.takahashi`, `manufacturer.player_one`, `manufacturer.touptek`, `manufacturer.warpastron`, `manufacturer.planewave`, `manufacturer.explore_scientific`, `manufacturer.ts_optics`, `manufacturer.rainbow_astro`, `manufacturer.open_source`, `manufacturer.freeware`, `manufacturer.pleiades_astrophoto`, `manufacturer.sharpcap`, `manufacturer.main_sequence`, `manufacturer.ideiki`, `manufacturer.starkeeper`, `manufacturer.rc_astro`, `manufacturer.aries_productions`, `manufacturer.ascom_initiative`, `manufacturer.simulation_curriculum`, `manufacturer.diffraction_limited`, `manufacturer.adobe`, `manufacturer.serif`, `manufacturer.topaz_labs`, `manufacturer.nina_project`, `manufacturer.open_phd_guiding`, `manufacturer.seti_astro`, `manufacturer.emil_kraaikamp`, `manufacturer.han_kleijn`, `manufacturer.ilanga`, `manufacturer.stellarmate`, `manufacturer.software_bisque`, `manufacturer.losmandy`, `manufacturer.astro_physics`, `manufacturer.10micron`, `manufacturer.vixen`, `manufacturer.msm`, `manufacturer.generic`, `manufacturer.rigel_systems`, `manufacturer.lacerta`, `manufacturer.deep_sky_dad`, `manufacturer.moonlite`, `manufacturer.optec`, `manufacturer.dwarflab`, `manufacturer.unistellar`, `manufacturer.omnivision`, `manufacturer.mlastro`, `manufacturer.altair`
+Seed_keys: `manufacturer.zwo`, `manufacturer.celestron`, `manufacturer.optolong`, `manufacturer.sony`, `manufacturer.smartsens`, `manufacturer.panasonic`, `manufacturer.onsemi`, `manufacturer.pegasus_astro`, `manufacturer.qhy`, `manufacturer.skywatcher`, `manufacturer.ioptron`, `manufacturer.askar`, `manufacturer.sharpstar`, `manufacturer.antlia`, `manufacturer.chroma`, `manufacturer.baader`, `manufacturer.william_optics`, `manufacturer.starizona`, `manufacturer.primalucelab`, `manufacturer.takahashi`, `manufacturer.player_one`, `manufacturer.touptek`, `manufacturer.warpastron`, `manufacturer.planewave`, `manufacturer.explore_scientific`, `manufacturer.ts_optics`, `manufacturer.rainbow_astro`, `manufacturer.open_source`, `manufacturer.freeware`, `manufacturer.pleiades_astrophoto`, `manufacturer.syqon`, `manufacturer.sharpcap`, `manufacturer.main_sequence`, `manufacturer.ideiki`, `manufacturer.starkeeper`, `manufacturer.rc_astro`, `manufacturer.aries_productions`, `manufacturer.ascom_initiative`, `manufacturer.simulation_curriculum`, `manufacturer.diffraction_limited`, `manufacturer.adobe`, `manufacturer.serif`, `manufacturer.topaz_labs`, `manufacturer.nina_project`, `manufacturer.open_phd_guiding`, `manufacturer.seti_astro`, `manufacturer.emil_kraaikamp`, `manufacturer.han_kleijn`, `manufacturer.ilanga`, `manufacturer.stellarmate`, `manufacturer.software_bisque`, `manufacturer.losmandy`, `manufacturer.astro_physics`, `manufacturer.10micron`, `manufacturer.vixen`, `manufacturer.msm`, `manufacturer.generic`, `manufacturer.rigel_systems`, `manufacturer.lacerta`, `manufacturer.deep_sky_dad`, `manufacturer.moonlite`, `manufacturer.optec`, `manufacturer.dwarflab`, `manufacturer.unistellar`, `manufacturer.omnivision`, `manufacturer.mlastro`, `manufacturer.altair`
 
 ### optical_design.csv (11 rows)
 Header: `seed_key,description,name`
@@ -196,10 +201,10 @@ Seed_keys: `filter_type.luminance` (Luminance), `filter_type.broadband_color` (B
 
 ## Populated Equipment Tables
 
-### software.csv (44 rows)
+### software.csv (48 rows)
 Header: `seed_key,manufacturer_seed_key,category,name,notes,website`
 
-Seed_keys: `software.nina`, `software.sgp`, `software.apt`, `software.voyager`, `software.sharpcap`, `software.ekos`, `software.maximdl`, `software.firecapture`, `software.nina_hocus_focus`, `software.nina_tppa`, `software.nina_ground_station`, `software.nina_target_scheduler`, `software.phd2`, `software.metaguide`, `software.pixinsight`, `software.siril`, `software.dss`, `software.app`, `software.graxpert`, `software.bxt`, `software.nxt`, `software.sxt`, `software.seti_astro_suite`, `software.starnet`, `software.photoshop`, `software.affinity_photo`, `software.topaz_photo_ai`, `software.autostakkert`, `software.registax`, `software.pipp`, `software.winjupos`, `software.imppg`, `software.stellarium`, `software.kstars`, `software.theskyx`, `software.skysafari`, `software.cartes_du_ciel`, `software.astap`, `software.astrometry_net`, `software.platesolve2`, `software.ascom`, `software.indi`, `software.eqmod`, `software.astroplanner`
+Seed_keys: `software.nina`, `software.sgp`, `software.apt`, `software.voyager`, `software.sharpcap`, `software.ekos`, `software.maximdl`, `software.firecapture`, `software.nina_hocus_focus`, `software.nina_tppa`, `software.nina_ground_station`, `software.nina_target_scheduler`, `software.phd2`, `software.metaguide`, `software.pixinsight`, `software.syqon_studio`, `software.syqon_deepprism`, `software.syqon_parallax`, `software.syqon_axiom`, `software.siril`, `software.dss`, `software.app`, `software.graxpert`, `software.bxt`, `software.nxt`, `software.sxt`, `software.seti_astro_suite`, `software.starnet`, `software.photoshop`, `software.affinity_photo`, `software.topaz_photo_ai`, `software.autostakkert`, `software.registax`, `software.pipp`, `software.winjupos`, `software.imppg`, `software.stellarium`, `software.kstars`, `software.theskyx`, `software.skysafari`, `software.cartes_du_ciel`, `software.astap`, `software.astrometry_net`, `software.platesolve2`, `software.ascom`, `software.indi`, `software.eqmod`, `software.astroplanner`
 
 ### computer.csv (16 rows)
 Header: `seed_key,form_factor_seed_key,manufacturer_seed_key,model_name,notes,source_url`

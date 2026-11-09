@@ -102,6 +102,8 @@ class CatalogFrame(BaseModel):
     image_height: int | None = None
     file_size_bytes: int | None = None
     date_obs_utc: str | None = None
+    # Noon-to-noon civil date in the project's geographic timezone.
+    observing_night: str | None = None
     accepted: bool | None = None
     # The rig the user tagged on this frame's source folder (v0.41.1). NULL is a
     # valid answer — "not stated" — and renders as no chip rather than a blank one.

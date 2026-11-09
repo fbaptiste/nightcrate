@@ -1,4 +1,4 @@
--- NightCrate version: 0.46.0
+-- NightCrate version: 0.47.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -840,6 +840,17 @@ BEGIN
     UPDATE software SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
+-- Versions are project-processing facts. Rig software intentionally remains
+-- unversioned because capture headers already retain that rapidly changing value.
+CREATE TABLE software_version (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    software_id INTEGER NOT NULL REFERENCES software(id) ON DELETE CASCADE,
+    version TEXT NOT NULL CHECK (length(trim(version)) BETWEEN 1 AND 50),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (software_id, version),
+    UNIQUE (id, software_id)
+);
+
 -- ============================================================
 -- VIEWS
 -- ============================================================
@@ -1054,6 +1065,40 @@ CREATE TABLE IF NOT EXISTS rig_software (
     rig_id INTEGER NOT NULL REFERENCES rig(id) ON DELETE CASCADE,
     software_id INTEGER NOT NULL REFERENCES software(id),
     PRIMARY KEY (rig_id, software_id)
+);
+
+-- Immutable snapshots created when an in-use rig changes "from now on".
+CREATE TABLE rig_setup (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rig_id INTEGER NOT NULL REFERENCES rig(id) ON DELETE CASCADE,
+    until_at TEXT NOT NULL,
+    telescope_configuration_id INTEGER NOT NULL REFERENCES telescope_configuration(id),
+    camera_id INTEGER NOT NULL REFERENCES camera(id),
+    filter_wheel_id INTEGER REFERENCES filter_wheel(id),
+    single_filter_id INTEGER REFERENCES filter(id),
+    mount_id INTEGER REFERENCES mount(id),
+    focuser_id INTEGER REFERENCES focuser(id),
+    oag_id INTEGER REFERENCES oag(id),
+    guide_scope_id INTEGER REFERENCES guide_scope(id),
+    guide_camera_id INTEGER REFERENCES camera(id),
+    computer_id INTEGER REFERENCES computer(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (id, rig_id)
+);
+CREATE INDEX idx_rig_setup_rig ON rig_setup(rig_id);
+
+CREATE TABLE rig_setup_filter_slot (
+    rig_setup_id INTEGER NOT NULL REFERENCES rig_setup(id) ON DELETE CASCADE,
+    slot_number INTEGER NOT NULL CHECK (slot_number >= 1),
+    filter_id INTEGER NOT NULL REFERENCES filter(id),
+    PRIMARY KEY (rig_setup_id, slot_number),
+    UNIQUE (rig_setup_id, filter_id)
+);
+
+CREATE TABLE rig_setup_software (
+    rig_setup_id INTEGER NOT NULL REFERENCES rig_setup(id) ON DELETE CASCADE,
+    software_id INTEGER NOT NULL REFERENCES software(id),
+    PRIMARY KEY (rig_setup_id, software_id)
 );
 
 -- Convenience view resolving equipment names + headline specs for rig listing.
@@ -1699,6 +1744,63 @@ CREATE TABLE project_rig (
 CREATE INDEX idx_project_rig_project ON project_rig(project_id);
 CREATE INDEX idx_project_rig_rig ON project_rig(rig_id);
 
+-- Per-project overrides. Nullable single-part values are meaningful when the
+-- matching changed flag is set, so optional parts can explicitly be removed.
+CREATE TABLE project_rig_change (
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    rig_id INTEGER NOT NULL REFERENCES rig(id),
+    telescope_configuration_id INTEGER REFERENCES telescope_configuration(id),
+    camera_id INTEGER REFERENCES camera(id),
+    filters_changed INTEGER NOT NULL DEFAULT 0 CHECK (filters_changed IN (0, 1)),
+    filter_wheel_id INTEGER REFERENCES filter_wheel(id),
+    single_filter_id INTEGER REFERENCES filter(id),
+    mount_changed INTEGER NOT NULL DEFAULT 0 CHECK (mount_changed IN (0, 1)),
+    mount_id INTEGER REFERENCES mount(id),
+    focuser_changed INTEGER NOT NULL DEFAULT 0 CHECK (focuser_changed IN (0, 1)),
+    focuser_id INTEGER REFERENCES focuser(id),
+    guider_changed INTEGER NOT NULL DEFAULT 0 CHECK (guider_changed IN (0, 1)),
+    oag_id INTEGER REFERENCES oag(id),
+    guide_scope_id INTEGER REFERENCES guide_scope(id),
+    guide_camera_changed INTEGER NOT NULL DEFAULT 0
+        CHECK (guide_camera_changed IN (0, 1)),
+    guide_camera_id INTEGER REFERENCES camera(id),
+    computer_changed INTEGER NOT NULL DEFAULT 0 CHECK (computer_changed IN (0, 1)),
+    computer_id INTEGER REFERENCES computer(id),
+    software_changed INTEGER NOT NULL DEFAULT 0 CHECK (software_changed IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project_id, rig_id)
+);
+
+CREATE TRIGGER trg_project_rig_change_updated_at
+AFTER UPDATE ON project_rig_change
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE project_rig_change SET updated_at = datetime('now')
+    WHERE project_id = NEW.project_id AND rig_id = NEW.rig_id;
+END;
+
+CREATE TABLE project_rig_change_filter_slot (
+    project_id INTEGER NOT NULL,
+    rig_id INTEGER NOT NULL,
+    slot_number INTEGER NOT NULL CHECK (slot_number >= 1),
+    filter_id INTEGER NOT NULL REFERENCES filter(id),
+    PRIMARY KEY (project_id, rig_id, slot_number),
+    UNIQUE (project_id, rig_id, filter_id),
+    FOREIGN KEY (project_id, rig_id)
+        REFERENCES project_rig_change(project_id, rig_id) ON DELETE CASCADE
+);
+
+CREATE TABLE project_rig_change_software (
+    project_id INTEGER NOT NULL,
+    rig_id INTEGER NOT NULL,
+    software_id INTEGER NOT NULL REFERENCES software(id),
+    PRIMARY KEY (project_id, rig_id, software_id),
+    FOREIGN KEY (project_id, rig_id)
+        REFERENCES project_rig_change(project_id, rig_id) ON DELETE CASCADE
+);
+
 -- A capture batch: N identical light subs of one filter. Either hand-entered
 -- (source = 'manual') or rebuilt from the project's cataloged light frames by
 -- the v0.41.1 derive pass (source = 'auto', one row per observing night ×
@@ -1727,9 +1829,38 @@ CREATE TABLE project_session (
                          CHECK (source IN ('manual', 'auto')),
     created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    -- Migration 0069: setup snapshot used by this capture batch.
+    rig_setup_id     INTEGER REFERENCES rig_setup(id) ON DELETE SET NULL,
     CHECK (filter_id IS NOT NULL OR line_name IS NOT NULL)
 );
 CREATE INDEX idx_project_session_project ON project_session(project_id);
+CREATE INDEX idx_project_session_rig_setup ON project_session(rig_setup_id);
+
+-- One durable note per project observing night. These are separate from
+-- project_session so rebuilding derived capture batches never removes them.
+CREATE TABLE project_night_note (
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    night_date TEXT NOT NULL
+        CHECK (night_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'),
+    notes TEXT NOT NULL CHECK (length(trim(notes)) > 0),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project_id, night_date)
+);
+
+CREATE TABLE project_software (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    software_id INTEGER NOT NULL REFERENCES software(id),
+    software_version_id INTEGER,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (software_version_id, software_id)
+        REFERENCES software_version(id, software_id),
+    UNIQUE (project_id, software_id, software_version_id)
+);
+CREATE UNIQUE INDEX idx_project_software_no_version
+    ON project_software(project_id, software_id)
+    WHERE software_version_id IS NULL;
 
 CREATE TRIGGER trg_project_session_updated_at
 AFTER UPDATE ON project_session
@@ -1967,6 +2098,18 @@ CREATE INDEX idx_sub_frame_match_bias
     ON sub_frame(project_id, rig_id, gain, binning_x, binning_y)
     WHERE frame_type = 'bias' AND accepted = 1;
 
+-- A frame retains one setup stamp for every rig it has been assigned to. The
+-- composite FK prevents attaching another rig's setup to that rig's stamp.
+CREATE TABLE sub_frame_rig_setup (
+    sub_frame_id INTEGER NOT NULL REFERENCES sub_frame(id) ON DELETE CASCADE,
+    rig_id INTEGER NOT NULL,
+    rig_setup_id INTEGER NOT NULL,
+    PRIMARY KEY (sub_frame_id, rig_id),
+    FOREIGN KEY (rig_setup_id, rig_id)
+        REFERENCES rig_setup(id, rig_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_sub_frame_rig_setup_setup ON sub_frame_rig_setup(rig_setup_id);
+
 -- File locations (§10, generalized) — one row per cataloged file (any category),
 -- with optional links to the sub_frame / processed_image it represents. Multiple
 -- rows may share a sub_frame_id (same sub in several places).
@@ -2164,20 +2307,41 @@ BEGIN
     UPDATE processed_image SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
--- Calibration-matching views (rebuilt by migration 0046). All consider only
+-- Effective telescope configuration and camera for every cataloged frame. A
+-- project-specific change wins over an applying historical stamp, which wins
+-- over the rig's current parts.
+CREATE VIEW sub_frame_equipment AS
+SELECT
+    sf.id AS sub_frame_id,
+    sf.project_id,
+    sf.rig_id,
+    rs.id AS rig_setup_id,
+    COALESCE(prc.telescope_configuration_id,
+             rs.telescope_configuration_id,
+             r.telescope_configuration_id) AS telescope_configuration_id,
+    COALESCE(prc.camera_id, rs.camera_id, r.camera_id) AS camera_id
+FROM sub_frame sf
+LEFT JOIN rig r ON r.id = sf.rig_id
+LEFT JOIN sub_frame_rig_setup sfs
+    ON sfs.sub_frame_id = sf.id AND sfs.rig_id = sf.rig_id
+LEFT JOIN rig_setup rs ON rs.id = sfs.rig_setup_id
+LEFT JOIN project_rig_change prc
+    ON prc.project_id = sf.project_id AND prc.rig_id = sf.rig_id;
+
+-- Calibration-matching views (rebuilt by migrations 0046 and 0069). All consider only
 -- accepted = 1 frames on both sides, and all scope to the same project AND the
 -- same rig — the rig being the source folder's user-declared tag, so one rig's
 -- calibration never calibrates another's lights. These are views, not tables.
 --
--- Matching is on the capture settings the FITS header gives us. The camera term
--- the original views carried is gone: within a project on one rig the camera is
--- fixed, so it added nothing once equipment identification was removed.
+-- Matching is on the capture settings the FITS header gives us plus the effective
+-- camera. Flats also require the effective telescope configuration.
 
 -- Darks: same exposure, gain and binning, set temperature within ±1.0 °C. Never
 -- matched on filter — calibration darks are filterless by definition.
 CREATE VIEW matching_darks AS
 SELECT l.id AS light_id, d.id AS dark_id
 FROM sub_frame l
+JOIN sub_frame_equipment le ON le.sub_frame_id = l.id
 JOIN sub_frame d
     ON  d.frame_type = 'dark' AND d.accepted = 1
     AND d.project_id = l.project_id
@@ -2190,6 +2354,8 @@ JOIN sub_frame d
         (d.set_temp_c IS NULL AND l.set_temp_c IS NULL)
         OR ABS(d.set_temp_c - l.set_temp_c) <= 1.0
     )
+JOIN sub_frame_equipment de
+    ON de.sub_frame_id = d.id AND de.camera_id IS le.camera_id
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
 -- Flats: same gain, binning and FILTER header. Not matched on exposure — a flat's
@@ -2197,6 +2363,7 @@ WHERE l.frame_type = 'light' AND l.accepted = 1;
 CREATE VIEW matching_flats AS
 SELECT l.id AS light_id, f.id AS flat_id
 FROM sub_frame l
+JOIN sub_frame_equipment le ON le.sub_frame_id = l.id
 JOIN sub_frame f
     ON  f.frame_type = 'flat' AND f.accepted = 1
     AND f.project_id = l.project_id
@@ -2205,12 +2372,17 @@ JOIN sub_frame f
     AND f.filter_name_hint IS l.filter_name_hint
     AND f.binning_x IS l.binning_x
     AND f.binning_y IS l.binning_y
+JOIN sub_frame_equipment fe
+    ON fe.sub_frame_id = f.id
+    AND fe.camera_id IS le.camera_id
+    AND fe.telescope_configuration_id IS le.telescope_configuration_id
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
 -- Bias: same gain and binning only (zero-length exposure, no filter).
 CREATE VIEW matching_bias AS
 SELECT l.id AS light_id, b.id AS bias_id
 FROM sub_frame l
+JOIN sub_frame_equipment le ON le.sub_frame_id = l.id
 JOIN sub_frame b
     ON  b.frame_type = 'bias' AND b.accepted = 1
     AND b.project_id = l.project_id
@@ -2218,6 +2390,8 @@ JOIN sub_frame b
     AND b.gain IS l.gain
     AND b.binning_x IS l.binning_x
     AND b.binning_y IS l.binning_y
+JOIN sub_frame_equipment be
+    ON be.sub_frame_id = b.id AND be.camera_id IS le.camera_id
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
 -- Per-light coverage flags over the three match views.

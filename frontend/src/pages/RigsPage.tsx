@@ -67,7 +67,14 @@ export default function RigsPage() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["rigs"] });
+    queryClient.invalidateQueries({ queryKey: ["rig-setups"] });
+    queryClient.invalidateQueries({ queryKey: ["project-rig-setups"] });
     queryClient.invalidateQueries({ queryKey: ["project-solve"] });
+    queryClient.invalidateQueries({ queryKey: ["project-catalog"] });
+    queryClient.invalidateQueries({ queryKey: ["catalog-frame"] });
+    queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
+    queryClient.invalidateQueries({ queryKey: ["project-integration"] });
+    queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
   };
 
   const showSnack = (message: string, severity: "success" | "error") =>
@@ -122,7 +129,7 @@ export default function RigsPage() {
     const newIdx = activeRigs.findIndex((r) => r.id === over.id);
     if (oldIdx === -1 || newIdx === -1) return;
     const reordered = arrayMove(activeRigs, oldIdx, newIdx);
-    queryClient.setQueryData<Rig[]>(["rigs"], (prev) => {
+    queryClient.setQueryData<Rig[]>(["rigs", "all"], (prev) => {
       if (!prev) return prev;
       // Everything that isn't in the reordered list — retired rigs and the
       // unclaimed pre-defined ones the New Rig dialog offers — must survive,
@@ -363,7 +370,9 @@ export default function RigsPage() {
           >
             <CloseIcon fontSize="small" />
           </IconButton>
-          {resolvedSelected && <RigDetailPanel rig={resolvedSelected} />}
+          {resolvedSelected && (
+            <RigDetailPanel rig={resolvedSelected} onCorrected={invalidate} />
+          )}
         </Paper>
       </Collapse>
 

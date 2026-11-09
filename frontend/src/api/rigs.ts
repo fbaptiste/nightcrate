@@ -157,6 +157,58 @@ export interface RigCreate {
   filter_slots?: RigFilterSlotIn[];
 }
 
+export interface RigPartsInput {
+  telescope_configuration_id: number;
+  camera_id: number;
+  filter_wheel_id: number | null;
+  single_filter_id: number | null;
+  mount_id: number | null;
+  focuser_id: number | null;
+  oag_id: number | null;
+  guide_scope_id: number | null;
+  guide_camera_id: number | null;
+  computer_id: number | null;
+  software_ids: number[];
+  filter_slots: RigFilterSlotIn[];
+}
+
+export interface RigParts extends RigPartsInput {
+  telescope_name: string;
+  telescope_config_name: string;
+  camera_name: string;
+  filter_wheel_name: string | null;
+  single_filter_name: string | null;
+  mount_name: string | null;
+  focuser_name: string | null;
+  oag_name: string | null;
+  guide_scope_name: string | null;
+  guide_camera_name: string | null;
+  computer_name: string | null;
+  software: { id: number; name: string; category: string }[];
+  filter_slots: RigFilterSlotOut[];
+}
+
+export interface RigSetup {
+  id: number;
+  until_at: string;
+  parts: RigParts;
+  project_count: number;
+  night_count: number;
+}
+
+export interface RigChange {
+  group: string;
+  before: string;
+  after: string;
+}
+
+export interface RigChangeChoiceDetail {
+  code: "rig_change_needs_choice";
+  project_count: number;
+  night_count: number;
+  changes: RigChange[];
+}
+
 export interface TelescopeConfigOption {
   id: number;
   config_name: string;
@@ -262,11 +314,25 @@ export const createRig = (data: RigCreate) =>
     body: JSON.stringify(data),
   });
 
-export const updateRig = (id: number, data: Partial<RigCreate>) =>
+export const updateRig = (
+  id: number,
+  data: Partial<RigCreate>,
+  applyMode?: "existing" | "from_now_on",
+) =>
   apiFetch<Rig>(`/rigs/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify(applyMode ? { ...data, apply_mode: applyMode } : data),
+  });
+
+export const fetchRigSetups = (rigId: number) =>
+  apiFetch<RigSetup[]>(`/rigs/${rigId}/setups`);
+
+export const correctRigSetup = (setupId: number, parts: RigPartsInput) =>
+  apiFetch<RigSetup>(`/rig-setups/${setupId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parts),
   });
 
 /** Removing an untouched pre-defined rig drops it; anything else is retired. */

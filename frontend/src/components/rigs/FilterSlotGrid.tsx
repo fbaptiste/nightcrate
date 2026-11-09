@@ -5,10 +5,15 @@ import Typography from "@mui/material/Typography";
 import StarIcon from "@mui/icons-material/Star";
 import type { FilterOption } from "@/api/rigs";
 import { withMineGroup } from "@/components/rigs/mineGroup";
+import {
+  retainedGroup,
+  retainedLabel,
+  type RetainedOption,
+} from "@/components/rigs/retainedOptions";
 
 interface FilterSlotGridProps {
   numPositions: number;
-  filters: FilterOption[];
+  filters: RetainedOption<FilterOption>[];
   slots: { slot_number: number; filter_id: number }[];
   onChange: (slots: { slot_number: number; filter_id: number }[]) => void;
 }
@@ -19,7 +24,7 @@ export default function FilterSlotGrid({
   slots,
   onChange,
 }: FilterSlotGridProps) {
-  const handleSlotChange = (slotNumber: number, filter: FilterOption | null) => {
+  const handleSlotChange = (slotNumber: number, filter: RetainedOption<FilterOption> | null) => {
     const updated = slots.filter((s) => s.slot_number !== slotNumber);
     if (filter) {
       updated.push({ slot_number: slotNumber, filter_id: filter.id });
@@ -49,15 +54,17 @@ export default function FilterSlotGrid({
             >
               Slot {slotNumber}
             </Typography>
-            <Autocomplete<FilterOption & { __mine_group?: string }>
+            <Autocomplete<RetainedOption<FilterOption> & { __mine_group?: string }>
               size="small"
               options={groupedOptions}
-              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
+              groupBy={(o) => retainedGroup(o, o.__mine_group ?? o.manufacturer_name)}
               value={selectedFilter}
               onChange={(_e, value) => handleSlotChange(slotNumber, value)}
-              getOptionLabel={(o) =>
-                `${o.manufacturer_name} \u2014 ${o.model_name}`
-              }
+              getOptionLabel={(o) => retainedLabel(
+                o,
+                `${o.manufacturer_name} \u2014 ${o.model_name}`,
+                o.model_name,
+              )}
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => {
                 const { key, ...rest } = props as typeof props & { key?: React.Key };
@@ -70,7 +77,11 @@ export default function FilterSlotGrid({
                         sx={{ mr: 0.75 }}
                       />
                     )}
-                    {option.manufacturer_name} — {option.model_name}
+                    {retainedLabel(
+                      option,
+                      `${option.manufacturer_name} — ${option.model_name}`,
+                      option.model_name,
+                    )}
                   </li>
                 );
               }}

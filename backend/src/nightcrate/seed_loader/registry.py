@@ -20,6 +20,7 @@ class SeedableTable:
     is_junction: bool = False
     junction_parent: str | None = None
     junction_key_columns: tuple[str, ...] = ()
+    natural_key: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ LOAD_ORDER: list[SeedableTable] = [
         table_name="manufacturer",
         csv_filename="manufacturer.csv",
         seeded_fields=("name", "website", "notes"),
+        natural_key=("name",),
     ),
     SeedableTable(
         table_name="optical_design",
@@ -469,6 +471,7 @@ LOAD_ORDER: list[SeedableTable] = [
         fk_columns={
             "manufacturer_seed_key": "manufacturer",
         },
+        natural_key=("manufacturer_id", "name"),
     ),
     # ------------------------------------------------------------------
     # 26: rig — LAST, because it references almost everything above.

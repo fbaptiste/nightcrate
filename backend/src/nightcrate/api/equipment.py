@@ -76,6 +76,8 @@ from nightcrate.api.equipment_models import (
     SoftwareCreate,
     SoftwareResponse,
     SoftwareUpdate,
+    SoftwareVersionCreate,
+    SoftwareVersionOut,
     TelescopeConfigurationCreate,
     TelescopeConfigurationResponse,
     TelescopeConfigurationUpdate,
@@ -84,6 +86,7 @@ from nightcrate.api.equipment_models import (
     TelescopeUpdate,
 )
 from nightcrate.db.session import get_db
+from nightcrate.services.rig_setups import equipment_usage
 
 router = APIRouter(prefix="/api/equipment", tags=["Equipment"])
 lookup_router = APIRouter(prefix="/api/equipment", tags=["Lookup Tables"])
@@ -115,6 +118,37 @@ async def get_mine_counts():
             ).fetchone()
             counts[response_key] = row[0] if row else 0
     return counts
+
+
+_USAGE_TABLES = {
+    "camera": "camera",
+    "sensor": "sensor",
+    "telescope": "telescope",
+    "telescope_configuration": "telescope_configuration",
+    "filter_wheel": "filter_wheel",
+    "filter": "filter",
+    "mount": "mount",
+    "focuser": "focuser",
+    "oag": "oag",
+    "guide_scope": "guide_scope",
+    "computer": "computer",
+}
+
+
+@router.get("/{kind}/{item_id}/usage")
+async def get_equipment_usage(kind: str, item_id: int) -> dict[str, int]:
+    table = _USAGE_TABLES.get(kind)
+    if table is None:
+        raise HTTPException(status_code=404, detail="Equipment kind not found")
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            f"SELECT id FROM {table} WHERE id = ?",  # nosec B608 - internal allow-list
+            (item_id,),
+        )
+        if await cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Equipment item not found")
+        rig_count, project_count = await equipment_usage(conn, kind, item_id)
+        return {"rig_count": rig_count, "project_count": project_count}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1375,6 +1409,102 @@ build_equipment_router(
 # ── Software ──────────────────────────────────────────────────────────────────
 
 
+async def _software_version_response(conn, version_id: int) -> dict:
+    cursor = await conn.execute(
+        "SELECT id, version FROM software_version WHERE id = ?", (version_id,)
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Software version not found")
+    cursor = await conn.execute(
+        """
+        SELECT DISTINCT p.id, p.name
+        FROM project_software ps
+        JOIN project p ON p.id = ps.project_id
+        WHERE ps.software_version_id = ?
+        ORDER BY p.name COLLATE NOCASE, p.id
+        """,
+        (version_id,),
+    )
+    names = [item["name"] for item in await cursor.fetchall()]
+    return {
+        "id": row["id"],
+        "version": row["version"],
+        "project_count": len(names),
+        "project_names": names[:3],
+    }
+
+
+async def _save_software_versions(conn, software_id: int, body) -> None:
+    versions = body.versions
+    if versions is None:
+        return
+    cursor = await conn.execute(
+        "SELECT id, version FROM software_version WHERE software_id = ?", (software_id,)
+    )
+    existing = {row["id"]: row["version"] for row in await cursor.fetchall()}
+    seen_versions: set[str] = set()
+    for item in versions:
+        if item.version in seen_versions:
+            raise HTTPException(status_code=422, detail=f"Version {item.version} is listed twice")
+        seen_versions.add(item.version)
+    requested_ids = [item.id for item in versions if item.id is not None]
+    if len(requested_ids) != len(set(requested_ids)):
+        raise HTTPException(status_code=422, detail="A software version may appear only once")
+    unknown = set(requested_ids) - set(existing)
+    if unknown:
+        raise HTTPException(
+            status_code=422, detail="Software version does not belong to this program"
+        )
+    existing_versions = set(existing.values())
+    for item in versions:
+        if item.id is None and item.version in existing_versions:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "version_exists", "version": item.version},
+            )
+
+    for version_id in set(existing) - set(requested_ids):
+        response = await _software_version_response(conn, version_id)
+        if response["project_count"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "version_in_use",
+                    "version": existing[version_id],
+                    "projects": response["project_names"],
+                },
+            )
+        await conn.execute("DELETE FROM software_version WHERE id = ?", (version_id,))
+
+    renamed = [
+        item for item in versions if item.id is not None and existing[item.id] != item.version
+    ]
+    occupied = existing_versions | seen_versions
+    for item in renamed:
+        counter = 0
+        temporary = f"__nc_tmp_{item.id}_{counter}"
+        while temporary in occupied:
+            counter += 1
+            temporary = f"__nc_tmp_{item.id}_{counter}"
+        occupied.add(temporary)
+        await conn.execute(
+            "UPDATE software_version SET version = ? WHERE id = ?",
+            (temporary, item.id),
+        )
+    for item in renamed:
+        await conn.execute(
+            "UPDATE software_version SET version = ? WHERE id = ?",
+            (item.version, item.id),
+        )
+    for item in versions:
+        if item.id is None:
+            await conn.execute(
+                "INSERT INTO software_version (software_id, version) VALUES (?, ?)",
+                (software_id, item.version),
+            )
+
+
 async def _build_software_response(conn, sw_row: dict) -> dict:
     """Build full software response with nested objects."""
     d = dict(sw_row)
@@ -1388,6 +1518,14 @@ async def _build_software_response(conn, sw_row: dict) -> dict:
         )
     else:
         d["manufacturer"] = None
+
+    cursor = await conn.execute(
+        "SELECT id FROM software_version WHERE software_id = ? ORDER BY id DESC",
+        (d["id"],),
+    )
+    d["versions"] = [
+        await _software_version_response(conn, row["id"]) for row in await cursor.fetchall()
+    ]
 
     _strip_seed(d)
 
@@ -1406,4 +1544,20 @@ build_equipment_router(
     name_column="name",
     order_by="name",
     check_detail_fn=lambda d: f"Invalid category: {d.get('category')}",
+    before_commit=_save_software_versions,
 )
+
+
+@router.post("/software/{item_id}/versions", response_model=SoftwareVersionOut, status_code=201)
+async def create_software_version(item_id: int, body: SoftwareVersionCreate):
+    async with get_db() as conn:
+        await get_or_404(conn, "software", item_id, "Software")
+        with integrity_guard(
+            conflict_detail={"code": "version_exists", "version": body.version}  # type: ignore[arg-type]
+        ):
+            cursor = await conn.execute(
+                "INSERT INTO software_version (software_id, version) VALUES (?, ?)",
+                (item_id, body.version),
+            )
+            await conn.commit()
+        return await _software_version_response(conn, cursor.lastrowid)

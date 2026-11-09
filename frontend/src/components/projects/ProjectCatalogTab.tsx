@@ -19,8 +19,8 @@ import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import { fetchRigs } from "@/api/rigs";
+import { fetchProject, fetchProjectRigSetups } from "@/api/projects";
 import { listProjectTargets } from "@/api/projectTargets";
-import IconButton from "@mui/material/IconButton";
 import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
 import Tab from "@mui/material/Tab";
@@ -28,24 +28,33 @@ import Tabs from "@mui/material/Tabs";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import LinearProgress from "@mui/material/LinearProgress";
-import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import ViewListIcon from "@mui/icons-material/ViewList";
+import GridViewIcon from "@mui/icons-material/GridView";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import { FileBrowser } from "@/components/fits/FileBrowser";
-import CatalogCardList from "./CatalogCardList";
 import AnalyzerOverlay, { type AnalyzerItem } from "./AnalyzerOverlay";
 import FrameCorrectionsDialog from "./FrameCorrectionsDialog";
+import { formatExposure } from "./CatalogCards";
+import FilterSwatch from "./FilterSwatch";
+import CatalogFrameTable from "./CatalogFrameTable";
+import CatalogThumbnailSheet from "./CatalogThumbnailSheet";
+import CatalogMasterTable from "./CatalogMasterTable";
+import CatalogOtherTable from "./CatalogOtherTable";
 import {
-  formatExposure,
-  FrameCard,
-  MasterCard,
-  OtherCard,
-} from "./CatalogCards";
+  fileSelectionKey,
+  processedImageSelectionKey,
+  selectionId,
+  selectionKind,
+  subFrameSelectionKey,
+  type CatalogSelectionKey,
+} from "./catalogSelection";
 import {
   addFolder,
   deleteCatalogItems,
-  CATALOG_SORTS,
   fetchCatalogFilterSummary,
   fetchCatalogFrames,
   fetchCatalogMasters,
@@ -67,6 +76,7 @@ import {
 } from "@/api/projectCatalog";
 import { useAnalyzeRun } from "@/lib/useAnalyzeRun";
 import { RIG_BLUE } from "@/lib/rigColors";
+import { compareFilters, resolveFilterLabel } from "./filterColors";
 
 interface Props {
   projectId: number;
@@ -78,6 +88,11 @@ const PAGE_SIZE = 60;
 function formatEta(seconds: number): string {
   if (seconds < 60) return `${Math.max(1, seconds)}s`;
   return `${Math.round(seconds / 60)} min`;
+}
+
+function folderName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }
 
 type TabKey =
@@ -107,6 +122,12 @@ interface CatalogPage {
   timezone: string;
 }
 
+function itemSelectionKey(item: CatalogItem): CatalogSelectionKey {
+  if (isMaster(item)) return processedImageSelectionKey(item.id);
+  if (isSubFrame(item)) return subFrameSelectionKey(item.id);
+  return fileSelectionKey(item.id);
+}
+
 export default function ProjectCatalogTab({ projectId }: Props) {
   const queryClient = useQueryClient();
   const [snack, setSnack] = useState<string | null>(null);
@@ -116,63 +137,67 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const [pendingRigId, setPendingRigId] = useState<number | "">("");
   const [pendingTargetId, setPendingTargetId] = useState<number | "">("");
   const [tab, setTab] = useState<TabKey>("light");
+  const [lightView, setLightView] = useState<"table" | "thumbnails">("table");
   // Active filter-pill scope on the Lights / Flats lists (null = show all).
   const [filterName, setFilterName] = useState<string | null>(null);
   // Server-side ordering (null = the per-tab default). Client-side sorting would
   // only order the pages already loaded, which is wrong for "worst first".
-  const [sort, setSort] = useState<CatalogSort | null>(null);
+  const [sort, setSort] = useState<CatalogSort>("date_desc");
   // Others tab: hide the non-frame files (PixInsight .xnml/.xdrz sidecars, logs)
   // so the handful of unclassified frames is actually findable.
   const [unclassifiedOnly, setUnclassifiedOnly] = useState(false);
 
   // Multi-select for bulk corrections. Cleared whenever the visible set changes,
   // so a hidden selection can never be acted on by mistake.
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<CatalogSelectionKey>>(new Set());
+  const itemsRef = useRef<CatalogItem[]>([]);
+  const lastSelectedRef = useRef<CatalogSelectionKey | null>(null);
+
+  const clearSelection = useCallback(() => {
+    setSelected(new Set());
+    lastSelectedRef.current = null;
+  }, []);
 
   const changeTab = (next: TabKey, opts?: { unclassifiedOnly?: boolean }) => {
     setTab(next);
     setFilterName(null);
-    setSort(null);
+    setSort("date_desc");
     setUnclassifiedOnly(opts?.unclassifiedOnly ?? false);
-    setSelected(new Set());
+    clearSelection();
   };
 
   const changeFilterPill = (next: string | null) => {
     setFilterName(next);
-    setSelected(new Set());
+    clearSelection();
   };
 
   // Read through refs so this callback's identity never changes: it is passed to
-  // every card, and memo(FrameCard) would be defeated for the whole loaded list
-  // on every tick if it were rebuilt when `items` or the anchor changed.
-  const itemsRef = useRef<CatalogItem[]>([]);
-  const lastSelectedRef = useRef<number | null>(null);
-
+  // every memoized row, which should not all re-render on one selection change.
   /** Toggle one row, or with shift extend from the last one clicked.
    *
    *  The range spans the rows currently LOADED — scroll far enough to load the
    *  far end first, which is what the gesture implies anyway. Shift always adds
    *  rather than replacing, so several ranges can be built up. */
-  const toggleSelect = useCallback((id: number, shift = false) => {
+  const toggleSelect = useCallback((key: CatalogSelectionKey, shift = false) => {
     setSelected((prev) => {
       const next = new Set(prev);
       const anchor = lastSelectedRef.current;
-      if (shift && anchor != null && anchor !== id) {
-        const ids = itemsRef.current.map((i) => i.id);
-        const from = ids.indexOf(anchor);
-        const to = ids.indexOf(id);
+      if (shift && anchor != null && anchor !== key) {
+        const keys = itemsRef.current.map(itemSelectionKey);
+        const from = keys.indexOf(anchor);
+        const to = keys.indexOf(key);
         if (from >= 0 && to >= 0) {
-          for (const rid of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) {
-            next.add(rid);
+          for (const rangeKey of keys.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+            next.add(rangeKey);
           }
           return next;
         }
       }
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
-    lastSelectedRef.current = id;
+    lastSelectedRef.current = key;
   }, []);
 
   const { data: folders = [] } = useQuery({
@@ -187,6 +212,14 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const { data: projectTargets = [] } = useQuery({
     queryKey: ["project-targets", projectId],
     queryFn: () => listProjectTargets(projectId),
+  });
+  const { data: project } = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => fetchProject(projectId),
+  });
+  const { data: projectRigSetups = [] } = useQuery({
+    queryKey: ["project-rig-setups", projectId],
+    queryFn: () => fetchProjectRigSetups(projectId),
   });
   const targetLabel = (t: { common_name: string | null; primary_designation: string }) =>
     t.common_name ?? t.primary_designation;
@@ -212,10 +245,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       return loaded < (allPages[0]?.total ?? 0) ? loaded : undefined;
     },
   });
-  // Memoized: `items` feeds `analyzerItems` -> `openInAnalyzer` -> every card's
+  // Memoized: `items` feeds `analyzerItems` -> `openInAnalyzer` -> every row's
   // `onOpen`. A fresh array each render would change that prop's identity and
-  // defeat memo(FrameCard) for every loaded card on every checkbox tick and every
-  // analyzer prev/next step.
+  // defeat row memoization on every checkbox tick and analyzer step.
   const items: CatalogItem[] = useMemo(() => data?.pages.flatMap((p) => p.rows) ?? [], [data]);
   // Kept current for `toggleSelect`, which reads it through the ref so its own
   // identity can stay stable across renders.
@@ -229,6 +261,15 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryFn: () => fetchCatalogFilterSummary(projectId, tab as "light" | "flat"),
     enabled: showFilterPills,
   });
+  const orderedFilterStats = useMemo(
+    () =>
+      [...filterStats].sort((a, b) => {
+        const aLabel = a.filter_name ?? "";
+        const bLabel = b.filter_name ?? "";
+        return compareFilters(resolveFilterLabel(aLabel), resolveFilterLabel(bLabel));
+      }),
+    [filterStats],
+  );
 
   /** Counts only — the row itself is patched in place by `patchFrameRow`.
    *
@@ -253,9 +294,21 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryClient.invalidateQueries({ queryKey: ["project-catalog", projectId] });
   };
 
+  const invalidateRigDependent = () => {
+    queryClient.invalidateQueries({ queryKey: ["rigs"] });
+    queryClient.invalidateQueries({ queryKey: ["rig-setups"] });
+    queryClient.invalidateQueries({ queryKey: ["project-rig-setups", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    invalidateCatalog();
+    queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
+  };
+
   /** Replace one row in the loaded pages instead of refetching the whole
    *  infinite query. A full invalidate refetches EVERY page already loaded, so
-   *  editing one card after scrolling 20 pages cost 20 round-trips. */
+   *  editing one row after scrolling 20 pages cost 20 round-trips. */
   const patchFrameRow = (updated: CatalogFrame) => {
     queryClient.setQueryData<{ pages: CatalogPage[]; pageParams: unknown[] }>(
       ["project-catalog", projectId, tab, filterName, sort, unclassifiedOnly],
@@ -286,7 +339,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     mutationFn: (folderId: number) => startIngest(projectId, folderId),
     onMutate: (folderId: number) => setScanningFolderId(folderId),
     onSuccess: (s) => {
-      invalidateCatalog();
+      invalidateRigDependent();
       setSnack(
         `Scan ${s.status}: ${s.subs_inserted} new, ${s.subs_updated} updated` +
           (s.errors_count ? `, ${s.errors_count} errors` : ""),
@@ -334,25 +387,26 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteMut = useMutation({
     mutationFn: () => {
-      const ids = [...selected];
-      if (tab === "masters") return deleteCatalogItems(projectId, { processed_image_ids: ids });
-      if (tab === "others") {
-        // Others mixes real frames with plain files; each goes to its own list.
-        const frameIds = new Set(
-          items
-            .filter(isSubFrame)
-            .map((i) => i.id),
-        );
+      const selectedIds = (kind: ReturnType<typeof selectionKind>) =>
+        [...selected]
+          .filter((key) => selectionKind(key) === kind)
+          .map(selectionId);
+      if (tab === "masters") {
         return deleteCatalogItems(projectId, {
-          sub_frame_ids: ids.filter((id) => frameIds.has(id)),
-          file_ids: ids.filter((id) => !frameIds.has(id)),
+          processed_image_ids: selectedIds("processed_image"),
         });
       }
-      return deleteCatalogItems(projectId, { sub_frame_ids: ids });
+      if (tab === "others") {
+        return deleteCatalogItems(projectId, {
+          sub_frame_ids: selectedIds("sub_frame"),
+          file_ids: selectedIds("file"),
+        });
+      }
+      return deleteCatalogItems(projectId, { sub_frame_ids: selectedIds("sub_frame") });
     },
     onSuccess: (r) => {
       const n = r.sub_frames + r.processed_images + r.files;
-      setSelected(new Set());
+      clearSelection();
       setConfirmDelete(false);
       invalidateCatalog();
       setSnack(`Removed ${n.toLocaleString()} item${n === 1 ? "" : "s"} from the catalog`);
@@ -405,15 +459,24 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // Classification corrections: a frame for single-frame mode, or "bulk".
   // Rigs available to tag a source folder with. The user declares which rig shot a
   // folder; nothing infers it from a header.
-  const { data: rigs = [] } = useQuery({ queryKey: ["rigs", "mine"], queryFn: () => fetchRigs(true, true) });
+  const { data: allRigs = [] } = useQuery({
+    queryKey: ["rigs", "all"],
+    queryFn: () => fetchRigs(false),
+  });
+  const rigs = useMemo(() => {
+    const usedIds = new Set<number>([
+      ...(project?.rigs.map((rig) => rig.id) ?? []),
+      ...projectRigSetups.map((rig) => rig.rig_id),
+      ...folders.flatMap((folder) => folder.rig_id == null ? [] : [folder.rig_id]),
+    ]);
+    return allRigs.filter((rig) => (rig.active && rig.is_mine) || usedIds.has(rig.id));
+  }, [allRigs, folders, project, projectRigSetups]);
   const folderRigMut = useMutation({
     mutationFn: ({ folderId, rigId }: { folderId: number; rigId: number | null }) =>
       setFolderRig(projectId, folderId, rigId),
     onSuccess: (f) => {
-      // Only the folder list changes on screen — no card renders a rig, so
-      // invalidating the infinite catalog query would refetch every loaded page
-      // for nothing.
       queryClient.invalidateQueries({ queryKey: ["project-folders", projectId] });
+      invalidateRigDependent();
       setSnack(
         f.rig_name
           ? `Folder tagged ${f.rig_name} — its frames and sessions were re-keyed`
@@ -429,8 +492,8 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // active tab + filter pill for free.
   const [analyzerIndex, setAnalyzerIndex] = useState<number | null>(null);
   // Anything in the list with a real path can be opened, masters included — a
-  // stack is often the thing you most want to look at. Ids are unique within one
-  // tab's list, which is all this index has to address.
+  // stack is often the thing you most want to look at. Plain files in Others are
+  // excluded, so a file id colliding with a sub-frame id cannot enter this list.
   const analyzerItems: AnalyzerItem[] = useMemo(
     () =>
       items
@@ -467,47 +530,10 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     { key: "masters", label: "Masters", count: summary?.processed ?? 0 },
     { key: "others", label: "Others", count: othersCount },
   ];
-
-  const renderItem = (item: CatalogItem) => {
-    if (tab === "masters") {
-      return (
-        <MasterCard
-          row={item as CatalogMaster}
-          projectId={projectId}
-          tz={tz}
-          onOpen={openInAnalyzer}
-          selected={selected.has(item.id)}
-          onToggleSelect={toggleSelect}
-        />
-      );
-    }
-    if (tab === "others") {
-      return (
-        <OtherCard
-          row={item as CatalogOther}
-          tz={tz}
-          projectId={projectId}
-          selected={selected.has(item.id)}
-          onToggleSelect={toggleSelect}
-          onCorrect={correctOther}
-        />
-      );
-    }
-    const row = item as CatalogFrame;
-    return (
-      <FrameCard
-        row={row}
-        projectId={projectId}
-        tz={tz}
-        showFilter={tab === "light" || tab === "flat"}
-        showObject={tab === "light"}
-        onCorrect={setCorrectTarget}
-        onOpen={openInAnalyzer}
-        selected={selected.has(row.id)}
-        onToggleSelect={toggleSelect}
-      />
-    );
-  };
+  const showRigColumn = new Set(
+    folders.flatMap((folder) => folder.rig_id == null ? [] : [folder.rig_id]),
+  ).size > 1;
+  const showTargetColumn = projectTargets.length > 1;
 
   /** Edit one unclassified frame from the Others tab.
    *
@@ -516,27 +542,39 @@ export default function ProjectCatalogTab({ projectId }: Props) {
    *  `CatalogFrame` the single-frame dialog wants, and the bulk path needs only
    *  ids. */
   const correctOther = useCallback((row: CatalogOther) => {
-    setSelected(new Set([row.id]));
+    const key = subFrameSelectionKey(row.id);
+    setSelected(new Set([key]));
+    lastSelectedRef.current = key;
     setCorrectTarget("bulk");
   }, []);
 
   // Rows a classification correction can act on: any sub_frame. On the frame
   // tabs that's everything; in Others it's only the unknown-type frames, not the
   // PixInsight sidecars and logs, which have no frame type to set.
-  const correctableIds = useMemo(
+  const correctableKeys = useMemo(
     () =>
       items
         .filter(isSubFrame)
-        .map((i) => i.id),
+        .map((item) => subFrameSelectionKey(item.id)),
     [items],
   );
   // Everything listed can be REMOVED from the catalog, so the selection bar shows
   // on every tab; only the correction actions inside it are gated on there being
   // sub frames to correct.
-  const selectableIds = useMemo(() => items.map((i) => i.id), [items]);
-  const canCorrect = tab !== "masters" && correctableIds.length > 0;
-  const showSelectionBar = items.length > 0;
-  const allSelected = showSelectionBar && selected.size === selectableIds.length;
+  const selectableKeys = useMemo(() => items.map(itemSelectionKey), [items]);
+  const selectedFrameIds = useMemo(
+    () =>
+      [...selected]
+        .filter((key) => selectionKind(key) === "sub_frame")
+        .map(selectionId),
+    [selected],
+  );
+  const canCorrect = tab !== "masters" && correctableKeys.length > 0;
+  const showSelectionBar = items.length > 0 && !(tab === "light" && lightView === "thumbnails");
+  const allSelected =
+    showSelectionBar &&
+    selectableKeys.length > 0 &&
+    selectableKeys.every((key) => selected.has(key));
 
   return (
     <Box
@@ -547,10 +585,28 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       }}
     >
       {/* Source folders */}
-      <Typography variant="h6" sx={{ mb: 1 }}>
-        Source folders
-      </Typography>
-      <Stack spacing={1} sx={{ mb: 2 }}>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+        <Typography variant="h6">Source folders</Typography>
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={() => setPickerOpen(true)}
+          sx={{ minHeight: 32 }}
+        >
+          + Add folder
+        </Button>
+      </Box>
+      <Box
+        sx={(theme) => ({
+          mb: 2,
+          border: folders.length > 0 ? 1 : 0,
+          borderColor: theme.palette.mode === "dark" ? "#34373d" : "#dcd9d4",
+          borderRadius: "8px",
+          bgcolor: folders.length > 0 ? "background.paper" : undefined,
+          overflow: "hidden",
+          containerType: "inline-size",
+        })}
+      >
         {folders.length === 0 && (
           <Typography variant="body2" color="text.secondary">
             No folders yet. Add a folder — its contents are cataloged
@@ -559,31 +615,54 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         )}
         {folders.map((f) => {
           const scanning = scanningFolderId === f.id;
+          const rigValue =
+            f.rig_id != null && rigs.some((rig) => rig.id === f.rig_id) ? f.rig_id : "";
+          const targetValue =
+            f.project_target_id != null &&
+            projectTargets.some((target) => target.id === f.project_target_id)
+              ? f.project_target_id
+              : "";
           return (
-            <Stack key={f.id} direction="row" alignItems="center" spacing={1}>
-              <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                {f.path}
-              </Typography>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => ingestMut.mutate(f.id)}
-                disabled={ingestMut.isPending}
-                startIcon={
-                  scanning ? (
-                    <CircularProgress size={14} />
-                  ) : (
-                    <RefreshIcon fontSize="small" />
-                  )
-                }
+            <Box
+              key={f.id}
+              sx={(theme) => ({
+                display: "grid",
+                gridTemplateColumns: "minmax(180px, 1fr) auto auto auto auto",
+                gap: "12px",
+                alignItems: "center",
+                px: "14px",
+                py: "10px",
+                borderBottom: 1,
+                borderColor: theme.palette.mode === "dark" ? "#34373d" : "#dcd9d4",
+                "&:last-child": { borderBottom: 0 },
+                "@container (max-width: 899px)": {
+                  gridTemplateColumns: "minmax(130px, 160px) minmax(130px, 170px) auto auto",
+                  gap: "8px",
+                  alignItems: "center",
+                  justifyContent: "start",
+                },
+              })}
+            >
+              <Box
+                sx={{
+                  minWidth: 0,
+                  "@container (max-width: 899px)": { gridColumn: "1 / -1" },
+                }}
               >
-                {scanning ? "Scanning…" : "Re-scan"}
-              </Button>
+                <Typography sx={{ fontSize: "13px", fontWeight: 600 }}>
+                  {folderName(f.path)}
+                </Typography>
+                <Typography
+                  title={f.path}
+                  sx={{ color: "text.secondary", fontSize: "12.5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >
+                  {f.path}
+                </Typography>
+              </Box>
               <TextField
                 select
                 size="small"
-                label="Rig"
-                value={f.rig_id ?? ""}
+                value={rigValue}
                 onChange={(e) =>
                   folderRigMut.mutate({
                     folderId: f.id,
@@ -591,14 +670,16 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                   })
                 }
                 disabled={folderRigMut.isPending}
-                sx={{ minWidth: 160 }}
+                inputProps={{ "aria-label": `Rig for ${folderName(f.path)}` }}
+                SelectProps={{ displayEmpty: true }}
+                sx={{ minWidth: 160, "& .MuiOutlinedInput-root": { height: 32 }, "& em": { color: "text.secondary", fontStyle: "normal" } }}
               >
                 <MenuItem value="">
-                  <em>Not stated</em>
+                  <em>Rig</em>
                 </MenuItem>
                 {rigs.map((r) => (
                   <MenuItem key={r.id} value={r.id}>
-                    {r.name}
+                    {r.name}{r.active ? "" : " (retired)"}
                   </MenuItem>
                 ))}
               </TextField>
@@ -610,8 +691,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                 <TextField
                   select
                   size="small"
-                  label="Target"
-                  value={f.project_target_id ?? ""}
+                  value={targetValue}
                   onChange={(e) =>
                     folderTargetMut.mutate({
                       folderId: f.id,
@@ -619,37 +699,40 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                     })
                   }
                   disabled={folderTargetMut.isPending}
-                  sx={{ minWidth: 170 }}
+                  inputProps={{ "aria-label": `Target for ${folderName(f.path)}` }}
+                  SelectProps={{ displayEmpty: true }}
+                  sx={{ minWidth: 170, "& .MuiOutlinedInput-root": { height: 32 }, "& em": { color: "text.secondary", fontStyle: "normal" } }}
                 >
                   <MenuItem value="">
-                    <em>Auto</em>
+                    <em>Target</em>
                   </MenuItem>
                   {projectTargets.map((t) => (
                     <MenuItem key={t.id} value={t.id}>
                       {targetLabel(t)}
-                    </MenuItem>
-                  ))}
+                  </MenuItem>
+                ))}
                 </TextField>
               )}
-              <Tooltip title="Remove folder">
-                <IconButton size="small" onClick={() => removeMut.mutate(f.id)}>
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Stack>
+              <Button
+                size="small"
+                onClick={() => ingestMut.mutate(f.id)}
+                disabled={ingestMut.isPending}
+                startIcon={scanning ? <CircularProgress size={14} /> : undefined}
+                sx={{ minHeight: 32, whiteSpace: "nowrap" }}
+              >
+                {scanning ? "Scanning…" : "Re-scan"}
+              </Button>
+              <Button
+                size="small"
+                onClick={() => removeMut.mutate(f.id)}
+                sx={{ minHeight: 32, color: "text.secondary", whiteSpace: "nowrap" }}
+              >
+                Remove
+              </Button>
+            </Box>
           );
         })}
-      </Stack>
-
-      <Stack direction="row" spacing={2} sx={{ mb: 2 }} alignItems="center">
-        <Button
-          startIcon={<AddIcon />}
-          variant="outlined"
-          onClick={() => setPickerOpen(true)}
-        >
-          Add folder
-        </Button>
-      </Stack>
+      </Box>
 
       {/* Unclassified frames would otherwise vanish into Others with no signal:
           the frame-type tabs all read (0) and the scan looks like it found
@@ -683,10 +766,10 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           onChange={(_, v: TabKey) => changeTab(v)}
           variant="scrollable"
           scrollButtons="auto"
-          aria-label="catalog category tabs"
+          aria-label="file category tabs"
         >
           {tabs.map((t) => (
-            <Tab key={t.key} value={t.key} label={`${t.label} (${t.count})`} />
+            <Tab key={t.key} value={t.key} label={`${t.label} ${t.count}`} />
           ))}
         </Tabs>
       </Box>
@@ -708,23 +791,22 @@ export default function ProjectCatalogTab({ projectId }: Props) {
               rowGap: 1.5,
             }}
           >
-            {items.length > 0 && (
-              <TextField
-                select
+            {tab === "light" && (
+              <ToggleButtonGroup
+                exclusive
                 size="small"
-                label="Sort by"
-                value={sort ?? "path"}
-                onChange={(e) => setSort(e.target.value as CatalogSort)}
-                // Sizing the gap here rather than on the buttons keeps the row
-                // from collapsing the two groups together when it wraps.
-                sx={{ minWidth: 220, mr: "100px" }}
+                value={lightView}
+                onChange={(_, value: "table" | "thumbnails" | null) => {
+                  if (!value) return;
+                  setLightView(value);
+                  clearSelection();
+                }}
+                aria-label="View"
+                sx={{ ml: "auto", "& .MuiToggleButton-root": { height: 32, px: 1.25, textTransform: "none", fontSize: "13px" } }}
               >
-                {CATALOG_SORTS.map((s) => (
-                  <MenuItem key={s.value} value={s.value}>
-                    {s.label}
-                  </MenuItem>
-                ))}
-              </TextField>
+                <ToggleButton value="table" aria-label="Table view"><ViewListIcon fontSize="small" sx={{ mr: 0.5 }} />Table</ToggleButton>
+                <ToggleButton value="thumbnails" aria-label="Thumbnails view"><GridViewIcon fontSize="small" sx={{ mr: 0.5 }} />Thumbnails</ToggleButton>
+              </ToggleButtonGroup>
             )}
 
             {/* Never analyzed, or newly-scanned frames since the last run. */}
@@ -779,7 +861,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
 
             {(qCounts?.unreadable ?? 0) > 0 && !analyzeProgress.running && (
               <Tooltip title="These files could not be read when they were last measured — most often a volume that was offline. Re-analyze to try them again.">
-                <Typography sx={{ fontSize: 12.5, color: "text.disabled", cursor: "help" }}>
+                <Typography sx={{ fontSize: 12.5, color: "text.disabled" }}>
                   {qCounts?.unreadable} unreadable
                 </Typography>
               </Tooltip>
@@ -835,7 +917,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                   checked={unclassifiedOnly}
                   onChange={(e) => {
                     setUnclassifiedOnly(e.target.checked);
-                    setSelected(new Set());
+                    clearSelection();
                   }}
                 />
               }
@@ -854,10 +936,11 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           Lights show name · count; Flats add total exposure. */}
       {showFilterPills && filterStats.length > 0 && (
         <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
-          {filterStats.map((s) => {
+          {orderedFilterStats.map((s) => {
             const name = s.filter_name ?? "—";
+            const resolvedFilter = resolveFilterLabel(name);
             const active = filterName === s.filter_name;
-            const label =
+            const labelText =
               tab === "flat"
                 ? `${name} · ${s.count} · ${formatExposure(s.total_seconds)}`
                 : `${name} · ${s.count}`;
@@ -868,7 +951,12 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                 clickable
                 variant={active ? "filled" : "outlined"}
                 color="primary"
-                label={label}
+                label={
+                  <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    <FilterSwatch filter={resolvedFilter} />
+                    {labelText}
+                  </Box>
+                }
                 onClick={() => changeFilterPill(active ? null : s.filter_name)}
               />
             );
@@ -894,9 +982,10 @@ export default function ProjectCatalogTab({ projectId }: Props) {
             size="small"
             checked={allSelected}
             indeterminate={selected.size > 0 && !allSelected}
-            onChange={() =>
-              setSelected(allSelected ? new Set() : new Set(selectableIds))
-            }
+            onChange={() => {
+              if (allSelected) clearSelection();
+              else setSelected(new Set(selectableKeys));
+            }}
             inputProps={{ "aria-label": "select all loaded frames" }}
           />
           <Typography variant="body2" color="text.secondary">
@@ -913,7 +1002,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                   Correct {selected.size}
                 </Button>
               )}
-              {tab === "others" && (
+              {tab === "others" && selectedFrameIds.length > 0 && (
                 <Button size="small" variant="outlined" onClick={() => setCorrectTarget("bulk")}>
                   Set frame type
                 </Button>
@@ -926,7 +1015,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
               >
                 Remove {selected.size}
               </Button>
-              <Button size="small" onClick={() => setSelected(new Set())}>
+              <Button size="small" onClick={clearSelection}>
                 Clear
               </Button>
             </>
@@ -934,17 +1023,71 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         </Stack>
       )}
 
-      <CatalogCardList
-        key={`${tab}:${filterName ?? ""}`}
-        items={items}
-        getKey={(it) => (isMaster(it) ? it.id : `${it.kind}-${it.id}`)}
-        renderItem={renderItem}
-        hasMore={hasNextPage}
-        fetchingMore={isFetchingNextPage}
-        onLoadMore={fetchNextPage}
-        loading={isLoading}
-        emptyMessage="Nothing in this category yet."
-      />
+      {tab === "masters" ? (
+        <CatalogMasterTable
+          key={tab}
+          rows={items as CatalogMaster[]}
+          timezone={tz}
+          selected={selected}
+          onToggleSelect={toggleSelect}
+          onOpen={openInAnalyzer}
+          hasMore={Boolean(hasNextPage)}
+          fetchingMore={isFetchingNextPage}
+          onLoadMore={fetchNextPage}
+          loading={isLoading}
+        />
+      ) : tab === "others" ? (
+        <CatalogOtherTable
+          key={`${tab}:${unclassifiedOnly}`}
+          rows={items as CatalogOther[]}
+          projectId={projectId}
+          timezone={tz}
+          selected={selected}
+          onToggleSelect={toggleSelect}
+          onOpen={openInAnalyzer}
+          onCorrect={correctOther}
+          hasMore={Boolean(hasNextPage)}
+          fetchingMore={isFetchingNextPage}
+          onLoadMore={fetchNextPage}
+          loading={isLoading}
+        />
+      ) : tab === "light" && lightView === "thumbnails" ? (
+        <CatalogThumbnailSheet
+          key={`${tab}:${filterName ?? ""}:${sort}`}
+          rows={items as CatalogFrame[]}
+          projectId={projectId}
+          timezone={tz}
+          showNightHeadings={sort === "date_desc" || sort === "date"}
+          onOpen={openInAnalyzer}
+          hasMore={Boolean(hasNextPage)}
+          fetchingMore={isFetchingNextPage}
+          onLoadMore={fetchNextPage}
+          loading={isLoading}
+        />
+      ) : (
+        <CatalogFrameTable
+          key={`${tab}:${filterName ?? ""}:${sort}`}
+          rows={items as CatalogFrame[]}
+          projectId={projectId}
+          timezone={tz}
+          sort={sort}
+          calibration={tab !== "light"}
+          showRig={showRigColumn}
+          showTarget={showTargetColumn}
+          selected={selected}
+          onToggleSelect={toggleSelect}
+          onSort={(next) => {
+            setSort(next);
+            clearSelection();
+          }}
+          onOpen={openInAnalyzer}
+          onCorrect={setCorrectTarget}
+          hasMore={Boolean(hasNextPage)}
+          fetchingMore={isFetchingNextPage}
+          onLoadMore={fetchNextPage}
+          loading={isLoading}
+        />
+      )}
 
       <FileBrowser
         open={pickerOpen}
@@ -993,7 +1136,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
             </MenuItem>
             {rigs.map((r) => (
               <MenuItem key={r.id} value={r.id}>
-                {r.name}
+                {r.name}{r.active ? "" : " (retired)"}
               </MenuItem>
             ))}
           </TextField>
@@ -1083,11 +1226,11 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         onClose={() => setCorrectTarget(null)}
         projectId={projectId}
         frame={correctTarget === "bulk" ? null : correctTarget}
-        frameIds={correctTarget === "bulk" ? [...selected] : []}
+        frameIds={correctTarget === "bulk" ? selectedFrameIds : []}
         onSaved={(updated) => {
           if (updated) {
             // A frame_type correction moves the frame to a different category
-            // tab, so patching it in place would leave a stale card behind in
+            // tab, so patching it in place would leave a stale row behind in
             // this one while the header counts already moved. Only the in-place
             // patch is safe when the type didn't change.
             if (correctTarget !== "bulk" && updated.frame_type !== correctTarget?.frame_type) {
@@ -1100,8 +1243,8 @@ export default function ProjectCatalogTab({ projectId }: Props) {
             // Bulk changes move frames between category tabs, so the counts and
             // the list itself both shift — a full refresh is correct here.
             invalidateCatalog();
-            setSelected(new Set());
-            setSnack(`Corrected ${selected.size} frames`);
+            clearSelection();
+            setSnack(`Corrected ${selectedFrameIds.length} frames`);
           }
         }}
       />

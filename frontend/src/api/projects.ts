@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import type { RigParts, RigPartsInput } from "./rigs";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,54 @@ export interface ThumbnailCropDef {
 export interface ProjectRigRef {
   id: number;
   name: string;
+  active: boolean;
+}
+
+export interface ProjectSoftwareRef {
+  id: number;
+  software_id: number;
+  name: string;
+  category: string;
+  manufacturer_name: string | null;
+  software_version_id: number | null;
+  version: string | null;
+  active: boolean;
+}
+
+export interface ProjectRigSetupParts extends RigParts {
+  effective_focal_length_mm: number;
+  effective_focal_ratio: number;
+  pixel_size_um: number;
+  sensor_resolution_x: number;
+  sensor_resolution_y: number;
+  image_scale_arcsec_per_pixel: number;
+  field_of_view_deg: [number, number];
+}
+
+export interface ProjectSetup {
+  rig_setup_id: number | null;
+  until_at: string | null;
+  since_at: string | null;
+  night_count: number;
+  parts: ProjectRigSetupParts;
+}
+
+export interface ProjectSetupOption {
+  rig_setup_id: number | null;
+  until_at: string | null;
+  camera_name: string;
+  image_scale_arcsec_per_pixel: number;
+}
+
+export interface ProjectRigSetups {
+  rig_id: number;
+  rig_name: string;
+  declared: boolean;
+  setups: ProjectSetup[];
+  setup_options: ProjectSetupOption[];
+  base_parts: RigPartsInput;
+  change: RigPartsInput | null;
+  changed_groups: string[];
 }
 
 export interface Project {
@@ -48,6 +97,7 @@ export interface Project {
   location_id: number | null;
   location_name: string | null;
   rigs: ProjectRigRef[];
+  software: ProjectSoftwareRef[];
   images: ProjectImage[];
   thumbnail_crops: ThumbnailCrop[];
   solved_at: string | null;
@@ -137,6 +187,42 @@ export async function setProjectRigs(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rig_ids: rigIds }),
+  });
+}
+
+export async function fetchProjectRigSetups(id: number): Promise<ProjectRigSetups[]> {
+  return apiFetch<ProjectRigSetups[]>(`/projects/${id}/rig-setups`);
+}
+
+export async function setProjectRigChange(
+  projectId: number,
+  rigId: number,
+  parts: RigPartsInput,
+): Promise<ProjectRigSetups> {
+  return apiFetch<ProjectRigSetups>(`/projects/${projectId}/rigs/${rigId}/change`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parts),
+  });
+}
+
+export async function deleteProjectRigChange(
+  projectId: number,
+  rigId: number,
+): Promise<void> {
+  return apiFetch<void>(`/projects/${projectId}/rigs/${rigId}/change`, {
+    method: "DELETE",
+  });
+}
+
+export async function setProjectSoftware(
+  projectId: number,
+  entries: { software_id: number; software_version_id: number | null }[],
+): Promise<Project> {
+  return apiFetch<Project>(`/projects/${projectId}/software`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entries }),
   });
 }
 

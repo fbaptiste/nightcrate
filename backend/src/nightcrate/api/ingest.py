@@ -86,6 +86,7 @@ from nightcrate.services.ingest_scanner import (
 from nightcrate.services.ingest_sessions import (
     assign_rigs_and_sessions,
     folder_prefix,
+    observing_night,
     project_geo_timezone,
 )
 from nightcrate.services.line_names import canonicalize_line_name
@@ -97,6 +98,7 @@ _QUALITY_PREFIX = "[frame-quality]"
 # Module-level tuple: ruff format strips parens from inline ``except (A, B):`` on
 # py3.14, producing invalid Py2 syntax. Referencing a constant sidesteps it.
 _COERCE_ERRORS = (TypeError, ValueError)
+_OBSERVING_NIGHT_ERRORS = (TypeError, ValueError, OverflowError)
 
 # Arcsec per pixel for a frame, as a SQL expression over the joins in
 # _FRAME_SELECT. 206.265 converts (micron / millimetre) to arcseconds.
@@ -123,7 +125,12 @@ _PIXEL_SCALE_SQL = (
 # blanks sort last.
 _FRAME_SORTS = {
     "path": "ORDER BY fl.path, sf.date_obs_utc, sf.id",
-    "date": "ORDER BY sf.date_obs_utc, sf.id",
+    "date": (
+        "ORDER BY julianday(sf.date_obs_utc) IS NULL, julianday(sf.date_obs_utc) ASC, sf.id ASC"
+    ),
+    "date_desc": (
+        "ORDER BY julianday(sf.date_obs_utc) IS NULL, julianday(sf.date_obs_utc) DESC, sf.id DESC"
+    ),
     # Worst focus/seeing first — the point of the quality pass.
     # Pixels: right within one rig, misleading across two — a long focal length
     # inflates every frame's figure. The arcsec orders below are the honest ones
@@ -143,6 +150,7 @@ _FRAME_SORTS = {
     "background_desc": (
         "ORDER BY sf.background_adu IS NULL, sf.background_adu DESC, fl.path, sf.id"
     ),
+    "background_asc": ("ORDER BY sf.background_adu IS NULL, sf.background_adu ASC, fl.path, sf.id"),
 }
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
@@ -896,7 +904,9 @@ async def catalog_frames(
             f"GROUP BY sf.id {order_clause} LIMIT ? OFFSET ?",
             (project_id, *scope_params, limit, offset),
         )
-        rows = [_catalog_frame(row_to_dict(r)) for r in await cursor.fetchall()]
+        frame_rows = await cursor.fetchall()
+        night_tz = await project_geo_timezone(conn, project_id)
+        rows = [_catalog_frame(row_to_dict(r), night_tz) for r in frame_rows]
         tz = await _project_display_tz(conn, project_id)
         return CatalogFramesPage(rows=rows, total=total, timezone=tz)
 
@@ -1324,7 +1334,8 @@ async def correct_frame_classification(
             _FRAME_SELECT + "WHERE sf.id = ? GROUP BY sf.id",  # nosec B608 - fixed literal
             (frame_id,),
         )
-        return _catalog_frame(row_to_dict(await cursor.fetchone()))
+        night_tz = await project_geo_timezone(conn, project_id)
+        return _catalog_frame(row_to_dict(await cursor.fetchone()), night_tz)
 
 
 @router.post(
@@ -1597,20 +1608,25 @@ _FRAME_SELECT = (
     "LEFT JOIN project_target pt ON pt.id = sf.project_target_id "
     "LEFT JOIN dso d ON d.id = pt.dso_id "
     "LEFT JOIN rig r ON r.id = sf.rig_id "
-    # Optics + sensor of the tagged rig, for the pixel scale above. All LEFT:
+    "LEFT JOIN sub_frame_equipment fe ON fe.sub_frame_id = sf.id "
+    # Effective optics + sensor for the pixel scale above. All LEFT:
     # an untagged rig or an incomplete equipment record must not drop the frame.
-    "LEFT JOIN telescope_configuration tc ON tc.id = r.telescope_configuration_id "
-    "LEFT JOIN camera cam ON cam.id = r.camera_id "
+    "LEFT JOIN telescope_configuration tc ON tc.id = fe.telescope_configuration_id "
+    "LEFT JOIN camera cam ON cam.id = fe.camera_id "
     "LEFT JOIN sensor sen ON sen.id = cam.sensor_id "
     "LEFT JOIN file_location fl ON fl.sub_frame_id = sf.id "
 )
 
 
-def _catalog_frame(d: dict) -> CatalogFrame:
+def _catalog_frame(d: dict, night_tz: str | None) -> CatalogFrame:
     scale = d.get("pixel_scale_arcsec")
     binning = None
     if d.get("binning_x") and d.get("binning_y"):
         binning = f"{d['binning_x']}x{d['binning_y']}"
+    try:
+        night = observing_night(d["date_obs_utc"], night_tz) if d.get("date_obs_utc") else None
+    except _OBSERVING_NIGHT_ERRORS:
+        night = None
     return CatalogFrame(
         id=d["id"],
         kind="sub_frame",
@@ -1626,6 +1642,7 @@ def _catalog_frame(d: dict) -> CatalogFrame:
         image_height=d.get("image_height"),
         file_size_bytes=d.get("file_size_bytes"),
         date_obs_utc=d.get("date_obs_utc"),
+        observing_night=night,
         accepted=bool(d["accepted"]) if d.get("accepted") is not None else None,
         rig_name=d.get("rig_name"),
         project_target_id=d.get("project_target_id"),

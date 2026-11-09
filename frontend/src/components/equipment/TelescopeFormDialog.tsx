@@ -20,11 +20,12 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import StarIcon from "@mui/icons-material/Star";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseOptionalFloat } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
+import EquipmentUsageNote from "@/components/equipment/shared/EquipmentUsageNote";
 import {
   createTelescope,
   updateTelescope,
@@ -190,6 +191,7 @@ export default function TelescopeFormDialog({
   onClose,
   onSaved,
 }: TelescopeFormDialogProps) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isMine, setIsMine] = useState<boolean>(false);
   const [configs, setConfigs] = useState<ConfigEntry[]>([emptyConfig()]);
@@ -362,6 +364,14 @@ export default function TelescopeFormDialog({
       setSnackMessage(isEdit ? "OTA updated." : "OTA added.");
       setSnackSeverity("info");
       setSnackOpen(true);
+      if (telescope) {
+        void queryClient.invalidateQueries({ queryKey: ["equipment-usage", "telescope", telescope.id] });
+        for (const config of telescope.configurations) {
+          void queryClient.invalidateQueries({
+            queryKey: ["equipment-usage", "telescope_configuration", config.id],
+          });
+        }
+      }
       onSaved();
       onClose();
     } catch (err) {
@@ -391,6 +401,7 @@ export default function TelescopeFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <EquipmentUsageNote kind="telescope" itemId={telescope?.id} />
             <MineCheckbox value={isMine} onChange={setIsMine} />
 
             {/* Row 1: Model name + Manufacturer */}
@@ -555,6 +566,10 @@ export default function TelescopeFormDialog({
 
                     <AccordionDetails>
                       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <EquipmentUsageNote
+                          kind="telescope_configuration"
+                          itemId={config.id}
+                        />
                         {/* Config name + Accessory */}
                         <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
                           <TextField

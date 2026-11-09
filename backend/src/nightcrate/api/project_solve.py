@@ -38,6 +38,7 @@ from nightcrate.services.plate_solve import run_solve, validate_astap_path
 from nightcrate.services.plate_solve_models import AstapLaunchError, ImageReadError
 from nightcrate.services.project_images import VARIANT_SIZES, generate_rendered_images
 from nightcrate.services.rig_calculators import estimate_focal_length_mm
+from nightcrate.services.rig_setups import project_setups
 
 logger = logging.getLogger("nightcrate")
 
@@ -158,44 +159,38 @@ async def _load_focal_length_estimates(
     ):
         return []
 
-    cursor = await conn.execute(
-        """
-        SELECT
-            rs.id AS rig_id,
-            rs.name AS rig_name,
-            rs.camera_name,
-            rs.pixel_size_um,
-            rs.effective_focal_length_mm AS rig_focal_length_mm
-        FROM (
-            SELECT rig_id
-            FROM project_rig
-            WHERE project_id = ?
-            UNION
-            SELECT rig_id
-            FROM project_session
-            WHERE project_id = ? AND rig_id IS NOT NULL
-        ) project_rigs
-        JOIN rig r ON r.id = project_rigs.rig_id
-        JOIN rig_summary rs ON rs.id = r.id
-        ORDER BY r.sort_order, r.name COLLATE NOCASE, r.id
-        """,
-        (project_id, project_id),
-    )
     estimates: list[FocalLengthEstimate] = []
-    for row in await cursor.fetchall():
-        estimated = estimate_focal_length_mm(row["pixel_size_um"], pixel_scale_arcsec)
-        if estimated is None:
-            continue
-        estimates.append(
-            FocalLengthEstimate(
-                rig_id=row["rig_id"],
-                rig_name=row["rig_name"],
-                camera_name=row["camera_name"],
-                pixel_size_um=row["pixel_size_um"],
-                rig_focal_length_mm=row["rig_focal_length_mm"],
-                estimated_focal_length_mm=estimated,
+    for rig in await project_setups(conn, project_id):
+        for setup in rig.setups:
+            cursor = await conn.execute(
+                """
+                SELECT cam.model_name AS camera_name, sen.pixel_size_um,
+                       tc.effective_focal_length_mm AS rig_focal_length_mm
+                FROM camera cam
+                JOIN sensor sen ON sen.id = cam.sensor_id
+                JOIN telescope_configuration tc ON tc.id = ?
+                WHERE cam.id = ?
+                """,
+                (setup.parts.telescope_configuration_id, setup.parts.camera_id),
             )
-        )
+            row = await cursor.fetchone()
+            if row is None:
+                continue
+            estimated = estimate_focal_length_mm(row["pixel_size_um"], pixel_scale_arcsec)
+            if estimated is None:
+                continue
+            estimates.append(
+                FocalLengthEstimate(
+                    rig_id=rig.rig_id,
+                    rig_setup_id=setup.rig_setup_id,
+                    setup_until_at=setup.until_at,
+                    rig_name=rig.rig_name,
+                    camera_name=row["camera_name"],
+                    pixel_size_um=row["pixel_size_um"],
+                    rig_focal_length_mm=row["rig_focal_length_mm"],
+                    estimated_focal_length_mm=estimated,
+                )
+            )
     return estimates
 
 
