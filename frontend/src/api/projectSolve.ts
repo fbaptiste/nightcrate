@@ -26,6 +26,8 @@ export interface IdentifiedDso {
 
 export interface FocalLengthEstimate {
   rig_id: number;
+  rig_setup_id: number | null;
+  setup_until_at: string | null;
   rig_name: string;
   camera_name: string;
   pixel_size_um: number;

@@ -1,6 +1,7 @@
 """Rig management API — CRUD for imaging rig templates."""
 
 import logging
+from dataclasses import replace
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -12,6 +13,9 @@ from nightcrate.api.rig_models import (
     RigCreate,
     RigMineToggle,
     RigOut,
+    RigPartsIn,
+    RigPartsOut,
+    RigSetupOut,
     RigUpdate,
 )
 from nightcrate.db.session import get_db
@@ -21,10 +25,29 @@ from nightcrate.services.rig_calculators import (
     compute_rig_calculators,
     resolve_seeing,
 )
+from nightcrate.services.rig_setups import (
+    RigParts,
+    apply_correction_to_earlier_setups,
+    changed_groups,
+    list_rig_setups,
+    read_rig_parts,
+    rig_usage,
+    save_earlier_setup,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rigs", tags=["Rigs"])
+
+SOFTWARE_CATEGORY_ORDER_RIG = (
+    "capture",
+    "guiding",
+    "plate_solving",
+    "planetarium",
+    "utility",
+    "other",
+    "processing",
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -145,6 +168,56 @@ async def _validate_filter_slots(conn, slots: list, filter_wheel_id: int | None)
                     f"of {num_positions} positions"
                 ),
             )
+
+
+async def _validate_rig_parts(conn, parts: RigPartsIn) -> None:
+    """Validate every id and uniqueness constraint in a complete parts payload."""
+    slots = [_slot_as_dict(slot) for slot in parts.filter_slots]
+    slot_numbers = [slot["slot_number"] for slot in slots]
+    if len(slot_numbers) != len(set(slot_numbers)):
+        raise HTTPException(status_code=422, detail="filter_slots has duplicate slot numbers")
+    filter_ids = [slot["filter_id"] for slot in slots]
+    if len(filter_ids) != len(set(filter_ids)):
+        raise HTTPException(status_code=422, detail="filter_slots has duplicate filters")
+
+    references = (
+        ("telescope_configuration_id", "telescope_configuration", parts.telescope_configuration_id),
+        ("camera_id", "camera", parts.camera_id),
+        ("filter_wheel_id", "filter_wheel", parts.filter_wheel_id),
+        ("single_filter_id", "filter", parts.single_filter_id),
+        ("mount_id", "mount", parts.mount_id),
+        ("focuser_id", "focuser", parts.focuser_id),
+        ("oag_id", "oag", parts.oag_id),
+        ("guide_scope_id", "guide_scope", parts.guide_scope_id),
+        ("guide_camera_id", "camera", parts.guide_camera_id),
+        ("computer_id", "computer", parts.computer_id),
+    )
+    for field, table, item_id in references:
+        if item_id is None:
+            continue
+        cursor = await conn.execute(
+            f"SELECT 1 FROM {table} WHERE id = ?",  # nosec B608 - internal table allow-list
+            (item_id,),
+        )
+        if await cursor.fetchone() is None:
+            raise HTTPException(status_code=422, detail=f"{field} references a missing item")
+
+    for index, filter_id in enumerate(filter_ids):
+        cursor = await conn.execute("SELECT 1 FROM filter WHERE id = ?", (filter_id,))
+        if await cursor.fetchone() is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"filter_slots[{index}].filter_id references a missing item",
+            )
+    for index, software_id in enumerate(parts.software_ids):
+        cursor = await conn.execute("SELECT 1 FROM software WHERE id = ?", (software_id,))
+        if await cursor.fetchone() is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"software_ids[{index}] references a missing item",
+            )
+
+    await _validate_filter_slots(conn, parts.filter_slots, parts.filter_wheel_id)
 
 
 async def _check_warnings(conn, rig_data: dict) -> list[dict]:
@@ -400,6 +473,180 @@ async def _save_filter_slots(conn, rig_id: int, slots: list) -> None:
         )
 
 
+async def _parts_response(conn, parts: RigParts) -> RigPartsOut:
+    """Resolve stored part ids to the same display names used by a rig response."""
+    cursor = await conn.execute(
+        """
+        SELECT t.model_name AS telescope_name, tc.config_name AS telescope_config_name,
+               cam.model_name AS camera_name, fw.model_name AS filter_wheel_name,
+               f.model_name AS single_filter_name, mt.model_name AS mount_name,
+               foc.model_name AS focuser_name, o.model_name AS oag_name,
+               gs.model_name AS guide_scope_name, gc.model_name AS guide_camera_name,
+               comp.model_name AS computer_name
+        FROM telescope_configuration tc
+        JOIN telescope t ON t.id = tc.telescope_id
+        JOIN camera cam ON cam.id = ?
+        LEFT JOIN filter_wheel fw ON fw.id = ?
+        LEFT JOIN filter f ON f.id = ?
+        LEFT JOIN mount mt ON mt.id = ?
+        LEFT JOIN focuser foc ON foc.id = ?
+        LEFT JOIN oag o ON o.id = ?
+        LEFT JOIN guide_scope gs ON gs.id = ?
+        LEFT JOIN camera gc ON gc.id = ?
+        LEFT JOIN computer comp ON comp.id = ?
+        WHERE tc.id = ?
+        """,
+        (
+            parts.camera_id,
+            parts.filter_wheel_id,
+            parts.single_filter_id,
+            parts.mount_id,
+            parts.focuser_id,
+            parts.oag_id,
+            parts.guide_scope_id,
+            parts.guide_camera_id,
+            parts.computer_id,
+            parts.telescope_configuration_id,
+        ),
+    )
+    names = await cursor.fetchone()
+    if names is None:
+        raise ValueError("rig parts refer to missing required equipment")
+
+    slots: list[dict] = []
+    for slot_number, filter_id in sorted(parts.filter_slots):
+        cursor = await conn.execute(
+            """
+            SELECT f.model_name AS filter_name, ft.display_name AS filter_type_name
+            FROM filter f JOIN filter_type ft ON ft.id = f.filter_type_id
+            WHERE f.id = ?
+            """,
+            (filter_id,),
+        )
+        filter_row = await cursor.fetchone()
+        if filter_row is None:
+            continue
+        cursor = await conn.execute(
+            "SELECT line_name FROM filter_passband WHERE filter_id = ? ORDER BY line_name",
+            (filter_id,),
+        )
+        slots.append(
+            {
+                "slot_number": slot_number,
+                "filter_id": filter_id,
+                "filter_name": filter_row["filter_name"],
+                "filter_type_name": filter_row["filter_type_name"],
+                "passbands": [row["line_name"] for row in await cursor.fetchall()],
+            }
+        )
+
+    software = []
+    if parts.software_ids:
+        placeholders = ",".join("?" * len(parts.software_ids))
+        cursor = await conn.execute(
+            f"SELECT id, name, category FROM software WHERE id IN ({placeholders}) "  # nosec B608
+            "ORDER BY name",
+            tuple(sorted(parts.software_ids)),
+        )
+        software = [row_to_dict(row) for row in await cursor.fetchall()]
+
+    return RigPartsOut(
+        **{
+            column: getattr(parts, column)
+            for column in (
+                "telescope_configuration_id",
+                "camera_id",
+                "filter_wheel_id",
+                "single_filter_id",
+                "mount_id",
+                "focuser_id",
+                "oag_id",
+                "guide_scope_id",
+                "guide_camera_id",
+                "computer_id",
+            )
+        },
+        **row_to_dict(names),
+        filter_slots=slots,
+        software=software,
+    )
+
+
+async def _setup_response(conn, summary) -> RigSetupOut:
+    return RigSetupOut(
+        id=summary.id,
+        until_at=summary.until_at,
+        parts=await _parts_response(conn, summary.parts),
+        project_count=summary.project_count,
+        night_count=summary.night_count,
+    )
+
+
+def _updated_parts(
+    old: RigParts, updates: dict, filter_slots: list | None, software_ids: list[int] | None
+) -> RigParts:
+    values = {
+        column: updates.get(column, getattr(old, column))
+        for column in (
+            "telescope_configuration_id",
+            "camera_id",
+            "filter_wheel_id",
+            "single_filter_id",
+            "mount_id",
+            "focuser_id",
+            "oag_id",
+            "guide_scope_id",
+            "guide_camera_id",
+            "computer_id",
+        )
+    }
+    slots = old.filter_slots
+    if updates.get("filter_wheel_id", old.filter_wheel_id) is None:
+        slots = frozenset()
+    elif filter_slots is not None:
+        slots = frozenset(
+            (_slot_as_dict(slot)["slot_number"], _slot_as_dict(slot)["filter_id"])
+            for slot in filter_slots
+        )
+    return replace(
+        old,
+        **values,
+        filter_slots=slots,
+        software_ids=(old.software_ids if software_ids is None else frozenset(software_ids)),
+    )
+
+
+async def _group_display(conn, parts: RigParts, group: str) -> str:
+    out = await _parts_response(conn, parts)
+    if group == "telescope":
+        return f"{out.telescope_name} — {out.telescope_config_name}"
+    if group == "camera":
+        return out.camera_name
+    if group == "filters":
+        if out.filter_wheel_name:
+            labels = ", ".join(slot.filter_name for slot in out.filter_slots)
+            return f"{out.filter_wheel_name}: {labels}" if labels else out.filter_wheel_name
+        return out.single_filter_name or "None"
+    if group == "guider":
+        return out.oag_name or out.guide_scope_name or "None"
+    if group == "software":
+        return ", ".join(item.name for item in out.software) or "None"
+    name = getattr(out, f"{group}_name")
+    return name or "None"
+
+
+async def _update_rig_row(conn, rig_id: int, updates: dict) -> None:
+    if not updates:
+        return
+    set_clause = ", ".join(f"{key} = ?" for key in updates)
+    values = list(updates.values()) + [rig_id]
+    with integrity_guard(conflict_detail="A rig with that name already exists"):
+        await conn.execute(
+            f"UPDATE rig SET {set_clause} WHERE id = ?",  # nosec B608
+            values,
+        )
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -554,12 +801,19 @@ async def get_equipment_options():
         computers = [_row_to_dict(r) for r in await comp_rows.fetchall()]
 
         # Software
+        category_order = " ".join(
+            f"WHEN '{category}' THEN {rank}"
+            for rank, category in enumerate(SOFTWARE_CATEGORY_ORDER_RIG)
+        )
         sw_rows = await conn.execute(
-            """
+            f"""
             SELECT id, name, category, is_mine FROM software
             WHERE active = 1
-            ORDER BY name
-            """
+            ORDER BY CASE category
+                {category_order}
+                ELSE {len(SOFTWARE_CATEGORY_ORDER_RIG)} END,
+                name COLLATE NOCASE, id
+            """  # nosec B608 - category values are a module constant
         )
         software = [_row_to_dict(r) for r in await sw_rows.fetchall()]
 
@@ -697,60 +951,92 @@ async def create_rig(body: RigCreate):
 async def update_rig(rig_id: int, body: RigUpdate):
     """Update an existing rig."""
     async with get_db() as conn:
-        # Verify rig exists
-        existing_row = await conn.execute("SELECT * FROM rig WHERE id = ?", (rig_id,))
-        existing = await existing_row.fetchone()
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Rig not found")
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing_row = await conn.execute("SELECT * FROM rig WHERE id = ?", (rig_id,))
+            existing = await existing_row.fetchone()
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Rig not found")
 
-        updates = body.model_dump(exclude_unset=True)
-        filter_slots = updates.pop("filter_slots", None)
-        software_ids = updates.pop("software_ids", None)
+            old_parts = await read_rig_parts(conn, rig_id)
+            updates = body.model_dump(exclude_unset=True)
+            apply_mode = updates.pop("apply_mode", None)
+            filter_slots = updates.pop("filter_slots", None)
+            software_ids = updates.pop("software_ids", None)
+            effective_fw_id = updates.get("filter_wheel_id", existing["filter_wheel_id"])
+            slots_to_validate = [] if effective_fw_id is None else filter_slots
+            if slots_to_validate is not None:
+                await _validate_filter_slots(conn, slots_to_validate, effective_fw_id)
 
-        # Determine effective filter_wheel_id for validation
-        effective_fw_id = updates.get("filter_wheel_id", existing["filter_wheel_id"])
-
-        # If filter_wheel_id is being set to None, clear filter slots
-        if "filter_wheel_id" in updates and updates["filter_wheel_id"] is None:
-            await conn.execute("DELETE FROM rig_filter_slot WHERE rig_id = ?", (rig_id,))
-            filter_slots = None  # Don't try to save slots
-
-        # Validate filter slots if provided
-        if filter_slots is not None:
-            await _validate_filter_slots(conn, filter_slots, effective_fw_id)
-
-        # Handle default flag
-        if updates.get("is_default"):
-            updates["is_default"] = 1
-            await _ensure_single_default(conn, rig_id)
-        elif "is_default" in updates:
-            updates["is_default"] = 1 if updates["is_default"] else 0
-
-        # Strip name if provided
-        if "name" in updates and updates["name"]:
-            updates["name"] = updates["name"].strip()
-
-        if updates:
-            set_clause = ", ".join(f"{k} = ?" for k in updates)
-            values = list(updates.values()) + [rig_id]
-            with integrity_guard(conflict_detail="A rig with that name already exists"):
-                await conn.execute(
-                    f"UPDATE rig SET {set_clause} WHERE id = ?",  # nosec B608 - table name from internal allow-list, not user input
-                    values,
+            new_parts = _updated_parts(old_parts, updates, filter_slots, software_ids)
+            groups = changed_groups(old_parts, new_parts)
+            usage = await rig_usage(conn, rig_id) if groups else None
+            if groups and usage and usage.project_count > 0 and apply_mode is None:
+                changes = [
+                    {
+                        "group": group,
+                        "before": await _group_display(conn, old_parts, group),
+                        "after": await _group_display(conn, new_parts, group),
+                    }
+                    for group in groups
+                ]
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "rig_change_needs_choice",
+                        "project_count": usage.project_count,
+                        "night_count": usage.night_count,
+                        "changes": changes,
+                    },
                 )
 
-        # Replace filter slots if provided
-        if filter_slots is not None:
-            await _save_filter_slots(conn, rig_id, filter_slots)
+            if groups and usage and usage.project_count > 0 and apply_mode == "from_now_on":
+                cursor = await conn.execute("SELECT datetime('now') AS now")
+                await save_earlier_setup(conn, rig_id, until_at=(await cursor.fetchone())["now"])
 
-        # Replace software links if provided
-        if software_ids is not None:
-            await _save_software(conn, rig_id, software_ids)
+            if updates.get("is_default"):
+                updates["is_default"] = 1
+                await _ensure_single_default(conn, rig_id)
+            elif "is_default" in updates:
+                updates["is_default"] = int(bool(updates["is_default"]))
+            if "name" in updates and updates["name"]:
+                updates["name"] = updates["name"].strip()
 
-        await conn.commit()
+            if "filter_wheel_id" in updates and updates["filter_wheel_id"] is None:
+                await conn.execute("DELETE FROM rig_filter_slot WHERE rig_id = ?", (rig_id,))
+                filter_slots = None
+            await _update_rig_row(conn, rig_id, updates)
+            if filter_slots is not None:
+                await _save_filter_slots(conn, rig_id, filter_slots)
+            if software_ids is not None:
+                await _save_software(conn, rig_id, software_ids)
 
-        rig_row = await _get_rig_summary(conn, rig_id)
-        return await _build_rig_response(conn, rig_row)
+            if groups and apply_mode == "existing":
+                await apply_correction_to_earlier_setups(conn, rig_id, old_parts, new_parts)
+
+            rig_row = await _get_rig_summary(conn, rig_id)
+            response = await _build_rig_response(conn, rig_row)
+            await conn.commit()
+            return response
+        except HTTPException:
+            await conn.rollback()
+            raise
+        except Exception as exc:
+            await conn.rollback()
+            logger.exception("[rigs] failed to update rig %d", rig_id)
+            raise HTTPException(status_code=500, detail="Failed to update rig") from exc
+        except BaseException:
+            await conn.rollback()
+            raise
+
+
+@router.get("/{rig_id}/setups", response_model=list[RigSetupOut])
+async def get_rig_setups(rig_id: int):
+    async with get_db() as conn:
+        await _get_rig_summary(conn, rig_id)
+        return [
+            await _setup_response(conn, summary) for summary in await list_rig_setups(conn, rig_id)
+        ]
 
 
 async def _seeded_rig_is_untouched(conn, rig_id: int) -> bool:
@@ -858,8 +1144,8 @@ async def clone_rig(rig_id: int):
                 name, description, telescope_configuration_id, camera_id,
                 filter_wheel_id, single_filter_id, mount_id, focuser_id,
                 oag_id, guide_scope_id, guide_camera_id, computer_id,
-                is_default, notes, sort_order
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                is_default, notes, sort_order, is_mine
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1)""",
             (
                 clone_name,
                 original["description"],

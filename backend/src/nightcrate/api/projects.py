@@ -21,6 +21,8 @@ from nightcrate.api.project_models import (
     ProjectResponse,
     ProjectRigRef,
     ProjectRigsSet,
+    ProjectSoftwareRef,
+    ProjectSoftwareSet,
     ProjectUpdate,
     ReorderImagesRequest,
     ThumbnailCropDef,
@@ -95,11 +97,35 @@ async def _fetch_project_with_images(conn, project_id: int) -> ProjectResponse:
         location_name = loc_row["name"] if loc_row else None
 
     cursor = await conn.execute(
-        "SELECT r.id, r.name FROM project_rig pr JOIN rig r ON r.id = pr.rig_id"
+        "SELECT r.id, r.name, r.active FROM project_rig pr JOIN rig r ON r.id = pr.rig_id"
         " WHERE pr.project_id = ? ORDER BY r.sort_order, r.name",
         (project_id,),
     )
-    rigs = [ProjectRigRef(**row_to_dict(r)) for r in await cursor.fetchall()]
+    rigs = []
+    for row in await cursor.fetchall():
+        value = row_to_dict(row)
+        bool_fields(value, "active")
+        rigs.append(ProjectRigRef(**value))
+
+    cursor = await conn.execute(
+        """
+        SELECT ps.id, ps.software_id, s.name, s.category,
+               m.name AS manufacturer_name, ps.software_version_id,
+               sv.version, s.active
+        FROM project_software ps
+        JOIN software s ON s.id = ps.software_id
+        LEFT JOIN manufacturer m ON m.id = s.manufacturer_id
+        LEFT JOIN software_version sv ON sv.id = ps.software_version_id
+        WHERE ps.project_id = ?
+        ORDER BY ps.sort_order, ps.id
+        """,
+        (project_id,),
+    )
+    software = []
+    for row in await cursor.fetchall():
+        value = row_to_dict(row)
+        bool_fields(value, "active")
+        software.append(ProjectSoftwareRef(**value))
 
     cursor = await conn.execute(
         "SELECT * FROM project_image WHERE project_id = ? ORDER BY display_order, id",
@@ -125,6 +151,7 @@ async def _fetch_project_with_images(conn, project_id: int) -> ProjectResponse:
         **proj,
         location_name=location_name,
         rigs=rigs,
+        software=software,
         images=images,
         thumbnail_crops=crops,
         solved_at=solve_row["solved_at"] if solve_row is not None else None,
@@ -374,6 +401,59 @@ async def set_project_rigs(project_id: int, body: ProjectRigsSet) -> ProjectResp
             )
         await conn.commit()
         return await _fetch_project_with_images(conn, project_id)
+
+
+@router.put("/{project_id}/software")
+async def set_project_software(project_id: int, body: ProjectSoftwareSet) -> ProjectResponse:
+    """Replace a project's ordered software/version list."""
+    pairs = [(entry.software_id, entry.software_version_id) for entry in body.entries]
+    if len(pairs) != len(set(pairs)):
+        raise HTTPException(
+            status_code=422, detail="The same software and version may appear only once"
+        )
+
+    async with get_db() as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            await get_or_404(conn, "project", project_id, "Project")
+            for entry in body.entries:
+                cursor = await conn.execute(
+                    "SELECT id FROM software WHERE id = ?", (entry.software_id,)
+                )
+                if await cursor.fetchone() is None:
+                    raise HTTPException(status_code=422, detail="Software not found")
+                if entry.software_version_id is not None:
+                    cursor = await conn.execute(
+                        "SELECT id FROM software_version WHERE id = ? AND software_id = ?",
+                        (entry.software_version_id, entry.software_id),
+                    )
+                    if await cursor.fetchone() is None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="Software version does not belong to this program",
+                        )
+            await conn.execute("DELETE FROM project_software WHERE project_id = ?", (project_id,))
+            await conn.executemany(
+                "INSERT INTO project_software "
+                "(project_id, software_id, software_version_id, sort_order) "
+                "VALUES (?, ?, ?, ?)",
+                [
+                    (project_id, entry.software_id, entry.software_version_id, index)
+                    for index, entry in enumerate(body.entries)
+                ],
+            )
+            await conn.commit()
+            return await _fetch_project_with_images(conn, project_id)
+        except HTTPException:
+            await conn.rollback()
+            raise
+        except Exception as exc:
+            await conn.rollback()
+            logger.exception("[software] failed to save project %d software", project_id)
+            raise HTTPException(status_code=500, detail="Failed to save project software") from exc
+        except BaseException:
+            await conn.rollback()
+            raise
 
 
 @router.delete("/{project_id}", status_code=204)

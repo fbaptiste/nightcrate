@@ -19,6 +19,7 @@ removed in v0.41.1 — this is a read-out, not a tracker.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException
@@ -31,13 +32,17 @@ from nightcrate.api.project_session_models import (
     IntegrationSummary,
     SessionCreate,
     SessionResponse,
+    SessionSetupUpdate,
     SessionUpdate,
 )
 from nightcrate.db.session import get_db
 from nightcrate.services.gallery import imaging_runs, valid_session_date
 from nightcrate.services.ingest_sessions import project_geo_timezone
+from nightcrate.services.rig_setups import set_batch_setup
 from nightcrate.services.session_derivation import derive_sessions
 from nightcrate.services.session_derivation_models import DerivationSummary
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
@@ -45,6 +50,7 @@ router = APIRouter(prefix="/api/projects", tags=["Projects"])
 # NOT NULL capture settings are validated before this list is applied).
 _SESSION_COLUMNS = (
     "rig_id",
+    "rig_setup_id",
     "filter_id",
     "line_name",
     "exposure_seconds",
@@ -56,10 +62,12 @@ _SESSION_COLUMNS = (
 )
 
 _SESSION_SELECT = (
-    "SELECT ps.*, r.name AS rig_name, f.model_name AS filter_name"
+    "SELECT ps.*, r.name AS rig_name, f.model_name AS filter_name,"
+    " rs.until_at AS setup_until_at"
     " FROM project_session ps"
     " LEFT JOIN rig r ON r.id = ps.rig_id"
     " LEFT JOIN filter f ON f.id = ps.filter_id"
+    " LEFT JOIN rig_setup rs ON rs.id = ps.rig_setup_id"
 )
 
 _DERIVED_IS_READ_ONLY = (
@@ -89,6 +97,15 @@ async def _validate_fks(conn, *, rig_id: int | None, filter_id: int | None) -> N
         await get_or_404(conn, "rig", rig_id, "Rig")
     if filter_id is not None:
         await get_or_404(conn, "filter", filter_id, "Filter")
+
+
+async def _validate_setup(conn, rig_id: int | None, rig_setup_id: int | None) -> None:
+    if rig_setup_id is None:
+        return
+    cursor = await conn.execute("SELECT rig_id FROM rig_setup WHERE id = ?", (rig_setup_id,))
+    setup = await cursor.fetchone()
+    if setup is None or setup["rig_id"] != rig_id:
+        raise HTTPException(status_code=422, detail="The setup must belong to the session's rig")
 
 
 async def _get_editable(conn, project_id: int, session_id: int) -> dict:
@@ -126,29 +143,37 @@ async def list_sessions(project_id: int) -> list[SessionResponse]:
 @router.post("/{project_id}/sessions", status_code=201)
 async def create_session(project_id: int, body: SessionCreate) -> SessionResponse:
     async with get_db() as conn:
-        await get_or_404(conn, "project", project_id, "Project")
-        await _validate_fks(conn, rig_id=body.rig_id, filter_id=body.filter_id)
-        cursor = await conn.execute(
-            """INSERT INTO project_session
-               (project_id, rig_id, filter_id, line_name, exposure_seconds,
-                gain, num_subs, binning, session_date, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                project_id,
-                body.rig_id,
-                body.filter_id,
-                body.line_name,
-                body.exposure_seconds,
-                body.gain,
-                body.num_subs,
-                body.binning,
-                body.session_date,
-                body.notes,
-            ),
-        )
-        session_id = cursor.lastrowid
-        await conn.commit()
-        return await _fetch_session(conn, project_id, session_id)
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            await get_or_404(conn, "project", project_id, "Project")
+            await _validate_fks(conn, rig_id=body.rig_id, filter_id=body.filter_id)
+            await _validate_setup(conn, body.rig_id, body.rig_setup_id)
+            cursor = await conn.execute(
+                """INSERT INTO project_session
+                   (project_id, rig_id, rig_setup_id, filter_id, line_name, exposure_seconds,
+                    gain, num_subs, binning, session_date, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    project_id,
+                    body.rig_id,
+                    body.rig_setup_id,
+                    body.filter_id,
+                    body.line_name,
+                    body.exposure_seconds,
+                    body.gain,
+                    body.num_subs,
+                    body.binning,
+                    body.session_date,
+                    body.notes,
+                ),
+            )
+            session_id = cursor.lastrowid
+            response = await _fetch_session(conn, project_id, session_id)
+            await conn.commit()
+            return response
+        except BaseException:
+            await conn.rollback()
+            raise
 
 
 @router.post("/{project_id}/sessions/derive")
@@ -172,38 +197,92 @@ async def update_session(project_id: int, session_id: int, body: SessionUpdate) 
     fields = body.model_dump(exclude_unset=True)
 
     async with get_db() as conn:
-        await get_or_404(conn, "project", project_id, "Project")
-        existing = await _get_editable(conn, project_id, session_id)
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            await get_or_404(conn, "project", project_id, "Project")
+            existing = await _get_editable(conn, project_id, session_id)
 
-        for required in ("exposure_seconds", "num_subs"):
-            if required in fields and fields[required] is None:
-                raise HTTPException(status_code=422, detail=f"{required} cannot be null")
-        if (
-            "line_name" in fields
-            and fields["line_name"] is not None
-            and fields["line_name"] not in LINE_NAMES
-        ):
-            raise HTTPException(status_code=422, detail=f"Invalid line_name: {fields['line_name']}")
-        await _validate_fks(conn, rig_id=fields.get("rig_id"), filter_id=fields.get("filter_id"))
-
-        merged_filter = fields["filter_id"] if "filter_id" in fields else existing["filter_id"]
-        merged_line = fields["line_name"] if "line_name" in fields else existing["line_name"]
-        if merged_filter is None and merged_line is None:
-            raise HTTPException(
-                status_code=422,
-                detail="A specific filter or a bandpass line_name is required",
+            for required in ("exposure_seconds", "num_subs"):
+                if required in fields and fields[required] is None:
+                    raise HTTPException(status_code=422, detail=f"{required} cannot be null")
+            if (
+                "line_name" in fields
+                and fields["line_name"] is not None
+                and fields["line_name"] not in LINE_NAMES
+            ):
+                raise HTTPException(
+                    status_code=422, detail=f"Invalid line_name: {fields['line_name']}"
+                )
+            await _validate_fks(
+                conn, rig_id=fields.get("rig_id"), filter_id=fields.get("filter_id")
             )
 
-        sets = [f"{col} = ?" for col in _SESSION_COLUMNS if col in fields]
-        params = [fields[col] for col in _SESSION_COLUMNS if col in fields]
-        if sets:
-            params.append(session_id)
-            await conn.execute(
-                f"UPDATE project_session SET {', '.join(sets)} WHERE id = ?",  # nosec B608 - column names internal
-                params,
+            merged_filter = fields["filter_id"] if "filter_id" in fields else existing["filter_id"]
+            merged_line = fields["line_name"] if "line_name" in fields else existing["line_name"]
+            if merged_filter is None and merged_line is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="A specific filter or a bandpass line_name is required",
+                )
+            merged_rig = fields["rig_id"] if "rig_id" in fields else existing["rig_id"]
+            merged_setup = (
+                fields["rig_setup_id"] if "rig_setup_id" in fields else existing["rig_setup_id"]
             )
+            if "rig_id" in fields and "rig_setup_id" not in fields and merged_setup is not None:
+                cursor = await conn.execute(
+                    "SELECT 1 FROM rig_setup WHERE id = ? AND rig_id = ?",
+                    (merged_setup, merged_rig),
+                )
+                if await cursor.fetchone() is None:
+                    fields["rig_setup_id"] = None
+                    merged_setup = None
+            await _validate_setup(conn, merged_rig, merged_setup)
+
+            sets = [f"{col} = ?" for col in _SESSION_COLUMNS if col in fields]
+            params = [fields[col] for col in _SESSION_COLUMNS if col in fields]
+            if sets:
+                params.append(session_id)
+                await conn.execute(
+                    f"UPDATE project_session SET {', '.join(sets)} WHERE id = ?",  # nosec B608
+                    params,
+                )
+            response = await _fetch_session(conn, project_id, session_id)
             await conn.commit()
-        return await _fetch_session(conn, project_id, session_id)
+            return response
+        except BaseException:
+            await conn.rollback()
+            raise
+
+
+@router.put("/{project_id}/sessions/{session_id}/setup")
+async def update_session_setup(
+    project_id: int, session_id: int, body: SessionSetupUpdate
+) -> SessionResponse:
+    async with get_db() as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            await set_batch_setup(conn, project_id, session_id, body.rig_setup_id)
+            response = await _fetch_session(conn, project_id, session_id)
+            await conn.commit()
+            return response
+        except LookupError as exc:
+            await conn.rollback()
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            await conn.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except HTTPException:
+            await conn.rollback()
+            raise
+        except Exception as exc:
+            await conn.rollback()
+            logger.exception(
+                "[rig-setups] failed to move project %d session %d", project_id, session_id
+            )
+            raise HTTPException(status_code=500, detail="Failed to change session setup") from exc
+        except BaseException:
+            await conn.rollback()
+            raise
 
 
 @router.delete("/{project_id}/sessions/{session_id}", status_code=204)

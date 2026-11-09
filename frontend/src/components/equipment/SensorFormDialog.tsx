@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -16,6 +17,7 @@ import Snackbar from "@mui/material/Snackbar";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
+import EquipmentUsageNote from "@/components/equipment/shared/EquipmentUsageNote";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import {
   createSensor,
@@ -104,6 +106,7 @@ export default function SensorFormDialog({
   onClose,
   onSaved,
 }: SensorFormDialogProps) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
@@ -168,6 +171,7 @@ export default function SensorFormDialog({
       setSnackMessage(isEdit ? "Sensor updated." : "Sensor added.");
       setSnackSeverity("info");
       setSnackOpen(true);
+      if (item) void queryClient.invalidateQueries({ queryKey: ["equipment-usage", "sensor", item.id] });
       onSaved();
       onClose();
     } catch (err) {
@@ -188,6 +192,7 @@ export default function SensorFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <EquipmentUsageNote kind="sensor" itemId={item?.id} />
             {/* Row 1: Model name + Manufacturer */}
             <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
               <TextField

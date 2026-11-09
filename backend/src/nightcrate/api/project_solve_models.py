@@ -74,6 +74,8 @@ class IdentifiedDso(BaseModel):
 
 class FocalLengthEstimate(BaseModel):
     rig_id: int
+    rig_setup_id: int | None
+    setup_until_at: str | None
     rig_name: str
     camera_name: str
     pixel_size_um: float

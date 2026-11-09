@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -14,7 +15,11 @@ import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
+import SoftwareVersionsField, {
+  type SoftwareVersionDraft,
+} from "@/components/equipment/SoftwareVersionsField";
 import { formatSnakeCase } from "@/lib/formUtils";
+import { ApiError } from "@/api/client";
 import {
   createSoftware,
   updateSoftware,
@@ -73,8 +78,10 @@ export default function SoftwareFormDialog({
   onClose,
   onSaved,
 }: SoftwareFormDialogProps) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isMine, setIsMine] = useState<boolean>(false);
+  const [versions, setVersions] = useState<SoftwareVersionDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [snackOpen, setSnackOpen] = useState(false);
@@ -85,6 +92,7 @@ export default function SoftwareFormDialog({
     if (open) {
       setForm(item ? softwareToForm(item) : emptyForm());
       setIsMine(item?.is_mine ?? false);
+      setVersions(item?.versions ?? []);
       setErrors({});
     }
   }, [open, item]);
@@ -114,6 +122,10 @@ export default function SoftwareFormDialog({
         category: form.category,
         website: form.website.trim() || null,
         notes: form.notes.trim() || null,
+        versions: [
+          ...versions.filter(({ id }) => id != null),
+          ...versions.filter(({ id }) => id == null).reverse(),
+        ].map(({ id, version }) => ({ id, version })),
       };
 
       if (item) {
@@ -125,10 +137,35 @@ export default function SoftwareFormDialog({
       setSnackMessage(isEdit ? "Software updated." : "Software added.");
       setSnackSeverity("info");
       setSnackOpen(true);
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["software"] }),
+        queryClient.invalidateQueries({ queryKey: ["my-software"] }),
+        queryClient.invalidateQueries({ queryKey: ["equipment-options"] }),
+        queryClient.invalidateQueries({ queryKey: ["rigs"] }),
+        queryClient.invalidateQueries({ queryKey: ["rig-setups"] }),
+        queryClient.invalidateQueries({ queryKey: ["project-rig-setups"] }),
+        queryClient.invalidateQueries({ queryKey: ["project"] }),
+        queryClient.invalidateQueries({ queryKey: ["project-catalog"] }),
+        queryClient.invalidateQueries({ queryKey: ["project-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["project-integration"] }),
+        queryClient.invalidateQueries({ queryKey: ["project-solve"] }),
+        queryClient.invalidateQueries({ queryKey: ["equipment-usage"] }),
+      ]);
       onSaved();
       onClose();
     } catch (err) {
-      setSnackMessage(err instanceof Error ? err.message : "Save failed");
+      let message = err instanceof Error ? err.message : "Save failed";
+      if (err instanceof ApiError && typeof err.detail === "object" && err.detail !== null) {
+        const detail = err.detail as { code?: string; version?: string; projects?: string[] };
+        if (detail.code === "version_in_use") {
+          message = `${detail.version ?? "This version"} is used by ${
+            detail.projects?.join(", ") || "a project"
+          } and cannot be removed.`;
+        } else if (detail.code === "version_exists") {
+          message = `${detail.version ?? "That version"} already exists.`;
+        }
+      }
+      setSnackMessage(message);
       setSnackSeverity("error");
       setSnackOpen(true);
     } finally {
@@ -197,6 +234,12 @@ export default function SoftwareFormDialog({
               onChange={(e) => set("notes", e.target.value)}
               multiline
               rows={3}
+            />
+
+            <SoftwareVersionsField
+              value={versions}
+              onChange={setVersions}
+              disabled={saving}
             />
           </Box>
         </DialogContent>

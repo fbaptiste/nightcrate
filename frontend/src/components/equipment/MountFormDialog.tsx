@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -14,6 +15,7 @@ import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker
 import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
 import InterfaceMultiSelect from "@/components/equipment/shared/InterfaceMultiSelect";
+import EquipmentUsageNote from "@/components/equipment/shared/EquipmentUsageNote";
 import { parseOptionalFloat } from "@/lib/formUtils";
 import {
   createMount,
@@ -86,6 +88,7 @@ export default function MountFormDialog({
   onClose,
   onSaved,
 }: MountFormDialogProps) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
@@ -144,6 +147,7 @@ export default function MountFormDialog({
       setSnackMessage(isEdit ? "Mount updated." : "Mount added.");
       setSnackSeverity("info");
       setSnackOpen(true);
+      if (item) void queryClient.invalidateQueries({ queryKey: ["equipment-usage", "mount", item.id] });
       onSaved();
       onClose();
     } catch (err) {
@@ -164,6 +168,7 @@ export default function MountFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <EquipmentUsageNote kind="mount" itemId={item?.id} />
             <MineCheckbox value={isMine} onChange={setIsMine} />
 
             {/* Row 1: Model name + Manufacturer */}

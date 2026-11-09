@@ -26,6 +26,7 @@ than explicit code.
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from aiosqlite import Connection
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -142,6 +143,7 @@ def build_equipment_router(
     order_by: str | None = None,
     bool_columns: tuple[str, ...] = ("is_mine",),
     interface_junction: tuple[str, str] | None = None,
+    before_commit: Callable[[Connection, int, BaseModel], Awaitable[None]] | None = None,
     update_conflict_detail: str | None = None,
     check_detail_fn: Callable[[dict], str] | None = None,
 ) -> None:
@@ -165,6 +167,8 @@ def build_equipment_router(
         interface_junction: Optional ``(junction_table, fk_column)`` tuple.
             When set, ``interface_ids`` on the body rebuilds the M2M junction
             on create/update.
+        before_commit: Optional async hook for related rows that must be saved in
+            the same transaction as the equipment row.
         update_conflict_detail: 409 detail for UPDATE. Default:
             ``f"{label} (manufacturer, {name_column}) already exists"``.
         check_detail_fn: Optional ``(body_dict) -> str`` to produce the 422
@@ -175,7 +179,9 @@ def build_equipment_router(
     if update_conflict_detail is None:
         update_conflict_detail = f"{label} (manufacturer, {name_column}) already exists"
 
-    insert_columns = tuple(col for col in create_model.model_fields if col != "interface_ids")
+    insert_columns = tuple(
+        col for col in create_model.model_fields if col not in {"interface_ids", "versions"}
+    )
     prefix = f"/{url_slug}"
     detail_prefix = f"/{url_slug}/{{item_id}}"
     mine_prefix = f"/{url_slug}/{{item_id}}/mine"
@@ -225,6 +231,8 @@ def build_equipment_router(
     @router.post(prefix, response_model=response_model, status_code=201, name=f"create_{table}")
     async def create_item(body: create_model) -> dict:  # type: ignore[valid-type]
         async with get_db() as conn:
+            if before_commit is not None:
+                await conn.execute("BEGIN IMMEDIATE")
             values = []
             for col in insert_columns:
                 v = getattr(body, col)
@@ -241,42 +249,62 @@ def build_equipment_router(
             }
             if check_detail_fn is not None:
                 guard_kwargs["check_detail"] = check_detail_fn(body.model_dump())
-            with integrity_guard(**guard_kwargs):
-                cursor = await conn.execute(
-                    f"INSERT INTO {table} ({column_list}) VALUES ({placeholders})",  # nosec B608 - table/columns from internal allow-list, not user input
-                    tuple(values),
-                )
-                item_id = cursor.lastrowid
-                if interface_junction is not None:
-                    iface_ids = getattr(body, "interface_ids", None) or []
-                    await _rebuild_interfaces(conn, item_id, iface_ids)
-                await conn.commit()
+            try:
+                with integrity_guard(**guard_kwargs):
+                    cursor = await conn.execute(
+                        f"INSERT INTO {table} ({column_list}) VALUES ({placeholders})",  # nosec B608 - table/columns from internal allow-list, not user input
+                        tuple(values),
+                    )
+                    item_id = cursor.lastrowid
+                    if interface_junction is not None:
+                        iface_ids = getattr(body, "interface_ids", None) or []
+                        await _rebuild_interfaces(conn, item_id, iface_ids)
+                    if before_commit is not None:
+                        await before_commit(conn, item_id, body)
+                    await conn.commit()
+            except BaseException:
+                if before_commit is not None:
+                    await conn.rollback()
+                raise
             row = await get_or_404(conn, table, item_id, label)
             return await response_builder(conn, row)
 
     @router.put(detail_prefix, response_model=response_model, name=f"update_{table}")
     async def update_item(item_id: int, body: update_model) -> dict:  # type: ignore[valid-type]
         async with get_db() as conn:
-            existing = await get_or_404(conn, table, item_id, label)
-            updates: dict[str, Any] = body.model_dump(exclude_unset=True)
-            iface_ids = updates.pop("interface_ids", None)
-            if not updates and iface_ids is None:
-                return await response_builder(conn, existing)
-            if updates:
-                _coerce_bools(updates)
-                set_clause = ", ".join(f"{k} = ?" for k in updates)
-                sql_values = list(updates.values()) + [item_id]
+            if before_commit is not None:
+                await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await get_or_404(conn, table, item_id, label)
+                updates: dict[str, Any] = body.model_dump(exclude_unset=True)
+                iface_ids = updates.pop("interface_ids", None)
+                hook_value = updates.pop("versions", None)
+                hook_work = before_commit is not None and hook_value is not None
+                if not updates and iface_ids is None and not hook_work:
+                    if before_commit is not None:
+                        await conn.commit()
+                    return await response_builder(conn, existing)
                 guard_kwargs: dict[str, Any] = {"conflict_detail": update_conflict_detail}
                 if check_detail_fn is not None:
                     guard_kwargs["check_detail"] = check_detail_fn(updates)
                 with integrity_guard(**guard_kwargs):
-                    await conn.execute(
-                        f"UPDATE {table} SET {set_clause} WHERE id = ?",  # nosec B608 - table/columns from internal allow-list, not user input
-                        sql_values,
-                    )
-            if iface_ids is not None and interface_junction is not None:
-                await _rebuild_interfaces(conn, item_id, iface_ids)
-            await conn.commit()
+                    if updates:
+                        _coerce_bools(updates)
+                        set_clause = ", ".join(f"{k} = ?" for k in updates)
+                        sql_values = list(updates.values()) + [item_id]
+                        await conn.execute(
+                            f"UPDATE {table} SET {set_clause} WHERE id = ?",  # nosec B608 - table/columns from internal allow-list, not user input
+                            sql_values,
+                        )
+                    if iface_ids is not None and interface_junction is not None:
+                        await _rebuild_interfaces(conn, item_id, iface_ids)
+                    if hook_work:
+                        await before_commit(conn, item_id, body)
+                    await conn.commit()
+            except BaseException:
+                if before_commit is not None:
+                    await conn.rollback()
+                raise
             row = await get_or_404(conn, table, item_id, label)
             return await response_builder(conn, row)
 

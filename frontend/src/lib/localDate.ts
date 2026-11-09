@@ -12,3 +12,18 @@ export function formatLocalDate(value: string | null | undefined): string | null
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
 }
+
+const nightFormatter = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** Format an observing-night date without letting the browser's zone move it. */
+export function formatNight(date: string): string {
+  return nightFormatter
+    .format(new Date(`${date.slice(0, 10)}T00:00:00Z`))
+    .replace(/,/g, "");
+}

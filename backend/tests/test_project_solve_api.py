@@ -31,7 +31,9 @@ from nightcrate.services.plate_solve_models import (
     PlateSolveResult,
     SolveAttempt,
 )
+from nightcrate.services.rig_setups import save_earlier_setup
 from tests.catalog_helpers import _seed_rig
+from tests.rig_setup_fixtures import make_equipment, make_frame, make_project, make_rig
 
 _SCALE = 3.0 / 3600.0  # 3 arcsec/px in degrees
 
@@ -1177,6 +1179,8 @@ class TestGetSolve:
         ]
         assert initial["focal_length_estimates"][0] == {
             "rig_id": both,
+            "rig_setup_id": None,
+            "setup_until_at": None,
             "rig_name": "Alpha Both",
             "camera_name": "Camera for Alpha Both",
             "pixel_size_um": 3.76,
@@ -1208,6 +1212,33 @@ class TestGetSolve:
 
         assert created.status_code == 200
         assert created.json()["focal_length_estimates"] == []
+
+    async def test_focal_estimates_from_frames_without_batches(self, client: AsyncClient):
+        async with get_db() as conn:
+            equipment = await make_equipment(conn)
+            rig_id = await make_rig(conn, equipment, "Frame setup rig")
+            project_id = await make_project(conn, "Frames without derive")
+            await conn.execute(
+                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+                (project_id, rig_id),
+            )
+            await make_frame(conn, project_id, "old-setup", rig_id=rig_id)
+            await save_earlier_setup(conn, rig_id, until_at="2026-11-01")
+            await conn.execute(
+                "UPDATE rig SET camera_id = ? WHERE id = ?", (equipment.camera_b, rig_id)
+            )
+            await make_frame(conn, project_id, "current-setup", rig_id=rig_id)
+            await conn.commit()
+
+        with _mock_solve([], result_kwargs={**_SOLVE, "pixel_scale_arcsec": 0.9}):
+            created = await client.post(
+                f"/api/projects/{project_id}/solve", json=_solve_payload("/fake/a.fits")
+            )
+        estimates = created.json()["focal_length_estimates"]
+        assert [item["rig_setup_id"] is None for item in estimates] == [True, False]
+        assert [item["estimated_focal_length_mm"] for item in estimates] == pytest.approx(
+            [861.7, 550.0], abs=0.1
+        )
 
     async def test_focal_length_estimates_empty_without_pixel_scale(self, client: AsyncClient):
         pid = await _make_project(client, "Solve Without Pixel Scale")

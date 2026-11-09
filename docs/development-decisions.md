@@ -131,6 +131,95 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - Never overwrite `source='user'` rows. Replace junction rows only for updated
   or inserted parents. Missing expected CSV files fail loudly. Test rehashes on
   a pre-migration DB copy; fresh databases cannot expose stranded seed records.
+- **A new seed row named like a user's own row** links to it instead of
+  stopping startup (v0.47.0): `SeedableTable.natural_key` is set only for
+  `manufacturer` (`name`) and `software` (`manufacturer_id`, `name`). On that
+  UNIQUE failure the seed key maps to the user's row in `fk_map`; nothing is
+  written to it and it stays out of `inserted_or_updated`, so its junctions are
+  never replaced. Other tables still fail loudly: linking a user's telescope
+  would collide with its configurations (child path and native-configuration
+  index), which needs its own design.
+- **Software versions** (`software_version`) are user data, unique per
+  program, listed newest first (`id DESC`). They save in the equipment
+  factory's `before_commit` hook, in the same transaction as the program;
+  `versions` omitted or `null` leaves them, `[]` removes them all, and a
+  version a project uses can't be removed (409 `version_in_use`).
+  `project_software`'s composite foreign key keeps a version on its own
+  program; a program may appear twice with different versions, never twice
+  with the same one or with none.
+- Software pickers group by category in a fixed order: the rig form lists
+  capture, guiding, plate solving, planetarium, utility, other, processing;
+  the project field lists processing first (`orderSoftwareOptions`).
+
+## Rig history and project setups
+
+Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-design.md).
+
+- **A rig keeps one identity.** Never copy rig rows for history or project
+  changes: calibration matching, the gallery rig filter, every picker and the
+  UNIQUE rig name assume one row per rig. History is `rig_setup` rows attached
+  to the rig; a project's own changes are one `project_rig_change` row per
+  project and rig.
+- **In use** means any `project_rig`, `project_session`, `session`,
+  `sub_frame` or `project_source_folder` row. Wishlist plans and planner
+  settings look forward and always use the current setup.
+- **Equipment changes on a rig in use need `apply_mode`.** Without it,
+  `PUT /api/rigs/{id}` returns 409 `rig_change_needs_choice` (counts and the
+  changed parts) and writes nothing. Name, description, notes, default and
+  order never ask. The whole update is one `BEGIN IMMEDIATE` transaction from
+  the first read of the old state, with slot validation before any write.
+  - `from_now_on`: `save_earlier_setup` copies the current parts into a
+    `rig_setup` and stamps every frame whose setup rig is this rig, and every
+    batch of the rig; frames cataloged later have no stamp and use the
+    current setup.
+  - `existing`: the edit applies to the rig, and in each earlier setup a
+    part group changes only where it still has the rig's old value.
+- **Part groups:** telescope, camera, filters (wheel, single filter and slots
+  together, because slots depend on the wheel), mount, focuser, guider (OAG
+  or guide scope), guide camera, computer, software. Swapping the guider
+  leaves the guide camera following the rig.
+- **Stamps:** one `sub_frame_rig_setup` row per frame and rig, so a frame
+  keeps its earlier setup for each rig it has been on. A stamp applies only
+  while the frame is on that rig; `assign_rigs_and_sessions` never clears
+  stamps, so re-tagging a folder away and back restores them. A batch has one
+  `project_session.rig_setup_id`, kept a setup of its own rig (a rig-only
+  PATCH clears a foreign one).
+- **A frame's setup rig** is its `rig_id`, else the project's single rig (the
+  derive fallback). Frame computations use `rig_id` only, so untagged frames
+  still have no pixel scale; batches use the setup rig. When the project gains
+  a second rig, untagged frames' batches lose their rig and setup, as the
+  fallback refuses to guess; the stamps remain and tagging the folder restores
+  both.
+- **Effective equipment for records** comes from `sub_frame_equipment`:
+  the project's change, else the applying stamp, else the rig. It feeds pixel
+  scale, star sizes in arcseconds, the arcsec HFR sorts, full-scale ADU and
+  the calibration views. Focal estimates and the project setup panel use
+  `project_setups`. Rig calculators, the planner, star-catalog coverage and
+  the wishlist use the rig's current setup.
+- **Moving a night** (`PUT /api/projects/{id}/sessions/{session_id}/setup`)
+  re-stamps every frame of that observing night on that setup rig,
+  calibration frames included, and that night's derived batches; a manual
+  batch's setup is its own column. This is how old files cataloged after a
+  change are put right. Its menu offers every setup of the rig
+  (`setup_options`), not only those the project used.
+- **The project Overview** (Fred, 2026-11-08) puts the plate-solve line under
+  the main targets and the processing software, description and integration
+  in the side column; equipment is its own section below the picture, one
+  row per rig with its camera, image scale, field of view and nights, and a
+  row's setup panel opens directly under the rig list (scrolled into view),
+  not at the foot of the page.
+- **Project changes** store only swapped groups; a group set back to the
+  rig's value is dropped, and no groups left deletes the row. They apply to
+  all of the project's nights on that rig, whatever the setup, are never
+  touched by rig edits, and go with the project.
+- **Night counts** are distinct (project, observing night) over frames (by
+  setup rig) and all batches, derived and manual; a stale derived batch with
+  no frames left still counts, because the Sessions tab shows it.
+- **Equipment usage** (`GET /api/equipment/{kind}/{id}/usage`) counts rigs
+  whose current setup, earlier setups or project changes use the record, and
+  projects whose resolved setups do (plus manual batches' filters). It uses
+  grouped queries over all projects: calling `project_setups` per project
+  took about 0.9 s on a 500-project library.
 
 ## Projects, catalog, and sessions
 
@@ -234,6 +323,32 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - `session` is the ingest rig/night group; `project_session` is a capture batch.
   Derive capture batches **only on request**, never during ingest. Replace auto
   rows and preserve manual rows. Derived rows are read-only (409 on edit/delete).
+- **Night notes** (`project_night_note`, v0.47.0) hold one note per project
+  and observing night, keyed by the civil night date (`YYYY-MM-DD`; the API
+  rejects anything that doesn't round-trip, such as week dates). They live
+  apart from capture batches so a rebuild never touches them, and a note
+  whose night has no batches left keeps its block on the Sessions tab. The
+  rig is not part of the key: a note records the night's conditions.
+- The **Sessions tab** groups batches by night (newest first), then rig. Its
+  totals use wall-clock minutes and physical subs (sessions' `num_subs`),
+  never the passband lines, which credit a duoband batch twice. The
+  per-night setup picker calls the batch setup endpoint once; the backend
+  moves that night's derived batches and leaves hand-entered ones, which
+  show their own setup when it differs.
+- **Filter colours** (v0.47.0) live in `components/projects/filterColors.ts`
+  and are used by the Sessions tab, the Overview's Integration bars and the
+  Files tab. Colour follows wavelength, from the Okabe-Ito palette: B blue,
+  OIII sky blue, G green, R orange, Hα vermillion, SII reddish purple; L
+  black (near-white in dark mode). Hβ, OI and NII take their neighbour's
+  colour with stripes; no filter, UV/IR cut and light-pollution filters take
+  L's with stripes; unknown names get a grey outline. An equipment filter
+  with several lines is split between their colours, red first. Don't use a
+  mid grey for L: for green-weak vision it matches G. Check any palette
+  change with a colour-vision validator (Machado 2009, deutan and protan);
+  the filter's name always sits beside its colour. Order: L and the other
+  whole-spectrum filters, then R, G, B, then narrowband from red to blue
+  (SII, NII, Hα, OI, OIII, Hβ); a multi-line filter sits with its reddest
+  line.
 - Derived grain: **night, rig, canonical filter, exposure, gain, binning**.
   Fall back to the project's rig only when it has exactly one. Round REAL gain
   to INTEGER; asymmetric binning becomes NULL; skip/report zero-exposure lights.
@@ -257,15 +372,33 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - Calibration matching stays **per project and rig**, not a global calibration
   library. Darks match exposure/gain/binning/set-temp ±1°C; flats match
   gain/binning/filter hint, not exposure; bias matches gain/binning. Both sides
-  require `accepted=1`. Compare nullable matching keys with `IS`.
+  require `accepted=1`. Compare nullable matching keys with `IS`. Since
+  v0.47.0, darks and bias also compare the effective camera and flats the
+  effective camera and telescope configuration (`sub_frame_equipment`), so a
+  "from now on" camera change never pairs old darks with new lights on a
+  tagged rig. Known limit: frames from untagged folders have no rig, so
+  their effective camera is NULL on both sides and they still match by
+  settings alone, as before v0.47.0 (v0.47.0-R2; revisit with the
+  calibration coverage UI).
 - Removing a folder purges its file locations and orphaned subs/masters/sessions.
   In correlated orphan queries, qualify outer columns (`processed_image.id`):
   bare `id` can bind to `file_location.id` and delete the entire project's table.
 - Deleting catalog entries does not exclude them from later scans. The source
   files remain; a rescan catalogs them again. Do not add silent exclusions.
 - Reuse `FileBrowser` in `directoryMode` for folder/archive selection. The
-  catalog uses category tabs and an infinite card list; MUI Community DataGrid's
-  100-row page cap is not a substitute. Sort/filter on the server, blanks last.
+  project's **Files** tab (named Catalog before v0.47.0; the side menu's DSO
+  Catalog is something else) uses category tabs and an infinite-scroll table,
+  with a thumbnail sheet for lights; MUI Community DataGrid's 100-row page cap
+  is not a substitute. Sort/filter on the server, blanks last. Capture-time
+  sorts order by `julianday(date_obs_utc)`, not text: stored timestamps mix
+  `T`/space and zone suffixes, and text order can split a night. Night
+  headings come from `CatalogFrame.observing_night` (the derivation's
+  geographic zone and noon rule) and appear only between consecutive loaded
+  rows, so a page boundary never repeats one. The pixel-only HFR sorts left
+  the UI in v0.47.0; the arcsec order falls back to pixels when a frame's
+  scale is unknown. The table keeps the cards' quality meanings: empty
+  cells before analysis, "unreadable" and "no stars" in words, ADU against
+  the camera's full scale.
 - Catalog cells use their dedicated thumbnail endpoint, never the full-image
   endpoint: decimate raw data first, cache JPEGs by content hash/size, bound
   concurrency (3), and fetch lazily. Ingest is single-flight (409 if busy), with

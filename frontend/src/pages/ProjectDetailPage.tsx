@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
@@ -23,6 +23,7 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import {
   fetchProject,
+  fetchProjectRigSetups,
   updateProject,
   deleteProject,
   restoreProject,
@@ -43,10 +44,12 @@ import ThumbnailCropEditor from "@/components/projects/ThumbnailCropEditor";
 import ProjectCatalogTab from "@/components/projects/ProjectCatalogTab";
 import ProjectPlateSolveTab from "@/components/projects/ProjectPlateSolveTab";
 import ProjectSessionsTab from "@/components/projects/ProjectSessionsTab";
+import ProjectNotesTab from "@/components/projects/ProjectNotesTab";
 import ProjectMetadataSection from "@/components/projects/ProjectMetadataSection";
+import ProjectEquipmentSection from "@/components/projects/ProjectEquipmentSection";
 import ProjectStatusChip from "@/components/projects/ProjectStatusChip";
-import PlateSolvedPill from "@/components/projects/PlateSolvedPill";
-import IntegrationBars from "@/components/projects/IntegrationBars";
+import PlateSolveLine from "@/components/projects/PlateSolveLine";
+import IntegrationBars, { formatHoursMinutes } from "@/components/projects/IntegrationBars";
 import AddTargetDialog from "@/components/projects/AddTargetDialog";
 import MarkdownEditor from "@/components/common/MarkdownEditor";
 import { getProjectSolve } from "@/api/projectSolve";
@@ -103,6 +106,74 @@ function openImageWindow(url: string, title: string) {
   win.focus();
 }
 
+interface ProjectDescriptionProps {
+  value: string;
+  onSave: (next: string) => void;
+}
+
+function ProjectDescription({ value, onSave }: ProjectDescriptionProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (expanded) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const measure = () => {
+      const editorRoot = root.firstElementChild;
+      const content = editorRoot?.children.item(1) as HTMLElement | null;
+      setHasOverflow(content != null && content.scrollHeight > content.clientHeight + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [expanded, value]);
+
+  return (
+    <Box>
+      <Box
+        ref={rootRef}
+        onClickCapture={() => setExpanded(true)}
+        sx={
+          expanded
+            ? undefined
+            : {
+                "& > div > div:nth-of-type(2)": {
+                  display: "-webkit-box",
+                  WebkitBoxOrient: "vertical",
+                  WebkitLineClamp: 6,
+                  overflow: "hidden",
+                },
+              }
+        }
+      >
+        <MarkdownEditor
+          value={value}
+          onSave={onSave}
+          label={
+            <Typography sx={{ color: "text.secondary", fontSize: "13px", lineHeight: 1.45 }}>
+              Description
+            </Typography>
+          }
+          placeholder="Add a description"
+          minHeight={0}
+        />
+      </Box>
+      {hasOverflow && (
+        <Button
+          size="small"
+          onClick={() => setExpanded((current) => !current)}
+          sx={{ minWidth: 0, px: 0, mt: "2px", fontSize: "13px" }}
+        >
+          {expanded ? "Show less" : "Show more"}
+        </Button>
+      )}
+    </Box>
+  );
+}
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -110,6 +181,7 @@ export default function ProjectDetailPage() {
   const queryClient = useQueryClient();
   const projectId = Number(id);
   const [tab, setTab] = useState(searchParams.get("tab") === "plate-solve" ? 3 : 0);
+  const [focusNight, setFocusNight] = useState<string | undefined>();
   const [snack, setSnack] = useState<string | null>(null);
 
   const [editingName, setEditingName] = useState(false);
@@ -126,6 +198,11 @@ export default function ProjectDetailPage() {
   const { data: solve } = useQuery({
     queryKey: ["project-solve", projectId],
     queryFn: () => getProjectSolve(projectId),
+    enabled: !isNaN(projectId),
+  });
+  const { data: projectRigSetups = [] } = useQuery({
+    queryKey: ["project-rig-setups", projectId],
+    queryFn: () => fetchProjectRigSetups(projectId),
     enabled: !isNaN(projectId),
   });
   const { data: integration } = useQuery({
@@ -195,7 +272,19 @@ export default function ProjectDetailPage() {
     [queryClient, projectId],
   );
 
-  const images = project?.images ?? [];
+  const refreshRigDependent = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["rigs"] });
+    queryClient.invalidateQueries({ queryKey: ["rig-setups"] });
+    queryClient.invalidateQueries({ queryKey: ["project-rig-setups", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-catalog", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
+  }, [queryClient, projectId]);
+
+  const images = useMemo(() => project?.images ?? [], [project?.images]);
 
   const effectiveMainId = useMemo(() => {
     const existing = images.find((i) => i.is_main);
@@ -409,6 +498,7 @@ export default function ProjectDetailPage() {
       {/* Tabs */}
       <Tabs value={tab} onChange={(_, v) => {
         setTab(v);
+        if (v !== 1) setFocusNight(undefined);
         const next = new URLSearchParams(searchParams);
         if (v === 3) next.set("tab", "plate-solve");
         else {
@@ -420,150 +510,167 @@ export default function ProjectDetailPage() {
       }} sx={{ mb: 2 }}>
         <Tab label="Overview" />
         <Tab label="Sessions" />
-        <Tab label="Catalog" />
+        <Tab label="Files" />
         <Tab label="Plate Solve" />
         <Tab label="Notes" />
       </Tabs>
 
-      {tab === 1 && <ProjectSessionsTab projectId={projectId} />}
+      {tab === 1 && <ProjectSessionsTab projectId={projectId} focusNight={focusNight} />}
       {tab === 2 && <ProjectCatalogTab projectId={projectId} />}
       {tab === 3 && (
         <ProjectPlateSolveTab projectId={projectId} onMainsChange={invalidate} />
       )}
       {tab === 4 && (
-        <Box sx={{ maxWidth: 820 }}>
-          <MarkdownEditor
-            value={displayNotes}
-            onSave={(next) => {
-              const v = next.trim();
-              if (v !== (project.notes ?? "")) metaMut.mutate({ notes: v });
-            }}
-            label={
-              <Typography variant="subtitle2" color="text.secondary">
-                Notes
-              </Typography>
-            }
-            placeholder="Add notes"
-          />
-        </Box>
+        <ProjectNotesTab
+          projectId={projectId}
+          notes={displayNotes}
+          onSave={(next) => {
+            if (next !== (project.notes ?? "")) metaMut.mutate({ notes: next });
+          }}
+          onOpenNight={(night) => {
+            setFocusNight(night);
+            setTab(1);
+            const next = new URLSearchParams(searchParams);
+            next.delete("tab");
+            next.delete("solve");
+            next.delete("hdu");
+            setSearchParams(next, { replace: true });
+          }}
+        />
       )}
 
       {/* Overview tab */}
       {tab === 0 && (
         <Box sx={{ maxWidth: 1280 }}>
-          {/* Two-column row, sized to the image height so the description
-              scrolls inside its column rather than overflowing below. */}
-          <Box sx={{ display: "flex", gap: 3, mb: 2, height: 520 }}>
-            <Box
-              sx={{
-                width: 520,
-                height: 520,
-                flexShrink: 0,
-                position: "relative",
-                borderRadius: 1,
-                overflow: "hidden",
-                bgcolor: images.length > 0 ? "common.black" : undefined,
-                border: images.length === 0 ? 2 : 0,
-                borderColor: "divider",
-                borderStyle: images.length === 0 ? "dashed" : undefined,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              {viewedImage ? (
-                <>
-                  {((!mainImgLoaded && !mainImgFailed) || addMut.isPending) && (
-                    <CircularProgress size={32} />
-                  )}
-                  <Box
-                    component="img"
-                    key={renderedImageUrl(
-                      projectId,
-                      viewedImage.id,
-                      "thumb_lg",
-                      project.workspace_key,
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "560px minmax(0, 1fr)",
+              gap: "28px",
+              alignItems: "start",
+              "@media (max-width: 1099.95px)": { gridTemplateColumns: "minmax(0, 1fr)" },
+            }}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <Box
+                sx={{
+                  width: "100%",
+                  aspectRatio: "4 / 3",
+                  position: "relative",
+                  borderRadius: "6px",
+                  overflow: "hidden",
+                  bgcolor: images.length > 0 ? "common.black" : undefined,
+                  border: images.length === 0 ? 2 : 0,
+                  borderColor: "divider",
+                  borderStyle: images.length === 0 ? "dashed" : undefined,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {viewedImage ? (
+                  <>
+                    {((!mainImgLoaded && !mainImgFailed) || addMut.isPending) && (
+                      <CircularProgress size={32} />
                     )}
-                    src={renderedImageUrl(
-                      projectId,
-                      viewedImage.id,
-                      "thumb_lg",
-                      project.workspace_key,
+                    <Box
+                      component="img"
+                      key={renderedImageUrl(
+                        projectId,
+                        viewedImage.id,
+                        "thumb_lg",
+                        project.workspace_key,
+                      )}
+                      src={renderedImageUrl(
+                        projectId,
+                        viewedImage.id,
+                        "thumb_lg",
+                        project.workspace_key,
+                      )}
+                      alt={project.name}
+                      onLoad={() => {
+                        setMainImgFailed(false);
+                        setMainImgLoaded(true);
+                      }}
+                      onError={() => {
+                        setMainImgLoaded(false);
+                        setMainImgFailed(true);
+                      }}
+                      sx={{
+                        maxWidth: "100%",
+                        maxHeight: "100%",
+                        objectFit: "contain",
+                        display: mainImgLoaded && !addMut.isPending ? "block" : "none",
+                      }}
+                    />
+                    {mainImgFailed && !addMut.isPending && (
+                      <Typography sx={{ color: "#8e8c88", fontSize: "13px" }}>
+                        No preview
+                      </Typography>
                     )}
-                    alt={project.name}
-                    onLoad={() => {
-                      setMainImgFailed(false);
-                      setMainImgLoaded(true);
-                    }}
-                    onError={() => {
-                      setMainImgLoaded(false);
-                      setMainImgFailed(true);
-                    }}
-                    sx={{
-                      maxWidth: "100%",
-                      maxHeight: "100%",
-                      objectFit: "contain",
-                      display: mainImgLoaded && !addMut.isPending ? "block" : "none",
-                    }}
-                  />
-                  {mainImgFailed && !addMut.isPending && (
-                    <Typography sx={{ color: "#8e8c88", fontSize: "13px" }}>
-                      No preview
-                    </Typography>
-                  )}
-                  {mainImgLoaded && !addMut.isPending && (
-                    <Tooltip title="Open in a larger window">
-                      <IconButton
-                        size="small"
-                        aria-label="Open image in a larger window"
-                        onClick={() =>
-                          openImageWindow(
-                            renderedImageUrl(
-                              projectId,
-                              viewedImage.id,
-                              "full",
-                              project.workspace_key,
-                            ),
-                            project.name,
-                          )
-                        }
-                        sx={{
-                          position: "absolute",
-                          top: 8,
-                          right: 8,
-                          // Sits on the image, not on a themed surface, so the
-                          // scrim is literal black rather than a theme token.
-                          color: "common.white",
-                          bgcolor: "rgba(0,0,0,0.45)",
-                          "&:hover": { bgcolor: "rgba(0,0,0,0.75)" },
-                        }}
-                      >
-                        <OpenInFullIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                </>
-              ) : addMut.isPending ? (
-                <CircularProgress size={32} />
-              ) : (
-                <Typography color="text.secondary" sx={{ px: 2, textAlign: "center" }}>
-                  No images yet. Use the gallery strip below to add images.
-                </Typography>
+                    {mainImgLoaded && !addMut.isPending && (
+                      <Tooltip title="Open in a larger window">
+                        <IconButton
+                          size="small"
+                          aria-label="Open image in a larger window"
+                          onClick={() =>
+                            openImageWindow(
+                              renderedImageUrl(
+                                projectId,
+                                viewedImage.id,
+                                "full",
+                                project.workspace_key,
+                              ),
+                              project.name,
+                            )
+                          }
+                          sx={{
+                            position: "absolute",
+                            top: 8,
+                            right: 8,
+                            color: "common.white",
+                            bgcolor: "rgba(0,0,0,0.45)",
+                            "&:hover": { bgcolor: "rgba(0,0,0,0.75)" },
+                          }}
+                        >
+                          <OpenInFullIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </>
+                ) : addMut.isPending ? (
+                  <CircularProgress size={32} />
+                ) : (
+                  <Typography color="text.secondary" sx={{ px: 2, textAlign: "center" }}>
+                    No images yet. Use the gallery strip below to add images.
+                  </Typography>
+                )}
+              </Box>
+
+              <ImageGalleryStrip
+                projectId={projectId}
+                workspaceKey={project.workspace_key}
+                images={images}
+                viewedImageId={viewedImage?.id ?? null}
+                mainImageId={effectiveMainId}
+                onViewImage={setViewedImageId}
+                onSetMain={(imageId) => mainMut.mutate(imageId)}
+                onRemove={(imageId) => removeMut.mutate(imageId)}
+                onReorder={(ids) => reorderMut.mutate(ids)}
+                onAddImages={(paths) => addMut.mutate(paths)}
+                isAdding={addMut.isPending}
+              />
+              {images.length > 0 && (
+                <Button size="small" onClick={() => setCropEditorOpen(true)} sx={{ mt: 0.5 }}>
+                  Customize thumbnails
+                </Button>
               )}
             </Box>
 
-            {/* RIGHT: metadata above, scrollable description below */}
-            <Box
-              sx={{
-                flexGrow: 1,
-                minWidth: 0,
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <Box sx={{ mb: 1.5 }}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
-                  <Typography variant="subtitle2" color="text.secondary">
+            <Box sx={{ display: "flex", minWidth: 0, flexDirection: "column", gap: "18px" }}>
+              <Box>
+                <Box sx={{ display: "flex", alignItems: "center", gap: "6px", mb: "6px" }}>
+                  <Typography sx={{ color: "text.secondary", fontSize: "13px", lineHeight: 1.45 }}>
                     Main targets
                   </Typography>
                   <Tooltip
@@ -574,106 +681,97 @@ export default function ProjectDetailPage() {
                       size="small"
                       onClick={() => setAddTargetOpen(true)}
                       aria-label="Add target"
+                      sx={{ width: "22px", height: "22px" }}
                     >
-                      <AddIcon fontSize="small" />
+                      <AddIcon sx={{ fontSize: "16px" }} />
                     </IconButton>
                   </Tooltip>
                 </Box>
                 {mainTargets.length > 0 ? (
-                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                    {mainTargets.map((t) => (
+                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {mainTargets.map((target) => (
                       <Chip
-                        key={t.dso_id}
+                        key={target.dso_id}
                         label={
                           <Box component="span" sx={{ display: "inline-flex", alignItems: "center" }}>
-                            {t.common_name ?? t.primary_designation}
-                            {!t.active && <NotListedTag />}
+                            {target.common_name ?? target.primary_designation}
+                            {!target.active && <NotListedTag />}
                           </Box>
                         }
                         size="small"
-                        onClick={solveDsoIds.has(t.dso_id) ? openPlateSolve : undefined}
-                        onDelete={() => removeTargetMut.mutate(t.dso_id)}
+                        onClick={solveDsoIds.has(target.dso_id) ? openPlateSolve : undefined}
+                        onDelete={() => removeTargetMut.mutate(target.dso_id)}
+                        sx={(theme) => ({
+                          height: "26px",
+                          bgcolor: theme.palette.mode === "dark" ? "#31343a" : "#ebe8e3",
+                          fontSize: "13px",
+                        })}
                       />
                     ))}
                   </Box>
                 ) : (
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography sx={{ color: "text.secondary", fontSize: "13px" }}>
                     No targets yet.
                   </Typography>
                 )}
-              </Box>
-
-              {imagingRunLabels.length > 0 && integration && (
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
-                    Imaging dates
-                  </Typography>
-                  <Typography variant="body2">
-                    {imagingRunLabels.join(", ")}
-                    <Box component="span" sx={{ color: "text.secondary" }}>
-                      {`, ${integration.night_count} ${
-                        integration.night_count === 1 ? "night" : "nights"
-                      }`}
-                    </Box>
-                  </Typography>
-                </Box>
-              )}
-
-              <Box sx={{ mb: 2 }}>
-                <ProjectMetadataSection project={project} onUpdated={applyProject} />
-              </Box>
-
-              <Box sx={{ mb: 3 }}>
-                <PlateSolvedPill solvedAt={project.solved_at} onOpen={openPlateSolve} />
-              </Box>
-
-              <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>
-                <MarkdownEditor
-                  value={displayDesc}
-                  onSave={(next) => {
-                    const v = next.trim();
-                    if (v !== (project.description ?? "")) metaMut.mutate({ description: v });
-                  }}
-                  label={
-                    <Typography variant="subtitle2" color="text.secondary">
-                      Description
-                    </Typography>
-                  }
-                  placeholder="Add a description"
-                  minHeight={40}
+                <PlateSolveLine
+                  solvedAt={solve?.solved_at ?? project.solved_at}
+                  objectCount={solve?.objects.length}
+                  onOpen={openPlateSolve}
                 />
               </Box>
+
+              <ProjectMetadataSection
+                project={project}
+                imagingRuns={imagingRunLabels}
+                nightCount={integration?.night_count ?? 0}
+                onUpdated={applyProject}
+                onChanged={refreshRigDependent}
+              />
+
+              <Box
+                sx={(theme) => ({
+                  borderTop: `1px solid ${theme.palette.mode === "dark" ? "#34373d" : "#dcd9d4"}`,
+                  pt: "14px",
+                })}
+              >
+                <ProjectDescription
+                  value={displayDesc}
+                  onSave={(next) => {
+                    const value = next.trim();
+                    if (value !== (project.description ?? "")) {
+                      metaMut.mutate({ description: value });
+                    }
+                  }}
+                />
+              </Box>
+
+              {integration && integration.total_actual_minutes > 0 && (
+                <Box
+                  sx={(theme) => ({
+                    borderTop: `1px solid ${theme.palette.mode === "dark" ? "#34373d" : "#dcd9d4"}`,
+                    pt: "14px",
+                  })}
+                >
+                  <Typography sx={{ mb: "8px", color: "text.secondary", fontSize: "13px" }}>
+                    Integration{" "}
+                    <Box component="span" sx={{ color: "text.primary", fontWeight: 500 }}>
+                      {formatHoursMinutes(integration.total_actual_minutes)} in all
+                    </Box>
+                  </Typography>
+                  <IntegrationBars summary={integration} compact showHeading={false} />
+                </Box>
+              )}
             </Box>
           </Box>
 
-          {/* Thumbnails — full width below, given room to grow horizontally */}
-          <ImageGalleryStrip
-            projectId={projectId}
-            workspaceKey={project.workspace_key}
-            images={images}
-            viewedImageId={viewedImage?.id ?? null}
-            mainImageId={effectiveMainId}
-            onViewImage={setViewedImageId}
-            onSetMain={(imageId) => mainMut.mutate(imageId)}
-            onRemove={(imageId) => removeMut.mutate(imageId)}
-            onReorder={(ids) => reorderMut.mutate(ids)}
-            onAddImages={(paths) => addMut.mutate(paths)}
-            isAdding={addMut.isPending}
+          <ProjectEquipmentSection
+            project={project}
+            rigSetups={projectRigSetups}
+            onUpdated={applyProject}
+            onChanged={refreshRigDependent}
+            onError={setSnack}
           />
-
-          {images.length > 0 && (
-            <Button size="small" onClick={() => setCropEditorOpen(true)} sx={{ mt: 0.5 }}>
-              Customize thumbnails
-            </Button>
-          )}
-
-          {/* Integration — left-aligned, narrow */}
-          {integration && integration.total_actual_minutes > 0 && (
-            <Box sx={{ mt: 3 }}>
-              <IntegrationBars summary={integration} />
-            </Box>
-          )}
-
         </Box>
       )}
 

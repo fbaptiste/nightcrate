@@ -12,7 +12,8 @@ forecasts and survey imagery are fetched from external services when needed.
 ## Features
 
 - **Projects and catalog:** bind folders or archives, classify captures from
-  headers, tag rigs/targets, inspect frames, keep notes and finished images.
+  headers, tag rigs/targets, inspect frames in a table grouped by night (or as
+  thumbnails), keep notes and finished images.
   Files stay where they are. Rescanning updates the catalog without duplicating
   records within a project. A project can start with a finished image and manual
   sessions; importing raw captures is optional. Plate solving a project image
@@ -25,6 +26,13 @@ forecasts and survey imagery are fetched from external services when needed.
   - **Thumbnails:** frame each picture as you want it shown, separately for
     small, medium and large views. Every frame is 4:3 and may extend onto a
     black mat, so a tall image can have black at its sides.
+  - **Setups:** each rig on a project opens its full setup (telescope,
+    camera, image scale, field of view, filters, mount, guiding, computer,
+    software), side by side with any earlier setup the project used. A
+    project can change a rig for itself only, for example a guide scope
+    instead of the rig's off-axis guider.
+  - **Software:** list the programs used on a project, each with a version
+    if you want one.
 - **Gallery:** every project's picture, as you framed it or whole, in a list
   or small, medium or large grids.
   - Filter by name or object (optionally including everything in each
@@ -34,8 +42,10 @@ forecasts and survey imagery are fetched from external services when needed.
     integration, rigs and status. Expand any image to full size and step
     through the results with the arrow keys.
 - **Sessions and integration:** enter capture batches manually or derive them
-  from cataloged lights. View totals by filter and observing night, and sub
-  counts by filter and exposure length. Duoband equipment-filter sessions count
+  from cataloged lights. Batches are grouped by night with each night's rig,
+  setup and filter mix, and a note per night that survives rebuilding. View
+  totals by filter and observing night, and sub counts by filter and
+  exposure length. Duoband equipment-filter sessions count
   toward each passed line and once toward total exposure time.
 - **Frame quality:** batch HFR, star count, star SNR, and background measurements,
   with progress, cancellation, and sorting to find frames worth inspecting.
@@ -61,6 +71,12 @@ forecasts and survey imagery are fetched from external services when needed.
   section/selection statistics, calibration geometry and range export.
 - **Equipment:** editable component catalog, personal rigs and smart-scope
   presets, filter loadouts, imaging and guiding calculators.
+  - Changing the equipment on a rig you've used asks whether to apply the
+    change to existing projects (fixing a mistake) or only from now on (a
+    real change). From now on, older projects keep the setup they were shot
+    with, and a night can be moved to another setup by hand.
+  - Editing a camera, telescope or other record says how many rigs and
+    projects use it. Programs can hold their versions.
 - **Weather:** a personal Go / Uncertain / No verdict for each of the next 14
   nights (the second week shown as an outlook). It uses imaging rules saved
   per location:

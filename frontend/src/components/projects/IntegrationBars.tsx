@@ -1,9 +1,12 @@
 import Box from "@mui/material/Box";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import { RIG_BLUE } from "@/lib/rigColors";
 import type { IntegrationSummary } from "@/api/projectSessions";
+import FilterSwatch from "./FilterSwatch";
+import { compareFilters, resolveFilterLabel } from "./filterColors";
 
+// Shared with the sessions exposure table and gallery read-outs.
+// eslint-disable-next-line react-refresh/only-export-components
 export function formatHoursMinutes(minutes: number): string {
   const total = Math.round(minutes);
   // Short subs are real time: 10 x 2 s must not read as nothing captured.
@@ -23,12 +26,17 @@ const ELLIPSIS = {
 
 interface Props {
   summary: IntegrationSummary;
+  compact?: boolean;
+  showHeading?: boolean;
 }
 
 // Per-filter integration: a horizontal bar of actual time per filter. A read-out,
-// not a tracker — per-filter goals were removed in v0.41.1. Blue fill keeps it
-// colorblind-safe (no red/green).
-export default function IntegrationBars({ summary }: Props) {
+// not a tracker — per-filter goals were removed in v0.41.1.
+export default function IntegrationBars({
+  summary,
+  compact = false,
+  showHeading = true,
+}: Props) {
   // Every session holds time, so a zero total means no sessions. Empty `lines`
   // alone does not: a broadband filter (UV/IR cut, L-Pro) has no line to credit.
   if (summary.total_actual_minutes === 0) {
@@ -42,12 +50,17 @@ export default function IntegrationBars({ summary }: Props) {
 
   // Scale every bar against the largest value, so the longest bar fills the track.
   const scale = Math.max(1, ...summary.lines.map((l) => l.actual_minutes));
+  const lines = summary.lines
+    .map((line) => ({ ...line, filter: resolveFilterLabel(line.label) }))
+    .sort((a, b) => compareFilters(a.filter, b.filter));
 
   return (
-    <Box sx={{ maxWidth: 560 }}>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-        Integration — {formatHoursMinutes(summary.total_actual_minutes)} total
-      </Typography>
+    <Box sx={{ maxWidth: compact ? "none" : 560 }}>
+      {showHeading && (
+        <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+          Integration — {formatHoursMinutes(summary.total_actual_minutes)} total
+        </Typography>
+      )}
 
       {summary.lines.length === 0 && (
         <Typography variant="body2" color="text.secondary">
@@ -56,15 +69,26 @@ export default function IntegrationBars({ summary }: Props) {
         </Typography>
       )}
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {summary.lines.map((line) => (
-          <Box key={line.label} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", gap: compact ? "6px" : 1 }}>
+        {lines.map((line) => (
+          <Box
+            key={line.label}
+            sx={{ display: "flex", alignItems: "center", gap: compact ? "12px" : 1 }}
+          >
             {/* The label is a free string — a canonical bandpass, or a filter
                 name straight from the FITS header. Truncate rather than wrap. */}
             <Tooltip title={line.label} placement="left">
               <Typography
                 variant="body2"
-                sx={{ width: 120, flexShrink: 0, fontWeight: 600, cursor: "default", ...ELLIPSIS }}
+                sx={{
+                  width: compact ? 48 : 120,
+                  flexShrink: 0,
+                  fontSize: compact ? "13px" : undefined,
+                  lineHeight: compact ? 1.45 : undefined,
+                  fontWeight: compact ? 400 : 600,
+                  cursor: "default",
+                  ...ELLIPSIS,
+                }}
               >
                 {line.label}
               </Typography>
@@ -74,9 +98,11 @@ export default function IntegrationBars({ summary }: Props) {
               sx={{
                 position: "relative",
                 flexGrow: 1,
-                height: 18,
-                borderRadius: 0.5,
-                bgcolor: "action.hover",
+                height: compact ? 12 : 18,
+                borderRadius: compact ? "3px" : 0.5,
+                bgcolor: compact
+                  ? (theme) => (theme.palette.mode === "dark" ? "#31343a" : "#ebe8e3")
+                  : "action.hover",
                 overflow: "hidden",
               }}
             >
@@ -85,16 +111,32 @@ export default function IntegrationBars({ summary }: Props) {
                   position: "absolute",
                   inset: 0,
                   width: `${Math.min((line.actual_minutes / scale) * 100, 100)}%`,
-                  bgcolor: RIG_BLUE,
-                  borderRadius: 0.5,
+                  borderRadius: compact ? "3px" : 0.5,
+                  overflow: "hidden",
                 }}
-              />
+              >
+                <FilterSwatch
+                  filter={line.filter}
+                  width="100%"
+                  height="100%"
+                  borderRadius="inherit"
+                  outlineWidth={1.5}
+                  display="block"
+                />
+              </Box>
             </Box>
 
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ width: 120, flexShrink: 0, textAlign: "left" }}
+              sx={{
+                width: compact ? 64 : 120,
+                flexShrink: 0,
+                textAlign: compact ? "right" : "left",
+                fontSize: compact ? "13px" : undefined,
+                lineHeight: compact ? 1.45 : undefined,
+                fontVariantNumeric: compact ? "tabular-nums" : undefined,
+              }}
             >
               {formatHoursMinutes(line.actual_minutes)}
             </Typography>

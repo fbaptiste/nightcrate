@@ -331,6 +331,24 @@ export interface Software {
   active: boolean;
   created_at: string;
   updated_at: string;
+  versions: SoftwareVersion[];
+}
+
+export interface SoftwareVersion {
+  id: number;
+  version: string;
+  project_count: number;
+  project_names: string[];
+}
+
+export interface SoftwareVersionInput {
+  id?: number;
+  version: string;
+}
+
+export interface EquipmentUsage {
+  rig_count: number;
+  project_count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -572,6 +590,7 @@ export interface SoftwareCreate {
   website?: string | null;
   notes?: string | null;
   is_mine?: boolean;
+  versions?: SoftwareVersionInput[];
 }
 
 // ---------------------------------------------------------------------------
@@ -599,6 +618,16 @@ function listParams(includeRetired: boolean, mine: boolean): string {
 export const restoreEquipmentItem = (tableName: string, id: number) =>
   apiFetch<{ ok: boolean }>(`/equipment/restore/${tableName}/${id}`, {
     method: "POST",
+  });
+
+export const fetchEquipmentUsage = (kind: string, id: number) =>
+  apiFetch<EquipmentUsage>(`/equipment/${kind}/${id}/usage`);
+
+export const createSoftwareVersion = (softwareId: number, version: string) =>
+  apiFetch<SoftwareVersion>(`/equipment/software/${softwareId}/versions`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ version }),
   });
 
 // ---------------------------------------------------------------------------

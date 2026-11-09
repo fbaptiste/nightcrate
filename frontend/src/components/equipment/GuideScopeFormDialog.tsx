@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -11,6 +12,7 @@ import TextField from "@mui/material/TextField";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
 import LookupPicker from "@/components/equipment/shared/LookupPicker";
+import EquipmentUsageNote from "@/components/equipment/shared/EquipmentUsageNote";
 import { parseOptionalFloat } from "@/lib/formUtils";
 import {
   createGuideScope,
@@ -67,6 +69,7 @@ export default function GuideScopeFormDialog({
   onClose,
   onSaved,
 }: GuideScopeFormDialogProps) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isMine, setIsMine] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
@@ -120,6 +123,7 @@ export default function GuideScopeFormDialog({
       setSnackMessage(isEdit ? "Guide scope updated." : "Guide scope added.");
       setSnackSeverity("info");
       setSnackOpen(true);
+      if (item) void queryClient.invalidateQueries({ queryKey: ["equipment-usage", "guide_scope", item.id] });
       onSaved();
       onClose();
     } catch (err) {
@@ -140,6 +144,7 @@ export default function GuideScopeFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <EquipmentUsageNote kind="guide_scope" itemId={item?.id} />
             <MineCheckbox value={isMine} onChange={setIsMine} />
 
             {/* Row 1: Model name + Manufacturer */}

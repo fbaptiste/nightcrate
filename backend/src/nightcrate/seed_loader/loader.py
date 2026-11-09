@@ -5,6 +5,7 @@ constraint violations are collected and raised as a group; the caller is
 responsible for rolling back on failure.
 """
 
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ from nightcrate.seed_loader.hash import HASH_CONTRACT_VERSION, compute_seed_hash
 from nightcrate.seed_loader.models import SeedError, SeedReport, TableReport
 from nightcrate.seed_loader.registry import LOAD_ORDER, SeedableTable
 from nightcrate.seed_loader.rehash import apply_rehash_steps
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -344,6 +347,24 @@ def _load_regular_table(
     csv_seed_keys: set[str] = set()
     table_inserted_or_updated: set[str] = set()
 
+    def link_user_row(incoming: dict, seed_key: str) -> int | None:
+        if not table.natural_key:
+            return None
+        where = " AND ".join(f"{column} IS ?" for column in table.natural_key)
+        row = conn.execute(
+            f"SELECT id FROM {table.table_name} "  # nosec B608 - internal registry table
+            f"WHERE source = 'user' AND {where}",
+            tuple(incoming[column] for column in table.natural_key),
+        ).fetchone()
+        if row is None:
+            return None
+        logger.info(
+            "[seed] linked %s %s to the user's own row",
+            table.table_name,
+            seed_key,
+        )
+        return row["id"]
+
     for row in rows:
         seed_key: str = row["seed_key"]  # type: ignore[assignment]
         csv_seed_keys.add(seed_key)
@@ -367,6 +388,15 @@ def _load_regular_table(
             try:
                 row_id = _insert_row(conn, table.table_name, seed_key, incoming, incoming_hash)
             except sqlite3.IntegrityError as exc:
+                linked_id = (
+                    link_user_row(incoming, seed_key)
+                    if getattr(exc, "sqlite_errorname", "") == "SQLITE_CONSTRAINT_UNIQUE"
+                    else None
+                )
+                if linked_id is not None:
+                    fk_map[(table.table_name, seed_key)] = linked_id
+                    table_report.unchanged += 1
+                    continue
                 errors.append(
                     SeedError(
                         table=table.table_name,
@@ -391,6 +421,15 @@ def _load_regular_table(
                 try:
                     row_id = _insert_row(conn, table.table_name, seed_key, incoming, incoming_hash)
                 except sqlite3.IntegrityError as exc:
+                    linked_id = (
+                        link_user_row(incoming, seed_key)
+                        if getattr(exc, "sqlite_errorname", "") == "SQLITE_CONSTRAINT_UNIQUE"
+                        else None
+                    )
+                    if linked_id is not None:
+                        fk_map[(table.table_name, seed_key)] = linked_id
+                        table_report.unchanged += 1
+                        continue
                     errors.append(
                         SeedError(
                             table=table.table_name,

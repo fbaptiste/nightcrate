@@ -1,12 +1,302 @@
 # NightCrate — active plan
 
-**Version:** v0.46.0 — Gallery
+**Version:** v0.47.0 — Rigs in use don't change underneath their records
 
-**Branch:** `v0.46.0/gallery`
+**Branch:** `v0.47.0/rigs-in-use`
 
 **Status:** Complete — awaiting merge
 
+## v0.47.0 — Rigs in use don't change underneath their records
+
+Fred started this version on 2026-11-07, after merging v0.46.0. Its scope is
+the roadmap item he placed next on 2026-11-07, moved here unchanged below.
+The spec comes next, decided with Fred one question at a time.
+
+- [x] Start from updated `main` on `v0.47.0/rigs-in-use`.
+- [x] Spec: [v0.47.0 design](docs/superpowers/specs/2026-11-07-v0.47.0-design.md),
+  from Fred's answers on 2026-11-07. Claude's calls are listed at its end
+  for his review. Mockups (`.superpowers/mockups/v0.47.0/rigs-and-software.html`,
+  local) show the seven screens in both themes.
+  - **Fred's additions (2026-11-07):**
+    - a project can change a rig for itself only;
+    - software versions, and the software used on each project;
+    - SyQon's four programs.
+  - **Fred's answer on "from now on":** no cutoff date ("let's keep it
+    simple").
+  - **Changed after review:** a fresh review of the first draft against
+    the code found that storing earlier setups and project changes as
+    extra rigs would break calibration matching, move old frames after a
+    project change, and leak hidden rigs into lists. Earlier setups are now
+    attached to the rig, and project changes stored as swapped parts.
+  - **Fred approved the spec and mockups** on 2026-11-07 ("approved, go
+    ahead with the plan").
+- [x] Implementation plan: [v0.47.0 plan](docs/superpowers/plans/2026-11-07-v0.47.0.md).
+  Codex's plan review converged after three rounds on 2026-11-07 (see the
+  plan's Codex review section). Its findings made the stored history
+  sturdier: setups survive untagged folders, re-derives and moves between
+  rigs, and the guide camera follows the rig when a project swaps its
+  guider. The spec was amended to match. One small addition to the
+  approved mockup: rigs a project used but doesn't list appear as "Also
+  used on this project's nights" chips.
+  - **Fred approved the plan** on 2026-11-07 ("yes, go ahead and build
+    it").
+- [x] Implementation (Codex, worktree `.superpowers/wt-v0.47.0`, detached
+  at `4020f5e`), with Claude's review of each part:
+  - [x] A1: migration 0069 and the rig-setup service (Tasks 1–2).
+    Accepted after one fix (records `07`–`10`): the prompt's night count
+    now includes nights from untagged folders in a one-rig project.
+    Claude's checks: 16 module tests and 120 migration, schema and
+    calibration tests; ruff, format and bandit clean. 0069 on a copy of
+    Fred's database: counts unchanged, integrity ok, no foreign-key
+    problems.
+  - [x] A2: rig API and records (Tasks 3–4), records `11`–`14`. Codex
+    stopped once, correctly: the handoff left out three files the work
+    needed (router registration and two model files). Claude's checks: 375
+    tests across rigs, setups, ingest, sessions, derivation and plate
+    solving; ruff, format and bandit clean. The frame list is 5–6.5%
+    slower on a 2,400-frame library (budget 20%). Focal estimates still
+    read capture batches only; moved to A3, where the project-setups
+    function covers frames.
+  - [x] A3: project setups, equipment usage, software (Tasks 5–7), records
+    `15`–`18`, accepted after one fix round:
+    - the equipment usage count took 919 ms on the 503-project library;
+      rewritten with grouped queries, now 6 ms;
+    - a duplicate version gave a misleading message, and swapping two
+      version names failed.
+    Claude's checks: 455, then 301 tests; ruff, format and bandit clean.
+    The SyQon rows are in the seed files. A handoff named a test module
+    that starts MLX inside the sandbox; it aborted once (the reason for
+    the §10 rule), so later handoffs leave it out.
+  - [x] Phase A gate and a fresh independent Codex review (records
+    `19`–`23`). The review found no blocker:
+    - moving a night to another setup left that night's darks, flats and
+      bias behind (major); fixed, with a calibration-matching test;
+    - bad parts input gave a server error (minor); now a clear 422.
+    Full backend suite on the worktree (Phase A as reviewed, before those
+    two fixes): 3,756 passed, 10 skipped, 0 failed. The fixes' modules: 100
+    passed.
+  - [x] Phase B, frontend (Tasks 8–11), with rendered checks (records
+    `20`–`32`). Claude drove every screen in a headless browser on
+    private servers with a copy of Fred's database migrated to 0069, in
+    both themes, against the mockups. Fixed in three rounds:
+    - near-invisible borders and fields in dark mode, a guiding toggle in
+      capitals without the amber selection, no "Use the rig's" link;
+    - dates as "Nov 8, 2026" instead of "8 Nov 2026"; versions added in
+      one save stored in reverse; a read-only Software field;
+    - the night move offered only setups the project already used (now
+      every setup of the rig, through a new `setup_options` field);
+    - the Sessions table wrapped and clipped with the Setup column;
+    - the prompt counted 5 nights where the change touched 8: stale
+      derived batches with no frames left were left out of the count;
+    - an existing React key warning in the rig form's pickers.
+    Checked live: the prompt and "From now on" (529 frames and 29 batches
+    stamped), the earlier-setups list, the correction dialog, the
+    equipment usage note, versions, the project setup panel with one and
+    two setups, a guiding change for one project, project software with a
+    version, moving a night (147 frames and 6 batches), "Also used on this
+    project's nights" chips, and the setup named in plate-solve estimates.
+    The SyQon programs were seeded into the copy at startup. After the
+    last round: 44 backend tests, ruff, format, bandit and `npm run build`
+    pass. All 74 files are staged in the worktree.
+  - [x] **Brought into the main checkout** on Fred's "yes, bring it in"
+    (2026-11-08): 74 files, identical to the reviewed worktree, now
+    staged. A backup of his database at 0068 was taken first
+    (`.superpowers/tmp/v047/`, local). His dev server applied 0069: every
+    record count unchanged (15 rigs, 3 projects, 1,232 frames, 30 batches,
+    45,436 objects), the four SyQon programs added (48 programs),
+    integrity ok, no foreign-key violations.
+  - [x] Phase C docs (Task 12, Claude, 2026-11-08): a "Rig history and
+    project setups" section and the software, seed-link and calibration
+    rules in the development decisions; the v0.47.0 tables and views and
+    the software diagram in `DB_SCHEMA.md`; seed counts and keys (67
+    manufacturers, 48 programs, checked against the CSVs) and the new
+    user-data tables in `LLM_DB_SPECS.md`; the code map; README features.
+    140 local links resolve; `git diff --check` clean.
+- [ ] **Fred's first look** on his own dev server, which now runs v0.47.0.
+  - **Chip spacing** (Fred, 2026-11-08: "Too close to each other", the
+    Software and Rigs fields). Chips in both fields, and the "Also used"
+    chips, now have a 6 px gap between chips and rows (shared
+    `components/projects/chipRow.ts`), so the open chip's outline no
+    longer touches its neighbours. Claude's fix; checked in a browser,
+    ESLint, type check and `npm run build` pass; staged.
+- [x] **Candidate preparation** (Fred: "ok, continue", 2026-11-08, after his
+  first look; Prepare only, no commit).
+  - Version 0.47.0 in `VERSION`, `backend/pyproject.toml` and `uv.lock`,
+    and in the headers of `DB_SCHEMA.md`, `DB_SCHEMA_DDL.sql` and
+    `LLM_DB_SPECS.md`.
+  - **Checks (Claude, main checkout):**
+    - full backend suite: 3,768 passed, 4 skipped, 29 warnings (45 min).
+      The 4 skips are v0.46.0's (missing star data and XISF fixtures); the
+      worktree run's 10 skips were fixtures absent from the worktree. The
+      suite started before the last fix round; its modules were re-run
+      after it: 100 passed;
+    - ruff check and format: clean (376 files);
+    - bandit: 0 issues at any severity;
+    - `npm run build`: passes; ESLint clean on every changed file (the
+      repository's 7 errors in the touched folders are in files this
+      version didn't change);
+    - 140 local doc links resolve; `git diff --check`: clean; a privacy
+      scan of the staged additions found nothing personal.
+  - **Coverage of the new and changed backend modules,** from their tests:
+    `services/rig_setups.py` 92%, `api/rigs.py` 88%, `api/project_sessions.py`
+    93%, `services/session_derivation.py` 97%, `api/equipment_factory.py`
+    95%, `seed_loader/loader.py` 86%. The two new route files were at 65%
+    and 71%: the undo endpoint and the 404 paths had no tests, now added.
+  - **Reviews before Fred's acceptance test:**
+    - a fresh independent Codex review of the frontend and the later
+      backend changes (`33`, `35`). One blocker: "Correct this setup" from
+      the project panel started from the project's own view of the setup,
+      so saving would copy its changes into a setup other projects share.
+      Three majors and a minor: retired equipment and programs vanishing
+      from the parts pickers (the rig form's software picker already did
+      this before v0.47.0), the session nights in the prompt's count, and
+      Escape committing a version rename. All fixed (`37`–`38`), except an
+      undated-frame finding the schema rules out (v0.47.0-R3);
+    - a batched Codex review of Claude's docs and the chip-spacing fix
+      (`34`, `36`): one major (v0.47.0-R2: untagged frames still match
+      calibration across a camera change, as before; the docs now say so)
+      and two minors, fixed.
+- [x] **Project Overview layout** (Fred, 2026-11-08, before his acceptance
+  test: "Plate solved location seems random. Clicking on a rig to see the
+  details all the way below is not user friendly."). Claude mocked two
+  layouts with the design skill (`overview-layout.html`, local); Fred chose
+  option A, with Integration moved under the description ("yes, go ahead
+  with option A"):
+  - beside the picture: main targets with the plate-solve line under them;
+    imaging dates and nights, location, "Processed with" (the project's
+    software); the description; integration per filter;
+  - below: an Equipment section, one row per rig with its camera, image
+    scale, field of view and nights; a row opens the setup panel directly
+    under the rig list; a rig used but not listed is tagged in its row.
+  - Claude's calls, accepted with it: the "Imaged" line drops the total
+    (Integration shows it); a long description shows six lines, then "Show
+    more"; declared rigs get a remove button in their row.
+  - This changes the prepared candidate: affected checks and Fred's renewed
+    acceptance follow.
+  - **Built** by Codex in the main checkout (records `39`–`42`), with one
+    fix round from Claude's rendered checks (both themes, 1280 and 1680 px
+    windows, real-data copy): an earlier setup shown in a rig row without
+    saying so, redundant "before" lines, the setup panel opening below the
+    fold, software chips stacking one per line, a pale "+ Add software", a
+    description clamp cutting a line in half, and an Emotion selector
+    warning. Claude's own narrow fix: in a narrow side column, "Processed
+    with" sits above its chips so they can use the full width.
+  - Checks: `npm run build` passes; ESLint clean on every changed file; no
+    console errors; frontend only, so the backend checks above stand.
+- [x] **The other project tabs** (Fred, 2026-11-08, before his acceptance
+  test: "see if there's room for improving each of the other tabs").
+  Claude mocked a main design and an alternative for each tab
+  (`tabs/project-tabs.html`, local); Fred chose every main design, in this
+  version. Spec: "The other project tabs"; plan: "Amendment — the other
+  project tabs".
+  - **Fred's decisions (2026-11-08):** add a note per night that survives
+    rebuilding (migration 0070); no "high" label on frames; frames sort by
+    capture time by default.
+  - Codex's plan review (one round, nine findings, all adopted): capture
+    times sorted as instants, physical totals instead of passband credits,
+    a block kept for a note whose night has no batches, the night on
+    correction responses, and the quality states kept in the table.
+    **Fred approved the plan** ("Start building").
+  - **Built** by Codex in the worktree (Phase D backend, E1 Sessions and
+    Notes, E2 Files and Plate Solve), each with a fix round from Claude's
+    rendered checks on a copy of Fred's database upgraded to 0070:
+    - Sessions: one block per night with a sub-heading per rig; the setup
+      picker showing "Now"; filters ordered Ha, OIII, SII, then RGB;
+    - Files: the table fitted to a 1280 px window with 33 px rows; header
+      alignment; the folder row at narrow widths; unused card code removed;
+    - Plate Solve: the focal-length and objects tables' proportions.
+  - Checked live: night notes added, saved and opened from the Notes tab;
+    585 frames over 10 pages under three night headings with no gaps or
+    repeats; shift-click selection; sorting by HFR; thumbnails; both
+    themes at 1440, 1280 and 800 px. The frame list answers in 5–10 ms
+    for 60 or 600 frames. 0070 on the copy: every record count and the
+    batch, stamp, project and frame tables unchanged, integrity ok, no
+    foreign-key violations.
+  - **Independent review** (fresh Codex session): no blocker. Fixed: the
+    Others tab's selection mixed file and frame ids, so a shared id could
+    remove the wrong item (older than v0.47.0, fixed now); unknown-type
+    frames had lost their thumbnail; a Shift-click anchor survived a sort
+    change. Rejected: touch zoom on the saved plate-solve image, which
+    never had it (v0.47.0-R4); Fred: "no pinch zoom on tablet is fine."
+  - **Brought into the main checkout** on Fred's "Yes, bring it in"
+    (2026-11-08), after the full suite passed on the worktree: the
+    reviewed tree, unchanged. A backup of his database at 0069 was taken
+    first (`.superpowers/tmp/v047/`, local). His dev server applied 0070:
+    every table's record count unchanged, projects, frames, capture
+    batches and project software identical, integrity ok, no foreign-key
+    violations. The one difference was his own rig save during the
+    upgrade (Fred: "that was me"): the same filters, re-saved.
+  - **Checks:** full backend suite on the worktree with this exact tree:
+    3,782 passed, 10 skipped (fixtures absent from the worktree), 0 failed
+    (47 min). In the main checkout: ruff and format clean (380 files),
+    bandit 0 issues, `npm run build` passes, `git diff --check` clean, and
+    a privacy scan of the additions found nothing personal.
+- [x] **Fred's acceptance test** (2026-11-08: "accepted, please finalize so I
+  can merge the PR").
+  - Fred, 2026-11-08: hover explanations for "Change for this project
+    only" and "Edit rig", and "Edit rig" as a button like the other.
+    Claude's narrow fix in the project's rig setup panel: all three
+    buttons there (with "Undo the project change") are outlined, each
+    with a hover note drafted by Codex and checked against the code.
+    ESLint clean, `npm run build` passes, checked in a browser.
+  - **Filter colours** (Fred, 2026-11-08: SII was blue though it is the
+    reddest, and L, R, G, B all grey). Claude mocked an Okabe-Ito palette
+    in wavelength order (`filter-colours.html`, local), checked with the
+    dataviz colour-vision validator; a mid grey for L was dropped because
+    it matched G for green-weak vision. Fred added dual-band filters with
+    SII, then approved: "colors look good, please implement". Built by
+    Codex (records `64`–`65`): the Sessions chips, rows and night bars, the
+    Overview's Integration bars and the Files tab's chips and Filter
+    column; equipment dual-band filters are split between their lines'
+    colours. Checked in a browser in both themes on the private copy (two
+    dual-band batches added there); ESLint clean, `npm run build` passes.
+    Order, Fred after seeing it: L, UV/IR and no filter first, then R, G,
+    B, then narrowband from red to blue; the exposure table follows it;
+    a dual-band swatch now shows its red line first (Claude's narrow
+    changes, checked in a browser).
+  - Also open: the iPad/Safari check of v0.46.0's framing dialog.
+- **Found in passing:** one of Fred's projects has three derived capture
+  batches on a rig with no frames left on it, the known "stale derived
+  rows" limit (development decisions, sessions). They now count in the rig
+  prompt's nights, because the Sessions tab shows them.
+- **From the start sweep (2026-11-07):** v0.46.0-D1, the single rig list
+  on gallery cards and in the filter, bears on this spec. After a rig is
+  saved as a new one, a project can list both rigs.
+- **Closed at the start:** the live HASH (V/163) add and remove under
+  v0.44.0. Harvard serves V/163 again, and the check passed on a copy of
+  Fred's database (the v0.44.0 plan's Codex review section).
+- **Still due from earlier versions:**
+  - the CDS checks under v0.43.1 ("When CDS returns"). CDS's Strasbourg
+    VizieR and tile servers still didn't connect on 2026-11-07;
+  - the iPad/Safari check of v0.46.0's framing dialog: dragging the frame,
+    and the long-press tooltip.
+
+### Scope (Fred, 2026-11-07)
+
+Projects, sessions, frames and source folders point at a rig, and a rig
+points at its equipment. Swapping a rig's camera therefore changes every
+project that lists it, along with pixel scale, field of view, star sizes in
+arcseconds and the plate-solve focal length. Fred: "it should not."
+
+- **Fred's choice (2026-11-07):**
+  - changing the equipment on a rig that is in use asks whether to **save
+    it as a new rig**, so older records keep the old one, or **correct it
+    everywhere**, for a mistake, after showing what it affects;
+  - name and notes edits stay free;
+  - the project page opens each rig's details in a panel.
+- **Rejected:** copying rig values into each project.
+  - The copy covers only projects, not sessions or frames.
+  - It repeats equipment details, so corrected specs never reach them.
+  - Rig versions were also offered; they are the most work.
+- **For the spec:**
+  - what counts as "in use";
+  - what "correct it everywhere" lists;
+  - names for a saved-as-new rig, which must be unique;
+  - whether edits to an equipment record's own specs need the same choice.
+
 ## v0.46.0 — Gallery
+
+Merged in [PR #25](https://github.com/fbaptiste/nightcrate/pull/25) on 2026-11-07.
 
 Fred started this version on 2026-11-04, after merging v0.45.0. Its scope is
 the roadmap's next item, the gallery, moved here unchanged below. The spec
@@ -95,7 +385,7 @@ to ship it in two parts.
     - imaging dates by month;
     - the viewer's arrows;
     - the project page's pill, description heading and status chip.
-- [ ] **Fred's first look (2026-11-07): additions.** Planned in the spec's
+- [x] **Fred's first look (2026-11-07): additions.** Planned in the spec's
   2026-11-07 amendment and the plan's Task 8. Fred approved the plan the
   same day.
   - Fred approved the framing and picker mockup (`framing.html`, local) the
@@ -145,8 +435,9 @@ to ship it in two parts.
     - Old crop files stay on disk until each project's next successful
       thumbnail save sweeps them.
   - [ ] **The iPad/Safari acceptance check:** dragging the frame (WebKit isn't
-    available to Playwright here), and the long-press tooltip.
-  - [ ] **Framed thumbnails.**
+    available to Playwright here), and the long-press tooltip. Still due
+    under v0.47.0.
+  - [x] **Framed thumbnails.**
     - The gallery uses each project's custom thumbnails, one framing per
       size. Fred: "that was the whole reason for defining the customizable
       thumbnails."
@@ -155,16 +446,16 @@ to ship it in two parts.
     - A frame may extend onto a black mat, so a portrait image can fill a
       4:3 tile with black at its sides.
     - Existing crops are cleared.
-  - [ ] **Bug found while planning, fixed by the above:** the editor
+  - [x] **Bug found while planning, fixed by the above:** the editor
     enforces each size's shape in the image's proportions, not its pixels,
     so saved crops are squashed. Seen on Fred's data: an 800×403 image's
     "square" crop is a 2:1 area squeezed into 180×180.
-  - [ ] **View pickers:** icon buttons on both pages, with the selected one
+  - [x] **View pickers:** icon buttons on both pages, with the selected one
     filled. The Projects page's "Gallery" view becomes "Pictures".
-  - [ ] **Plate-solve focal length:** calculated from the solved pixel scale
+  - [x] **Plate-solve focal length:** calculated from the solved pixel scale
     and each project rig's camera pixel size, beside the rig's own focal
     length.
-  - [ ] **A tooltip on the "+" beside Main targets:** add targets here, or
+  - [x] **A tooltip on the "+" beside Main targets:** add targets here, or
     plate solve and choose from the objects found.
 - [x] **Candidate preparation** (Fred: "please finalize", 2026-11-07, before
   his acceptance test, so this is Prepare: no commit).
@@ -196,6 +487,8 @@ to ship it in two parts.
     authorized publication.
     - He didn't report the iPad/Safari drag check, so it stays open in the
       PR.
+- [x] **Published** as [PR #25](https://github.com/fbaptiste/nightcrate/pull/25)
+  on 2026-11-07 (tag `v0.46.0`), and merged the same day.
 - **Found in passing (kept, with reasons):** every endpoint reads the
   global database path, so a workspace switch during a request can mix two
   workspaces in one response (v0.46.0-R1). A wrong image can't be cached
@@ -2365,34 +2658,11 @@ v0.43.0. On 2026-10-30 he added a faster star download as v0.43.1. On 2026-11-01
 placed more deep-sky catalogs and search links as the very next version,
 ahead of the gallery; it became v0.44.0. On
 2026-11-03 he placed common names for galaxies and nebulae as the version
-after it, also ahead of the gallery; it became v0.45.0. The gallery is now
-v0.46.0, the active version above. On 2026-11-07 Fred placed rigs that
-don't change underneath their records as the very next version after the
-gallery.
+after it, also ahead of the gallery; it became v0.45.0. The gallery became
+v0.46.0. On 2026-11-07 Fred placed rigs that don't change underneath their
+records as the very next version after the gallery; it is now v0.47.0, the
+active version above.
 Version numbers are otherwise assigned when each version starts.
-
-### Rigs in use don't change underneath their records (next, Fred, 2026-11-07)
-
-Projects, sessions, frames and source folders point at a rig, and a rig
-points at its equipment. Swapping a rig's camera therefore changes every
-project that lists it, along with pixel scale, field of view, star sizes in
-arcseconds and the plate-solve focal length. Fred: "it should not."
-
-- **Fred's choice (2026-11-07):**
-  - changing the equipment on a rig that is in use asks whether to **save
-    it as a new rig**, so older records keep the old one, or **correct it
-    everywhere**, for a mistake, after showing what it affects;
-  - name and notes edits stay free;
-  - the project page opens each rig's details in a panel.
-- **Rejected:** copying rig values into each project.
-  - The copy covers only projects, not sessions or frames.
-  - It repeats equipment details, so corrected specs never reach them.
-  - Rig versions were also offered; they are the most work.
-- **For the spec:**
-  - what counts as "in use";
-  - what "correct it everywhere" lists;
-  - names for a saved-as-new rig, which must be unique;
-  - whether edits to an equipment record's own specs need the same choice.
 
 ### Messier checklist
 

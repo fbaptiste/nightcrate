@@ -20,10 +20,11 @@ import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseOptionalFloat } from "@/lib/formUtils";
 import ManufacturerPicker from "@/components/equipment/shared/ManufacturerPicker";
 import MineCheckbox from "@/components/equipment/shared/MineCheckbox";
+import EquipmentUsageNote from "@/components/equipment/shared/EquipmentUsageNote";
 
 import {
   createFilter,
@@ -142,6 +143,7 @@ export default function FilterFormDialog({
   onClose,
   onSaved,
 }: FilterFormDialogProps) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isMine, setIsMine] = useState<boolean>(false);
   const [passbands, setPassbands] = useState<PassbandEntry[]>([]);
@@ -267,6 +269,7 @@ export default function FilterFormDialog({
       setSnackMessage(isEdit ? "Filter updated." : "Filter added.");
       setSnackSeverity("info");
       setSnackOpen(true);
+      if (filter) void queryClient.invalidateQueries({ queryKey: ["equipment-usage", "filter", filter.id] });
       onSaved();
       onClose();
     } catch (err) {
@@ -291,6 +294,7 @@ export default function FilterFormDialog({
 
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <EquipmentUsageNote kind="filter" itemId={filter?.id} />
             <MineCheckbox value={isMine} onChange={setIsMine} />
 
             {/* Row 1: Model name + Manufacturer */}

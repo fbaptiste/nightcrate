@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.46.0
+**NightCrate version:** 0.47.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -556,10 +556,33 @@ erDiagram
         TEXT notes
     }
 
+    software_version {
+        INTEGER id PK
+        INTEGER software_id FK "CASCADE"
+        TEXT version "1-50 chars, UNIQUE per program"
+    }
+
+    project_software {
+        INTEGER id PK
+        INTEGER project_id FK "CASCADE"
+        INTEGER software_id FK
+        INTEGER software_version_id FK "nullable; (version, program) composite FK"
+        INTEGER sort_order
+    }
+
     manufacturer ||--o{ computer : "makes"
     computer_type ||--o{ computer : "type of"
     manufacturer ||--o{ software : "develops"
+    software ||--o{ software_version : "has"
+    software ||--o{ project_software : "used on"
+    software_version ||--o{ project_software : "optional version"
 ```
+
+`software_version` and `project_software` (v0.47.0) are user data, never
+seeded. A version a project uses can't be deleted (no `ON DELETE` on the
+composite foreign key), and `project_software` allows one program twice only
+with different versions: `UNIQUE (project_id, software_id,
+software_version_id)` plus a partial unique index for the NULL version.
 
 ---
 
@@ -965,3 +988,25 @@ rows. Nullable terms in a match view must use `IS`.
 | Migration | Change |
 |-----------|--------|
 | `0068.clear_thumbnail_crops` | `DELETE FROM project_thumbnail`. Earlier framings couldn't be trusted under the new 4:3 contract: the old editor kept each shape in image proportions, not pixels, so most were distorted, and small and medium were square. The table and its AUTOINCREMENT sequence are kept, so new crop ids never repeat old ones. No schema change. Leftover `thumb_crop_*` files are no longer served, and the project's next successful thumbnail save deletes them. |
+
+### v0.47.0 — Rig history, project setups, project software (migration 0069)
+
+Rules: [development decisions](docs/development-decisions.md#rig-history-and-project-setups).
+
+| Table / View | Purpose |
+|--------------|---------|
+| `rig_setup` | An earlier setup of a rig, saved by a "from now on" equipment change: `rig_id` FK CASCADE, `until_at`, and the rig's part columns (`telescope_configuration_id` and `camera_id` NOT NULL; wheel, single filter, mount, focuser, OAG, guide scope, guide camera, computer nullable). `UNIQUE (id, rig_id)` backs the stamp table's composite FK. Index on `rig_id`. |
+| `rig_setup_filter_slot`, `rig_setup_software` | The earlier setup's slots (`PRIMARY KEY (rig_setup_id, slot_number)`, `UNIQUE (rig_setup_id, filter_id)`) and software, both CASCADE from `rig_setup`. |
+| `sub_frame_rig_setup` | Stamps: `(sub_frame_id, rig_id)` PRIMARY KEY, `sub_frame_id` FK CASCADE, FK `(rig_setup_id, rig_id)` → `rig_setup (id, rig_id)` CASCADE, so a stamp can't name another rig's setup. One row per frame and rig. Index on `rig_setup_id`. |
+| `project_session.rig_setup_id` | `ALTER TABLE ADD COLUMN`, FK → `rig_setup` ON DELETE SET NULL, indexed. A batch's setup; NULL means the rig's current setup. |
+| `project_rig_change` | A project's own changes to one rig, PRIMARY KEY `(project_id, rig_id)`, `project_id` FK CASCADE. `telescope_configuration_id` and `camera_id` count as changed when not NULL; the other groups have `*_changed` flags (0/1) beside their columns: `filters_changed` (`filter_wheel_id`, `single_filter_id`), `mount_changed`, `focuser_changed`, `guider_changed` (`oag_id`, `guide_scope_id`), `guide_camera_changed`, `computer_changed`, `software_changed`. `updated_at` trigger. |
+| `project_rig_change_filter_slot`, `project_rig_change_software` | The changed slots and software, FK `(project_id, rig_id)` → `project_rig_change` CASCADE; used only while the matching flag is set. |
+| `software_version`, `project_software` | See section 11. |
+| `sub_frame_equipment` (view) | Each frame's effective `telescope_configuration_id` and `camera_id`: the project's change, else the frame's stamp for its current rig, else the rig. The frame list's pixel scale, full-scale ADU and arcsec sorts read it. |
+| `matching_darks`, `matching_flats`, `matching_bias`, `calibration_coverage` (views) | Recreated: darks and bias also compare the effective camera, flats the effective camera and telescope configuration. |
+
+### v0.47.0 — Night notes (migration 0070)
+
+| Table | Purpose |
+|-------|---------|
+| `project_night_note` | One note per project and observing night: `project_id` FK CASCADE, `night_date` (civil `YYYY-MM-DD`, GLOB CHECK), `notes` (CHECK non-blank after trim), `created_at`, `updated_at`; PRIMARY KEY `(project_id, night_date)`. Separate from `project_session`, so rebuilding derived batches never removes a note. |

@@ -59,6 +59,14 @@ export default function SoftwareList({ mineOnly = false }: { mineOnly?: boolean 
             value={item.website ? <ExternalLink href={item.website} /> : null}
           />
           <DetailField label="Notes" value={item.notes ?? null} />
+          <DetailField
+            label="Versions"
+            value={
+              item.versions.length > 0
+                ? item.versions.map((version) => version.version).join(", ")
+                : null
+            }
+          />
         </Box>
       )}
     />

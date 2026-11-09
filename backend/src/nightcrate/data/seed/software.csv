@@ -18,6 +18,10 @@ software.phd2,manufacturer.open_phd_guiding,guiding,PHD2,Push Here Dummy 2 — a
 software.metaguide,manufacturer.freeware,guiding,MetaGuide,Guiding and centering for planetary work,http://www.astrogeeks.com/Bliss/MetaGuide
 # --- Processing (deep-sky) ---
 software.pixinsight,manufacturer.pleiades_astrophoto,processing,PixInsight,Cross-platform DSO image processing,https://pixinsight.com
+software.syqon_studio,manufacturer.syqon,processing,SyQon Studio,Desktop workspace for calibrating and stacking and processing with optional neural models (macOS and Windows; public beta),https://syqon.eu/syqonstudio
+software.syqon_deepprism,manufacturer.syqon,processing,DeepPrism,Noise reduction for linear and non-linear images,https://syqon.eu/prism
+software.syqon_parallax,manufacturer.syqon,processing,Parallax,Deconvolution that reduces optical blur,https://syqon.eu/parallax
+software.syqon_axiom,manufacturer.syqon,processing,Axiom,Separates stars from extended structure for starless images,https://syqon.eu/neural-model/starless
 software.siril,manufacturer.open_source,processing,Siril,Free cross-platform DSO processing,https://siril.org
 software.dss,manufacturer.open_source,processing,DeepSkyStacker,Windows DSO stacking,http://deepskystacker.free.fr
 software.app,manufacturer.aries_productions,processing,Astro Pixel Processor,Cross-platform stacking and processing,https://www.astropixelprocessor.com

@@ -1,6 +1,6 @@
 """Pydantic models for equipment API request/response shapes."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ── Shared ────────────────────────────────────────────────────────────────────
 
@@ -825,6 +825,42 @@ class ComputerResponse(BaseModel):
 # ── Software ─────────────────────────────────────────────────────────────────
 
 
+class SoftwareVersionIn(BaseModel):
+    id: int | None = None
+    version: str = Field(min_length=1, max_length=50)
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def trim_version(cls, value):
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Version cannot be empty")
+        return value
+
+
+class SoftwareVersionCreate(BaseModel):
+    version: str = Field(min_length=1, max_length=50)
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def trim_version(cls, value):
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Version cannot be empty")
+        return value
+
+
+class SoftwareVersionOut(BaseModel):
+    id: int
+    version: str
+    project_count: int
+    project_names: list[str]
+
+
 class SoftwareCreate(BaseModel):
     manufacturer_id: int | None = None
     name: str
@@ -835,6 +871,7 @@ class SoftwareCreate(BaseModel):
     website: str | None = None
     notes: str | None = None
     is_mine: bool = False
+    versions: list[SoftwareVersionIn] | None = None
 
 
 class SoftwareUpdate(BaseModel):
@@ -844,6 +881,7 @@ class SoftwareUpdate(BaseModel):
     website: str | None = None
     notes: str | None = None
     is_mine: bool | None = None
+    versions: list[SoftwareVersionIn] | None = None
 
 
 class SoftwareResponse(BaseModel):
@@ -857,3 +895,4 @@ class SoftwareResponse(BaseModel):
     active: bool
     created_at: str
     updated_at: str
+    versions: list[SoftwareVersionOut]

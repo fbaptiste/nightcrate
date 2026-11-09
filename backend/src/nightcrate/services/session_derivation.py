@@ -24,6 +24,7 @@ import aiosqlite
 
 from nightcrate.services.ingest_sessions import observing_night
 from nightcrate.services.line_names import canonicalize_line_name, normalize_label
+from nightcrate.services.rig_setups import frame_setup_rig_ids
 from nightcrate.services.session_derivation_models import DerivationSummary, DerivedSession
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def group_key(
     binning_x: int | None,
     binning_y: int | None,
     rig_id: int | None = None,
+    rig_setup_id: int | None = None,
 ) -> tuple:
     """The hashable grain of one derived session.
 
@@ -68,6 +70,7 @@ def group_key(
         round(float(exposure_seconds or 0.0), 3),
         coerce_gain(gain),
         (binning_x, binning_y),
+        rig_setup_id,
     )
 
 
@@ -110,12 +113,22 @@ async def derive_sessions(
     # has exactly one. With several, "which rig" is a question only the user can
     # answer — tag the source folders.
     default_rig_id = await _project_single_rig(conn, project_id)
+    setup_rigs = await frame_setup_rig_ids(conn, project_id)
     cursor = await conn.execute(
-        "SELECT date_obs_utc, filter_name_hint, exposure_seconds, gain, binning_x, binning_y, "
+        "SELECT id, date_obs_utc, filter_name_hint, exposure_seconds, gain, binning_x, binning_y, "
         "rig_id FROM sub_frame WHERE project_id = ? AND frame_type = 'light'",
         (project_id,),
     )
     rows = await cursor.fetchall()
+    cursor = await conn.execute(
+        "SELECT sfs.sub_frame_id, sfs.rig_id, sfs.rig_setup_id "
+        "FROM sub_frame_rig_setup sfs JOIN sub_frame sf ON sf.id = sfs.sub_frame_id "
+        "WHERE sf.project_id = ?",
+        (project_id,),
+    )
+    stamps = {
+        (row["sub_frame_id"], row["rig_id"]): row["rig_setup_id"] for row in await cursor.fetchall()
+    }
     summary.lights_considered = len(rows)
 
     groups: dict[tuple, DerivedSession] = {}
@@ -129,6 +142,9 @@ async def derive_sessions(
             continue
         night = observing_night(row["date_obs_utc"], tz_name)
         rig_id = row["rig_id"] if row["rig_id"] is not None else default_rig_id
+        rig_setup_id = (
+            stamps.get((row["id"], setup_rigs[row["id"]])) if rig_id is not None else None
+        )
         key = group_key(
             night,
             row["filter_name_hint"],
@@ -137,6 +153,7 @@ async def derive_sessions(
             row["binning_x"],
             row["binning_y"],
             rig_id,
+            rig_setup_id,
         )
         existing = groups.get(key)
         if existing is not None:
@@ -146,6 +163,7 @@ async def derive_sessions(
         groups[key] = DerivedSession(
             night=night,
             rig_id=rig_id,
+            rig_setup_id=rig_setup_id,
             line_name=(canonicalize_line_name(hint) if hint else None) or _UNKNOWN_LINE,
             filter_label=hint,
             exposure_seconds=exposure,
@@ -165,12 +183,14 @@ async def derive_sessions(
     for key in sorted(groups, key=_sort_key):
         session = groups[key]
         await conn.execute(
-            "INSERT INTO project_session (project_id, rig_id, line_name, filter_label, "
+            "INSERT INTO project_session "
+            "(project_id, rig_id, rig_setup_id, line_name, filter_label, "
             "exposure_seconds, gain, num_subs, binning, session_date, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto')",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto')",
             (
                 project_id,
                 session.rig_id,
+                session.rig_setup_id,
                 session.line_name,
                 session.filter_label,
                 session.exposure_seconds,
@@ -213,7 +233,7 @@ async def _project_single_rig(conn: aiosqlite.Connection, project_id: int) -> in
 
 def _sort_key(key: tuple) -> tuple:
     """Total order over group keys, tolerating the NULLs any component may hold."""
-    night, rig_id, filt, exposure, gain, binning = key
+    night, rig_id, filt, exposure, gain, binning, rig_setup_id = key
     return (
         night,
         -1 if rig_id is None else rig_id,
@@ -221,4 +241,5 @@ def _sort_key(key: tuple) -> tuple:
         exposure,
         -1 if gain is None else gain,
         (-1 if binning[0] is None else binning[0], -1 if binning[1] is None else binning[1]),
+        -1 if rig_setup_id is None else rig_setup_id,
     )

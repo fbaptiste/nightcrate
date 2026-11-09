@@ -8,6 +8,8 @@ export interface ProjectSession {
   project_id: number;
   rig_id: number | null;
   rig_name: string | null;
+  rig_setup_id: number | null;
+  setup_until_at: string | null;
   filter_id: number | null;
   filter_name: string | null;
   filter_label: string | null;
@@ -26,6 +28,7 @@ export interface ProjectSession {
 
 export interface SessionCreate {
   rig_id?: number | null;
+  rig_setup_id?: number | null;
   filter_id?: number | null;
   line_name?: string | null;
   exposure_seconds: number;
@@ -79,6 +82,12 @@ export interface DerivationSummary {
   manual_sessions_kept: number;
 }
 
+export interface NightNote {
+  night_date: string;
+  notes: string;
+  updated_at: string;
+}
+
 // ── Sessions ──────────────────────────────────────────────────────────────
 
 export function listSessions(projectId: number): Promise<ProjectSession[]> {
@@ -114,12 +123,52 @@ export function deleteSession(projectId: number, sessionId: number): Promise<voi
   });
 }
 
+export function updateSessionSetup(
+  projectId: number,
+  sessionId: number,
+  rigSetupId: number | null,
+): Promise<ProjectSession> {
+  return apiFetch<ProjectSession>(`/projects/${projectId}/sessions/${sessionId}/setup`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rig_setup_id: rigSetupId }),
+  });
+}
+
 /** Rebuild the project's derived sessions from its cataloged light frames.
  *  Replaces every `source: "auto"` row; manual ones are left alone. */
 export function deriveSessions(projectId: number): Promise<DerivationSummary> {
   return apiFetch<DerivationSummary>(`/projects/${projectId}/sessions/derive`, {
     method: "POST",
   });
+}
+
+// ── Night notes ────────────────────────────────────────────────────────────
+
+export function listNightNotes(projectId: number): Promise<NightNote[]> {
+  return apiFetch<NightNote[]>(`/projects/${projectId}/night-notes`);
+}
+
+export function saveNightNote(
+  projectId: number,
+  night: string,
+  notes: string,
+): Promise<NightNote> {
+  return apiFetch<NightNote>(
+    `/projects/${projectId}/night-notes/${encodeURIComponent(night)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes }),
+    },
+  );
+}
+
+export function deleteNightNote(projectId: number, night: string): Promise<void> {
+  return apiFetch<void>(
+    `/projects/${projectId}/night-notes/${encodeURIComponent(night)}`,
+    { method: "DELETE" },
+  );
 }
 
 // ── Integration ─────────────────────────────────────────────────────────────

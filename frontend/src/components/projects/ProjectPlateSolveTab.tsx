@@ -8,6 +8,12 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import Table from "@mui/material/Table";
+import TableBody from "@mui/material/TableBody";
+import TableCell from "@mui/material/TableCell";
+import TableContainer from "@mui/material/TableContainer";
+import TableHead from "@mui/material/TableHead";
+import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
 import { alpha, useTheme } from "@mui/material/styles";
 
@@ -26,7 +32,6 @@ import {
   type ProjectSolve,
 } from "@/api/projectSolve";
 import { headerNumber } from "@/components/analyzer/analyzerHelpers";
-import NameWithAlternates from "@/components/common/NameWithAlternates";
 import { FileBrowser } from "@/components/fits/FileBrowser";
 import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import ImagePreview from "@/components/plate-solve/ImagePreview";
@@ -47,6 +52,25 @@ function formatFocalLength(value: number): string {
 
 function formatPixelSize(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatDay(value: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value.slice(0, 10)}T00:00:00Z`));
+}
+
+function formatAxis(value: number): string {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+function objectSize(major: number | null, minor: number | null): string {
+  if (major == null) return "";
+  if (minor == null || Math.abs(major - minor) < 0.05) return `${formatAxis(major)}′`;
+  return `${formatAxis(major)}′ × ${formatAxis(minor)}′`;
 }
 
 function toResult(solve: ProjectSolve): PlateSolveResult {
@@ -267,7 +291,7 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
         </Typography>
         <Typography color="text.secondary">
           Plate solving identifies catalog objects in this image. Choose one or more main targets
-          to organize the project's folders and frames in the Catalog tab. Later, search will find
+          to organize the project's folders and frames in the Files tab. Later, search will find
           projects and frames by their main targets or by any object identified in them.
         </Typography>
         <Button
@@ -378,44 +402,208 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
       ? `${solve.ra_hms}  ${solve.dec_dms}`
       : `${solve.center_ra_deg.toFixed(4)}°  ${solve.center_dec_deg.toFixed(4)}°`;
   const foundBy = foundByText(solve);
-  const hasStars = solve.stars_matched != null && solve.stars_detected != null;
-  const hasFitError = solve.rms_px != null || solve.rms_arcsec != null;
   const fitError = [
     solve.rms_px != null ? `${solve.rms_px.toFixed(2)} px` : null,
     solve.rms_arcsec != null ? `(${solve.rms_arcsec.toFixed(2)}″)` : null,
   ]
     .filter(Boolean)
     .join(" ");
+  const imageRatio = solve.image_width / solve.image_height;
+  const facts = [
+    { label: "Centre", value: center },
+    {
+      label: "Pixel scale",
+      value:
+        solve.pixel_scale_arcsec != null ? `${solve.pixel_scale_arcsec.toFixed(2)}″/px` : "—",
+    },
+    {
+      label: "Field",
+      value:
+        solve.fov_width_arcmin != null && solve.fov_height_arcmin != null
+          ? `${(solve.fov_width_arcmin / 60).toFixed(2)}° × ${(solve.fov_height_arcmin / 60).toFixed(2)}°`
+          : "—",
+    },
+    {
+      label: "Rotation",
+      value: solve.rotation_deg != null ? `${solve.rotation_deg.toFixed(1)}°` : "—",
+    },
+    { label: "Solver", value: solve.solver === "native" ? "Built-in" : "ASTAP" },
+    ...(foundBy
+      ? [
+          {
+            label: "Found by",
+            value: `${foundBy.label}${foundBy.seconds != null ? `, ${foundBy.seconds.toFixed(1)} s` : ""}`,
+          },
+        ]
+      : []),
+    ...(solve.stars_matched != null
+      ? [
+          {
+            label: "Stars matched",
+            value:
+              solve.stars_detected != null
+                ? `${solve.stars_matched} of ${solve.stars_detected}`
+                : solve.stars_matched.toLocaleString(),
+          },
+        ]
+      : []),
+    ...(fitError ? [{ label: "Fit error", value: fitError }] : []),
+  ];
 
   return (
-    <Box sx={{ maxWidth: 1240, display: "grid", gap: 1.5 }}>
+    <Box sx={{ maxWidth: 1240, display: "grid", gap: 2 }}>
       <Box
         sx={{
           display: "flex",
           flexWrap: "wrap",
-          gap: "8px 14px",
-          alignItems: "baseline",
+          gap: 1,
+          alignItems: "center",
         }}
       >
         <Typography sx={{ fontWeight: 600 }}>{fileName(solve.image_path)}</Typography>
-        <Typography color="text.secondary" sx={{ fontSize: 13 }}>
+        <Typography color="text.secondary" sx={{ mr: 0.75, fontSize: 13 }}>
           {solve.image_width} × {solve.image_height} px
         </Typography>
+        <Box
+          sx={{
+            minHeight: 32,
+            px: 1.25,
+            borderRadius: "999px",
+            bgcolor: alpha(done, 0.12),
+            border: `1px solid ${alpha(done, 0.4)}`,
+            display: "flex",
+            gap: 0.75,
+            alignItems: "center",
+          }}
+        >
+          <Box
+            sx={{
+              width: 18,
+              height: 18,
+              borderRadius: "50%",
+              bgcolor: done,
+              color: "#0d1f1d",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
+            ✓
+          </Box>
+          <Typography sx={{ fontWeight: 600, fontSize: 13 }}>
+            Solved and saved, {formatDay(solve.solved_at)}
+          </Typography>
+        </Box>
+        <Box sx={{ flex: 1 }} />
+        <Button
+          variant="outlined"
+          onClick={() => setChosen(solve.image_path)}
+          sx={{ minHeight: 40 }}
+        >
+          Solve again
+        </Button>
+        <Button variant="outlined" onClick={() => setBrowserOpen(true)} sx={{ minHeight: 40 }}>
+          Choose another image
+        </Button>
+        <Button
+          color="inherit"
+          onClick={() => setConfirmDelete(true)}
+          sx={{ minHeight: 40, color: "text.secondary" }}
+        >
+          Remove solution
+        </Button>
       </Box>
+
       <Box
         sx={{
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "minmax(0, 1fr)",
-            md: "minmax(0, 1fr) 340px",
-          },
-          gap: 2,
-          alignItems: "start",
+          bgcolor: "background.paper",
+          border: 1,
+          borderColor: "divider",
+          borderRadius: "8px",
+          p: 1.25,
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: "10px 22px",
         }}
       >
+        {facts.map((fact) => (
+          <Box key={fact.label} sx={{ minWidth: 0, fontVariantNumeric: "tabular-nums" }}>
+            <Typography
+              component="div"
+              color="text.secondary"
+              sx={{ fontSize: 11.5, lineHeight: 1.2 }}
+            >
+              {fact.label}
+            </Typography>
+            <Typography component="div" sx={{ fontSize: 13, lineHeight: 1.45 }}>
+              {fact.value}
+            </Typography>
+          </Box>
+        ))}
+        <Button
+          variant="text"
+          onClick={() => setDetailsOpen((value) => !value)}
+          sx={{ ml: "auto", minHeight: 32, whiteSpace: "nowrap" }}
+        >
+          {detailsOpen ? "Hide solution details" : "View solution details"}
+        </Button>
+      </Box>
+
+      {detailsOpen && (
+        <Box
+          sx={{
+            mt: -1,
+            borderRadius: "6px",
+            p: "10px 12px",
+            bgcolor: alpha(theme.palette.secondary.main, 0.12),
+            border: `1px solid ${alpha(theme.palette.secondary.main, 0.35)}`,
+          }}
+        >
+          <Box
+            component="dl"
+            sx={{
+              m: 0,
+              display: "grid",
+              gridTemplateColumns: "auto minmax(0, 1fr)",
+              gap: "4px 12px",
+              fontSize: 13,
+              "& dt": { color: "text.secondary" },
+              "& dd": { m: 0 },
+            }}
+          >
+            {solve.star_catalog && (
+              <>
+                <dt>Star catalog</dt>
+                <dd>{solve.star_catalog}</dd>
+              </>
+            )}
+            {solve.scale_stage && (
+              <>
+                <dt>Scale stage</dt>
+                <dd>{solve.scale_stage}</dd>
+              </>
+            )}
+            {solve.attempts.map((attempt, index) => (
+              <Box component="div" key={`${attempt.step}:${index}`} sx={{ display: "contents" }}>
+                <dt>{index === 0 ? "Attempts" : ""}</dt>
+                <dd>
+                  {stepLabel(attempt.step)} — {attempt.outcome}
+                  {attempt.seconds != null ? `, ${attempt.seconds.toFixed(1)} s` : ""}
+                </dd>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      )}
+
+      <Box sx={{ display: "flex", justifyContent: "center", width: "100%" }}>
         <Box
           ref={setViewerElement}
           sx={{
+            width: `min(100%, ${imageRatio * 560}px, ${imageRatio * 60}vh)`,
+            maxHeight: "min(560px, 60vh)",
             bgcolor: "#05070b",
             borderRadius: "6px",
             overflow: "hidden",
@@ -433,267 +621,192 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
             displayWidthPx={viewerWidth || undefined}
           />
         </Box>
+      </Box>
+
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "minmax(0, 1fr)",
+            md:
+              solve.focal_length_estimates.length > 0
+                ? "minmax(0, 1.1fr) minmax(0, 1.2fr)"
+                : "1fr",
+          },
+          gap: 2,
+          alignItems: "start",
+        }}
+      >
         <Box
           sx={{
             bgcolor: "background.paper",
             border: 1,
             borderColor: "divider",
             borderRadius: "8px",
-            p: 2,
-            display: "grid",
-            gap: "14px",
+            overflow: "hidden",
           }}
         >
-          <Box
-            sx={{
-              borderRadius: "6px",
-              p: "10px 12px",
-              bgcolor: alpha(done, 0.12),
-              border: `1px solid ${alpha(done, 0.4)}`,
-              display: "flex",
-              gap: 1,
-              alignItems: "center",
-            }}
-          >
-            <Box
-              sx={{
-                width: 18,
-                height: 18,
-                borderRadius: "50%",
-                bgcolor: done,
-                color: "#0d1f1d",
-                display: "grid",
-                placeItems: "center",
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              ✓
-            </Box>
-            <Typography sx={{ fontWeight: 600, fontSize: 13 }}>
-              Solved and saved to project
+          <Box sx={{ p: "14px 16px 8px" }}>
+            <Typography component="h2" sx={{ fontSize: 15, fontWeight: 600 }}>
+              Objects in the image ({solve.objects.length})
             </Typography>
           </Box>
-          <Box
-            component="dl"
-            sx={{
-              m: 0,
-              display: "grid",
-              gridTemplateColumns: "auto 1fr",
-              gap: "4px 12px",
-              fontSize: 13,
-              fontVariantNumeric: "tabular-nums",
-              "& dt": { color: "text.secondary" },
-              "& dd": { m: 0 },
-            }}
-          >
-            <dt>Centre</dt>
-            <dd>{center}</dd>
-            <dt>Pixel scale</dt>
-            <dd>
-              {solve.pixel_scale_arcsec != null
-                ? `${solve.pixel_scale_arcsec.toFixed(2)}″/px`
-                : "—"}
-            </dd>
-            {solve.focal_length_estimates.length > 0 && (
-              <>
-                <dt>Estimated focal length</dt>
-                <dd>
-                  {solve.focal_length_estimates.map((estimate) => (
-                    <Box key={estimate.rig_id}>
-                      {"≈"} {formatFocalLength(estimate.estimated_focal_length_mm)} mm with the{" "}
-                      {estimate.camera_name}&apos;s {formatPixelSize(estimate.pixel_size_um)} µm
-                      pixels · {estimate.rig_name}: {formatFocalLength(estimate.rig_focal_length_mm)}
-                      {" mm"}
-                    </Box>
-                  ))}
-                  <Typography
-                    component="div"
-                    sx={{ color: "text.secondary", fontSize: 12, lineHeight: 1.4 }}
-                  >
-                    Assumes the image&apos;s pixels are the camera&apos;s own. Binning, drizzling or
-                    resizing changes this estimate.
-                  </Typography>
-                </dd>
-              </>
-            )}
-            <dt>Rotation</dt>
-            <dd>{solve.rotation_deg != null ? `${solve.rotation_deg.toFixed(1)}°` : "—"}</dd>
-            <dt>Field</dt>
-            <dd>
-              {solve.fov_width_arcmin != null && solve.fov_height_arcmin != null
-                ? `${(solve.fov_width_arcmin / 60).toFixed(2)}° × ` +
-                  `${(solve.fov_height_arcmin / 60).toFixed(2)}°`
-                : "—"}
-            </dd>
-            <dt>Solver</dt>
-            <dd>{solve.solver === "native" ? "Built-in" : "ASTAP"}</dd>
-          </Box>
-          <Button
-            variant="text"
-            onClick={() => setDetailsOpen((value) => !value)}
-            sx={{ justifySelf: "start", px: 0.25, minHeight: 32 }}
-          >
-            View solution details
-          </Button>
-          {detailsOpen && (hasStars || hasFitError || foundBy) && (
-            <Box
-              sx={{
-                borderRadius: "6px",
-                p: "10px 12px",
-                bgcolor: alpha(theme.palette.secondary.main, 0.12),
-                border: `1px solid ${alpha(theme.palette.secondary.main, 0.35)}`,
-              }}
+          <TableContainer>
+            <Table
+              size="small"
+              aria-label="Objects in the solved image"
+              sx={{ "& th": { whiteSpace: "nowrap" } }}
             >
-              <Box
-                component="dl"
-                sx={{
-                  m: 0,
-                  display: "grid",
-                  gridTemplateColumns: "auto 1fr",
-                  gap: "4px 12px",
-                  fontSize: 13,
-                  "& dt": { color: "text.secondary" },
-                  "& dd": { m: 0 },
-                }}
-              >
-                {hasStars && (
-                  <>
-                    <dt>Stars</dt>
-                    <dd>
-                      {solve.stars_matched} matched of {solve.stars_detected} found
-                    </dd>
-                  </>
-                )}
-                {hasFitError && (
-                  <>
-                    <dt>Fit error</dt>
-                    <dd>{fitError}</dd>
-                  </>
-                )}
-                {foundBy && (
-                  <>
-                    <dt>Found by</dt>
-                    <dd>
-                      {foundBy.label}
-                      {foundBy.seconds != null ? `, ${foundBy.seconds.toFixed(1)} s` : ""}
-                    </dd>
-                  </>
-                )}
-              </Box>
-            </Box>
-          )}
-          <Box sx={{ height: "1px", bgcolor: "divider" }} />
-          <Box>
-            <Typography component="h2" sx={{ fontSize: 15, fontWeight: 600, mb: 0.75 }}>
-              Objects in image <Box component="span" color="text.secondary">({solve.objects.length})</Box>
-            </Typography>
-            <Typography color="text.secondary" sx={{ fontSize: 12.5, mb: 1 }}>
-              Choose one or more main targets for cataloging. Later, search will find projects by
-              main target or any identified object.
-            </Typography>
-            <Box
-              component="ul"
-              sx={{
-                listStyle: "none",
-                p: 0,
-                m: 0,
-                display: "grid",
-                gap: 0.25,
-                maxHeight: 260,
-                overflowY: "auto",
-              }}
-            >
-              {solve.objects.map((object) => {
-                const title = object.common_name ?? object.primary_designation;
-                const typeName = DSO_TYPE_DISPLAY[object.obj_type] ?? object.obj_type;
-                const subtitle = object.common_name
-                  ? `${object.primary_designation}, ${typeName}`
-                  : typeName;
-                return (
-                  <Box
-                    component="li"
-                    key={object.dso_id}
-                    onClick={() => setSelectedId(object.dso_id)}
-                    sx={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr auto",
-                      gap: 1,
-                      alignItems: "center",
-                      p: "6px 4px",
-                      borderRadius: "6px",
-                      cursor: "pointer",
-                      bgcolor: selectedId === object.dso_id ? "action.selected" : undefined,
-                    }}
-                  >
-                    <Box>
-                      <Typography sx={{ fontWeight: 500, fontSize: 13 }}>
-                        <NameWithAlternates name={title} otherNames={object.other_names} />
-                      </Typography>
-                      <Typography color="text.secondary" sx={{ fontSize: 12 }}>
-                        {subtitle}
-                      </Typography>
-                    </Box>
-                    <Box
-                      component="label"
-                      onClick={(event) => event.stopPropagation()}
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        whiteSpace: "nowrap",
-                        color: "text.secondary",
-                        fontSize: 12,
-                      }}
-                    >
-                      <Checkbox
-                        size="small"
-                        checked={object.is_main}
-                        onChange={(event) =>
-                          mainMutation.mutate({
-                            dsoId: object.dso_id,
-                            isMain: event.target.checked,
-                          })
+              <TableHead>
+                <TableRow>
+                  <TableCell>Object</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell align="right">Size</TableCell>
+                  <TableCell align="center">Main target</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {solve.objects.map((object) => {
+                  const title = object.common_name ?? object.primary_designation;
+                  const seen = new Set([title.toLocaleLowerCase()]);
+                  const otherDesignations = [object.primary_designation, ...object.other_names].filter(
+                    (name) => {
+                      const key = name.toLocaleLowerCase();
+                      if (seen.has(key)) return false;
+                      seen.add(key);
+                      return true;
+                    },
+                  );
+                  const typeName = DSO_TYPE_DISPLAY[object.obj_type] ?? object.obj_type;
+                  const selectObject = () => setSelectedId(object.dso_id);
+                  return (
+                    <TableRow
+                      hover
+                      key={object.dso_id}
+                      tabIndex={0}
+                      selected={selectedId === object.dso_id}
+                      onClick={selectObject}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectObject();
                         }
-                        inputProps={{ "aria-label": `Main target: ${title}` }}
-                        sx={{ color: done, "&.Mui-checked": { color: done } }}
-                      />
-                      Main target
-                    </Box>
-                  </Box>
-                );
-              })}
-            </Box>
-          </Box>
-          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-            <Button
-              variant="outlined"
-              onClick={() => setChosen(solve.image_path)}
-              sx={{ minHeight: 40 }}
-            >
-              Solve again
-            </Button>
-            <Button
-              variant="outlined"
-              onClick={() => setBrowserOpen(true)}
-              sx={{ minHeight: 40 }}
-            >
-              Choose another image
-            </Button>
-          </Box>
-          <Button
-            color="inherit"
-            onClick={() => setConfirmDelete(true)}
-            sx={{ justifySelf: "start", minHeight: 40, color: "text.secondary" }}
-          >
-            Remove saved solution
-          </Button>
-          {error && (
-            <Typography color="error" sx={{ fontSize: 13 }}>
-              {error}
-            </Typography>
-          )}
+                      }}
+                      sx={{ cursor: "pointer" }}
+                    >
+                      <TableCell>
+                        <Typography sx={{ fontWeight: 500, fontSize: 13 }}>{title}</Typography>
+                        {otherDesignations.length > 0 && (
+                          <Typography color="text.secondary" sx={{ fontSize: 12 }}>
+                            {otherDesignations.join(", ")}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: 13 }}>{typeName}</TableCell>
+                      <TableCell align="right" sx={{ fontSize: 13, whiteSpace: "nowrap" }}>
+                        {objectSize(object.maj_axis_arcmin, object.min_axis_arcmin)}
+                      </TableCell>
+                      <TableCell
+                        align="center"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <Checkbox
+                          size="small"
+                          checked={object.is_main}
+                          onChange={(event) =>
+                            mainMutation.mutate({
+                              dsoId: object.dso_id,
+                              isMain: event.target.checked,
+                            })
+                          }
+                          inputProps={{ "aria-label": `Main target: ${title}` }}
+                          sx={{ color: done, "&.Mui-checked": { color: done } }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          <Typography color="text.secondary" sx={{ p: "9px 16px 14px", fontSize: 12.5 }}>
+            Search finds projects by their main targets or by any object found here.
+          </Typography>
         </Box>
+
+        {solve.focal_length_estimates.length > 0 && (
+          <Box
+            sx={{
+              bgcolor: "background.paper",
+              border: 1,
+              borderColor: "divider",
+              borderRadius: "8px",
+              overflow: "hidden",
+            }}
+          >
+            <Typography component="h2" sx={{ p: "14px 16px 8px", fontSize: 15, fontWeight: 600 }}>
+              Focal length check
+            </Typography>
+            <TableContainer>
+              <Table
+                size="small"
+                aria-label="Focal length estimates"
+                sx={{ "& th": { whiteSpace: "nowrap" } }}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Setup</TableCell>
+                    <TableCell>Camera</TableCell>
+                    <TableCell align="right">Rig says</TableCell>
+                    <TableCell align="right">Image says</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {solve.focal_length_estimates.map((estimate) => (
+                    <TableRow key={`${estimate.rig_id}:${estimate.rig_setup_id ?? "now"}`}>
+                      <TableCell sx={{ fontSize: 13 }}>
+                        <Typography component="div" sx={{ fontSize: 13 }}>
+                          {estimate.rig_name}
+                        </Typography>
+                        <Typography component="div" color="text.secondary" sx={{ fontSize: 12 }}>
+                          {estimate.setup_until_at
+                            ? `until ${formatDay(estimate.setup_until_at)}`
+                            : "now"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ fontSize: 13 }}>
+                        <Typography component="div" sx={{ fontSize: 13 }}>
+                          {estimate.camera_name}
+                        </Typography>
+                        <Typography component="div" color="text.secondary" sx={{ fontSize: 12 }}>
+                          {formatPixelSize(estimate.pixel_size_um)} µm pixels
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontSize: 13, whiteSpace: "nowrap" }}>
+                        {formatFocalLength(estimate.rig_focal_length_mm)} mm
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontSize: 13, whiteSpace: "nowrap" }}>
+                        ≈ {formatFocalLength(estimate.estimated_focal_length_mm)} mm
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+            <Typography color="text.secondary" sx={{ p: "9px 16px 14px", fontSize: 12 }}>
+              Assumes the image&apos;s pixels are the camera&apos;s own. Binning, drizzling or resizing
+              changes this estimate.
+            </Typography>
+          </Box>
+        )}
       </Box>
+
+      {error && (
+        <Typography color="error" sx={{ fontSize: 13 }}>
+          {error}
+        </Typography>
+      )}
       {fileBrowser}
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)}>
         <DialogTitle>Remove saved solution?</DialogTitle>

@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import type { HTMLAttributes, Key, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
@@ -18,7 +19,16 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import FilterSlotGrid from "@/components/rigs/FilterSlotGrid";
+import RigChangePrompt from "@/components/rigs/RigChangePrompt";
 import { withMineGroup } from "@/components/rigs/mineGroup";
+import { orderSoftwareOptions } from "@/components/shared/softwareOrder";
+import {
+  keepRetiredSelected,
+  retainedGroup,
+  retainedLabel,
+  type RetainedOption,
+} from "@/components/rigs/retainedOptions";
+import { ApiError } from "@/api/client";
 import {
   fetchEquipmentOptions,
   createRig,
@@ -32,6 +42,7 @@ import {
   type GuideScopeOption,
   type SoftwareOption,
   type TelescopeConfigOption,
+  type RigChangeChoiceDetail,
 } from "@/api/rigs";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -73,6 +84,19 @@ interface FlatConfigOption extends TelescopeConfigOption {
   telescope_id: number;
   is_mine: boolean;
   __mine_group?: string;
+}
+
+type GroupedRetained<T> = RetainedOption<T> & { __mine_group?: string };
+
+function OptionListItem({
+  optionProps,
+  children,
+}: {
+  optionProps: HTMLAttributes<HTMLLIElement> & { key?: Key };
+  children: ReactNode;
+}) {
+  const { key, ...props } = optionProps;
+  return <li key={key} {...props}>{children}</li>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -130,8 +154,45 @@ function rigToForm(r: Rig): FormState {
   };
 }
 
-function formatSimple(o: SimpleOption): string {
-  return `${o.manufacturer_name} \u2014 ${o.model_name}`;
+function formatSimple(o: RetainedOption<SimpleOption>): string {
+  return retainedLabel(o, `${o.manufacturer_name} \u2014 ${o.model_name}`, o.model_name);
+}
+
+function equipmentGroup(o: { retired?: true; __mine_group?: string; manufacturer_name: string }) {
+  return retainedGroup(o, o.__mine_group ?? o.manufacturer_name);
+}
+
+function cameraLabel(o: RetainedOption<CameraOption>): string {
+  return retainedLabel(
+    o,
+    `${o.manufacturer_name} \u2014 ${o.model_name} (${o.sensor_type})`,
+    o.model_name,
+  );
+}
+
+function filterLabel(o: RetainedOption<FilterOption>): string {
+  return retainedLabel(o, `${o.manufacturer_name} \u2014 ${o.model_name}`, o.model_name);
+}
+
+function wheelLabel(o: RetainedOption<FilterWheelOption>): string {
+  return retainedLabel(
+    o,
+    `${o.manufacturer_name} \u2014 ${o.model_name} (${o.num_positions}-pos)`,
+    o.model_name,
+  );
+}
+
+function retainedSimpleOptions(
+  active: SimpleOption[],
+  selectedId: number | null,
+  rigId: number | null,
+  name: string | null,
+): RetainedOption<SimpleOption>[] {
+  return keepRetiredSelected(active, [selectedId], (id) => (
+    id === rigId && name
+      ? { id, model_name: name, manufacturer_name: "", is_mine: false }
+      : null
+  ));
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -144,6 +205,11 @@ export default function RigFormDialog({
 }: RigFormDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [pendingChange, setPendingChange] = useState<{
+    detail: RigChangeChoiceDetail;
+    payload: RigCreate;
+  } | null>(null);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
   const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
   const [snack, setSnack] = useState<{
     open: boolean;
@@ -162,6 +228,7 @@ export default function RigFormDialog({
     if (open) {
       setForm(rig ? rigToForm(rig) : emptyForm());
       setErrors({});
+      setPendingChange(null);
     }
   }, [open, rig]);
 
@@ -171,9 +238,9 @@ export default function RigFormDialog({
 
   // ── Derived option lists ───────────────────────────────────────────────
 
-  const telescopeConfigOptions: FlatConfigOption[] = useMemo(
-    () =>
-      options?.telescopes.flatMap((t) =>
+  const telescopeConfigOptions = useMemo<RetainedOption<FlatConfigOption>[]>(
+    () => {
+      const active = options?.telescopes.flatMap((t) =>
         t.configs.map((c) => ({
           ...c,
           telescope_name: t.telescope_name,
@@ -182,8 +249,128 @@ export default function RigFormDialog({
           telescope_id: t.telescope_id,
           is_mine: t.is_mine,
         })),
-      ) ?? [],
-    [options?.telescopes],
+      ) ?? [];
+      return keepRetiredSelected(active, [form.telescope_configuration_id], (id) => {
+        if (!rig || rig.telescope_configuration_id !== id) return null;
+        return {
+          id,
+          config_name: rig.telescope_config_name,
+          effective_focal_length_mm: rig.effective_focal_length_mm,
+          effective_focal_ratio: rig.effective_focal_ratio,
+          effective_image_circle_mm: null,
+          telescope_name: rig.telescope_name,
+          manufacturer_name: "",
+          aperture_mm: rig.aperture_mm,
+          telescope_id: rig.telescope_id,
+          is_mine: false,
+        };
+      });
+    },
+    [options?.telescopes, rig, form.telescope_configuration_id],
+  );
+
+  const cameraOptions = useMemo(
+    () => keepRetiredSelected(
+      options?.cameras ?? [],
+      [form.camera_id, form.guide_camera_id],
+      (id) => {
+        if (!rig || (rig.camera_id !== id && rig.guide_camera_id !== id)) return null;
+        const isImagingCamera = rig.camera_id === id;
+        const name = isImagingCamera ? rig.camera_name : rig.guide_camera_name;
+        if (!name) return null;
+        return {
+          id,
+          model_name: name,
+          manufacturer_name: "",
+          pixel_size_um: isImagingCamera ? rig.pixel_size_um : 0,
+          resolution_x: isImagingCamera ? rig.sensor_resolution_x : 0,
+          resolution_y: isImagingCamera ? rig.sensor_resolution_y : 0,
+          sensor_width_mm: isImagingCamera ? rig.sensor_width_mm : null,
+          sensor_height_mm: isImagingCamera ? rig.sensor_height_mm : null,
+          sensor_type: isImagingCamera ? rig.sensor_type : "",
+          is_mine: false,
+        };
+      },
+    ),
+    [options?.cameras, rig, form.camera_id, form.guide_camera_id],
+  );
+
+  const filterWheelOptions = useMemo(
+    () => keepRetiredSelected(options?.filter_wheels ?? [], [form.filter_wheel_id], (id) => {
+      if (!rig || rig.filter_wheel_id !== id || !rig.filter_wheel_name) return null;
+      return {
+        id,
+        model_name: rig.filter_wheel_name,
+        manufacturer_name: "",
+        num_positions: rig.filter_wheel_positions
+          ?? Math.max(1, ...rig.filter_slots.map((slot) => slot.slot_number)),
+        is_mine: false,
+      };
+    }),
+    [options?.filter_wheels, rig, form.filter_wheel_id],
+  );
+
+  const selectedFilterIds = useMemo(
+    () => [form.single_filter_id, ...form.filter_slots.map((slot) => slot.filter_id)],
+    [form.single_filter_id, form.filter_slots],
+  );
+  const filterOptions = useMemo(
+    () => keepRetiredSelected(options?.filters ?? [], selectedFilterIds, (id) => {
+      if (!rig) return null;
+      const name = rig.single_filter_id === id
+        ? rig.single_filter_name
+        : rig.filter_slots.find((slot) => slot.filter_id === id)?.filter_name;
+      if (!name) return null;
+      return {
+        id,
+        model_name: name,
+        manufacturer_name: "",
+        filter_type_name: "",
+        is_mine: false,
+      };
+    }),
+    [options?.filters, rig, selectedFilterIds],
+  );
+
+  const mountOptions = useMemo(
+    () => retainedSimpleOptions(options?.mounts ?? [], form.mount_id, rig?.mount_id ?? null, rig?.mount_name ?? null),
+    [options?.mounts, form.mount_id, rig],
+  );
+  const focuserOptions = useMemo(
+    () => retainedSimpleOptions(options?.focusers ?? [], form.focuser_id, rig?.focuser_id ?? null, rig?.focuser_name ?? null),
+    [options?.focusers, form.focuser_id, rig],
+  );
+  const oagOptions = useMemo(
+    () => retainedSimpleOptions(options?.oags ?? [], form.oag_id, rig?.oag_id ?? null, rig?.oag_name ?? null),
+    [options?.oags, form.oag_id, rig],
+  );
+  const computerOptions = useMemo(
+    () => retainedSimpleOptions(options?.computers ?? [], form.computer_id, rig?.computer_id ?? null, rig?.computer_name ?? null),
+    [options?.computers, form.computer_id, rig],
+  );
+  const guideScopeOptions = useMemo(
+    () => keepRetiredSelected(options?.guide_scopes ?? [], [form.guide_scope_id], (id) => {
+      if (!rig || rig.guide_scope_id !== id || !rig.guide_scope_name) return null;
+      return {
+        id,
+        model_name: rig.guide_scope_name,
+        manufacturer_name: "",
+        focal_length_mm: rig.guide_scope_focal_length_mm,
+        is_mine: false,
+      };
+    }),
+    [options?.guide_scopes, form.guide_scope_id, rig],
+  );
+
+  const orderedSoftware = useMemo(
+    () => orderSoftwareOptions(
+      keepRetiredSelected(options?.software ?? [], form.software_ids, (id) => {
+        const item = rig?.software.find((software) => software.id === id);
+        return item ? { ...item, is_mine: false } : null;
+      }),
+      "rig",
+    ),
+    [options?.software, form.software_ids, rig],
   );
 
   // ── Selected items for preview ─────────────────────────────────────────
@@ -191,10 +378,10 @@ export default function RigFormDialog({
   const selectedConfig = telescopeConfigOptions.find(
     (c) => c.id === form.telescope_configuration_id,
   );
-  const selectedCamera = options?.cameras.find(
+  const selectedCamera = cameraOptions.find(
     (c) => c.id === form.camera_id,
   );
-  const selectedFilterWheel = options?.filter_wheels.find(
+  const selectedFilterWheel = filterWheelOptions.find(
     (w) => w.id === form.filter_wheel_id,
   );
 
@@ -244,36 +431,64 @@ export default function RigFormDialog({
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) return;
 
+    const payload: RigCreate = {
+      name: form.name.trim(),
+      description: form.description.trim() || null,
+      telescope_configuration_id: form.telescope_configuration_id!,
+      camera_id: form.camera_id!,
+      filter_wheel_id: form.filter_wheel_id,
+      single_filter_id: form.filter_wheel_id ? null : form.single_filter_id,
+      mount_id: form.mount_id,
+      focuser_id: form.focuser_id,
+      oag_id: form.guiding_mode === "oag" ? form.oag_id : null,
+      guide_scope_id:
+        form.guiding_mode === "guide_scope" ? form.guide_scope_id : null,
+      guide_camera_id:
+        form.guiding_mode !== "none" ? form.guide_camera_id : null,
+      computer_id: form.computer_id,
+      software_ids: form.software_ids,
+      is_default: form.is_default,
+      notes: form.notes.trim() || null,
+      filter_slots: form.filter_wheel_id ? form.filter_slots : [],
+    };
+
     setSaving(true);
     try {
-      const payload: RigCreate = {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        telescope_configuration_id: form.telescope_configuration_id!,
-        camera_id: form.camera_id!,
-        filter_wheel_id: form.filter_wheel_id,
-        single_filter_id: form.filter_wheel_id
-          ? null
-          : form.single_filter_id,
-        mount_id: form.mount_id,
-        focuser_id: form.focuser_id,
-        oag_id: form.guiding_mode === "oag" ? form.oag_id : null,
-        guide_scope_id:
-          form.guiding_mode === "guide_scope" ? form.guide_scope_id : null,
-        guide_camera_id:
-          form.guiding_mode !== "none" ? form.guide_camera_id : null,
-        computer_id: form.computer_id,
-        software_ids: form.software_ids,
-        is_default: form.is_default,
-        notes: form.notes.trim() || null,
-        filter_slots: form.filter_wheel_id ? form.filter_slots : [],
-      };
-
-      if (rig) {
-        await updateRig(rig.id, payload);
-      } else {
-        await createRig(payload);
+      if (rig) await updateRig(rig.id, payload);
+      else await createRig(payload);
+      onSaved();
+      onClose();
+    } catch (err) {
+      if (
+        rig &&
+        err instanceof ApiError &&
+        err.status === 409 &&
+        typeof err.detail === "object" &&
+        err.detail !== null &&
+        (err.detail as { code?: string }).code === "rig_change_needs_choice"
+      ) {
+        setPendingChange({
+          detail: err.detail as RigChangeChoiceDetail,
+          payload,
+        });
+        return;
       }
+      setSnack({
+        open: true,
+        message: err instanceof Error ? err.message : String(err),
+        severity: "error",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChoice = async (mode: "existing" | "from_now_on") => {
+    if (!rig || !pendingChange) return;
+    setSaving(true);
+    try {
+      await updateRig(rig.id, pendingChange.payload, mode);
+      setPendingChange(null);
       onSaved();
       onClose();
     } catch (err) {
@@ -285,6 +500,11 @@ export default function RigFormDialog({
     } finally {
       setSaving(false);
     }
+  };
+
+  const cancelChoice = () => {
+    setPendingChange(null);
+    requestAnimationFrame(() => saveButtonRef.current?.focus());
   };
 
   const isEdit = rig !== null;
@@ -323,11 +543,13 @@ export default function RigFormDialog({
             <Autocomplete
               options={withMineGroup(telescopeConfigOptions)}
               groupBy={(o) =>
-                o.__mine_group ?? `${o.manufacturer_name} ${o.telescope_name}`
+                retainedGroup(o, o.__mine_group ?? `${o.manufacturer_name} ${o.telescope_name}`)
               }
-              getOptionLabel={(o: FlatConfigOption) =>
-                `${o.manufacturer_name} ${o.telescope_name} \u2014 ${o.config_name} (${o.effective_focal_length_mm}mm f/${o.effective_focal_ratio})`
-              }
+              getOptionLabel={(o) => retainedLabel(
+                o,
+                `${o.manufacturer_name} ${o.telescope_name} \u2014 ${o.config_name} (${o.effective_focal_length_mm}mm f/${o.effective_focal_ratio})`,
+                `${o.telescope_name} \u2014 ${o.config_name}`,
+              )}
               value={
                 telescopeConfigOptions.find(
                   (c) => c.id === form.telescope_configuration_id,
@@ -341,12 +563,16 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <li {...props}>
+                <OptionListItem optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
-                  {`${option.manufacturer_name} ${option.telescope_name} \u2014 ${option.config_name} (${option.effective_focal_length_mm}mm f/${option.effective_focal_ratio})`}
-                </li>
+                  {retainedLabel(
+                    option,
+                    `${option.manufacturer_name} ${option.telescope_name} \u2014 ${option.config_name} (${option.effective_focal_length_mm}mm f/${option.effective_focal_ratio})`,
+                    `${option.telescope_name} \u2014 ${option.config_name}`,
+                  )}
+                </OptionListItem>
               )}
               renderInput={(params) => (
                 <TextField
@@ -358,14 +584,12 @@ export default function RigFormDialog({
                 />
               )}
             />
-            <Autocomplete<CameraOption & { __mine_group?: string }>
-              options={withMineGroup(options?.cameras ?? [])}
-              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
-              getOptionLabel={(o) =>
-                `${o.manufacturer_name} \u2014 ${o.model_name} (${o.sensor_type})`
-              }
+            <Autocomplete<GroupedRetained<CameraOption>>
+              options={withMineGroup(cameraOptions)}
+              groupBy={equipmentGroup}
+              getOptionLabel={cameraLabel}
               value={
-                options?.cameras.find(
+                cameraOptions.find(
                   (c) => c.id === form.camera_id,
                 ) ?? null
               }
@@ -374,12 +598,12 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <li {...props}>
+                <OptionListItem optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
-                  {`${option.manufacturer_name} \u2014 ${option.model_name} (${option.sensor_type})`}
-                </li>
+                  {cameraLabel(option)}
+                </OptionListItem>
               )}
               renderInput={(params) => (
                 <TextField
@@ -427,14 +651,12 @@ export default function RigFormDialog({
             <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>
               Filtration
             </Typography>
-            <Autocomplete<FilterWheelOption & { __mine_group?: string }>
-              options={withMineGroup(options?.filter_wheels ?? [])}
-              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
-              getOptionLabel={(o) =>
-                `${o.manufacturer_name} \u2014 ${o.model_name} (${o.num_positions}-pos)`
-              }
+            <Autocomplete<GroupedRetained<FilterWheelOption>>
+              options={withMineGroup(filterWheelOptions)}
+              groupBy={equipmentGroup}
+              getOptionLabel={wheelLabel}
               value={
-                options?.filter_wheels.find(
+                filterWheelOptions.find(
                   (w) => w.id === form.filter_wheel_id,
                 ) ?? null
               }
@@ -446,12 +668,12 @@ export default function RigFormDialog({
               }}
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <li {...props}>
+                <OptionListItem optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
-                  {`${option.manufacturer_name} \u2014 ${option.model_name} (${option.num_positions}-pos)`}
-                </li>
+                  {wheelLabel(option)}
+                </OptionListItem>
               )}
               renderInput={(params) => (
                 <TextField {...params} label="Filter Wheel" />
@@ -461,21 +683,19 @@ export default function RigFormDialog({
             {selectedFilterWheel && (
               <FilterSlotGrid
                 numPositions={selectedFilterWheel.num_positions}
-                filters={options?.filters ?? []}
+                filters={filterOptions}
                 slots={form.filter_slots}
                 onChange={(slots) => set("filter_slots", slots)}
               />
             )}
 
             {!form.filter_wheel_id && (
-              <Autocomplete<FilterOption & { __mine_group?: string }>
-                options={withMineGroup(options?.filters ?? [])}
-                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
-                getOptionLabel={(o) =>
-                  `${o.manufacturer_name} \u2014 ${o.model_name}`
-                }
+              <Autocomplete<GroupedRetained<FilterOption>>
+                options={withMineGroup(filterOptions)}
+                groupBy={equipmentGroup}
+                getOptionLabel={filterLabel}
                 value={
-                  options?.filters.find(
+                  filterOptions.find(
                     (f) => f.id === form.single_filter_id,
                   ) ?? null
                 }
@@ -484,12 +704,12 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <li {...props}>
+                  <OptionListItem optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
-                    {`${option.manufacturer_name} \u2014 ${option.model_name}`}
-                  </li>
+                    {filterLabel(option)}
+                  </OptionListItem>
                 )}
                 renderInput={(params) => (
                   <TextField {...params} label="Single Filter" />
@@ -501,12 +721,12 @@ export default function RigFormDialog({
             <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>
               Mount & Guiding
             </Typography>
-            <Autocomplete<SimpleOption & { __mine_group?: string }>
-              options={withMineGroup(options?.mounts ?? [])}
-              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
+            <Autocomplete<GroupedRetained<SimpleOption>>
+              options={withMineGroup(mountOptions)}
+              groupBy={equipmentGroup}
               getOptionLabel={formatSimple}
               value={
-                options?.mounts.find(
+                mountOptions.find(
                   (m) => m.id === form.mount_id,
                 ) ?? null
               }
@@ -515,12 +735,12 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <li {...props}>
+                <OptionListItem optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
                   {formatSimple(option)}
-                </li>
+                </OptionListItem>
               )}
               renderInput={(params) => (
                 <TextField {...params} label="Mount" />
@@ -546,12 +766,12 @@ export default function RigFormDialog({
             </Box>
 
             {form.guiding_mode === "oag" && (
-              <Autocomplete<SimpleOption & { __mine_group?: string }>
-                options={withMineGroup(options?.oags ?? [])}
-                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
+              <Autocomplete<GroupedRetained<SimpleOption>>
+                options={withMineGroup(oagOptions)}
+                groupBy={equipmentGroup}
                 getOptionLabel={formatSimple}
                 value={
-                  options?.oags.find(
+                  oagOptions.find(
                     (o) => o.id === form.oag_id,
                   ) ?? null
                 }
@@ -560,12 +780,12 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <li {...props}>
+                  <OptionListItem optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
                     {formatSimple(option)}
-                  </li>
+                  </OptionListItem>
                 )}
                 renderInput={(params) => (
                   <TextField {...params} label="OAG" />
@@ -574,12 +794,12 @@ export default function RigFormDialog({
             )}
 
             {form.guiding_mode === "guide_scope" && (
-              <Autocomplete<GuideScopeOption & { __mine_group?: string }>
-                options={withMineGroup(options?.guide_scopes ?? [])}
-                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
+              <Autocomplete<GroupedRetained<GuideScopeOption>>
+                options={withMineGroup(guideScopeOptions)}
+                groupBy={equipmentGroup}
                 getOptionLabel={formatSimple}
                 value={
-                  options?.guide_scopes.find(
+                  guideScopeOptions.find(
                     (g) => g.id === form.guide_scope_id,
                   ) ?? null
                 }
@@ -588,12 +808,12 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <li {...props}>
+                  <OptionListItem optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
                     {formatSimple(option)}
-                  </li>
+                  </OptionListItem>
                 )}
                 renderInput={(params) => (
                   <TextField {...params} label="Guide Scope" />
@@ -602,14 +822,12 @@ export default function RigFormDialog({
             )}
 
             {form.guiding_mode !== "none" && (
-              <Autocomplete<CameraOption & { __mine_group?: string }>
-                options={withMineGroup(options?.cameras ?? [])}
-                groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
-                getOptionLabel={(o) =>
-                  `${o.manufacturer_name} \u2014 ${o.model_name} (${o.sensor_type})`
-                }
+              <Autocomplete<GroupedRetained<CameraOption>>
+                options={withMineGroup(cameraOptions)}
+                groupBy={equipmentGroup}
+                getOptionLabel={cameraLabel}
                 value={
-                  options?.cameras.find(
+                  cameraOptions.find(
                     (c) => c.id === form.guide_camera_id,
                   ) ?? null
                 }
@@ -618,12 +836,12 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <li {...props}>
+                  <OptionListItem optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
-                    {`${option.manufacturer_name} \u2014 ${option.model_name} (${option.sensor_type})`}
-                  </li>
+                    {cameraLabel(option)}
+                  </OptionListItem>
                 )}
                 renderInput={(params) => (
                   <TextField {...params} label="Guide Camera" />
@@ -635,12 +853,12 @@ export default function RigFormDialog({
             <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>
               Peripherals
             </Typography>
-            <Autocomplete<SimpleOption & { __mine_group?: string }>
-              options={withMineGroup(options?.focusers ?? [])}
-              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
+            <Autocomplete<GroupedRetained<SimpleOption>>
+              options={withMineGroup(focuserOptions)}
+              groupBy={equipmentGroup}
               getOptionLabel={formatSimple}
               value={
-                options?.focusers.find(
+                focuserOptions.find(
                   (f) => f.id === form.focuser_id,
                 ) ?? null
               }
@@ -649,23 +867,23 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <li {...props}>
+                <OptionListItem optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
                   {formatSimple(option)}
-                </li>
+                </OptionListItem>
               )}
               renderInput={(params) => (
                 <TextField {...params} label="Focuser" />
               )}
             />
-            <Autocomplete<SimpleOption & { __mine_group?: string }>
-              options={withMineGroup(options?.computers ?? [])}
-              groupBy={(o) => o.__mine_group ?? o.manufacturer_name}
+            <Autocomplete<GroupedRetained<SimpleOption>>
+              options={withMineGroup(computerOptions)}
+              groupBy={equipmentGroup}
               getOptionLabel={formatSimple}
               value={
-                options?.computers.find(
+                computerOptions.find(
                   (c) => c.id === form.computer_id,
                 ) ?? null
               }
@@ -674,24 +892,26 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <li {...props}>
+                <OptionListItem optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
                   {formatSimple(option)}
-                </li>
+                </OptionListItem>
               )}
               renderInput={(params) => (
                 <TextField {...params} label="Computer" />
               )}
             />
-            <Autocomplete<SoftwareOption, true>
+            <Autocomplete<RetainedOption<SoftwareOption>, true>
               multiple
-              options={options?.software ?? []}
-              groupBy={(o) => o.category}
-              getOptionLabel={(o) => o.name}
+              options={orderedSoftware}
+              groupBy={(o) =>
+                o.category.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase())
+              }
+              getOptionLabel={(o) => retainedLabel(o, o.name, o.name)}
               value={
-                options?.software.filter((s) =>
+                orderedSoftware.filter((s) =>
                   form.software_ids.includes(s.id),
                 ) ?? []
               }
@@ -703,12 +923,12 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <li {...props}>
+                <OptionListItem optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
-                  {option.name}
-                </li>
+                  {retainedLabel(option, option.name, option.name)}
+                </OptionListItem>
               )}
               renderInput={(params) => (
                 <TextField {...params} label="Software" />
@@ -742,11 +962,26 @@ export default function RigFormDialog({
           <Button onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} variant="contained" disabled={saving}>
+          <Button
+            ref={saveButtonRef}
+            onClick={handleSave}
+            variant="contained"
+            disabled={saving}
+          >
             {saving ? "Saving\u2026" : "Save"}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {pendingChange && (
+        <RigChangePrompt
+          open
+          detail={pendingChange.detail}
+          saving={saving}
+          onChoose={handleChoice}
+          onCancel={cancelChoice}
+        />
+      )}
 
       <Snackbar
         open={snack.open}

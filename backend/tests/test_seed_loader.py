@@ -425,6 +425,143 @@ def test_junction_table(seed_db, csv_root):
     assert report2.per_table["camera_interface"].inserted == 1
 
 
+def test_seed_links_to_user_row(seed_db, csv_root):
+    seed_db.execute(
+        "INSERT INTO manufacturer (name, notes, source) VALUES ('SyQon', 'My notes', 'user')"
+    )
+    write_csv(
+        csv_root,
+        "manufacturer.csv",
+        "seed_key,name,notes,website",
+        "manufacturer.syqon,SyQon,Seed notes,https://syqon.eu",
+    )
+    write_csv(
+        csv_root,
+        "software.csv",
+        "seed_key,manufacturer_seed_key,category,name,notes,website",
+        "software.syqon_studio,manufacturer.syqon,processing,SyQon Studio,Studio,https://syqon.eu",
+        "software.syqon_axiom,manufacturer.syqon,processing,Axiom,Stars,https://syqon.eu/axiom",
+    )
+
+    first = load_all(seed_db, csv_root, mode="first_run")
+    second = load_all(seed_db, csv_root, mode="update")
+    third = load_all(seed_db, csv_root, mode="update")
+
+    assert first.ok and second.ok and third.ok
+    manufacturer = seed_db.execute(
+        "SELECT id, name, notes, source FROM manufacturer WHERE name = 'SyQon'"
+    ).fetchone()
+    assert dict(manufacturer) == {
+        "id": manufacturer["id"],
+        "name": "SyQon",
+        "notes": "My notes",
+        "source": "user",
+    }
+    programs = seed_db.execute(
+        "SELECT manufacturer_id, name FROM software ORDER BY name"
+    ).fetchall()
+    assert [(row["manufacturer_id"], row["name"]) for row in programs] == [
+        (manufacturer["id"], "Axiom"),
+        (manufacturer["id"], "SyQon Studio"),
+    ]
+
+
+def test_seed_link_preserves_user_program_links(seed_db, csv_root):
+    manufacturer_id = seed_db.execute(
+        "INSERT INTO manufacturer (name, source) VALUES ('SyQon', 'user') RETURNING id"
+    ).fetchone()["id"]
+    software_id = seed_db.execute(
+        "INSERT INTO software (manufacturer_id, name, category, source) "
+        "VALUES (?, 'SyQon Studio', 'processing', 'user') RETURNING id",
+        (manufacturer_id,),
+    ).fetchone()["id"]
+    hardware_id = seed_db.execute(
+        "INSERT INTO manufacturer (name) VALUES ('Hardware') RETURNING id"
+    ).fetchone()["id"]
+    telescope_id = seed_db.execute(
+        "INSERT INTO telescope (manufacturer_id, model_name, aperture_mm) "
+        "VALUES (?, 'Scope', 100) RETURNING id",
+        (hardware_id,),
+    ).fetchone()["id"]
+    configuration_id = seed_db.execute(
+        "INSERT INTO telescope_configuration "
+        "(telescope_id, config_name, effective_focal_length_mm, effective_focal_ratio) "
+        "VALUES (?, 'Native', 500, 5) RETURNING id",
+        (telescope_id,),
+    ).fetchone()["id"]
+    sensor_id = seed_db.execute(
+        "INSERT INTO sensor "
+        "(manufacturer_id, model_name, sensor_type, pixel_size_um, resolution_x, resolution_y) "
+        "VALUES (?, 'Sensor', 'mono', 3.76, 100, 100) RETURNING id",
+        (hardware_id,),
+    ).fetchone()["id"]
+    camera_id = seed_db.execute(
+        "INSERT INTO camera (manufacturer_id, sensor_id, model_name) "
+        "VALUES (?, ?, 'Camera') RETURNING id",
+        (hardware_id, sensor_id),
+    ).fetchone()["id"]
+    rig_id = seed_db.execute(
+        "INSERT INTO rig (name, telescope_configuration_id, camera_id) "
+        "VALUES ('Rig', ?, ?) RETURNING id",
+        (configuration_id, camera_id),
+    ).fetchone()["id"]
+    seed_db.execute(
+        "INSERT INTO rig_software (rig_id, software_id) VALUES (?, ?)",
+        (rig_id, software_id),
+    )
+    seed_db.executemany(
+        "INSERT INTO software_version (software_id, version) VALUES (?, ?)",
+        [(software_id, "1"), (software_id, "2")],
+    )
+    write_csv(
+        csv_root,
+        "manufacturer.csv",
+        "seed_key,name,notes,website",
+        "manufacturer.syqon,SyQon,Seed notes,https://syqon.eu",
+    )
+    write_csv(
+        csv_root,
+        "software.csv",
+        "seed_key,manufacturer_seed_key,category,name,notes,website",
+        "software.syqon_studio,manufacturer.syqon,processing,SyQon Studio,Seed notes,https://syqon.eu",
+    )
+
+    report = load_all(seed_db, csv_root, mode="first_run")
+
+    assert report.ok
+    assert seed_db.execute("SELECT COUNT(*) FROM rig_software").fetchone()[0] == 1
+    assert seed_db.execute("SELECT COUNT(*) FROM software_version").fetchone()[0] == 2
+    program = seed_db.execute(
+        "SELECT source, notes FROM software WHERE id = ?", (software_id,)
+    ).fetchone()
+    assert tuple(program) == ("user", None)
+
+
+def test_seed_other_integrity_errors_still_fail(seed_db, csv_root):
+    manufacturer_id = seed_db.execute(
+        "INSERT INTO manufacturer (name, source) VALUES ('Test', 'user') RETURNING id"
+    ).fetchone()["id"]
+    seed_db.execute(
+        "INSERT INTO software (manufacturer_id, name, category, source) "
+        "VALUES (?, 'Bad program', 'processing', 'user')",
+        (manufacturer_id,),
+    )
+    write_csv(
+        csv_root,
+        "manufacturer.csv",
+        "seed_key,name,notes,website",
+        "manufacturer.test,Test,,",
+    )
+    write_csv(
+        csv_root,
+        "software.csv",
+        "seed_key,manufacturer_seed_key,category,name,notes,website",
+        "software.bad,manufacturer.test,not-a-category,Bad program,,",
+    )
+    with pytest.raises(RuntimeError, match="CHECK constraint failed"):
+        load_all(seed_db, csv_root, mode="first_run")
+
+
 # ---------------------------------------------------------------------------
 # Test 9: orphaned_seed — rows removed from CSV are reported, not deleted
 # ---------------------------------------------------------------------------

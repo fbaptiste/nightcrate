@@ -10,6 +10,7 @@ class DerivedSession(BaseModel):
 
     night: str
     rig_id: int | None
+    rig_setup_id: int | None
     line_name: str
     filter_label: str | None
     exposure_seconds: float

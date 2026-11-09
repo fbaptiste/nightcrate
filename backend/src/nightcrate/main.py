@@ -34,10 +34,13 @@ from nightcrate.api import (
     phd2,
     planner,
     plate_solve,
+    project_night_notes,
+    project_rig_setups,
     project_sessions,
     project_solve,
     project_targets,
     projects,
+    rig_setups,
     rigs,
     settings,
     star_catalog,
@@ -431,6 +434,7 @@ app.include_router(imaging_rules.router)
 app.include_router(horizons.router)
 app.include_router(horizons.parse_router)
 app.include_router(rigs.router)
+app.include_router(rig_setups.router)
 app.include_router(calculators.router)
 app.include_router(weather.router)
 app.include_router(dso.router)
@@ -438,6 +442,8 @@ app.include_router(planner.router)
 app.include_router(phd2.router)
 app.include_router(plate_solve.router)
 app.include_router(projects.router)
+app.include_router(project_night_notes.router)
+app.include_router(project_rig_setups.router)
 app.include_router(gallery.router)
 app.include_router(ingest.router)
 app.include_router(project_sessions.router)
