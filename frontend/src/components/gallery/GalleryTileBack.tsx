@@ -153,17 +153,12 @@ export default function GalleryTileBack({
 
   return (
     <Box
-      inert={!turned ? true : undefined}
-      aria-hidden={!turned}
       onClick={(event) => {
         if (!(event.target as HTMLElement).closest("a")) onTurn();
       }}
       sx={{
-        position: "absolute",
-        inset: 0,
-        transform: "rotateY(180deg)",
-        backfaceVisibility: "hidden",
-        WebkitBackfaceVisibility: "hidden",
+        width: "100%",
+        height: "100%",
         bgcolor: "background.paper",
         border: 1,
         borderColor: "divider",

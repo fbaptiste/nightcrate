@@ -72,10 +72,10 @@ def _alternate_names(name: str, designations: list, other_names: list[str]) -> l
     return result
 
 
-async def _load_records(conn) -> list[ProjectRecord]:
+async def load_project_records(conn) -> list[ProjectRecord]:
     project_cursor = await conn.execute(
         """
-        SELECT p.id, p.name, p.status, p.active,
+        SELECT p.id, p.name, p.status, p.active, p.created_at,
                pi.id AS main_image_id
         FROM project p
         LEFT JOIN project_image pi
@@ -206,6 +206,7 @@ async def _load_records(conn) -> list[ProjectRecord]:
             id=int(row["id"]),
             name=row["name"],
             status=row["status"],
+            created_at=row["created_at"],
             retired=not bool(row["active"]),
             main_image_id=row["main_image_id"],
             crops=crops_by_project.get(int(row["id"]), {}),
@@ -308,7 +309,7 @@ async def get_gallery(
         desc=desc,
     )
     async with get_db() as conn:
-        records = await _load_records(conn)
+        records = await load_project_records(conn)
         target_hits = await _search_targets(conn, normalized_q)
         image_hits = await _search_images(conn, normalized_q, records, search_images)
     result = build_gallery(

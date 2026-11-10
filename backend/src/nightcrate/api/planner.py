@@ -95,7 +95,7 @@ from nightcrate.services.planner_visibility import (
 )
 from nightcrate.services.rig_calculators import (
     compute_coverage_pct,
-    compute_fov,
+    rig_fov_from_summary,
 )
 from nightcrate.services.sky_tile_cache import make_cell_key
 from nightcrate.services.sky_tiles import (
@@ -394,27 +394,14 @@ async def _load_rig_fov(conn, rig_id: int) -> tuple[PlannerRigSummary, float, fl
     if row is None:
         raise HTTPException(status_code=404, detail=f"Rig {rig_id} not found")
 
-    focal = row["effective_focal_length_mm"]
-    px = row["pixel_size_um"]
-    res_x = row["sensor_resolution_x"]
-    res_y = row["sensor_resolution_y"]
-    if not focal or not px or not res_x or not res_y:
+    field = rig_fov_from_summary(row)
+    if field is None:
         raise HTTPException(
             status_code=400,
             detail="Rig is missing focal length or sensor info; FOV cannot be computed.",
         )
 
-    width_deg, height_deg = compute_fov(
-        focal_length_mm=float(focal),
-        sensor_width_mm=row["sensor_width_mm"],
-        sensor_height_mm=row["sensor_height_mm"],
-        resolution_x=int(res_x),
-        resolution_y=int(res_y),
-        pixel_size_um=float(px),
-    )
-
-    fov_major = max(width_deg, height_deg)
-    fov_minor = min(width_deg, height_deg)
+    fov_major, fov_minor = field
     return (
         PlannerRigSummary(
             id=int(row["id"]),
@@ -1492,7 +1479,7 @@ async def moon_year(
 @router.get("/thumbnails/{dso_id}")
 async def get_thumbnail(
     dso_id: int,
-    variant: Literal["list", "detail", "rig_framed"] = "list",
+    variant: Literal["list", "detail", "rig_framed", "checklist"] = "list",
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
     wait_ms: int = Query(0, ge=0, le=10000),

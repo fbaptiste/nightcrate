@@ -6,6 +6,7 @@ export type Theme = "light" | "dark" | "browser";
 export type WeatherUnits = "metric" | "imperial";
 export type PlannerTab = "tonight" | "anytime" | "wishlist";
 export type GalleryView = "list" | "small" | "medium" | "large";
+export type MessierView = "small" | "medium" | "large";
 
 export interface BrowserFavorite {
   name: string;
@@ -27,6 +28,12 @@ export interface Settings {
   calculators_clock_order: string[];
   nav_order: string[];
   gallery_view: GalleryView;
+  messier_view: MessierView;
+  messier_imaged_style: "own" | "sky";
+  messier_unimaged_style: "sky" | "blank";
+  messier_show_projects: boolean;
+  messier_location: number | "default" | "none";
+  messier_rig_id: number | null;
   planner_min_visibility_hours: number;
   planner_max_magnitude: number;
   planner_min_size_arcmin: number;

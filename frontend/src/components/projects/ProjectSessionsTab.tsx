@@ -34,6 +34,7 @@ import NightNoteDialog from "./NightNoteDialog";
 import SessionFormDialog from "./SessionFormDialog";
 import SessionNightBlock, { type SessionRigGroup } from "./SessionNightBlock";
 import { compareFilters, resolveFilter, summarizeSessionFilters } from "./filterColors";
+import { invalidateProjectLinks } from "@/api/projectTargetLinks";
 
 interface Props {
   projectId: number;
@@ -226,6 +227,7 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
+    void invalidateProjectLinks(queryClient);
   };
 
   const setupMut = useMutation({

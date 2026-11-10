@@ -68,8 +68,8 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   So `vite`, `@vitejs/plugin-react`, and `@vitejs/plugin-basic-ssl` are listed
   under `dependencies`, which means `npm audit --omit=dev` covers them.
   `make install` uses `npm ci` so that installs never rewrite the lockfile.
-- `AppShell` keeps the Image Analyzer, Planner, PHD2 Analyzer, DSO Catalog, and
-  Weather pages mounted after their first visit, hidden with `display: none`, so
+- `AppShell` keeps the Image Analyzer, Planner, PHD2 Analyzer, DSO Catalog,
+  Weather, Gallery and Messier pages mounted after their first visit, hidden with `display: none`, so
   nested state such as chart zoom survives navigation. To add a page, register
   it in `PERSISTENT_ROUTES` (`components/AppShell.tsx`) and give its route
   `element: null` in `App.tsx` to avoid a second render.
@@ -567,6 +567,76 @@ Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
     Plate Solve tab;
   - `MarkdownEditor` puts its edit toggle right after its label, as in
     "Main targets +".
+
+## Messier checklist
+
+Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
+- **Slots:** 110, from `services/messier.py:MESSIER_NUMBERS`, matched to
+  objects through their Messier designations; M 102 is NGC 5866 (v0.45.0).
+- **Which project fills a slot:** only active projects with the object
+  among their main targets. Projects with a main image come first, then
+  the latest valid session date (dated before undated), creation time,
+  and id (`order_candidates`).
+- **Never rises:** `90 − |latitude − Dec| < −1`, a conservative test with
+  a one-degree margin, for the location chosen on the page. It ignores
+  the horizon profile.
+- **Rig field:** the rig's field is drawn centred on each picture
+  (`lib/messierFov.ts`); the picture shrinks when the field is larger.
+  - An own image's scale comes from the project's plate solve, only when
+    the main image is the solved file, or has its proportions within
+    0.5% (`main_image_field`). Thumbnail framings scale that field by
+    their crop fractions.
+  - Survey images span `max(1.5 × major axis, 0.15°)`, 5′ when the size
+    is unknown.
+- **Survey images** are the `checklist` thumbnail variant: 800 × 600,
+  identified by `ChecklistRender` (centre and field quantised, plus a
+  render revision). The same `render_key` names the cache row
+  (migration 0071), the file and the browser URL, with the workspace key.
+  Change the framing rule by bumping `CHECKLIST_FRAMING_REVISION`, never
+  by reusing a key.
+- **Loading survey images** (`lib/surveyRequestQueue.ts`,
+  `MessierSkyImage`):
+  - at most three requests in flight for the whole page, nearest the
+    visible part first. Browsers allow six connections per server; in
+    v0.48.0's first look about 100 long-polled requests from tiles
+    scrolled past held all six, and the full-size viewer waited about a
+    minute;
+  - every poll goes through the queue; a 202 releases its place;
+  - a tile leaving the 400 px look-ahead cancels its request, and asks
+    again with a fresh 75 s budget when it returns;
+  - the `IntersectionObserver` root is the page's own scroll box.
+    `rootMargin` only grows an explicit root; with the default root the
+    scroll box still clips;
+  - a loaded image survives hiding and showing the page and the
+    checklist's refetch on each visit. Its identity is the object, the
+    render key and the workspace; its object URL is revoked only on
+    unmount, a changed identity or a load error. A refetch only retries
+    tiles that failed or have no image yet. Readiness comes from the
+    image's own `onLoad` and resets before paint when the image goes.
+- **The header is pinned** inside the page's scroll box. The scroll box's
+  `scroll-padding-top` follows the header's measured height, so keyboard
+  focus and the viewer's return never leave a tile under it.
+  - Container queries on the header choose the layout: three areas from
+    1,100 px, a compact form with a smaller map from 950 px, two rows
+    below. The map column is fixed to the boxes' width; the legend wraps
+    inside it.
+  - The header's content is at most 1,552 px, the tile grid's width.
+- **Shared pieces with the Gallery:** `FlipTile` and the viewer. Viewer
+  entries have their own key, so two slots showing one project image
+  stay distinct.
+- **The Planner's project pill** reads `GET /api/project-target-links`
+  (active projects' main targets, with names, status and imaging dates).
+  Every change to those calls `invalidateProjectLinks`: targets
+  (`ProjectDetailPage`, `ProjectPlateSolveTab`), sessions
+  (`ProjectSessionsTab`), name or status, retiring and restoring
+  (`ProjectDetailPage`), and creating a project (`ProjectsPage`). The
+  Planner also refreshes the links each time its card tabs show.
+  - Its `select` must be a module-level function. An inline one returned
+    a new Map every render and looped the Planner ("Maximum update depth
+    exceeded").
+- **"Open in Planner"** navigates to `/planner?object=<dso id>`. The
+  persistent Planner opens that object's details once its settings have
+  loaded, then removes the parameter.
 
 ## Frame quality
 

@@ -7,6 +7,8 @@ import {
 import type { GalleryView } from "@/api/settings";
 
 export type GalleryRendition = "thumb_sm" | "thumb_md" | "thumb_lg";
+type RenditionItem = Pick<GalleryItem, "project_id" | "main_image_id" | "crops">;
+type RunsItem = Pick<GalleryItem, "imaging_runs" | "first_date" | "last_date">;
 
 /**
  * | slot | DPR | result |
@@ -41,7 +43,7 @@ export function cropSizeForView(view: GalleryView): CropSize {
  * | no crop or image  | null                                      |
  */
 export function tileImageUrl(
-  item: GalleryItem,
+  item: RenditionItem,
   size: CropSize,
   slotCssPx: number,
   dpr: number,
@@ -66,7 +68,7 @@ export function tileImageUrl(
  * | 10         | (none)     | 10     |
  * | (none)     | (none)     | null   |
  */
-export function viewerImageId(item: GalleryItem, size: CropSize): number | null {
+export function viewerImageId(item: RenditionItem, size: CropSize): number | null {
   return item.crops[size]?.image_id ?? item.main_image_id;
 }
 
@@ -88,7 +90,7 @@ function monthName(value: string): string {
  * | Jan–Feb 2025; Jan 2026               | Jan–Feb 2025; Jan 2026 |
  * | Dec 2023–Jan 2024                    | Dec 2023–Jan 2024      |
  */
-export function formatImagingRuns(item: GalleryItem): string[] {
+export function formatImagingRuns(item: RunsItem): string[] {
   if (item.imaging_runs.length === 0) return [];
 
   const only = item.imaging_runs.length === 1 ? item.imaging_runs[0] : null;

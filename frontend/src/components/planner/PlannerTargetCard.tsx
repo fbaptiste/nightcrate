@@ -35,6 +35,7 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import StarIcon from "@mui/icons-material/Star";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
 import type { PlannerTargetItem } from "@/api/planner";
+import type { ProjectTargetLink } from "@/api/projectTargetLinks";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance } from "@/lib/distanceFormat";
 import { formatDec, formatRa } from "@/lib/dsoFormatters";
@@ -43,6 +44,7 @@ import { RIG_BLUE, RIG_ORANGE } from "@/lib/rigColors";
 import { ScoreChip } from "./ScoreChip";
 import ThumbnailCell from "./ThumbnailCell";
 import NameWithAlternates from "@/components/common/NameWithAlternates";
+import ProjectPill from "./ProjectPill";
 
 interface Props {
   item: PlannerTargetItem;
@@ -58,6 +60,7 @@ interface Props {
   /** ``false`` hides the tonight-line entirely (Anytime mode). */
   restrictTonight: boolean;
   onClick: (dsoId: number) => void;
+  projectLinks?: ProjectTargetLink[];
   isFavorite?: boolean;
   onToggleFavorite?: (dsoId: number) => void;
 }
@@ -118,6 +121,7 @@ export default function PlannerTargetCard({
   tz,
   restrictTonight,
   onClick,
+  projectLinks,
   isFavorite,
   onToggleFavorite,
 }: Props) {
@@ -361,6 +365,11 @@ export default function PlannerTargetCard({
           </Stack>
         </Stack>
       </CardActionArea>
+      {projectLinks && projectLinks.length > 0 && (
+        <Box sx={{ flex: "0 0 auto", pt: 1.5, pr: 1.5 }}>
+          <ProjectPill designation={item.primary_designation} links={projectLinks} />
+        </Box>
+      )}
     </Card>
   );
 }

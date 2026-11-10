@@ -41,6 +41,13 @@ forecasts and survey imagery are fetched from external services when needed.
   - Click an image to turn its card over: imaging months and nights, total
     integration, rigs and status. Expand any image to full size and step
     through the results with the arrow keys.
+- **Messier checklist:** all 110 objects, each showing your own image when a
+  project has one, or a sky-survey picture, crossed through until you image
+  it. A small map of the 110 shows your progress.
+  - Options: the projects under each picture, a rig's field drawn on every
+    picture to show scale, and which objects never rise at a chosen
+    location.
+  - Several projects on one object: arrows step through their images.
 - **Sessions and integration:** enter capture batches manually or derive them
   from cataloged lights. Batches are grouped by night with each night's rig,
   setup and filter mix, and a note per night that survives rebuilding. View
@@ -51,6 +58,7 @@ forecasts and survey imagery are fetched from external services when needed.
   with progress, cancellation, and sorting to find frames worth inspecting.
 - **Planning:** date/location/horizon-aware visibility, rig framing, filter-aware
   target scores, sky tracks, annual visibility, wishlists and calendars.
+  Objects that are already a project's target carry a pill that opens it.
 - **Deep-sky catalogs:** OpenNGC (Messier, NGC, IC and Caldwell) is always
   loaded. Sharpless 2, Barnard, LBN, LDN, Melotte, Arp, ACO galaxy clusters,
   MCG, Herbig-Haro objects, Wolf-Rayet stars, planetary nebulae and Abell

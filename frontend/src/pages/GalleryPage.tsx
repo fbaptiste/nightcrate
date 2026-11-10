@@ -14,7 +14,7 @@ import GalleryGrid from "@/components/gallery/GalleryGrid";
 import GalleryList from "@/components/gallery/GalleryList";
 import GalleryResultsBar from "@/components/gallery/GalleryResultsBar";
 import GalleryViewer from "@/components/gallery/GalleryViewer";
-import { cropSizeForView } from "@/lib/galleryRendition";
+import { cropSizeForView, viewerImageId, viewerSequence } from "@/lib/galleryRendition";
 import { useDebounce } from "@/lib/useDebounce";
 import { useGalleryStore } from "@/stores/galleryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -201,6 +201,19 @@ export default function GalleryPage() {
   const data = query.data;
   const resetKey = JSON.stringify(params);
   const queryError = query.error instanceof Error ? query.error : null;
+  const cropSize = cropSizeForView(view);
+  const viewerEntries = useMemo(
+    () =>
+      data
+        ? viewerSequence(data.items).flatMap((item) => {
+            const imageId = viewerImageId(item, cropSize);
+            return imageId == null
+              ? []
+              : [{ key: `p${item.project_id}`, projectId: item.project_id, imageId, title: item.name, subtitle: item.targets.map((target) => target.name).join(", ") }];
+          })
+        : [],
+    [cropSize, data],
+  );
 
   return (
     <Box
@@ -248,11 +261,10 @@ export default function GalleryPage() {
         {data && viewerId != null && (
           <GalleryViewer
             key={`${viewerId}-${data.workspace_key}`}
-            items={data.items}
-            startId={viewerId}
+            entries={viewerEntries}
+            startKey={`p${viewerId}`}
             ws={data.workspace_key}
-            cropSize={cropSizeForView(view)}
-            onClose={closeViewer}
+            onClose={(key) => closeViewer(Number(key.slice(1)))}
           />
         )}
       </Box>

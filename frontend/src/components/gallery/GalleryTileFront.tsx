@@ -13,7 +13,6 @@ interface Props {
   slotWidth: number;
   cropSize: CropSize;
   small: boolean;
-  turned: boolean;
   onTurn: () => void;
   onExpand: () => void;
   buttonRef: RefObject<HTMLButtonElement | null>;
@@ -26,7 +25,6 @@ export default function GalleryTileFront({
   slotWidth,
   cropSize,
   small,
-  turned,
   onTurn,
   onExpand,
   buttonRef,
@@ -44,16 +42,7 @@ export default function GalleryTileFront({
     `Found in this project's plate-solved image: ${item.found_in_image.join(", ")}`;
 
   return (
-    <Box
-      inert={turned ? true : undefined}
-      aria-hidden={turned}
-      sx={{
-        position: "absolute",
-        inset: 0,
-        backfaceVisibility: "hidden",
-        WebkitBackfaceVisibility: "hidden",
-      }}
-    >
+    <Box sx={{ width: "100%", height: "100%" }}>
       <Box
         sx={{
           position: "relative",

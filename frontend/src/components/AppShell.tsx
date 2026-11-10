@@ -36,6 +36,7 @@ import ShowChartIcon from "@mui/icons-material/ShowChart";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import CollectionsIcon from "@mui/icons-material/Collections";
 import ViewQuiltIcon from "@mui/icons-material/ViewQuilt";
+import ChecklistIcon from "@mui/icons-material/Checklist";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ImageAnalyzerPage } from "@/pages/ImageAnalyzerPage";
 import PlannerPage from "@/pages/PlannerPage";
@@ -43,6 +44,7 @@ import Phd2AnalyzerPage from "@/pages/Phd2AnalyzerPage";
 import DsoCatalogPage from "@/pages/DsoCatalogPage";
 import WeatherPage from "@/pages/WeatherPage";
 import GalleryPage from "@/pages/GalleryPage";
+import MessierPage from "@/pages/MessierPage";
 import {
   DndContext,
   KeyboardSensor,
@@ -88,6 +90,7 @@ const REORDERABLE_ITEMS: NavItem[] = [
   { to: "/weather", label: "Weather", icon: <WbSunnyIcon /> },
   { to: "/projects", label: "Projects", icon: <CollectionsIcon /> },
   { to: "/gallery", label: "Gallery", icon: <ViewQuiltIcon /> },
+  { to: "/messier", label: "Messier", icon: <ChecklistIcon /> },
   { to: "/image-analyzer", label: "Image Analyzer", icon: <ImageSearchIcon /> },
   { to: "/phd2-analyzer", label: "PHD2 Analyzer", icon: <ShowChartIcon /> },
   { to: "/catalog/dso", label: "DSO Catalog", icon: <AutoAwesomeIcon /> },
@@ -170,7 +173,10 @@ export function AppShell() {
   // route change resets the default.
   const { pathname } = useLocation();
   const lastPathname = useRef<string | null>(null);
+  // Activity must be set before the newly rendered page starts its first query.
+  // eslint-disable-next-line react-hooks/refs
   if (lastPathname.current !== pathname) {
+    // eslint-disable-next-line react-hooks/refs
     lastPathname.current = pathname;
     setActivity(resolvePageLabel(pathname));
   }
@@ -484,6 +490,7 @@ const PERSISTENT_ROUTES: Record<string, React.ComponentType> = {
   "/catalog/dso": DsoCatalogPage,
   "/weather": WeatherPage,
   "/gallery": GalleryPage,
+  "/messier": MessierPage,
 };
 
 const persistentPaths = Object.keys(PERSISTENT_ROUTES);
@@ -497,6 +504,9 @@ function PersistentPages({ pathname }: { pathname: string }) {
     if (isOnPersistent && !mounted.has(pathname)) {
       setMounted((prev) => new Set([...prev, pathname]));
     }
+    // `mounted` is deliberately read as the current route-entry guard; adding it
+    // would make the mounting effect rerun after its own state update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, isOnPersistent]);
 
   return (

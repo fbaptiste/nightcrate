@@ -524,7 +524,7 @@ export const clearSkyTileCache = () =>
     method: "POST",
   });
 
-export type ThumbnailVariant = "list" | "detail" | "rig_framed";
+export type ThumbnailVariant = "list" | "detail" | "rig_framed" | "checklist";
 
 export interface ThumbnailUrlOptions {
   /** Required for ``rig_framed``; ignored otherwise. */
@@ -540,6 +540,10 @@ export interface ThumbnailUrlOptions {
    *  ``0`` (default) restores the old behaviour — immediate placeholder,
    *  client polls with backoff. Backend caps at 10 s. */
   waitMs?: number;
+  /** Workspace browser-cache identity for checklist thumbnails. */
+  ws?: string;
+  /** Stable descriptor for the checklist framing. */
+  renderKey?: string;
 }
 
 /** Build the <img src> URL for a thumbnail — the backend handles cache lookup.
@@ -559,6 +563,8 @@ export function thumbnailUrl(
   if (opts.fovMinorDeg != null) q.set("fov_minor_deg", opts.fovMinorDeg.toFixed(4));
   if (opts.generation != null) q.set("_g", String(opts.generation));
   if (opts.waitMs != null && opts.waitMs > 0) q.set("wait_ms", String(opts.waitMs));
+  if (opts.ws) q.set("ws", opts.ws);
+  if (opts.renderKey) q.set("render_key", opts.renderKey);
   const activity = getActivity();
   if (activity) q.set("_activity", activity);
   return `/api/planner/thumbnails/${dsoId}?${q.toString()}`;

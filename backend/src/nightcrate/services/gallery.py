@@ -82,6 +82,7 @@ class ProjectRecord(BaseModel):
     id: int
     name: str
     status: str
+    created_at: str = ""
     retired: bool = False
     main_image_id: int | None = None
     crops: dict[Literal["small", "medium", "large"], GalleryCrop] = Field(default_factory=dict)

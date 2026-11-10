@@ -1,12 +1,161 @@
 # NightCrate — active plan
 
-**Version:** v0.47.0 — Rigs in use don't change underneath their records
+**Version:** v0.48.0 — Messier checklist
 
-**Branch:** `v0.47.0/rigs-in-use`
+**Branch:** `v0.48.0/messier-checklist`
 
 **Status:** Complete — awaiting merge
 
+## v0.48.0 — Messier checklist
+
+Fred started this version on 2026-11-09, after merging v0.47.0. Its scope is
+the roadmap's next item, the Messier checklist, moved here unchanged below,
+plus the Planner project pill Fred added.
+
+- [x] Start from updated `main` on `v0.48.0/messier-checklist`.
+- [x] Spec: [v0.48.0 design](docs/superpowers/specs/2026-11-09-v0.48.0-design.md).
+  Fred skipped the questions and asked for the spec, Codex's review and
+  the design skill (2026-11-09). Claude's calls are listed at its end for
+  his review. Mockups (`.superpowers/mockups/v0.48.0/messier.html`,
+  local) show the page and the pill in both themes.
+  - **Fred's addition (2026-11-09):** a pill on Plan a Night and Full
+    Catalog cards for objects that are a main target of a project,
+    opening the project or a list of them; not on the Wishlist.
+  - **Codex's spec review** converged after three rounds (records
+    `00`–`06`, local): no blocker; ten findings, all adopted. They made
+    "Open in Planner" survive the Planner's first load, kept one project
+    filling several slots from breaking the shared Gallery parts, and
+    tightened the pill's refresh, the survey-image fallback and cache, and
+    the "not downloaded" test. Codex first preferred deferring the header
+    map, then accepted it as a picture only.
+  - **Fred's changes after the review (2026-11-09):** the survey images at
+    full strength with a light X over the whole tile; a map tooltip
+    listing projects (only on boxes with one); a "Projects under images"
+    switch; a Location picker under the title; a "Rig field" picker that
+    draws the rig's field centred on each picture.
+  - **Fred's addition after approval (2026-11-09):** "Imaged as" (own image
+    or sky image) and arrows that step through the images of a slot's
+    projects; approved from the mockup ("approved, go ahead and build
+    it").
+  - **Fred approved the spec and mockups** (2026-11-09: "approved, go
+    ahead with the plan") and authorised the whole version up to, but not
+    including, finalisation while he is at work, database changes
+    included.
+- [x] Implementation plan: [v0.48.0 plan](docs/superpowers/plans/2026-11-09-v0.48.0.md).
+  Codex's plan review converged after two rounds (the plan's Codex review
+  section). Its findings gave the survey-image cache one canonical key,
+  made the pill's refresh explicit at each project change, and fixed the
+  viewer for two tiles sharing one image.
+- [x] Implementation (Codex, worktree `.superpowers/wt-v0.48.0`, detached
+  at `6a04481`), with Claude's review of each phase (records `21`–`54`,
+  local):
+  - [x] A, backend: the Messier service and endpoint, the 4:3 survey
+    variant with one canonical cache key, migration 0071, the project
+    target links, six settings. One fix round (picture scale per
+    project for the arrows, two simplifications). Claude's checks: 362
+    tests across the new and affected modules, ruff, format, bandit 0;
+    0071 on a copy of Fred's database at 0070: all 88 tables' counts and
+    the 1,121 cache rows unchanged, integrity ok, no foreign-key
+    violations.
+  - [x] B, frontend: the Gallery's tile pieces shared with a separate
+    entry identity, and the Messier page. Two fix rounds: Serpens shown as
+    "Se1"/"Se2" everywhere (a bug from before this version: OpenNGC's
+    codes for Serpens Caput and Cauda, now named in both name lists),
+    unnamed pickers, images released while the page was hidden, image
+    readiness, pinning the default location, the shown-project dot.
+  - [x] C, Planner: the project pill and its refresh at every project
+    change (call sites audited), and "Open in Planner". Claude fixed one
+    defect: an inline query `select` put the Planner in a re-render loop
+    ("Maximum update depth exceeded"); a copy of `main` run against the
+    same data showed no such error.
+  - [x] Independent review (fresh Codex session, whole change): no blocker
+    or major; three minors, all fixed in B's second round.
+  - [x] Rendered checks (headless, private servers, a copy of Fred's
+    database plus 500 synthetic projects with Messier targets): every
+    state in both themes and three tile sizes; arrows; the map tooltip;
+    turning and focus; the viewer stepping M 31 → M 32 on one image;
+    blank and sky styles; the rig box against hand-computed sizes (M 101's
+    real solve, a portrait solve, a matching export with framings,
+    "Scale unknown"); a southern location marking M 40, M 52 and M 103;
+    the Planner pill, its menu and its failure line; "Open in Planner" on
+    a first visit and with the Planner open; the Gallery unchanged.
+  - [x] **Brought into the main checkout** (2026-11-09, Fred's
+    authorisation of database changes): the reviewed 53 files, staged. A
+    backup of his database at 0070 was taken first
+    (`.superpowers/tmp/v048/`, local). His dev server applied 0071: all 88
+    tables' counts and the 1,121 cache rows unchanged, integrity ok, no
+    foreign-key violations; both new endpoints answer.
+- [x] Fred's look at the built version.
+  - [x] **First look (2026-11-09):** opening M 101 full size took about a
+    minute. Every tile he scrolled past kept asking for its survey image,
+    and those requests filled the browser's six connections to the
+    server; the full-size image waited behind them. Now at most three
+    survey requests run at a time, nearest the visible part first, and a
+    tile scrolled away cancels its request. With an empty survey cache,
+    scrolling to M 101 and opening it took 0.24 s.
+  - [x] **Fred's change (2026-11-09):** the controls moved beside the
+    progress map, and the header stays on screen while the tiles scroll
+    (mockup first). A compact form keeps the three areas side by side on
+    narrower windows and iPads in landscape; below that, two rows.
+    Codex built both (records `55`–`63`, local); Claude's rendered
+    checks: the header lines up with the tiles from 960 to 2,300 px;
+    216 px tall at Fred's width, 231–238 px in the compact form (349 px
+    before it); keyboard focus and the viewer's return never leave a
+    tile under the header; scroll position kept on return; nothing
+    requested while the page is hidden; dark mode; the map tooltip and
+    menus above the header.
+- [x] Candidate preparation (2026-11-09, Fred: "please continue and
+  finalize"):
+  - version 0.48.0 in `VERSION`, `backend/pyproject.toml` and `uv.lock`;
+    documentation synced (README, code map, development decisions, schema
+    documents and their version headers);
+  - checks: ruff, format, bandit (0 issues), the frontend build, ESLint on
+    every changed frontend file (one warning in `PlannerPage.tsx`,
+    unchanged from `main`). Full backend suite: 3,816 passed, 4 skipped,
+    1 failed. The failure was `test_migration_0066`: it upgrades to the
+    newest migration and compared whole rows, so 0071's new column broke
+    it. It now compares the columns that existed before (Claude). The
+    rig-field helper gained direct tests for incomplete rigs (Claude);
+  - coverage: the Messier service 98%, its endpoint 99%; the modified
+    modules no lower than on `main` (thumbnails 49% → 66%, planner API
+    89% → 92%, on the same tests);
+  - a final fresh Codex review of everything since the first review: no
+    blocker, one major (loaded survey images dropped by the refetch on
+    each visit) and three minors, all fixed and checked in a browser;
+  - privacy scan of the staged diff: no personal details, ignored files
+    or `instructions/`.
+- [x] Fred's acceptance of the candidate (2026-11-09: "finalize").
+- **From the start sweep (2026-11-09):**
+  - v0.46.0-D1, the single rig list on gallery cards and in the filter:
+    its named check, the v0.47.0 spec, is done. v0.47.0 kept one identity
+    per rig, so a project no longer lists an old and a new rig; still
+    pending (the v0.46.0 plan's Codex review section). It bears on this
+    spec if a checklist card reuses the gallery card's back.
+  - v0.46.0-R1 (one workspace per request) stays deferred to
+    Distribution's design; v0.47.0-R1 and R2 wait on checks outside this
+    scope. No new evidence, and nothing is overdue.
+- **Still due from earlier versions:**
+  - the CDS checks under v0.43.1 ("When CDS returns"). CDS's Strasbourg
+    VizieR and tile servers still timed out on 2026-11-09;
+  - the iPad/Safari check of v0.46.0's framing dialog: dragging the frame,
+    and the long-press tooltip.
+
+### Scope (Fred, 2026-10-24)
+
+- 110 numbered slots from an explicit checklist mapping, separate from catalog
+  designations; one designation can belong to only one object. Since v0.45.0
+  M 102 names NGC 5866, so the catalog has 110 numbers on 110 objects.
+- A slot is filled only by a project with that object among its main targets
+  and a main image. The latest project wins, by latest session date: dated
+  projects before undated ones, then creation time, then ID. The back of the
+  card lists the other projects.
+- Empty slots distinguish "no project" from "a project without an image".
+- M102 is NGC 5866 (Fred, 2026-11-03, a reviewed `assign` override in
+  v0.45.0); keep a note on the historical ambiguity in the checklist.
+
 ## v0.47.0 — Rigs in use don't change underneath their records
+
+Merged in [PR #26](https://github.com/fbaptiste/nightcrate/pull/26) on 2026-11-08.
 
 Fred started this version on 2026-11-07, after merging v0.46.0. Its scope is
 the roadmap item he placed next on 2026-11-07, moved here unchanged below.
@@ -112,7 +261,7 @@ The spec comes next, decided with Fred one question at a time.
     manufacturers, 48 programs, checked against the CSVs) and the new
     user-data tables in `LLM_DB_SPECS.md`; the code map; README features.
     140 local links resolve; `git diff --check` clean.
-- [ ] **Fred's first look** on his own dev server, which now runs v0.47.0.
+- [x] **Fred's first look** on his own dev server, which now runs v0.47.0.
   - **Chip spacing** (Fred, 2026-11-08: "Too close to each other", the
     Software and Rigs fields). Chips in both fields, and the "Also used"
     chips, now have a 6 px gap between chips and rows (shared
@@ -2660,22 +2809,9 @@ ahead of the gallery; it became v0.44.0. On
 2026-11-03 he placed common names for galaxies and nebulae as the version
 after it, also ahead of the gallery; it became v0.45.0. The gallery became
 v0.46.0. On 2026-11-07 Fred placed rigs that don't change underneath their
-records as the very next version after the gallery; it is now v0.47.0, the
-active version above.
+records as the very next version after the gallery; it became v0.47.0. The
+Messier checklist became v0.48.0, the active version above.
 Version numbers are otherwise assigned when each version starts.
-
-### Messier checklist
-
-- 110 numbered slots from an explicit checklist mapping, separate from catalog
-  designations; one designation can belong to only one object. Since v0.45.0
-  M 102 names NGC 5866, so the catalog has 110 numbers on 110 objects.
-- A slot is filled only by a project with that object among its main targets
-  and a main image. The latest project wins, by latest session date: dated
-  projects before undated ones, then creation time, then ID. The back of the
-  card lists the other projects.
-- Empty slots distinguish "no project" from "a project without an image".
-- M102 is NGC 5866 (Fred, 2026-11-03, a reviewed `assign` override in
-  v0.45.0); keep a note on the historical ambiguity in the checklist.
 
 ### Object search
 

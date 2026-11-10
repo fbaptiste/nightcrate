@@ -31,6 +31,7 @@ from nightcrate.api import (
     imaging_rules,
     ingest,
     locations,
+    messier,
     phd2,
     planner,
     plate_solve,
@@ -445,10 +446,12 @@ app.include_router(projects.router)
 app.include_router(project_night_notes.router)
 app.include_router(project_rig_setups.router)
 app.include_router(gallery.router)
+app.include_router(messier.router)
 app.include_router(ingest.router)
 app.include_router(project_sessions.router)
 app.include_router(project_solve.router)
 app.include_router(project_targets.router)
+app.include_router(project_targets.links_router)
 app.include_router(settings.router)
 app.include_router(star_catalog.router)
 app.include_router(admin.router)
