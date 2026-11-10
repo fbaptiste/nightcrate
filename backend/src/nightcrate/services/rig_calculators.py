@@ -8,7 +8,9 @@ and guide system metrics for rig configurations.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from typing import Any
 
 # Unicode constants used in recommendation text.
 _ARCSEC = "\u2033"  # double prime (arcsecond)
@@ -112,6 +114,25 @@ def compute_fov(
     width_deg = 2.0 * math.degrees(math.atan(w_mm / (2.0 * focal_length_mm)))
     height_deg = 2.0 * math.degrees(math.atan(h_mm / (2.0 * focal_length_mm)))
     return width_deg, height_deg
+
+
+def rig_fov_from_summary(row: Mapping[str, Any]) -> tuple[float, float] | None:
+    """Return a rig summary's major/minor field in degrees when complete."""
+    focal = row["effective_focal_length_mm"]
+    pixel_size = row["pixel_size_um"]
+    resolution_x = row["sensor_resolution_x"]
+    resolution_y = row["sensor_resolution_y"]
+    if not focal or not pixel_size or not resolution_x or not resolution_y:
+        return None
+    width_deg, height_deg = compute_fov(
+        focal_length_mm=float(focal),
+        sensor_width_mm=row["sensor_width_mm"],
+        sensor_height_mm=row["sensor_height_mm"],
+        resolution_x=int(resolution_x),
+        resolution_y=int(resolution_y),
+        pixel_size_um=float(pixel_size),
+    )
+    return max(width_deg, height_deg), min(width_deg, height_deg)
 
 
 # ---------------------------------------------------------------------------

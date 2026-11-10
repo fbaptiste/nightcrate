@@ -6,12 +6,13 @@ enqueue a background render from HiPS tiles; the frontend
 re-requests after a short delay and serves the cached image on the
 retry.
 
-Three variants share the cache:
+Four variants share the cache:
 
     ``list``          180×180, object-framed
     ``detail``        800×800, object-framed, wide extent
     ``rig_framed``    180×180, fetched at the rig's FOV major axis; the
                       browser crops to the rig's aspect via ``object-fit``
+    ``checklist``     800×600, object-framed for the Messier checklist
 
 (The old ``fov_simulator`` variant was retired in v0.18.0 — the
 simulator pulls from the DSO-agnostic ``sky_tile_cache`` now.)
@@ -25,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -32,12 +34,15 @@ from pathlib import Path
 from typing import Literal
 
 import aiosqlite
+from astropy.wcs import WCS
 
 from nightcrate.services import hips_tiles, image_cache
 
 logger = logging.getLogger("nightcrate.thumbnails")
 
-Variant = Literal["list", "detail", "rig_framed"]
+Variant = Literal["list", "detail", "rig_framed", "checklist"]
+
+CHECKLIST_FRAMING_REVISION = 1
 
 # ``rig_framed`` requires fov_major_deg + fov_minor_deg query params;
 # the other variants reject those params as unused input.
@@ -81,6 +86,82 @@ class ThumbnailResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ChecklistRender:
+    """Canonical, quantised description of a checklist survey render."""
+
+    ra_e4: int
+    dec_e4: int
+    field_mdeg: int
+    revision: int = CHECKLIST_FRAMING_REVISION
+    width: int = 800
+    height: int = 600
+
+    @classmethod
+    def for_object(
+        cls,
+        ra_deg: float,
+        dec_deg: float,
+        maj_axis_arcmin: float | None,
+    ) -> ChecklistRender:
+        field_deg = compute_angular_extent_deg(
+            "checklist",
+            dso_maj_axis_arcmin=maj_axis_arcmin,
+        )
+        return cls(
+            ra_e4=round(ra_deg * 10_000),
+            dec_e4=round(dec_deg * 10_000),
+            field_mdeg=round(field_deg * 1000),
+            revision=CHECKLIST_FRAMING_REVISION,
+        )
+
+    @property
+    def render_key(self) -> str:
+        return (
+            f"r{self.revision}_ra{self.ra_e4}_dec{self.dec_e4}_"
+            f"f{self.field_mdeg}_{self.width}x{self.height}"
+        )
+
+    @property
+    def file_name(self) -> str:
+        return (
+            f"ra{self.ra_e4}_dec{self.dec_e4}_checklist_"
+            f"{self.width}x{self.height}_{self.field_mdeg}_{self.revision}.jpg"
+        )
+
+    @classmethod
+    def from_file_name(cls, name: str) -> ChecklistRender | None:
+        match = re.fullmatch(
+            r"ra(?P<ra>-?\d+)_dec(?P<dec>-?\d+)_checklist_"
+            r"(?P<width>\d+)x(?P<height>\d+)_"
+            r"(?P<field>\d+)_(?P<revision>\d+)\.jpg",
+            name,
+        )
+        if match is None:
+            return None
+        try:
+            descriptor = cls(
+                ra_e4=int(match.group("ra")),
+                dec_e4=int(match.group("dec")),
+                field_mdeg=int(match.group("field")),
+                revision=int(match.group("revision")),
+                width=int(match.group("width")),
+                height=int(match.group("height")),
+            )
+        except TypeError, ValueError:
+            return None
+        return descriptor if descriptor.width > 0 and descriptor.height > 0 else None
+
+    def wcs(self) -> WCS:
+        return hips_tiles.thumbnail_wcs(
+            self.ra_e4 / 10_000,
+            self.dec_e4 / 10_000,
+            self.field_mdeg / 1000,
+            self.width,
+            self.height,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ThumbnailKey:
     """Composite cache key — dso + variant + dimensions + rig FOV.
 
@@ -111,6 +192,8 @@ class ThumbnailKey:
     fov_minor_deg_x1000: int | None = None
     center_ra_deg_x1000: int | None = None
     center_dec_deg_x1000: int | None = None
+    render_key: str | None = None
+    checklist: ChecklistRender | None = None
 
 
 # Dedupe in-flight fetches keyed on the full ThumbnailKey. Concurrent
@@ -140,6 +223,7 @@ _DIMENSIONS: dict[Variant, ThumbnailDimensions] = {
     "list": ThumbnailDimensions(180, 180),
     "detail": ThumbnailDimensions(800, 800),
     "rig_framed": ThumbnailDimensions(180, 180),
+    "checklist": ThumbnailDimensions(800, 600),
 }
 
 
@@ -171,6 +255,9 @@ def compute_angular_extent_deg(
     if variant == "detail":
         maj_deg = (dso_maj_axis_arcmin or 10.0) / 60.0
         return max(maj_deg * 3.5, 1.0)
+    if variant == "checklist":
+        maj_deg = (dso_maj_axis_arcmin or 5.0) / 60.0
+        return max(maj_deg * 1.5, 0.15)
     if variant == "rig_framed":
         if fov_major_deg is None or fov_major_deg <= 0:
             raise ValueError("rig_framed variant requires a positive fov_major_deg")
@@ -200,6 +287,7 @@ def make_key(
     *,
     ra_deg: float,
     dec_deg: float,
+    maj_axis_arcmin: float | None = None,
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
     center_ra_deg: float | None = None,
@@ -221,6 +309,11 @@ def make_key(
     if variant in _RIG_DEPENDENT and (fov_major_deg is None or fov_minor_deg is None):
         raise ValueError(f"variant {variant!r} requires fov_major_deg + fov_minor_deg")
     dim = dimensions_for(variant)
+    checklist = (
+        ChecklistRender.for_object(ra_deg, dec_deg, maj_axis_arcmin)
+        if variant == "checklist"
+        else None
+    )
     # Rig-independent variants deliberately ignore passed-in FOV values so
     # a stray param can never fork the cache.
     if variant not in _RIG_DEPENDENT:
@@ -235,6 +328,8 @@ def make_key(
         dec_deg_x10000=_to_x10000(dec_deg),
         fov_major_deg_x1000=_to_x1000(fov_major_deg),
         fov_minor_deg_x1000=_to_x1000(fov_minor_deg),
+        render_key=checklist.render_key if checklist is not None else None,
+        checklist=checklist,
     )
 
 
@@ -255,6 +350,10 @@ def _thumb_path(key: ThumbnailKey) -> Path:
     FOV suffix only appears on rig-dependent variants, preventing two
     rigs from clobbering each other's JPEGs.
     """
+    if key.variant == "checklist":
+        if key.checklist is None:
+            raise ValueError("checklist key is missing its render descriptor")
+        return thumb_dir() / key.checklist.file_name
     base = f"ra{key.ra_deg_x10000}_dec{key.dec_deg_x10000}_{key.variant}_{key.width}x{key.height}"
     if key.fov_major_deg_x1000 is not None and key.fov_minor_deg_x1000 is not None:
         base += f"_{key.fov_major_deg_x1000}_{key.fov_minor_deg_x1000}"
@@ -305,6 +404,7 @@ async def _lookup_cache_row(conn: aiosqlite.Connection, key: ThumbnailKey) -> ai
           AND COALESCE(fov_minor_deg_x1000, -1) = ?
           AND COALESCE(center_ra_deg_x1000, -999999) = ?
           AND COALESCE(center_dec_deg_x1000, -999999) = ?
+          AND COALESCE(render_key, '') = ?
         """,
         (
             key.dso_id,
@@ -315,6 +415,7 @@ async def _lookup_cache_row(conn: aiosqlite.Connection, key: ThumbnailKey) -> ai
             _coalesce_fov(key.fov_minor_deg_x1000),
             _coalesce_center(key.center_ra_deg_x1000),
             _coalesce_center(key.center_dec_deg_x1000),
+            key.render_key or "",
         ),
     )
     return await cursor.fetchone()
@@ -354,8 +455,8 @@ async def _insert_cache_row(
             dso_id, variant, width, height,
             fov_major_deg_x1000, fov_minor_deg_x1000,
             center_ra_deg_x1000, center_dec_deg_x1000,
-            file_path, source, bytes, fetch_error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            render_key, file_path, source, bytes, fetch_error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             key.dso_id,
@@ -366,6 +467,7 @@ async def _insert_cache_row(
             key.fov_minor_deg_x1000,
             key.center_ra_deg_x1000,
             key.center_dec_deg_x1000,
+            key.render_key,
             file_path,
             source,
             bytes_size,
@@ -437,7 +539,12 @@ async def _fetch_and_store(
     render_generation = image_cache.generation()
     async with _fetch_semaphore:
         try:
-            wcs = hips_tiles.thumbnail_wcs(ra_deg, dec_deg, extent_deg, key.width, key.height)
+            if key.variant == "checklist":
+                if key.checklist is None:
+                    raise ValueError("invalid checklist render descriptor")
+                wcs = key.checklist.wcs()
+            else:
+                wcs = hips_tiles.thumbnail_wcs(ra_deg, dec_deg, extent_deg, key.width, key.height)
             rendered = await hips_tiles.render(wcs, key.width, key.height)
         except Exception as exc:  # noqa: BLE001 — record failure, backoff
             logger.warning("[thumbnails] dso=%s render failed: %s", key.dso_id, exc)
@@ -552,11 +659,12 @@ async def get_thumbnail(
         variant,
         ra_deg=ra_deg,
         dec_deg=dec_deg,
+        maj_axis_arcmin=maj_axis_arcmin,
         fov_major_deg=fov_major_deg,
         fov_minor_deg=fov_minor_deg,
     )
-    effective_ra = ra_deg
-    effective_dec = dec_deg
+    effective_ra = key.checklist.ra_e4 / 10_000 if key.checklist is not None else ra_deg
+    effective_dec = key.checklist.dec_e4 / 10_000 if key.checklist is not None else dec_deg
     logger.debug(
         "[thumb] req dso=%d variant=%s fov=(%s,%s) -> sky=(%.5f,%.5f)",
         dso_id,
@@ -610,6 +718,10 @@ async def get_thumbnail(
             fov_major_deg=fov_major_deg,
             fov_minor_deg=fov_minor_deg,
         )
+        if variant == "checklist":
+            if key.checklist is None:
+                raise ValueError("invalid checklist render descriptor")
+            extent_deg = key.checklist.field_mdeg / 1000
         logger.debug(
             "[thumb] miss dso=%d variant=%s extent=%.4f° — enqueueing fetch",
             dso_id,
@@ -756,8 +868,20 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
             variant = match.group("variant")
             width = int(match.group("width"))
             height = int(match.group("height"))
-            fmaj = int(match.group("fmaj")) if match.group("fmaj") is not None else None
-            fmin = int(match.group("fmin")) if match.group("fmin") is not None else None
+            fmaj = (
+                int(match.group("fmaj"))
+                if variant != "checklist" and match.group("fmaj") is not None
+                else None
+            )
+            fmin = (
+                int(match.group("fmin"))
+                if variant != "checklist" and match.group("fmin") is not None
+                else None
+            )
+            descriptor = ChecklistRender.from_file_name(entry.name)
+            if variant == "checklist" and descriptor is None:
+                continue
+            render_key = descriptor.render_key if descriptor is not None else None
             cursor = await conn.execute(
                 """
                 SELECT id, file_path, bytes FROM thumbnail_cache
@@ -766,8 +890,17 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
                   AND COALESCE(fov_minor_deg_x1000, -1) = ?
                   AND center_ra_deg_x1000 IS NULL
                   AND center_dec_deg_x1000 IS NULL
+                  AND COALESCE(render_key, '') = ?
                 """,
-                (dso_id, variant, width, height, _coalesce_fov(fmaj), _coalesce_fov(fmin)),
+                (
+                    dso_id,
+                    variant,
+                    width,
+                    height,
+                    _coalesce_fov(fmaj),
+                    _coalesce_fov(fmin),
+                    render_key or "",
+                ),
             )
             existing = await cursor.fetchone()
             if existing is not None:
@@ -783,10 +916,20 @@ async def rehydrate_from_disk(conn: aiosqlite.Connection) -> int:
                 INSERT INTO thumbnail_cache (
                     dso_id, variant, width, height,
                     fov_major_deg_x1000, fov_minor_deg_x1000,
-                    file_path, source, bytes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'dss2_color', ?)
+                    render_key, file_path, source, bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dss2_color', ?)
                 """,
-                (dso_id, variant, width, height, fmaj, fmin, entry.name, size_bytes),
+                (
+                    dso_id,
+                    variant,
+                    width,
+                    height,
+                    fmaj,
+                    fmin,
+                    render_key,
+                    entry.name,
+                    size_bytes,
+                ),
             )
             inserted += 1
             changed = True

@@ -76,6 +76,8 @@ export const CONSTELLATION_NAMES: Record<string, string> = {
   Scl: "Sculptor",
   Sco: "Scorpius",
   Sct: "Scutum",
+  Se1: "Serpens Caput",
+  Se2: "Serpens Cauda",
   Ser: "Serpens",
   Sex: "Sextans",
   Sge: "Sagitta",

@@ -228,13 +228,25 @@ def test_migration_0066_preserves_dso_children(tmp_path: Path):
             "project_dso",
         )
         before = {table: _rows(conn, table) for table in tables}
+        columns = {
+            table: [row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')]
+            for table in tables
+        }
         conn.commit()
 
     apply_migrations(db_path)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
-        assert {table: _rows(conn, table) for table in tables} == before
+        # Later migrations may add columns (0071 adds thumbnail_cache.render_key);
+        # every value that existed before 0066 must come through unchanged.
+        after = {
+            table: [
+                {column: row[column] for column in columns[table]} for row in _rows(conn, table)
+            ]
+            for table in tables
+        }
+        assert after == before
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         for table in (

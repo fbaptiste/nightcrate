@@ -23,14 +23,14 @@ _generation = 0
 # ``.<filename>.tmp`` and are recognized by :func:`is_cache_owned_filename`.
 THUMBNAIL_FILENAME_RE = re.compile(
     r"^ra(?P<ra>\d+)_dec(?P<dec>-?\d+)_"
-    r"(?P<variant>list|detail|rig_framed|fov_simulator)_"
+    r"(?P<variant>list|detail|rig_framed|fov_simulator|checklist)_"
     r"(?P<width>\d+)x(?P<height>\d+)"
     r"(?:_(?P<fmaj>-?\d+)_(?P<fmin>-?\d+))?"
     r"\.jpg$"
 )
 LEGACY_THUMBNAIL_FILENAME_RE = re.compile(
     r"^\d+_"
-    r"(?:list|detail|rig_framed|fov_simulator)_"
+    r"(?:list|detail|rig_framed|fov_simulator|checklist)_"
     r"\d+x\d+"
     r"(?:_-?\d+_-?\d+)?"
     r"(?:_c-?\d+_-?\d+)?"

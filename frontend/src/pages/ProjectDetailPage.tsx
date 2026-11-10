@@ -61,6 +61,7 @@ import {
 } from "@/api/projectTargets";
 import NotListedTag from "@/components/dso/NotListedTag";
 import { formatImagingRuns } from "@/lib/galleryRendition";
+import { invalidateProjectLinks } from "@/api/projectTargetLinks";
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
@@ -234,6 +235,7 @@ export default function ProjectDetailPage() {
     // The solve response derives `is_main` from project_target, so refresh it
     // too — keeps the Plate Solve tab's star toggles in sync.
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    void invalidateProjectLinks(queryClient);
   }, [queryClient, projectId]);
 
   const addTargetMut = useMutation({
@@ -268,6 +270,7 @@ export default function ProjectDetailPage() {
       queryClient.setQueryData(["project", projectId], p);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+      void invalidateProjectLinks(queryClient);
     },
     [queryClient, projectId],
   );
@@ -378,6 +381,7 @@ export default function ProjectDetailPage() {
     mutationFn: () => deleteProject(projectId),
     onSuccess: () => {
       invalidate();
+      void invalidateProjectLinks(queryClient);
       setSnack("Project retired");
     },
   });
@@ -386,6 +390,7 @@ export default function ProjectDetailPage() {
     mutationFn: () => restoreProject(projectId),
     onSuccess: () => {
       invalidate();
+      void invalidateProjectLinks(queryClient);
       setSnack("Project restored");
     },
   });
@@ -394,6 +399,7 @@ export default function ProjectDetailPage() {
     mutationFn: () => permanentlyDeleteProject(projectId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void invalidateProjectLinks(queryClient);
       navigate("/projects");
     },
     onError: (err) => setSnack(String(err)),

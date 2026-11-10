@@ -11,13 +11,19 @@ Overview "+" edit the same record, and rows survive `DELETE /solve`.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import date
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from nightcrate.api._common import get_or_404, integrity_guard, row_to_dict
 from nightcrate.db.session import get_db
+from nightcrate.services.gallery import ImagingRun, imaging_runs, valid_session_date
+from nightcrate.services.messier import Candidate, order_candidates
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
+links_router = APIRouter(prefix="/api/project-target-links", tags=["Projects"])
 
 
 class TargetCreate(BaseModel):
@@ -36,6 +42,92 @@ class TargetResponse(BaseModel):
     ra_deg: float | None
     dec_deg: float | None
     created_at: str
+
+
+class ProjectTargetLink(BaseModel):
+    dso_id: int
+    project_id: int
+    name: str
+    status: str
+    first_date: str | None
+    last_date: str | None
+    nights: int
+    imaging_runs: list[ImagingRun]
+
+
+@links_router.get("", response_model=list[ProjectTargetLink])
+async def list_project_target_links() -> list[ProjectTargetLink]:
+    """Return every active project's main-target links in three batched reads."""
+    async with get_db() as conn:
+        project_cursor = await conn.execute(
+            """
+            SELECT id, name, status, created_at
+            FROM project
+            WHERE active = 1
+            ORDER BY id
+            """
+        )
+        projects = {int(row["id"]): row for row in await project_cursor.fetchall()}
+
+        target_cursor = await conn.execute(
+            """
+            SELECT pt.project_id, pt.dso_id
+            FROM project_target pt
+            JOIN project p ON p.id = pt.project_id
+            WHERE p.active = 1
+            ORDER BY pt.dso_id, pt.project_id
+            """
+        )
+        target_rows = await target_cursor.fetchall()
+
+        session_cursor = await conn.execute(
+            """
+            SELECT ps.project_id, ps.session_date
+            FROM project_session ps
+            JOIN project p ON p.id = ps.project_id
+            WHERE p.active = 1
+            ORDER BY ps.project_id, ps.id
+            """
+        )
+        dates_by_project: dict[int, set[date]] = defaultdict(set)
+        for row in await session_cursor.fetchall():
+            parsed = valid_session_date(row["session_date"])
+            if parsed is not None:
+                dates_by_project[int(row["project_id"])].add(parsed)
+
+    projects_by_dso: dict[int, list[Candidate]] = defaultdict(list)
+    for target in target_rows:
+        project_id = int(target["project_id"])
+        dso_id = int(target["dso_id"])
+        row = projects[project_id]
+        projects_by_dso[dso_id].append(
+            Candidate(
+                project_id=project_id,
+                name=row["name"],
+                status=row["status"],
+                created_at=row["created_at"],
+                main_image_id=None,
+                dates=sorted(dates_by_project.get(project_id, set())),
+            )
+        )
+
+    result: list[ProjectTargetLink] = []
+    for dso_id in sorted(projects_by_dso):
+        for candidate in order_candidates(projects_by_dso[dso_id], image_first=False):
+            dates = candidate.dates
+            result.append(
+                ProjectTargetLink(
+                    dso_id=dso_id,
+                    project_id=candidate.project_id,
+                    name=candidate.name,
+                    status=candidate.status,
+                    first_date=dates[0].isoformat() if dates else None,
+                    last_date=dates[-1].isoformat() if dates else None,
+                    nights=len(dates),
+                    imaging_runs=imaging_runs(dates),
+                )
+            )
+    return result
 
 
 _TARGET_SELECT = (

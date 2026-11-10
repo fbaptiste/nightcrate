@@ -5,6 +5,8 @@ Pinned regression tests using real-world equipment values.
 
 import pytest
 
+from nightcrate.services.rig_calculators import rig_fov_from_summary
+
 # -- Image Scale ---------------------------------------------------------------
 
 
@@ -643,3 +645,50 @@ def test_full_calculators_c11_with_oag():
     assert gs["mode"] == "oag"
     assert gs["rating"] == "excellent"
     assert gs["guide_focal_length_mm"] == 1960.0
+
+
+def _rig_summary(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "effective_focal_length_mm": 500.0,
+        "pixel_size_um": 3.76,
+        "sensor_resolution_x": 6248,
+        "sensor_resolution_y": 4176,
+        "sensor_width_mm": 23.5,
+        "sensor_height_mm": 15.7,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_rig_fov_from_summary_uses_the_sensor_size():
+    # 2·atan(23.5 / 1000) = 2.69241°, 2·atan(15.7 / 1000) = 1.79894°.
+    major, minor = rig_fov_from_summary(_rig_summary())
+    assert major == pytest.approx(2.69241, abs=1e-5)
+    assert minor == pytest.approx(1.79894, abs=1e-5)
+
+
+def test_rig_fov_from_summary_orders_a_portrait_sensor():
+    major, minor = rig_fov_from_summary(_rig_summary(sensor_width_mm=15.7, sensor_height_mm=23.5))
+    assert major == pytest.approx(2.69241, abs=1e-5)
+    assert minor == pytest.approx(1.79894, abs=1e-5)
+
+
+def test_rig_fov_from_summary_falls_back_to_pixels():
+    # 6248 × 3.76 µm = 23.49248 mm → 2.69154°; 4176 × 3.76 µm = 15.70176 mm → 1.79914°.
+    major, minor = rig_fov_from_summary(_rig_summary(sensor_width_mm=None, sensor_height_mm=None))
+    assert major == pytest.approx(2.69154, abs=1e-5)
+    assert minor == pytest.approx(1.79914, abs=1e-5)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "effective_focal_length_mm",
+        "pixel_size_um",
+        "sensor_resolution_x",
+        "sensor_resolution_y",
+    ],
+)
+@pytest.mark.parametrize("value", [None, 0])
+def test_rig_fov_from_summary_needs_focal_length_and_camera(missing: str, value: object):
+    assert rig_fov_from_summary(_rig_summary(**{missing: value})) is None

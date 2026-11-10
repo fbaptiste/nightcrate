@@ -8,7 +8,7 @@
  * filter ("Size in frame"). Row click opens ``PlannerDetailPanel``.
  */
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Checkbox from "@mui/material/Checkbox";
@@ -37,7 +37,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
-import { Link as RouterLink } from "react-router-dom";
+import { Link as RouterLink, useLocation, useSearchParams } from "react-router-dom";
 import { fetchLocations } from "@/api/locations";
 import { fetchRigs } from "@/api/rigs";
 import { fetchDsoFacets } from "@/api/dsos";
@@ -61,6 +61,10 @@ import PlannerTargetCard from "@/components/planner/PlannerTargetCard";
 import PlannerDetailPanel from "@/components/planner/PlannerDetailPanel";
 import WishlistTab from "@/components/planner/WishlistTab";
 import { useFavoriteIds, useAddFavorite, useRemoveFavorite } from "@/api/wishlist";
+import {
+  invalidateProjectLinks,
+  useProjectTargetLinks,
+} from "@/api/projectTargetLinks";
 
 const DEFAULT_PAGE_SIZE = 100;
 
@@ -90,7 +94,10 @@ function formatLocalTime(iso: string, tz: string): string {
 export default function PlannerPage() {
   // Bridges the in-memory zustand store with the database-backed
   // settings — hydrates on mount and pushes changes back.
-  usePlannerSettingsSync();
+  const { hydrated } = usePlannerSettingsSync();
+  const queryClient = useQueryClient();
+  const { pathname } = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const settings = useSettingsStore((s) => s.settings);
   const locationId = usePlannerStore((s) => s.selectedLocationId);
   const setLocationId = usePlannerStore((s) => s.setSelectedLocationId);
@@ -118,6 +125,36 @@ export default function PlannerPage() {
   const detailId = usePlannerStore((s) => s.detailId);
   const setDetailId = usePlannerStore((s) => s.setDetailId);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(true);
+  const projectLinksEnabled = pathname === "/planner" && activeTab !== "wishlist";
+  const projectLinksQuery = useProjectTargetLinks(projectLinksEnabled);
+  const [showProjectLinksLoading, setShowProjectLinksLoading] = useState(false);
+
+  useEffect(() => {
+    if (projectLinksEnabled) void invalidateProjectLinks(queryClient);
+  }, [projectLinksEnabled, queryClient]);
+
+  useEffect(() => {
+    if (!projectLinksEnabled || projectLinksQuery.data || projectLinksQuery.isError) {
+      setShowProjectLinksLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowProjectLinksLoading(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [projectLinksEnabled, projectLinksQuery.data, projectLinksQuery.isError]);
+
+  useEffect(() => {
+    if (!hydrated || pathname !== "/planner") return;
+    const object = searchParams.get("object");
+    if (object === null) return;
+    if (/^[1-9]\d*$/.test(object)) {
+      const dsoId = Number(object);
+      if (Number.isSafeInteger(dsoId)) setDetailId(dsoId);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("object");
+    setSearchParams(next, { replace: true });
+  }, [hydrated, pathname, searchParams, setDetailId, setSearchParams]);
+
   const { data: favoriteIds } = useFavoriteIds();
   const addFavorite = useAddFavorite();
   const removeFav = useRemoveFavorite();
@@ -967,6 +1004,13 @@ export default function PlannerPage() {
           or row-click semantics (``CardActionArea`` on each card
           does), and the column layout wasted horizontal space for
           the data density we actually want. */}
+      {(showProjectLinksLoading || projectLinksQuery.isError) && (
+        <Typography variant="body2" color="text.secondary">
+          {projectLinksQuery.isError
+            ? "Couldn't check which objects have projects."
+            : "Checking projects…"}
+        </Typography>
+      )}
       <Paper
         variant="outlined"
         sx={{ position: "relative" }}
@@ -1006,6 +1050,7 @@ export default function PlannerPage() {
                   tz={tz}
                   restrictTonight={restrictTonight}
                   onClick={setDetailId}
+                  projectLinks={projectLinksQuery.data?.get(item.dso_id)}
                   isFavorite={favoriteIds?.has(item.dso_id)}
                   onToggleFavorite={handleToggleFavorite}
                 />

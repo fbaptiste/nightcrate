@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import Box from "@mui/material/Box";
 import type { GalleryItem } from "@/api/gallery";
+import FlipTile from "@/components/common/FlipTile";
 import NameWithAlternates from "@/components/common/NameWithAlternates";
 import { cropSizeForView } from "@/lib/galleryRendition";
+import { tileMinimums, useTrackWidth } from "@/lib/useTrackWidth";
 import GalleryTileBack from "./GalleryTileBack";
 import GalleryTileFront from "./GalleryTileFront";
 
@@ -27,12 +29,6 @@ interface TileProps {
   onExpand: () => void;
   expandRefs: RefObject<Map<number, HTMLButtonElement>>;
 }
-
-const minimums: Record<GridView, number> = {
-  small: 180,
-  medium: 300,
-  large: 480,
-};
 
 function GalleryGridTile({
   item,
@@ -59,14 +55,6 @@ function GalleryGridTile({
     };
   }, [expandRefs, item.project_id]);
 
-  const turn = (showBack: boolean) => {
-    onTurn(showBack);
-    requestAnimationFrame(() => {
-      const destination = showBack ? backRef : frontRef;
-      destination.current?.focus({ preventScroll: true });
-    });
-  };
-
   const labelColor =
     item.status === "paused"
       ? (theme: { palette: { mode: string } }) =>
@@ -78,45 +66,35 @@ function GalleryGridTile({
   const statusLabel = item.status[0].toUpperCase() + item.status.slice(1);
 
   return (
-    <Box
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && turned) turn(false);
-      }}
-      sx={{ minWidth: 0 }}
-    >
-      <Box sx={{ perspective: "1400px" }}>
-        <Box
-          sx={{
-            position: "relative",
-            width: "100%",
-            aspectRatio: "4 / 3",
-            transformStyle: "preserve-3d",
-            transform: turned ? "rotateY(180deg)" : "none",
-            transition: "transform 400ms cubic-bezier(0.3, 0.1, 0.2, 1)",
-            "@media (prefers-reduced-motion: reduce)": { transition: "none" },
-          }}
-        >
+    <Box sx={{ minWidth: 0 }}>
+      <FlipTile
+        turned={turned}
+        onTurn={onTurn}
+        frontButtonRef={frontRef}
+        backButtonRef={backRef}
+        front={
           <GalleryTileFront
             item={item}
             ws={ws}
             slotWidth={trackWidth}
             cropSize={cropSizeForView(view)}
             small={view === "small"}
-            turned={turned}
-            onTurn={() => turn(true)}
+            onTurn={() => onTurn(true)}
             onExpand={onExpand}
             buttonRef={frontRef}
             expandRef={expandRef}
           />
+        }
+        back={
           <GalleryTileBack
             item={item}
             view={view}
             turned={turned}
-            onTurn={() => turn(false)}
+            onTurn={() => onTurn(false)}
             buttonRef={backRef}
           />
-        </Box>
-      </Box>
+        }
+      />
       <Box sx={{ pt: "8px" }}>
         <Box
           sx={{
@@ -200,7 +178,7 @@ export default function GalleryGrid({
   expandRefs,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [trackWidth, setTrackWidth] = useState(minimums[view]);
+  const trackWidth = useTrackWidth(view, containerRef);
   const [turned, setTurned] = useState<Set<number>>(new Set());
 
   useEffect(() => {
@@ -218,21 +196,6 @@ export default function GalleryGrid({
     });
   }, [items]);
 
-  useEffect(() => {
-    const element = containerRef.current;
-    if (!element) return;
-    const update = () => {
-      const width = element.clientWidth;
-      const minimum = minimums[view];
-      const columns = Math.max(1, Math.floor((width + 16) / (minimum + 16)));
-      setTrackWidth((width - 16 * (columns - 1)) / columns);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [view]);
-
   const setItemTurned = (projectId: number, showBack: boolean) => {
     setTurned((current) => {
       const next = new Set(current);
@@ -247,7 +210,7 @@ export default function GalleryGrid({
       ref={containerRef}
       sx={{
         display: "grid",
-        gridTemplateColumns: `repeat(auto-fill, minmax(${minimums[view]}px, 1fr))`,
+        gridTemplateColumns: `repeat(auto-fill, minmax(${tileMinimums[view]}px, 1fr))`,
         columnGap: "16px",
         rowGap: view === "small" ? "20px" : "28px",
       }}

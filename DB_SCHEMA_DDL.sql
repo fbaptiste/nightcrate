@@ -1,4 +1,4 @@
--- NightCrate version: 0.47.0
+-- NightCrate version: 0.48.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1389,11 +1389,15 @@ ALTER TABLE dso ADD COLUMN common_name_augmented INTEGER NOT NULL DEFAULT 0
 -- the unique index). The unique index uses COALESCE so rig-independent
 -- entries (NULL FOV) don't collide with rig-dependent ones at the same
 -- dso_id.
+
+-- v0.48.0 / migration 0071 adds the 'checklist' variant (the Messier
+-- page's 4:3 survey image) and render_key, its canonical render identity
+-- (centre, field and render revision); NULL for every other variant.
 CREATE TABLE IF NOT EXISTS thumbnail_cache (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     dso_id               INTEGER NOT NULL REFERENCES dso(id) ON DELETE CASCADE,
     variant              TEXT    NOT NULL CHECK (variant IN (
-        'list', 'detail', 'rig_framed', 'fov_simulator'
+        'list', 'detail', 'rig_framed', 'fov_simulator', 'checklist'
     )),
     width                INTEGER NOT NULL,
     height               INTEGER NOT NULL,
@@ -1401,6 +1405,7 @@ CREATE TABLE IF NOT EXISTS thumbnail_cache (
     fov_minor_deg_x1000  INTEGER,
     center_ra_deg_x1000  INTEGER,
     center_dec_deg_x1000 INTEGER,
+    render_key           TEXT,
     file_path            TEXT    NOT NULL UNIQUE,
     source               TEXT    NOT NULL CHECK (source IN (
         'dss2_color', 'dss2_red', 'dss2_blue', 'placeholder'
@@ -1411,11 +1416,11 @@ CREATE TABLE IF NOT EXISTS thumbnail_cache (
     fetch_error          TEXT
 );
 
--- Unique index wraps FOV columns in COALESCE(-1) and centre-coord
--- columns in COALESCE(-999999). Distinct sentinels keep a legitimate
--- 0.0 RA (celestial equator) from colliding with NULL, and rig-
--- independent entries (NULL FOV) from colliding with rig-dependent
--- ones at the same dso_id.
+-- Unique index wraps FOV columns in COALESCE(-1), centre coordinates in
+-- COALESCE(-999999), and the checklist render identity in COALESCE('').
+-- Distinct sentinels keep a legitimate 0.0 RA (celestial equator) from
+-- colliding with NULL, and rig-independent entries (NULL FOV) from
+-- colliding with rig-dependent ones at the same dso_id.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_thumbnail_cache_unique
     ON thumbnail_cache(
         dso_id,
@@ -1425,7 +1430,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_thumbnail_cache_unique
         COALESCE(fov_major_deg_x1000, -1),
         COALESCE(fov_minor_deg_x1000, -1),
         COALESCE(center_ra_deg_x1000, -999999),
-        COALESCE(center_dec_deg_x1000, -999999)
+        COALESCE(center_dec_deg_x1000, -999999),
+        COALESCE(render_key, '')
     );
 
 CREATE INDEX IF NOT EXISTS idx_thumbnail_cache_last_access

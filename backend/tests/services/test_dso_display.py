@@ -43,6 +43,11 @@ def test_backend_label_maps_match_frontend():
     )
 
 
+def test_serpens_subdivision_names():
+    assert CONSTELLATION_NAMES["Se1"] == "Serpens Caput"
+    assert CONSTELLATION_NAMES["Se2"] == "Serpens Cauda"
+
+
 @pytest.mark.parametrize(
     ("labels", "values", "expected"),
     [

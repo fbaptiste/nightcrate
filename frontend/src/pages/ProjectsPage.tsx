@@ -24,6 +24,7 @@ import ProjectCard from "@/components/projects/ProjectCard";
 import ProjectGalleryCard from "@/components/projects/ProjectGalleryCard";
 import ProjectFormDialog from "@/components/projects/ProjectFormDialog";
 import ViewToggle, { type ViewToggleOption } from "@/components/common/ViewToggle";
+import { invalidateProjectLinks } from "@/api/projectTargetLinks";
 
 type ViewMode = "compact" | "list" | "pictures";
 
@@ -51,6 +52,7 @@ export default function ProjectsPage() {
     mutationFn: (data: ProjectCreate) => createProject(data),
     onSuccess: (p) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void invalidateProjectLinks(queryClient);
       setDialogOpen(false);
       setSnack(`Created "${p.name}"`);
     },

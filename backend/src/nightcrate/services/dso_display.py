@@ -101,6 +101,8 @@ CONSTELLATION_NAMES: dict[str, str] = {
     "Scl": "Sculptor",
     "Sco": "Scorpius",
     "Sct": "Scutum",
+    "Se1": "Serpens Caput",
+    "Se2": "Serpens Cauda",
     "Ser": "Serpens",
     "Sex": "Sextans",
     "Sge": "Sagitta",

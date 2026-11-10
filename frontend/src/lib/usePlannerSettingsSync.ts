@@ -9,7 +9,7 @@
  *
  * Search query stays out of the sync — it's intentionally ephemeral.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePlannerStore, DEFAULT_SORT } from "@/stores/plannerStore";
 import type { Settings } from "@/api/settings";
@@ -59,9 +59,10 @@ function consumeLegacyLocalStorage(): Partial<Settings> | null {
   return patch && Object.keys(patch).length > 0 ? patch : null;
 }
 
-export function usePlannerSettingsSync(): void {
+export function usePlannerSettingsSync(): { hydrated: boolean } {
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.update);
+  const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
   // Latest payload PUT to the backend, JSON-stringified. Used to skip
   // redundant saves — the post-hydration render is the prime offender.
@@ -134,6 +135,10 @@ export function usePlannerSettingsSync(): void {
     // arrived from the server.
     lastPushedRef.current = JSON.stringify(buildPayload(hydrated));
     hydratedRef.current = true;
+    // This React signal must flip in the same hydration effect that updates
+    // the external zustand store, so query-param consumers cannot run first.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHydrated(true);
   }, [settings, updateSettings]);
 
   // Push planner-store changes back to settings whenever any tracked
@@ -219,6 +224,8 @@ export function usePlannerSettingsSync(): void {
     calendarRigId,
     updateSettings,
   ]);
+
+  return { hydrated };
 }
 
 interface PlannerSnapshot {

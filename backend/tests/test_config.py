@@ -42,6 +42,52 @@ class TestSettingsModel:
 
 
 class TestSettingsPersistence:
+    async def test_messier_settings_round_trip_and_invalid_location_fallback(self):
+        values = Settings(
+            messier_view="large",
+            messier_imaged_style="sky",
+            messier_unimaged_style="blank",
+            messier_show_projects=True,
+            messier_location=7,
+            messier_rig_id=12,
+        )
+        await update_settings(values)
+        loaded = await get_settings()
+        assert loaded.messier_view == "large"
+        assert loaded.messier_imaged_style == "sky"
+        assert loaded.messier_unimaged_style == "blank"
+        assert loaded.messier_show_projects is True
+        assert loaded.messier_location == 7
+        assert loaded.messier_rig_id == 12
+
+        from nightcrate.db.session import get_db
+
+        for invalid in (True, 1.0, 0, -3, "abc"):
+            async with get_db() as conn:
+                await conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value_json) VALUES (?, ?)",
+                    ("messier_location", json.dumps(invalid)),
+                )
+                await conn.commit()
+            assert (await get_settings()).messier_location == "default"
+
+        for valid in ("none", "default", 7):
+            async with get_db() as conn:
+                await conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value_json) VALUES (?, ?)",
+                    ("messier_location", json.dumps(valid)),
+                )
+                await conn.commit()
+            assert (await get_settings()).messier_location == valid
+
+        async with get_db() as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value_json) VALUES (?, ?)",
+                ("messier_imaged_style", '"invalid"'),
+            )
+            await conn.commit()
+        assert (await get_settings()).messier_imaged_style == "own"
+
     async def test_default_solver_setting(self):
         from nightcrate.db.session import get_db
 

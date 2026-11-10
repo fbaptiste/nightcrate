@@ -6,7 +6,7 @@ as JSON text so composite types round-trip cleanly.
 """
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -30,6 +30,14 @@ FilterLine = Literal["Ha", "SII", "OIII", "L", "R", "G", "B"]
 class Settings(BaseModel):
     theme: Literal["light", "dark", "browser"] = "browser"
     gallery_view: Literal["list", "small", "medium", "large"] = "medium"
+    messier_view: Literal["small", "medium", "large"] = "medium"
+    messier_imaged_style: Literal["own", "sky"] = "own"
+    messier_unimaged_style: Literal["sky", "blank"] = "sky"
+    messier_show_projects: bool = False
+    messier_location: Annotated[int, Field(strict=True, gt=0)] | Literal["default", "none"] = (
+        "default"
+    )
+    messier_rig_id: int | None = None
     gpu_acceleration: bool = True
     max_worker_cores: int | None = None  # None → cpu_count - 1
     last_browse_path: str | None = None
