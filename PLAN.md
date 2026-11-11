@@ -1,12 +1,193 @@
 # NightCrate — active plan
 
-**Version:** v0.48.0 — Messier checklist
+**Version:** v0.49.0 — Object search
 
-**Branch:** `v0.48.0/messier-checklist`
+**Branch:** `v0.49.0/object-search`
 
 **Status:** Complete — awaiting merge
 
+## v0.49.0 — Object search
+
+Fred started this version on 2026-11-10, after merging v0.48.0. Its scope is
+the roadmap's next item, the object search, moved here unchanged below. The
+spec comes next, decided with Fred one question at a time.
+
+- [x] Start from updated `main` on `v0.49.0/object-search`.
+- [x] Spec: [v0.49.0 design](docs/superpowers/specs/2026-11-10-v0.49.0-design.md),
+  from Fred's answers and his approved mockup (2026-11-10,
+  `.superpowers/mockups/v0.49.0/search.html`, local). The builder check
+  found a bug from before this version: every catalog ring in the Plate
+  Solve tab and the Image Analyzer is drawn at the wrong tilt. Its fix is
+  in scope. **Fred approved the spec** (2026-11-10: "approved, go ahead
+  with the plan").
+- [x] Implementation plan: [v0.49.0 plan](docs/superpowers/plans/2026-11-10-v0.49.0.md),
+  then Codex's review of it. **Fred, 2026-11-10:** "I have to step away, so
+  please continue working and implement the plan once you have created it.
+  Just build and use your best judgment. Make any call that's reversible
+  yourself, and check in later with the calls you made." Claude settles
+  the plan review and records each call in the plan's Codex review
+  section. Codex's plan review converged after two rounds: every
+  finding adopted, none rejected (the plan's Codex review section).
+- [x] Implementation (Codex, worktree `.superpowers/wt-v0.49.0`, detached
+  at `06d4cc3`), with Claude's review of each phase (records `05`–`18`,
+  local):
+  - [x] A, backend: the ring angle from the solution's local geometry; the
+    object search service (membership at query time, a pre-filter proven
+    to keep everything the full rule keeps); exact designations in the
+    Gallery; marks, match facts, the results line's object and
+    suggestions; the solve image route's generation check; the Messier
+    "In a solved picture" state; known fields in the test library and a
+    speed script. 278 tests across the changed modules.
+  - [x] B, frontend: marked solve pictures on tiles, in the list and in
+    the viewer, with the enlarged view for tiny objects; the chips and
+    notes; suggestions; the Messier pill, map box and progress line; the
+    Gallery opened from the Messier page. One fix round after the
+    rendered checks.
+  - [x] Independent review (fresh Codex session, whole change): no
+    blocker or major; two minors, both fixed.
+  - [x] Checks (Claude): the full backend suite on the worktree (3,868
+    passed, 10 skipped for fixtures absent from the worktree), ruff,
+    format, bandit 0; the frontend build and ESLint; speed on a copy of
+    Fred's database with 456 solves (search 49–57 ms, suggestions
+    68–197 ms, Messier 47 ms); rendered checks in both themes on the
+    three known fields with survey renders, including the viewer, the
+    enlarged view, a mark in a corner, a name shared by two objects,
+    a missing rendering, box off, "M1", suggestions, the Messier pill and
+    Back; the new ring angles drawn on a DSS Leo Triplet field and on
+    Fred's three real solves.
+  - [x] **Brought into the main checkout** (2026-11-10): the 35 reviewed
+    files, staged; no migration. Fred's dev server reloaded and answers
+    on his data ("M 101" finds his M 101 project, marked).
+- [x] Fred's look at the built version.
+  - [x] **The search box's clear button did nothing** (Fred, 2026-11-10).
+    The box became an autocomplete this version, and its clear button
+    reports a "clear" event that the handler ignored; the old plain field
+    had no such button. Claude's narrow fix in `GalleryFilters.tsx`,
+    checked in a browser: clearing typed text, a picked suggestion, and
+    with the list open all empty the box and restore the full Gallery.
+  - [x] **Fred's additions (2026-11-10, from mockups):** with a rig
+    selected, Messier tiles show the rig's whole view with the sky filled
+    in and "{n}% of the field" (the Planner's coverage); and a corner
+    ribbon, "Not imaged", replaces the cross (option C of five). Spec
+    section "Rig view and the not-imaged ribbon". Built by Codex (plan
+    Phase D, records `19`–`22`); Claude's checks: 110 tests across the
+    changed modules, ruff, format, bandit 0, build, ESLint; rendered with
+    two rigs of different fields (M 1 at "6% of the field", as in the
+    Planner), the ribbon at medium and small sizes, and Fred's own M 101
+    over the survey sky at its plate-solved scale (32% and 84% of the
+    field). Brought into the main checkout and staged.
+  - [x] **Fred's next look (2026-11-10):** a teal border on his own
+    pictures; the progress map jumps to the clicked object's tile; with
+    "Own image", his pictures never get the rig view (no sky, no frame);
+    "Sky survey" as the one name for survey pictures. With the review's
+    three fixes (the server owns the rig view's field; rigs outside
+    0.05°–30° fall back to the close-up; own pictures keep their look
+    while the sky loads). Built by Codex (records `25`–`28`); Claude
+    made the jump instant (a smooth scroll used up the highlight) and
+    checked every case in the browser. Staged.
+  - [x] **The own-picture border, thicker** (Fred, 2026-11-10): 4 px (3 px
+    on small tiles), rounded to the tile's corners. The square 2 px border
+    had looked odd at the corners because the tile's rounded clip shaved
+    its outer edge only. Claude's narrow fix, checked enlarged in the
+    browser. Staged.
+  - [x] **The last review round's two findings** (fresh Codex review,
+    records `29`–`30`; fixed by Codex, `31`–`32`): the picture route
+    refuses a rig view whose key no longer matches the rig (an equipment
+    edit between loading the page and loading a picture gave 204, never a
+    mismatched picture); and the unused own-picture geometry is gone, so
+    loading the checklist no longer opens every imaged project's
+    thumbnail. Claude's checks: 88 tests in the changed modules, ruff,
+    format, bandit 0, build, ESLint. Staged.
+  - [x] **Fred's reports on switching rigs (2026-11-10):** "are they not
+    being cached?", pictures in view not coming first, and the map click
+    switching "Show" to All. Findings: the server keeps every picture
+    (cached ones return in 9–29 ms on his server), but it rendered in
+    arrival order, so tiles in view waited behind tiles already scrolled
+    past; a quick switch away and back left tiles on their numbers for
+    good (reproduced). Spec updated. Built by Codex (records `33`–`36`):
+    the server renders the most recently requested picture first; every
+    tile near the view registers its picture at once; the browser keeps
+    finished pictures; a refresh no longer repeats requests; the map never
+    changes "Show", and boxes of hidden tiles do nothing. Claude's checks:
+    165 tests across the affected modules, ruff, format, bandit 0, build,
+    ESLint; in the browser, quick switches back (150 ms, 400 ms, 1 s) left
+    no tile blank, a switch back to a rig already viewed completed in about
+    0.15 s, a fast scroll to the end of an unrendered rig showed the ten
+    tiles on screen first (7.6 s after stopping) before the ones scrolled
+    past, and map clicks behaved under all three filters. The independent
+    review (records `37`–`38`, also covering Claude's clear-button,
+    instant-jump and border edits) found no blocker or major; two minors
+    fixed by Codex (`39`–`40`: a tile releases its old picture on a rig
+    switch; clearing the thumbnail cache replaces stored pictures), one
+    rejected (the border stays around the whole tile). Rechecked in the
+    browser: no tile blank after quick switches back, no errors. Staged.
+- [x] Candidate preparation (2026-11-11, Fred: "keep the border around the
+  whole tile as-is. go ahead and finalize please"):
+  - version 0.49.0 in `VERSION`, `backend/pyproject.toml` and `uv.lock`;
+    documentation synced (README, code map, development decisions, schema
+    documents' version headers; no schema change, no migration). One stale
+    decision corrected: `project_dso` holds the in-frame objects among the
+    500 largest in the solve's cone, not every object;
+  - checks: ruff, format, bandit (0 issues), the frontend build, ESLint on
+    all 22 changed frontend files. Full backend suite: 3,875 passed,
+    10 skipped, 0 failed (14 min, parallel);
+  - coverage, the same tests on `main` and the candidate: no changed module
+    lower (thumbnails 86% → 87%, Messier service 98% → 100%, its endpoint
+    99% → 100%, image annotations 92% → 93%). The Gallery endpoint fell
+    from 100% to 98% on new edge paths; Codex added their tests (records
+    `41`–`42`), bringing it and both object-search modules to 100%;
+  - independent reviews: the whole change after Phases A–B, each later
+    phase, and one batched review of Claude's own edits, all resolved
+    (plan's Codex review section);
+  - privacy scan of the staged diff: one rig name in this file's Phase D
+    entry replaced; no other personal details, ignored files or
+    `instructions/`.
+- [x] Fred's acceptance of the candidate (2026-11-11: "finalize").
+- [x] Published as [PR #28](https://github.com/fbaptiste/nightcrate/pull/28)
+  (tag `v0.49.0`). **PR review after publication** (fresh Codex review of
+  everything changed after the last independent review, records `43`–`44`):
+  no blocker or major; two minors, confirmed by Claude: two tests added at
+  finalization would pass without the code they cover (the inactive object
+  lay outside the test picture; the short-query test had no catalog
+  objects). Fred: "yes, fix both". Codex fixed them (`45`–`46`), each shown
+  to fail with its code removed (Claude repeated the inactive-object one);
+  the tag moved to the fix commit.
+- **From the start sweep (2026-11-10):**
+  - v0.46.0-D1, the single rig list on gallery cards and in the filter:
+    three releases completed with no evidence either way; Fred closed it
+    as inconclusive, to reopen if a rig filter result ever surprises him.
+  - v0.46.0-R1 (one workspace per request): three releases completed, no
+    new evidence; Fred kept it for Distribution's design.
+  - v0.47.0-R1 and R2 wait on checks outside this scope. No new evidence,
+    and nothing is overdue.
+- **Still due from earlier versions:**
+  - the CDS checks under v0.43.1 ("When CDS returns"). On 2026-11-10 the
+    tile server (alasky) timed out and VizieR refused the connection;
+    SIMBAD answers;
+  - the iPad/Safari check of v0.46.0's framing dialog: dragging the frame,
+    and the long-press tooltip;
+  - Safari, Firefox and touch devices on v0.48.0's Messier page.
+
+### Scope (Fred, 2026-10-24 and 2026-10-30)
+
+- A submitted search matches identifiers exactly ("M1" is not M10–M110); prefix
+  suggestions appear while typing. Common names and aliases are searched and
+  deduplicated by object.
+- Results are labelled "Main target", "In the plate-solved image", or both.
+  In-field results show the solve image with the object marked; the solve image
+  can differ from the gallery's main image.
+- **Fred (2026-10-30): the user chooses the scope.** A search covers either
+  main targets only or every catalog object identified in a project's solve.
+  A project can have several main targets; the Plate Solve tab already lets
+  the user tick more than one.
+- In-field membership is computed at query time from stored solves through one
+  shared overlap function. Stored `project_dso` rows are computed once at solve
+  time, from a capped candidate list, and can be incomplete.
+- Messier slots gain an "in a solved field" marker.
+
 ## v0.48.0 — Messier checklist
+
+Merged in [PR #27](https://github.com/fbaptiste/nightcrate/pull/27) on 2026-11-09.
 
 Fred started this version on 2026-11-09, after merging v0.47.0. Its scope is
 the roadmap's next item, the Messier checklist, moved here unchanged below,
@@ -2810,25 +2991,9 @@ ahead of the gallery; it became v0.44.0. On
 after it, also ahead of the gallery; it became v0.45.0. The gallery became
 v0.46.0. On 2026-11-07 Fred placed rigs that don't change underneath their
 records as the very next version after the gallery; it became v0.47.0. The
-Messier checklist became v0.48.0, the active version above.
+Messier checklist became v0.48.0. Object search became v0.49.0, the active
+version above.
 Version numbers are otherwise assigned when each version starts.
-
-### Object search
-
-- A submitted search matches identifiers exactly ("M1" is not M10–M110); prefix
-  suggestions appear while typing. Common names and aliases are searched and
-  deduplicated by object.
-- Results are labelled "Main target", "In the plate-solved image", or both.
-  In-field results show the solve image with the object marked; the solve image
-  can differ from the gallery's main image.
-- **Fred (2026-10-30): the user chooses the scope.** A search covers either
-  main targets only or every catalog object identified in a project's solve.
-  A project can have several main targets; the Plate Solve tab already lets
-  the user tick more than one.
-- In-field membership is computed at query time from stored solves through one
-  shared overlap function. Stored `project_dso` rows are computed once at solve
-  time, from a capped candidate list, and can be incomplete.
-- Messier slots gain an "in a solved field" marker.
 
 ### Updated XISF specification (before Distribution)
 

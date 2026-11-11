@@ -90,6 +90,7 @@ class ProjectRecord(BaseModel):
     dates: list[date] = Field(default_factory=list)
     rigs: list[GalleryRig] = Field(default_factory=list)
     integration_minutes: float = 0.0
+    has_solve: bool = False
 
 
 class GalleryQuery(BaseModel):
@@ -106,6 +107,35 @@ class GalleryQuery(BaseModel):
     search_images: bool = False
     sort: Literal["latest", "first", "name"] = "latest"
     desc: bool = True
+    search_project_names: bool = True
+
+
+class GalleryMark(BaseModel):
+    dso_id: int
+    designation: str
+    common_name: str | None = None
+    pixel_x: float
+    pixel_y: float
+    semi_major_px: float | None = None
+    semi_minor_px: float | None = None
+    angle_deg: float | None = None
+    inset_radius_px: float
+    main_target: bool
+
+
+class GallerySolveMarks(BaseModel):
+    solve_id: int
+    width: int
+    height: int
+    pixel_scale_arcsec: float
+    marks: list[GalleryMark]
+
+
+class SearchObject(BaseModel):
+    dso_id: int
+    designation: str
+    common_name: str | None = None
+    alias: str | None = None
 
 
 class GalleryItem(BaseModel):
@@ -122,7 +152,10 @@ class GalleryItem(BaseModel):
     imaging_runs: list[ImagingRun]
     integration_minutes: float
     rigs: list[GalleryRig]
-    found_in_image: list[str]
+    match_main_target: bool
+    match_in_image: bool
+    solve: GallerySolveMarks | None = None
+    has_solve: bool
 
 
 class FacetCount(BaseModel):
@@ -154,13 +187,13 @@ def _matches_search(
     record: ProjectRecord,
     query: GalleryQuery,
     target_search_hits: set[int] | None,
-    image_search_hits: dict[int, list[str]] | None,
+    image_search_hits: dict[int, GallerySolveMarks] | None,
 ) -> bool:
     if not query.q or not query.q.strip():
         return True
     needle = query.q.strip().casefold()
     return (
-        needle in record.name.casefold()
+        (query.search_project_names and needle in record.name.casefold())
         or record.id in (target_search_hits or set())
         or (query.search_images and record.id in (image_search_hits or {}))
     )
@@ -275,7 +308,7 @@ def build_gallery(
     query: GalleryQuery,
     *,
     target_search_hits: set[int] | None,
-    image_search_hits: dict[int, list[str]] | None,
+    image_search_hits: dict[int, GallerySolveMarks] | None,
 ) -> GalleryResult:
     """Filter records, compute disjunctive facets, and build gallery cards."""
     searched = [
@@ -291,12 +324,8 @@ def build_gallery(
     items = []
     for record in matching:
         dates = sorted(set(record.dates))
-        direct_match = needle is not None and (
-            needle in record.name.casefold() or record.id in target_hits
-        )
-        found_in_image = []
-        if needle is not None and query.search_images and not direct_match:
-            found_in_image = list((image_search_hits or {}).get(record.id, []))
+        match_main_target = needle is not None and record.id in target_hits
+        solve = (image_search_hits or {}).get(record.id) if query.search_images else None
         items.append(
             GalleryItem(
                 project_id=record.id,
@@ -312,7 +341,10 @@ def build_gallery(
                 imaging_runs=imaging_runs(dates),
                 integration_minutes=record.integration_minutes,
                 rigs=record.rigs,
-                found_in_image=found_in_image,
+                match_main_target=match_main_target,
+                match_in_image=solve is not None,
+                solve=solve,
+                has_solve=record.has_solve,
             )
         )
 

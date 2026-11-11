@@ -2,22 +2,27 @@ import type { RefObject } from "react";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Link from "@mui/material/Link";
-import GpsFixedIcon from "@mui/icons-material/GpsFixed";
 import { Link as RouterLink } from "react-router-dom";
 import type { GalleryItem } from "@/api/gallery";
 import NameWithAlternates from "@/components/common/NameWithAlternates";
 import { formatHoursMinutes } from "@/components/projects/IntegrationBars";
-import { formatImagingRuns, tileImageUrl } from "@/lib/galleryRendition";
+import { formatImagingRuns, pickRendition, tileImageUrl } from "@/lib/galleryRendition";
 import ExpandButton from "./ExpandButton";
 import GalleryImage from "./GalleryImage";
 import RigSummary from "./RigSummary";
 import StatusPills from "./StatusPills";
+import MatchChips from "./MatchChips";
+import SolveMarkedImage from "./SolveMarkedImage";
 
 interface Props {
   items: GalleryItem[];
   ws: string;
   onExpand: (id: number) => void;
   expandRefs: RefObject<Map<number, HTMLButtonElement>>;
+  unavailableSolveIds: ReadonlySet<number>;
+  solveRetries: ReadonlyMap<number, number>;
+  onSolveUnavailable: (solveId: number) => void;
+  showMatchNotes: boolean;
 }
 
 interface RowProps {
@@ -26,14 +31,28 @@ interface RowProps {
   ws: string;
   onExpand: (id: number) => void;
   expandRefs: RefObject<Map<number, HTMLButtonElement>>;
+  unavailableSolveIds: ReadonlySet<number>;
+  solveRetries: ReadonlyMap<number, number>;
+  onSolveUnavailable: (solveId: number) => void;
+  showMatchNotes: boolean;
 }
 
-function GalleryListRow({ item, index, ws, onExpand, expandRefs }: RowProps) {
+function GalleryListRow({
+  item,
+  index,
+  ws,
+  onExpand,
+  expandRefs,
+  unavailableSolveIds,
+  solveRetries,
+  onSolveUnavailable,
+  showMatchNotes,
+}: RowProps) {
   const runs = formatImagingRuns(item);
   const imageId = item.main_image_id;
   const src = tileImageUrl(item, "small", 180, window.devicePixelRatio || 1, ws);
-  const foundLabel =
-    `Found in this project's plate-solved image: ${item.found_in_image.join(", ")}`;
+  const solve =
+    item.solve && !unavailableSolveIds.has(item.solve.solve_id) ? item.solve : null;
   const dates = runs.length
     ? `${runs.join(", ")}, ${item.nights} ${item.nights === 1 ? "night" : "nights"}`
     : "No imaging dates";
@@ -68,7 +87,20 @@ function GalleryListRow({ item, index, ws, onExpand, expandRefs }: RowProps) {
           overflow: "hidden",
         }}
       >
-        {src ? (
+        {solve ? (
+          <SolveMarkedImage
+            key={`${solve.solve_id}-${solveRetries.get(solve.solve_id) ?? 0}`}
+            projectId={item.project_id}
+            solve={solve}
+            variant={pickRendition(180, window.devicePixelRatio || 1)}
+            ws={ws}
+            alt={item.name}
+            onUnavailable={() => onSolveUnavailable(solve.solve_id)}
+            matchMainTarget={item.match_main_target}
+            matchInImage={item.match_in_image}
+            compactChips
+          />
+        ) : src ? (
           <GalleryImage src={src} alt={item.name} />
         ) : (
           <Box
@@ -83,38 +115,14 @@ function GalleryListRow({ item, index, ws, onExpand, expandRefs }: RowProps) {
             No main image
           </Box>
         )}
-        {item.found_in_image.length > 0 && (
-          <Box
-            aria-label={foundLabel}
-            sx={{
-              position: "absolute",
-              left: 6,
-              bottom: 6,
-              maxWidth: "calc(100% - 12px)",
-              height: 22,
-              px: "7px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "5px",
-              borderRadius: 12,
-              bgcolor: "rgba(0, 0, 0, 0.62)",
-              border: "1px solid rgba(255, 255, 255, 0.28)",
-              color: "common.white",
-              fontSize: 11,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              pointerEvents: "none",
-            }}
-          >
-            <GpsFixedIcon sx={{ fontSize: 13 }} />
-            In image: {item.found_in_image[0]}
-            {item.found_in_image.length > 1
-              ? ` +${item.found_in_image.length - 1}`
-              : ""}
-          </Box>
+        {!solve && (
+          <MatchChips
+            mainTarget={item.match_main_target}
+            inImage={item.match_in_image}
+            compact
+          />
         )}
-        {imageId != null && (
+        {(solve != null || imageId != null) && (
           <ExpandButton
             buttonRef={registerExpandButton}
             label={`View ${item.name} full size`}
@@ -136,6 +144,16 @@ function GalleryListRow({ item, index, ws, onExpand, expandRefs }: RowProps) {
           </Link>
           <StatusPills status={item.status} retired={item.retired} />
         </Box>
+        {showMatchNotes && item.match_main_target && !item.has_solve && (
+          <Box sx={{ color: "text.secondary", fontSize: 12.5, mb: "6px" }}>
+            Not plate solved, so nothing is marked.
+          </Box>
+        )}
+        {showMatchNotes && item.match_main_target && item.has_solve && !item.solve && (
+          <Box sx={{ color: "text.secondary", fontSize: 12.5, mb: "6px" }}>
+            Not in the plate-solved image.
+          </Box>
+        )}
         <Box
           component="dl"
           sx={{
@@ -205,7 +223,16 @@ function GalleryListRow({ item, index, ws, onExpand, expandRefs }: RowProps) {
   );
 }
 
-export default function GalleryList({ items, ws, onExpand, expandRefs }: Props) {
+export default function GalleryList({
+  items,
+  ws,
+  onExpand,
+  expandRefs,
+  unavailableSolveIds,
+  solveRetries,
+  onSolveUnavailable,
+  showMatchNotes,
+}: Props) {
   return (
     <Box sx={{ maxWidth: 980 }}>
       {items.map((item, index) => (
@@ -216,6 +243,10 @@ export default function GalleryList({ items, ws, onExpand, expandRefs }: Props) 
           ws={ws}
           onExpand={onExpand}
           expandRefs={expandRefs}
+          unavailableSolveIds={unavailableSolveIds}
+          solveRetries={solveRetries}
+          onSolveUnavailable={onSolveUnavailable}
+          showMatchNotes={showMatchNotes}
         />
       ))}
     </Box>

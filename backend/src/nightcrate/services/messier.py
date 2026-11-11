@@ -7,9 +7,9 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
-from nightcrate.services.thumbnails import compute_angular_extent_deg
-
 MESSIER_NUMBERS: tuple[int, ...] = tuple(range(1, 111))
+MIN_RIG_VIEW_FIELD_DEG = 0.05
+MAX_RIG_VIEW_FIELD_DEG = 30.0
 
 
 class Candidate(BaseModel):
@@ -24,19 +24,6 @@ class Candidate(BaseModel):
     @classmethod
     def _sort_dates(cls, value: list[date]) -> list[date]:
         return sorted(value)
-
-
-class PictureField(BaseModel):
-    width_deg: float
-    height_deg: float
-
-
-class SolveFacts(BaseModel):
-    image_path: str
-    image_width: int
-    image_height: int
-    fov_width_arcmin: float | None
-    fov_height_arcmin: float | None
 
 
 SlotState = Literal["imaged", "project", "none", "missing"]
@@ -68,45 +55,16 @@ def order_candidates(items: list[Candidate], *, image_first: bool) -> list[Candi
     return ordered
 
 
-def main_image_field(
-    solve: SolveFacts | None,
-    main_path: str | None,
-    main_size_px: tuple[int, int] | None,
-) -> PictureField | None:
-    """Return the solved field when it safely describes the displayed image."""
+def rig_view_field_deg(major_deg: float, minor_deg: float) -> float | None:
+    """Return a supported 4:3 survey width that fits the rig within 92%."""
+    field_deg = max(major_deg, minor_deg * 4 / 3) / 0.92
+    tolerance = 1e-12
     if (
-        solve is None
-        or solve.fov_width_arcmin is None
-        or solve.fov_height_arcmin is None
-        or solve.image_width <= 0
-        or solve.image_height <= 0
+        field_deg < MIN_RIG_VIEW_FIELD_DEG - tolerance
+        or field_deg > MAX_RIG_VIEW_FIELD_DEG + tolerance
     ):
         return None
-    if main_path != solve.image_path:
-        if main_size_px is None or main_size_px[0] <= 0 or main_size_px[1] <= 0:
-            return None
-        main_ratio = main_size_px[0] / main_size_px[1]
-        solve_ratio = solve.image_width / solve.image_height
-        if abs(main_ratio / solve_ratio - 1) > 0.005:
-            return None
-    return PictureField(
-        width_deg=solve.fov_width_arcmin / 60,
-        height_deg=solve.fov_height_arcmin / 60,
-    )
-
-
-def crop_field(main: PictureField, crop_w: float, crop_h: float) -> PictureField:
-    return PictureField(
-        width_deg=main.width_deg * crop_w,
-        height_deg=main.height_deg * crop_h,
-    )
-
-
-def survey_field_deg(maj_axis_arcmin: float | None) -> float:
-    return compute_angular_extent_deg(
-        "checklist",
-        dso_maj_axis_arcmin=maj_axis_arcmin,
-    )
+    return min(MAX_RIG_VIEW_FIELD_DEG, max(MIN_RIG_VIEW_FIELD_DEG, field_deg))
 
 
 def slot_state(has_object: bool, ordered: list[Candidate]) -> SlotState:

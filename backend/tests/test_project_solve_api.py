@@ -1381,6 +1381,29 @@ class TestSolveImage:
         resp = await client.get(f"/api/projects/{pid}/solve/image/full")
         assert resp.status_code == 204
 
+    async def test_old_solve_id_returns_204_after_replacement(self, client: AsyncClient):
+        pid = await _make_project(client, "Solve generation mismatch")
+        with _mock_solve([], renderer=_renderer(b"old")):
+            old = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/old.fits")
+            )
+        with _mock_solve([], renderer=_renderer(b"new")):
+            new = await client.post(
+                f"/api/projects/{pid}/solve",
+                json=_solve_payload("/fake/new.fits", replace=True),
+            )
+
+        mismatch = await client.get(
+            f"/api/projects/{pid}/solve/image/full",
+            params={"solve_id": old.json()["id"]},
+        )
+        current = await client.get(
+            f"/api/projects/{pid}/solve/image/full",
+            params={"solve_id": new.json()["id"]},
+        )
+        assert mismatch.status_code == 204
+        assert current.content == b"new"
+
     async def test_legacy_layout_is_served_and_removed_on_replace(self, client: AsyncClient):
         pid = await _make_project(client, "Legacy Solve Images")
         with _mock_solve([], renderer=_renderer(b"legacy")):

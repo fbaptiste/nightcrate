@@ -307,3 +307,118 @@ class TestProjectDsos:
 
     def test_empty_dso_list(self):
         assert project_dsos(ORION_WCS, []) == []
+
+    @pytest.mark.parametrize(
+        ("position_angle", "expected_angle"),
+        [(0.0, 90.0), (45.0, 45.0), (104.0, 166.0), (170.0, 100.0)],
+    )
+    def test_ellipse_angle_uses_projected_axes(self, position_angle, expected_angle):
+        scale = 4.5 / 3600.0
+        params = WcsParams(
+            crval1=170.0,
+            crval2=13.0,
+            cd1_1=-scale,
+            cd1_2=0,
+            cd2_1=0,
+            cd2_2=-scale,
+            crpix1=601,
+            crpix2=451,
+            naxis1=1200,
+            naxis2=900,
+        )
+        result = project_dsos(params, [_ellipse_dso(position_angle)])[0]
+        assert result.pixel_x == pytest.approx(600.0, abs=0.1)
+        assert result.pixel_y == pytest.approx(450.0, abs=0.1)
+        assert result.ellipse_angle_deg == pytest.approx(expected_angle, abs=0.5)
+
+    @pytest.mark.parametrize(
+        ("rotation", "position_angle"),
+        [(rotation, pa) for rotation in (30.0, 90.0, 180.0, 270.0) for pa in (0, 45, 104, 170)],
+    )
+    def test_rotated_solution_angles(self, rotation, position_angle):
+        scale = 4.5 / 3600.0
+        angle = math.radians(rotation)
+        params = WcsParams(
+            crval1=170.0,
+            crval2=13.0,
+            cd1_1=-scale * math.cos(angle),
+            cd1_2=scale * math.sin(angle),
+            cd2_1=-scale * math.sin(angle),
+            cd2_2=-scale * math.cos(angle),
+            crpix1=601,
+            crpix2=451,
+            naxis1=1200,
+            naxis2=900,
+        )
+        # Inverting CD rotates the north-up answer by -rotation in pixel space.
+        expected = (90.0 - position_angle - rotation) % 180.0
+        result = project_dsos(params, [_ellipse_dso(position_angle)])[0]
+        assert result.ellipse_angle_deg == pytest.approx(expected, abs=0.5)
+
+    @pytest.mark.parametrize("position_angle", (0.0, 45.0, 104.0, 170.0))
+    @pytest.mark.parametrize(
+        "updates",
+        [
+            {"cd1_1": 4.5 / 3600.0},
+            {"cd2_2": 4.5 / 3600.0},
+        ],
+    )
+    def test_mirror_and_bottom_up_angles(self, updates, position_angle):
+        scale = 4.5 / 3600.0
+        params = WcsParams(
+            crval1=170.0,
+            crval2=13.0,
+            cd1_1=-scale,
+            cd1_2=0,
+            cd2_1=0,
+            cd2_2=-scale,
+            crpix1=601,
+            crpix2=451,
+            naxis1=1200,
+            naxis2=900,
+        ).model_copy(update=updates)
+        result = project_dsos(params, [_ellipse_dso(position_angle)])[0]
+        expected_angle = (position_angle - 90.0) % 180.0
+        assert result.ellipse_angle_deg == pytest.approx(expected_angle, abs=0.5)
+
+    @pytest.mark.parametrize(
+        ("matrix", "expected_major", "expected_minor", "expected_angle"),
+        [
+            ((-2.0, 0.0, 0.0, -1.0), 49.12, 14.48, 77.60),
+            ((-1.0, 0.1, 0.0, -1.0), 55.80, 25.49, 55.20),
+        ],
+    )
+    def test_unequal_scale_and_skew(self, matrix, expected_major, expected_minor, expected_angle):
+        scale = 4.5 / 3600.0
+        params = WcsParams(
+            crval1=170.0,
+            crval2=13.0,
+            cd1_1=matrix[0] * scale,
+            cd1_2=matrix[1] * scale,
+            cd2_1=matrix[2] * scale,
+            cd2_2=matrix[3] * scale,
+            crpix1=601,
+            crpix2=451,
+            naxis1=1200,
+            naxis2=900,
+        )
+        result = project_dsos(params, [_ellipse_dso(30.0)])[0]
+        assert result.ellipse_semi_major_px == pytest.approx(expected_major, abs=0.1)
+        assert result.ellipse_semi_minor_px == pytest.approx(expected_minor, abs=0.1)
+        assert result.ellipse_angle_deg == pytest.approx(expected_angle, abs=0.2)
+
+
+def _ellipse_dso(position_angle: float) -> dict:
+    return {
+        "id": 101,
+        "primary_designation": "Test ellipse",
+        "obj_type": "G",
+        "type_group": "Galaxy",
+        "ra_deg": 170.0,
+        "dec_deg": 13.0,
+        "maj_axis_arcmin": 8.0,
+        "min_axis_arcmin": 4.0,
+        "position_angle_deg": position_angle,
+        "common_name": None,
+        "constellation": "Leo",
+    }

@@ -71,6 +71,7 @@ from nightcrate.services import image_cache, sky_tile_cache, thumbnails
 from nightcrate.services.astronomy import tonight_date
 from nightcrate.services.dso_sorting import catalog_rank, designation_sort_key
 from nightcrate.services.dso_type_groups import filter_type_code, raw_types_for_filter_codes
+from nightcrate.services.messier import rig_view_field_deg
 from nightcrate.services.planner_annual_hours import (
     compute_annual_hours,
     compute_moon_year,
@@ -1482,8 +1483,15 @@ async def get_thumbnail(
     variant: Literal["list", "detail", "rig_framed", "checklist"] = "list",
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
+    rig_id: int | None = None,
+    render_key: str | None = None,
     wait_ms: int = Query(0, ge=0, le=10000),
 ) -> Response:
+    if rig_id is not None and variant != "checklist":
+        raise HTTPException(
+            status_code=422,
+            detail="rig_id is only valid for the checklist variant",
+        )
     if variant == "rig_framed":
         if fov_major_deg is None or fov_minor_deg is None:
             raise HTTPException(
@@ -1510,6 +1518,38 @@ async def get_thumbnail(
         if dso_row is None or dso_row["ra_deg"] is None or dso_row["dec_deg"] is None:
             raise HTTPException(status_code=404, detail=f"DSO {dso_id} not found / no coords")
 
+        field_deg = None
+        if rig_id is not None:
+            rig_cursor = await conn.execute(
+                "SELECT * FROM rig_summary WHERE id = ? AND active = 1",
+                (rig_id,),
+            )
+            rig_row = await rig_cursor.fetchone()
+            rig_field = rig_fov_from_summary(rig_row) if rig_row is not None else None
+            field_deg = rig_view_field_deg(*rig_field) if rig_field is not None else None
+            if field_deg is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Rig {rig_id} has no supported checklist field",
+                )
+
+        if variant == "checklist" and render_key is not None:
+            descriptor = (
+                thumbnails.ChecklistRender.for_field(
+                    float(dso_row["ra_deg"]),
+                    float(dso_row["dec_deg"]),
+                    field_deg,
+                )
+                if field_deg is not None
+                else thumbnails.ChecklistRender.for_object(
+                    float(dso_row["ra_deg"]),
+                    float(dso_row["dec_deg"]),
+                    dso_row["maj_axis_arcmin"],
+                )
+            )
+            if render_key != descriptor.render_key:
+                return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
         result = await thumbnails.get_thumbnail(
             conn,
             dso_id=dso_id,
@@ -1519,6 +1559,7 @@ async def get_thumbnail(
             maj_axis_arcmin=float(dso_row["maj_axis_arcmin"])
             if dso_row["maj_axis_arcmin"] is not None
             else None,
+            field_deg=field_deg,
             max_cache_bytes=max_bytes,
             conn_factory=get_db,
             fov_major_deg=fov_major_deg,

@@ -4,12 +4,9 @@ import pytest
 
 from nightcrate.services.messier import (
     Candidate,
-    PictureField,
-    SolveFacts,
-    crop_field,
-    main_image_field,
     never_rises,
     order_candidates,
+    rig_view_field_deg,
     slot_state,
 )
 
@@ -41,6 +38,19 @@ def test_never_rises_southern_examples():
     assert never_rises(-35.0, None) is False
 
 
+def test_rig_view_field_fits_landscape_and_tall_rigs():
+    assert rig_view_field_deg(2.80, 1.86) == pytest.approx(3.0435, abs=0.0001)
+    assert rig_view_field_deg(41.2 / 60, 27.4 / 60) == pytest.approx(0.7464, abs=0.0001)
+    assert rig_view_field_deg(1.0, 1.0) == pytest.approx(1.4493, abs=0.0001)
+
+
+def test_rig_view_field_supported_range_is_inclusive():
+    assert rig_view_field_deg(0.0276, 0.01) is None
+    assert rig_view_field_deg(0.046, 0.01) == pytest.approx(0.05)
+    assert rig_view_field_deg(27.6, 1.0) == pytest.approx(30.0)
+    assert rig_view_field_deg(36.8, 1.0) is None
+
+
 def test_order_candidates_image_first_then_dates_then_created_then_id():
     items = [
         _candidate(1, image=True, dates=[date(2025, 3, 1)], created_at="2025-01-01"),
@@ -59,47 +69,6 @@ def test_order_candidates_created_at_seconds_and_invalid_last():
         _candidate(3, image=False, dates=[], created_at="not-a-date"),
     ]
     assert [item.project_id for item in order_candidates(items, image_first=False)] == [1, 2, 3]
-
-
-def _solve(**values) -> SolveFacts:
-    return SolveFacts(
-        image_path=values.get("image_path", "/solve.fits"),
-        image_width=values.get("image_width", 5845),
-        image_height=values.get("image_height", 3646),
-        fov_width_arcmin=values.get("fov_width_arcmin", 36.7),
-        fov_height_arcmin=values.get("fov_height_arcmin", 22.9),
-    )
-
-
-def test_main_image_field_same_file():
-    field = main_image_field(_solve(), "/solve.fits", None)
-    assert field == PictureField(width_deg=36.7 / 60, height_deg=22.9 / 60)
-
-
-def test_main_image_field_matching_proportions():
-    assert main_image_field(_solve(), "/main.jpg", (800, 499)) is not None
-
-    square = _solve(image_width=1000, image_height=1000)
-    assert main_image_field(square, "/main.jpg", (1004, 1000)) is not None
-    assert main_image_field(square, "/main.jpg", (1006, 1000)) is None
-
-
-def test_main_image_field_other_proportions_is_none():
-    assert main_image_field(_solve(), "/main.jpg", (800, 600)) is None
-
-
-def test_main_image_field_without_solve_or_fov_is_none():
-    assert main_image_field(None, "/main.jpg", (800, 499)) is None
-    assert main_image_field(_solve(fov_width_arcmin=None), "/solve.fits", None) is None
-
-
-def test_crop_field():
-    result = crop_field(PictureField(width_deg=36.7 / 60, height_deg=22.9 / 60), 0.5, 0.6)
-    assert result.width_deg == pytest.approx(0.3058333333, abs=1e-6)
-    assert result.height_deg == pytest.approx(0.229, abs=1e-6)
-    mat = crop_field(PictureField(width_deg=0.4, height_deg=0.4), 4 / 3, 1)
-    assert mat.width_deg == pytest.approx(0.533333, abs=1e-6)
-    assert mat.height_deg == pytest.approx(0.4, abs=1e-6)
 
 
 def test_slot_state_all_four():

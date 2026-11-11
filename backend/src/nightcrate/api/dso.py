@@ -79,15 +79,23 @@ def _external_ref_sort_key(provider: str) -> tuple[int, str]:
         return (len(_EXTERNAL_REF_PROVIDER_ORDER), provider)
 
 
-def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
+def dso_search_clause(
+    q: str,
+    *,
+    alias: str = "d",
+    exact_designations: bool = False,
+) -> tuple[str, list[str]]:
     """Return the shared designation/name/group search fragment.
 
     Parameter order is direct designations, preferred name, other name,
     group designation, whole designation, whole preferred name, group name,
     then whole other name.
     """
-    search_prefixes = designation_search_prefixes(q)
-    designation_match = " OR ".join("search_key LIKE ?" for _prefix in search_prefixes)
+    search_prefixes = (
+        [normalize_designation(q)] if exact_designations else designation_search_prefixes(q)
+    )
+    operator = "=" if exact_designations else "LIKE"
+    designation_match = " OR ".join(f"search_key {operator} ?" for _prefix in search_prefixes)
     common_name = f"%{q.lower()}%"
     clause = f"""
         (
@@ -122,7 +130,7 @@ def dso_search_clause(q: str, *, alias: str = "d") -> tuple[str, list[str]]:
             )
         )
     """  # noqa: S608  # nosec B608 - alias is an internal fixed query alias
-    prefix_params = [prefix + "%" for prefix in search_prefixes]
+    prefix_params = [prefix if exact_designations else prefix + "%" for prefix in search_prefixes]
     return clause, [
         *prefix_params,
         common_name,

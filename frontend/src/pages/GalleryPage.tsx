@@ -6,7 +6,7 @@ import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
 import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
-import { Link as RouterLink, useLocation } from "react-router-dom";
+import { Link as RouterLink, useLocation, useSearchParams } from "react-router-dom";
 import { fetchGallery, type GalleryParams, type GalleryResponse } from "@/api/gallery";
 import type { GalleryView } from "@/api/settings";
 import GalleryFilters from "@/components/gallery/GalleryFilters";
@@ -28,6 +28,10 @@ interface GalleryBodyProps {
   onClear: () => void;
   onExpand: (projectId: number) => void;
   expandRefs: React.RefObject<Map<number, HTMLButtonElement>>;
+  unavailableSolveIds: ReadonlySet<number>;
+  solveRetries: ReadonlyMap<number, number>;
+  onSolveUnavailable: (solveId: number) => void;
+  showMatchNotes: boolean;
 }
 
 function GalleryBody({
@@ -39,6 +43,10 @@ function GalleryBody({
   onClear,
   onExpand,
   expandRefs,
+  unavailableSolveIds,
+  solveRetries,
+  onSolveUnavailable,
+  showMatchNotes,
 }: GalleryBodyProps) {
   const errorAlert = error ? (
     <Alert severity="error" sx={{ mb: 2 }}>
@@ -85,6 +93,10 @@ function GalleryBody({
       ws={data.workspace_key}
       onExpand={onExpand}
       expandRefs={expandRefs}
+      unavailableSolveIds={unavailableSolveIds}
+      solveRetries={solveRetries}
+      onSolveUnavailable={onSolveUnavailable}
+      showMatchNotes={showMatchNotes}
     />
   ) : (
     <GalleryGrid
@@ -94,6 +106,10 @@ function GalleryBody({
       resetKey={resetKey}
       onExpand={onExpand}
       expandRefs={expandRefs}
+      unavailableSolveIds={unavailableSolveIds}
+      solveRetries={solveRetries}
+      onSolveUnavailable={onSolveUnavailable}
+      showMatchNotes={showMatchNotes}
     />
   );
   return (
@@ -106,9 +122,25 @@ function GalleryBody({
 
 export default function GalleryPage() {
   const { pathname } = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const visible = pathname === "/gallery";
   const queryClient = useQueryClient();
   const state = useGalleryStore();
+  const setGallery = state.set;
+  useEffect(() => {
+    if (pathname !== "/gallery") return;
+    const search = searchParams.get("search");
+    const images = searchParams.get("images");
+    if (search === null && images === null) return;
+    setGallery({
+      ...(search !== null ? { search } : {}),
+      ...(images === "1" ? { searchImages: true } : {}),
+    });
+    const next = new URLSearchParams(searchParams);
+    next.delete("search");
+    next.delete("images");
+    setSearchParams(next, { replace: true });
+  }, [pathname, searchParams, setGallery, setSearchParams]);
   const debouncedSearch = useDebounce(state.search, 300);
   const invalidRange = Boolean(
     state.dateFrom && state.dateTo && state.dateFrom > state.dateTo,
@@ -172,6 +204,62 @@ export default function GalleryPage() {
   const updateSettings = useSettingsStore((store) => store.update);
   const view: GalleryView = settings?.gallery_view ?? "medium";
   const [viewerId, setViewerId] = useState<number | null>(null);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const workspaceKey = query.data?.workspace_key;
+  const [solveLoadState, setSolveLoadState] = useState<{
+    workspaceKey: string | undefined;
+    unavailable: Set<number>;
+    retries: Map<number, number>;
+  }>({ workspaceKey, unavailable: new Set(), retries: new Map() });
+  const attemptedSolveIds = useRef(new Set<string>());
+  const solveRefetches = useRef(new Set<string>());
+  const unavailableSolveIds = useMemo(
+    () =>
+      solveLoadState.workspaceKey === workspaceKey
+        ? solveLoadState.unavailable
+        : new Set<number>(),
+    [solveLoadState, workspaceKey],
+  );
+  const solveRetries = useMemo(
+    () =>
+      solveLoadState.workspaceKey === workspaceKey
+        ? solveLoadState.retries
+        : new Map<number, number>(),
+    [solveLoadState, workspaceKey],
+  );
+
+  const handleSolveUnavailable = (solveId: number) => {
+    const solveKey = `${workspaceKey ?? ""}:${solveId}`;
+    if (solveRefetches.current.has(solveKey) || unavailableSolveIds.has(solveId)) return;
+    if (attemptedSolveIds.current.has(solveKey)) {
+      setSolveLoadState((current) => ({
+        workspaceKey,
+        retries:
+          current.workspaceKey === workspaceKey ? current.retries : new Map(),
+        unavailable: new Set(
+          current.workspaceKey === workspaceKey ? current.unavailable : [],
+        ).add(solveId),
+      }));
+      return;
+    }
+    attemptedSolveIds.current.add(solveKey);
+    solveRefetches.current.add(solveKey);
+    void query.refetch().finally(() => {
+      solveRefetches.current.delete(solveKey);
+      setSolveLoadState((current) => {
+        const next = new Map(
+          current.workspaceKey === workspaceKey ? current.retries : [],
+        );
+        next.set(solveId, (next.get(solveId) ?? 0) + 1);
+        return {
+          workspaceKey,
+          retries: next,
+          unavailable:
+            current.workspaceKey === workspaceKey ? current.unavailable : new Set(),
+        };
+      });
+    });
+  };
   const expandRefs = useRef(new Map<number, HTMLButtonElement>());
   useEffect(() => {
     if (!visible) queueMicrotask(() => setViewerId(null));
@@ -205,14 +293,30 @@ export default function GalleryPage() {
   const viewerEntries = useMemo(
     () =>
       data
-        ? viewerSequence(data.items).flatMap((item) => {
+        ? viewerSequence(data.items, unavailableSolveIds).flatMap((item) => {
             const imageId = viewerImageId(item, cropSize);
-            return imageId == null
-              ? []
-              : [{ key: `p${item.project_id}`, projectId: item.project_id, imageId, title: item.name, subtitle: item.targets.map((target) => target.name).join(", ") }];
+            const solve =
+              item.solve && !unavailableSolveIds.has(item.solve.solve_id)
+                ? item.solve
+                : null;
+            if (!solve && imageId == null) return [];
+            return [{
+              key: `p${item.project_id}`,
+              projectId: item.project_id,
+              source: solve
+                ? { kind: "solve" as const, solve }
+                : { kind: "project" as const, imageId: imageId as number },
+              fallbackImageId: imageId,
+              title: item.name,
+              subtitle: solve
+                ? "Plate-solved image"
+                : item.targets.map((target) => target.name).join(", "),
+              matchMainTarget: item.match_main_target,
+              matchInImage: item.match_in_image,
+            }];
           })
         : [],
-    [cropSize, data],
+    [cropSize, data, unavailableSolveIds],
   );
 
   return (
@@ -238,6 +342,7 @@ export default function GalleryPage() {
           onChange={state.set}
           onClear={state.reset}
           hasFilters={hasFilters}
+          onSuggestionsOpenChange={setSuggestionsOpen}
         />
         <GalleryResultsBar
           count={data?.items.length ?? 0}
@@ -247,17 +352,24 @@ export default function GalleryPage() {
           onSort={(sort) => state.set({ sort })}
           onDirection={() => state.set({ desc: !state.desc })}
           onView={(next) => void updateSettings({ gallery_view: next })}
+          searchObject={data?.search_object ?? null}
         />
-        <GalleryBody
-          data={data}
-          pending={query.isPending}
-          error={queryError}
-          view={view}
-          resetKey={resetKey}
-          onClear={state.reset}
-          onExpand={setViewerId}
-          expandRefs={expandRefs}
-        />
+        <Box sx={{ opacity: suggestionsOpen ? 0.45 : 1, transition: "opacity 120ms" }}>
+          <GalleryBody
+            data={data}
+            pending={query.isPending}
+            error={queryError}
+            view={view}
+            resetKey={resetKey}
+            onClear={state.reset}
+            onExpand={setViewerId}
+            expandRefs={expandRefs}
+            unavailableSolveIds={unavailableSolveIds}
+            solveRetries={solveRetries}
+            onSolveUnavailable={handleSolveUnavailable}
+            showMatchNotes={state.searchImages}
+          />
+        </Box>
         {data && viewerId != null && (
           <GalleryViewer
             key={`${viewerId}-${data.workspace_key}`}
@@ -265,6 +377,8 @@ export default function GalleryPage() {
             startKey={`p${viewerId}`}
             ws={data.workspace_key}
             onClose={(key) => closeViewer(Number(key.slice(1)))}
+            onSolveUnavailable={handleSolveUnavailable}
+            solveRetries={solveRetries}
           />
         )}
       </Box>

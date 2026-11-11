@@ -761,7 +761,11 @@ async def delete_solve(project_id: int) -> None:
 
 
 @router.get("/{project_id}/solve/image/{variant}")
-async def get_solve_image(project_id: int, variant: str) -> Response:
+async def get_solve_image(
+    project_id: int,
+    variant: str,
+    solve_id: int | None = None,
+) -> Response:
     if variant not in _VALID_VARIANTS:
         raise HTTPException(
             status_code=422,
@@ -773,6 +777,8 @@ async def get_solve_image(project_id: int, variant: str) -> Response:
             "SELECT id FROM project_solve WHERE project_id = ?", (project_id,)
         )
         row = await cursor.fetchone()
+    if solve_id is not None and (row is None or int(row["id"]) != solve_id):
+        return Response(status_code=204)
     path = solve_dir / str(row["id"]) / f"{variant}.jpg" if row is not None else None
     if path is None or not path.is_file():
         path = solve_dir / f"{variant}.jpg"

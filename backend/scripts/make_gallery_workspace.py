@@ -92,6 +92,22 @@ def _write_renditions(dest: Path, project_id: int, image_id: int, index: int, se
         rendered.save(image_dir / f"{name}.jpg", "JPEG", quality=88, optimize=True)
 
 
+def _write_solve_renditions(dest: Path, project_id: int, solve_id: int, seed: int) -> None:
+    base = _star_field((1200, 900), seed)
+    image_dir = dest / "project_data" / str(project_id) / "solve" / str(solve_id)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    for name, long_edge in {
+        "thumb_sm": 180,
+        "thumb_md": 400,
+        "thumb_lg": 800,
+        "full": 4000,
+    }.items():
+        rendered = base.copy()
+        if long_edge < 1200:
+            rendered.thumbnail((long_edge, long_edge), Image.Resampling.LANCZOS)
+        rendered.save(image_dir / f"{name}.jpg", "JPEG", quality=88, optimize=True)
+
+
 def _crop_frame(width: int, height: int, index: int) -> tuple[float, float, float, float]:
     """Choose a deterministic whole, zoomed, or mat-crossing 4:3 frame."""
     fit_x, fit_y, fit_w, fit_h = fit_box(width, height)
@@ -181,10 +197,20 @@ async def _build(source: Path, dest: Path, projects: int, seed: int) -> None:
         await conn.commit()
 
     # Five deliberately broken previews exercise the gallery's missing-rendition state.
-    rendered = list(summary.main_images.items())[5:]
+    known_ids = set(summary.known_project_ids.values())
+    rendered = [item for item in summary.main_images.items() if item[0] not in known_ids][5:]
     for index, (project_id, image_id) in enumerate(rendered):
         _write_renditions(dest, project_id, image_id, index, seed)
     await _write_crops(destination_db, dest, rendered)
+    for index, key in enumerate(("leo", "hamburger", "markarian")):
+        project_id = summary.known_project_ids.get(key)
+        if project_id is not None:
+            _write_solve_renditions(
+                dest,
+                project_id,
+                summary.solve_ids[project_id],
+                seed * 100_003 + index,
+            )
 
 
 def _parser() -> argparse.ArgumentParser:

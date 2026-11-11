@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
-from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Query
-from PIL import Image, UnidentifiedImageError
 
 from nightcrate.api._common import load_other_names
 from nightcrate.api.gallery import load_project_records
 from nightcrate.api.messier_models import (
-    CropSize,
     MessierCounts,
     MessierLocation,
     MessierObject,
@@ -20,36 +18,34 @@ from nightcrate.api.messier_models import (
     MessierRig,
     MessierSlot,
     SlotProject,
+    SolvedPicture,
     SurveyImage,
 )
+from nightcrate.api.object_search_db import load_solves
 from nightcrate.catalog_loader import registry
-from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db, workspace_key
+from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.gallery import ProjectRecord, imaging_runs
 from nightcrate.services.messier import (
     MESSIER_NUMBERS,
     Candidate,
-    PictureField,
-    SolveFacts,
-    crop_field,
-    main_image_field,
     never_rises,
     order_candidates,
+    rig_view_field_deg,
     slot_state,
 )
-from nightcrate.services.rig_calculators import rig_fov_from_summary
+from nightcrate.services.object_search import marks_in_solve
+from nightcrate.services.rig_calculators import compute_coverage_pct, rig_fov_from_summary
 from nightcrate.services.thumbnails import ChecklistRender
 
 router = APIRouter(prefix="/api/messier", tags=["Projects"])
 
-_CROP_SIZES: tuple[CropSize, ...] = ("small", "medium", "large")
-_ID_BATCH_SIZE = 500
+
+def _project_solves(solves, dsos):
+    return [marks_in_solve(solve, dsos) for solve in solves]
 
 
-def _slot_project(
-    record: ProjectRecord,
-    picture_fields: dict[int, dict[CropSize, PictureField | None]],
-) -> SlotProject:
+def _slot_project(record: ProjectRecord) -> SlotProject:
     return SlotProject(
         project_id=record.id,
         name=record.name,
@@ -60,102 +56,7 @@ def _slot_project(
         last_date=record.dates[-1].isoformat() if record.dates else None,
         nights=len(record.dates),
         imaging_runs=imaging_runs(record.dates),
-        picture_fields=(
-            picture_fields.get(record.id) if record.main_image_id is not None else None
-        ),
     )
-
-
-def _main_preview_size(
-    projects_root: Path | None,
-    project_id: int,
-    image_id: int,
-) -> tuple[int, int] | None:
-    if projects_root is None:
-        return None
-    path = projects_root / str(project_id) / f"img_{image_id}" / "thumb_lg.jpg"
-    try:
-        with Image.open(path) as image:
-            return image.size
-    except FileNotFoundError, OSError, UnidentifiedImageError:
-        return None
-
-
-async def _load_picture_fields(
-    conn,
-    records: list[ProjectRecord],
-) -> dict[int, dict[CropSize, PictureField | None]]:
-    """Load solve and crop geometry for every candidate project with an image."""
-    if not records:
-        return {}
-    project_ids = list(dict.fromkeys(record.id for record in records))
-    facts_by_project: dict[int, dict] = {}
-    crops_by_project: dict[int, dict[str, dict]] = defaultdict(dict)
-    for start in range(0, len(project_ids), _ID_BATCH_SIZE):
-        batch = project_ids[start : start + _ID_BATCH_SIZE]
-        placeholders = ",".join("?" * len(batch))
-        facts_cursor = await conn.execute(
-            f"""
-            SELECT p.id AS project_id,
-                   pi.id AS main_image_id, pi.file_path AS main_path,
-                   ps.image_path, ps.image_width, ps.image_height,
-                   ps.fov_width_arcmin, ps.fov_height_arcmin
-            FROM project p
-            LEFT JOIN project_image pi
-              ON pi.project_id = p.id AND pi.is_main = 1
-            LEFT JOIN project_solve ps ON ps.project_id = p.id
-            WHERE p.id IN ({placeholders})
-            """,  # noqa: S608  # nosec B608 - bounded integer-id batch
-            batch,
-        )
-        for row in await facts_cursor.fetchall():
-            facts_by_project[int(row["project_id"])] = dict(row)
-
-        crop_cursor = await conn.execute(
-            f"""
-            SELECT project_id, size, source_image_id, crop_w, crop_h
-            FROM project_thumbnail
-            WHERE project_id IN ({placeholders})
-            """,  # noqa: S608  # nosec B608 - bounded integer-id batch
-            batch,
-        )
-        for row in await crop_cursor.fetchall():
-            crops_by_project[int(row["project_id"])][str(row["size"])] = dict(row)
-
-    projects_root = get_projects_root()
-    result: dict[int, dict[CropSize, PictureField | None]] = {}
-    for record in records:
-        facts = facts_by_project.get(record.id, {})
-        solve = None
-        if facts.get("image_path") is not None:
-            solve = SolveFacts(
-                image_path=facts["image_path"],
-                image_width=int(facts["image_width"]),
-                image_height=int(facts["image_height"]),
-                fov_width_arcmin=facts["fov_width_arcmin"],
-                fov_height_arcmin=facts["fov_height_arcmin"],
-            )
-        image_id = record.main_image_id
-        preview_size = (
-            _main_preview_size(projects_root, record.id, image_id) if image_id is not None else None
-        )
-        main = main_image_field(solve, facts.get("main_path"), preview_size)
-        fields: dict[CropSize, PictureField | None] = {}
-        for size in _CROP_SIZES:
-            crop = crops_by_project.get(record.id, {}).get(size)
-            visible_crop = record.crops.get(size)
-            if crop is None or visible_crop is None:
-                fields[size] = main
-            elif image_id is not None and crop["source_image_id"] in (None, image_id):
-                fields[size] = (
-                    crop_field(main, float(crop["crop_w"]), float(crop["crop_h"]))
-                    if main is not None
-                    else None
-                )
-            else:
-                fields[size] = None
-        result[record.id] = fields
-    return result
 
 
 async def _load_location(
@@ -202,11 +103,13 @@ async def _load_rig(conn, rig_id: int | None) -> MessierRig | None:
     if row is None:
         return None
     field = rig_fov_from_summary(row)
+    view_field = rig_view_field_deg(*field) if field is not None else None
     return MessierRig(
         id=int(row["id"]),
         name=row["name"],
         fov_major_deg=field[0] if field is not None else None,
         fov_minor_deg=field[1] if field is not None else None,
+        view_field_deg=view_field,
     )
 
 
@@ -242,7 +145,13 @@ async def get_messier(
                 catalog_status="not_downloaded",
                 location=await _load_location(conn, location),
                 rig=await _load_rig(conn, rig_id),
-                counts=MessierCounts(imaged=0, project=0, never_rises=0, missing=0),
+                counts=MessierCounts(
+                    imaged=0,
+                    project=0,
+                    never_rises=0,
+                    missing=0,
+                    in_solved=0,
+                ),
                 slots=[],
                 workspace_key=workspace_key(),
             )
@@ -251,6 +160,14 @@ async def get_messier(
         other_names = await load_other_names(conn, dso_ids)
         location_model = await _load_location(conn, location)
         rig_model = await _load_rig(conn, rig_id)
+        rig_field = (
+            (rig_model.fov_major_deg, rig_model.fov_minor_deg)
+            if rig_model is not None
+            and rig_model.fov_major_deg is not None
+            and rig_model.fov_minor_deg is not None
+            else None
+        )
+        survey_field = rig_model.view_field_deg if rig_model is not None else None
         records = [record for record in await load_project_records(conn) if not record.retired]
 
         records_by_id = {record.id: record for record in records}
@@ -273,19 +190,32 @@ async def get_messier(
             dso_id: order_candidates(items, image_first=True)
             for dso_id, items in candidates_by_dso.items()
         }
-        imaged_records = [
-            record
-            for record in records
-            if record.main_image_id is not None
-            and any(target.target.dso_id in messier_dso_ids for target in record.targets)
+        solves = await load_solves(conn, (record.id for record in records))
+        searchable_dsos = [
+            {
+                **dict(row),
+                "id": int(row["id"]),
+                "primary_designation": f"M {number}",
+                "type_group": group_for_raw_type(row["obj_type"]),
+            }
+            for number, row in object_rows.items()
+            if row["active"] and row["ra_deg"] is not None and row["dec_deg"] is not None
         ]
-        picture_fields = await _load_picture_fields(conn, imaged_records)
+        projected = await asyncio.to_thread(_project_solves, solves, searchable_dsos)
+        solved_by_dso: dict[int, list[SolvedPicture]] = defaultdict(list)
+        for solve, marks in zip(solves, projected, strict=True):
+            record = records_by_id[solve.project_id]
+            for mark in marks:
+                solved_by_dso[mark.id].append(SolvedPicture(project_id=record.id, name=record.name))
+        for pictures in solved_by_dso.values():
+            pictures.sort(key=lambda picture: (picture.name.casefold(), picture.project_id))
 
     slots: list[MessierSlot] = []
     imaged_count = 0
     project_count = 0
     never_count = 0
     missing_count = 0
+    in_solved_count = 0
     for number in MESSIER_NUMBERS:
         row = object_rows.get(number)
         dso_id = int(row["id"]) if row is not None else None
@@ -314,10 +244,18 @@ async def get_messier(
                 active=bool(row["active"]),
             )
             if row["ra_deg"] is not None and row["dec_deg"] is not None:
-                descriptor = ChecklistRender.for_object(
-                    float(row["ra_deg"]),
-                    float(row["dec_deg"]),
-                    row["maj_axis_arcmin"],
+                descriptor = (
+                    ChecklistRender.for_field(
+                        float(row["ra_deg"]),
+                        float(row["dec_deg"]),
+                        survey_field,
+                    )
+                    if survey_field is not None
+                    else ChecklistRender.for_object(
+                        float(row["ra_deg"]),
+                        float(row["dec_deg"]),
+                        row["maj_axis_arcmin"],
+                    )
                 )
                 survey = SurveyImage(
                     field_deg=descriptor.field_mdeg / 1000,
@@ -331,17 +269,28 @@ async def get_messier(
             and never_rises(location_model.latitude_deg, row["dec_deg"])
         )
         never_count += int(does_not_rise)
+        in_solved_pictures = (
+            solved_by_dso.get(dso_id, []) if state == "none" and dso_id is not None else []
+        )
+        in_solved_count += int(bool(in_solved_pictures))
         slots.append(
             MessierSlot(
                 number=number,
                 object=object_model,
                 state=state,
                 never_rises=does_not_rise,
-                projects=[
-                    _slot_project(records_by_id[item.project_id], picture_fields)
-                    for item in ordered
-                ],
+                projects=[_slot_project(records_by_id[item.project_id]) for item in ordered],
                 survey=survey,
+                coverage_pct=(
+                    compute_coverage_pct(
+                        *rig_field,
+                        row["maj_axis_arcmin"],
+                        row["min_axis_arcmin"],
+                    )
+                    if rig_field is not None and row is not None
+                    else None
+                ),
+                in_solved_pictures=in_solved_pictures,
             )
         )
 
@@ -354,6 +303,7 @@ async def get_messier(
             project=project_count,
             never_rises=never_count,
             missing=missing_count,
+            in_solved=in_solved_count,
         ),
         slots=slots,
         workspace_key=workspace_key(),

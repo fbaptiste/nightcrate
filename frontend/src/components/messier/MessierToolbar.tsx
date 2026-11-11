@@ -54,11 +54,11 @@ export default function MessierToolbar(props: Props) {
       </Box>
       <Box sx={controlSx}>
         <Box id="messier-imaged-style-label" sx={captionSx}>Imaged as</Box>
-        <ToggleButtonGroup aria-labelledby="messier-imaged-style-label" exclusive value={props.imagedStyle} onChange={(_, value) => value && props.onImagedStyle(value)} sx={groupSx}><ToggleButton value="own">Own image</ToggleButton><ToggleButton value="sky">Sky image</ToggleButton></ToggleButtonGroup>
+        <ToggleButtonGroup aria-labelledby="messier-imaged-style-label" exclusive value={props.imagedStyle} onChange={(_, value) => value && props.onImagedStyle(value)} sx={groupSx}><ToggleButton value="own">Own image</ToggleButton><ToggleButton value="sky">Sky survey</ToggleButton></ToggleButtonGroup>
       </Box>
       <Box sx={controlSx}>
         <Box id="messier-unimaged-style-label" sx={captionSx}>Not imaged as</Box>
-        <ToggleButtonGroup aria-labelledby="messier-unimaged-style-label" exclusive value={props.unimagedStyle} onChange={(_, value) => value && props.onUnimagedStyle(value)} sx={groupSx}><ToggleButton value="sky">Sky image</ToggleButton><ToggleButton value="blank">Blank</ToggleButton></ToggleButtonGroup>
+        <ToggleButtonGroup aria-labelledby="messier-unimaged-style-label" exclusive value={props.unimagedStyle} onChange={(_, value) => value && props.onUnimagedStyle(value)} sx={groupSx}><ToggleButton value="sky">Sky survey</ToggleButton><ToggleButton value="blank">Blank</ToggleButton></ToggleButtonGroup>
       </Box>
       <Box sx={{ ...controlSx, width: 260, "@container (min-width: 950px) and (max-width: 1099.99px)": { width: 200 } }}>
         <Box id="messier-rig-field-label" sx={captionSx}>Rig field</Box>

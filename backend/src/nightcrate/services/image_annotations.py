@@ -7,6 +7,7 @@ coordinates. WCS math via astropy.wcs.
 
 import math
 
+import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
@@ -167,7 +168,6 @@ def project_dsos(
     (with margin for extended objects).
     """
     wcs = build_wcs(params)
-    image_rotation = compute_rotation(params)
     pixel_scale_deg = math.sqrt(params.cd2_1**2 + params.cd2_2**2)
 
     if not dsos:
@@ -177,6 +177,16 @@ def project_dsos(
     dec_arr = np.array([d["dec_deg"] for d in dsos])
     coords = SkyCoord(ra=ra_arr, dec=dec_arr, unit="deg")
     px_x, px_y = wcs.world_to_pixel(coords)
+
+    # Build the local sky-to-pixel Jacobian at every object.  Catalog position
+    # angles are measured from north through east, while SVG ellipses start on
+    # +x in displayed (y-down) pixels.  Projecting both tangent directions and
+    # taking the mapped ellipse's principal axes handles rotation, reflection,
+    # unequal scales, and skew without special cases.
+    east = coords.directional_offset_by(90.0 * u.deg, 1.0 * u.arcmin)
+    north = coords.directional_offset_by(0.0 * u.deg, 1.0 * u.arcmin)
+    east_x, east_y = wcs.world_to_pixel(east)
+    north_x, north_y = wcs.world_to_pixel(north)
 
     results: list[AnnotatedDso] = []
     for i, dso in enumerate(dsos):
@@ -206,12 +216,27 @@ def project_dsos(
         ellipse_angle = None
 
         if maj_arcmin is not None and pixel_scale_deg > 0:
-            semi_major_px = (maj_arcmin / 60.0) / pixel_scale_deg / 2.0
             min_arcmin = dso.get("min_axis_arcmin") or maj_arcmin
-            semi_minor_px = (min_arcmin / 60.0) / pixel_scale_deg / 2.0
-
             pa = dso.get("position_angle_deg") or 0.0
-            ellipse_angle = pa - image_rotation
+            pa_rad = math.radians(pa)
+            jacobian = np.array(
+                [
+                    [float(east_x[i] - px_x[i]), float(north_x[i] - px_x[i])],
+                    [float(east_y[i] - px_y[i]), float(north_y[i] - px_y[i])],
+                ]
+            )
+            axes = np.array(
+                [
+                    [math.sin(pa_rad) * maj_arcmin / 2.0, math.cos(pa_rad) * min_arcmin / 2.0],
+                    [math.cos(pa_rad) * maj_arcmin / 2.0, -math.sin(pa_rad) * min_arcmin / 2.0],
+                ]
+            )
+            principal, singular, _ = np.linalg.svd(jacobian @ axes)
+            semi_major_px = float(singular[0])
+            semi_minor_px = float(singular[1])
+            ellipse_angle = (
+                math.degrees(math.atan2(float(principal[1, 0]), float(principal[0, 0]))) % 180.0
+            )
 
         results.append(
             AnnotatedDso(

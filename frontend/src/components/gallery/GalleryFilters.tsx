@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Checkbox from "@mui/material/Checkbox";
@@ -6,12 +9,17 @@ import InputAdornment from "@mui/material/InputAdornment";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import SearchIcon from "@mui/icons-material/Search";
-import type { GalleryFacets } from "@/api/gallery";
+import {
+  fetchGallerySuggestions,
+  type GalleryFacets,
+  type GallerySuggestion,
+} from "@/api/gallery";
 import PillFilter from "@/components/common/PillFilter";
 import CatalogFilter from "@/components/dso/CatalogFilter";
 import ConstellationFilter from "@/components/dso/ConstellationFilter";
 import type { GalleryFilters as FilterValues } from "@/stores/galleryStore";
 import TypeGroupFilter from "./TypeGroupFilter";
+import { useDebounce } from "@/lib/useDebounce";
 
 interface Props {
   values: FilterValues;
@@ -20,6 +28,7 @@ interface Props {
   onChange: (patch: Partial<FilterValues>) => void;
   onClear: () => void;
   hasFilters: boolean;
+  onSuggestionsOpenChange: (open: boolean) => void;
 }
 
 const statusNames: Record<string, string> = {
@@ -36,7 +45,31 @@ export default function GalleryFilters({
   onChange,
   onClear,
   hasFilters,
+  onSuggestionsOpenChange,
 }: Props) {
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const debouncedSuggestionText = useDebounce(values.search.trim(), 300);
+  const suggestionQuery = useQuery({
+    queryKey: [
+      "gallery",
+      "suggestions",
+      debouncedSuggestionText,
+      values.searchImages,
+      values.includeRetired,
+    ],
+    queryFn: () =>
+      fetchGallerySuggestions(
+        debouncedSuggestionText,
+        values.searchImages,
+        values.includeRetired,
+      ),
+    enabled: debouncedSuggestionText.length >= 2,
+  });
+  const setOpen = (open: boolean) => {
+    const next = open && values.search.trim().length >= 2;
+    setSuggestionsOpen(next);
+    onSuggestionsOpenChange(next);
+  };
   const wrapperSx = { flex: "0 1 180px", minWidth: 160 };
   const statusOptions = (facets?.statuses ?? []).map((option) => ({
     code: option.code,
@@ -68,22 +101,107 @@ export default function GalleryFilters({
           mb: "18px",
         }}
       >
-        <TextField
-          size="small"
-          label="Search"
-          value={values.search}
-          onChange={(event) => onChange({ search: event.target.value })}
-          placeholder="Project, target or object name"
-          autoComplete="off"
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon sx={{ fontSize: 18 }} />
-                </InputAdornment>
-              ),
-            },
+        <Autocomplete<GallerySuggestion, false, false, true>
+          freeSolo
+          open={suggestionsOpen && values.search.trim().length >= 2}
+          onOpen={() => setOpen(true)}
+          onClose={() => setOpen(false)}
+          value={null}
+          inputValue={values.search}
+          options={suggestionQuery.data ?? []}
+          loading={suggestionQuery.isFetching}
+          filterOptions={(options) => options}
+          getOptionLabel={(option) =>
+            typeof option === "string" ? option : option.designation
+          }
+          groupBy={(option) =>
+            option.project_count > 0 ? "In your pictures" : "Not in your pictures"
+          }
+          onInputChange={(_event, value, reason) => {
+            // The clear button reports "clear"; "reset" follows a pick and
+            // is ignored so it can't overwrite the chosen designation.
+            if (reason === "clear") {
+              onChange({ search: "" });
+              setOpen(false);
+              return;
+            }
+            if (reason !== "input") {
+              setOpen(false);
+              return;
+            }
+            onChange({ search: value });
+            setOpen(value.trim().length >= 2);
           }}
+          onChange={(_event, value) => {
+            if (typeof value === "string") onChange({ search: value });
+            else if (value) onChange({ search: value.designation });
+            setOpen(false);
+          }}
+          renderOption={(props, option) => {
+            const typed = values.search.trim();
+            const index = option.designation.toLocaleLowerCase().indexOf(
+              typed.toLocaleLowerCase(),
+            );
+            return (
+              <Box
+                component="li"
+                {...props}
+                key={option.dso_id}
+                sx={{
+                  display: "grid !important",
+                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                  gap: "4px 16px",
+                  opacity: option.project_count > 0 ? 1 : 0.58,
+                }}
+              >
+                <Box sx={{ minWidth: 0 }}>
+                  <Box sx={{ fontWeight: 600 }}>
+                    {index >= 0 ? (
+                      <>
+                        {option.designation.slice(0, index)}
+                        <Box component="strong" sx={{ color: "primary.main", fontWeight: 800 }}>
+                          {option.designation.slice(index, index + typed.length)}
+                        </Box>
+                        {option.designation.slice(index + typed.length)}
+                      </>
+                    ) : option.designation}
+                  </Box>
+                  {option.detail && (
+                    <Box sx={{ color: "text.secondary", fontSize: 12 }}>
+                      {option.detail}
+                    </Box>
+                  )}
+                </Box>
+                <Box sx={{ color: "text.secondary", fontSize: 12, whiteSpace: "nowrap" }}>
+                  {option.project_count === 0
+                    ? "none"
+                    : `${option.project_count} ${option.project_count === 1 ? "project" : "projects"}`}
+                </Box>
+              </Box>
+            );
+          }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              size="small"
+              label="Search"
+              placeholder="Project, target or object name"
+              autoComplete="off"
+              slotProps={{
+                input: {
+                  ...params.InputProps,
+                  startAdornment: (
+                    <>
+                      <InputAdornment position="start">
+                        <SearchIcon sx={{ fontSize: 18 }} />
+                      </InputAdornment>
+                      {params.InputProps.startAdornment}
+                    </>
+                  ),
+                },
+              }}
+            />
+          )}
           sx={{ flex: "0 1 420px", minWidth: 280 }}
         />
         <FormControlLabel
@@ -191,7 +309,13 @@ export default function GalleryFilters({
           }
           label="Show retired"
         />
-        <Button onClick={onClear} disabled={!hasFilters}>
+        <Button
+          onClick={() => {
+            setOpen(false);
+            onClear();
+          }}
+          disabled={!hasFilters}
+        >
           Clear filters
         </Button>
       </Box>

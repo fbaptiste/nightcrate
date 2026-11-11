@@ -30,6 +30,8 @@ class LibrarySummary:
     main_images: dict[int, int] = field(default_factory=dict)
     solved_project_ids: list[int] = field(default_factory=list)
     solve_non_target_dsos: dict[int, list[int]] = field(default_factory=dict)
+    solve_ids: dict[int, int] = field(default_factory=dict)
+    known_project_ids: dict[str, int] = field(default_factory=dict)
 
 
 _NAMED_DSOS = (
@@ -41,7 +43,38 @@ _NAMED_DSOS = (
     ("ngc6992", "NGC 6992", "ngc", "6992", "SNR", "Cyg", "Eastern Veil Nebula"),
     ("ic1795", "IC 1795", "ic", "1795", "HII", "Cas", "Fish Head Nebula"),
     ("inactive", "Sh2-240", "sharpless2", "240", "SNR", "Tau", "Spaghetti Nebula"),
+    ("m65", "M 65", "messier", "65", "G", "Leo", None),
+    ("m66", "M 66", "messier", "66", "G", "Leo", None),
+    ("ngc3628", "NGC 3628", "ngc", "3628", "G", "Leo", "Hamburger Galaxy"),
+    ("ic2729", "IC 2729", "ic", "2729", "G", "Leo", None),
+    ("m84", "M 84", "messier", "84", "G", "Vir", None),
+    ("m86", "M 86", "messier", "86", "G", "Vir", None),
+    ("m87", "M 87", "messier", "87", "G", "Vir", "Virgo A"),
+    ("ngc4435", "NGC 4435", "ngc", "4435", "G", "Vir", "Eyes"),
+    ("ngc4438", "NGC 4438", "ngc", "4438", "G", "Vir", "Eyes"),
 )
+
+_KNOWN_GEOMETRY = {
+    "m65": (169.733154, 13.092212, 7.64, 1.97, 173.0),
+    "m66": (170.062365, 12.991289, 10.28, 4.61, 168.0),
+    "ngc3628": (170.070817, 13.5899, 11.04, 3.44, 104.0),
+    "ic2729": (170.0276, 13.4088, 0.43, 0.23, 177.0),
+    "m84": (186.265597, 12.886983, 7.41, 6.44, 133.0),
+    "m86": (186.549225, 12.945969, 11.53, 8.43, 128.0),
+    "m87": (187.70593, 12.391123, 7.11, 6.67, 153.0),
+    "ngc4435": (186.919708, 13.079896, 3.03, 2.14, 12.0),
+    "ngc4438": (186.940913, 13.009734, 9.16, 4.02, 27.0),
+}
+
+_KNOWN_ALIASES = {
+    "m65": (("ngc", "3623", "NGC 3623"),),
+    "m66": (("ngc", "3627", "NGC 3627"),),
+    "ngc3628": (("pgc", "34697", "PGC 34697"), ("ugc", "6350", "UGC 6350")),
+    "ic2729": (("pgc", "1430330", "PGC 1430330"),),
+    "m84": (("ngc", "4374", "NGC 4374"),),
+    "m86": (("ngc", "4406", "NGC 4406"),),
+    "m87": (("ngc", "4486", "NGC 4486"),),
+}
 
 
 async def make_library_dsos(conn: Any) -> LibraryDsos:
@@ -87,6 +120,12 @@ async def make_library_dsos(conn: Any) -> LibraryDsos:
     for index, (key, display, catalog, identifier, obj_type, constellation, common) in enumerate(
         rows
     ):
+        geometry = _KNOWN_GEOMETRY.get(key)
+        ra_deg, dec_deg = (
+            (geometry[0], geometry[1])
+            if geometry is not None
+            else (float((index * 9) % 360), float(-45 + (index * 7) % 90))
+        )
         dso = await conn.execute(
             """
             INSERT INTO dso (
@@ -97,8 +136,8 @@ async def make_library_dsos(conn: Any) -> LibraryDsos:
             (
                 display,
                 obj_type,
-                float((index * 9) % 360),
-                float(-45 + (index * 7) % 90),
+                ra_deg,
+                dec_deg,
                 constellation,
                 common,
                 source_id,
@@ -117,6 +156,30 @@ async def make_library_dsos(conn: Any) -> LibraryDsos:
             """,
             (dso_id, catalog, identifier, display, normalize_designation(display)),
         )
+        if geometry is not None:
+            await conn.execute(
+                """
+                UPDATE dso
+                SET maj_axis_arcmin = ?, min_axis_arcmin = ?, position_angle_deg = ?
+                WHERE id = ?
+                """,
+                (*geometry[2:], dso_id),
+            )
+        for alias_catalog, alias_identifier, alias_display in _KNOWN_ALIASES.get(key, ()):
+            await conn.execute(
+                """
+                INSERT INTO dso_designation
+                    (dso_id, catalog, identifier, display_form, search_key, is_primary)
+                VALUES (?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    dso_id,
+                    alias_catalog,
+                    alias_identifier,
+                    alias_display,
+                    normalize_designation(alias_display),
+                ),
+            )
 
     # Cross-designations and display-ordered names exercise gallery hover data.
     await conn.execute(
@@ -179,7 +242,8 @@ async def populate_gallery_projects(
     main_images: dict[int, int] = {}
     solved_project_ids: list[int] = []
     solve_non_target_dsos: dict[int, list[int]] = {}
-    main_image_count = 0
+    solve_ids: dict[int, int] = {}
+    known_project_ids: dict[str, int] = {}
     session_dates = (
         "2024-12-20",
         "2025-01-03T22:14:00",
@@ -216,7 +280,6 @@ async def populate_gallery_projects(
                 (project_id, f"/synthetic/gallery/project-{index + 1}.jpg"),
             )
             main_images[project_id] = int(image.lastrowid)
-            main_image_count += 1
 
         target_count = min(len(dso_ids), 8 if index < 2 else 1 + index % 3)
         target_start = rng.randrange(len(dso_ids))
@@ -232,7 +295,11 @@ async def populate_gallery_projects(
                 (project_id, dso_id, f"2026-01-01 00:00:{offset:02d}"),
             )
 
-        if project_id in main_images and main_image_count % 3 == 0:
+        if project_id in main_images:
+            target_cursor = await conn.execute(
+                "SELECT ra_deg, dec_deg FROM dso WHERE id = ?", (project_targets[0],)
+            )
+            target_row = await target_cursor.fetchone()
             solve = await conn.execute(
                 """
                 INSERT INTO project_solve (
@@ -241,13 +308,13 @@ async def populate_gallery_projects(
                     rotation_deg, fov_width_arcmin, fov_height_arcmin,
                     cd1_1, cd1_2, cd2_1, cd2_2, crpix1, crpix2
                 ) VALUES (?, ?, 3000, 2000, ?, ?, 1.44, 0, 72, 48,
-                          -0.0004, 0, 0, 0.0004, 1500, 1000)
+                          -0.0004, 0, 0, -0.0004, 1501, 1001)
                 """,
                 (
                     project_id,
                     f"/synthetic/gallery/solve-{project_id}.fits",
-                    float((index * 11) % 360),
-                    float(-50 + (index * 7) % 100),
+                    float(target_row["ra_deg"]),
+                    float(target_row["dec_deg"]),
                 ),
             )
             target_set = set(project_targets)
@@ -263,6 +330,7 @@ async def populate_gallery_projects(
                     (solve.lastrowid, dso_id),
                 )
             solved_project_ids.append(project_id)
+            solve_ids[project_id] = int(solve.lastrowid)
             solve_non_target_dsos[project_id] = non_targets
 
         declared_rig_count = 4 if index < 2 else 1 + (index % 2)
@@ -291,6 +359,94 @@ async def populate_gallery_projects(
                 ),
             )
 
+    designation_keys = {
+        key: normalize_designation(display)
+        for key, display in {
+            "m65": "M 65",
+            "m66": "M 66",
+            "ngc3628": "NGC 3628",
+            "m84": "M 84",
+            "m86": "M 86",
+        }.items()
+    }
+    known_ids: dict[str, int] = {}
+    for key, search_key in designation_keys.items():
+        cursor = await conn.execute(
+            """
+            SELECT d.id
+            FROM dso d
+            JOIN dso_designation dd ON dd.dso_id = d.id
+            WHERE dd.search_key = ? AND d.active = 1
+            ORDER BY d.id LIMIT 1
+            """,
+            (search_key,),
+        )
+        row = await cursor.fetchone()
+        if row is not None:
+            known_ids[key] = int(row["id"])
+
+    known_fields = (
+        ("leo", "Leo Triplet", 169.93, 13.27, 1.50, ("m65", "m66")),
+        ("hamburger", "Hamburger Galaxy", 170.071, 13.589, 0.42, ("ngc3628",)),
+        ("markarian", "Markarian's Chain", 186.78, 13.06, 2.30, ("m84", "m86")),
+    )
+    if all(key in known_ids for field in known_fields for key in field[5]):
+        for key, name, ra_deg, dec_deg, field_deg, target_keys in known_fields:
+            project = await conn.execute(
+                "INSERT INTO project (name, status, active) VALUES (?, 'active', 1)", (name,)
+            )
+            project_id = int(project.lastrowid)
+            known_project_ids[key] = project_id
+            project_ids.append(project_id)
+            visible_by_status["active"] += 1
+            for dso_key in target_keys:
+                await conn.execute(
+                    "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+                    (project_id, known_ids[dso_key]),
+                )
+            image = await conn.execute(
+                "INSERT INTO project_image (project_id, file_path, is_main) VALUES (?, ?, 1)",
+                (project_id, f"/synthetic/gallery/{key}.jpg"),
+            )
+            main_images[project_id] = int(image.lastrowid)
+            scale_deg = field_deg / 1200.0
+            solve = await conn.execute(
+                """
+                INSERT INTO project_solve (
+                    project_id, image_path, image_width, image_height,
+                    center_ra_deg, center_dec_deg, pixel_scale_arcsec,
+                    rotation_deg, fov_width_arcmin, fov_height_arcmin,
+                    cd1_1, cd1_2, cd2_1, cd2_2, crpix1, crpix2
+                ) VALUES (?, ?, 1200, 900, ?, ?, ?, 0, ?, ?, ?, 0, 0, ?, 601, 451)
+                """,
+                (
+                    project_id,
+                    f"/synthetic/gallery/{key}.fits",
+                    ra_deg,
+                    dec_deg,
+                    scale_deg * 3600.0,
+                    field_deg * 60.0,
+                    field_deg * 45.0,
+                    -scale_deg,
+                    -scale_deg,
+                ),
+            )
+            solved_project_ids.append(project_id)
+            solve_ids[project_id] = int(solve.lastrowid)
+            solve_non_target_dsos[project_id] = []
+
+        unsolved = await conn.execute(
+            "INSERT INTO project (name, status, active) VALUES ('Unsolved Hamburger', 'active', 1)"
+        )
+        unsolved_id = int(unsolved.lastrowid)
+        known_project_ids["unsolved_hamburger"] = unsolved_id
+        project_ids.append(unsolved_id)
+        visible_by_status["active"] += 1
+        await conn.execute(
+            "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+            (unsolved_id, known_ids["ngc3628"]),
+        )
+
     await conn.commit()
     return LibrarySummary(
         expected_visible=sum(visible_by_status.values()),
@@ -299,4 +455,6 @@ async def populate_gallery_projects(
         main_images=main_images,
         solved_project_ids=solved_project_ids,
         solve_non_target_dsos=solve_non_target_dsos,
+        solve_ids=solve_ids,
+        known_project_ids=known_project_ids,
     )

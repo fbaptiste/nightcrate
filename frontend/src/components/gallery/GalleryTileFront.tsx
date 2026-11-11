@@ -1,11 +1,12 @@
 import type { RefObject } from "react";
 import Box from "@mui/material/Box";
-import GpsFixedIcon from "@mui/icons-material/GpsFixed";
 import type { GalleryItem } from "@/api/gallery";
 import type { CropSize } from "@/api/projects";
-import { tileImageUrl } from "@/lib/galleryRendition";
+import { pickRendition, tileImageUrl } from "@/lib/galleryRendition";
 import ExpandButton from "./ExpandButton";
 import GalleryImage from "./GalleryImage";
+import MatchChips from "./MatchChips";
+import SolveMarkedImage from "./SolveMarkedImage";
 
 interface Props {
   item: GalleryItem;
@@ -17,6 +18,9 @@ interface Props {
   onExpand: () => void;
   buttonRef: RefObject<HTMLButtonElement | null>;
   expandRef: RefObject<HTMLButtonElement | null>;
+  solveUnavailable: boolean;
+  solveRetry: number;
+  onSolveUnavailable: (solveId: number) => void;
 }
 
 export default function GalleryTileFront({
@@ -29,8 +33,12 @@ export default function GalleryTileFront({
   onExpand,
   buttonRef,
   expandRef,
+  solveUnavailable,
+  solveRetry,
+  onSolveUnavailable,
 }: Props) {
   const imageId = item.main_image_id;
+  const solve = solveUnavailable ? null : item.solve;
   const src = tileImageUrl(
     item,
     cropSize,
@@ -38,8 +46,7 @@ export default function GalleryTileFront({
     window.devicePixelRatio || 1,
     ws,
   );
-  const foundLabel =
-    `Found in this project's plate-solved image: ${item.found_in_image.join(", ")}`;
+  const canExpand = solve != null || imageId != null;
 
   return (
     <Box sx={{ width: "100%", height: "100%" }}>
@@ -71,7 +78,20 @@ export default function GalleryTileFront({
             "&:focus-visible": { outlineOffset: "-3px" },
           }}
         >
-          {src ? (
+          {solve ? (
+            <SolveMarkedImage
+              key={`${solve.solve_id}-${solveRetry}`}
+              projectId={item.project_id}
+              solve={solve}
+              variant={pickRendition(slotWidth, window.devicePixelRatio || 1)}
+              ws={ws}
+              alt={item.name}
+              onUnavailable={() => onSolveUnavailable(solve.solve_id)}
+              matchMainTarget={item.match_main_target}
+              matchInImage={item.match_in_image}
+              compactChips={small}
+            />
+          ) : src ? (
             <GalleryImage src={src} alt={item.name} />
           ) : (
             <Box
@@ -87,39 +107,14 @@ export default function GalleryTileFront({
             </Box>
           )}
         </Box>
-        {item.found_in_image.length > 0 && (
-          <Box
-            aria-label={foundLabel}
-            sx={{
-              position: "absolute",
-              left: small ? 6 : 8,
-              bottom: small ? 6 : 8,
-              maxWidth: small ? "calc(100% - 12px)" : "calc(100% - 16px)",
-              height: small ? 22 : 24,
-              px: "8px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "5px",
-              borderRadius: 12,
-              bgcolor: "rgba(0, 0, 0, 0.62)",
-              border: "1px solid rgba(255, 255, 255, 0.28)",
-              color: "common.white",
-              fontSize: small ? 11 : 11.5,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              pointerEvents: "none",
-            }}
-          >
-            <GpsFixedIcon sx={{ fontSize: 13 }} />
-            In image: {item.found_in_image[0]}
-            {item.found_in_image.length > 1
-              ? ` +${item.found_in_image.length - 1}`
-              : ""}
-          </Box>
+        {!solve && (
+          <MatchChips
+            mainTarget={item.match_main_target}
+            inImage={item.match_in_image}
+            compact={small}
+          />
         )}
-        {imageId != null && (
+        {canExpand && (
           <ExpandButton
             buttonRef={expandRef}
             label={`View ${item.name} full size`}

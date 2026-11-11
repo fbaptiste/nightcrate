@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import CheckIcon from "@mui/icons-material/Check";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import GpsFixedIcon from "@mui/icons-material/GpsFixed";
 import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "@mui/material/styles";
 import type { MessierRig, MessierSlot, SlotProject } from "@/api/messier";
@@ -20,7 +21,7 @@ import { tileImageUrl } from "@/lib/galleryRendition";
 import { fovGeometry } from "@/lib/messierFov";
 import { formatDateRange } from "@/lib/messierFormat";
 import type { SurveyRequestQueue } from "@/lib/surveyRequestQueue";
-import MessierSkyImage from "./MessierSkyImage";
+import MessierSkyImage, { type SurveyImageStatus } from "./MessierSkyImage";
 import RigFieldBox from "./RigFieldBox";
 
 interface Props {
@@ -43,6 +44,8 @@ interface Props {
   onTurn: (next: boolean) => void;
   onExpand: () => void;
   expandRefs: RefObject<Map<string, HTMLButtonElement>>;
+  tileRefs: RefObject<Map<number, { host: HTMLDivElement; front: HTMLButtonElement }>>;
+  highlighted: boolean;
 }
 
 function objectSummary(slot: MessierSlot): string {
@@ -59,8 +62,33 @@ function BlankSurface({ number, view }: { number: number; view: MessierView }) {
   return <Box sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", bgcolor: (theme) => theme.palette.mode === "dark" ? "#202327" : "#ebe9e5", border: "1.5px dashed", borderColor: (theme) => theme.palette.mode === "dark" ? "#4a4d54" : "#c4c1bb", borderRadius: "6px", color: (theme) => theme.palette.mode === "dark" ? "#3f434a" : "#bdb8b0", fontSize, fontWeight: 600, letterSpacing: "-0.02em" }}>{number}</Box>;
 }
 
-function Cross() {
-  return <Box component="svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}><line x1="0" y1="0" x2="100" y2="100" /><line x1="100" y1="0" x2="0" y2="100" /><style>{"line{stroke:#ffffff;stroke-opacity:.45;stroke-width:1.5px;vector-effect:non-scaling-stroke}"}</style></Box>;
+function NotImagedRibbon({ view }: { view: MessierView }) {
+  const small = view === "small";
+  return (
+    <Box
+      aria-label="Not imaged"
+      sx={{
+        position: "absolute",
+        zIndex: 2,
+        top: small ? 10 : 14,
+        left: small ? -38 : -34,
+        width: 132,
+        transform: "rotate(-45deg)",
+        bgcolor: "rgba(20, 22, 26, 0.82)",
+        borderTop: "1px solid rgba(255, 255, 255, 0.35)",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.35)",
+        color: "#ffffff",
+        fontSize: small ? 9.5 : view === "large" ? 12 : 11,
+        fontWeight: 600,
+        lineHeight: 1.45,
+        py: small ? "2px" : "3px",
+        textAlign: "center",
+        pointerEvents: "none",
+      }}
+    >
+      Not imaged
+    </Box>
+  );
 }
 
 export default function MessierTile(props: Props) {
@@ -70,7 +98,9 @@ export default function MessierTile(props: Props) {
   const frontRef = useRef<HTMLButtonElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const expandRef = useRef<HTMLButtonElement>(null);
-  const [surveyReady, setSurveyReady] = useState(false);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [surveyStatus, setSurveyStatus] = useState<SurveyImageStatus>("loading");
+  const surveyReady = surveyStatus === "ready";
   const object = slot.object;
   const imageProjects = slot.projects.filter((project) => project.main_image_id != null);
   const shownIndex = Math.min(props.shownProjectIndex, Math.max(0, imageProjects.length - 1));
@@ -79,11 +109,10 @@ export default function MessierTile(props: Props) {
   const small = view === "small";
   const rigShape = rig?.fov_major_deg != null && rig.fov_minor_deg != null ? { majorDeg: rig.fov_major_deg, minorDeg: rig.fov_minor_deg } : null;
   const skyStyle = (slot.state === "imaged" && props.imagedStyle === "sky") || (slot.state !== "imaged" && props.unimagedStyle === "sky");
-  const showSky = Boolean(object && slot.survey && skyStyle);
-  const ownPicture = shownProject?.picture_fields?.[cropSize];
   const surveyPicture = slot.survey ? { widthDeg: slot.survey.field_deg, heightDeg: slot.survey.field_deg * 0.75 } : null;
-  const picture = skyStyle ? surveyPicture : ownPicture ? { widthDeg: ownPicture.width_deg, heightDeg: ownPicture.height_deg } : null;
-  const geometry = picture && rigShape ? fovGeometry(picture, rigShape) : null;
+  const hasRigView = Boolean(rigShape && rig?.view_field_deg != null && slot.survey);
+  const showSurvey = Boolean(object && slot.survey && skyStyle);
+  const geometry = surveyPicture && rigShape ? fovGeometry(surveyPicture, rigShape) : null;
 
   useEffect(() => {
     const registered = props.expandRefs.current;
@@ -93,25 +122,81 @@ export default function MessierTile(props: Props) {
     return () => { if (registered.get(key) === button) registered.delete(key); };
   }, [props.expandRefs, slot.number]);
 
+  useLayoutEffect(() => {
+    const registered = props.tileRefs.current;
+    const host = hostRef.current;
+    const frontButton = frontRef.current;
+    if (host && frontButton) registered.set(slot.number, { host, front: frontButton });
+    return () => {
+      if (registered.get(slot.number)?.host === host) registered.delete(slot.number);
+    };
+  }, [props.tileRefs, slot.number]);
+
   const src = shownProject ? tileImageUrl(shownProject, cropSize, props.trackWidth, window.devicePixelRatio || 1, props.ws) : null;
   const designation = object?.designation ?? `M ${slot.number}`;
   const label = object?.common_name ? `${designation} ${object.common_name}` : designation;
   const teal = theme.palette.mode === "dark" ? "#4db6ac" : "#00695c";
+  const solvedPictures = slot.state === "none" ? slot.in_solved_pictures : [];
+  const solvedLabel =
+    solvedPictures.length === 1
+      ? `In ${solvedPictures[0].name}`
+      : `In ${solvedPictures.length} solved pictures`;
+  const coverageLabel = slot.coverage_pct != null
+    ? `${Math.round(slot.coverage_pct)}% of the field`
+    : null;
 
   const front = (
     <Box sx={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", borderRadius: "6px", bgcolor: "#000000" }}>
       <Box ref={frontRef} component="button" type="button" aria-label={`Show details for ${designation}`} onClick={() => props.onTurn(true)} sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", p: 0, border: 0, bgcolor: "transparent", cursor: "pointer", borderRadius: "6px", "&:focus-visible": { outlineOffset: "-3px" } }}>
         {skyStyle || !shownProject ? <BlankSurface number={slot.number} view={view} /> : (
-          src ? <Box sx={{ position: "absolute", left: "50%", top: "50%", width: `${100 / (geometry?.scale ?? 1)}%`, height: `${100 / (geometry?.scale ?? 1)}%`, transform: "translate(-50%, -50%)" }}><GalleryImage src={src} alt={label} /></Box> : <Box sx={{ display: "grid", placeItems: "center", height: "100%", color: "#8e8c88", fontSize: 13 }}>No main image</Box>
+          src ? <Box sx={{ position: "absolute", inset: 0, "&::after": { content: '""', position: "absolute", inset: 0, border: `${small ? 3 : 4}px solid ${teal}`, borderRadius: "6px", pointerEvents: "none" } }}><GalleryImage src={src} alt={label} /></Box> : <Box sx={{ display: "grid", placeItems: "center", height: "100%", color: "#8e8c88", fontSize: 13 }}>No main image</Box>
         )}
-        {showSky && surveyReady && <Box sx={{ position: "absolute", inset: 0, bgcolor: "#000000" }} />}
-        {showSky && object && slot.survey && <MessierSkyImage dsoId={object.dso_id} ws={props.ws} renderKey={slot.survey.render_key} active={props.active} requestKey={props.requestKey} messierNumber={slot.number} scrollRootRef={props.scrollRootRef} requestQueue={props.requestQueue} alt={label} scale={geometry?.scale} onReadyChange={setSurveyReady} />}
+        {showSurvey && surveyReady && <Box sx={{ position: "absolute", inset: 0, bgcolor: "#000000" }} />}
+        {showSurvey && object && slot.survey && <MessierSkyImage dsoId={object.dso_id} ws={props.ws} renderKey={slot.survey.render_key} rigId={hasRigView ? rig?.id : undefined} active={props.active} requestKey={props.requestKey} messierNumber={slot.number} scrollRootRef={props.scrollRootRef} requestQueue={props.requestQueue} alt={label} scale={hasRigView ? 1 : geometry?.scale} onStatusChange={setSurveyStatus} />}
       </Box>
-      {showSky && surveyReady && slot.state !== "imaged" && <Cross />}
-      {showSky && surveyReady && <Box sx={{ position: "absolute", right: small ? 6 : 8, bottom: small ? 5 : 7, fontSize: small ? 9.5 : 10.5, color: "rgba(255, 255, 255, 0.72)", pointerEvents: "none", textShadow: "0 0 3px #000000, 0 0 6px #000000" }}>Sky survey</Box>}
-      {rigShape && ((showSky && surveyReady) || (!skyStyle && shownProject)) && <RigFieldBox picture={picture} rig={rigShape} showUnknown={!skyStyle && Boolean(shownProject)} small={small} />}
+      {showSurvey && surveyReady && slot.state !== "imaged" && <NotImagedRibbon view={view} />}
+      {showSurvey && surveyReady && <Box sx={{ position: "absolute", right: small ? 6 : 8, bottom: small ? 5 : 7, fontSize: small ? 9.5 : 10.5, color: "rgba(255, 255, 255, 0.72)", pointerEvents: "none", textShadow: "0 0 3px #000000, 0 0 6px #000000" }}>Sky survey</Box>}
+      {rigShape && surveyPicture && showSurvey && surveyReady && <RigFieldBox picture={surveyPicture} rig={rigShape} fieldDeg={hasRigView && slot.survey ? slot.survey.field_deg : undefined} />}
       {slot.state === "imaged" && <Box aria-label="Imaged" sx={{ position: "absolute", top: 8, left: 8, width: 26, height: 26, borderRadius: "50%", bgcolor: "rgba(0, 0, 0, 0.62)", border: "1px solid rgba(255, 255, 255, 0.28)", display: "grid", placeItems: "center", pointerEvents: "none" }}><CheckIcon sx={{ width: 16, height: 16, color: teal }} /></Box>}
-      {slot.state === "project" && <Box sx={{ position: "absolute", left: small ? 6 : 8, bottom: small ? 6 : 8, maxWidth: "calc(100% - 16px)", height: small ? 22 : 24, px: small ? "8px" : "10px", borderRadius: 12, display: "inline-flex", alignItems: "center", bgcolor: showSky && surveyReady ? "rgba(0, 0, 0, 0.66)" : "background.paper", border: "1px solid", borderColor: showSky && surveyReady ? "rgba(255, 255, 255, 0.32)" : "divider", color: showSky && surveyReady ? "#ffffff" : "text.primary", fontSize: small ? 11 : 11.5, fontWeight: 600, pointerEvents: "none" }}>Project, no image yet</Box>}
+      {slot.state === "project" && <Box sx={{ position: "absolute", left: small ? 6 : 8, bottom: small ? 6 : 8, maxWidth: "calc(100% - 16px)", height: small ? 22 : 24, px: small ? "8px" : "10px", borderRadius: 12, display: "inline-flex", alignItems: "center", bgcolor: showSurvey && surveyReady ? "rgba(0, 0, 0, 0.66)" : "background.paper", border: "1px solid", borderColor: showSurvey && surveyReady ? "rgba(255, 255, 255, 0.32)" : "divider", color: showSurvey && surveyReady ? "#ffffff" : "text.primary", fontSize: small ? 11 : 11.5, fontWeight: 600, pointerEvents: "none" }}>Project, no image yet</Box>}
+      {solvedPictures.length > 0 && (
+        <Button
+          size="small"
+          onClick={(event) => {
+            event.stopPropagation();
+            const params = new URLSearchParams({ search: designation, images: "1" });
+            navigate(`/gallery?${params.toString()}`);
+          }}
+          sx={{
+            position: "absolute",
+            zIndex: 3,
+            left: small ? 6 : 8,
+            bottom: small ? 6 : 8,
+            maxWidth: "calc(100% - 16px)",
+            minWidth: 0,
+            height: small ? 22 : 24,
+            px: small ? "8px" : "10px",
+            borderRadius: 12,
+            bgcolor: showSurvey && surveyReady ? "rgba(0,0,0,0.66)" : "background.paper",
+            border: "1px solid",
+            borderColor: teal,
+            color: showSurvey && surveyReady ? "#ffffff" : "text.primary",
+            fontSize: small ? 11 : 11.5,
+            fontWeight: 600,
+            lineHeight: 1,
+            textTransform: "none",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            "&:hover": {
+              bgcolor: showSurvey && surveyReady ? "rgba(0,0,0,0.82)" : "action.hover",
+            },
+          }}
+        >
+          <GpsFixedIcon sx={{ flex: "0 0 auto", mr: "5px", fontSize: 13 }} />
+          {solvedLabel}
+        </Button>
+      )}
       {shownProject && <ExpandButton buttonRef={expandRef} label={`View ${designation} full size`} onClick={props.onExpand} size={small ? "compact" : "regular"} />}
       {!skyStyle && imageProjects.length >= 2 && <>
         <IconButton aria-label="Previous project's image" title={imageProjects[shownIndex - 1]?.name ?? ""} disabled={shownIndex === 0} onClick={(event) => { event.stopPropagation(); props.onShownProjectIndex(shownIndex - 1); }} sx={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", width: small ? 26 : 32, height: small ? 26 : 32, color: "#ffffff", bgcolor: "rgba(0, 0, 0, 0.55)", border: "1px solid rgba(255, 255, 255, 0.32)", "&:hover": { bgcolor: "rgba(0, 0, 0, 0.75)" }, "&.Mui-disabled": { color: "#ffffff", opacity: 0.3 } }}><ChevronLeftIcon sx={{ fontSize: small ? 18 : 22 }} /></IconButton>
@@ -138,11 +223,29 @@ export default function MessierTile(props: Props) {
   );
 
   return (
-    <Box sx={{ minWidth: 0 }}>
+    <Box
+      ref={hostRef}
+      sx={{
+        minWidth: 0,
+        borderRadius: "8px",
+        animation: props.highlighted ? "messier-map-jump 1.5s ease-out" : undefined,
+        "@keyframes messier-map-jump": {
+          from: { boxShadow: `0 0 0 2px ${theme.palette.mode === "dark" ? "#d4993f" : "#c07b2b"}` },
+          to: { boxShadow: "0 0 0 2px transparent" },
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          animationDuration: props.highlighted ? "150ms" : undefined,
+        },
+      }}
+    >
       <FlipTile turned={props.turned} onTurn={props.onTurn} front={front} back={back} frontButtonRef={frontRef} backButtonRef={backRef} />
       <Box sx={{ pt: "7px", px: "2px", minWidth: 0 }}>
         <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}><Box component="span" sx={{ fontWeight: 600, mr: "6px" }}>{designation}</Box>{object?.common_name && <NameWithAlternates name={object.common_name} otherNames={object.other_names}><Box component="span" sx={{ color: "text.secondary" }}>{object.common_name}</Box></NameWithAlternates>}</Box>
-        <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: slot.never_rises ? "text.primary" : "text.secondary", fontSize: 12.5 }}>{slot.never_rises && props.locationName ? `↧ Never rises at ${props.locationName}` : objectSummary(slot)}</Box>
+        <Box sx={{ display: small ? "block" : "flex", justifyContent: "space-between", gap: "10px", color: slot.never_rises ? "text.primary" : "text.secondary", fontSize: 12.5 }}>
+          <Box sx={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{slot.never_rises && props.locationName ? `↧ Never rises at ${props.locationName}` : objectSummary(slot)}</Box>
+          {!small && coverageLabel && <Box sx={{ flex: "0 0 auto", color: "text.primary", whiteSpace: "nowrap" }}>{coverageLabel}</Box>}
+          {small && coverageLabel && <Box sx={{ color: "text.primary", whiteSpace: "nowrap" }}>{coverageLabel}</Box>}
+        </Box>
         {props.showProjects && slot.projects.length > 0 && <Box sx={{ mt: "6px", pt: "6px", borderTop: 1, borderColor: "divider", fontSize: small ? 12 : 12.5 }}>{slot.projects.map((project) => { const isShown = props.imagedStyle === "own" && slot.projects.length > 1 && project.project_id === shownProject?.project_id; return <Box key={project.project_id} sx={{ display: small ? "block" : "flex", alignItems: "baseline", gap: "10px", minWidth: 0, lineHeight: small ? 1.35 : 1.6, mb: small ? "4px" : 0 }}><Box component={Link} to={`/projects/${project.project_id}`} title={`Open project: ${project.name}`} sx={{ display: small ? "block" : "inline", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: 600, textDecoration: "none", color: "primary.main", "&:hover": { textDecoration: "underline" }, "&::before": isShown ? { content: '""', display: "inline-block", width: 7, height: 7, borderRadius: "50%", bgcolor: teal, mr: "6px", verticalAlign: "1px" } : undefined }}>{project.name}</Box><Box sx={{ display: small ? "block" : "inline", flex: "0 0 auto", ml: small ? 0 : "auto", color: "text.secondary", whiteSpace: "nowrap" }}>{projectDates(project)}</Box></Box>; })}</Box>}
       </Box>
     </Box>

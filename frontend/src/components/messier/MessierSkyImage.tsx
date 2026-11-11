@@ -2,11 +2,15 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 import Box from "@mui/material/Box";
 import { thumbnailUrl } from "@/api/planner";
 import type { SurveyRequestQueue } from "@/lib/surveyRequestQueue";
+import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
+
+export type SurveyImageStatus = "loading" | "ready" | "failed";
 
 interface Props {
   dsoId: number;
   ws: string;
   renderKey: string;
+  rigId?: number;
   active: boolean;
   requestKey: number;
   messierNumber: number;
@@ -14,13 +18,14 @@ interface Props {
   requestQueue: SurveyRequestQueue;
   alt: string;
   scale?: number;
-  onReadyChange?: (ready: boolean) => void;
+  onStatusChange?: (status: SurveyImageStatus) => void;
 }
 
 export default function MessierSkyImage({
   dsoId,
   ws,
   renderKey,
+  rigId,
   active,
   requestKey,
   messierNumber,
@@ -28,13 +33,20 @@ export default function MessierSkyImage({
   requestQueue,
   alt,
   scale = 1,
-  onReadyChange,
+  onStatusChange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
-  const identityKey = `${dsoId}:${renderKey}:${ws}`;
-  const objectUrlRef = useRef<string | null>(null);
+  const generation = useThumbnailCacheStore((state) => state.generation);
+  const identityKey = `${dsoId}:${renderKey}:${ws}:${generation}`;
   const failedKeyRef = useRef<string | null>(null);
+  const requestKeyRef = useRef(requestKey);
+  const [retryCount, setRetryCount] = useState(0);
+  const [loadStatus, setLoadStatus] = useState<{
+    key: string;
+    requestKey: number;
+    status: SurveyImageStatus;
+  }>({ key: "", requestKey: 0, status: "loading" });
   const [image, setImage] = useState<{
     key: string;
     src: string;
@@ -42,6 +54,15 @@ export default function MessierSkyImage({
   } | null>(null);
   const currentImage = image?.key === identityKey ? image : null;
   const src = currentImage?.src ?? null;
+  const status = loadStatus.key === identityKey
+    ? loadStatus.status === "ready" || loadStatus.requestKey === requestKey
+      ? loadStatus.status
+      : "loading"
+    : "loading";
+
+  useLayoutEffect(() => {
+    requestKeyRef.current = requestKey;
+  }, [requestKey]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -57,26 +78,42 @@ export default function MessierSkyImage({
     return () => observer.disconnect();
   }, [scrollRootRef]);
 
-  useEffect(() => {
-    onReadyChange?.(currentImage?.ready ?? false);
-  }, [currentImage?.ready, onReadyChange]);
+  useLayoutEffect(() => {
+    onStatusChange?.(status);
+  }, [onStatusChange, status]);
 
   useLayoutEffect(() => {
-    onReadyChange?.(false);
-    return () => onReadyChange?.(false);
-  }, [identityKey, onReadyChange]);
+    return () => onStatusChange?.("loading");
+  }, [identityKey, onStatusChange]);
 
   useEffect(() => {
     failedKeyRef.current = null;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setImage(null);
+    });
     return () => {
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
+      cancelled = true;
     };
   }, [identityKey]);
 
   useEffect(() => {
-    if (failedKeyRef.current === identityKey) failedKeyRef.current = null;
+    if (failedKeyRef.current !== identityKey) return;
+    queueMicrotask(() => {
+      if (failedKeyRef.current !== identityKey) return;
+      failedKeyRef.current = null;
+      setLoadStatus({ key: identityKey, requestKey, status: "loading" });
+      setRetryCount((current) => current + 1);
+    });
   }, [identityKey, requestKey]);
+
+  useEffect(() => {
+    const objectUrl = image?.src;
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [image?.src]);
 
   useEffect(() => {
     if (!active) return;
@@ -89,14 +126,16 @@ export default function MessierSkyImage({
         thumbnailUrl(dsoId, "checklist", {
           ws,
           renderKey,
-          waitMs: first ? 4000 : 0,
+          rigId,
+          generation,
+          waitMs: first ? 0 : 4000,
         }),
         window.location.origin,
       );
-      url.searchParams.set("_poll", String(Date.now()));
       try {
         const result = await requestQueue.enqueue({
           messierNumber,
+          initial: first,
           signal: controller.signal,
           distance: () => {
             const host = hostRef.current;
@@ -109,7 +148,7 @@ export default function MessierSkyImage({
             return 0;
           },
           run: async (signal) => {
-            const response = await fetch(url, { cache: "no-store", signal });
+            const response = await fetch(url, { signal });
             return {
               status: response.status,
               blob: response.status === 200 ? await response.blob() : null,
@@ -119,14 +158,17 @@ export default function MessierSkyImage({
         if (result.status === 200 && result.blob) {
           if (controller.signal.aborted) return;
           const objectUrl = URL.createObjectURL(result.blob);
-          objectUrlRef.current = objectUrl;
           setImage({ key: identityKey, src: objectUrl, ready: false });
         } else if (result.status === 202 && Date.now() - started < 75_000) {
-          timer = setTimeout(() => void poll(false), 2500);
+          timer = setTimeout(() => void poll(false), 1000);
+        } else {
+          failedKeyRef.current = identityKey;
+          setLoadStatus({ key: identityKey, requestKey: requestKeyRef.current, status: "failed" });
         }
       } catch (error) {
         if ((error as DOMException).name !== "AbortError") {
           failedKeyRef.current = identityKey;
+          setLoadStatus({ key: identityKey, requestKey: requestKeyRef.current, status: "failed" });
           setImage(null);
         }
       }
@@ -136,9 +178,10 @@ export default function MessierSkyImage({
       controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [active, dsoId, identityKey, messierNumber, near, renderKey, requestKey, requestQueue, scrollRootRef, src, ws]);
+  }, [active, dsoId, generation, identityKey, messierNumber, near, renderKey, requestQueue, retryCount, rigId, scrollRootRef, src, ws]);
 
   const handleLoad = () => {
+    setLoadStatus({ key: identityKey, requestKey: requestKeyRef.current, status: "ready" });
     setImage((current) =>
       current?.key === identityKey && current.src === src
         ? { ...current, ready: true }
@@ -148,9 +191,7 @@ export default function MessierSkyImage({
 
   const handleError = () => {
     failedKeyRef.current = identityKey;
-    onReadyChange?.(false);
-    if (src) URL.revokeObjectURL(src);
-    if (objectUrlRef.current === src) objectUrlRef.current = null;
+    setLoadStatus({ key: identityKey, requestKey: requestKeyRef.current, status: "failed" });
     setImage((current) =>
       current?.key === identityKey && current.src === src ? null : current,
     );
@@ -169,7 +210,7 @@ export default function MessierSkyImage({
             transform: "translate(-50%, -50%)",
           }}
         >
-          <Box component="img" src={src} alt={alt} onLoad={handleLoad} onError={handleError} sx={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }} />
+          <Box component="img" src={src} alt={alt} onLoad={handleLoad} onError={handleError} sx={{ display: "block", visibility: currentImage?.ready ? "visible" : "hidden", width: "100%", height: "100%", objectFit: "cover" }} />
         </Box>
       )}
     </Box>

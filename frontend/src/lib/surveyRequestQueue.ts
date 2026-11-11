@@ -1,5 +1,6 @@
 interface SurveyQueueRequest<T> {
   messierNumber: number;
+  initial: boolean;
   distance: () => number;
   signal: AbortSignal;
   run: (signal: AbortSignal) => Promise<T>;
@@ -7,6 +8,7 @@ interface SurveyQueueRequest<T> {
 
 interface QueuedRequest {
   messierNumber: number;
+  initial: boolean;
   distance: () => number;
   signal: AbortSignal;
   run: (signal: AbortSignal) => Promise<unknown>;
@@ -71,8 +73,9 @@ export class SurveyRequestQueue {
         const candidateDistance = candidate.distance();
         const bestDistance = best.distance();
         if (
-          candidateDistance < bestDistance ||
-          (candidateDistance === bestDistance && candidate.messierNumber < best.messierNumber)
+          (candidate.initial && !best.initial) ||
+          (candidate.initial === best.initial && candidateDistance < bestDistance) ||
+          (candidate.initial === best.initial && candidateDistance === bestDistance && candidate.messierNumber < best.messierNumber)
         ) {
           bestIndex = index;
         }
